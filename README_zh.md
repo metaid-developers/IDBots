@@ -10,7 +10,9 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+  <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Mobile-brightgreen?style=for-the-badge" alt="Platform">
+  <br>
   <img src="https://img.shields.io/badge/Electron-40-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
 </p>
@@ -42,7 +44,7 @@ LobsterAI 的核心是 **Cowork 模式** —— AI 不只是给建议，而是�
 ## 工作原理
 
 <p align="center">
-  <img src="https://ydhardwarecommon.nosdn.127.net/ff2b57a50dc6e7d2493c1f85c633ac64.png" alt="Architecture" width="800">
+  <img src="docs/res/architecture_zh.png" alt="Architecture" width="500">
 </p>
 
 ## 快速开始

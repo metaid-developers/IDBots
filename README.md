@@ -10,7 +10,9 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+  <br>
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Mobile-brightgreen?style=for-the-badge" alt="Platform">
+  <br>
   <img src="https://img.shields.io/badge/Electron-40-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
 </p>
@@ -42,7 +44,7 @@ LobsterAI also supports remote triggering via DingTalk, Feishu (Lark), Telegram,
 ## How It Works
 
 <p align="center">
-  <img src="https://ydhardwarecommon.nosdn.127.net/069467bc6a9afe2a2471f5b1a83a9b50.png" alt="Architecture" width="800">
+  <img src="docs/res/architecture_en.png" alt="Architecture" width="500">
 </p>
 
 ## Quick Start
