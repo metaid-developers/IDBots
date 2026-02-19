@@ -25,18 +25,16 @@
 
 **LobsterAI** is an all-in-one personal assistant Agent developed by [NetEase Youdao](https://www.youdao.com/). It works around the clock to handle your everyday tasks — data analysis, making presentations, generating videos, writing documents, searching the web, sending emails, scheduling tasks, and more.
 
-At its core is **Cowork mode** — the AI doesn't just give advice, it actually does the work for you. Powered by the Claude Agent SDK, it executes tools, manipulates files, and runs commands in a local or sandboxed environment, all under your supervision.
-
-LobsterAI also supports remote triggering via DingTalk, Feishu (Lark), Telegram, and Discord, so you can command your personal assistant from your phone anytime, anywhere.
+At its core is **Cowork mode** — it executes tools, manipulates files, and runs commands in a local or sandboxed environment, all under your supervision. You can also chat with agent via Telegram, Discord, DingTalk or Feishu (Lark) and get work done from your phone anytime, anywhere.
 
 ## Key Features
 
 - **All-in-One Productivity Assistant** — Data analysis, PPT creation, video generation, document writing, web search, email — covers the full range of daily work
 - **Local + Sandbox Execution** — Run tasks directly on your machine or in an isolated Alpine Linux sandbox
-- **16 Built-in Skills** — Office document generation, web search, Playwright automation, Remotion video generation, and more
+- **Built-in Skills** — Office document generation, web search, Playwright automation, Remotion video generation, and more
 - **Scheduled Tasks** — Create recurring tasks via conversation or the GUI — daily news digests, inbox cleanup, periodic report generation, and more
 - **Persistent Memory** — Automatically extracts user preferences and personal facts from conversations, remembers your habits across sessions, and gets smarter the more you use it
-- **Mobile via IM** — Trigger the Agent remotely from your phone through DingTalk, Feishu, Telegram, or Discord
+- **Mobile via IM** — Control your Agent remotely from your phone through Telegram, Discord, DingTalk, or Feishu
 - **Permission Gating** — All tool invocations require explicit user approval before execution
 - **Cross-Platform** — macOS (Intel + Apple Silicon), Windows, Linux desktop, plus mobile coverage via IM
 - **Local Data** — SQLite storage keeps your chat history and configuration on your device
@@ -341,7 +339,7 @@ Cowork session config includes:
 
 ### Internationalization
 
-Chinese (default) and English are supported. Switch languages in the Settings panel.
+Currently English and Chinese are supported. Switch languages in the Settings panel.
 
 ## Development Guidelines
 
