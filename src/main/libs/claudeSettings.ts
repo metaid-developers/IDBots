@@ -84,6 +84,10 @@ function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown)
   return normalizeProviderApiFormat(apiFormat);
 }
 
+function providerRequiresApiKey(providerName: string): boolean {
+  return providerName !== 'ollama';
+}
+
 function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvider | null; error?: string } {
   const providers = appConfig.providers ?? {};
 
@@ -121,7 +125,7 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
     return { matched: null, error: `Provider ${providerName} is missing base URL.` };
   }
 
-  if (apiFormat === 'anthropic' && !providerConfig.apiKey?.trim()) {
+  if (apiFormat === 'anthropic' && providerRequiresApiKey(providerName) && !providerConfig.apiKey?.trim()) {
     return { matched: null, error: `Provider ${providerName} requires API key for Anthropic-compatible mode.` };
   }
 
