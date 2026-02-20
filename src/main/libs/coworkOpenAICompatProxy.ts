@@ -18,6 +18,8 @@ export type OpenAICompatUpstreamConfig = {
   provider?: string;
 };
 
+export type OpenAICompatProxyTarget = 'local' | 'sandbox';
+
 export type OpenAICompatProxyStatus = {
   running: boolean;
   baseURL: string | null;
@@ -66,7 +68,9 @@ type ResponsesStreamContext = {
   hasAnyDelta: boolean;
 };
 
+const PROXY_BIND_HOST = '0.0.0.0';
 const LOCAL_HOST = '127.0.0.1';
+const SANDBOX_HOST = '10.0.2.2';
 const GEMINI_FALLBACK_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
 
 let proxyServer: http.Server | null = null;
@@ -2131,6 +2135,16 @@ async function handleRequest(
   const method = (req.method || 'GET').toUpperCase();
   const url = new URL(req.url || '/', `http://${LOCAL_HOST}`);
 
+  if (method === 'GET' && url.pathname === '/healthz') {
+    writeJSON(res, 200, {
+      ok: true,
+      running: Boolean(proxyServer),
+      hasUpstream: Boolean(upstreamConfig),
+      lastError: lastProxyError,
+    });
+    return;
+  }
+
   // Scheduled task creation API
   if (method === 'POST' && url.pathname === '/api/scheduled-tasks') {
     await handleCreateScheduledTask(req, res);
@@ -2366,7 +2380,7 @@ export async function startCoworkOpenAICompatProxy(): Promise<void> {
       reject(error);
     });
 
-    server.listen(0, LOCAL_HOST, () => {
+    server.listen(0, PROXY_BIND_HOST, () => {
       const addr = server.address();
       if (!addr || typeof addr === 'string') {
         reject(new Error('Failed to bind OpenAI compatibility proxy port'));
@@ -2410,11 +2424,12 @@ export function configureCoworkOpenAICompatProxy(config: OpenAICompatUpstreamCon
   lastProxyError = null;
 }
 
-export function getCoworkOpenAICompatProxyBaseURL(): string | null {
+export function getCoworkOpenAICompatProxyBaseURL(target: OpenAICompatProxyTarget = 'local'): string | null {
   if (!proxyServer || !proxyPort) {
     return null;
   }
-  return `http://${LOCAL_HOST}:${proxyPort}`;
+  const host = target === 'sandbox' ? SANDBOX_HOST : LOCAL_HOST;
+  return `http://${host}:${proxyPort}`;
 }
 
 /**
@@ -2423,7 +2438,7 @@ export function getCoworkOpenAICompatProxyBaseURL(): string | null {
  * this always returns the local proxy URL regardless of API format.
  */
 export function getInternalApiBaseURL(): string | null {
-  return getCoworkOpenAICompatProxyBaseURL();
+  return getCoworkOpenAICompatProxyBaseURL('local');
 }
 
 export function getCoworkOpenAICompatProxyStatus(): OpenAICompatProxyStatus {
