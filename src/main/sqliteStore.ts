@@ -14,19 +14,17 @@ type ChangePayload<T = unknown> = {
 
 const USER_MEMORIES_MIGRATION_KEY = 'userMemories.migration.v1.completed';
 
-// Pre-read the sql.js WASM binary from disk.
-// Using fs.readFileSync (which handles non-ASCII paths via Windows wide-char APIs)
-// and passing the buffer directly to initSqlJs bypasses Emscripten's file loading,
-// which can fail or hang when the install path contains Chinese characters on Windows.
-function loadWasmBinary(): ArrayBuffer {
-  const wasmPath = app.isPackaged
-    ? path.join(
-        process.resourcesPath,
-        'app.asar.unpacked/node_modules/sql.js/dist/sql-wasm.wasm'
-      )
-    : path.join(app.getAppPath(), 'node_modules/sql.js/dist/sql-wasm.wasm');
-  const buf = fs.readFileSync(wasmPath);
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+// Get the path to sql.js WASM file
+function getWasmPath(): string {
+  if (app.isPackaged) {
+    // In production, the wasm file is in the unpacked resources
+    return path.join(
+      process.resourcesPath,
+      'app.asar.unpacked/node_modules/sql.js/dist/sql-wasm.wasm'
+    );
+  }
+  // In development, use node_modules directly
+  return path.join(app.getAppPath(), 'node_modules/sql.js/dist/sql-wasm.wasm');
 }
 
 export class SqliteStore {
@@ -46,9 +44,9 @@ export class SqliteStore {
 
     // Initialize SQL.js with WASM file path (cached promise for reuse)
     if (!SqliteStore.sqlPromise) {
-      const wasmBinary = loadWasmBinary();
+      const wasmPath = getWasmPath();
       SqliteStore.sqlPromise = initSqlJs({
-        wasmBinary,
+        locateFile: () => wasmPath,
       });
     }
     const SQL = await SqliteStore.sqlPromise;
@@ -212,19 +210,80 @@ export class SqliteStore {
         ON scheduled_task_runs(task_id, started_at DESC);
     `);
 
-    // Create MCP servers table
+    // MetaBot multi-agent architecture tables
     this.db.run(`
-      CREATE TABLE IF NOT EXISTS mcp_servers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT NOT NULL DEFAULT '',
+      CREATE TABLE IF NOT EXISTS metabots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mvc_address TEXT UNIQUE NOT NULL,
+        btc_address TEXT UNIQUE NOT NULL,
+        doge_address TEXT UNIQUE NOT NULL,
+        public_key TEXT UNIQUE NOT NULL,
+        chat_public_key TEXT UNIQUE NOT NULL,
+        chat_public_key_pin_id TEXT UNIQUE NOT NULL,
+        name TEXT UNIQUE NOT NULL,
+        avatar TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
-        transport_type TEXT NOT NULL DEFAULT 'stdio',
-        config_json TEXT NOT NULL DEFAULT '{}',
+        metaid TEXT UNIQUE NOT NULL,
+        globalmetaid TEXT UNIQUE,
+        metabot_info_pinid TEXT UNIQUE NOT NULL,
+        metabot_type TEXT CHECK(metabot_type IN ('twin', 'worker')) NOT NULL,
+        created_by TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        goal TEXT,
+        background TEXT,
+        boss_id INTEGER,
+        llm_id TEXT,
+        tools TEXT DEFAULT '[]',
+        skills TEXT DEFAULT '[]',
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (boss_id) REFERENCES metabots(id)
       );
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_wallets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        metabot_id INTEGER NOT NULL UNIQUE,
+        mnemonic TEXT UNIQUE NOT NULL,
+        path TEXT NOT NULL DEFAULT "m/44'/10001'/0'/0/0",
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (metabot_id) REFERENCES metabots(id) ON DELETE RESTRICT
+      );
+    `);
+
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS prevent_metabot_wallets_update
+      BEFORE UPDATE ON metabot_wallets
+      BEGIN
+        SELECT RAISE(ABORT, 'Security Error: metabot_wallets table is append-only. Updates are strictly prohibited.');
+      END;
+    `);
+
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS prevent_metabot_wallets_delete
+      BEFORE DELETE ON metabot_wallets
+      BEGIN
+        SELECT RAISE(ABORT, 'Security Error: metabot_wallets table is append-only. Deletions are strictly prohibited.');
+      END;
+    `);
+
+    // Migration: metabots avatar & enabled (for existing DBs created before these columns)
+    try {
+      const metabotColsResult = this.db.exec("PRAGMA table_info(metabots);");
+      const metabotColumns = metabotColsResult[0]?.values.map((row) => row[1]) || [];
+      if (!metabotColumns.includes('avatar')) {
+        this.db.run('ALTER TABLE metabots ADD COLUMN avatar TEXT;');
+        this.save();
+      }
+      if (!metabotColumns.includes('enabled')) {
+        this.db.run('ALTER TABLE metabots ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;');
+        this.save();
+      }
+    } catch {
+      // Table might not exist yet
+    }
 
     // Migrations - safely add columns if they don't exist
     try {

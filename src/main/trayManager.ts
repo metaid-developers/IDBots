@@ -31,10 +31,10 @@ function getLabels(store: SqliteStore): { showWindow: string; newTask: string; s
     const config = store.get<{ language?: string }>('app_config');
     const lang = config?.language === 'en' ? 'en' : 'zh';
     return lang === 'en'
-      ? { showWindow: 'Open LobsterAI', newTask: 'New Task', settings: 'Settings', quit: 'Quit' }
-      : { showWindow: '打开 LobsterAI', newTask: '新建任务', settings: '设置', quit: '退出' };
+      ? { showWindow: 'Open IDBots', newTask: 'New Task', settings: 'Settings', quit: 'Quit' }
+      : { showWindow: '打开 IDBots', newTask: '新建任务', settings: '设置', quit: '退出' };
   } catch {
-    return { showWindow: '打开 LobsterAI', newTask: '新建任务', settings: '设置', quit: '退出' };
+    return { showWindow: '打开 IDBots', newTask: '新建任务', settings: '设置', quit: '退出' };
   }
 }
 

@@ -5,19 +5,18 @@ import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
-import { MagnifyingGlassIcon, PuzzlePieceIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, PuzzlePieceIcon, ClockIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from './icons/ComposeIcon';
-import ConnectorIcon from './icons/ConnectorIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp';
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'metabots';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
-  onShowMcp: () => void;
+  onShowMetabots: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -30,7 +29,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowSkills,
   onShowCowork,
   onShowScheduledTasks,
-  onShowMcp,
+  onShowMetabots,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -148,16 +147,16 @@ const Sidebar: React.FC<SidebarProps> = ({
             type="button"
             onClick={() => {
               setIsSearchOpen(false);
-              onShowMcp();
+              onShowMetabots();
             }}
             className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
-              activeView === 'mcp'
+              activeView === 'metabots'
                 ? 'dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
             }`}
           >
-            <ConnectorIcon className="h-4 w-4" />
-            {i18nService.t('mcpServers')}
+            <CpuChipIcon className="h-4 w-4" />
+            {i18nService.t('metabots')}
           </button>
         </div>
       </div>

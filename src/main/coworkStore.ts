@@ -14,10 +14,10 @@ import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
-  return path.join(os.homedir(), 'lobsterai', 'project');
+  return path.join(os.homedir(), 'idbots', 'project');
 };
 
-const TASK_WORKSPACE_CONTAINER_DIR = '.lobsterai-tasks';
+const TASK_WORKSPACE_CONTAINER_DIR = '.idbots-tasks';
 
 const normalizeRecentWorkspacePath = (cwd: string): string => {
   const resolved = path.resolve(cwd);

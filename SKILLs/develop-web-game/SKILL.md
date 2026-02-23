@@ -1,7 +1,6 @@
 ---
 name: "develop-web-game"
 description: "Use when Codex is building or iterating on a web game (HTML/JS) and needs a reliable development + testing loop: implement small changes, run a Playwright-based test script with short input bursts and intentional pauses, inspect screenshots/text, and review console errors with render_game_to_text."
-official: true
 ---
 
 
@@ -12,12 +11,12 @@ Build games in small steps and validate every change. Treat each iteration as: i
 ## Skill paths (set once)
 
 ```bash
-export SKILLS_ROOT="${LOBSTERAI_SKILLS_ROOT:-${SKILLS_ROOT:-$HOME/Library/Application Support/LobsterAI/SKILLs}}"
+export SKILLS_ROOT="${IDBOTS_SKILLS_ROOT:-${SKILLS_ROOT:-$HOME/Library/Application Support/IDBots/SKILLs}}"
 export WEB_GAME_CLIENT="$SKILLS_ROOT/develop-web-game/scripts/web_game_playwright_client.js"
 export WEB_GAME_ACTIONS="$SKILLS_ROOT/develop-web-game/references/action_payloads.json"
 ```
 
-Installed skills resolve from `$LOBSTERAI_SKILLS_ROOT` / `$SKILLS_ROOT` (production default: app `userData/SKILLs`, macOS usually `~/Library/Application Support/LobsterAI/SKILLs`).
+Installed skills resolve from `$IDBOTS_SKILLS_ROOT` / `$SKILLS_ROOT` (production default: app `userData/SKILLs`, macOS usually `~/Library/Application Support/IDBots/SKILLs`).
 
 ## Workflow
 

@@ -2,6 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ========== Theme tokens (CSS variables) ========== */
+/* Light mode: clean Web3 light theme */
+:root {
+  --bg-main: #F8FAFC;
+  --bg-sidebar: #F1F5F9;
+  --bg-panel: #FFFFFF;
+  --bg-hover: #F1F5F9;
+  --color-primary: #EAB308;
+  --color-accent: #06B6D4;
+  --text-primary: #0F172A;
+  --text-secondary: #64748B;
+  --border-color: #E2E8F0;
+}
+
+/* Dark mode: aligned with IDChat (dark navy, high contrast) */
+.dark {
+  --bg-main: #0B1120;
+  --bg-sidebar: #080C17;
+  --bg-panel: #1A2235;
+  --bg-hover: #1E293B;
+  --color-primary: #FACC15;
+  --color-accent: #22D3EE;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --border-color: #334155;
+}
+
 /* KaTeX styles */
 .katex-display {
   overflow-x: auto;
@@ -10,17 +37,9 @@
   margin: 1em 0;
 }
 
-.katex {
-  color: inherit;
-}
-
-.dark .katex {
-  color: #E4E5E9;
-}
-
 /* Improve code block styles */
 pre {
-  @apply dark:bg-claude-darkSurface bg-claude-surfaceHover;
+  background-color: var(--bg-panel);
   border-radius: 0.75rem !important;
   padding: 1em !important;
   margin: 1em 0 !important;
@@ -39,19 +58,20 @@ table {
 }
 
 th, td {
-  @apply dark:border-claude-darkBorder border-claude-border;
+  border-color: var(--border-color);
   padding: 0.5em;
 }
 
 th {
-  @apply dark:bg-claude-darkSurface/50 bg-claude-surfaceHover/50;
+  background-color: var(--bg-hover);
   font-weight: bold;
 }
 
 /* Style for blockquotes */
 blockquote {
-  @apply dark:border-claude-accent border-claude-accent dark:text-claude-darkTextSecondary text-claude-textSecondary;
   border-left-width: 3px;
+  border-left-color: var(--color-accent);
+  color: var(--text-secondary);
   padding-left: 1em;
   font-style: italic;
   margin: 1em 0;
@@ -66,40 +86,36 @@ blockquote {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.6;
   font-weight: 400;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Cold modern dark mode */
 .dark {
   color-scheme: dark;
-  color: #E4E5E9;
-  background-color: #0F1117;
+  color: var(--text-primary);
+  background-color: var(--bg-main);
 }
 
-/* Cold modern light mode */
 .light {
   color-scheme: light;
-  color: #1A1D23;
-  background-color: #F8F9FB;
+  color: var(--text-primary);
+  background-color: var(--bg-main);
 }
 
-/* Ensure all containers inherit theme */
 .dark #root,
 .dark .App,
 .dark main {
-  background-color: #0F1117;
-  color: #E4E5E9;
+  background-color: var(--bg-main);
+  color: var(--text-primary);
 }
 
 .light #root,
 .light .App,
 .light main {
-  background-color: #F8F9FB;
-  color: #1A1D23;
+  background-color: var(--bg-main);
+  color: var(--text-primary);
 }
 
 body {
@@ -122,23 +138,22 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply dark:bg-claude-darkBorder bg-claude-border;
+  background-color: var(--border-color);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply dark:bg-claude-darkTextSecondary bg-claude-textSecondary;
+  background-color: var(--text-secondary);
 }
 
-/* Style for select options to match theme */
 .dark option {
-  background-color: #1A1D27;
-  color: #E4E5E9;
+  background-color: var(--bg-panel);
+  color: var(--text-primary);
 }
 
 .light option {
-  background-color: #FFFFFF;
-  color: #1A1D23;
+  background-color: var(--bg-panel);
+  color: var(--text-primary);
 }
 
 /* Ensure select elements have proper styling in Firefox */
@@ -172,16 +187,36 @@ select::-ms-expand {
 
 /* Focus ring */
 .focus-ring {
-  @apply focus:outline-none focus:ring-2 focus:ring-claude-accent focus:ring-offset-2 dark:focus:ring-offset-claude-darkBg focus:ring-offset-claude-bg;
+  outline: none;
+}
+.focus-ring:focus {
+  box-shadow: 0 0 0 2px var(--bg-main), 0 0 0 4px var(--color-accent);
 }
 
-/* Button styles */
+/* Button styles (rounded-lg per SDD) */
 .btn-primary {
-  @apply bg-claude-accent hover:bg-claude-accentHover text-white font-medium py-2 px-4 rounded-lg transition-colors;
+  background-color: var(--color-primary);
+  color: #0F172A;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: filter 0.15s ease;
+}
+.btn-primary:hover {
+  filter: brightness(1.1);
 }
 
 .btn-secondary {
-  @apply dark:bg-claude-darkSurface bg-claude-surface dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border font-medium py-2 px-4 rounded-lg transition-colors;
+  background-color: var(--bg-panel);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: background-color 0.15s ease;
+}
+.btn-secondary:hover {
+  background-color: var(--bg-hover);
 }
 
 /* Sidebar width transition - instant toggle, no animation */
@@ -191,8 +226,7 @@ select::-ms-expand {
 
 /* Subtle separator line */
 .separator {
-  @apply dark:border-claude-darkBorderLight border-claude-borderLight;
-  border-top-width: 1px;
+  border-top: 1px solid var(--border-color);
 }
 
 /* Modal backdrop */
@@ -213,7 +247,8 @@ select::-ms-expand {
 
 /* Skeleton loading */
 .skeleton {
-  @apply dark:bg-claude-darkSurface bg-claude-surfaceHover rounded;
+  background-color: var(--bg-panel);
+  border-radius: 0.25rem;
   position: relative;
   overflow: hidden;
 }

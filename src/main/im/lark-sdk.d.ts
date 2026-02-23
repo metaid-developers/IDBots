@@ -32,7 +32,6 @@ declare module '@larksuiteoapi/node-sdk' {
     appSecret: string;
     domain?: symbol | string;
     loggerLevel?: LoggerLevel;
-    agent?: any;
   }
 
   export interface EventDispatcherOptions {

@@ -3,9 +3,9 @@
  * Intercepts console.* methods and writes to file + console simultaneously.
  *
  * Log file locations:
- *   macOS:   ~/Library/Logs/LobsterAI/main.log
- *   Windows: %USERPROFILE%\AppData\Roaming\LobsterAI\logs\main.log
- *   Linux:   ~/.config/LobsterAI/logs/main.log
+ *   macOS:   ~/Library/Logs/IDBots/main.log
+ *   Windows: %USERPROFILE%\AppData\Roaming\IDBots\logs\main.log
+ *   Linux:   ~/.config/IDBots/logs/main.log
  */
 
 import log from 'electron-log/main';
@@ -61,7 +61,7 @@ export function initLogger(): void {
 
   // Log startup marker
   log.info('='.repeat(60));
-  log.info(`LobsterAI started (${process.platform} ${process.arch})`);
+  log.info(`IDBots started (${process.platform} ${process.arch})`);
   log.info('='.repeat(60));
 }
 

@@ -24,7 +24,7 @@ export interface Schedule {
   expression?: string;
 }
 
-export type NotifyPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim';
+export type NotifyPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord';
 
 export interface ScheduledTask {
   id: string;

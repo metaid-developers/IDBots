@@ -7,7 +7,7 @@ REM  Usage: scripts\build-sandbox-image.bat [amd64|arm64|all]
 REM ============================================================
 
 set ROOT_DIR=%~dp0..
-set IMAGE_NAME=lobsterai-sandbox-image-builder
+set IMAGE_NAME=idbots-sandbox-image-builder
 set DOCKERFILE=%ROOT_DIR%\sandbox\image\Dockerfile
 set BUILD_CONTEXT=%ROOT_DIR%\sandbox\image
 set ARCHS=%~1

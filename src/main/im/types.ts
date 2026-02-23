@@ -35,8 +35,6 @@ export interface DingTalkInboundMessage {
     fileName?: string;
     recognition?: string;
     richText?: Array<{ text?: string }>;
-    duration?: string;
-    videoType?: string;
   };
   conversationType: '1' | '2'; // 1: DM, 2: Group
   conversationId: string;
@@ -80,10 +78,6 @@ export interface FeishuMessageContext {
   parentId?: string;
   content: string;
   contentType: string;
-  mediaKey?: string;
-  mediaType?: string;
-  mediaFileName?: string;
-  mediaDuration?: number;
 }
 
 // ==================== Telegram Types ====================
@@ -91,7 +85,6 @@ export interface FeishuMessageContext {
 export interface TelegramConfig {
   enabled: boolean;
   botToken: string;
-  allowedUserIds?: string[];
   debug?: boolean;
 }
 
@@ -122,55 +115,15 @@ export interface DiscordGatewayStatus {
   lastOutboundAt: number | null;
 }
 
-// ==================== NIM (NetEase IM) Types ====================
-
-export interface NimConfig {
-  enabled: boolean;
-  appKey: string;
-  account: string;
-  token: string;
-  accountWhitelist: string;
-  debug?: boolean;
-}
-
-export interface NimGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  botAccount: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
-// ==================== Xiaomifeng (小蜜蜂) Types ====================
-
-export interface XiaomifengConfig {
-  enabled: boolean;
-  clientId: string;    // 用于 NIM 登录的账号 (appKey)
-  secret: string;      // 用于 NIM 登录的 token (appSecret)
-  debug?: boolean;
-}
-
-export interface XiaomifengGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  botAccount: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
-  nim: NimConfig;
-  xiaomifeng: XiaomifengConfig;
   settings: IMSettings;
 }
 
@@ -184,16 +137,14 @@ export interface IMGatewayStatus {
   feishu: FeishuGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
-  nim: NimGatewayStatus;
-  xiaomifeng: XiaomifengGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
 
-export type IMMediaType = 'image' | 'video' | 'audio' | 'voice' | 'document' | 'sticker';
+export type TelegramMediaType = 'image' | 'video' | 'audio' | 'voice' | 'document' | 'sticker';
 
 export interface IMMediaAttachment {
-  type: IMMediaType;
+  type: TelegramMediaType;
   localPath: string;          // 下载后的本地路径
   mimeType: string;           // MIME 类型
   fileName?: string;          // 原始文件名
@@ -212,6 +163,7 @@ export interface IMMessage {
   content: string;
   chatType: 'direct' | 'group';
   timestamp: number;
+  // 媒体附件（Telegram 支持）
   attachments?: IMMediaAttachment[];
   mediaGroupId?: string;      // 媒体组 ID（用于合并多张图片）
 }
@@ -272,8 +224,7 @@ export type IMConnectivityCheckCode =
   | 'feishu_event_subscription_required'
   | 'discord_group_requires_mention'
   | 'telegram_privacy_mode_hint'
-  | 'dingtalk_bot_membership_hint'
-  | 'nim_p2p_only_hint';
+  | 'dingtalk_bot_membership_hint';
 
 export interface IMConnectivityCheck {
   code: IMConnectivityCheckCode;
@@ -317,29 +268,12 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
 export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
   enabled: false,
   botToken: '',
-  allowedUserIds: [],
   debug: true,
 };
 
 export const DEFAULT_DISCORD_CONFIG: DiscordConfig = {
   enabled: false,
   botToken: '',
-  debug: true,
-};
-
-export const DEFAULT_NIM_CONFIG: NimConfig = {
-  enabled: false,
-  appKey: '',
-  account: '',
-  token: '',
-  accountWhitelist: '',
-  debug: true,
-};
-
-export const DEFAULT_XIAOMIFENG_CONFIG: XiaomifengConfig = {
-  enabled: false,
-  clientId: '',
-  secret: '',
   debug: true,
 };
 
@@ -353,8 +287,6 @@ export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
-  nim: DEFAULT_NIM_CONFIG,
-  xiaomifeng: DEFAULT_XIAOMIFENG_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -394,31 +326,11 @@ export const DEFAULT_DISCORD_STATUS: DiscordGatewayStatus = {
   lastOutboundAt: null,
 };
 
-export const DEFAULT_NIM_STATUS: NimGatewayStatus = {
-  connected: false,
-  startedAt: null,
-  lastError: null,
-  botAccount: null,
-  lastInboundAt: null,
-  lastOutboundAt: null,
-};
-
-export const DEFAULT_XIAOMIFENG_STATUS: XiaomifengGatewayStatus = {
-  connected: false,
-  startedAt: null,
-  lastError: null,
-  botAccount: null,
-  lastInboundAt: null,
-  lastOutboundAt: null,
-};
-
 export const DEFAULT_IM_STATUS: IMGatewayStatus = {
   dingtalk: DEFAULT_DINGTALK_STATUS,
   feishu: DEFAULT_FEISHU_STATUS,
   telegram: DEFAULT_TELEGRAM_STATUS,
   discord: DEFAULT_DISCORD_STATUS,
-  nim: DEFAULT_NIM_STATUS,
-  xiaomifeng: DEFAULT_XIAOMIFENG_STATUS,
 };
 
 // ==================== DingTalk Media Types ====================

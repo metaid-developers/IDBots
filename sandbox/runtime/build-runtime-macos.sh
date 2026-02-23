@@ -42,7 +42,7 @@ if ! command -v dylibbundler >/dev/null 2>&1; then
   exit 1
 fi
 
-STAGING="$(mktemp -d "${TMPDIR:-/tmp}/lobsterai-runtime-${ARCH}.XXXXXX")"
+STAGING="$(mktemp -d "${TMPDIR:-/tmp}/idbots-runtime-${ARCH}.XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
 
 mkdir -p "$STAGING/bin" "$STAGING/lib" "$STAGING/share"

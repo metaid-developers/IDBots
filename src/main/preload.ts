@@ -3,7 +3,6 @@ import { contextBridge, ipcRenderer } from 'electron';
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
-  arch: process.arch,
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
@@ -25,13 +24,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('skills:changed', handler);
       return () => ipcRenderer.removeListener('skills:changed', handler);
     },
-  },
-  mcp: {
-    list: () => ipcRenderer.invoke('mcp:list'),
-    create: (data: any) => ipcRenderer.invoke('mcp:create', data),
-    update: (id: string, data: any) => ipcRenderer.invoke('mcp:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
-    setEnabled: (options: { id: string; enabled: boolean }) => ipcRenderer.invoke('mcp:setEnabled', options),
   },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
@@ -118,9 +110,9 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('get-recent-cwds', limit),
   cowork: {
     // Session management
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) =>
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
       ipcRenderer.invoke('cowork:session:start', options),
-    continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) =>
+    continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
       ipcRenderer.invoke('cowork:session:continue', options),
     stopSession: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:stop', sessionId),
@@ -226,8 +218,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('dialog:selectFile', options),
     saveInlineFile: (options: { dataBase64: string; fileName?: string; mimeType?: string; cwd?: string }) =>
       ipcRenderer.invoke('dialog:saveInlineFile', options),
-    readFileAsDataUrl: (filePath: string) =>
-      ipcRenderer.invoke('dialog:readFileAsDataUrl', filePath),
   },
   shell: {
     openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
@@ -242,20 +232,9 @@ contextBridge.exposeInMainWorld('electron', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
   },
-  appUpdate: {
-    download: (url: string) => ipcRenderer.invoke('appUpdate:download', url),
-    cancelDownload: () => ipcRenderer.invoke('appUpdate:cancelDownload'),
-    install: (filePath: string) => ipcRenderer.invoke('appUpdate:install', filePath),
-    onDownloadProgress: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data);
-      ipcRenderer.on('appUpdate:downloadProgress', handler);
-      return () => ipcRenderer.removeListener('appUpdate:downloadProgress', handler);
-    },
-  },
   log: {
     getPath: () => ipcRenderer.invoke('log:getPath'),
     openFolder: () => ipcRenderer.invoke('log:openFolder'),
-    exportZip: () => ipcRenderer.invoke('log:exportZip'),
   },
   im: {
     // Configuration
@@ -263,10 +242,10 @@ contextBridge.exposeInMainWorld('electron', {
     setConfig: (config: any) => ipcRenderer.invoke('im:config:set', config),
 
     // Gateway control
-    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng') => ipcRenderer.invoke('im:gateway:start', platform),
-    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng') => ipcRenderer.invoke('im:gateway:stop', platform),
+    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => ipcRenderer.invoke('im:gateway:start', platform),
+    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => ipcRenderer.invoke('im:gateway:stop', platform),
     testGateway: (
-      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng',
+      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord',
       configOverride?: any
     ) => ipcRenderer.invoke('im:gateway:test', platform, configOverride),
 
@@ -316,6 +295,34 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('scheduledTask:runUpdate', handler);
       return () => ipcRenderer.removeListener('scheduledTask:runUpdate', handler);
     },
+  },
+  metabot: {
+    list: () => ipcRenderer.invoke('metabot:list'),
+    get: (id: number) => ipcRenderer.invoke('metabot:get', id),
+    create: (input: {
+      name: string;
+      avatar?: string | null;
+      metabot_type: 'twin' | 'worker';
+      role: string;
+      soul: string;
+      goal?: string | null;
+      background?: string | null;
+      boss_id?: number | null;
+      llm_id?: string | null;
+    }) => ipcRenderer.invoke('metabot:create', input),
+    update: (id: number, input: {
+      name?: string;
+      avatar?: string | null;
+      enabled?: boolean;
+      metabot_type?: 'twin' | 'worker';
+      role?: string;
+      soul?: string;
+      goal?: string | null;
+      background?: string | null;
+      boss_id?: number | null;
+      llm_id?: string | null;
+    }) => ipcRenderer.invoke('metabot:update', id, input),
+    setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('metabot:setEnabled', id, enabled),
   },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),

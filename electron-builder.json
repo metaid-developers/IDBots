@@ -1,24 +1,16 @@
 {
-  "appId": "com.lobsterai.app",
-  "productName": "LobsterAI",
-  "executableName": "LobsterAI",
+  "appId": "ai.idbots.app",
+  "productName": "IDBots",
+  "executableName": "IDBots",
   "directories": {
     "output": "release"
   },
   "beforePack": "./scripts/electron-builder-hooks.cjs",
   "afterPack": "./scripts/electron-builder-hooks.cjs",
   "files": [
-    "sandbox/agent-runner/AGENT_SYSTEM_PROMPT.md",
-    {
-      "from": "dist",
-      "to": "dist",
-      "filter": ["**/*"]
-    },
-    {
-      "from": "dist-electron",
-      "to": "dist-electron",
-      "filter": ["**/*"]
-    }
+    "dist/**/*",
+    "dist-electron/**/*",
+    "sandbox/agent-runner/AGENT_SYSTEM_PROMPT.md"
   ],
   "extraResources": [
     {
@@ -27,14 +19,19 @@
       "filter": [
         "**/*",
         "!**/.env",
-        "!**/.env.*",
-        "!**/.venv",
-        "!**/.venv/**"
+        "!**/.env.*"
       ]
     },
     {
       "from": "resources/tray",
       "to": "tray",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "resources/mingit",
+      "to": "mingit",
       "filter": [
         "**/*"
       ]
@@ -52,9 +49,9 @@
     "entitlementsInherit": "build/entitlements.mac.plist",
     "extendInfo": {
       "CFBundleIconName": "icon",
-      "NSCalendarsUsageDescription": "LobsterAI 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。",
-      "NSRemindersUsageDescription": "LobsterAI 需要访问您的提醒事项来帮助您管理待办事项。",
-      "NSAppleEventsUsageDescription": "LobsterAI 需要使用 Apple Events 来控制 Calendar 应用执行自动化操作。"
+      "NSCalendarsUsageDescription": "IDBots 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。",
+      "NSRemindersUsageDescription": "IDBots 需要访问您的提醒事项来帮助您管理待办事项。",
+      "NSAppleEventsUsageDescription": "IDBots 需要使用 Apple Events 来控制 Calendar 应用执行自动化操作。"
     }
   },
   "dmg": {
@@ -65,36 +62,14 @@
     "target": [
       "nsis"
     ],
-    "icon": "build/icons/win/icon.ico",
-    "extraResources": [
-      {
-        "from": "resources/mingit",
-        "to": "mingit",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "resources/python-win",
-        "to": "python-win",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ]
+    "icon": "build/icons/win/icon.ico"
   },
   "linux": {
     "target": [
-      "AppImage",
-      "deb"
+      "AppImage"
     ],
     "icon": "build/icons/png",
-    "category": "Utility",
-    "desktop": {
-      "Name": "LobsterAI",
-      "Comment": "AI-assisted coding and productivity tool",
-      "Terminal": "false"
-    }
+    "category": "Utility"
   },
   "nsis": {
     "oneClick": false,
@@ -107,8 +82,7 @@
   "asarUnpack": [
     "node_modules/@anthropic-ai/claude-agent-sdk/**",
     "node_modules/@img/**",
-    "node_modules/sql.js/dist/**",
-    "node_modules/node-nim/**"
+    "node_modules/sql.js/dist/**"
   ],
   "asar": true
 }

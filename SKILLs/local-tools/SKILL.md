@@ -1,7 +1,6 @@
 ---
 name: local-tools
 description: Access local system resources including Calendar on macOS and Windows. Use this skill when you need to manage user's schedule directly on their device.
-official: true
 ---
 
 # Local Tools Skill
@@ -98,7 +97,7 @@ In all examples below, `<skill-dir>/scripts/calendar.sh` is a placeholder. Repla
 bash "<skill-dir>/scripts/calendar.sh" search --query "birthday"
 
 # If permission error returned, directly tell user:
-# "Calendar access permission is required. Please open System Settings > Privacy & Security > Calendar, and authorize Terminal or LobsterAI"
+# "Calendar access permission is required. Please open System Settings > Privacy & Security > Calendar, and authorize Terminal or IDBots"
 ```
 
 ### List Events
@@ -408,7 +407,7 @@ fi
 ```
 Error: Calendar access permission is required
 ```
-**Solution:** Open System Settings > Privacy & Security > Calendar, authorize Terminal or LobsterAI
+**Solution:** Open System Settings > Privacy & Security > Calendar, authorize Terminal or IDBots
 
 **Script Not Found:**
 ```

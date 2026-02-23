@@ -1,10 +1,10 @@
 # Web Search Skill
 
-Real-time web search capability for LobsterAI using Playwright-controlled browser automation.
+Real-time web search capability for IDBots using Playwright-controlled browser automation.
 
 ## Overview
 
-The Web Search Skill enables LobsterAI to perform live web searches using Google and Bing, with automatic fallback when one provider is unavailable. The skill uses Playwright to control a local Chrome browser instance, making all operations transparent and observable.
+The Web Search Skill enables IDBots to perform live web searches using Google and Bing, with automatic fallback when one provider is unavailable. The skill uses Playwright to control a local Chrome browser instance, making all operations transparent and observable.
 
 ## Features
 
@@ -316,7 +316,7 @@ MIT License - See LICENSE.txt
 
 ## Contributing
 
-This skill is part of the LobsterAI project. For issues or suggestions:
+This skill is part of the IDBots project. For issues or suggestions:
 
 1. Check existing issues
 2. Create detailed bug reports

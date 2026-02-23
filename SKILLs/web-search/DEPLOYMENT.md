@@ -49,7 +49,7 @@ export async function getEnhancedEnv(): Promise<Record<string, string | undefine
   // Inject SKILLs directory path for skill scripts
   const skillsRoot = getSkillsRoot();
   env.SKILLS_ROOT = skillsRoot;
-  env.LOBSTERAI_SKILLS_ROOT = skillsRoot; // Alternative name for clarity
+  env.IDBOTS_SKILLS_ROOT = skillsRoot; // Alternative name for clarity
 
   // ... rest of code ...
 }
@@ -77,7 +77,7 @@ bash "$SKILLS_ROOT/web-search/scripts/search.sh" "query" 10
    - All relative paths work correctly
 
 2. **Production Mode**:
-   - `SKILLS_ROOT` → `~/Library/Application Support/lobsterai/SKILLs` (macOS)
+   - `SKILLS_ROOT` → `~/Library/Application Support/idbots/SKILLs` (macOS)
    - Skills are copied to userData during first launch
    - Scripts execute from packaged location
 

@@ -18,25 +18,17 @@ import { APP_NAME } from './appConstants';
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
-import { McpStore } from './mcpStore';
 import { ScheduledTaskStore } from './scheduledTaskStore';
+import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
-import { downloadUpdate, installUpdate, cancelActiveDownload } from './libs/appUpdateInstaller';
 import { initLogger, getLogFilePath } from './logger';
-import { getCoworkLogPath } from './libs/coworkLogger';
-import { exportLogsZip } from './libs/logExport';
-import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
-import {
-  applySystemProxyEnv,
-  resolveSystemProxyUrl,
-  restoreOriginalProxyEnv,
-  setSystemProxyEnabled,
-} from './libs/systemProxy';
+import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
 
 // 设置应用程序名称
 app.name = APP_NAME;
 app.setName(APP_NAME);
 
+const LEGACY_APP_NAMES = ['OctoBot', 'octobot'];
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;
 const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 60;
@@ -94,24 +86,11 @@ const resolveInlineAttachmentDir = (cwd?: string): string => {
       return path.join(resolved, '.cowork-temp', 'attachments', 'manual');
     }
   }
-  return path.join(app.getPath('temp'), 'lobsterai', 'attachments');
+  return path.join(app.getPath('temp'), 'idbots', 'attachments');
 };
 
 const ensurePngFileName = (value: string): string => {
   return value.toLowerCase().endsWith('.png') ? value : `${value}.png`;
-};
-
-const ensureZipFileName = (value: string): string => {
-  return value.toLowerCase().endsWith('.zip') ? value : `${value}.zip`;
-};
-
-const padTwoDigits = (value: number): string => value.toString().padStart(2, '0');
-
-const buildLogExportFileName = (): string => {
-  const now = new Date();
-  const datePart = `${now.getFullYear()}${padTwoDigits(now.getMonth() + 1)}${padTwoDigits(now.getDate())}`;
-  const timePart = `${padTwoDigits(now.getHours())}${padTwoDigits(now.getMinutes())}${padTwoDigits(now.getSeconds())}`;
-  return `lobsterai-logs-${datePart}-${timePart}.zip`;
 };
 
 const truncateIpcString = (value: string, maxChars: number): string => {
@@ -170,29 +149,12 @@ const sanitizeCoworkMessageForIpc = (message: any): any => {
   if (!message || typeof message !== 'object') {
     return message;
   }
-
-  // Preserve imageAttachments in metadata as-is (base64 data can be very large
-  // and must not be truncated by the generic sanitizer).
-  let sanitizedMetadata: unknown;
-  if (message.metadata && typeof message.metadata === 'object') {
-    const { imageAttachments, ...rest } = message.metadata as Record<string, unknown>;
-    const sanitizedRest = sanitizeIpcPayload(rest) as Record<string, unknown> | undefined;
-    sanitizedMetadata = {
-      ...(sanitizedRest && typeof sanitizedRest === 'object' ? sanitizedRest : {}),
-      ...(Array.isArray(imageAttachments) && imageAttachments.length > 0
-        ? { imageAttachments }
-        : {}),
-    };
-  } else {
-    sanitizedMetadata = undefined;
-  }
-
   return {
     ...message,
     content: typeof message.content === 'string'
       ? truncateIpcString(message.content, IPC_MESSAGE_CONTENT_MAX_CHARS)
       : '',
-    metadata: sanitizedMetadata,
+    metadata: message.metadata ? sanitizeIpcPayload(message.metadata) : undefined,
   };
 };
 
@@ -283,6 +245,44 @@ const configureUserDataPath = (): void => {
   }
 };
 
+const migrateLegacyUserData = (): void => {
+  const appDataPath = app.getPath('appData');
+  const userDataPath = app.getPath('userData');
+  const legacyRoots = LEGACY_APP_NAMES
+    .map(name => path.join(appDataPath, name))
+    .filter(legacyPath => legacyPath !== userDataPath && fs.existsSync(legacyPath));
+
+  if (legacyRoots.length === 0) {
+    return;
+  }
+
+  if (!fs.existsSync(userDataPath)) {
+    fs.mkdirSync(userDataPath, { recursive: true });
+  }
+
+  for (const legacyRoot of legacyRoots) {
+    try {
+      const entries = fs.readdirSync(legacyRoot);
+      for (const entry of entries) {
+        const sourcePath = path.join(legacyRoot, entry);
+        const targetPath = path.join(userDataPath, entry);
+        if (fs.existsSync(targetPath)) {
+          continue;
+        }
+        fs.cpSync(sourcePath, targetPath, {
+          recursive: true,
+          dereference: true,
+          force: false,
+          errorOnExist: false,
+        });
+      }
+      console.log(`[Main] Migrated missing user data from legacy directory: ${legacyRoot}`);
+    } catch (error) {
+      console.warn(`[Main] Failed to migrate legacy user data from ${legacyRoot}:`, error);
+    }
+  }
+};
+
 configureUserDataPath();
 initLogger();
 
@@ -295,8 +295,8 @@ const enableVerboseLogging =
   process.env.ELECTRON_ENABLE_LOGGING === '1' ||
   process.env.ELECTRON_ENABLE_LOGGING === 'true';
 const disableGpu =
-  process.env.LOBSTERAI_DISABLE_GPU === '1' ||
-  process.env.LOBSTERAI_DISABLE_GPU === 'true' ||
+  process.env.IDBOTS_DISABLE_GPU === '1' ||
+  process.env.IDBOTS_DISABLE_GPU === 'true' ||
   process.env.ELECTRON_DISABLE_GPU === '1' ||
   process.env.ELECTRON_DISABLE_GPU === 'true';
 const reloadOnChildProcessGone =
@@ -496,17 +496,13 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled Rejection:', error);
 });
 
-process.on('exit', (code) => {
-  console.log(`[Main] Process exiting with code: ${code}`);
-});
-
 let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let coworkRunner: CoworkRunner | null = null;
 let skillManager: SkillManager | null = null;
-let mcpStore: McpStore | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let scheduledTaskStore: ScheduledTaskStore | null = null;
+let metabotStore: MetabotStore | null = null;
 let scheduler: Scheduler | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 
@@ -515,12 +511,7 @@ const initStore = async (): Promise<SqliteStore> => {
     if (!app.isReady()) {
       throw new Error('Store accessed before app is ready.');
     }
-    storeInitPromise = Promise.race([
-      SqliteStore.create(app.getPath('userData')),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Store initialization timed out after 15s')), 15_000)
-      ),
-    ]);
+    storeInitPromise = SqliteStore.create(app.getPath('userData'));
   }
   return storeInitPromise;
 };
@@ -548,38 +539,9 @@ const getCoworkRunner = () => {
   if (!coworkRunner) {
     coworkRunner = new CoworkRunner(getCoworkStore());
 
-    // Provide MCP server configuration to the runner
-    coworkRunner.setMcpServerProvider(() => {
-      return getMcpStore().getEnabledServers();
-    });
-
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
-      // Debug: log user messages with metadata to trace imageAttachments
-      if (message?.type === 'user') {
-        const meta = message.metadata;
-        console.log('[main] coworkRunner message event (user)', {
-          sessionId,
-          messageId: message.id,
-          hasMetadata: !!meta,
-          metadataKeys: meta ? Object.keys(meta) : [],
-          hasImageAttachments: !!(meta?.imageAttachments),
-          imageAttachmentsCount: Array.isArray(meta?.imageAttachments) ? meta.imageAttachments.length : 0,
-          imageAttachmentsBase64Lengths: Array.isArray(meta?.imageAttachments) ? meta.imageAttachments.map((a: any) => a?.base64Data?.length ?? 0) : [],
-        });
-      }
       const safeMessage = sanitizeCoworkMessageForIpc(message);
-      // Debug: check sanitized result
-      if (message?.type === 'user') {
-        const safeMeta = safeMessage?.metadata;
-        console.log('[main] sanitized user message', {
-          hasMetadata: !!safeMeta,
-          metadataKeys: safeMeta ? Object.keys(safeMeta) : [],
-          hasImageAttachments: !!(safeMeta?.imageAttachments),
-          imageAttachmentsCount: Array.isArray(safeMeta?.imageAttachments) ? safeMeta.imageAttachments.length : 0,
-          imageAttachmentsBase64Lengths: Array.isArray(safeMeta?.imageAttachments) ? safeMeta.imageAttachments.map((a: any) => a?.base64Data?.length ?? 0) : [],
-        });
-      }
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (!win.isDestroyed()) {
@@ -649,14 +611,6 @@ const getSkillManager = () => {
     skillManager = new SkillManager(getStore);
   }
   return skillManager;
-};
-
-const getMcpStore = () => {
-  if (!mcpStore) {
-    const sqliteStore = getStore();
-    mcpStore = new McpStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
-  }
-  return mcpStore;
 };
 
 const getIMGatewayManager = () => {
@@ -746,6 +700,14 @@ const getScheduledTaskStore = () => {
   return scheduledTaskStore;
 };
 
+const getMetabotStore = () => {
+  if (!metabotStore) {
+    const sqliteStore = getStore();
+    metabotStore = new MetabotStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  }
+  return metabotStore;
+};
+
 const getScheduler = () => {
   if (!scheduler) {
     scheduler = new Scheduler({
@@ -794,17 +756,8 @@ let isQuitting = false;
 const activeStreamControllers = new Map<string, AbortController>();
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
-type AppConfigSettings = {
-  theme?: string;
-  language?: string;
-  useSystemProxy?: boolean;
-};
 
-const getUseSystemProxyFromConfig = (config?: { useSystemProxy?: boolean }): boolean => {
-  return config?.useSystemProxy === true;
-};
-
-const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' => {
+const resolveThemeFromConfig = (config?: { theme?: string }): 'light' | 'dark' => {
   if (config?.theme === 'dark') {
     return 'dark';
   }
@@ -815,12 +768,12 @@ const resolveThemeFromConfig = (config?: AppConfigSettings): 'light' | 'dark' =>
 };
 
 const getInitialTheme = (): 'light' | 'dark' => {
-  const config = getStore().get<AppConfigSettings>('app_config');
+  const config = getStore().get('app_config') as { theme?: string } | undefined;
   return resolveThemeFromConfig(config);
 };
 
 const getTitleBarOverlayOptions = () => {
-  const config = getStore().get<AppConfigSettings>('app_config');
+  const config = getStore().get('app_config') as { theme?: string } | undefined;
   const theme = resolveThemeFromConfig(config);
   return {
     color: TITLEBAR_COLORS[theme].color,
@@ -835,34 +788,9 @@ const updateTitleBarOverlay = () => {
     mainWindow.setTitleBarOverlay(getTitleBarOverlayOptions());
   }
   // Also update the window background color to match the theme
-  const config = getStore().get<AppConfigSettings>('app_config');
+  const config = getStore().get('app_config') as { theme?: string } | undefined;
   const theme = resolveThemeFromConfig(config);
   mainWindow.setBackgroundColor(theme === 'dark' ? '#0F1117' : '#F8F9FB');
-};
-
-const applyProxyPreference = async (useSystemProxy: boolean): Promise<void> => {
-  try {
-    await session.defaultSession.setProxy({ mode: useSystemProxy ? 'system' : 'direct' });
-  } catch (error) {
-    console.error('[Main] Failed to apply session proxy mode:', error);
-  }
-
-  setSystemProxyEnabled(useSystemProxy);
-
-  if (!useSystemProxy) {
-    restoreOriginalProxyEnv();
-    console.log('[Main] System proxy disabled (direct mode).');
-    return;
-  }
-
-  const proxyUrl = await resolveSystemProxyUrl('https://openrouter.ai');
-  applySystemProxyEnv(proxyUrl);
-
-  if (proxyUrl) {
-    console.log('[Main] System proxy enabled for process env:', proxyUrl);
-  } else {
-    console.warn('[Main] System proxy mode enabled, but no proxy endpoint was resolved (DIRECT).');
-  }
 };
 
 const emitWindowState = () => {
@@ -964,55 +892,9 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('log:exportZip', async (event) => {
-    try {
-      const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-      const saveOptions = {
-        title: 'Export Logs',
-        defaultPath: path.join(app.getPath('downloads'), buildLogExportFileName()),
-        filters: [{ name: 'Zip Archive', extensions: ['zip'] }],
-      };
-
-      const saveResult = ownerWindow
-        ? await dialog.showSaveDialog(ownerWindow, saveOptions)
-        : await dialog.showSaveDialog(saveOptions);
-
-      if (saveResult.canceled || !saveResult.filePath) {
-        return { success: true, canceled: true };
-      }
-
-      const outputPath = ensureZipFileName(saveResult.filePath);
-      const archiveResult = await exportLogsZip({
-        outputPath,
-        entries: [
-          { archiveName: 'main.log', filePath: getLogFilePath() },
-          { archiveName: 'cowork.log', filePath: getCoworkLogPath() },
-        ],
-      });
-
-      return {
-        success: true,
-        canceled: false,
-        path: outputPath,
-        missingEntries: archiveResult.missingEntries,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to export logs',
-      };
-    }
-  });
-
   // Auto-launch IPC handlers
-  // Use SQLite store as the source of truth for UI state, because
-  // app.getLoginItemSettings() returns unreliable values on macOS and
-  // requires matching args on Windows.
   ipcMain.handle('app:getAutoLaunch', () => {
-    const stored = getStore().get<boolean>('auto_launch_enabled');
-    // Fall back to OS API if SQLite has no record yet (e.g. upgraded from older version)
-    const enabled = stored ?? getAutoLaunchEnabled();
-    return { enabled };
+    return { enabled: getAutoLaunchEnabled() };
   });
 
   ipcMain.handle('app:setAutoLaunch', (_event, enabled: unknown) => {
@@ -1021,7 +903,6 @@ if (!gotTheLock) {
     }
     try {
       setAutoLaunchEnabled(enabled);
-      getStore().set('auto_launch_enabled', enabled);
       return { success: true };
     } catch (error) {
       return {
@@ -1125,74 +1006,6 @@ if (!gotTheLock) {
     return getSkillManager().testEmailConnectivity(skillId, config);
   });
 
-  // MCP Server IPC handlers
-  ipcMain.handle('mcp:list', () => {
-    try {
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to list MCP servers' };
-    }
-  });
-
-  ipcMain.handle('mcp:create', (_event, data: {
-    name: string;
-    description: string;
-    transportType: string;
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
-    url?: string;
-    headers?: Record<string, string>;
-  }) => {
-    try {
-      getMcpStore().createServer(data as any);
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to create MCP server' };
-    }
-  });
-
-  ipcMain.handle('mcp:update', (_event, id: string, data: {
-    name?: string;
-    description?: string;
-    transportType?: string;
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
-    url?: string;
-    headers?: Record<string, string>;
-  }) => {
-    try {
-      getMcpStore().updateServer(id, data as any);
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to update MCP server' };
-    }
-  });
-
-  ipcMain.handle('mcp:delete', (_event, id: string) => {
-    try {
-      getMcpStore().deleteServer(id);
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete MCP server' };
-    }
-  });
-
-  ipcMain.handle('mcp:setEnabled', (_event, options: { id: string; enabled: boolean }) => {
-    try {
-      getMcpStore().setEnabled(options.id, options.enabled);
-      const servers = getMcpStore().listServers();
-      return { success: true, servers };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to update MCP server' };
-    }
-  });
-
   // Cowork IPC handlers
   ipcMain.handle('cowork:session:start', async (_event, options: {
     prompt: string;
@@ -1200,7 +1013,6 @@ if (!gotTheLock) {
     systemPrompt?: string;
     title?: string;
     activeSkillIds?: string[];
-    imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
   }) => {
     try {
       const coworkStoreInstance = getCoworkStore();
@@ -1232,19 +1044,10 @@ if (!gotTheLock) {
       // Update session status to 'running' before starting async task
       // This ensures the frontend receives the correct status immediately
       coworkStoreInstance.updateSession(session.id, { status: 'running' });
-
-      // Build metadata, include imageAttachments if present
-      const messageMetadata: Record<string, unknown> = {};
-      if (options.activeSkillIds?.length) {
-        messageMetadata.skillIds = options.activeSkillIds;
-      }
-      if (options.imageAttachments?.length) {
-        messageMetadata.imageAttachments = options.imageAttachments;
-      }
       coworkStoreInstance.addMessage(session.id, {
         type: 'user',
         content: options.prompt,
-        metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
+        metadata: options.activeSkillIds?.length ? { skillIds: options.activeSkillIds } : undefined,
       });
 
       // Start the session asynchronously (skip initial user message since we already added it)
@@ -1253,7 +1056,6 @@ if (!gotTheLock) {
         skillIds: options.activeSkillIds,
         workspaceRoot: selectedWorkspaceRoot,
         confirmationMode: 'modal',
-        imageAttachments: options.imageAttachments,
       }).catch(error => {
         console.error('Cowork session error:', error);
       });
@@ -1276,21 +1078,10 @@ if (!gotTheLock) {
     prompt: string;
     systemPrompt?: string;
     activeSkillIds?: string[];
-    imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
   }) => {
     try {
-      console.log('[main] cowork:session:continue handler', {
-        sessionId: options.sessionId,
-        hasImageAttachments: !!options.imageAttachments,
-        imageAttachmentsCount: options.imageAttachments?.length ?? 0,
-        imageAttachmentsNames: options.imageAttachments?.map(a => a.name),
-      });
       const runner = getCoworkRunner();
-      runner.continueSession(options.sessionId, options.prompt, {
-        systemPrompt: options.systemPrompt,
-        skillIds: options.activeSkillIds,
-        imageAttachments: options.imageAttachments,
-      }).catch(error => {
+      runner.continueSession(options.sessionId, options.prompt, { systemPrompt: options.systemPrompt, skillIds: options.activeSkillIds }).catch(error => {
         console.error('Cowork continue error:', error);
       });
 
@@ -1784,6 +1575,98 @@ if (!gotTheLock) {
     }
   });
 
+  // ==================== MetaBot IPC Handlers ====================
+
+  ipcMain.handle('metabot:list', async () => {
+    try {
+      const list = getMetabotStore().listMetabots();
+      return { success: true, list };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list metabots' };
+    }
+  });
+
+  ipcMain.handle('metabot:get', async (_event, id: number) => {
+    try {
+      const metabot = getMetabotStore().getMetabotById(id);
+      return { success: true, metabot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get metabot' };
+    }
+  });
+
+  ipcMain.handle('metabot:create', async (_event, input: {
+    name: string;
+    avatar?: string | null;
+    metabot_type: 'twin' | 'worker';
+    role: string;
+    soul: string;
+    goal?: string | null;
+    background?: string | null;
+    boss_id?: number | null;
+    llm_id?: string | null;
+  }) => {
+    try {
+      const walletResult = await mockCreateWalletAndFund();
+      const pushResult = await mockPushConfigToChain();
+      if (!pushResult.success) {
+        return { success: false, error: 'Mock push config to chain failed' };
+      }
+      const store = getMetabotStore();
+      const metabot = store.createMetabot({
+        ...walletResult,
+        name: input.name,
+        avatar: input.avatar ?? null,
+        enabled: true,
+        metabot_type: input.metabot_type,
+        created_by: 'system',
+        role: input.role,
+        soul: input.soul,
+        goal: input.goal ?? null,
+        background: input.background ?? null,
+        boss_id: input.boss_id ?? null,
+        llm_id: input.llm_id ?? null,
+        tools: [],
+        skills: [],
+      });
+      return { success: true, metabot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to create metabot' };
+    }
+  });
+
+  ipcMain.handle('metabot:update', async (_event, id: number, input: {
+    name?: string;
+    avatar?: string | null;
+    enabled?: boolean;
+    metabot_type?: 'twin' | 'worker';
+    role?: string;
+    soul?: string;
+    goal?: string | null;
+    background?: string | null;
+    boss_id?: number | null;
+    llm_id?: string | null;
+  }) => {
+    try {
+      await mockUpdateConfigOnChain();
+      const store = getMetabotStore();
+      const metabot = store.updateMetabot(id, input);
+      return { success: true, metabot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update metabot' };
+    }
+  });
+
+  ipcMain.handle('metabot:setEnabled', async (_event, id: number, enabled: boolean) => {
+    try {
+      const store = getMetabotStore();
+      const metabot = store.updateMetabot(id, { enabled });
+      return { success: true, metabot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to set metabot enabled' };
+    }
+  });
+
   // ==================== Permissions IPC Handlers ====================
 
   ipcMain.handle('permissions:checkCalendar', async () => {
@@ -1943,30 +1826,22 @@ if (!gotTheLock) {
   });
 
   // Dialog handlers
-  ipcMain.handle('dialog:selectDirectory', async (event) => {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-    const dialogOptions = {
-      properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[],
-    };
-    const result = ownerWindow
-      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions);
+  ipcMain.handle('dialog:selectDirectory', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory'],
+    });
     if (result.canceled || result.filePaths.length === 0) {
       return { success: true, path: null };
     }
     return { success: true, path: result.filePaths[0] };
   });
 
-  ipcMain.handle('dialog:selectFile', async (event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-    const dialogOptions = {
-      properties: ['openFile'] as ('openFile')[],
+  ipcMain.handle('dialog:selectFile', async (_event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
       title: options?.title,
       filters: options?.filters,
-    };
-    const result = ownerWindow
-      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions);
+    });
     if (result.canceled || result.filePaths.length === 0) {
       return { success: true, path: null };
     }
@@ -2019,49 +1894,6 @@ if (!gotTheLock) {
     }
   );
 
-  // Read a local file as a data URL (data:<mime>;base64,...)
-  const MAX_READ_AS_DATA_URL_BYTES = 20 * 1024 * 1024;
-  const MIME_BY_EXT: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-    '.svg': 'image/svg+xml',
-  };
-  ipcMain.handle(
-    'dialog:readFileAsDataUrl',
-    async (_event, filePath?: string): Promise<{ success: boolean; dataUrl?: string; error?: string }> => {
-      try {
-        if (typeof filePath !== 'string' || !filePath.trim()) {
-          return { success: false, error: 'Missing file path' };
-        }
-        const resolvedPath = path.resolve(filePath.trim());
-        const stat = await fs.promises.stat(resolvedPath);
-        if (!stat.isFile()) {
-          return { success: false, error: 'Not a file' };
-        }
-        if (stat.size > MAX_READ_AS_DATA_URL_BYTES) {
-          return {
-            success: false,
-            error: `File too large (max ${Math.floor(MAX_READ_AS_DATA_URL_BYTES / (1024 * 1024))}MB)`,
-          };
-        }
-        const buffer = await fs.promises.readFile(resolvedPath);
-        const ext = path.extname(resolvedPath).toLowerCase();
-        const mimeType = MIME_BY_EXT[ext] || 'application/octet-stream';
-        const base64 = buffer.toString('base64');
-        return { success: true, dataUrl: `data:${mimeType};base64,${base64}` };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to read file',
-        };
-      }
-    }
-  );
-
   // Shell handlers - 打开文件/文件夹
   ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
     try {
@@ -2093,34 +1925,6 @@ if (!gotTheLock) {
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  });
-
-  // App update download & install
-  ipcMain.handle('appUpdate:download', async (event, url: string) => {
-    try {
-      const filePath = await downloadUpdate(url, (progress) => {
-        if (!event.sender.isDestroyed()) {
-          event.sender.send('appUpdate:downloadProgress', progress);
-        }
-      });
-      return { success: true, filePath };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Download failed' };
-    }
-  });
-
-  ipcMain.handle('appUpdate:cancelDownload', async () => {
-    const cancelled = cancelActiveDownload();
-    return { success: cancelled };
-  });
-
-  ipcMain.handle('appUpdate:install', async (_event, filePath: string) => {
-    try {
-      await installUpdate(filePath);
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Installation failed' };
     }
   });
 
@@ -2372,6 +2176,12 @@ if (!gotTheLock) {
       emitWindowState();
     });
 
+    // [关键代码] 显式告诉 Electron 使用系统的代理配置
+    // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
+    mainWindow.webContents.session.setProxy({ mode: 'system' }).then(() => {
+      console.log('已设置为跟随系统代理');
+    });
+
     // 处理窗口关闭
     mainWindow.on('close', (e) => {
       // In development, close should actually quit so `npm run electron:dev`
@@ -2538,77 +2348,41 @@ if (!gotTheLock) {
 
   // 初始化应用
   const initApp = async () => {
-    console.log('[Main] initApp: waiting for app.whenReady()');
     await app.whenReady();
-    console.log('[Main] initApp: app is ready');
+
+    migrateLegacyUserData();
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users
 
     // Ensure default working directory exists
-    const defaultProjectDir = path.join(os.homedir(), 'lobsterai', 'project');
+    const defaultProjectDir = path.join(os.homedir(), 'idbots', 'project');
     if (!fs.existsSync(defaultProjectDir)) {
       fs.mkdirSync(defaultProjectDir, { recursive: true });
       console.log('Created default project directory:', defaultProjectDir);
     }
-    console.log('[Main] initApp: default project dir ensured');
 
-    console.log('[Main] initApp: starting initStore()');
     store = await initStore();
-    console.log('[Main] initApp: store initialized');
-
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
     const resetCount = getCoworkStore().resetRunningSessions();
-    console.log('[Main] initApp: resetRunningSessions done, count:', resetCount);
     if (resetCount > 0) {
       console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
     }
     // Inject store getter into claudeSettings
     setStoreGetter(() => store);
-    console.log('[Main] initApp: setStoreGetter done');
     const manager = getSkillManager();
-    console.log('[Main] initApp: getSkillManager done');
+    manager.syncBundledSkillsToUserData();
+    manager.startWatching();
 
-    // Non-critical: sync bundled skills to user data.
-    // Wrapped in try-catch so a failure here does not block window creation.
-    try {
-      manager.syncBundledSkillsToUserData();
-      console.log('[Main] initApp: syncBundledSkillsToUserData done');
-    } catch (error) {
-      console.error('[Main] initApp: syncBundledSkillsToUserData failed:', error);
-    }
+    // Start skill services
+    const skillServices = getSkillServiceManager();
+    await skillServices.startAll();
 
-    try {
-      const runtimeResult = await ensurePythonRuntimeReady();
-      if (!runtimeResult.success) {
-        console.error('[Main] initApp: ensurePythonRuntimeReady failed:', runtimeResult.error);
-      } else {
-        console.log('[Main] initApp: ensurePythonRuntimeReady done');
-      }
-    } catch (error) {
-      console.error('[Main] initApp: ensurePythonRuntimeReady threw:', error);
-    }
-
-    try {
-      manager.startWatching();
-      console.log('[Main] initApp: startWatching done');
-    } catch (error) {
-      console.error('[Main] initApp: startWatching failed:', error);
-    }
-
-    // Start skill services (non-critical)
-    try {
-      const skillServices = getSkillServiceManager();
-      console.log('[Main] initApp: getSkillServiceManager done');
-      await skillServices.startAll();
-      console.log('[Main] initApp: skill services started');
-    } catch (error) {
-      console.error('[Main] initApp: skill services failed:', error);
-    }
-
-    const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
+    // [关键代码] 显式告诉 Electron 使用系统的代理配置
+    // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
+    await session.defaultSession.setProxy({ mode: 'system' });
+    console.log('已设置为跟随系统代理');
 
     await startCoworkOpenAICompatProxy().catch((error) => {
       console.error('Failed to start OpenAI compatibility proxy:', error);
@@ -2621,9 +2395,7 @@ if (!gotTheLock) {
     setContentSecurityPolicy();
 
     // 创建窗口
-    console.log('[Main] initApp: creating window');
     createWindow();
-    console.log('[Main] initApp: window created');
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager().startAllEnabled().catch((error) => {
@@ -2633,29 +2405,18 @@ if (!gotTheLock) {
     // 首次启动时默认开启开机自启动（先写标记再设置，避免崩溃后重复设置）
     if (!getStore().get('auto_launch_initialized')) {
       getStore().set('auto_launch_initialized', true);
-      getStore().set('auto_launch_enabled', true);
       setAutoLaunchEnabled(true);
     }
 
-    let lastLanguage = getStore().get<AppConfigSettings>('app_config')?.language;
-    let lastUseSystemProxy = getUseSystemProxyFromConfig(getStore().get<AppConfigSettings>('app_config'));
-    getStore().onDidChange<AppConfigSettings>('app_config', (newConfig, oldConfig) => {
+    let lastLanguage = getStore().get<{ language?: string }>('app_config')?.language;
+    getStore().onDidChange('app_config', () => {
       updateTitleBarOverlay();
       // 仅在语言变更时刷新托盘菜单文本
-      const currentLanguage = newConfig?.language;
+      const currentLanguage = getStore().get<{ language?: string }>('app_config')?.language;
       if (currentLanguage !== lastLanguage) {
         lastLanguage = currentLanguage;
         updateTrayMenu(() => mainWindow, getStore());
       }
-
-      const previousUseSystemProxy = oldConfig
-        ? getUseSystemProxyFromConfig(oldConfig)
-        : lastUseSystemProxy;
-      const currentUseSystemProxy = getUseSystemProxyFromConfig(newConfig);
-      if (currentUseSystemProxy !== previousUseSystemProxy) {
-        void applyProxyPreference(currentUseSystemProxy);
-      }
-      lastUseSystemProxy = currentUseSystemProxy;
     });
 
     // 在 macOS 上，当点击 dock 图标时显示已有窗口或重新创建

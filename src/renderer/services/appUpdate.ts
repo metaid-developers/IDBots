@@ -1,51 +1,20 @@
-const UPDATE_CHECK_URL = import.meta.env.DEV
-  ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update'
-  : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update';
-const FALLBACK_DOWNLOAD_URL = import.meta.env.DEV
-  ? 'https://lobsterai.inner.youdao.com/#/download-list'
-  : 'https://lobsterai.youdao.com/#/download-list';
+const UPDATE_CHECK_URL = 'https://idbots.ai/api/update/check';
+const FALLBACK_DOWNLOAD_URL = 'https://idbots.ai';
 
 export const UPDATE_POLL_INTERVAL_MS = 12 * 60 * 60 * 1000;
-
-type ChangeLogLang = {
-  title?: string;
-  content?: string[];
-};
-
-type PlatformDownload = {
-  url?: string;
-};
 
 type UpdateApiResponse = {
   code?: number;
   data?: {
     value?: {
       version?: string;
-      date?: string;
-      changeLog?: {
-        ch?: ChangeLogLang;
-        en?: ChangeLogLang;
-      };
-      macIntel?: PlatformDownload;
-      macArm?: PlatformDownload;
-      windowsX64?: PlatformDownload;
+      url?: string;
     };
   };
 };
 
-export type ChangeLogEntry = { title: string; content: string[] };
-
-export interface AppUpdateDownloadProgress {
-  received: number;
-  total: number | undefined;
-  percent: number | undefined;
-  speed: number | undefined;
-}
-
 export interface AppUpdateInfo {
   latestVersion: string;
-  date: string;
-  changeLog: { zh: ChangeLogEntry; en: ChangeLogEntry };
   url: string;
 }
 
@@ -77,23 +46,6 @@ const isNewerVersion = (latestVersion: string, currentVersion: string): boolean 
   compareVersions(latestVersion, currentVersion) > 0
 );
 
-type UpdateValue = NonNullable<NonNullable<UpdateApiResponse['data']>['value']>;
-
-const getPlatformDownloadUrl = (value: UpdateValue | undefined): string => {
-  const { platform, arch } = window.electron;
-
-  if (platform === 'darwin') {
-    const download = arch === 'arm64' ? value?.macArm : value?.macIntel;
-    return download?.url?.trim() || FALLBACK_DOWNLOAD_URL;
-  }
-
-  if (platform === 'win32') {
-    return value?.windowsX64?.url?.trim() || FALLBACK_DOWNLOAD_URL;
-  }
-
-  return FALLBACK_DOWNLOAD_URL;
-};
-
 export const checkForAppUpdate = async (currentVersion: string): Promise<AppUpdateInfo | null> => {
   const response = await window.electron.api.fetch({
     url: UPDATE_CHECK_URL,
@@ -112,24 +64,14 @@ export const checkForAppUpdate = async (currentVersion: string): Promise<AppUpda
     return null;
   }
 
-  const value = payload.data?.value;
-  const latestVersion = value?.version?.trim();
+  const latestVersion = payload.data?.value?.version?.trim();
   if (!latestVersion || !isNewerVersion(latestVersion, currentVersion)) {
     return null;
   }
 
-  const toEntry = (log?: ChangeLogLang): ChangeLogEntry => ({
-    title: typeof log?.title === 'string' ? log.title : '',
-    content: Array.isArray(log?.content) ? log.content : [],
-  });
-
+  const url = payload.data?.value?.url?.trim() || FALLBACK_DOWNLOAD_URL;
   return {
     latestVersion,
-    date: value?.date?.trim() || '',
-    changeLog: {
-      zh: toEntry(value?.changeLog?.ch),
-      en: toEntry(value?.changeLog?.en),
-    },
-    url: getPlatformDownloadUrl(value),
+    url,
   };
 };

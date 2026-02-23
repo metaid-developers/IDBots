@@ -1,20 +1,27 @@
-build/*
-!build/entitlements.mac.plist
-!build/icons/
-!build/icons/**
+build/
 release/
-node_modules
-dist
-dist-electron
+node_modules/
+dist/
+dist-electron/
 .DS_Store
-.env 
+.env
+.env.local
 .claude/
+
+# Internal / tooling (do not publish)
+Dev-docs/
+AGENTS.md
+CLAUDE.md
+
+# Local DB (never commit)
+*.sqlite
+*.sqlite3
+*.sqlite-journal
 __pycache__/
 .codebuddy/
 sandbox/image/out/
 sandbox/image/publish/
 sandbox/image/.work/
-.work/
 sandbox/runtime/out/
 sandbox/runtime-darwin-*/
 
@@ -22,14 +29,11 @@ sandbox/runtime-darwin-*/
 resources/mingit/
 resources/MinGit-*.zip
 resources/PortableGit-*.7z.exe
-resources/python-win/
-resources/python-*.zip
 
 # SKILLs runtime files
 SKILLs/**/.connection
 SKILLs/**/.server.log
 SKILLs/**/.server.pid
-SKILLs/**/.venv/
 
 package-lock.json
 

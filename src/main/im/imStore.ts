@@ -10,8 +10,6 @@ import {
   FeishuConfig,
   TelegramConfig,
   DiscordConfig,
-  NimConfig,
-  XiaomifengConfig,
   IMSettings,
   IMPlatform,
   IMSessionMapping,
@@ -19,8 +17,6 @@ import {
   DEFAULT_FEISHU_CONFIG,
   DEFAULT_TELEGRAM_CONFIG,
   DEFAULT_DISCORD_CONFIG,
-  DEFAULT_NIM_CONFIG,
-  DEFAULT_XIAOMIFENG_CONFIG,
   DEFAULT_IM_SETTINGS,
 } from './types';
 
@@ -63,7 +59,7 @@ export class IMStore {
    * Migrate existing IM configs to ensure stable defaults.
    */
   private migrateDefaults(): void {
-    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord', 'nim', 'xiaomifeng'] as const;
+    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord'] as const;
     let changed = false;
 
     for (const platform of platforms) {
@@ -98,25 +94,6 @@ export class IMStore {
           this.db.run(
             'UPDATE im_config SET value = ?, updated_at = ? WHERE key = ?',
             [JSON.stringify(settings), now, 'settings']
-          );
-          changed = true;
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
-    // Migrate feishu renderMode from 'text' to 'card' (previous renderer default was incorrect)
-    const feishuResult = this.db.exec('SELECT value FROM im_config WHERE key = ?', ['feishu']);
-    if (feishuResult[0]?.values[0]) {
-      try {
-        const feishuConfig = JSON.parse(feishuResult[0].values[0][0] as string) as Partial<FeishuConfig>;
-        if (feishuConfig.renderMode === 'text') {
-          feishuConfig.renderMode = 'card';
-          const now = Date.now();
-          this.db.run(
-            'UPDATE im_config SET value = ?, updated_at = ? WHERE key = ?',
-            [JSON.stringify(feishuConfig), now, 'feishu']
           );
           changed = true;
         }
@@ -163,8 +140,6 @@ export class IMStore {
     const feishu = this.getConfigValue<FeishuConfig>('feishu') ?? DEFAULT_FEISHU_CONFIG;
     const telegram = this.getConfigValue<TelegramConfig>('telegram') ?? DEFAULT_TELEGRAM_CONFIG;
     const discord = this.getConfigValue<DiscordConfig>('discord') ?? DEFAULT_DISCORD_CONFIG;
-    const nim = this.getConfigValue<NimConfig>('nim') ?? DEFAULT_NIM_CONFIG;
-    const xiaomifeng = this.getConfigValue<XiaomifengConfig>('xiaomifeng') ?? DEFAULT_XIAOMIFENG_CONFIG;
     const settings = this.getConfigValue<IMSettings>('settings') ?? DEFAULT_IM_SETTINGS;
 
     // Resolve enabled field: default to false for safety
@@ -183,8 +158,6 @@ export class IMStore {
       feishu: resolveEnabled(feishu, DEFAULT_FEISHU_CONFIG),
       telegram: resolveEnabled(telegram, DEFAULT_TELEGRAM_CONFIG),
       discord: resolveEnabled(discord, DEFAULT_DISCORD_CONFIG),
-      nim: resolveEnabled(nim, DEFAULT_NIM_CONFIG),
-      xiaomifeng: resolveEnabled(xiaomifeng, DEFAULT_XIAOMIFENG_CONFIG),
       settings: { ...DEFAULT_IM_SETTINGS, ...settings },
     };
   }
@@ -201,12 +174,6 @@ export class IMStore {
     }
     if (config.discord) {
       this.setDiscordConfig(config.discord);
-    }
-    if (config.nim) {
-      this.setNimConfig(config.nim);
-    }
-    if (config.xiaomifeng) {
-      this.setXiaomifengConfig(config.xiaomifeng);
     }
     if (config.settings) {
       this.setIMSettings(config.settings);
@@ -261,30 +228,6 @@ export class IMStore {
     this.setConfigValue('discord', { ...current, ...config });
   }
 
-  // ==================== NIM Config ====================
-
-  getNimConfig(): NimConfig {
-    const stored = this.getConfigValue<NimConfig>('nim');
-    return { ...DEFAULT_NIM_CONFIG, ...stored };
-  }
-
-  setNimConfig(config: Partial<NimConfig>): void {
-    const current = this.getNimConfig();
-    this.setConfigValue('nim', { ...current, ...config });
-  }
-
-  // ==================== Xiaomifeng Config ====================
-
-  getXiaomifengConfig(): XiaomifengConfig {
-    const stored = this.getConfigValue<XiaomifengConfig>('xiaomifeng');
-    return { ...DEFAULT_XIAOMIFENG_CONFIG, ...stored };
-  }
-
-  setXiaomifengConfig(config: Partial<XiaomifengConfig>): void {
-    const current = this.getXiaomifengConfig();
-    this.setConfigValue('xiaomifeng', { ...current, ...config });
-  }
-
   // ==================== IM Settings ====================
 
   getIMSettings(): IMSettings {
@@ -316,25 +259,7 @@ export class IMStore {
     const hasFeishu = !!(config.feishu.appId && config.feishu.appSecret);
     const hasTelegram = !!config.telegram.botToken;
     const hasDiscord = !!config.discord.botToken;
-    const hasNim = !!(config.nim.appKey && config.nim.account && config.nim.token);
-    const hasXiaomifeng = !!(config.xiaomifeng?.clientId && config.xiaomifeng?.secret);
-    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasNim || hasXiaomifeng;
-  }
-
-  // ==================== Notification Target Persistence ====================
-
-  /**
-   * Get persisted notification target for a platform
-   */
-  getNotificationTarget(platform: IMPlatform): any | null {
-    return this.getConfigValue<any>(`notification_target:${platform}`) ?? null;
-  }
-
-  /**
-   * Persist notification target for a platform
-   */
-  setNotificationTarget(platform: IMPlatform, target: any): void {
-    this.setConfigValue(`notification_target:${platform}`, target);
+    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord;
   }
 
   // ==================== Session Mapping Operations ====================

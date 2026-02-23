@@ -192,8 +192,8 @@ function buildPathSearchRoots(cwd, requestEnv) {
     if (typeof requestEnv.SKILLS_ROOT === 'string') {
       pushRoot(requestEnv.SKILLS_ROOT);
     }
-    if (typeof requestEnv.LOBSTERAI_SKILLS_ROOT === 'string') {
-      pushRoot(requestEnv.LOBSTERAI_SKILLS_ROOT);
+    if (typeof requestEnv.IDBOTS_SKILLS_ROOT === 'string') {
+      pushRoot(requestEnv.IDBOTS_SKILLS_ROOT);
     }
   }
 
@@ -287,8 +287,8 @@ function resolveFallbackPath(filePath, searchRoots, requestEnv) {
   if (normalizedLower.startsWith(TMP_WORKSPACE_SKILLS_PREFIX) && requestEnv && typeof requestEnv === 'object') {
     const skillsRoot = typeof requestEnv.SKILLS_ROOT === 'string'
       ? requestEnv.SKILLS_ROOT
-      : typeof requestEnv.LOBSTERAI_SKILLS_ROOT === 'string'
-        ? requestEnv.LOBSTERAI_SKILLS_ROOT
+      : typeof requestEnv.IDBOTS_SKILLS_ROOT === 'string'
+        ? requestEnv.IDBOTS_SKILLS_ROOT
         : null;
     if (skillsRoot && path.isAbsolute(skillsRoot)) {
       const skillsCandidate = path.join(skillsRoot, normalized.slice(TMP_WORKSPACE_SKILLS_PREFIX.length));
@@ -333,8 +333,8 @@ function resolveSkillsRootFromEnv(requestEnv) {
   if (!requestEnv || typeof requestEnv !== 'object') return null;
   const skillsRoot = typeof requestEnv.SKILLS_ROOT === 'string'
     ? requestEnv.SKILLS_ROOT
-    : typeof requestEnv.LOBSTERAI_SKILLS_ROOT === 'string'
-      ? requestEnv.LOBSTERAI_SKILLS_ROOT
+    : typeof requestEnv.IDBOTS_SKILLS_ROOT === 'string'
+      ? requestEnv.IDBOTS_SKILLS_ROOT
       : null;
   if (!skillsRoot || !path.isAbsolute(skillsRoot)) return null;
   return skillsRoot;
@@ -740,7 +740,7 @@ function isPathWritable(targetPath) {
   if (!targetPath || !path.isAbsolute(targetPath)) return false;
   const probePath = path.join(
     targetPath,
-    `.lobsterai-mount-probe-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    `.idbots-mount-probe-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
   try {
     fs.writeFileSync(probePath, 'ok');
@@ -1377,39 +1377,7 @@ async function handleRequest(requestId, request, requestPath) {
       options.systemPrompt = request.systemPrompt;
     }
 
-    // Build prompt: if we have image attachments, use SDKUserMessage with content blocks
-    // instead of a plain string prompt, so the model can see the images.
-    let queryPrompt;
-    const imageAttachments = request.imageAttachments;
-    if (Array.isArray(imageAttachments) && imageAttachments.length > 0) {
-      const contentBlocks = [];
-      const promptText = request.prompt || '';
-      if (promptText.trim()) {
-        contentBlocks.push({ type: 'text', text: promptText });
-      }
-      for (const img of imageAttachments) {
-        contentBlocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: img.mimeType,
-            data: img.base64Data,
-          },
-        });
-      }
-      const userMessage = {
-        type: 'user',
-        message: { role: 'user', content: contentBlocks },
-        parent_tool_use_id: null,
-        session_id: '',
-      };
-      queryPrompt = (async function* () { yield userMessage; })();
-      appendLog(`Request ${requestId}: sending prompt with ${imageAttachments.length} image attachment(s)`);
-    } else {
-      queryPrompt = request.prompt || '';
-    }
-
-    const result = await query({ prompt: queryPrompt, options });
+    const result = await query({ prompt: request.prompt || '', options });
     for await (const event of result) {
       emit({ type: 'sdk_event', event });
     }

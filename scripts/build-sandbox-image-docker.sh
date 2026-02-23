@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-IMAGE_NAME=${IMAGE_NAME:-lobsterai-sandbox-image-builder}
+IMAGE_NAME=${IMAGE_NAME:-idbots-sandbox-image-builder}
 DOCKERFILE=${DOCKERFILE:-"${ROOT_DIR}/sandbox/image/Dockerfile"}
 BUILD_CONTEXT=${BUILD_CONTEXT:-"${ROOT_DIR}/sandbox/image"}
 CONTAINER_PLATFORM=${CONTAINER_PLATFORM:-}
@@ -29,7 +29,7 @@ fi
 
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
-WORK_DIR_DEFAULT=/tmp/lobsterai-sandbox-work
+WORK_DIR_DEFAULT=/tmp/idbots-sandbox-work
 WORK_DIR_ENV=${WORK_DIR:-${WORK_DIR_DEFAULT}}
 
 # Container-specific options

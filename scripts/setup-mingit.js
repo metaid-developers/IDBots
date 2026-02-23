@@ -5,8 +5,8 @@
  * Features:
  * - Cross-platform execution (macOS/Linux can prepare assets for Windows packaging)
  * - Optional strict mode: --required (fail build if not prepared)
- * - Offline archive support via LOBSTERAI_PORTABLE_GIT_ARCHIVE
- * - Mirror URL override via LOBSTERAI_PORTABLE_GIT_URL
+ * - Offline archive support via IDBOTS_PORTABLE_GIT_ARCHIVE
+ * - Mirror URL override via IDBOTS_PORTABLE_GIT_URL
  * - Unified extraction via 7zip-bin (path7za)
  */
 
@@ -26,10 +26,6 @@ const DEFAULT_PORTABLE_GIT_URL =
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(PROJECT_ROOT, 'resources', 'mingit');
 const DEFAULT_ARCHIVE_PATH = path.join(PROJECT_ROOT, 'resources', PORTABLE_GIT_FILE);
-const RUNTIME_DIRS = [
-  path.join('dev', 'shm'),
-  path.join('dev', 'mqueue'),
-];
 
 const DIRS_TO_PRUNE = [
   'doc',
@@ -180,36 +176,15 @@ function extractArchive(archivePath) {
   }
 }
 
-function ensurePortableGitRuntimeDirs(required) {
-  const ensured = [];
-  for (const relPath of RUNTIME_DIRS) {
-    const fullPath = path.join(OUTPUT_DIR, relPath);
-    try {
-      fs.mkdirSync(fullPath, { recursive: true });
-      ensured.push(relPath);
-    } catch (error) {
-      const message = `Could not create runtime directory ${relPath}: ${error instanceof Error ? error.message : String(error)}`;
-      if (required) {
-        throw new Error(message);
-      }
-      console.warn(`[setup-mingit] Warning: ${message}`);
-    }
-  }
-
-  if (ensured.length > 0) {
-    console.log(`[setup-mingit] Ensured runtime directories: ${ensured.join(', ')}`);
-  }
-}
-
 async function resolveArchive(required) {
-  const envArchive = resolveInputPath(process.env.LOBSTERAI_PORTABLE_GIT_ARCHIVE);
+  const envArchive = resolveInputPath(process.env.IDBOTS_PORTABLE_GIT_ARCHIVE);
   if (envArchive) {
     if (!isNonEmptyFile(envArchive)) {
       throw new Error(
-        `LOBSTERAI_PORTABLE_GIT_ARCHIVE points to an invalid file: ${envArchive}`
+        `IDBOTS_PORTABLE_GIT_ARCHIVE points to an invalid file: ${envArchive}`
       );
     }
-    console.log(`[setup-mingit] Using local archive from LOBSTERAI_PORTABLE_GIT_ARCHIVE: ${envArchive}`);
+    console.log(`[setup-mingit] Using local archive from IDBOTS_PORTABLE_GIT_ARCHIVE: ${envArchive}`);
     return { archivePath: envArchive, source: 'env-archive' };
   }
 
@@ -218,8 +193,8 @@ async function resolveArchive(required) {
     return { archivePath: DEFAULT_ARCHIVE_PATH, source: 'cache' };
   }
 
-  const urlFromEnv = typeof process.env.LOBSTERAI_PORTABLE_GIT_URL === 'string'
-    ? process.env.LOBSTERAI_PORTABLE_GIT_URL.trim()
+  const urlFromEnv = typeof process.env.IDBOTS_PORTABLE_GIT_URL === 'string'
+    ? process.env.IDBOTS_PORTABLE_GIT_URL.trim()
     : '';
   const downloadUrl = urlFromEnv || DEFAULT_PORTABLE_GIT_URL;
 
@@ -233,8 +208,8 @@ async function resolveArchive(required) {
     if (required) {
       throw new Error(
         'Unable to obtain PortableGit archive. '
-        + 'Set LOBSTERAI_PORTABLE_GIT_ARCHIVE to a local offline package or '
-        + 'set LOBSTERAI_PORTABLE_GIT_URL to a reachable mirror. '
+        + 'Set IDBOTS_PORTABLE_GIT_ARCHIVE to a local offline package or '
+        + 'set IDBOTS_PORTABLE_GIT_URL to a reachable mirror. '
         + `Original error: ${error instanceof Error ? error.message : String(error)}`
       );
     }
@@ -249,7 +224,7 @@ async function resolveArchive(required) {
 
 async function ensurePortableGit(options = {}) {
   const required = Boolean(options.required);
-  const shouldRun = process.platform === 'win32' || required || process.env.LOBSTERAI_SETUP_MINGIT_FORCE === '1';
+  const shouldRun = process.platform === 'win32' || required || process.env.IDBOTS_SETUP_MINGIT_FORCE === '1';
 
   if (!shouldRun) {
     console.log('[setup-mingit] Skip on non-Windows host (pass --required to force cross-platform preparation).');
@@ -258,7 +233,6 @@ async function ensurePortableGit(options = {}) {
 
   const existingBash = findPortableGitBash();
   if (existingBash) {
-    ensurePortableGitRuntimeDirs(required);
     console.log(`[setup-mingit] PortableGit already prepared: ${existingBash}`);
     return { ok: true, skipped: false, bashPath: existingBash };
   }
@@ -277,7 +251,6 @@ async function ensurePortableGit(options = {}) {
     );
   }
 
-  ensurePortableGitRuntimeDirs(required);
   pruneUnneededFiles();
 
   const finalSize = getDirSize(OUTPUT_DIR);

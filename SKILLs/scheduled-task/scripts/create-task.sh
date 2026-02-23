@@ -6,7 +6,7 @@
 # Returns JSON response: { "success": true, "task": { ... } } or { "success": false, "error": "..." }
 #
 # Environment variables (set automatically by LobsterAI cowork session):
-#   LOBSTERAI_API_BASE_URL - Internal proxy URL (always points to local proxy)
+#   IDBOTS_API_BASE_URL - Internal proxy URL (always points to local proxy)
 
 HTTP_NODE_CMD=""
 HTTP_NODE_ARGS=()
@@ -31,8 +31,8 @@ resolve_http_node_runtime() {
     return 0
   fi
 
-  if [ -n "${LOBSTERAI_ELECTRON_PATH:-}" ] && [ -x "${LOBSTERAI_ELECTRON_PATH}" ]; then
-    HTTP_NODE_CMD="$LOBSTERAI_ELECTRON_PATH"
+  if [ -n "${IDBOTS_ELECTRON_PATH:-}" ] && [ -x "${IDBOTS_ELECTRON_PATH}" ]; then
+    HTTP_NODE_CMD="$IDBOTS_ELECTRON_PATH"
     HTTP_NODE_ARGS=()
     HTTP_NODE_ENV_PREFIX=("ELECTRON_RUN_AS_NODE=1")
     return 0
@@ -109,8 +109,8 @@ const [url, body] = process.argv.slice(2);
 NODE
 }
 
-if [ -z "$LOBSTERAI_API_BASE_URL" ]; then
-  echo '{"success":false,"error":"LOBSTERAI_API_BASE_URL not set. This script must run inside a LobsterAI cowork session."}'
+if [ -z "$IDBOTS_API_BASE_URL" ]; then
+  echo '{"success":false,"error":"IDBOTS_API_BASE_URL not set. This script must run inside a LobsterAI cowork session."}'
   exit 1
 fi
 
@@ -133,8 +133,8 @@ if [ "${PAYLOAD#@}" != "$PAYLOAD" ]; then
   PAYLOAD="$(cat "$PAYLOAD_FILE")"
 fi
 
-# LOBSTERAI_API_BASE_URL always points to the local proxy: http://127.0.0.1:PORT
-BASE_URL="${LOBSTERAI_API_BASE_URL%/}"
+# IDBOTS_API_BASE_URL always points to the local proxy: http://127.0.0.1:PORT
+BASE_URL="${IDBOTS_API_BASE_URL%/}"
 
 RESPONSE="$(http_post_json "${BASE_URL}/api/scheduled-tasks" "$PAYLOAD")"
 CODE=$?

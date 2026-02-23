@@ -16,7 +16,7 @@ import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { QuickActionBar, PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
-import type { CoworkSession, CoworkImageAttachment } from '../../types/cowork';
+import type { CoworkSession } from '../../types/cowork';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -106,7 +106,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     };
   }, [dispatch]);
 
-  const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => {
+  const handleStartSession = async (prompt: string, skillPrompt?: string) => {
     // Prevent duplicate submissions
     if (isStartingRef.current) return;
     isStartingRef.current = true;
@@ -158,12 +158,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             type: 'user',
             content: prompt,
             timestamp: now,
-            metadata: (sessionSkillIds.length > 0 || (imageAttachments && imageAttachments.length > 0))
-              ? {
-                ...(sessionSkillIds.length > 0 ? { skillIds: sessionSkillIds } : {}),
-                ...(imageAttachments && imageAttachments.length > 0 ? { imageAttachments } : {}),
-              }
-              : undefined,
+            metadata: sessionSkillIds.length > 0 ? { skillIds: sessionSkillIds } : undefined,
           },
         ],
       };
@@ -210,7 +205,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         cwd: config.workingDirectory || undefined,
         systemPrompt: combinedSystemPrompt,
         activeSkillIds: sessionSkillIds,
-        imageAttachments,
       });
 
       // Stop immediately if user cancelled while startup request was in flight.
@@ -225,15 +219,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     }
   };
 
-  const handleContinueSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => {
+  const handleContinueSession = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession) return;
-
-    console.log('[CoworkView] handleContinueSession called', {
-      hasImageAttachments: !!imageAttachments,
-      imageAttachmentsCount: imageAttachments?.length ?? 0,
-      imageAttachmentsNames: imageAttachments?.map(a => a.name),
-      imageAttachmentsBase64Lengths: imageAttachments?.map(a => a.base64Data.length),
-    });
 
     // Capture active skill IDs before clearing
     const sessionSkillIds = [...activeSkillIds];
@@ -258,7 +245,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       prompt,
       systemPrompt: combinedSystemPrompt,
       activeSkillIds: sessionSkillIds.length > 0 ? sessionSkillIds : undefined,
-      imageAttachments,
     });
   };
 

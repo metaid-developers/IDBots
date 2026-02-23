@@ -418,8 +418,7 @@ export function buildOpenAIChatCompletionsURL(baseURL: string): string {
     return `${normalized}/v1beta/openai/chat/completions`;
   }
 
-  // Handle /v1, /v4 etc. versioned paths
-  if (/\/v\d+$/.test(normalized)) {
+  if (normalized.endsWith('/v1')) {
     return `${normalized}/chat/completions`;
   }
   return `${normalized}/v1/chat/completions`;

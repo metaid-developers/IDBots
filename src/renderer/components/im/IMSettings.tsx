@@ -3,12 +3,12 @@
  * Configuration UI for DingTalk, Feishu and Telegram IM bots
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
 import { imService } from '../../services/im';
-import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setNimConfig, setXiaomifengConfig, clearError } from '../../store/slices/imSlice';
+import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, clearError } from '../../store/slices/imSlice';
 import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
@@ -19,8 +19,6 @@ const platformMeta: Record<IMPlatform, { label: string; logo: string }> = {
   feishu: { label: '飞书', logo: 'feishu.png' },
   telegram: { label: 'Telegram', logo: 'telegram.svg' },
   discord: { label: 'Discord', logo: 'discord.svg' },
-  nim: { label: '云信', logo: 'nim.png' },
-  xiaomifeng: { label: '小蜜蜂', logo: 'xiaomifeng.png' },
 };
 
 const verdictColorClass: Record<IMConnectivityTestResult['verdict'], string> = {
@@ -36,21 +34,6 @@ const checkLevelColorClass: Record<IMConnectivityCheck['level'], string> = {
   fail: 'text-red-600 dark:text-red-400',
 };
 
-// Map of backend error messages to i18n keys
-const errorMessageI18nMap: Record<string, string> = {
-  '账号已在其它地方登录': 'kickedByOtherClient',
-};
-
-// Helper function to translate IM error messages
-function translateIMError(error: string | null): string {
-  if (!error) return '';
-  const i18nKey = errorMessageI18nMap[error];
-  if (i18nKey) {
-    return i18nService.t(i18nKey);
-  }
-  return error;
-}
-
 const IMSettings: React.FC = () => {
   const dispatch = useDispatch();
   const { config, status, isLoading } = useSelector((state: RootState) => state.im);
@@ -59,17 +42,6 @@ const IMSettings: React.FC = () => {
   const [connectivityResults, setConnectivityResults] = useState<Partial<Record<IMPlatform, IMConnectivityTestResult>>>({});
   const [connectivityModalPlatform, setConnectivityModalPlatform] = useState<IMPlatform | null>(null);
   const [language, setLanguage] = useState<'zh' | 'en'>(i18nService.getLanguage());
-  const [allowedUserIdInput, setAllowedUserIdInput] = useState('');
-  const [configLoaded, setConfigLoaded] = useState(false);
-  // Re-entrancy guard for gateway toggle to prevent rapid ON→OFF→ON
-  const [togglingPlatform, setTogglingPlatform] = useState<IMPlatform | null>(null);
-
-  // Track the last-persisted NIM credentials so we can detect real changes on save
-  const savedNimConfigRef = useRef<{ appKey: string; account: string; token: string }>({
-    appKey: config.nim.appKey,
-    account: config.nim.account,
-    token: config.nim.token,
-  });
 
   // Subscribe to language changes
   useEffect(() => {
@@ -81,15 +53,8 @@ const IMSettings: React.FC = () => {
 
   // Initialize IM service and subscribe status updates
   useEffect(() => {
-    let cancelled = false;
-    void imService.init().then(() => {
-      if (!cancelled) {
-        setConfigLoaded(true);
-      }
-    });
+    void imService.init();
     return () => {
-      cancelled = true;
-      setConfigLoaded(false);
       imService.destroy();
     };
   }, []);
@@ -105,7 +70,7 @@ const IMSettings: React.FC = () => {
   };
 
   // Handle Telegram config change
-  const handleTelegramChange = (field: 'botToken' | 'allowedUserIds', value: string | string[]) => {
+  const handleTelegramChange = (field: 'botToken', value: string) => {
     dispatch(setTelegramConfig({ [field]: value }));
   };
 
@@ -114,41 +79,9 @@ const IMSettings: React.FC = () => {
     dispatch(setDiscordConfig({ [field]: value }));
   };
 
-  // Handle NIM config change
-  const handleNimChange = (field: 'appKey' | 'account' | 'token' | 'accountWhitelist', value: string) => {
-    dispatch(setNimConfig({ [field]: value }));
-  };
-
-  // Handle Xiaomifeng config change
-  const handleXiaomifengChange = (field: 'clientId' | 'secret', value: string) => {
-    dispatch(setXiaomifengConfig({ [field]: value }));
-  };
-
-  // Save config on blur — also auto-triggers NIM connectivity test when
-  // the NIM toggle is ON and credential fields have changed.
+  // Save config on blur
   const handleSaveConfig = async () => {
-    if (!configLoaded) return;
-    await imService.updateConfig({ [activePlatform]: config[activePlatform] });
-
-    // Detect NIM credential changes while the gateway is enabled (only for NIM platform)
-    if (activePlatform === 'nim') {
-      const prev = savedNimConfigRef.current;
-      const cur = config.nim;
-      const nimCredentialsChanged =
-        cur.appKey !== prev.appKey ||
-        cur.account !== prev.account ||
-        cur.token !== prev.token;
-
-      // Update the snapshot regardless
-      savedNimConfigRef.current = { appKey: cur.appKey, account: cur.account, token: cur.token };
-
-      if (nimCredentialsChanged && cur.enabled && cur.appKey && cur.account && cur.token) {
-        // Auto-run connectivity test: stop → start → test (silently, no modal)
-        await imService.stopGateway('nim');
-        await imService.startGateway('nim');
-        await runConnectivityTest('nim', { nim: cur } as Partial<IMGatewayConfig>);
-      }
-    }
+    await imService.updateConfig(config);
   };
 
   const getCheckTitle = (code: IMConnectivityCheck['code']): string => {
@@ -191,41 +124,37 @@ const IMSettings: React.FC = () => {
 
   // Toggle gateway on/off and persist enabled state
   const toggleGateway = async (platform: IMPlatform) => {
-    // Re-entrancy guard: if a toggle is already in progress for this platform, bail out.
-    // This prevents rapid ON→OFF→ON clicks from causing concurrent native SDK init/uninit.
-    if (togglingPlatform === platform) return;
-    setTogglingPlatform(platform);
+    const isEnabled = config[platform].enabled;
+    const newEnabled = !isEnabled;
 
-    try {
-      const isEnabled = config[platform].enabled;
-      const newEnabled = !isEnabled;
+    // Map platform to its Redux action
+    const setConfigAction = {
+      dingtalk: setDingTalkConfig,
+      feishu: setFeishuConfig,
+      telegram: setTelegramConfig,
+      discord: setDiscordConfig,
+    }[platform];
 
-      // Map platform to its Redux action
-      const setConfigAction = getSetConfigAction(platform);
+    // Update Redux state
+    dispatch(setConfigAction({ enabled: newEnabled }));
 
-      // Update Redux state
-      dispatch(setConfigAction({ enabled: newEnabled }));
+    // Persist the updated config (construct manually since Redux state hasn't re-rendered yet)
+    await imService.updateConfig({ [platform]: { ...config[platform], enabled: newEnabled } });
 
-      // Persist the updated config (construct manually since Redux state hasn't re-rendered yet)
-      await imService.updateConfig({ [platform]: { ...config[platform], enabled: newEnabled } });
-
-      if (newEnabled) {
-        dispatch(clearError());
-        const success = await imService.startGateway(platform);
-        if (!success) {
-          // Rollback enabled state on failure
-          dispatch(setConfigAction({ enabled: false }));
-          await imService.updateConfig({ [platform]: { ...config[platform], enabled: false } });
-        } else {
-          await runConnectivityTest(platform, {
-            [platform]: { ...config[platform], enabled: true },
-          } as Partial<IMGatewayConfig>);
-        }
+    if (newEnabled) {
+      dispatch(clearError());
+      const success = await imService.startGateway(platform);
+      if (!success) {
+        // Rollback enabled state on failure
+        dispatch(setConfigAction({ enabled: false }));
+        await imService.updateConfig({ [platform]: { ...config[platform], enabled: false } });
       } else {
-        await imService.stopGateway(platform);
+        await runConnectivityTest(platform, {
+          [platform]: { ...config[platform], enabled: true },
+        } as Partial<IMGatewayConfig>);
       }
-    } finally {
-      setTogglingPlatform(null);
+    } else {
+      await imService.stopGateway(platform);
     }
   };
 
@@ -233,8 +162,6 @@ const IMSettings: React.FC = () => {
   const feishuConnected = status.feishu.connected;
   const telegramConnected = status.telegram.connected;
   const discordConnected = status.discord.connected;
-  const nimConnected = status.nim.connected;
-  const xiaomifengConnected = status.xiaomifeng?.connected ?? false;
 
   // Compute visible platforms based on language
   const platforms = useMemo<IMPlatform[]>(() => {
@@ -260,12 +187,6 @@ const IMSettings: React.FC = () => {
     if (platform === 'discord') {
       return !!config.discord.botToken;
     }
-    if (platform === 'nim') {
-      return !!(config.nim.appKey && config.nim.account && config.nim.token);
-    }
-    if (platform === 'xiaomifeng') {
-      return !!(config.xiaomifeng.clientId && config.xiaomifeng.secret);
-    }
     return !!(config.feishu.appId && config.feishu.appSecret);
   };
 
@@ -279,8 +200,6 @@ const IMSettings: React.FC = () => {
     if (platform === 'dingtalk') return dingtalkConnected;
     if (platform === 'telegram') return telegramConnected;
     if (platform === 'discord') return discordConnected;
-    if (platform === 'nim') return nimConnected;
-    if (platform === 'xiaomifeng') return xiaomifengConnected;
     return feishuConnected;
   };
 
@@ -291,35 +210,7 @@ const IMSettings: React.FC = () => {
   };
 
   const handleConnectivityTest = async (platform: IMPlatform) => {
-    // Re-entrancy guard: if a test is already running, do nothing.
-    if (testingPlatform) return;
-
     setConnectivityModalPlatform(platform);
-    // 1. Persist latest config to backend (without changing enabled state)
-    await imService.updateConfig({
-      [platform]: config[platform],
-    } as Partial<IMGatewayConfig>);
-
-    const isEnabled = isPlatformEnabled(platform);
-
-    // For NIM, skip the frontend stop/start cycle entirely.
-    // The backend's testNimConnectivity already manages the SDK lifecycle
-    // (stop main → probe with temp instance → restart main) under a mutex,
-    // so doing stop/start here would cause a race condition and potential crash.
-    if (isEnabled && platform !== 'nim') {
-      // Gateway is ON: restart it to pick up the latest credentials, then run the
-      // gateway_running check (which also calls runAuthProbe internally via testGateway).
-      await imService.stopGateway(platform);
-      await imService.startGateway(platform);
-    }
-    // When the gateway is OFF we skip stop/start entirely.
-    // The main process testGateway → runAuthProbe will spawn an isolated
-    // temporary NimGateway (for NIM) or use stateless HTTP calls for other
-    // platforms, so no historical messages are ingested and the main
-    // gateway state is never touched.
-
-    // Run connectivity test (always passes configOverride so the backend uses
-    // the latest unsaved credential values from the form).
     await runConnectivityTest(platform, {
       [platform]: config[platform],
     } as Partial<IMGatewayConfig>);
@@ -327,8 +218,6 @@ const IMSettings: React.FC = () => {
 
   // Handle platform toggle
   const handlePlatformToggle = (platform: IMPlatform) => {
-    // Block toggle if a toggle is already in progress for any platform
-    if (togglingPlatform) return;
     const isEnabled = isPlatformEnabled(platform);
     // Can toggle ON if credentials are present, can always toggle OFF
     const canToggle = isEnabled || canStart(platform);
@@ -336,19 +225,6 @@ const IMSettings: React.FC = () => {
       setActivePlatform(platform);
       toggleGateway(platform);
     }
-  };
-
-  // Toggle gateway on/off - map platform to Redux action
-  const getSetConfigAction = (platform: IMPlatform) => {
-    const actionMap: Record<IMPlatform, any> = {
-      dingtalk: setDingTalkConfig,
-      feishu: setFeishuConfig,
-      telegram: setTelegramConfig,
-      discord: setDiscordConfig,
-      nim: setNimConfig,
-      xiaomifeng: setXiaomifengConfig,
-    };
-    return actionMap[platform];
   };
 
   const renderConnectivityTestButton = (platform: IMPlatform) => (
@@ -395,8 +271,8 @@ const IMSettings: React.FC = () => {
               onClick={() => setActivePlatform(platform)}
               className={`flex items-center p-2 rounded-xl cursor-pointer transition-colors ${
                 activePlatform === platform
-                  ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30 shadow-subtle'
-                  : 'dark:bg-claude-darkSurface/50 bg-claude-surface hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover border border-transparent'
+                  ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30'
+                  : 'bg-claude-surfaceHover/80 dark:bg-claude-darkSurface/55 dark:bg-gradient-to-br dark:from-claude-darkSurface/70 dark:to-claude-darkSurfaceHover/70 hover:bg-claude-surface dark:hover:from-claude-darkSurface/80 dark:hover:to-claude-darkSurfaceHover/80 dark:border-claude-darkBorder/70 border-claude-border/80 border'
               }`}
             >
               <div className="flex flex-1 items-center">
@@ -421,7 +297,7 @@ const IMSettings: React.FC = () => {
                     isEnabled
                       ? (isConnected ? 'bg-green-500' : 'bg-yellow-500')
                       : 'dark:bg-claude-darkBorder bg-claude-border'
-                  } ${(!canToggle || togglingPlatform === platform) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  } ${!canToggle ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     handlePlatformToggle(platform);
@@ -581,75 +457,6 @@ const IMSettings: React.FC = () => {
               </p>
             </div>
 
-            {/* Allowed User IDs */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Allowed User IDs
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={allowedUserIdInput}
-                  onChange={(e) => setAllowedUserIdInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const id = allowedUserIdInput.trim();
-                      if (id && !(config.telegram.allowedUserIds || []).includes(id)) {
-                        const newIds = [...(config.telegram.allowedUserIds || []), id];
-                        handleTelegramChange('allowedUserIds', newIds);
-                        setAllowedUserIdInput('');
-                        void imService.updateConfig({ telegram: { ...config.telegram, allowedUserIds: newIds } });
-                      }
-                    }
-                  }}
-                  className="block flex-1 rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                  placeholder={i18nService.t('telegramAllowedUserIdsPlaceholder') || '输入 Telegram User ID'}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = allowedUserIdInput.trim();
-                    if (id && !(config.telegram.allowedUserIds || []).includes(id)) {
-                      const newIds = [...(config.telegram.allowedUserIds || []), id];
-                      handleTelegramChange('allowedUserIds', newIds);
-                      setAllowedUserIdInput('');
-                      void imService.updateConfig({ telegram: { ...config.telegram, allowedUserIds: newIds } });
-                    }
-                  }}
-                  className="px-3 py-2 rounded-lg text-xs font-medium bg-claude-accent/10 text-claude-accent hover:bg-claude-accent/20 transition-colors"
-                >
-                  {i18nService.t('add') || '添加'}
-                </button>
-              </div>
-              {(config.telegram.allowedUserIds || []).length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {(config.telegram.allowedUserIds || []).map((id) => (
-                    <span
-                      key={id}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border dark:text-claude-darkText text-claude-text"
-                    >
-                      {id}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newIds = (config.telegram.allowedUserIds || []).filter((uid) => uid !== id);
-                          handleTelegramChange('allowedUserIds', newIds);
-                          void imService.updateConfig({ telegram: { ...config.telegram, allowedUserIds: newIds } });
-                        }}
-                        className="text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                      >
-                        <XMarkIcon className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('telegramAllowedUserIdsHint') || '限制只有白名单中的用户可以与 Bot 交互。留空则允许所有用户。'}
-              </p>
-            </div>
-
             <div className="pt-1">
               {renderConnectivityTestButton('telegram')}
             </div>
@@ -706,167 +513,6 @@ const IMSettings: React.FC = () => {
             {status.discord.lastError && (
               <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
                 {status.discord.lastError}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* NIM (NetEase IM) Settings */}
-        {activePlatform === 'nim' && (
-          <div className="space-y-3">
-            {/* How to get NIM credentials */}
-            <div className="mb-3 p-3 rounded-lg bg-blue-50/50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/30">
-              <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
-                {i18nService.t('nimCredentialsGuide') || '如何获取云信凭证：'}
-              </p>
-              <ol className="mt-2 ml-3 text-xs text-blue-600 dark:text-blue-400 space-y-1 list-decimal list-inside">
-                <li>{i18nService.t('nimGuideStep1') || '登录网易云信控制台（yunxin.163.com）'}</li>
-                <li>{i18nService.t('nimGuideStep2') || '创建或选择应用，获取 App Key'}</li>
-                <li>{i18nService.t('nimGuideStep3') || '在"账号管理"中创建 IM 账号（accid）'}</li>
-                <li>{i18nService.t('nimGuideStep4') || '为该账号生成 Token（建议长期有效）'}</li>
-              </ol>
-            </div>
-
-            {/* App Key */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                App Key
-              </label>
-              <input
-                type="text"
-                value={config.nim.appKey}
-                onChange={(e) => handleNimChange('appKey', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder="your_app_key"
-              />
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('nimAppKeyHint') || '从云信控制台应用信息中获取'}
-              </p>
-            </div>
-
-            {/* Account */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Account (accid)
-              </label>
-              <input
-                type="text"
-                value={config.nim.account}
-                onChange={(e) => handleNimChange('account', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder={i18nService.t('nimAccountPlaceholder') || 'bot_account_id'}
-              />
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('nimAccountHint') || '在云信控制台"账号管理"中创建的 IM 账号 ID'}
-              </p>
-            </div>
-
-            {/* Token */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Token
-              </label>
-              <input
-                type="password"
-                value={config.nim.token}
-                onChange={(e) => handleNimChange('token', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder="••••••••••••"
-              />
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('nimTokenHint') || '为该账号生成的访问凭证（建议设置为长期有效）'}
-              </p>
-            </div>
-
-            {/* Account Whitelist */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('nimAccountWhitelist') || '白名单账号'}
-              </label>
-              <input
-                type="text"
-                value={config.nim.accountWhitelist}
-                onChange={(e) => handleNimChange('accountWhitelist', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder="account1,account2"
-              />
-              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                {i18nService.t('nimAccountWhitelistHint') || '填写允许与机器人对话的云信账号，多个账号用逗号分隔。留空则不限制，响应所有账号的消息。'}
-              </p>
-            </div>
-
-            <div className="pt-1">
-              {renderConnectivityTestButton('nim')}
-            </div>
-
-            {/* Bot account display */}
-            {status.nim.botAccount && (
-              <div className="text-xs text-green-600 dark:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg">
-                Account: {status.nim.botAccount}
-              </div>
-            )}
-
-            {/* Error display */}
-            {status.nim.lastError && (
-              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
-                {status.nim.lastError}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 小蜜蜂设置*/}
-        {activePlatform === 'xiaomifeng' && (
-          <div className="space-y-3">
-            {/* Client ID */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Client ID
-              </label>
-              <input
-                type="text"
-                value={config.xiaomifeng.clientId}
-                onChange={(e) => handleXiaomifengChange('clientId', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder={i18nService.t('xiaomifengClientIdPlaceholder') || '您的Client ID'}
-              />
-            </div>
-
-            {/* Client Secret */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                Client Secret
-              </label>
-              <input
-                type="password"
-                value={config.xiaomifeng.secret}
-                onChange={(e) => handleXiaomifengChange('secret', e.target.value)}
-                onBlur={handleSaveConfig}
-                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
-                placeholder="••••••••••••"
-              />
-            </div>
-
-            <div className="pt-1">
-              {renderConnectivityTestButton('xiaomifeng')}
-            </div>
-
-            {/* Bot account display */}
-            {status.xiaomifeng?.botAccount && (
-              <div className="text-xs text-green-600 dark:text-green-400 bg-green-500/10 px-3 py-2 rounded-lg">
-                Account: {status.xiaomifeng.botAccount}
-              </div>
-            )}
-
-            {/* Error display */}
-            {status.xiaomifeng?.lastError && (
-              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
-                {translateIMError(status.xiaomifeng.lastError)}
               </div>
             )}
           </div>

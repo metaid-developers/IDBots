@@ -8,7 +8,6 @@ import {
   IMMessage,
   IMSettings,
 } from './types';
-import { buildIMMediaInstruction } from './imMediaInstruction';
 
 // LLM Configuration interface (mirrors app_config structure)
 interface LLMConfig {
@@ -50,14 +49,6 @@ export class IMChatHandler {
           ? `${systemPrompt}\n\n${skillsPrompt}`
           : skillsPrompt;
       }
-    }
-
-    // Append IM media sending instruction
-    const mediaInstruction = buildIMMediaInstruction(this.options.imSettings);
-    if (mediaInstruction) {
-      systemPrompt = systemPrompt
-        ? `${systemPrompt}\n\n${mediaInstruction}`
-        : mediaInstruction;
     }
 
     // Call LLM API
