@@ -26,30 +26,8 @@ import {
 import type { Database } from 'sql.js';
 import type { CoworkRunner } from '../libs/coworkRunner';
 import type { CoworkStore } from '../coworkStore';
-import * as path from 'path';
-import * as os from 'os';
-import * as fs from 'fs';
-import { app } from 'electron';
-
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
-
-/**
- * Get NIM SDK data directory for auth probe
- */
-function getSdkDataPath(account: string): string {
-  let baseDir: string;
-  try {
-    baseDir = app.getPath('userData');
-  } catch {
-    baseDir = path.join(os.homedir(), '.lobsterai');
-  }
-  const dataDir = path.join(baseDir, 'nim-data', account);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  return dataDir;
-}
 
 export interface IMGatewayManagerOptions {
   coworkRunner?: CoworkRunner;
@@ -782,50 +760,14 @@ export class IMGatewayManager extends EventEmitter {
     }
 
     if (platform === 'nim') {
-      // NIM doesn't have a simple REST probe; we attempt a quick SDK init + login
-      const nodenim: any = require('node-nim');
-      const v2Client = new nodenim.V2NIMClient();
-      const dataPath = getSdkDataPath(config.nim.account);
-      const initError = v2Client.init({ appkey: config.nim.appKey, appDataPath: dataPath });
-      if (initError) {
-        throw new Error(`NIM SDK 初始化失败: ${initError.desc || JSON.stringify(initError)}`);
+      // If the gateway is already connected, the credentials are valid
+      if (this.nimGateway.isConnected()) {
+        return `云信鉴权通过（Account: ${config.nim.account}，网关已连接）。`;
       }
-      const loginService = v2Client.getLoginService();
-      if (!loginService) {
-        v2Client.uninit();
-        throw new Error('NIM SDK 服务不可用');
-      }
-
-      // Use Promise to wait for login status event
-      return new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          v2Client.uninit();
-          reject(new Error('NIM 登录超时'));
-        }, 10000);
-
-        loginService.on('loginStatus', (status: number) => {
-          clearTimeout(timeout);
-          if (status === 1) {
-            // Login success
-            loginService.logout().catch(() => {});
-            v2Client.uninit();
-            resolve(`云信鉴权通过（Account: ${config.nim.account}）。`);
-          } else if (status === 0) {
-            // Logout or failed
-            v2Client.uninit();
-            reject(new Error('NIM 登录失败'));
-          }
-        });
-
-        loginService.on('loginFailed', (error: any) => {
-          clearTimeout(timeout);
-          v2Client.uninit();
-          reject(new Error(`NIM 登录失败: ${error?.desc || JSON.stringify(error)}`));
-        });
-
-        // Initiate login
-        loginService.login(config.nim.account, config.nim.token, {});
-      });
+      // Without AppSecret we cannot call the REST API for a stateless probe.
+      // Just confirm that all required fields are non-empty; the real credential
+      // check will happen when the user enables the gateway and the SDK logs in.
+      return `云信配置已填写（Account: ${config.nim.account}）。请启用渠道，SDK 登录时将完成实际凭证验证。`;
     }
 
     const response = await axios.get('https://discord.com/api/v10/users/@me', {

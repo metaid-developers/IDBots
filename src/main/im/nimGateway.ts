@@ -138,6 +138,9 @@ export class NimGateway extends EventEmitter {
   private onMessageCallback?: (message: IMMessage, replyFn: (text: string) => Promise<void>) => Promise<void>;
   private lastSenderId: string | null = null;
   private log: (...args: any[]) => void = () => {};
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts: number = 0;
+  private readonly MAX_RECONNECT_DELAY_MS = 30_000;
 
   constructor() {
     super();
@@ -161,12 +164,53 @@ export class NimGateway extends EventEmitter {
    * Public method for external reconnection triggers
    */
   reconnectIfNeeded(): void {
-    if (!this.v2Client && this.config) {
+    if (this.config && (!this.v2Client || !this.status.connected)) {
       this.log('[NIM Gateway] External reconnection trigger');
-      this.start(this.config).catch((error) => {
-        console.error('[NIM Gateway] Reconnection failed:', error.message);
-      });
+      this.scheduleReconnect(0);
     }
+  }
+
+  /**
+   * Schedule a reconnection attempt with exponential backoff
+   */
+  private scheduleReconnect(delayMs: number): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (!this.config) {
+      return;
+    }
+    const savedConfig = this.config;
+    this.log(`[NIM Gateway] Scheduling reconnect in ${delayMs}ms (attempt ${this.reconnectAttempts + 1})`);
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      if (!savedConfig) return;
+      try {
+        // Reset v2Client if still hanging
+        if (this.v2Client) {
+          try {
+            this.v2Client.uninit();
+          } catch (_) { /* ignore */ }
+          this.v2Client = null;
+          this.loginService = null;
+          this.messageService = null;
+          this.messageCreator = null;
+          this.conversationIdUtil = null;
+        }
+        this.reconnectAttempts++;
+        await this.start(savedConfig);
+        // start() sets this.config = savedConfig internally, so we're fine
+      } catch (error: any) {
+        console.error('[NIM Gateway] Reconnection attempt failed:', error.message);
+        // Schedule next retry with exponential backoff
+        const nextDelay = Math.min(
+          (this.reconnectAttempts <= 1 ? 2000 : delayMs * 2),
+          this.MAX_RECONNECT_DELAY_MS
+        );
+        this.scheduleReconnect(nextDelay);
+      }
+    }, delayMs);
   }
 
   /**
@@ -185,6 +229,8 @@ export class NimGateway extends EventEmitter {
     if (this.v2Client) {
       throw new Error('NIM gateway already running');
     }
+    // Always keep config for reconnection
+    this.config = config;
 
     if (!config.enabled) {
       console.log('[NIM Gateway] NIM is disabled in config');
@@ -244,6 +290,7 @@ export class NimGateway extends EventEmitter {
         this.log('[NIM Gateway] Login status changed:', loginStatus);
         // V2NIMLoginStatus: 0=LOGOUT, 1=LOGINED, 2=LOGINING
         if (loginStatus === 1) {
+          this.reconnectAttempts = 0; // Reset backoff on success
           this.status.connected = true;
           this.status.lastError = null;
           this.status.startedAt = Date.now();
@@ -267,14 +314,22 @@ export class NimGateway extends EventEmitter {
         this.status.lastError = 'Kicked offline';
         this.emit('error', new Error('Kicked offline'));
         this.emit('status');
+        // Schedule reconnect after kicked offline
+        this.scheduleReconnect(5000);
       });
 
       this.loginService.on('loginFailed', (error: any) => {
         this.log('[NIM Gateway] Login failed:', error);
         this.status.connected = false;
         this.status.lastError = `Login failed: ${error?.desc || JSON.stringify(error)}`;
-        this.emit('error', new Error(this.status.lastError));
+        this.emit('error', new Error(this.status.lastError!));
         this.emit('status');
+        // Schedule reconnect after login failure
+        const delay = Math.min(
+          this.reconnectAttempts <= 1 ? 3000 : 3000 * Math.pow(2, this.reconnectAttempts - 1),
+          this.MAX_RECONNECT_DELAY_MS
+        );
+        this.scheduleReconnect(delay);
       });
 
       this.loginService.on('disconnected', (error: any) => {
@@ -283,6 +338,8 @@ export class NimGateway extends EventEmitter {
         this.status.lastError = 'Disconnected';
         this.emit('disconnected');
         this.emit('status');
+        // Schedule reconnect after unexpected disconnect
+        this.scheduleReconnect(3000);
       });
 
       // Login (don't await - status will be updated via events)
@@ -297,6 +354,7 @@ export class NimGateway extends EventEmitter {
         });
 
       // Initialize status (will be updated by loginStatus callback)
+      // Note: do NOT reset config here – it was set at the top of start()
       this.status = {
         connected: false,
         startedAt: null,
@@ -308,12 +366,14 @@ export class NimGateway extends EventEmitter {
 
       this.log('[NIM Gateway] NIM gateway initialized, waiting for login status...');
     } catch (error: any) {
+      const savedConfig = this.config; // Preserve config before cleanup
       this.cleanup();
+      this.config = savedConfig; // Restore config so reconnect can work
       this.status = {
         connected: false,
         startedAt: null,
         lastError: error.message,
-        botAccount: null,
+        botAccount: savedConfig?.account || null,
         lastInboundAt: null,
         lastOutboundAt: null,
       };
@@ -326,6 +386,13 @@ export class NimGateway extends EventEmitter {
    * Stop NIM gateway
    */
   async stop(): Promise<void> {
+    // Cancel any pending reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+
     if (!this.v2Client) {
       this.log('[NIM Gateway] Not running');
       return;
@@ -371,7 +438,7 @@ export class NimGateway extends EventEmitter {
   }
 
   /**
-   * Clean up internal references
+   * Clean up internal references (does NOT clear config to allow reconnection)
    */
   private cleanup(): void {
     this.v2Client = null;
@@ -379,7 +446,7 @@ export class NimGateway extends EventEmitter {
     this.messageService = null;
     this.messageCreator = null;
     this.conversationIdUtil = null;
-    this.config = null;
+    // NOTE: intentionally NOT clearing this.config here so reconnectIfNeeded() can use it
   }
 
   /**
