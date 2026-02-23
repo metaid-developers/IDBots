@@ -1,7 +1,6 @@
 import { app, session } from 'electron';
 
 // Fallback for cases where Electron session is not ready yet.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const nodeFetch = require('node-fetch');
 
 function linkAbortSignal(source: AbortSignal, controller: AbortController): void {
