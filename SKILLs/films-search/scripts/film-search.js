@@ -474,7 +474,7 @@ const DOMAIN_BLACKLIST = [
   'douban.com', 'bilibili.com', 'iqiyi.com', 'youku.com', 'v.qq.com',
   'mgtv.com', 'zhihu.com', 'weibo.com', 'baike.baidu.com', 'wikipedia.org',
   'imdb.com', 'bing.com', 'google.com', 'so.com', 'sogou.com',
-  'movie.douban.com', 'baidu.com/s',
+  'movie.douban.com', 'baidu.com/s?',
 ];
 
 /**
