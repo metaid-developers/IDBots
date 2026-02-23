@@ -362,12 +362,13 @@ export const getVisibleProviders = (language: 'zh' | 'en'): readonly string[] =>
     ...GLOBAL_PROVIDERS,
   ];
   const uniqueProviders = [...new Set(orderedProviders)];
-  const ollamaIndex = uniqueProviders.indexOf('ollama');
-  if (ollamaIndex === -1) {
-    return uniqueProviders;
+  // Move ollama and custom to the end, with custom last
+  for (const key of ['ollama', 'custom'] as const) {
+    const idx = uniqueProviders.indexOf(key);
+    if (idx !== -1) {
+      uniqueProviders.splice(idx, 1);
+      uniqueProviders.push(key);
+    }
   }
-
-  uniqueProviders.splice(ollamaIndex, 1);
-  uniqueProviders.push('ollama');
   return uniqueProviders;
 };
