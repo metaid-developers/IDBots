@@ -286,8 +286,15 @@ export class NimGateway extends EventEmitter {
       });
 
       // Login (don't await - status will be updated via events)
+      // But we need to catch potential rejections
       this.log('[NIM Gateway] Initiating login...', config.account);
-      this.loginService.login(config.account, config.token, {});
+      this.loginService.login(config.account, config.token, {})
+        .catch((error: any) => {
+          // Login errors will be handled by 'loginFailed' event listener
+          // This catch is just to prevent Unhandled Rejection
+          // Error code 191002 (operation cancelled) can be safely ignored as login will retry
+          this.log('[NIM Gateway] Login promise rejected (will retry via events):', error?.code, error?.desc);
+        });
 
       // Initialize status (will be updated by loginStatus callback)
       this.status = {
@@ -326,23 +333,26 @@ export class NimGateway extends EventEmitter {
 
     this.log('[NIM Gateway] Stopping NIM gateway...');
 
-    try {
-      if (this.loginService) {
-        await this.loginService.logout();
-      }
-    } catch (error) {
-      this.log('[NIM Gateway] Logout error:', error);
-    }
-
+    // CRITICAL: Directly uninit without any delay or listener removal
+    // This is the safest approach to avoid race conditions with native callbacks
     try {
       if (this.v2Client) {
-        this.v2Client.uninit();
+        this.log('[NIM Gateway] Calling uninit immediately...');
+        const error = this.v2Client.uninit();
+        if (error) {
+          this.log('[NIM Gateway] Uninit error:', error.code, error.desc);
+        } else {
+          this.log('[NIM Gateway] Uninit completed');
+        }
       }
-    } catch (error) {
-      this.log('[NIM Gateway] Uninit error:', error);
+    } catch (error: any) {
+      this.log('[NIM Gateway] Uninit exception:', error?.message || error);
     }
 
+    // Clean up JavaScript references immediately
     this.cleanup();
+    
+    // Update status
     this.status = {
       connected: false,
       startedAt: null,
@@ -354,6 +364,10 @@ export class NimGateway extends EventEmitter {
 
     this.log('[NIM Gateway] NIM gateway stopped');
     this.emit('disconnected');
+    
+    // Wait a bit for native cleanup before allowing restart
+    // This delay is AFTER cleanup to prevent blocking the UI
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
 
   /**
