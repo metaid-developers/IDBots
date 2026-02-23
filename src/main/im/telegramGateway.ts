@@ -147,7 +147,6 @@ export class TelegramGateway extends EventEmitter {
       this.bot = new Bot(config.botToken, {
         client: {
           // Use our custom fetch wrapper
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           fetch: grammyFetch as any,
           // Increase API timeout to 60 seconds for file uploads (default is 500s which is too long)
           timeoutSeconds: 60,
