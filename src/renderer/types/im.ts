@@ -230,7 +230,7 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   appId: '',
   appSecret: '',
   domain: 'feishu',
-  renderMode: 'text',
+  renderMode: 'card',
   debug: true,
 };
 
