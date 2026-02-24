@@ -613,8 +613,8 @@ export class IMCoworkHandler extends EventEmitter {
       // Skip user messages (they're the input)
       if (msg.type === 'user') continue;
 
-      // Only include assistant messages in reply
-      if (msg.type === 'assistant' && msg.content) {
+      // Only include assistant messages in reply (skip thinking messages)
+      if (msg.type === 'assistant' && msg.content && !msg.metadata?.isThinking) {
         parts.push(msg.content);
       }
     }
