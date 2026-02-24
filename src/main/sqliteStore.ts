@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 
@@ -14,17 +15,19 @@ type ChangePayload<T = unknown> = {
 
 const USER_MEMORIES_MIGRATION_KEY = 'userMemories.migration.v1.completed';
 
-// Get the path to sql.js WASM file
+// Get the path to sql.js WASM file as a file:// URL.
+// Using file:// URL instead of a raw path so that non-ASCII characters
+// (Chinese, spaces, #, etc.) in the Windows install directory are
+// percent-encoded and correctly handled by the Emscripten WASM loader.
+// Same pattern as claudeSdk.ts.
 function getWasmPath(): string {
-  if (app.isPackaged) {
-    // In production, the wasm file is in the unpacked resources
-    return path.join(
-      process.resourcesPath,
-      'app.asar.unpacked/node_modules/sql.js/dist/sql-wasm.wasm'
-    );
-  }
-  // In development, use node_modules directly
-  return path.join(app.getAppPath(), 'node_modules/sql.js/dist/sql-wasm.wasm');
+  const wasmPath = app.isPackaged
+    ? path.join(
+        process.resourcesPath,
+        'app.asar.unpacked/node_modules/sql.js/dist/sql-wasm.wasm'
+      )
+    : path.join(app.getAppPath(), 'node_modules/sql.js/dist/sql-wasm.wasm');
+  return pathToFileURL(wasmPath).href;
 }
 
 export class SqliteStore {
