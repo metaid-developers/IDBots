@@ -116,7 +116,29 @@ export interface AppConfig {
         supportsImage?: boolean;
       }>;
     };
+    xiaomi: {
+      enabled: boolean;
+      apiKey: string;
+      baseUrl: string;
+      apiFormat?: 'anthropic' | 'openai';
+      models?: Array<{
+        id: string;
+        name: string;
+        supportsImage?: boolean;
+      }>;
+    };
     ollama: {
+      enabled: boolean;
+      apiKey: string;
+      baseUrl: string;
+      apiFormat?: 'anthropic' | 'openai';
+      models?: Array<{
+        id: string;
+        name: string;
+        supportsImage?: boolean;
+      }>;
+    };
+    custom: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
@@ -254,6 +276,15 @@ export const defaultConfig: AppConfig = {
         { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus', supportsImage: false }
       ]
     },
+    xiaomi: {
+      enabled: false,
+      apiKey: '',
+      baseUrl: 'https://api.xiaomimimo.com/anthropic',
+      apiFormat: 'anthropic',
+      models: [
+        { id: 'mimo-v2-flash', name: 'MiMo V2 Flash', supportsImage: false }
+      ]
+    },
     openrouter: {
       enabled: false,
       apiKey: '',
@@ -275,6 +306,13 @@ export const defaultConfig: AppConfig = {
         { id: 'qwen3-coder-next', name: 'Qwen3-Coder-Next', supportsImage: false },
         { id: 'glm-4.7-flash', name: 'GLM 4.7 Flash', supportsImage: false }
       ]
+    },
+    custom: {
+      enabled: false,
+      apiKey: '',
+      baseUrl: '',
+      apiFormat: 'openai',
+      models: []
     }
   },
   theme: 'system',
@@ -300,7 +338,7 @@ export const CONFIG_KEYS = {
 };
 
 // 模型提供商分类
-export const CHINA_PROVIDERS = ['deepseek', 'moonshot', 'qwen', 'zhipu', 'minimax', 'ollama'] as const;
+export const CHINA_PROVIDERS = ['deepseek', 'moonshot', 'qwen', 'zhipu', 'minimax', 'xiaomi', 'ollama', 'custom'] as const;
 export const GLOBAL_PROVIDERS = ['openai', 'gemini', 'anthropic', 'openrouter'] as const;
 export const EN_PRIORITY_PROVIDERS = ['openai', 'anthropic', 'gemini'] as const;
 
@@ -324,12 +362,13 @@ export const getVisibleProviders = (language: 'zh' | 'en'): readonly string[] =>
     ...GLOBAL_PROVIDERS,
   ];
   const uniqueProviders = [...new Set(orderedProviders)];
-  const ollamaIndex = uniqueProviders.indexOf('ollama');
-  if (ollamaIndex === -1) {
-    return uniqueProviders;
+  // Move ollama and custom to the end, with custom last
+  for (const key of ['ollama', 'custom'] as const) {
+    const idx = uniqueProviders.indexOf(key);
+    if (idx !== -1) {
+      uniqueProviders.splice(idx, 1);
+      uniqueProviders.push(key);
+    }
   }
-
-  uniqueProviders.splice(ollamaIndex, 1);
-  uniqueProviders.push('ollama');
   return uniqueProviders;
 };

@@ -4,7 +4,6 @@
  */
 
 import { EventEmitter } from 'events';
-import axios from 'axios';
 import { DingTalkGateway } from './dingtalkGateway';
 import { FeishuGateway } from './feishuGateway';
 import { TelegramGateway } from './telegramGateway';
@@ -14,6 +13,7 @@ import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
 import { getOapiAccessToken } from './dingtalkMedia';
+import { fetchJsonWithTimeout } from './http';
 import {
   IMGatewayConfig,
   IMGatewayStatus,
@@ -28,6 +28,19 @@ import type { CoworkRunner } from '../libs/coworkRunner';
 import type { CoworkStore } from '../coworkStore';
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
+
+interface TelegramGetMeResponse {
+  ok?: boolean;
+  result?: {
+    username?: string;
+  };
+  description?: string;
+}
+
+interface DiscordUserResponse {
+  username?: string;
+  discriminator?: string;
+}
 
 export interface IMGatewayManagerOptions {
   coworkRunner?: CoworkRunner;
@@ -747,18 +760,18 @@ export class IMGatewayManager extends EventEmitter {
     }
 
     if (platform === 'telegram') {
-      const response = await axios.get(
+      const response = await fetchJsonWithTimeout<TelegramGetMeResponse>(
         `https://api.telegram.org/bot${config.telegram.botToken}/getMe`,
-        { timeout: CONNECTIVITY_TIMEOUT_MS }
+        {},
+        CONNECTIVITY_TIMEOUT_MS
       );
-      if (!response.data?.ok) {
-        const description = response.data?.description || 'unknown error';
+      if (!response.ok) {
+        const description = response.description || 'unknown error';
         throw new Error(description);
       }
-      const username = response.data?.result?.username ? `@${response.data.result.username}` : 'unknown';
+      const username = response.result?.username ? `@${response.result.username}` : 'unknown';
       return `Telegram 鉴权通过（Bot: ${username}）。`;
     }
-
     if (platform === 'nim') {
       // If the gateway is already connected, the credentials are valid
       if (this.nimGateway.isConnected()) {
@@ -769,14 +782,12 @@ export class IMGatewayManager extends EventEmitter {
       // check will happen when the user enables the gateway and the SDK logs in.
       return `云信配置已填写（Account: ${config.nim.account}）。请启用渠道，SDK 登录时将完成实际凭证验证。`;
     }
-
-    const response = await axios.get('https://discord.com/api/v10/users/@me', {
-      timeout: CONNECTIVITY_TIMEOUT_MS,
+    const response = await fetchJsonWithTimeout<DiscordUserResponse>('https://discord.com/api/v10/users/@me', {
       headers: {
         Authorization: `Bot ${config.discord.botToken}`,
       },
-    });
-    const username = response.data?.username ? `${response.data.username}#${response.data.discriminator || '0000'}` : 'unknown';
+    }, CONNECTIVITY_TIMEOUT_MS);
+    const username = response.username ? `${response.username}#${response.discriminator || '0000'}` : 'unknown';
     return `Discord 鉴权通过（Bot: ${username}）。`;
   }
 
