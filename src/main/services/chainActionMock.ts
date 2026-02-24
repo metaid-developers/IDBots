@@ -11,8 +11,9 @@ function randomDelay(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Mock: create wallet and receive gas subsidy */
+/** Mock: create wallet and receive gas subsidy. Returns mnemonic for insertMetabotWallet (wallet-first). */
 export function mockCreateWalletAndFund(): Promise<{
+  mnemonic: string;
   mvc_address: string;
   btc_address: string;
   doge_address: string;
@@ -23,17 +24,21 @@ export function mockCreateWalletAndFund(): Promise<{
   globalmetaid: string;
   metabot_info_pinid: string;
 }> {
-  return randomDelay().then(() => ({
-    mvc_address: `mock_mvc_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    btc_address: `mock_btc_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    doge_address: `mock_doge_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    public_key: `mock_pk_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`,
-    chat_public_key: `mock_chat_pk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    chat_public_key_pin_id: `mock_chat_pin_${Date.now()}`,
-    metaid: `mock_metaid_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    globalmetaid: `mock_global_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-    metabot_info_pinid: `mock_info_pin_${Date.now()}`,
-  }));
+  return randomDelay().then(() => {
+    const seed = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    return {
+      mnemonic: `mock mnemonic ${seed} twelve words mock wallet for testing`,
+      mvc_address: `mock_mvc_${seed}`,
+      btc_address: `mock_btc_${seed}`,
+      doge_address: `mock_doge_${seed}`,
+      public_key: `mock_pk_${seed}`,
+      chat_public_key: `mock_chat_pk_${seed}`,
+      chat_public_key_pin_id: `mock_chat_pin_${Date.now()}`,
+      metaid: `mock_metaid_${seed}`,
+      globalmetaid: `mock_global_${seed}`,
+      metabot_info_pinid: `mock_info_pin_${Date.now()}`,
+    };
+  });
 }
 
 /** Mock: push MetaBot config to chain */

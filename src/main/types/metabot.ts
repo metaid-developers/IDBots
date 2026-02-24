@@ -8,6 +8,8 @@ export type MetabotType = 'twin' | 'worker';
 /** MetaBot base info and soul (matches metabots table) */
 export interface Metabot {
   id: number;
+  /** FK to metabot_wallets.id; wallet is created before metabot */
+  wallet_id: number;
   mvc_address: string;
   btc_address: string;
   doge_address: string;
@@ -15,7 +17,7 @@ export interface Metabot {
   chat_public_key: string;
   chat_public_key_pin_id: string;
   name: string;
-  /** Avatar: base64 string (e.g. data:image/png;base64,...) or binary stored as base64; null if not set */
+  /** Avatar: data URL or URL string for display; stored as BLOB on-chain aligned in DB */
   avatar: string | null;
   /** Whether this MetaBot is currently available */
   enabled: boolean;
@@ -40,6 +42,7 @@ export interface Metabot {
 
 /** Input for creating a MetaBot (same shape minus id and timestamps) */
 export interface MetabotInsert {
+  wallet_id: number;
   mvc_address: string;
   btc_address: string;
   doge_address: string;
@@ -66,6 +69,7 @@ export interface MetabotInsert {
 
 /** Input for updating a MetaBot (all optional except identity) */
 export interface MetabotUpdate {
+  wallet_id?: number;
   mvc_address?: string;
   btc_address?: string;
   doge_address?: string;
@@ -90,18 +94,16 @@ export interface MetabotUpdate {
   skills?: string[];
 }
 
-/** MetaBot wallet (append-only; no update/delete in app layer) */
+/** MetaBot wallet (append-only; no update/delete in app layer). Created before metabot; metabots.wallet_id references this id. */
 export interface MetabotWallet {
   id: number;
-  metabot_id: number;
   mnemonic: string;
   path: string;
   created_at: number;
 }
 
-/** Input for inserting a wallet (metabot_wallets is insert-only) */
+/** Input for inserting a wallet (metabot_wallets is insert-only). No metabot_id; metabot references wallet by wallet_id. */
 export interface MetabotWalletInsert {
-  metabot_id: number;
   mnemonic: string;
   path?: string;
 }

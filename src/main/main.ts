@@ -537,7 +537,22 @@ const getCoworkStore = () => {
 
 const getCoworkRunner = () => {
   if (!coworkRunner) {
-    coworkRunner = new CoworkRunner(getCoworkStore());
+    coworkRunner = new CoworkRunner(getCoworkStore(), {
+      getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
+        const session = getCoworkStore().getSession(sessionId);
+        const skillIds = session?.activeSkillIds ?? [];
+        // Inject Twin when metabot-basic is selected, or when no skills selected (default: use main Agent for buzz)
+        const shouldInjectTwin = skillIds.length === 0 || skillIds.includes('metabot-basic');
+        if (!shouldInjectTwin) return {};
+        const twin = getMetabotStore().getTwinWallet();
+        if (!twin) return {};
+        return {
+          IDBOTS_TWIN_MNEMONIC: twin.mnemonic,
+          IDBOTS_TWIN_NAME: twin.name,
+          IDBOTS_TWIN_PATH: twin.path,
+        };
+      },
+    });
 
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
@@ -1613,11 +1628,23 @@ if (!gotTheLock) {
         return { success: false, error: 'Mock push config to chain failed' };
       }
       const store = getMetabotStore();
+      const wallet = store.insertMetabotWallet({
+        mnemonic: walletResult.mnemonic,
+      });
       const metabot = store.createMetabot({
-        ...walletResult,
+        wallet_id: wallet.id,
+        mvc_address: walletResult.mvc_address,
+        btc_address: walletResult.btc_address,
+        doge_address: walletResult.doge_address,
+        public_key: walletResult.public_key,
+        chat_public_key: walletResult.chat_public_key,
+        chat_public_key_pin_id: walletResult.chat_public_key_pin_id,
         name: input.name,
         avatar: input.avatar ?? null,
         enabled: true,
+        metaid: walletResult.metaid,
+        globalmetaid: walletResult.globalmetaid,
+        metabot_info_pinid: walletResult.metabot_info_pinid,
         metabot_type: input.metabot_type,
         created_by: 'system',
         role: input.role,

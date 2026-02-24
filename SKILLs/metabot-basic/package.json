@@ -1,0 +1,40 @@
+{
+  "name": "metabot-basic",
+  "version": "1.0.0",
+  "description": "metabot-basic skill for wallet and MetaID management",
+  "main": "scripts/main.ts",
+  "scripts": {
+    "check-env": "bash scripts/check_environment.sh",
+    "start": "ts-node scripts/main.ts",
+    "build": "tsc",
+    "send-buzz": "ts-node scripts/send_buzz.ts",
+    "send-space": "ts-node scripts/send_space.ts",
+    "send-doge": "ts-node scripts/send_doge.ts",
+    "create-agents": "ts-node scripts/create_agents.ts",
+    "create-chatpubkey": "ts-node scripts/create_chatpubkey.ts",
+    "create-avatar": "ts-node scripts/create_avatar.ts",
+    "sync-agent-metaid": "ts-node scripts/sync_agent_metaid.ts",
+    "sync-account-llm": "ts-node scripts/sync_account_llm.ts"
+  },
+  "dependencies": {
+    "@scure/bip39": "1.6.0",
+    "bip32": "^4.0.0",
+    "@metalet/utxo-wallet-service": "0.3.33-beta.5",
+    "bitcoinjs-lib": "6.1.7",
+    "ecpair": "^2.1.0",
+    "@bitcoinerlab/secp256k1": "1.2.0",
+    "crypto-js": "^4.2.0",
+    "decimal.js": "^10.4.3",
+    "meta-contract": "^0.4.16",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/crypto-js": "^4.2.2",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "keywords": ["metaid", "metabot", "wallet", "blockchain"],
+  "author": "",
+  "license": "MIT"
+}

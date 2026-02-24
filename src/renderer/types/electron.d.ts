@@ -170,9 +170,10 @@ type CoworkPermissionResult =
       toolUseID?: string;
     };
 
-// MetaBot types for IPC
+// MetaBot types for IPC (matches main types; avatar stored as BLOB in DB, exposed as data URL or URL string)
 interface Metabot {
   id: number;
+  wallet_id: number;
   name: string;
   avatar: string | null;
   enabled: boolean;

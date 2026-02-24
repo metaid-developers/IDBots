@@ -1,0 +1,39 @@
+# IDBots Cursor AI Assistant Rules
+
+You are an expert developer assisting with the **IDBots** project. IDBots is a Web3-native, multi-agent collaboration platform built on the MetaID protocol.
+
+## 1. Project Identity & Architecture
+- **Identity**: IDBots (The On-Chain Multi-Agent Collaboration Platform). Do NOT refer to legacy names like "LobsterAI" or "Cowork".
+- **Tech Stack**: Electron 40, React 18 (TypeScript), Vite 5, Tailwind CSS 3, SQLite (`sql.js`).
+- **Process Isolation**: Strict IPC communication between Main (`src/main/`) and Renderer (`src/renderer/`). Node integration is disabled in Renderer.
+
+## 2. Core Concepts: The MetaBot Ecosystem
+Unlike traditional single-agent code assistants, IDBots manages multiple autonomous entities called **MetaBots**:
+- **MetaBots**: On-chain AI agents with persistent memory, sovereign wallets, and unique personas.
+- **Types**: 
+  - `twin`: The user's primary digital avatar (usually one per client).
+  - `worker`: Specialized agents created or hired to perform specific tasks.
+- **Data Persistence**: Stored locally in `idbots.sqlite`. Crucial tables include `metabots` (agent info/persona) and `metabot_wallets` (append-only, stores encrypted mnemonics).
+
+## 3. Database Schema Context (SQLite)
+When writing backend code or IPC handlers, assume the following key tables exist in `idbots.sqlite`:
+- `metabots`: id, name, metaid, metabot_type ('twin'/'worker'), role, soul, tools, skills, etc.
+- `metabot_wallets`: id, metabot_id, mnemonic (APPEND ONLY).
+- `llm_configs`: API configurations for different models (DeepSeek, Claude, OpenAI).
+- *Legacy Tables*: `cowork_sessions`, `cowork_messages` (Now associated with a `metabot_id`).
+
+## 4. UI/UX Guidelines (Renderer)
+- **Styling**: Use Tailwind CSS exclusively.
+- **Theme**: The project supports both Dark and Light modes using CSS variables (`var(--bg-main)`, `var(--bg-panel)`, `var(--text-primary)`, `var(--color-primary)`). Do NOT hardcode `dark:bg-xxx` utility classes. Prefer semantic custom variables.
+- **Vibe**: The UI should feel like a Web3, cyberpunk/geek console (Dark navy backgrounds, bright accent buttons).
+- **i18n**: All user-facing strings MUST be internationalized (support for English and Chinese via `src/renderer/services/i18n.ts`).
+- **Comments**: ALL code comments generated must be strictly in English. NO Chinese comments.
+
+## 5. Development Workflow
+- **Commands**: `npm run electron:dev` (Dev), `npm run build` (Build UI).
+- **Mock First**: When developing Web3 features (wallet generation, on-chain config), ALWAYS implement a mock service with a timeout (e.g., `mockCreateWalletAndFund()`) first to unblock UI development before doing actual chain integration.
+
+## 6. Code Style
+- Functional React components with Hooks.
+- Keep business logic in `src/renderer/services/` (or Redux slices) away from UI components.
+- 2-space indentation, single quotes, semicolons.

@@ -1,0 +1,2 @@
+# 将头像图片（jpg/png/gif/webp）放入此目录，文件需小于 1MB
+# 执行 create_agents.ts 创建 Agent 时会自动设置头像

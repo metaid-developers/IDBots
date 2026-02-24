@@ -370,8 +370,14 @@ type SandboxSkillEntry = {
   mountTag: string;
 };
 
+export interface CoworkRunnerOptions {
+  /** When set, env overrides (e.g. Twin wallet for metabot-basic) are merged into session env for tool execution. */
+  getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
+}
+
 export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
+  private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   private activeSessions: Map<string, ActiveSession> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
@@ -381,9 +387,10 @@ export class CoworkRunner extends EventEmitter {
   private lastTurnMemoryKeyBySession: Map<string, string> = new Map();
   private drainingTurnMemoryQueue = false;
 
-  constructor(store: CoworkStore) {
+  constructor(store: CoworkStore, options?: CoworkRunnerOptions) {
     super();
     this.store = store;
+    this.getSkillSessionEnvOverrides = options?.getSkillSessionEnvOverrides;
   }
 
   private isSessionStopRequested(sessionId: string, activeSession?: ActiveSession): boolean {
@@ -2313,7 +2320,8 @@ export class CoworkRunner extends EventEmitter {
     activeSession: ActiveSession,
     prompt: string,
     cwd: string,
-    systemPrompt: string
+    systemPrompt: string,
+    isRetry: boolean = false
   ): Promise<void> {
     const { sessionId, abortController } = activeSession;
     const config = this.store.getConfig();
@@ -2343,6 +2351,10 @@ export class CoworkRunner extends EventEmitter {
 
     const claudeCodePath = getClaudeCodePath();
     const envVars = await getEnhancedEnvWithTmpdir(cwd, 'local');
+    const skillEnvOverrides = await this.getSkillSessionEnvOverrides?.(sessionId);
+    if (skillEnvOverrides && Object.keys(skillEnvOverrides).length > 0) {
+      Object.assign(envVars, skillEnvOverrides);
+    }
     let stderrTail = '';
 
     // When packaged, process.execPath is the Electron binary.
@@ -2623,11 +2635,25 @@ export class CoworkRunner extends EventEmitter {
         return;
       }
 
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isStaleResumeError = errorMessage.includes('No conversation found with session ID');
+      if (isStaleResumeError && !isRetry) {
+        this.store.updateSession(sessionId, { claudeSessionId: null });
+        activeSession.claudeSessionId = null;
+        coworkLog('INFO', 'runClaudeCodeLocal', 'Cleared stale claudeSessionId after "No conversation found", retrying once without resume', { sessionId });
+        try {
+          await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
+          return;
+        } catch (retryError) {
+          error = retryError;
+          errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+        }
+      }
+
       const stderrOutput = stderrTail;
       coworkLog('ERROR', 'runClaudeCodeLocal', 'Claude Code process failed', {
         errorMessage,
-        errorStack: error instanceof Error ? error.stack : undefined,
+        errorStack: error instanceof Error ? (error as Error).stack : undefined,
         stderr: stderrOutput || '(no stderr captured)',
         claudeCodePath,
         claudeCodePathExists: fs.existsSync(claudeCodePath),
