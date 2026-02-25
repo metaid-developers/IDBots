@@ -8,6 +8,8 @@ official: true
 
 使用火山引擎 Seedream 模型生成高质量 AI 图片，支持文本生成图片（T2I）、图片编辑（I2I）、多图融合、组图生成、联网搜索等多种创作模式。
 
+> ✨ **Node.js 版本**：此脚本使用 Node.js 实现，无需 Python 环境。Windows 和 Mac 用户都可以开箱即用。
+
 ## 配置
 
 - **Base URL**: `https://ark.cn-beijing.volces.com/api/v3`
@@ -36,7 +38,7 @@ echo $env:ARK_API_KEY
 **第二步：生成你的第一张图片**
 
 ```bash
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "一只可爱的橘色小猫"
 ```
 
@@ -74,15 +76,9 @@ LobsterAI 会自动读取系统环境变量，确保在启动 LobsterAI 前已�
 
 ## 前置检查
 
-执行前确保已安装 Python 依赖：
+**无需安装任何依赖！** 该脚本已兼容 Node.js 内置模块。
 
-```bash
-# 方式一：使用官方 SDK（推荐）
-pip install 'volcengine-python-sdk[ark]'
-
-# 方式二：仅使用 requests（轻量）
-pip install requests
-```
+LobsterAI 已包含 Node.js 运行时，所有必要的依赖已被自动打包。Windows 和 Mac 用户无需额外配置。
 
 ## 工作流程
 
@@ -121,7 +117,7 @@ Seedream 图片生成采用**同步模式**，流程简单高效：
 根据文字描述生成图片，适合创意激发和概念设计。
 
 ```bash
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，景深较浅，Vogue杂志封面美学风格" \
   --output portrait.png
 ```
@@ -137,13 +133,13 @@ python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
 
 ```bash
 # 使用本地图片
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "保持模特姿势不变，将服装材质改为透明玻璃质感" \
   --image "/Users/yourname/Pictures/model.jpg" \
   --output edited_model.png
 
 # 使用网络图片
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "将背景改为海边日落场景" \
   --image "https://example.com/photo.jpg" \
   --output beach_sunset.png
@@ -162,7 +158,7 @@ python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
 融合多张参考图的特征生成新图像。**支持混合使用本地图片和网络图片**。
 
 ```bash
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "将图1的服装换为图2的服装" \
   --image "/Users/yourname/Pictures/person.jpg" \
   --image "https://example.com/clothes.jpg" \
@@ -181,7 +177,7 @@ python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
 #### 文生组图
 
 ```bash
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "生成一组共4张连贯插画，核心为同一庭院一角的四季变迁，以统一风格展现四季独特色彩、元素与氛围" \
   --sequential \
   --max-images 4 \
@@ -193,7 +189,7 @@ python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
 #### 单图生组图
 
 ```bash
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "参考这个LOGO，做一套户外运动品牌视觉设计，品牌名称为'GREEN'，包括包装袋、帽子、卡片、挂绳等" \
   --image "/Users/yourname/Pictures/logo.png" \
   --sequential \
@@ -206,7 +202,7 @@ python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
 启用实时网络搜索，融合最新网络信息。
 
 ```bash
-python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
+node "$SKILLS_ROOT/seedream/scripts/generate_image.js" \
   --prompt "搜索下近期热门的白鸭子单手拿着风车形象，以极具冲击力的视角，设计成巨型装置" \
   --search \
   --output search_result.png
@@ -404,7 +400,7 @@ python3 "$SKILLS_ROOT/seedream/scripts/generate_image.py" \
 ### 产品设计
 
 ```bash
-python3 scripts/generate_image.py \
+node scripts/generate_image.js \
   --prompt "现代简约风格，智能手表产品展示，白色背景，工作室灯光" \
   --size "4K"
 ```
@@ -412,7 +408,7 @@ python3 scripts/generate_image.py \
 ### 艺术创作
 
 ```bash
-python3 scripts/generate_image.py \
+node scripts/generate_image.js \
   --prompt "超现实主义，漂浮的岛屿，瀑布从天而降，梦幻色彩" \
   --size "2K"
 ```
@@ -420,7 +416,7 @@ python3 scripts/generate_image.py \
 ### 社交媒体内容
 
 ```bash
-python3 scripts/generate_image.py \
+node scripts/generate_image.js \
   --prompt "美食特写，热气腾腾的拉面，筷子夹起面条，暖色调" \
   --size "2K"
 ```
@@ -428,7 +424,7 @@ python3 scripts/generate_image.py \
 ### 品牌视觉设计
 
 ```bash
-python3 scripts/generate_image.py \
+node scripts/generate_image.js \
   --prompt "参考logo，生成一套完整的品牌视觉系统，包括名片、海报、包装设计" \
   --image brand_logo.png \
   --sequential \
