@@ -297,6 +297,11 @@ export class SqliteStore {
         this.save();
       }
 
+      if (!columns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN metabot_id INTEGER;');
+        this.save();
+      }
+
       // Migration: Add sequence column to cowork_messages
       const msgColsResult = this.db.exec("PRAGMA table_info(cowork_messages);");
       const msgColumns = msgColsResult[0]?.values.map((row) => row[1]) || [];
@@ -338,6 +343,23 @@ export class SqliteStore {
       `);
     } catch (error) {
       console.warn('Failed to migrate cowork execution mode:', error);
+    }
+
+    // Migration: Add metabot_id to user_memories for MetaBot memory isolation
+    try {
+      const umColsResult = this.db.exec("PRAGMA table_info(user_memories);");
+      const umColumns = (umColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!umColumns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE user_memories ADD COLUMN metabot_id INTEGER REFERENCES metabots(id);');
+        const twinRow = this.db.exec("SELECT id FROM metabots WHERE metabot_type = 'twin' ORDER BY id ASC LIMIT 1");
+        const twinId = twinRow[0]?.values?.[0]?.[0] as number | undefined;
+        if (twinId != null) {
+          this.db.run('UPDATE user_memories SET metabot_id = ? WHERE metabot_id IS NULL', [twinId]);
+        }
+        this.save();
+      }
+    } catch (error) {
+      console.warn('Failed to migrate user_memories metabot_id:', error);
     }
 
     // Migration: Add expires_at and notify_platforms_json columns to scheduled_tasks
@@ -625,6 +647,13 @@ export class SqliteStore {
       return;
     }
 
+    const twinResult = this.db.exec("SELECT id FROM metabots WHERE metabot_type = 'twin' ORDER BY id ASC LIMIT 1");
+    const defaultMetabotId = twinResult[0]?.values?.[0]?.[0] as number | undefined;
+    if (defaultMetabotId == null) {
+      this.set(USER_MEMORIES_MIGRATION_KEY, '1');
+      return;
+    }
+
     const now = Date.now();
     this.db.run('BEGIN TRANSACTION;');
     try {
@@ -640,10 +669,9 @@ export class SqliteStore {
 
         const memoryId = crypto.randomUUID();
         this.db.run(`
-          INSERT INTO user_memories (
-            id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
-          ) VALUES (?, ?, ?, ?, 1, 'created', ?, ?, NULL)
-        `, [memoryId, text, fingerprint, 0.9, now, now]);
+          INSERT INTO user_memories (id, metabot_id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at)
+          VALUES (?, ?, ?, ?, ?, 1, 'created', ?, ?, NULL)
+        `, [memoryId, defaultMetabotId, text, fingerprint, 0.9, now, now]);
 
         this.db.run(`
           INSERT INTO user_memory_sources (id, memory_id, session_id, message_id, role, is_active, created_at)
