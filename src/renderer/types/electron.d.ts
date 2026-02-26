@@ -28,6 +28,7 @@ interface CoworkSession {
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
+  metabotId?: number | null;
 }
 
 interface CoworkMessage {
@@ -275,7 +276,7 @@ interface IElectronAPI {
     onStateChanged: (callback: (state: WindowState) => void) => () => void;
   };
   cowork: {
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[] }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
@@ -298,6 +299,7 @@ interface IElectronAPI {
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
     listMemoryEntries: (input: {
+      sessionId?: string;
       query?: string;
       status?: 'created' | 'stale' | 'deleted' | 'all';
       includeDeleted?: boolean;
@@ -305,19 +307,21 @@ interface IElectronAPI {
       offset?: number;
     }) => Promise<{ success: boolean; entries?: CoworkUserMemoryEntry[]; error?: string }>;
     createMemoryEntry: (input: {
+      sessionId?: string;
       text: string;
       confidence?: number;
       isExplicit?: boolean;
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
     updateMemoryEntry: (input: {
+      sessionId?: string;
       id: string;
       text?: string;
       confidence?: number;
       status?: 'created' | 'stale' | 'deleted';
       isExplicit?: boolean;
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
-    deleteMemoryEntry: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
-    getMemoryStats: () => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
+    deleteMemoryEntry: (input: { sessionId?: string; id: string }) => Promise<{ success: boolean; error?: string }>;
+    getMemoryStats: (input?: { sessionId?: string }) => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
     getSandboxStatus: () => Promise<CoworkSandboxStatus>;
     installSandbox: () => Promise<{ success: boolean; status: CoworkSandboxStatus; error?: string }>;
     onSandboxDownloadProgress: (callback: (data: CoworkSandboxProgress) => void) => () => void;
@@ -372,6 +376,9 @@ interface IElectronAPI {
     listAllRuns: (limit?: number, offset?: number) => Promise<any>;
     onStatusUpdate: (callback: (data: any) => void) => () => void;
     onRunUpdate: (callback: (data: any) => void) => () => void;
+  };
+  idbots: {
+    getMetaBots: () => Promise<{ success: boolean; list?: Array<{ id: number; name: string; avatar: string | null; metabot_type: string }>; error?: string }>;
   };
   metabot: {
     list: () => Promise<{ success: boolean; list?: Metabot[]; error?: string }>;

@@ -331,6 +331,8 @@ export interface CoworkSession {
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
+  /** FK to metabots.id; which MetaBot persona this session uses */
+  metabotId?: number | null;
 }
 
 export interface CoworkSessionSummary {
@@ -469,6 +471,7 @@ interface CoworkUserMemoryRow {
   created_at: number;
   updated_at: number;
   last_used_at: number | null;
+  metabot_id?: number | null;
 }
 
 export class CoworkStore {
@@ -505,20 +508,48 @@ export class CoworkStore {
     });
   }
 
+  /** Get metabot_id for a session; returns null if session not found or has no metabot_id. */
+  getMetabotIdForSession(sessionId: string): number | null {
+    const row = this.getOne<{ metabot_id: number | null }>(
+      'SELECT metabot_id FROM cowork_sessions WHERE id = ?',
+      [sessionId]
+    );
+    if (!row || row.metabot_id == null) return null;
+    return typeof row.metabot_id === 'number' ? row.metabot_id : null;
+  }
+
+  /** Get default MetaBot id (first twin) for fallback when session has no metabot_id. */
+  getDefaultMetabotId(): number | null {
+    const row = this.getOne<{ id: number }>(
+      "SELECT id FROM metabots WHERE metabot_type = 'twin' ORDER BY id ASC LIMIT 1"
+    );
+    return row?.id ?? null;
+  }
+
+  /** Resolve metabot_id from sessionId or use default twin. Returns null only if no default. */
+  resolveMetabotIdForMemory(sessionId?: string | null): number | null {
+    if (sessionId) {
+      const fromSession = this.getMetabotIdForSession(sessionId);
+      if (fromSession != null) return fromSession;
+    }
+    return this.getDefaultMetabotId();
+  }
+
   createSession(
     title: string,
     cwd: string,
     systemPrompt: string = '',
     executionMode: CoworkExecutionMode = 'local',
-    activeSkillIds: string[] = []
+    activeSkillIds: string[] = [],
+    metabotId: number | null = null
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
 
     this.db.run(`
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, pinned, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, 0, ?, ?)
-    `, [id, title, cwd, systemPrompt, executionMode, JSON.stringify(activeSkillIds), now, now]);
+      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, created_at, updated_at)
+      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?)
+    `, [id, title, cwd, systemPrompt, executionMode, JSON.stringify(activeSkillIds), metabotId, now, now]);
 
     this.saveDb();
 
@@ -535,6 +566,7 @@ export class CoworkStore {
       messages: [],
       createdAt: now,
       updatedAt: now,
+      metabotId: metabotId ?? undefined,
     };
   }
 
@@ -549,12 +581,13 @@ export class CoworkStore {
       system_prompt: string;
       execution_mode?: string | null;
       active_skill_ids?: string | null;
+      metabot_id?: number | null;
       created_at: number;
       updated_at: number;
     }
 
     const row = this.getOne<SessionRow>(`
-      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, created_at, updated_at
+      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `, [id]);
@@ -585,6 +618,7 @@ export class CoworkStore {
       messages,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      metabotId: row.metabot_id ?? undefined,
     };
   }
 
@@ -632,9 +666,12 @@ export class CoworkStore {
   }
 
   deleteSession(id: string): void {
+    const metabotId = this.getMetabotIdForSession(id) ?? this.getDefaultMetabotId();
     this.markMemorySourcesInactiveBySession(id);
     this.db.run('DELETE FROM cowork_sessions WHERE id = ?', [id]);
-    this.markOrphanImplicitMemoriesStale();
+    if (metabotId != null) {
+      this.markOrphanImplicitMemoriesStale(metabotId);
+    }
     this.saveDb();
   }
 
@@ -958,6 +995,7 @@ export class CoworkStore {
     confidence?: number;
     isExplicit?: boolean;
     source?: CoworkUserMemorySourceInput;
+    metabotId: number;
   }): { memory: CoworkUserMemory; created: boolean; updated: boolean } {
     const normalizedText = truncate(normalizeMemoryText(input.text), 360);
     if (!normalizedText) {
@@ -968,14 +1006,15 @@ export class CoworkStore {
     const fingerprint = buildMemoryFingerprint(normalizedText);
     const confidence = Math.max(0, Math.min(1, Number.isFinite(input.confidence) ? Number(input.confidence) : 0.75));
     const explicitFlag = input.isExplicit ? 1 : 0;
+    const metabotId = input.metabotId;
 
     let existing = this.getOne<CoworkUserMemoryRow>(`
       SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
       FROM user_memories
-      WHERE fingerprint = ? AND status != 'deleted'
+      WHERE fingerprint = ? AND status != 'deleted' AND metabot_id = ?
       ORDER BY updated_at DESC
       LIMIT 1
-    `, [fingerprint]);
+    `, [fingerprint, metabotId]);
 
     if (!existing) {
       const incomingSemanticKey = normalizeMemorySemanticKey(normalizedText);
@@ -983,10 +1022,10 @@ export class CoworkStore {
         const candidates = this.getAll<CoworkUserMemoryRow>(`
           SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
           FROM user_memories
-          WHERE status != 'deleted'
+          WHERE status != 'deleted' AND metabot_id = ?
           ORDER BY updated_at DESC
           LIMIT 200
-        `);
+        `, [metabotId]);
         let bestCandidate: CoworkUserMemoryRow | null = null;
         let bestScore = 0;
         for (const candidate of candidates) {
@@ -1027,9 +1066,9 @@ export class CoworkStore {
     const id = uuidv4();
     this.db.run(`
       INSERT INTO user_memories (
-        id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, 'created', ?, ?, NULL)
-    `, [id, normalizedText, fingerprint, confidence, explicitFlag, now, now]);
+        id, metabot_id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, NULL)
+    `, [id, metabotId, normalizedText, fingerprint, confidence, explicitFlag, now, now]);
     this.addMemorySource(id, input.source);
 
     const memory = this.getOne<CoworkUserMemoryRow>(`
@@ -1045,20 +1084,22 @@ export class CoworkStore {
   }
 
   listUserMemories(options: {
+    metabotId: number;
     query?: string;
     status?: CoworkUserMemoryStatus | 'all';
     limit?: number;
     offset?: number;
     includeDeleted?: boolean;
-  } = {}): CoworkUserMemory[] {
+  }): CoworkUserMemory[] {
+    const metabotId = options.metabotId;
     const query = normalizeMemoryText(options.query || '');
     const includeDeleted = Boolean(options.includeDeleted);
     const status = options.status || 'all';
     const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 200)));
     const offset = Math.max(0, Math.floor(options.offset ?? 0));
 
-    const clauses: string[] = [];
-    const params: Array<string | number> = [];
+    const clauses: string[] = ['metabot_id = ?'];
+    const params: Array<string | number> = [metabotId];
 
     if (!includeDeleted && status === 'all') {
       clauses.push(`status != 'deleted'`);
@@ -1072,7 +1113,7 @@ export class CoworkStore {
       params.push(`%${query.toLowerCase()}%`);
     }
 
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const whereClause = `WHERE ${clauses.join(' AND ')}`;
 
     const rows = this.getAll<CoworkUserMemoryRow>(`
       SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
@@ -1090,6 +1131,7 @@ export class CoworkStore {
     confidence?: number;
     isExplicit?: boolean;
     source?: CoworkUserMemorySourceInput;
+    metabotId: number;
   }): CoworkUserMemory {
     const result = this.createOrReviveUserMemory(input);
     this.saveDb();
@@ -1098,6 +1140,7 @@ export class CoworkStore {
 
   updateUserMemory(input: {
     id: string;
+    metabotId: number;
     text?: string;
     confidence?: number;
     status?: CoworkUserMemoryStatus;
@@ -1106,8 +1149,8 @@ export class CoworkStore {
     const current = this.getOne<CoworkUserMemoryRow>(`
       SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
       FROM user_memories
-      WHERE id = ?
-    `, [input.id]);
+      WHERE id = ? AND metabot_id = ?
+    `, [input.id, input.metabotId]);
     if (!current) return null;
 
     const now = Date.now();
@@ -1126,8 +1169,8 @@ export class CoworkStore {
     this.db.run(`
       UPDATE user_memories
       SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = ?, updated_at = ?
-      WHERE id = ?
-    `, [nextText, buildMemoryFingerprint(nextText), nextConfidence, nextExplicit, nextStatus, now, input.id]);
+      WHERE id = ? AND metabot_id = ?
+    `, [nextText, buildMemoryFingerprint(nextText), nextConfidence, nextExplicit, nextStatus, now, input.id, input.metabotId]);
 
     const updated = this.getOne<CoworkUserMemoryRow>(`
       SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
@@ -1139,13 +1182,15 @@ export class CoworkStore {
     return updated ? this.mapMemoryRow(updated) : null;
   }
 
-  deleteUserMemory(id: string): boolean {
+  deleteUserMemory(id: string, metabotId?: number): boolean {
     const now = Date.now();
+    const whereClause = metabotId != null ? 'id = ? AND metabot_id = ?' : 'id = ?';
+    const params = metabotId != null ? [now, id, metabotId] : [now, id];
     this.db.run(`
       UPDATE user_memories
       SET status = 'deleted', updated_at = ?
-      WHERE id = ?
-    `, [now, id]);
+      WHERE ${whereClause}
+    `, params);
     this.db.run(`
       UPDATE user_memory_sources
       SET is_active = 0
@@ -1155,7 +1200,7 @@ export class CoworkStore {
     return (this.db.getRowsModified?.() || 0) > 0;
   }
 
-  getUserMemoryStats(): CoworkUserMemoryStats {
+  getUserMemoryStats(metabotId: number): CoworkUserMemoryStats {
     const rows = this.getAll<{
       status: string;
       is_explicit: number;
@@ -1163,8 +1208,9 @@ export class CoworkStore {
     }>(`
       SELECT status, is_explicit, COUNT(*) AS count
       FROM user_memories
+      WHERE metabot_id = ?
       GROUP BY status, is_explicit
-    `);
+    `, [metabotId]);
 
     const stats: CoworkUserMemoryStats = {
       total: 0,
@@ -1188,10 +1234,14 @@ export class CoworkStore {
     return stats;
   }
 
-  autoDeleteNonPersonalMemories(): number {
-    const rows = this.getAll<Pick<CoworkUserMemoryRow, 'id' | 'text'>>(
-      `SELECT id, text FROM user_memories WHERE status = 'created'`
-    );
+  autoDeleteNonPersonalMemories(metabotId?: number): number {
+    const resolvedMetabotId = metabotId ?? this.getDefaultMetabotId();
+    const rows = resolvedMetabotId == null
+      ? []
+      : this.getAll<Pick<CoworkUserMemoryRow, 'id' | 'text'>>(
+          `SELECT id, text FROM user_memories WHERE status = 'created' AND metabot_id = ?`,
+          [resolvedMetabotId]
+        );
     if (rows.length === 0) return 0;
 
     const now = Date.now();
@@ -1227,19 +1277,20 @@ export class CoworkStore {
     `, [sessionId]);
   }
 
-  markOrphanImplicitMemoriesStale(): void {
+  markOrphanImplicitMemoriesStale(metabotId: number): void {
     const now = Date.now();
     this.db.run(`
       UPDATE user_memories
       SET status = 'stale', updated_at = ?
-      WHERE is_explicit = 0
+      WHERE metabot_id = ?
+        AND is_explicit = 0
         AND status = 'created'
         AND NOT EXISTS (
           SELECT 1
           FROM user_memory_sources s
           WHERE s.memory_id = user_memories.id AND s.is_active = 1
         )
-    `, [now]);
+    `, [now, metabotId]);
   }
 
   async applyTurnMemoryUpdates(options: ApplyTurnMemoryUpdatesOptions): Promise<ApplyTurnMemoryUpdatesResult> {
@@ -1252,6 +1303,11 @@ export class CoworkStore {
       llmReviewed: 0,
       skipped: 0,
     };
+
+    const metabotId = this.resolveMetabotIdForMemory(options.sessionId);
+    if (metabotId == null) {
+      return result;
+    }
 
     const extracted = extractTurnMemoryChanges({
       userText: options.userText,
@@ -1291,6 +1347,7 @@ export class CoworkStore {
             sessionId: options.sessionId,
             messageId: options.userMessageId,
           },
+          metabotId,
         });
 
         if (!change.isExplicit && options.assistantMessageId) {
@@ -1313,7 +1370,7 @@ export class CoworkStore {
         continue;
       }
 
-      const candidates = this.listUserMemories({ status: 'all', includeDeleted: false, limit: 100 });
+      const candidates = this.listUserMemories({ metabotId, status: 'all', includeDeleted: false, limit: 100 });
       let target: CoworkUserMemory | null = null;
       let bestScore = 0;
       for (const entry of candidates) {
@@ -1330,12 +1387,12 @@ export class CoworkStore {
         continue;
       }
 
-      const deleted = this.deleteUserMemory(target.id);
+      const deleted = this.deleteUserMemory(target.id, metabotId);
       if (deleted) result.deleted += 1;
       else result.skipped += 1;
     }
 
-    this.markOrphanImplicitMemoriesStale();
+    this.markOrphanImplicitMemoriesStale(metabotId);
     this.saveDb();
     return result;
   }

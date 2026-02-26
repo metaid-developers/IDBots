@@ -373,11 +373,14 @@ type SandboxSkillEntry = {
 export interface CoworkRunnerOptions {
   /** When set, env overrides (e.g. Twin wallet for metabot-basic) are merged into session env for tool execution. */
   getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
+  /** When set, fetches MetaBot by id for persona injection into system prompt. */
+  getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
 }
 
 export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
+  private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
   private activeSessions: Map<string, ActiveSession> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
@@ -391,6 +394,7 @@ export class CoworkRunner extends EventEmitter {
     super();
     this.store = store;
     this.getSkillSessionEnvOverrides = options?.getSkillSessionEnvOverrides;
+    this.getMetabotById = options?.getMetabotById;
   }
 
   private isSessionStopRequested(sessionId: string, activeSession?: ActiveSession): boolean {
@@ -501,13 +505,20 @@ export class CoworkRunner extends EventEmitter {
       .replace(/'/g, '&apos;');
   }
 
-  private buildUserMemoriesXml(): string {
+  private buildUserMemoriesXml(sessionId: string): string {
     const config = this.store.getConfig();
     if (!config.memoryEnabled) {
       return '<userMemories></userMemories>';
     }
 
+    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
+    if (metabotId == null) {
+      return '<userMemories></userMemories>';
+    }
+
+    console.log('[Memory System] Target MetaBot ID: ' + metabotId + ' (read, sessionId=' + sessionId + ')');
     const memories = this.store.listUserMemories({
+      metabotId,
       status: 'created',
       includeDeleted: false,
       limit: config.memoryUserMemoriesMaxItems,
@@ -637,9 +648,25 @@ export class CoworkRunner extends EventEmitter {
     is_explicit?: boolean;
     limit?: number;
     query?: string;
-  }): { text: string; isError: boolean } {
+  }, sessionId: string): { text: string; isError: boolean } {
+    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
+    if (metabotId == null) {
+      return {
+        text: this.formatMemoryUserEditsResult({
+          action: args.action,
+          successCount: 0,
+          failedCount: 1,
+          changedIds: [],
+          reason: 'could not resolve MetaBot for session',
+        }),
+        isError: true,
+      };
+    }
+    console.log('[Memory System] Target MetaBot ID: ' + metabotId + ' (write, sessionId=' + sessionId + ')');
+
     if (args.action === 'list') {
       const entries = this.store.listUserMemories({
+        metabotId,
         query: args.query,
         status: 'all',
         includeDeleted: true,
@@ -690,10 +717,18 @@ export class CoworkRunner extends EventEmitter {
           isError: true,
         };
       }
+      const session = this.store.getSession(sessionId);
+      const lastUserMsg = session?.messages ? [...session.messages].reverse().find((m) => m.type === 'user') : null;
       const entry = this.store.createUserMemory({
         text: validation.text,
         confidence: args.confidence,
         isExplicit: args.is_explicit ?? true,
+        metabotId,
+        source: {
+          sessionId,
+          messageId: lastUserMsg?.id,
+          role: 'user',
+        },
       });
       return {
         text: this.formatMemoryUserEditsResult({
@@ -737,6 +772,7 @@ export class CoworkRunner extends EventEmitter {
       }
       const updated = this.store.updateUserMemory({
         id: args.id.trim(),
+        metabotId,
         text: args.text,
         confidence: args.confidence,
         status: args.status,
@@ -778,7 +814,7 @@ export class CoworkRunner extends EventEmitter {
       };
     }
 
-    const deleted = this.store.deleteUserMemory(args.id.trim());
+    const deleted = this.store.deleteUserMemory(args.id.trim(), metabotId);
     return {
       text: this.formatMemoryUserEditsResult({
         action: 'delete',
@@ -1791,6 +1827,34 @@ export class CoworkRunner extends EventEmitter {
     ].join('\n');
   }
 
+  /**
+   * Build MetaBot persona prefix for system prompt. Returns empty string if no MetaBot or no getter.
+   * Safe fallback for legacy sessions without metabot_id.
+   * Includes explicit name/identity so the model reliably answers "What is your name?" from metabots table.
+   */
+  private buildMetabotPersonaPrefix(sessionId: string): string {
+    if (!this.getMetabotById) return '';
+    const session = this.store.getSession(sessionId);
+    const metabotId = session?.metabotId;
+    if (metabotId == null || typeof metabotId !== 'number') return '';
+    const metabot = this.getMetabotById(metabotId);
+    if (!metabot) return '';
+    const parts: string[] = [
+      `You are ${metabot.name}. Your name is ${metabot.name}. When asked your name (e.g. "你叫什么名字" or "What is your name"), answer: ${metabot.name}.`,
+      `Role: ${metabot.role || 'assistant'}.`,
+    ];
+    if (metabot.background?.trim()) {
+      parts.push(`Background: ${metabot.background.trim()}.`);
+    }
+    if (metabot.soul?.trim()) {
+      parts.push(`Your core soul/personality: ${metabot.soul.trim()}.`);
+    }
+    if (metabot.goal?.trim()) {
+      parts.push(`Your goal: ${metabot.goal.trim()}.`);
+    }
+    return parts.join(' ');
+  }
+
   private composeEffectiveSystemPrompt(
     baseSystemPrompt: string,
     workspaceRoot: string,
@@ -2071,12 +2135,14 @@ export class CoworkRunner extends EventEmitter {
     }
 
     const baseSystemPrompt = options.systemPrompt ?? session.systemPrompt;
+    const personaPrefix = this.buildMetabotPersonaPrefix(sessionId);
+    const baseWithPersona = [personaPrefix, baseSystemPrompt].filter((s) => s?.trim()).join('\n\n');
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
-      baseSystemPrompt,
+      baseWithPersona,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildUserMemoriesXml(),
+      this.buildUserMemoriesXml(sessionId),
       this.store.getConfig().memoryEnabled
     );
 
@@ -2124,12 +2190,14 @@ export class CoworkRunner extends EventEmitter {
     // Use provided systemPrompt (e.g. with updated skill routing) or fall back to session's stored one.
     // Always prepend workspace safety prompt so folder boundary rules are enforced at prompt level.
     const baseSystemPrompt = options.systemPrompt ?? session.systemPrompt;
+    const personaPrefix = this.buildMetabotPersonaPrefix(sessionId);
+    const baseWithPersona = [personaPrefix, baseSystemPrompt].filter((s) => s?.trim()).join('\n\n');
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
-      baseSystemPrompt,
+      baseWithPersona,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildUserMemoriesXml(),
+      this.buildUserMemoriesXml(sessionId),
       this.store.getConfig().memoryEnabled
     );
 
@@ -2201,7 +2269,7 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
-  private handleHostToolExecution(payload: Record<string, unknown>): { success: boolean; text: string } {
+  private handleHostToolExecution(payload: Record<string, unknown>, sessionId: string): { success: boolean; text: string } {
     const toolName = String(payload.toolName ?? payload.name ?? '');
     const rawInput = payload.toolInput ?? payload.input ?? {};
     const toolInput =
@@ -2258,7 +2326,7 @@ export class CoworkRunner extends EventEmitter {
           is_explicit: typeof toolInput.is_explicit === 'boolean' ? toolInput.is_explicit : undefined,
           limit: typeof toolInput.limit === 'number' ? toolInput.limit : undefined,
           query: typeof toolInput.query === 'string' ? toolInput.query : undefined,
-        });
+        }, sessionId);
         return {
           success: !result.isError,
           text: result.text,
@@ -2571,7 +2639,7 @@ export class CoworkRunner extends EventEmitter {
               query?: string;
             }) => {
               try {
-                const result = this.runMemoryUserEditsTool(args);
+                const result = this.runMemoryUserEditsTool(args, sessionId);
                 return {
                   content: [{
                     type: 'text',
@@ -2992,7 +3060,7 @@ export class CoworkRunner extends EventEmitter {
           const requestId = String(payload.requestId ?? '');
           if (!requestId) return;
 
-          const result = this.handleHostToolExecution(payload);
+          const result = this.handleHostToolExecution(payload, sessionId);
           this.writeSandboxHostToolResponse(activeSession, paths.responsesDir, requestId, {
             type: 'host_tool_response',
             requestId,
@@ -3436,7 +3504,7 @@ export class CoworkRunner extends EventEmitter {
       if (messageType === 'host_tool_request') {
         const reqId = String(payload.requestId ?? '');
         if (!reqId) return;
-        const result = this.handleHostToolExecution(payload);
+        const result = this.handleHostToolExecution(payload, sessionId);
         this.writeSandboxHostToolResponse(activeSession, paths.responsesDir, reqId, {
           type: 'host_tool_response',
           requestId: reqId,

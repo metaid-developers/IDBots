@@ -541,16 +541,34 @@ const getCoworkRunner = () => {
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
         const skillIds = session?.activeSkillIds ?? [];
-        // Inject Twin when metabot-basic is selected, or when no skills selected (default: use main Agent for buzz)
-        const shouldInjectTwin = skillIds.length === 0 || skillIds.includes('metabot-basic');
-        if (!shouldInjectTwin) return {};
-        const twin = getMetabotStore().getTwinWallet();
+        // Inject MetaBot wallet when metabot-basic is selected, or when no skills selected (default)
+        const shouldInject = skillIds.length === 0 || skillIds.includes('metabot-basic');
+        if (!shouldInject) return {};
+        const metabotStore = getMetabotStore();
+        // Prefer session's selected MetaBot; fall back to Twin for legacy sessions without metabotId
+        const metabotId = session?.metabotId;
+        if (metabotId != null && typeof metabotId === 'number') {
+          const metabot = metabotStore.getMetabotById(metabotId);
+          const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
+          if (metabot && wallet) {
+            return {
+              IDBOTS_TWIN_MNEMONIC: wallet.mnemonic,
+              IDBOTS_TWIN_NAME: metabot.name,
+              IDBOTS_TWIN_PATH: wallet.path,
+            };
+          }
+        }
+        const twin = metabotStore.getTwinWallet();
         if (!twin) return {};
         return {
           IDBOTS_TWIN_MNEMONIC: twin.mnemonic,
           IDBOTS_TWIN_NAME: twin.name,
           IDBOTS_TWIN_PATH: twin.path,
         };
+      },
+      getMetabotById: (id: number) => {
+        const m = getMetabotStore().getMetabotById(id);
+        return m ? { name: m.name, role: m.role, soul: m.soul, background: m.background ?? null, goal: m.goal ?? null } : null;
       },
     });
 
@@ -1028,6 +1046,7 @@ if (!gotTheLock) {
     systemPrompt?: string;
     title?: string;
     activeSkillIds?: string[];
+    metabotId?: number | null;
   }) => {
     try {
       const coworkStoreInstance = getCoworkStore();
@@ -1052,7 +1071,8 @@ if (!gotTheLock) {
         taskWorkingDirectory,
         systemPrompt,
         config.executionMode || 'local',
-        options.activeSkillIds || []
+        options.activeSkillIds || [],
+        options.metabotId ?? null
       );
       const runner = getCoworkRunner();
 
@@ -1302,6 +1322,7 @@ if (!gotTheLock) {
     return getSandboxStatus();
   });
   ipcMain.handle('cowork:memory:listEntries', async (_event, input: {
+    sessionId?: string;
     query?: string;
     status?: 'created' | 'stale' | 'deleted' | 'all';
     includeDeleted?: boolean;
@@ -1309,7 +1330,13 @@ if (!gotTheLock) {
     offset?: number;
   }) => {
     try {
-      const entries = getCoworkStore().listUserMemories({
+      const store = getCoworkStore();
+      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      if (metabotId == null) {
+        return { success: false, error: 'No MetaBot available for memory' };
+      }
+      const entries = store.listUserMemories({
+        metabotId,
         query: input?.query?.trim() || undefined,
         status: input?.status || 'all',
         includeDeleted: Boolean(input?.includeDeleted),
@@ -1325,15 +1352,22 @@ if (!gotTheLock) {
     }
   });
   ipcMain.handle('cowork:memory:createEntry', async (_event, input: {
+    sessionId?: string;
     text: string;
     confidence?: number;
     isExplicit?: boolean;
   }) => {
     try {
-      const entry = getCoworkStore().createUserMemory({
+      const store = getCoworkStore();
+      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      if (metabotId == null) {
+        return { success: false, error: 'No MetaBot available for memory' };
+      }
+      const entry = store.createUserMemory({
         text: input.text,
         confidence: input.confidence,
         isExplicit: input?.isExplicit,
+        metabotId,
       });
       return { success: true, entry };
     } catch (error) {
@@ -1344,6 +1378,7 @@ if (!gotTheLock) {
     }
   });
   ipcMain.handle('cowork:memory:updateEntry', async (_event, input: {
+    sessionId?: string;
     id: string;
     text?: string;
     confidence?: number;
@@ -1351,8 +1386,14 @@ if (!gotTheLock) {
     isExplicit?: boolean;
   }) => {
     try {
-      const entry = getCoworkStore().updateUserMemory({
+      const store = getCoworkStore();
+      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      if (metabotId == null) {
+        return { success: false, error: 'No MetaBot available for memory' };
+      }
+      const entry = store.updateUserMemory({
         id: input.id,
+        metabotId,
         text: input.text,
         confidence: input.confidence,
         status: input.status,
@@ -1370,10 +1411,13 @@ if (!gotTheLock) {
     }
   });
   ipcMain.handle('cowork:memory:deleteEntry', async (_event, input: {
+    sessionId?: string;
     id: string;
   }) => {
     try {
-      const success = getCoworkStore().deleteUserMemory(input.id);
+      const store = getCoworkStore();
+      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      const success = store.deleteUserMemory(input.id, metabotId ?? undefined);
       return success
         ? { success: true }
         : { success: false, error: 'Memory entry not found' };
@@ -1384,9 +1428,14 @@ if (!gotTheLock) {
       };
     }
   });
-  ipcMain.handle('cowork:memory:getStats', async () => {
+  ipcMain.handle('cowork:memory:getStats', async (_event, input?: { sessionId?: string }) => {
     try {
-      const stats = getCoworkStore().getUserMemoryStats();
+      const store = getCoworkStore();
+      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      if (metabotId == null) {
+        return { success: false, error: 'No MetaBot available for memory' };
+      }
+      const stats = store.getUserMemoryStats(metabotId);
       return { success: true, stats };
     } catch (error) {
       return {
@@ -1591,6 +1640,15 @@ if (!gotTheLock) {
   });
 
   // ==================== MetaBot IPC Handlers ====================
+
+  ipcMain.handle('idbots:getMetaBots', async () => {
+    try {
+      const list = getMetabotStore().getAllMetaBots();
+      return { success: true, list };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get MetaBots list' };
+    }
+  });
 
   ipcMain.handle('metabot:list', async () => {
     try {

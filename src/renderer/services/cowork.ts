@@ -372,6 +372,7 @@ class CoworkService {
   }
 
   async listMemoryEntries(input: {
+    sessionId?: string;
     query?: string;
     status?: 'created' | 'stale' | 'deleted' | 'all';
     includeDeleted?: boolean;
@@ -386,6 +387,7 @@ class CoworkService {
   }
 
   async createMemoryEntry(input: {
+    sessionId?: string;
     text: string;
     confidence?: number;
     isExplicit?: boolean;
@@ -398,6 +400,7 @@ class CoworkService {
   }
 
   async updateMemoryEntry(input: {
+    sessionId?: string;
     id: string;
     text?: string;
     confidence?: number;
@@ -411,17 +414,17 @@ class CoworkService {
     return result.entry;
   }
 
-  async deleteMemoryEntry(input: { id: string }): Promise<boolean> {
+  async deleteMemoryEntry(input: { sessionId?: string; id: string }): Promise<boolean> {
     const api = window.electron?.cowork?.deleteMemoryEntry;
     if (!api) return false;
     const result = await api(input);
     return Boolean(result?.success);
   }
 
-  async getMemoryStats(): Promise<CoworkMemoryStats | null> {
+  async getMemoryStats(input?: { sessionId?: string }): Promise<CoworkMemoryStats | null> {
     const api = window.electron?.cowork?.getMemoryStats;
     if (!api) return null;
-    const result = await api();
+    const result = await api(input);
     if (!result?.success || !result.stats) return null;
     return result.stats;
   }

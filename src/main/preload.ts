@@ -110,7 +110,7 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('get-recent-cwds', limit),
   cowork: {
     // Session management
-    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
+    startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null }) =>
       ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
       ipcRenderer.invoke('cowork:session:continue', options),
@@ -174,8 +174,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:memory:updateEntry', input),
     deleteMemoryEntry: (input: { id: string }) =>
       ipcRenderer.invoke('cowork:memory:deleteEntry', input),
-    getMemoryStats: () =>
-      ipcRenderer.invoke('cowork:memory:getStats'),
+    getMemoryStats: (input?: { sessionId?: string }) =>
+      ipcRenderer.invoke('cowork:memory:getStats', input),
     getSandboxStatus: () =>
       ipcRenderer.invoke('cowork:sandbox:status'),
     installSandbox: () =>
@@ -295,6 +295,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('scheduledTask:runUpdate', handler);
       return () => ipcRenderer.removeListener('scheduledTask:runUpdate', handler);
     },
+  },
+  idbots: {
+    getMetaBots: () => ipcRenderer.invoke('idbots:getMetaBots'),
   },
   metabot: {
     list: () => ipcRenderer.invoke('metabot:list'),
