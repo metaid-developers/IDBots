@@ -318,6 +318,7 @@ export class IMGatewayManager extends EventEmitter {
    * Update configuration
    */
   setConfig(config: Partial<IMGatewayConfig>): void {
+    const previousConfig = this.imStore.getConfig();
     this.imStore.setConfig(config);
 
     // Update chat handler if settings changed
@@ -329,6 +330,81 @@ export class IMGatewayManager extends EventEmitter {
     if (config.telegram && this.telegramGateway) {
       this.telegramGateway.updateConfig(config.telegram);
     }
+
+    // Hot-update NIM config: if credential fields changed while gateway is connected,
+    // restart the gateway transparently so the SDK re-logs in with new credentials.
+    if (config.nim && this.nimGateway) {
+      const oldNim = previousConfig.nim;
+      const newNim = { ...oldNim, ...config.nim };
+      const credentialsChanged =
+        newNim.appKey !== oldNim.appKey ||
+        newNim.account !== oldNim.account ||
+        newNim.token !== oldNim.token;
+
+      if (credentialsChanged && this.nimGateway.isConnected()) {
+        console.log('[IMGatewayManager] NIM credentials changed, restarting gateway...');
+        this.restartGateway('nim').catch((err) => {
+          console.error('[IMGatewayManager] Failed to restart NIM after config change:', err.message);
+        });
+      }
+    }
+
+    // Hot-update DingTalk config: restart if credential fields changed
+    if (config.dingtalk && this.dingtalkGateway) {
+      const oldDt = previousConfig.dingtalk;
+      const newDt = { ...oldDt, ...config.dingtalk };
+      const credentialsChanged =
+        newDt.clientId !== oldDt.clientId ||
+        newDt.clientSecret !== oldDt.clientSecret;
+
+      if (credentialsChanged && this.dingtalkGateway.isConnected()) {
+        console.log('[IMGatewayManager] DingTalk credentials changed, restarting gateway...');
+        this.restartGateway('dingtalk').catch((err) => {
+          console.error('[IMGatewayManager] Failed to restart DingTalk after config change:', err.message);
+        });
+      }
+    }
+
+    // Hot-update Feishu config: restart if credential fields changed
+    if (config.feishu && this.feishuGateway) {
+      const oldFs = previousConfig.feishu;
+      const newFs = { ...oldFs, ...config.feishu };
+      const credentialsChanged =
+        newFs.appId !== oldFs.appId ||
+        newFs.appSecret !== oldFs.appSecret;
+
+      if (credentialsChanged && this.feishuGateway.isConnected()) {
+        console.log('[IMGatewayManager] Feishu credentials changed, restarting gateway...');
+        this.restartGateway('feishu').catch((err) => {
+          console.error('[IMGatewayManager] Failed to restart Feishu after config change:', err.message);
+        });
+      }
+    }
+
+    // Hot-update Discord config: restart if credential fields changed
+    if (config.discord && this.discordGateway) {
+      const oldDc = previousConfig.discord;
+      const newDc = { ...oldDc, ...config.discord };
+      const credentialsChanged = newDc.botToken !== oldDc.botToken;
+
+      if (credentialsChanged && this.discordGateway.isConnected()) {
+        console.log('[IMGatewayManager] Discord credentials changed, restarting gateway...');
+        this.restartGateway('discord').catch((err) => {
+          console.error('[IMGatewayManager] Failed to restart Discord after config change:', err.message);
+        });
+      }
+    }
+  }
+
+  /**
+   * Restart a specific gateway (stop then start with latest config)
+   * Used for hot-reloading when credentials change at runtime.
+   */
+  private async restartGateway(platform: IMPlatform): Promise<void> {
+    console.log(`[IMGatewayManager] Restarting ${platform} gateway...`);
+    await this.stopGateway(platform);
+    await this.startGateway(platform);
+    console.log(`[IMGatewayManager] ${platform} gateway restarted successfully`);
   }
 
   // ==================== Status ====================

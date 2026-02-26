@@ -3,7 +3,7 @@
  * Configuration UI for DingTalk, Feishu and Telegram IM bots
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
@@ -44,6 +44,13 @@ const IMSettings: React.FC = () => {
   const [connectivityModalPlatform, setConnectivityModalPlatform] = useState<IMPlatform | null>(null);
   const [language, setLanguage] = useState<'zh' | 'en'>(i18nService.getLanguage());
   const [allowedUserIdInput, setAllowedUserIdInput] = useState('');
+
+  // Track the last-persisted NIM credentials so we can detect real changes on save
+  const savedNimConfigRef = useRef<{ appKey: string; account: string; token: string }>({
+    appKey: config.nim.appKey,
+    account: config.nim.account,
+    token: config.nim.token,
+  });
 
   // Subscribe to language changes
   useEffect(() => {
@@ -86,9 +93,28 @@ const IMSettings: React.FC = () => {
     dispatch(setNimConfig({ [field]: value }));
   };
 
-  // Save config on blur
+  // Save config on blur — also auto-triggers NIM connectivity test when
+  // the NIM toggle is ON and credential fields have changed.
   const handleSaveConfig = async () => {
     await imService.updateConfig(config);
+
+    // Detect NIM credential changes while the gateway is enabled
+    const prev = savedNimConfigRef.current;
+    const cur = config.nim;
+    const nimCredentialsChanged =
+      cur.appKey !== prev.appKey ||
+      cur.account !== prev.account ||
+      cur.token !== prev.token;
+
+    // Update the snapshot regardless
+    savedNimConfigRef.current = { appKey: cur.appKey, account: cur.account, token: cur.token };
+
+    if (nimCredentialsChanged && cur.enabled && cur.appKey && cur.account && cur.token) {
+      // Auto-run connectivity test: stop → start → test (silently, no modal)
+      await imService.stopGateway('nim');
+      await imService.startGateway('nim');
+      await runConnectivityTest('nim', { nim: cur } as Partial<IMGatewayConfig>);
+    }
   };
 
   const getCheckTitle = (code: IMConnectivityCheck['code']): string => {
@@ -218,6 +244,13 @@ const IMSettings: React.FC = () => {
 
   const handleConnectivityTest = async (platform: IMPlatform) => {
     setConnectivityModalPlatform(platform);
+    // 1. Persist latest config to backend
+    await imService.updateConfig(config);
+    // 2. Stop the gateway (ensure clean state)
+    await imService.stopGateway(platform);
+    // 3. Start the gateway with latest config
+    await imService.startGateway(platform);
+    // 4. Run connectivity test
     await runConnectivityTest(platform, {
       [platform]: config[platform],
     } as Partial<IMGatewayConfig>);
