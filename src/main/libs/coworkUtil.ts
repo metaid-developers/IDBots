@@ -314,10 +314,113 @@ function resolveWindowsGitBashPath(): string | null {
   return null;
 }
 
+/**
+ * Windows system directories that must be in PATH for built-in commands
+ * (ipconfig, systeminfo, netstat, ping, nslookup, etc.) to work.
+ */
+const WINDOWS_SYSTEM_PATH_ENTRIES = [
+  'System32',
+  'System32\\Wbem',
+  'System32\\WindowsPowerShell\\v1.0',
+  'System32\\OpenSSH',
+];
+
+/**
+ * Critical Windows environment variables that some system commands and DLLs depend on.
+ * Without these, commands like ipconfig may fail even if System32 is in PATH.
+ */
+const WINDOWS_CRITICAL_ENV_VARS: Record<string, () => string | undefined> = {
+  SystemRoot: () => process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\windows',
+  windir: () => process.env.windir || process.env.WINDIR || process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\windows',
+  COMSPEC: () => process.env.COMSPEC || process.env.comspec || 'C:\\windows\\system32\\cmd.exe',
+  SYSTEMDRIVE: () => process.env.SYSTEMDRIVE || process.env.SystemDrive || 'C:',
+};
+
+/**
+ * Ensure critical Windows system environment variables are present in the env object.
+ *
+ * Packaged Electron apps or certain launch contexts may strip environment variables
+ * like SystemRoot, windir, COMSPEC, and SYSTEMDRIVE. Many Windows system commands
+ * and DLLs depend on these variables to locate system resources.
+ *
+ * Additionally, the Claude Agent SDK's shell snapshot mechanism runs `echo $PATH`
+ * via `shell: true`, which on Windows uses cmd.exe. The captured PATH is then
+ * baked into the snapshot file. If these critical variables are missing, the shell
+ * environment may be broken and commands fail silently.
+ */
+function ensureWindowsSystemEnvVars(env: Record<string, string | undefined>): void {
+  const injected: string[] = [];
+
+  for (const [key, resolver] of Object.entries(WINDOWS_CRITICAL_ENV_VARS)) {
+    // Check both the exact case and common variants (Windows env vars are case-insensitive
+    // but Node.js process.env on Windows normalizes to the original casing)
+    if (!env[key]) {
+      const value = resolver();
+      if (value) {
+        env[key] = value;
+        injected.push(`${key}=${value}`);
+      }
+    }
+  }
+
+  if (injected.length > 0) {
+    coworkLog('INFO', 'ensureWindowsSystemEnvVars', `Injected missing Windows system env vars: ${injected.join(', ')}`);
+  }
+}
+
+/**
+ * Ensure Windows system directories (System32, etc.) are present in PATH.
+ *
+ * When the Electron app launches, process.env.PATH normally includes System32.
+ * However, the Claude Agent SDK creates a "shell snapshot" by running git-bash
+ * with `-c -l` (login shell). The git-bash `/etc/profile` rebuilds PATH based on
+ * MSYS2_PATH_TYPE (default: "inherit"), which preserves ORIGINAL_PATH from the
+ * inherited environment. If System32 entries are somehow missing from the inherited
+ * PATH, they won't appear in the snapshot either.
+ *
+ * This function ensures that essential Windows system directories are always
+ * present in PATH before the environment is handed to the SDK.
+ */
+function ensureWindowsSystemPathEntries(env: Record<string, string | undefined>): void {
+  const systemRoot = env.SystemRoot || env.SYSTEMROOT || 'C:\\windows';
+  const currentPath = env.PATH || '';
+  const currentEntries = currentPath.split(delimiter).map((entry) => entry.toLowerCase());
+
+  const missingDirs: string[] = [];
+  for (const relDir of WINDOWS_SYSTEM_PATH_ENTRIES) {
+    const fullDir = join(systemRoot, relDir);
+    if (!currentEntries.includes(fullDir.toLowerCase()) && existsSync(fullDir)) {
+      missingDirs.push(fullDir);
+    }
+  }
+
+  // Also ensure the systemRoot itself (e.g. C:\windows) is in PATH
+  if (!currentEntries.includes(systemRoot.toLowerCase()) && existsSync(systemRoot)) {
+    missingDirs.push(systemRoot);
+  }
+
+  if (missingDirs.length > 0) {
+    // Append system dirs at the END so they don't override user tools
+    env.PATH = currentPath ? `${currentPath}${delimiter}${missingDirs.join(delimiter)}` : missingDirs.join(delimiter);
+    coworkLog('INFO', 'ensureWindowsSystemPathEntries', `Appended missing Windows system PATH entries: ${missingDirs.join(', ')}`);
+  }
+}
+
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
   // On Windows, resolve git-bash and ensure Git toolchain directories are available in PATH.
   if (process.platform === 'win32') {
     env.LOBSTERAI_ELECTRON_PATH = process.execPath;
+
+    // Ensure critical Windows system environment variables are always present.
+    // Packaged Electron apps or certain launch contexts may lack these variables,
+    // which causes Windows built-in commands (ipconfig, systeminfo, netstat, etc.)
+    // to fail when executed inside git-bash via the Claude Agent SDK.
+    ensureWindowsSystemEnvVars(env);
+
+    // Ensure Windows system directories (System32, etc.) are always in PATH.
+    // The Claude Agent SDK's shell snapshot mechanism captures PATH and may lose
+    // system directories if they were missing from the inherited environment.
+    ensureWindowsSystemPathEntries(env);
 
     const configuredBashPath = normalizeWindowsPath(env.CLAUDE_CODE_GIT_BASH_PATH);
     const bashPath = configuredBashPath && existsSync(configuredBashPath)
