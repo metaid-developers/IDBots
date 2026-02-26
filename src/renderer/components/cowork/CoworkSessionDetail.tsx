@@ -1150,6 +1150,24 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
+  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null } | null>(null);
+
+  // Fetch MetaBot when session has metabotId
+  useEffect(() => {
+    const metabotId = currentSession?.metabotId;
+    if (metabotId == null || typeof metabotId !== 'number') {
+      setSessionMetabot(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchMetaBot = async () => {
+      const result = await window.electron?.metabot?.get?.(metabotId);
+      if (cancelled || !result?.success || !result.metabot) return;
+      setSessionMetabot({ name: result.metabot.name, avatar: result.metabot.avatar ?? null });
+    };
+    void fetchMetaBot();
+    return () => { cancelled = true; };
+  }, [currentSession?.metabotId]);
 
   // Reset rename value when session changes
   useEffect(() => {
@@ -1629,6 +1647,22 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 <ComposeIcon className="h-4 w-4" />
               </button>
               {updateBadge}
+            </div>
+          )}
+          {sessionMetabot && (
+            <div className="non-draggable flex items-center gap-2 shrink-0">
+              <div className="w-7 h-7 rounded-full overflow-hidden flex items-center justify-center dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+                {sessionMetabot.avatar ? (
+                  <img src={sessionMetabot.avatar} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
+                    {sessionMetabot.name.slice(0, 2) || '?'}
+                  </span>
+                )}
+              </div>
+              <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate max-w-[100px]">
+                {sessionMetabot.name}
+              </span>
             </div>
           )}
           {isRenaming ? (

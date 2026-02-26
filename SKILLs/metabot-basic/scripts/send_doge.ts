@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * DOGE 转账：使用指定 Agent 向地址转 DOGE（最小 0.01 DOGE）。
+ * DOGE transfer: use specified Agent to send DOGE (min 0.01 DOGE).
+ * When run from IDBots Cowork with metabot-basic skill, session MetaBot wallet is injected via env (IDBOTS_TWIN_*).
+ * Otherwise falls back to account.json by agentName.
  * Usage: npx ts-node scripts/send_doge.ts <agentName> <toAddress> <amountSatoshis> [--confirm]
- * 例: npx ts-node scripts/send_doge.ts "<agent_name>" "<to_address>" 1000000
  */
 
 import * as readline from 'readline'
 import { sendDoge, MIN_DOGE_TRANSFER_SATOSHIS } from './transfer'
 import { readAccountFile, findAccountByKeyword } from './utils'
 import { parseAddressIndexFromPath } from './wallet'
+
+const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0"
 
 async function confirm(question: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -36,15 +39,29 @@ async function main() {
     process.exit(1)
   }
 
-  const accountData = readAccountFile()
-  const account = findAccountByKeyword(agentName, accountData)
-  if (!account) {
-    console.error(`❌ 未找到账户: ${agentName}`)
-    process.exit(1)
-  }
-  if (!account.mnemonic) {
-    console.error(`❌ 账户 ${agentName} 无 mnemonic`)
-    process.exit(1)
+  let mnemonic: string
+  let pathStr: string
+  let displayName: string
+
+  if (process.env.IDBOTS_TWIN_MNEMONIC && process.env.IDBOTS_TWIN_NAME) {
+    mnemonic = process.env.IDBOTS_TWIN_MNEMONIC.trim()
+    pathStr = (process.env.IDBOTS_TWIN_PATH || DEFAULT_WALLET_PATH).trim()
+    displayName = process.env.IDBOTS_TWIN_NAME
+  } else {
+    const accountData = readAccountFile()
+    const account = findAccountByKeyword(agentName, accountData)
+    if (!account) {
+      console.error(`❌ 未找到账户: ${agentName}`)
+      console.error('   在 IDBots 中请启用 metabot-basic 技能后使用；或确保 account.json 中存在该 Agent')
+      process.exit(1)
+    }
+    if (!account.mnemonic) {
+      console.error(`❌ 账户 ${agentName} 无 mnemonic`)
+      process.exit(1)
+    }
+    mnemonic = account.mnemonic.trim()
+    pathStr = (account.path || DEFAULT_WALLET_PATH).trim()
+    displayName = agentName
   }
 
   const satoshis = parseInt(amountStr, 10)
@@ -54,7 +71,7 @@ async function main() {
   }
 
   console.log('--- DOGE 转账确认 ---')
-  console.log('  发起账户:', agentName)
+  console.log('  发起账户:', displayName)
   console.log('  接收地址:', toAddress)
   console.log('  金额:', satoshis, 'satoshis (=', (satoshis / 1e8).toFixed(8), 'DOGE)')
   console.log('---')
@@ -68,16 +85,10 @@ async function main() {
   }
 
   try {
-    const accountIndex = accountData.accountList.indexOf(account)
+    const addressIndex = parseAddressIndexFromPath(pathStr)
     const result = await sendDoge(
-      {
-        toAddress,
-        satoshis,
-      },
-      {
-        accountIndex: accountIndex >= 0 ? accountIndex : 0,
-        addressIndex: parseAddressIndexFromPath(account.path),
-      }
+      { toAddress, satoshis },
+      { mnemonic, addressIndex }
     )
     if ('txId' in result) {
       console.log('✅ 转账成功')

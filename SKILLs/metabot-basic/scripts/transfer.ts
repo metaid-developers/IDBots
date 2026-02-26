@@ -25,6 +25,8 @@ export type Receiver = {
 export type SendSpaceOptions = {
   addressIndex?: number
   accountIndex?: number
+  /** When provided (e.g. from IDBOTS_TWIN_MNEMONIC), used instead of account.json */
+  mnemonic?: string
 }
 
 type TransferResult = {
@@ -56,10 +58,16 @@ export async function sendSpace(
   }
 ): Promise<{ res: TransferResult[]; txids: string[]; broadcasted: boolean }> {
   const { tasks, broadcast = true, feeb = 1, options = {} } = params
-  const { mnemonic, addressIndex: derivedIndex } = getMnemonicFromAccount({
-    accountIndex: options.accountIndex,
-  })
-  const addressIndex = options.addressIndex ?? derivedIndex
+  let mnemonic: string
+  let addressIndex: number
+  if (options.mnemonic?.trim()) {
+    mnemonic = options.mnemonic.trim()
+    addressIndex = options.addressIndex ?? 0
+  } else {
+    const fromAccount = getMnemonicFromAccount({ accountIndex: options.accountIndex })
+    mnemonic = fromAccount.mnemonic
+    addressIndex = options.addressIndex ?? fromAccount.addressIndex
+  }
 
   const network: API_NET = getApiNet()
   const chainWallet = await getCurrentWallet(Chain.MVC, { mnemonic, addressIndex })
@@ -191,6 +199,8 @@ export interface DogeTransferParams {
 export type SendDogeOptions = {
   addressIndex?: number
   accountIndex?: number
+  /** When provided (e.g. from IDBOTS_TWIN_MNEMONIC), used instead of account.json */
+  mnemonic?: string
 }
 
 /** 最小转账：0.01 DOGE = 1,000,000 satoshis */
@@ -203,10 +213,16 @@ export async function sendDoge(
   params: DogeTransferParams,
   options: SendDogeOptions = {}
 ): Promise<{ txId: string } | { txHex: string }> {
-  const { mnemonic, addressIndex: derivedIndex } = getMnemonicFromAccount({
-    accountIndex: options.accountIndex,
-  })
-  const addressIndex = options.addressIndex ?? derivedIndex
+  let mnemonic: string
+  let addressIndex: number
+  if (options.mnemonic?.trim()) {
+    mnemonic = options.mnemonic.trim()
+    addressIndex = options.addressIndex ?? 0
+  } else {
+    const fromAccount = getMnemonicFromAccount({ accountIndex: options.accountIndex })
+    mnemonic = fromAccount.mnemonic
+    addressIndex = options.addressIndex ?? fromAccount.addressIndex
+  }
 
   const wallet = await getDogeWallet({
     mnemonic,

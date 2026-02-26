@@ -2,6 +2,8 @@
   "version": 1,
   "description": "Default skill configuration for IDBots",
   "defaults": {
+    "metabot-basic": { "order": 1, "enabled": true },
+    "metabot-file": { "order": 2, "enabled": true },
     "docx": { "order": 10, "enabled": true },
     "web-search": { "order": 15, "enabled": true },
     "xlsx": { "order": 20, "enabled": true },
@@ -16,6 +18,12 @@
     "frontend-design": { "order": 100, "enabled": true },
     "local-tools": { "order": 200, "enabled": true },
     "weather": { "order": 210, "enabled": true },
+    "imap-smtp-email": { "order": 211, "enabled": true },
+    "seedance": { "order": 212, "enabled": true },
+    "seedream": { "order": 213, "enabled": true },
+    "technology-news-search": { "order": 214, "enabled": true },
+    "films-search": { "order": 222, "enabled": true },
+    "music-search": { "order": 223, "enabled": true },
     "skill-creator": { "order": 300, "enabled": true }
   }
 }

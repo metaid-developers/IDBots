@@ -3,7 +3,7 @@
 You are an expert developer assisting with the **IDBots** project. IDBots is a Web3-native, multi-agent collaboration platform built on the MetaID protocol.
 
 ## 1. Project Identity & Architecture
-- **Identity**: IDBots (The On-Chain Multi-Agent Collaboration Platform). Do NOT refer to legacy names like "LobsterAI" or "Cowork".
+- **Identity**: IDBots (The On-Chain Multi-Agent Collaboration Platform). Do NOT refer to legacy names like "IDBots" or "Cowork".
 - **Tech Stack**: Electron 40, React 18 (TypeScript), Vite 5, Tailwind CSS 3, SQLite (`sql.js`).
 - **Process Isolation**: Strict IPC communication between Main (`src/main/`) and Renderer (`src/renderer/`). Node integration is disabled in Renderer.
 

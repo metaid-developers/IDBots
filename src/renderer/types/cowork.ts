@@ -45,6 +45,8 @@ export interface CoworkSession {
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
+  /** FK to metabots.id; which MetaBot persona this session uses */
+  metabotId?: number | null;
 }
 
 // Cowork configuration
@@ -162,6 +164,7 @@ export interface CoworkStartOptions {
   systemPrompt?: string;
   title?: string;
   activeSkillIds?: string[];
+  metabotId?: number | null;
 }
 
 // Continue session options

@@ -74,20 +74,20 @@ MetaBot 在链上发布基础数据或协议节点。
 | `create_avatar.ts` | **头像管理** | `[AgentName] [FilePath]`。限制 < 1MB。 |
 | `create_chatpubkey.ts` | **聊天初始化** | 上链 Chat 公钥，启用加密通讯。 |
 | `send_space.ts` | **MVC 转账** | 交互式或参数调用。单位：Satoshis。 |
-| `send_buzz.ts` | **发送文字 buzz** | `<agentName>` 为用户指定的发送者 MetaBot 名称（如用户说「用 loop AI 发」则填 `loop AI`），须与 IDBots 中已注册名称一致；`<content>` 为正文。若脚本报「未找到账户」，说明该名称未注册，可提示用户检查名称或先创建该 MetaBot。 |
+| `send_buzz.ts` | **发送文字 buzz** | 在 IDBots Cowork 中，当前会话选中的 MetaBot 钱包会自动注入；`<agentName>` 应填**当前会话的 MetaBot 名称**（与 metabots 表一致）；`<content>` 为正文。 |
 | `send_doge.ts` | **DOGE 转账** | 交互式或参数调用。 |
-| **`send_buzz_with_image.ts`** | **带图 Buzz** | `<agentName>` `<content>`，`--image <path>` 或 `--pinid <pinid>`，可选 `--ext`。 |
+| **`send_buzz_with_image.ts`** | **带图 Buzz** | 在 IDBots Cowork 中当前会话 MetaBot 钱包自动注入；`<agentName>` 填当前会话 MetaBot 名称；`<content>`；`--image <path>` 或 `--pinid <pinid>`。 |
 | `metaid.ts` | **底层操作** | 提供 `createPin`, `pay` 等原子操作。 |
 | `wallet.ts` | **钱包工具** | 提供 `signTransaction` (供其他 Skill 调用)。 |
 
 ## 行为规范 (AI Constraints)
 
-1. **身份认知与调用**: 作为主分身 (Twin)，当你接收到用户类似“发送一条 buzz 说你好”、“把这段话发到链上”的指令时，你**不需要**向用户索要私钥或账户名。
-2. **执行脚本**: 请**先 cd 到本 Skill 根目录**，再执行 `npx ts-node scripts/send_buzz.ts "<agentName>" "<content>"`（或使用上文的 `cd "$SKILLS_ROOT/metabot-basic" && npx ts-node scripts/send_buzz.ts "<agentName>" "<content>"` 一次性命令）。底层脚本会自动从 SQLite 数据库提取你的专属助记词并完成广播。
+1. **身份认知与调用**: 作为当前会话选中的 MetaBot，当你接收到用户类似「发送一条 buzz 说你好」「把这段话发到链上」的指令时，你**不需要**向用户索要私钥或账户名。你的名字、灵魂、目标等信息来自 metabots 表，请准确回答「你叫什么名字」等问题。
+2. **执行脚本**: 请**先 cd 到本 Skill 根目录**，再执行 `npx ts-node scripts/send_buzz.ts "<当前会话MetaBot名称>" "<content>"`。在 IDBots Cowork 中，当前会话的 MetaBot 钱包（助记词）会自动注入，buzz 将以你的身份发出。
 3. **参数传递**: 确保提取用户意图中的**纯文本内容**作为 `<content>` 参数传递，如果有引号请注意转义。
 4. **执行优先**: 当用户要求“创建一个叫 Alice 的 MetaBot”时，不要返回操作指南，**直接生成并运行**对应的 `create_agents.ts` 命令。
 5. **创建命令格式**: 创建**单个** MetaBot 时**必须**使用 `--name "名字"` 形式，且**只有一个**名字（即 `--name` 后的那一个参数）。例如创建名为 Alice 的 MetaBot：`npx ts-node scripts/create_agents.ts --name "Alice"`。禁止把 `--name` 或其它 `--` 开头的参数当作 Agent 名字。
 6. **路径智能**: 处理头像路径时，若用户提供了 `@引用` AI 需自动将其解析为系统绝对路径传入脚本。
 7. **余额单位**: 涉及 MVC 转账时，**必须**将用户口语中的 "Space" 转换为 "sats" (乘以 10^8) 传入脚本。
-8. **带图 Buzz**: 当用户说「将 xx 作为附件发送 buzz」「用 pinid 发送带图 buzz」等时，使用 `send_buzz_with_image.ts`，传入对应 agent、文字内容及 `--image <path>` 或 `--pinid <pinid>`。
+8. **带图 Buzz**: 当用户说「将 xx 作为附件发送 buzz」「用 pinid 发送带图 buzz」等时，使用 `send_buzz_with_image.ts`，`<agentName>` 填当前会话 MetaBot 名称，并传入 `--image <path>` 或 `--pinid <pinid>`。
 

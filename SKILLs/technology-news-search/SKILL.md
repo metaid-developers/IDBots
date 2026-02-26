@@ -1,8 +1,7 @@
 ---
-name: technology-search
-description: Search tech blogs, developer forums, and IT media (TechCrunch, Hacker News, 36氪, etc.) for software and hardware industry updates with heat ranking and EN↔CN translation. Use this skill only when the topic is clearly about programming, software, hardware, AI, or IT infrastructure.
-official: false
-version: 1.0.2
+name: technology-news-search
+description: Real-time technology news search and aggregation from 75 international and Chinese media sources across 9 core technical domains. Intelligent keyword-based routing with domain aliases searches only relevant sources. Automatically adapts to network environment - seamlessly switches between global sources (75) and China-only sources (18) based on network accessibility. Use when user requests to search for tech news by keyword. Trigger phrases include "search for [keyword] tech news", "find news about [topic]", "latest news on [subject]", or Chinese equivalents like "搜索 [关键词] 科技新闻". Provides multi-source heat analysis, automatic EN↔CN translation, and clean Markdown presentation.
+official: true
 ---
 
 # Technology News Search
@@ -87,7 +86,7 @@ This skill searches multiple technology news sources simultaneously, automatical
 
 To disable smart routing and search all available sources (respects network availability):
 ```bash
-bash "$SKILLS_ROOT/technology-news-search/scripts/search-news.sh" "keyword" --all-sources
+python3 search_news.py "keyword" --all-sources
 ```
 
 ## Supported Technical Domains
@@ -121,7 +120,13 @@ When user asks: **"Search for Electron tech news"** or **"搜索 Electron 技术
 
 Execute:
 ```bash
-bash "$SKILLS_ROOT/technology-news-search/scripts/search-news.sh" "Electron" --limit 15
+# macOS/Linux
+cd scripts
+python3 search_news.py "Electron" --limit 15
+
+# Windows
+cd scripts
+python search_news.py "Electron" --limit 15
 ```
 
 The script will:
@@ -139,17 +144,23 @@ Read the JSON and present results in Markdown format with translations.
 
 2. **Run search script**
    ```bash
-   bash "$SKILLS_ROOT/technology-news-search/scripts/search-news.sh" "[keyword]" --limit 15 --max-per-source 5
+   # macOS/Linux (with smart routing)
+   cd scripts
+   python3 search_news.py "[keyword]" --limit 15 --max-per-source 5
 
    # To search all sources (disable smart routing)
-   bash "$SKILLS_ROOT/technology-news-search/scripts/search-news.sh" "[keyword]" --limit 15 --all-sources
+   python3 search_news.py "[keyword]" --limit 15 --all-sources
+
+   # Windows
+   cd scripts
+   python search_news.py "[keyword]" --limit 15 --max-per-source 5
    ```
 
    **Parameters:**
    - `--limit 15`: Fetch up to 15 articles from each source
    - `--max-per-source 5`: Display max 5 articles per source (ensures diversity)
    - `--no-balance`: Disable balancing (show all results sorted by heat)
-   - `--all-sources`: Search all 75 sources (disable smart routing)
+   - `--all-sources`: Search all 63 sources (disable smart routing)
 
 3. **Read JSON output**
    - Script outputs to stdout
@@ -181,10 +192,10 @@ Read the JSON and present results in Markdown format with translations.
 **Customization:**
 ```bash
 # Show more articles per source
-bash "$SKILLS_ROOT/technology-news-search/scripts/search-news.sh" "AI" --max-per-source 10
+python3 search_news.py "AI" --max-per-source 10
 
 # Disable balancing (show all by heat score only)
-bash "$SKILLS_ROOT/technology-news-search/scripts/search-news.sh" "AI" --no-balance
+python3 search_news.py "AI" --no-balance
 ```
 
 **How it works:**
@@ -290,10 +301,14 @@ Articles appearing on multiple sources rank higher, indicating broader industry 
 - Verify sources are enabled in [references/sources.json](references/sources.json)
 
 **Script errors:**
-- Ensure Node.js is available or LobsterAI Electron is running
+- Ensure Python 3.6+ is installed (`python3 --version` on macOS/Linux, `python --version` on Windows)
 - Check network connectivity
 - Review stderr output for specific error messages
 - Some sources may be temporarily unavailable
+
+**Windows-specific notes:**
+- Use `python` instead of `python3` in commands
+- Some Chinese sources may have encoding issues if system locale is not UTF-8 (already handled in code)
 
 **Slow performance:**
 - Reduce `--limit` parameter (default is 15)

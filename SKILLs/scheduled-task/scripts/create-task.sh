@@ -1,11 +1,11 @@
 #!/bin/bash
-# Create a scheduled task via LobsterAI internal API.
+# Create a scheduled task via IDBots internal API.
 # Usage: bash "$SKILLS_ROOT/scheduled-task/scripts/create-task.sh" '<json_payload>'
 #
 # The JSON payload should follow ScheduledTaskInput schema.
 # Returns JSON response: { "success": true, "task": { ... } } or { "success": false, "error": "..." }
 #
-# Environment variables (set automatically by LobsterAI cowork session):
+# Environment variables (set automatically by IDBots cowork session):
 #   IDBOTS_API_BASE_URL - Internal proxy URL (always points to local proxy)
 
 HTTP_NODE_CMD=""
@@ -110,7 +110,7 @@ NODE
 }
 
 if [ -z "$IDBOTS_API_BASE_URL" ]; then
-  echo '{"success":false,"error":"IDBOTS_API_BASE_URL not set. This script must run inside a LobsterAI cowork session."}'
+  echo '{"success":false,"error":"IDBOTS_API_BASE_URL not set. This script must run inside a IDBots cowork session."}'
   exit 1
 fi
 
