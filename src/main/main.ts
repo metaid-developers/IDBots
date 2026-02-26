@@ -1737,22 +1737,30 @@ if (!gotTheLock) {
   });
 
   // Dialog handlers
-  ipcMain.handle('dialog:selectDirectory', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory', 'createDirectory'],
-    });
+  ipcMain.handle('dialog:selectDirectory', async (event) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
+      properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[],
+    };
+    const result = ownerWindow
+      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
     if (result.canceled || result.filePaths.length === 0) {
       return { success: true, path: null };
     }
     return { success: true, path: result.filePaths[0] };
   });
 
-  ipcMain.handle('dialog:selectFile', async (_event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openFile'],
+  ipcMain.handle('dialog:selectFile', async (event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
+      properties: ['openFile'] as ('openFile')[],
       title: options?.title,
       filters: options?.filters,
-    });
+    };
+    const result = ownerWindow
+      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
     if (result.canceled || result.filePaths.length === 0) {
       return { success: true, path: null };
     }

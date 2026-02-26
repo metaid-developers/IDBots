@@ -34,6 +34,7 @@ import {
   MiniMaxIcon,
   QwenIcon,
   XiaomiIcon,
+  VolcengineIcon,
   OpenRouterIcon,
   OllamaIcon,
   CustomProviderIcon,
@@ -60,6 +61,7 @@ const providerKeys = [
   'minimax',
   'qwen',
   'xiaomi',
+  'volcengine',
   'openrouter',
   'ollama',
   'custom',
@@ -75,6 +77,7 @@ interface ProviderExportEntry {
   apiKey: PasswordEncryptedPayload;
   baseUrl: string;
   apiFormat?: 'anthropic' | 'openai';
+  codingPlanEnabled?: boolean;
   models?: Model[];
 }
 
@@ -97,6 +100,7 @@ interface ProvidersImportEntry {
   apiKeyIv?: string;
   baseUrl?: string;
   apiFormat?: 'anthropic' | 'openai' | 'native';
+  codingPlanEnabled?: boolean;
   models?: Model[];
 }
 
@@ -121,6 +125,7 @@ const providerMeta: Record<ProviderType, { label: string; icon: React.ReactNode 
   minimax: { label: 'MiniMax', icon: <MiniMaxIcon /> },
   qwen: { label: 'Qwen', icon: <QwenIcon /> },
   xiaomi: { label: 'Xiaomi', icon: <XiaomiIcon /> },
+  volcengine: { label: 'Volcengine', icon: <VolcengineIcon /> },
   openrouter: { label: 'OpenRouter', icon: <OpenRouterIcon /> },
   ollama: { label: 'Ollama', icon: <OllamaIcon /> },
   custom: { label: 'Custom', icon: <CustomProviderIcon /> },
@@ -150,6 +155,10 @@ const providerSwitchableDefaultBaseUrls: Partial<Record<ProviderType, { anthropi
   xiaomi: {
     anthropic: 'https://api.xiaomimimo.com/anthropic',
     openai: 'https://api.xiaomimimo.com/v1/chat/completions',
+  },
+  volcengine: {
+    anthropic: 'https://ark.cn-beijing.volces.com/api/compatible',
+    openai: 'https://ark.cn-beijing.volces.com/api/v3',
   },
   openrouter: {
     anthropic: 'https://openrouter.ai/api',
@@ -227,7 +236,8 @@ const buildOpenAICompatibleChatCompletionsUrl = (baseUrl: string, provider: stri
     return `${normalized}/v1beta/openai/chat/completions`;
   }
 
-  if (normalized.endsWith('/v1')) {
+  // Handle /v1, /v4 etc. versioned paths
+  if (/\/v\d+$/.test(normalized)) {
     return `${normalized}/chat/completions`;
   }
   return `${normalized}/v1/chat/completions`;
@@ -658,6 +668,42 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
         };
       }
 
+      // Handle codingPlanEnabled toggle for zhipu
+      if (field === 'codingPlanEnabled' && provider === 'zhipu') {
+        const codingPlanEnabled = value === 'true';
+        return {
+          ...prev,
+          zhipu: {
+            ...prev.zhipu,
+            codingPlanEnabled,
+          },
+        };
+      }
+
+      // Handle codingPlanEnabled toggle for qwen
+      if (field === 'codingPlanEnabled' && provider === 'qwen') {
+        const codingPlanEnabled = value === 'true';
+        return {
+          ...prev,
+          qwen: {
+            ...prev.qwen,
+            codingPlanEnabled,
+          },
+        };
+      }
+
+      // Handle codingPlanEnabled toggle for volcengine
+      if (field === 'codingPlanEnabled' && provider === 'volcengine') {
+        const codingPlanEnabled = value === 'true';
+        return {
+          ...prev,
+          volcengine: {
+            ...prev.volcengine,
+            codingPlanEnabled,
+          },
+        };
+      }
+
       return {
         ...prev,
         [provider]: {
@@ -1073,13 +1119,40 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
 
     try {
       let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
-      const normalizedBaseUrl = providerConfig.baseUrl.replace(/\/+$/, '');
-
+      // Apply Coding Plan endpoint switch
+      let effectiveBaseUrl = providerConfig.baseUrl;
+      let effectiveApiFormat = getEffectiveApiFormat(activeProvider, providerConfig.apiFormat);
+      
+      // Handle Zhipu GLM Coding Plan endpoint switch
+      if (activeProvider === 'zhipu' && (providerConfig as { codingPlanEnabled?: boolean }).codingPlanEnabled) {
+        effectiveBaseUrl = 'https://open.bigmodel.cn/api/coding/paas/v4';
+        effectiveApiFormat = 'openai';
+      }
+      // Handle Qwen Coding Plan endpoint switch
+      if (activeProvider === 'qwen' && (providerConfig as { codingPlanEnabled?: boolean }).codingPlanEnabled) {
+        if (effectiveApiFormat === 'anthropic') {
+          effectiveBaseUrl = 'https://coding.dashscope.aliyuncs.com/apps/anthropic';
+        } else {
+          effectiveBaseUrl = 'https://coding.dashscope.aliyuncs.com/v1';
+          effectiveApiFormat = 'openai';
+        }
+      }
+      // Handle Volcengine Coding Plan endpoint switch
+      if (activeProvider === 'volcengine' && (providerConfig as { codingPlanEnabled?: boolean }).codingPlanEnabled) {
+        if (effectiveApiFormat === 'anthropic') {
+          effectiveBaseUrl = 'https://ark.cn-beijing.volces.com/api/coding';
+        } else {
+          effectiveBaseUrl = 'https://ark.cn-beijing.volces.com/api/coding/v3';
+          effectiveApiFormat = 'openai';
+        }
+      }
+      
+      const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
       // 统一为两种协议格式：
       // - anthropic: /v1/messages
       // - openai provider: /v1/responses
       // - other openai-compatible providers: /v1/chat/completions
-      const useAnthropicFormat = getEffectiveApiFormat(activeProvider, providerConfig.apiFormat) === 'anthropic';
+      const useAnthropicFormat = effectiveApiFormat === 'anthropic';
 
       if (useAnthropicFormat) {
         const anthropicUrl = normalizedBaseUrl.endsWith('/v1')
@@ -1171,6 +1244,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
             apiKey,
             baseUrl: providerConfig.baseUrl,
             apiFormat: getEffectiveApiFormat(providerKey, providerConfig.apiFormat),
+            codingPlanEnabled: (providerConfig as ProviderConfig).codingPlanEnabled,
             models: providerConfig.models,
           },
         ] as const;
@@ -1307,6 +1381,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
           apiKey: apiKey ?? providers[providerKey].apiKey,
           baseUrl: typeof providerData.baseUrl === 'string' ? providerData.baseUrl : providers[providerKey].baseUrl,
           apiFormat: getEffectiveApiFormat(providerKey, providerData.apiFormat ?? providers[providerKey].apiFormat),
+          codingPlanEnabled: typeof providerData.codingPlanEnabled === 'boolean' ? providerData.codingPlanEnabled : (providers[providerKey] as ProviderConfig).codingPlanEnabled,
           models: models ?? providers[providerKey].models,
         };
       }
@@ -1383,6 +1458,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
           apiKey: apiKey ?? providers[providerKey].apiKey,
           baseUrl: typeof providerData.baseUrl === 'string' ? providerData.baseUrl : providers[providerKey].baseUrl,
           apiFormat: getEffectiveApiFormat(providerKey, providerData.apiFormat ?? providers[providerKey].apiFormat),
+          codingPlanEnabled: typeof providerData.codingPlanEnabled === 'boolean' ? providerData.codingPlanEnabled : (providers[providerKey] as ProviderConfig).codingPlanEnabled,
           models: models ?? providers[providerKey].models,
         };
       }
@@ -2017,9 +2093,22 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                 <input
                   type="text"
                   id={`${activeProvider}-baseUrl`}
-                  value={providers[activeProvider].baseUrl}
+                  value={
+                    activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled
+                      ? 'https://open.bigmodel.cn/api/coding/paas/v4'
+                      : activeProvider === 'qwen' && providers.qwen.codingPlanEnabled
+                        ? (getEffectiveApiFormat('qwen', providers.qwen.apiFormat) === 'anthropic'
+                            ? 'https://coding.dashscope.aliyuncs.com/apps/anthropic'
+                            : 'https://coding.dashscope.aliyuncs.com/v1')
+                        : activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled
+                          ? (getEffectiveApiFormat('volcengine', providers.volcengine.apiFormat) === 'anthropic'
+                              ? 'https://ark.cn-beijing.volces.com/api/coding'
+                              : 'https://ark.cn-beijing.volces.com/api/coding/v3')
+                          : providers[activeProvider].baseUrl
+                  }
                   onChange={(e) => handleProviderConfigChange(activeProvider, 'baseUrl', e.target.value)}
-                  className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                  disabled={(activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled)}
+                  className={`block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs ${(activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled) ? 'opacity-50 cursor-not-allowed' : ''}`}
                   placeholder={i18nService.t('baseUrlPlaceholder')}
                 />
                 {activeProvider === 'custom' && (
@@ -2035,6 +2124,30 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                     <code className="ml-1 text-claude-accent/80 dark:text-claude-accent/70 break-all">{i18nService.t('baseUrlHintExample2')}</code>
                   </p>
                 </div>
+                )}
+                {/* GLM Coding Plan 提示 */}
+                {activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled && (
+                  <div className="mt-1.5 p-2 rounded-lg bg-claude-accent/10 border border-claude-accent/20">
+                    <p className="text-[11px] text-claude-accent dark:text-claude-accent">
+                      <span className="font-medium">GLM Coding Plan:</span> {i18nService.t('zhipuCodingPlanEndpointHint')}
+                    </p>
+                  </div>
+                )}
+                {/* Qwen Coding Plan 提示 */}
+                {activeProvider === 'qwen' && providers.qwen.codingPlanEnabled && (
+                  <div className="mt-1.5 p-2 rounded-lg bg-claude-accent/10 border border-claude-accent/20">
+                    <p className="text-[11px] text-claude-accent dark:text-claude-accent">
+                      <span className="font-medium">Coding Plan:</span> {i18nService.t('qwenCodingPlanEndpointHint')}
+                    </p>
+                  </div>
+                )}
+                {/* Volcengine Coding Plan 提示 */}
+                {activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled && (
+                  <div className="mt-1.5 p-2 rounded-lg bg-claude-accent/10 border border-claude-accent/20">
+                    <p className="text-[11px] text-claude-accent dark:text-claude-accent">
+                      <span className="font-medium">Coding Plan:</span> {i18nService.t('volcengineCodingPlanEndpointHint')}
+                    </p>
+                  </div>
                 )}
               </div>
 
@@ -2075,6 +2188,90 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                   <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                     {i18nService.t('apiFormatHint')}
                   </p>
+                </div>
+              )}
+
+              {/* GLM Coding Plan 开关 (仅 Zhipu) */}
+              {activeProvider === 'zhipu' && (
+                <div className="flex items-center justify-between p-3 rounded-xl dark:bg-claude-darkSurface/50 bg-claude-surface/50 border dark:border-claude-darkBorder border-claude-border">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                        GLM Coding Plan
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-claude-accent/10 text-claude-accent">
+                        Beta
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t('zhipuCodingPlanHint')}
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer ml-3">
+                    <input
+                      type="checkbox"
+                      checked={providers.zhipu.codingPlanEnabled ?? false}
+                      onChange={(e) => handleProviderConfigChange('zhipu', 'codingPlanEnabled', e.target.checked ? 'true' : 'false')}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-claude-accent/50 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-claude-accent"></div>
+                  </label>
+                </div>
+              )}
+
+              {/* Qwen Coding Plan 开关 (仅 Qwen) */}
+              {activeProvider === 'qwen' && (
+                <div className="flex items-center justify-between p-3 rounded-xl dark:bg-claude-darkSurface/50 bg-claude-surface/50 border dark:border-claude-darkBorder border-claude-border">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                        Coding Plan
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-claude-accent/10 text-claude-accent">
+                        订阅套餐
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t('qwenCodingPlanHint')}
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer ml-3">
+                    <input
+                      type="checkbox"
+                      checked={providers.qwen.codingPlanEnabled ?? false}
+                      onChange={(e) => handleProviderConfigChange('qwen', 'codingPlanEnabled', e.target.checked ? 'true' : 'false')}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-claude-accent/50 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-claude-accent"></div>
+                  </label>
+                </div>
+              )}
+
+              {/* Volcengine Coding Plan 开关 (仅 Volcengine) */}
+              {activeProvider === 'volcengine' && (
+                <div className="flex items-center justify-between p-3 rounded-xl dark:bg-claude-darkSurface/50 bg-claude-surface/50 border dark:border-claude-darkBorder border-claude-border">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                        Coding Plan
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-claude-accent/10 text-claude-accent">
+                        Beta
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t('volcengineCodingPlanHint')}
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer ml-3">
+                    <input
+                      type="checkbox"
+                      checked={providers.volcengine.codingPlanEnabled ?? false}
+                      onChange={(e) => handleProviderConfigChange('volcengine', 'codingPlanEnabled', e.target.checked ? 'true' : 'false')}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-claude-accent/50 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-claude-accent"></div>
+                  </label>
                 </div>
               )}
 
