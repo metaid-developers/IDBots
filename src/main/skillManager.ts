@@ -177,6 +177,23 @@ const normalizeFolderName = (name: string): string => {
 
 const isZipFile = (filePath: string): boolean => path.extname(filePath).toLowerCase() === '.zip';
 
+/**
+ * Compare two semver-like version strings (e.g. "1.0.0" vs "1.0.1").
+ * Returns 1 if a > b, -1 if a < b, 0 if equal.
+ * Non-numeric segments are treated as 0.
+ */
+const compareVersions = (a: string, b: string): number => {
+  const pa = a.split('.').map(s => parseInt(s, 10) || 0);
+  const pb = b.split('.').map(s => parseInt(s, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+};
+
 const resolveWithin = (root: string, target: string): string => {
   const resolvedRoot = path.resolve(root);
   const resolvedTarget = path.resolve(root, target);
@@ -802,8 +819,13 @@ export class SkillManager {
         // Check if skill needs repair
         let shouldRepair = false;
         if (targetExists) {
+          // Version-based update: if bundled has a version and it's newer, force update
+          const bundledVer = this.getSkillVersion(dir);
+          if (bundledVer && compareVersions(bundledVer, this.getSkillVersion(targetDir) || '0.0.0') > 0) {
+            shouldRepair = true;
+          }
           // web-search has specific broken checks
-          if (id === 'web-search' && isWebSearchSkillBroken(targetDir)) {
+          else if (id === 'web-search' && isWebSearchSkillBroken(targetDir)) {
             shouldRepair = true;
           }
           // Generic check: if bundled has node_modules but target doesn't, repair it
@@ -815,10 +837,24 @@ export class SkillManager {
         if (targetExists && !shouldRepair) return;
         try {
           console.log(`[skills] syncBundledSkillsToUserData: copying "${id}" from ${dir} to ${targetDir}`);
+
+          // Preserve .env file before force overwrite
+          let envBackup: Buffer | null = null;
+          const envPath = path.join(targetDir, '.env');
+          if (shouldRepair && fs.existsSync(envPath)) {
+            envBackup = fs.readFileSync(envPath);
+          }
+
           cpRecursiveSync(dir, targetDir, {
             dereference: true,
             force: shouldRepair,
           });
+
+          // Restore .env file
+          if (envBackup !== null) {
+            fs.writeFileSync(envPath, envBackup);
+          }
+
           console.log(`[skills] syncBundledSkillsToUserData: copied "${id}" successfully`);
           if (shouldRepair) {
             console.log(`[skills] Repaired bundled skill "${id}" in user data`);
@@ -830,9 +866,13 @@ export class SkillManager {
 
       const bundledConfig = path.join(bundledRoot, SKILLS_CONFIG_FILE);
       const targetConfig = path.join(userRoot, SKILLS_CONFIG_FILE);
-      if (fs.existsSync(bundledConfig) && !fs.existsSync(targetConfig)) {
-        console.log('[skills] syncBundledSkillsToUserData: copying skills.config.json');
-        cpRecursiveSync(bundledConfig, targetConfig);
+      if (fs.existsSync(bundledConfig)) {
+        if (!fs.existsSync(targetConfig)) {
+          console.log('[skills] syncBundledSkillsToUserData: copying skills.config.json');
+          cpRecursiveSync(bundledConfig, targetConfig);
+        } else {
+          this.mergeSkillsConfig(bundledConfig, targetConfig);
+        }
       }
       console.log('[skills] syncBundledSkillsToUserData: done');
     } catch (error) {
@@ -865,6 +905,42 @@ export class SkillManager {
     }
 
     return true;
+  }
+
+  private getSkillVersion(skillDir: string): string {
+    try {
+      const raw = fs.readFileSync(path.join(skillDir, SKILL_FILE_NAME), 'utf8');
+      const { frontmatter } = parseFrontmatter(raw);
+      return typeof frontmatter.version === 'string' ? frontmatter.version
+        : typeof frontmatter.version === 'number' ? String(frontmatter.version)
+        : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private mergeSkillsConfig(bundledPath: string, targetPath: string): void {
+    try {
+      const bundled = JSON.parse(fs.readFileSync(bundledPath, 'utf-8'));
+      const target = JSON.parse(fs.readFileSync(targetPath, 'utf-8'));
+      if (!bundled.defaults || !target.defaults) return;
+      let changed = false;
+      for (const [id, config] of Object.entries(bundled.defaults)) {
+        if (!(id in target.defaults)) {
+          target.defaults[id] = config;
+          changed = true;
+        }
+      }
+      if (changed) {
+        // Write to temp file first, then rename for atomic update
+        const tmpPath = targetPath + '.tmp';
+        fs.writeFileSync(tmpPath, JSON.stringify(target, null, 2) + '\n', 'utf-8');
+        fs.renameSync(tmpPath, targetPath);
+        console.log('[skills] mergeSkillsConfig: merged new skill entries into user config');
+      }
+    } catch (e) {
+      console.warn('[skills] Failed to merge skills config:', e);
+    }
   }
 
   listSkills(): SkillRecord[] {

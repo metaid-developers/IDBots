@@ -2,6 +2,7 @@
 name: seedance
 description: 使用火山引擎 Seedance 模型生成 AI 视频。支持文本生成视频（T2V）、图片生成视频（I2V）、音画同步等多种创作模式。触发场景：用户请求生成视频、制作视频、视频创作等任务。
 official: true
+version: 1.0.0
 ---
 
 # Seedance 视频生成
