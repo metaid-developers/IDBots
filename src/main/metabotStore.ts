@@ -175,6 +175,22 @@ export class MetabotStore {
     return rows.map(rowToMetabot);
   }
 
+  /**
+   * Returns enabled MetaBots with minimal fields for picker/selector UI.
+   * Twin is ordered first for default selection.
+   */
+  getAllMetaBots(): Array<{ id: number; name: string; avatar: string | null; metabot_type: string }> {
+    const rows = this.getAll<MetabotRow>(
+      "SELECT * FROM metabots WHERE enabled = 1 ORDER BY metabot_type = 'twin' DESC, id ASC"
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      avatar: avatarFromRow(row),
+      metabot_type: row.metabot_type,
+    }));
+  }
+
   getMetabotById(id: number): Metabot | null {
     const row = this.getOne<MetabotRow>('SELECT * FROM metabots WHERE id = ?', [id]);
     return row ? rowToMetabot(row) : null;

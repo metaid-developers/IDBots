@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * MVC 转账（Space/sats）：使用指定 Agent 向地址转 SPACE，执行前人机确认。
+ * MVC transfer (Space/sats). When run from IDBots Cowork with metabot-basic skill,
+ * session MetaBot wallet is injected via env (IDBOTS_TWIN_*). Otherwise falls back to account.json.
  * Usage:
  *   npx ts-node scripts/send_space.ts <agentName> <toAddress> <amount> <unit>
- *   unit: space | sats  （space 会按 1 space = 10^8 sats 换算）
- * 可选: --confirm 跳过交互确认
- * 例: npx ts-node scripts/send_space.ts "<agent_name>" "<to_address>" 0.001 space
- *     npx ts-node scripts/send_space.ts "<agent_name>" "<to_address>" 100000 sats --confirm
+ *   unit: space | sats; --confirm to skip confirmation
  */
 
 import * as readline from 'readline'
@@ -15,6 +13,8 @@ import Decimal from 'decimal.js'
 import { sendSpace, toSats, SPACE_TO_SATS } from './transfer'
 import { readAccountFile, findAccountByKeyword } from './utils'
 import { parseAddressIndexFromPath } from './wallet'
+
+const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0"
 
 async function confirm(question: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -47,15 +47,29 @@ async function main() {
     process.exit(1)
   }
 
-  const accountData = readAccountFile()
-  const account = findAccountByKeyword(agentName, accountData)
-  if (!account) {
-    console.error(`❌ 未找到账户: ${agentName}`)
-    process.exit(1)
-  }
-  if (!account.mnemonic) {
-    console.error(`❌ 账户 ${agentName} 无 mnemonic`)
-    process.exit(1)
+  let mnemonic: string
+  let pathStr: string
+  let displayName: string
+
+  if (process.env.IDBOTS_TWIN_MNEMONIC && process.env.IDBOTS_TWIN_NAME) {
+    mnemonic = process.env.IDBOTS_TWIN_MNEMONIC.trim()
+    pathStr = (process.env.IDBOTS_TWIN_PATH || DEFAULT_WALLET_PATH).trim()
+    displayName = process.env.IDBOTS_TWIN_NAME
+  } else {
+    const accountData = readAccountFile()
+    const account = findAccountByKeyword(agentName, accountData)
+    if (!account) {
+      console.error(`❌ 未找到账户: ${agentName}`)
+      console.error('   在 IDBots 中请启用 metabot-basic 技能后使用；或确保 account.json 中存在该 Agent')
+      process.exit(1)
+    }
+    if (!account.mnemonic) {
+      console.error(`❌ 账户 ${agentName} 无 mnemonic`)
+      process.exit(1)
+    }
+    mnemonic = account.mnemonic.trim()
+    pathStr = (account.path || DEFAULT_WALLET_PATH).trim()
+    displayName = agentName
   }
 
   const amountNum = parseFloat(amountStr)
@@ -68,7 +82,7 @@ async function main() {
   const feeb = 1
 
   console.log('--- MVC 转账确认 ---')
-  console.log('  发起账户:', agentName)
+  console.log('  发起账户:', displayName)
   console.log('  接收地址:', toAddress)
   if (unit === 'space') {
     console.log('  金额:', amountStr, 'Space (=', sats, 'sats)')
@@ -87,19 +101,12 @@ async function main() {
   }
 
   try {
-    const accountIndex = accountData.accountList.indexOf(account)
+    const addressIndex = parseAddressIndexFromPath(pathStr)
     const { res, txids, broadcasted } = await sendSpace({
-      tasks: [
-        {
-          receivers: [{ address: toAddress, amount: String(sats) }],
-        },
-      ],
+      tasks: [{ receivers: [{ address: toAddress, amount: String(sats) }] }],
       broadcast: true,
       feeb,
-      options: {
-        accountIndex: accountIndex >= 0 ? accountIndex : 0,
-        addressIndex: parseAddressIndexFromPath(account.path),
-      },
+      options: { mnemonic, addressIndex },
     })
     console.log('✅ 转账成功')
     console.log('  TXID:', res[0].txid)

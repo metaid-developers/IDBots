@@ -31,6 +31,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
+  const [metabots, setMetabots] = useState<Array<{ id: number; name: string; avatar: string | null; metabot_type: string }>>([]);
+  const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(null);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
@@ -64,6 +66,18 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     }
     return `${baseNotice} (${error})`;
   };
+
+  useEffect(() => {
+    const loadMetaBots = async () => {
+      const result = await window.electron?.idbots?.getMetaBots?.();
+      if (result?.success && result.list && result.list.length > 0) {
+        setMetabots(result.list);
+        const twin = result.list.find((m) => m.metabot_type === 'twin');
+        setSelectedMetabotId(twin ? twin.id : result.list[0].id);
+      }
+    };
+    void loadMetaBots();
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -205,6 +219,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         cwd: config.workingDirectory || undefined,
         systemPrompt: combinedSystemPrompt,
         activeSkillIds: sessionSkillIds,
+        metabotId: selectedMetabotId,
       });
 
       // Stop immediately if user cancelled while startup request was in flight.
@@ -382,6 +397,37 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               {i18nService.t('coworkDescription')}
             </p>
           </div>
+
+          {/* MetaBot selector (when creating new session) */}
+          {metabots.length > 0 && (
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium dark:text-claude-darkText text-claude-text shrink-0">
+                {i18nService.t('coworkMetaBotLabel')}
+              </label>
+              <div className="relative min-w-[180px]">
+                <select
+                  value={selectedMetabotId ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value ? Number(e.target.value) : null;
+                    setSelectedMetabotId(v);
+                  }}
+                  className="w-full rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border dark:text-claude-darkText text-claude-text px-4 py-2.5 text-sm focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 appearance-none cursor-pointer"
+                  aria-label={i18nService.t('coworkMetaBotPlaceholder')}
+                >
+                  {metabots.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.metabot_type})
+                    </option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Prompt Input Area - Large version with folder selector */}
           <div className="space-y-3">

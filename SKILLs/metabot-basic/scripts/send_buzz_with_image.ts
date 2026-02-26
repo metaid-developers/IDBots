@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * 发送带图片附件的 Buzz 到 MVC 网络。
- * 支持本地图片（先上链取 pinId）或已有 pinId。
+ * Send Buzz with image attachment to MVC network.
+ * When run from IDBots Cowork with metabot-basic skill, session MetaBot wallet is injected via env (IDBOTS_TWIN_*).
+ * Otherwise falls back to account.json by agentName.
  *
  * Usage:
  *   npx ts-node scripts/send_buzz_with_image.ts <agentName> <content> --image <path>
@@ -17,6 +18,7 @@ import { parseAddressIndexFromPath } from './wallet'
 import { readAccountFile, findAccountByKeyword } from './utils'
 
 const SCRIPT_DIR = __dirname
+const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0"
 // 使用 process.cwd() 确保配置文件在用户项目根目录
 const ROOT_DIR = process.cwd()
 const ACCOUNT_FILE = path.join(ROOT_DIR, 'account.json')
@@ -159,28 +161,41 @@ async function main() {
 
   const attachment = `metafile://${pinId}${attachmentExt.startsWith('.') ? attachmentExt : '.' + attachmentExt}`
 
-  const accountData = readAccountFile()
-  const account = findAccountByKeyword(agentName, accountData)
-  if (!account) {
-    console.error(`❌ 未找到账户: ${agentName}`)
-    console.error('   请确保 account.json 中存在该 Agent')
-    process.exit(1)
-  }
-  if (!account.mnemonic) {
-    console.error(`❌ 账户 ${agentName} 无 mnemonic`)
-    process.exit(1)
+  let mnemonic: string
+  let pathStr: string
+  let displayName: string
+
+  if (process.env.IDBOTS_TWIN_MNEMONIC && process.env.IDBOTS_TWIN_NAME) {
+    mnemonic = process.env.IDBOTS_TWIN_MNEMONIC.trim()
+    pathStr = (process.env.IDBOTS_TWIN_PATH || DEFAULT_WALLET_PATH).trim()
+    displayName = process.env.IDBOTS_TWIN_NAME
+  } else {
+    const accountData = readAccountFile()
+    const account = findAccountByKeyword(agentName, accountData)
+    if (!account) {
+      console.error(`❌ 未找到账户: ${agentName}`)
+      console.error('   在 IDBots 中请启用 metabot-basic 技能后使用；或确保 account.json 中存在该 Agent')
+      process.exit(1)
+    }
+    if (!account.mnemonic) {
+      console.error(`❌ 账户 ${agentName} 无 mnemonic`)
+      process.exit(1)
+    }
+    mnemonic = account.mnemonic.trim()
+    pathStr = (account.path || DEFAULT_WALLET_PATH).trim()
+    displayName = agentName
   }
 
-  console.log(`📢 使用 ${agentName} 发送带图 Buzz...`)
+  console.log(`📢 使用 ${displayName} 发送带图 Buzz...`)
   console.log(`   内容: ${content}`)
   console.log(`   附件: ${attachment}`)
 
   try {
     const result = await createBuzz(
-      account.mnemonic,
+      mnemonic,
       content,
       1,
-      { addressIndex: parseAddressIndexFromPath(account.path) },
+      { addressIndex: parseAddressIndexFromPath(pathStr) },
       [attachment]
     )
     if (result.txids?.length) {

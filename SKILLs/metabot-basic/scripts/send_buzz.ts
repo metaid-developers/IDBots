@@ -2,7 +2,7 @@
 
 /**
  * Send Buzz to MVC network.
- * When run from IDBots Cowork with metabot-basic skill, Twin wallet is injected via env (IDBOTS_TWIN_*).
+ * When run from IDBots Cowork with metabot-basic skill, session MetaBot wallet is injected via env (IDBOTS_TWIN_*).
  * Otherwise falls back to account.json by agent name for standalone CLI use.
  *
  * Usage:

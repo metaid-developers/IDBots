@@ -6,7 +6,7 @@ dist-electron/
 .DS_Store
 .env
 .env.local
-.claude/
+
 
 # Internal / tooling (do not publish)
 Dev-docs/
@@ -34,7 +34,9 @@ resources/PortableGit-*.7z.exe
 SKILLs/**/.connection
 SKILLs/**/.server.log
 SKILLs/**/.server.pid
+SKILLs/**/account.json
 
+**/account.json
 package-lock.json
 
 nul
