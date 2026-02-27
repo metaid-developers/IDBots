@@ -44,6 +44,8 @@ export interface AppConfig {
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
+      /** 是否启用 Moonshot Coding Plan 模式（使用专属 Coding API 端点） */
+      codingPlanEnabled?: boolean;
       models?: Array<{
         id: string;
         name: string;
@@ -183,6 +185,8 @@ export interface AppConfig {
   theme: 'light' | 'dark' | 'system';
   // 语言配置
   language: 'zh' | 'en';
+  // 是否使用系统代理
+  useSystemProxy: boolean;
   // 语言初始化标记 (用于判断是否是首次启动)
   language_initialized?: boolean;
   // 应用配置
@@ -260,6 +264,7 @@ export const defaultConfig: AppConfig = {
       apiKey: '',
       baseUrl: 'https://api.moonshot.cn/anthropic',
       apiFormat: 'anthropic',
+      codingPlanEnabled: false,
       models: [
         { id: 'kimi-k2.5', name: 'Kimi K2.5', supportsImage: true }
       ]
@@ -350,6 +355,7 @@ export const defaultConfig: AppConfig = {
   },
   theme: 'system',
   language: 'zh',
+  useSystemProxy: false,
   app: {
     port: 3000,
     isDevelopment: process.env.NODE_ENV === 'development',

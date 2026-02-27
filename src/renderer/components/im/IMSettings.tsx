@@ -44,6 +44,7 @@ const IMSettings: React.FC = () => {
   const [connectivityModalPlatform, setConnectivityModalPlatform] = useState<IMPlatform | null>(null);
   const [language, setLanguage] = useState<'zh' | 'en'>(i18nService.getLanguage());
   const [allowedUserIdInput, setAllowedUserIdInput] = useState('');
+  const [configLoaded, setConfigLoaded] = useState(false);
 
   // Track the last-persisted NIM credentials so we can detect real changes on save
   const savedNimConfigRef = useRef<{ appKey: string; account: string; token: string }>({
@@ -62,8 +63,15 @@ const IMSettings: React.FC = () => {
 
   // Initialize IM service and subscribe status updates
   useEffect(() => {
-    void imService.init();
+    let cancelled = false;
+    void imService.init().then(() => {
+      if (!cancelled) {
+        setConfigLoaded(true);
+      }
+    });
     return () => {
+      cancelled = true;
+      setConfigLoaded(false);
       imService.destroy();
     };
   }, []);
@@ -96,25 +104,29 @@ const IMSettings: React.FC = () => {
   // Save config on blur — also auto-triggers NIM connectivity test when
   // the NIM toggle is ON and credential fields have changed.
   const handleSaveConfig = async () => {
-    await imService.updateConfig(config);
+    if (!configLoaded) return;
+    await imService.updateConfig({ [activePlatform]: config[activePlatform] });
 
-    // Detect NIM credential changes while the gateway is enabled
-    const prev = savedNimConfigRef.current;
-    const cur = config.nim;
-    const nimCredentialsChanged =
-      cur.appKey !== prev.appKey ||
-      cur.account !== prev.account ||
-      cur.token !== prev.token;
+    // Detect NIM credential changes while the gateway is enabled (only for NIM platform)
+    if (activePlatform === 'nim') {
+      const prev = savedNimConfigRef.current;
+      const cur = config.nim;
+      const nimCredentialsChanged =
+        cur.appKey !== prev.appKey ||
+        cur.account !== prev.account ||
+        cur.token !== prev.token;
 
-    // Update the snapshot regardless
-    savedNimConfigRef.current = { appKey: cur.appKey, account: cur.account, token: cur.token };
+      // Update the snapshot regardless
+      savedNimConfigRef.current = { appKey: cur.appKey, account: cur.account, token: cur.token };
 
-    if (nimCredentialsChanged && cur.enabled && cur.appKey && cur.account && cur.token) {
-      // Auto-run connectivity test: stop → start → test (silently, no modal)
-      await imService.stopGateway('nim');
-      await imService.startGateway('nim');
-      await runConnectivityTest('nim', { nim: cur } as Partial<IMGatewayConfig>);
+      if (nimCredentialsChanged && cur.enabled && cur.appKey && cur.account && cur.token) {
+        // Auto-run connectivity test: stop → start → test (silently, no modal)
+        await imService.stopGateway('nim');
+        await imService.startGateway('nim');
+        await runConnectivityTest('nim', { nim: cur } as Partial<IMGatewayConfig>);
+      }
     }
+  };
   };
 
   const getCheckTitle = (code: IMConnectivityCheck['code']): string => {
