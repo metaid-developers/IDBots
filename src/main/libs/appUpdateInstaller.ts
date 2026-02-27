@@ -16,6 +16,7 @@ let activeDownloadController: AbortController | null = null;
 
 export function cancelActiveDownload(): boolean {
   if (activeDownloadController) {
+    console.log('[AppUpdate] Download cancelled by user');
     activeDownloadController.abort('cancelled');
     activeDownloadController = null;
     return true;
@@ -54,6 +55,8 @@ export async function downloadUpdate(
     throw new Error('A download is already in progress');
   }
 
+  console.log(`[AppUpdate] Starting download: ${url}`);
+
   // Validate URL
   let parsedUrl: URL;
   try {
@@ -67,6 +70,9 @@ export async function downloadUpdate(
   const ts = Date.now();
   const downloadPath = path.join(tempDir, `lobsterai-update-${ts}${ext}.download`);
   const finalPath = path.join(tempDir, `lobsterai-update-${ts}${ext}`);
+
+  console.log(`[AppUpdate] Temp path: ${downloadPath}`);
+  console.log(`[AppUpdate] Final path: ${finalPath}`);
 
   const controller = new AbortController();
   activeDownloadController = controller;
@@ -84,6 +90,7 @@ export async function downloadUpdate(
   const resetInactivityTimer = () => {
     clearInactivityTimer();
     inactivityTimer = setTimeout(() => {
+      console.error('[AppUpdate] Download inactivity timeout (60s), aborting');
       controller.abort('timeout');
     }, DOWNLOAD_INACTIVITY_TIMEOUT_MS);
   };
@@ -92,6 +99,8 @@ export async function downloadUpdate(
     const response = await session.defaultSession.fetch(url, {
       signal: controller.signal,
     });
+
+    console.log(`[AppUpdate] HTTP response: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       throw new Error(`Download failed (HTTP ${response.status})`);
@@ -103,6 +112,8 @@ export async function downloadUpdate(
 
     const totalHeader = response.headers.get('content-length');
     const total = totalHeader ? Number(totalHeader) : undefined;
+    console.log(`[AppUpdate] Content-Length: ${totalHeader ?? 'unknown'}`);
+
     let received = 0;
     let lastSpeedTime = Date.now();
     let lastSpeedBytes = 0;
@@ -157,6 +168,8 @@ export async function downloadUpdate(
 
     // Validate downloaded file
     const stat = await fs.promises.stat(downloadPath);
+    console.log(`[AppUpdate] Download complete: ${stat.size} bytes`);
+
     if (stat.size === 0) {
       throw new Error('Downloaded file is empty');
     }
@@ -166,6 +179,7 @@ export async function downloadUpdate(
 
     // Rename to final path (atomic on same filesystem)
     await fs.promises.rename(downloadPath, finalPath);
+    console.log(`[AppUpdate] File saved to: ${finalPath}`);
 
     // Emit final 100% progress
     onProgress({
@@ -178,6 +192,8 @@ export async function downloadUpdate(
     return finalPath;
   } catch (error) {
     clearInactivityTimer();
+    console.error('[AppUpdate] Download error:', error);
+
     // Clean up partial download
     try {
       if (writeStream) {
@@ -201,9 +217,13 @@ export async function downloadUpdate(
 }
 
 export async function installUpdate(filePath: string): Promise<void> {
+  console.log(`[AppUpdate] Installing update from: ${filePath}`);
+  console.log(`[AppUpdate] Platform: ${process.platform}, Arch: ${process.arch}`);
+
   // Verify the file exists before attempting install
   try {
     const stat = await fs.promises.stat(filePath);
+    console.log(`[AppUpdate] Installer file size: ${stat.size} bytes`);
     if (stat.size === 0) {
       throw new Error('Update file is empty');
     }
@@ -228,6 +248,7 @@ async function installMacDmg(dmgPath: string): Promise<void> {
 
   try {
     // Mount the DMG (timeout 60s)
+    console.log('[AppUpdate] Mounting DMG...');
     const mountOutput = await execAsync(
       `hdiutil attach ${shellEscape(dmgPath)} -nobrowse -noautoopen -noverify`,
       60_000,
@@ -241,6 +262,7 @@ async function installMacDmg(dmgPath: string): Promise<void> {
       throw new Error('Failed to determine mount point from hdiutil output');
     }
     mountPoint = mountMatch[1];
+    console.log(`[AppUpdate] Mounted at: ${mountPoint}`);
 
     // Find .app bundle in mount point
     const entries = await fs.promises.readdir(mountPoint);
@@ -250,6 +272,7 @@ async function installMacDmg(dmgPath: string): Promise<void> {
     }
 
     const sourceApp = path.join(mountPoint, appBundle);
+    console.log(`[AppUpdate] Source app: ${sourceApp}`);
 
     // Determine target path: current running app location
     // process.resourcesPath is .app/Contents/Resources, go up 3 levels
@@ -262,13 +285,16 @@ async function installMacDmg(dmgPath: string): Promise<void> {
       // Fallback to /Applications
       targetApp = `/Applications/${appBundle}`;
     }
+    console.log(`[AppUpdate] Target app: ${targetApp}`);
 
     // Try to copy the .app bundle (use shellEscape to prevent injection)
     try {
+      console.log('[AppUpdate] Copying app bundle...');
       await execAsync(
         `rm -rf ${shellEscape(targetApp)} && cp -R ${shellEscape(sourceApp)} ${shellEscape(targetApp)}`,
         300_000,
       );
+      console.log('[AppUpdate] Copy succeeded');
     } catch {
       // Permission denied: try with admin privileges via osascript
       console.log('[AppUpdate] Normal copy failed, requesting admin privileges...');
@@ -281,6 +307,7 @@ async function installMacDmg(dmgPath: string): Promise<void> {
           `osascript -e 'do shell script "rm -rf \\"${escapedTarget}\\" && cp -R \\"${escapedSource}\\" \\"${escapedTarget}\\"" with administrator privileges'`,
           300_000,
         );
+        console.log('[AppUpdate] Admin copy succeeded');
       } catch (adminError) {
         throw new Error(
           `Installation failed: insufficient permissions. ${adminError instanceof Error ? adminError.message : ''}`,
@@ -309,12 +336,15 @@ async function installMacDmg(dmgPath: string): Promise<void> {
     const executable = execEntries[0]; // Should be the app executable
 
     if (executable) {
+      console.log(`[AppUpdate] Relaunching: ${path.join(executablePath, executable)}`);
       app.relaunch({ execPath: path.join(executablePath, executable) });
     } else {
+      console.log('[AppUpdate] Relaunching (default)');
       app.relaunch();
     }
     app.quit();
   } catch (error) {
+    console.error('[AppUpdate] macOS install error:', error);
     // Clean up mount point on error
     if (mountPoint) {
       try {
@@ -328,19 +358,76 @@ async function installMacDmg(dmgPath: string): Promise<void> {
 }
 
 async function installWindowsNsis(exePath: string): Promise<void> {
-  // Get the current installation directory
-  const installDir = path.dirname(app.getPath('exe'));
+  console.log(`[AppUpdate] Windows NSIS install (interactive mode)`);
+  console.log(`[AppUpdate]   installer: ${exePath}`);
+  console.log(`[AppUpdate]   appPid: ${process.pid}`);
 
-  // Launch NSIS installer in silent mode with the same install directory
-  // The NSIS customInit macro will kill the running instance
-  // runAfterFinish: true in electron-builder.json ensures restart
-  const child = spawn(exePath, ['/S', `/D=${installDir}`], {
+  // We must NOT spawn the installer directly as a child of the app, because
+  // the NSIS customInit macro runs `taskkill /IM "LobsterAI.exe" /F /T`
+  // which kills the entire process tree — including child processes.
+  //
+  // Strategy: use a tiny PowerShell script (launched via hidden VBS) that
+  // waits for the app to fully exit, then opens the installer with its
+  // normal UI (no /S silent flag). This lets NSIS handle everything:
+  // desktop shortcuts, start menu entries, "Run after finish", etc.
+  const ts = Date.now();
+  const tempDir = app.getPath('temp');
+  const logPath = path.join(tempDir, `lobsterai-update-${ts}.log`);
+  const scriptPath = path.join(tempDir, `lobsterai-update-${ts}.ps1`);
+  const vbsPath = path.join(tempDir, `lobsterai-update-${ts}.vbs`);
+
+  console.log(`[AppUpdate] Script log: ${logPath}`);
+
+  const psEscape = (s: string) => s.replace(/'/g, "''");
+
+  const psScript = [
+    `$logPath = '${psEscape(logPath)}'`,
+    `$appPid = ${process.pid}`,
+    `$installerPath = '${psEscape(exePath)}'`,
+    '',
+    'function Log($msg) {',
+    "    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'",
+    '    Add-Content -Path $logPath -Value "[$ts] $msg" -Encoding UTF8',
+    '}',
+    '',
+    'try {',
+    '    Log "Update script started (appPid=$appPid)"',
+    '',
+    '    # Wait for the app to fully exit (by PID, max 120s)',
+    '    $waited = 0',
+    '    while ($waited -lt 120) {',
+    '        try {',
+    '            Get-Process -Id $appPid -ErrorAction Stop | Out-Null',
+    '            Start-Sleep -Seconds 1',
+    '            $waited++',
+    '        } catch {',
+    '            break',
+    '        }',
+    '    }',
+    '    Log "App exited after $waited seconds"',
+    '',
+    '    # Launch installer with normal UI (NSIS handles shortcuts & relaunch)',
+    '    Log "Launching installer: $installerPath"',
+    '    Start-Process -FilePath $installerPath',
+    '    Log "Done"',
+    '} catch {',
+    '    Log "ERROR: $($_.Exception.Message)"',
+    '}',
+  ].join('\r\n');
+
+  await fs.promises.writeFile(scriptPath, '\ufeff' + psScript, 'utf-8');
+
+  const vbsScript = `CreateObject("WScript.Shell").Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File ""${scriptPath}""", 0, False`;
+  await fs.promises.writeFile(vbsPath, vbsScript, 'utf-8');
+
+  console.log('[AppUpdate] Launching installer via wscript.exe...');
+
+  const launcher = spawn('wscript.exe', [vbsPath], {
     detached: true,
     stdio: 'ignore',
   });
-  child.unref();
+  launcher.unref();
 
-  // Give the installer a moment to start, then quit
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  console.log(`[AppUpdate] Launcher PID: ${launcher.pid}, calling app.quit()`);
   app.quit();
 }

@@ -1,7 +1,7 @@
-const UPDATE_CHECK_URL = import.meta.env.DEV
+const UPDATE_CHECK_URL = !import.meta.env.DEV
   ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update'
   : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update';
-const FALLBACK_DOWNLOAD_URL = import.meta.env.DEV
+const FALLBACK_DOWNLOAD_URL = !import.meta.env.DEV
   ? 'https://lobsterai.inner.youdao.com/#/download-list'
   : 'https://lobsterai.youdao.com/#/download-list';
 
