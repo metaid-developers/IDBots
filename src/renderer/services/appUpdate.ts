@@ -70,7 +70,9 @@ const isNewerVersion = (latestVersion: string, currentVersion: string): boolean 
   compareVersions(latestVersion, currentVersion) > 0
 );
 
-const getPlatformDownloadUrl = (value: NonNullable<NonNullable<UpdateApiResponse['data']>['value']> | undefined): string => {
+type UpdateValue = NonNullable<NonNullable<UpdateApiResponse['data']>['value']>;
+
+const getPlatformDownloadUrl = (value: UpdateValue | undefined): string => {
   const { platform, arch } = window.electron;
 
   if (platform === 'darwin') {

@@ -11,7 +11,7 @@ interface AppUpdateModalProps {
 const AppUpdateModal: React.FC<AppUpdateModalProps> = ({ updateInfo, onConfirm, onCancel }) => {
   const { latestVersion, date, changeLog } = updateInfo;
   const lang = i18nService.getLanguage();
-  const currentLog = changeLog[lang];
+  const currentLog = changeLog?.[lang] ?? { title: '', content: [] };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop">
