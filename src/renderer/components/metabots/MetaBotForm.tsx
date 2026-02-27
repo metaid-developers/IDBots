@@ -1,5 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { PhotoIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+
+const AVATAR_MAX_SIZE_BYTES = 200 * 1024; // 200KB
 
 export interface MetaBotFormValues {
   name: string;
@@ -11,6 +14,11 @@ export interface MetaBotFormValues {
   background: string;
   boss_id: string;
   llm_id: string;
+}
+
+export interface LlmOption {
+  id: string;
+  label: string;
 }
 
 const defaultValues: MetaBotFormValues = {
@@ -31,6 +39,10 @@ interface MetaBotFormProps {
   onCancel: () => void;
   onSave: (values: MetaBotFormValues) => Promise<void>;
   saveLabel?: string;
+  /** Available LLM providers for exclusive selection. Empty = none available. */
+  llmOptions: LlmOption[];
+  /** Called when user clicks "Go to Model Settings" (e.g. to open Settings tab). */
+  onRequestModelSettings?: () => void;
 }
 
 const MetaBotForm: React.FC<MetaBotFormProps> = ({
@@ -39,7 +51,10 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   onCancel,
   onSave,
   saveLabel,
+  llmOptions,
+  onRequestModelSettings,
 }) => {
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<MetaBotFormValues>({
     ...defaultValues,
     ...(initialValues || {}),
@@ -58,6 +73,25 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
     setError('');
   };
 
+  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > AVATAR_MAX_SIZE_BYTES) {
+      setError(i18nService.t('metabotAvatarSizeError'));
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotAvatarSizeError') }));
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUri = reader.result as string;
+      setValues((prev) => ({ ...prev, avatar: dataUri }));
+      setError('');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!values.name.trim()) {
@@ -72,6 +106,10 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
       setError(i18nService.t('metabotSoulRequired'));
       return;
     }
+    if (llmOptions.length > 0 && !values.llm_id.trim()) {
+      setError(i18nService.t('metabotLlmIdPlaceholder'));
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -84,6 +122,8 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   };
 
   const saveButtonLabel = saveLabel ?? (isEdit ? i18nService.t('save') : i18nService.t('metabotCreate'));
+  const hasNoAvailableLlm = llmOptions.length === 0;
+  const canSave = !hasNoAvailableLlm;
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -110,13 +150,43 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
         <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
           {i18nService.t('metabotAvatar')}
         </label>
-        <input
-          type="text"
-          value={values.avatar}
-          onChange={(e) => handleChange('avatar', e.target.value)}
-          placeholder={i18nService.t('metabotAvatarPlaceholder')}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-        />
+        <div className="flex items-center gap-3">
+          <div className="w-16 h-16 rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex-shrink-0 flex items-center justify-center">
+            {values.avatar && (values.avatar.startsWith('data:') || values.avatar.startsWith('http')) ? (
+              <img src={values.avatar} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <PhotoIcon className="h-8 w-8 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+              className="hidden"
+              onChange={handleAvatarFileChange}
+            />
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            >
+              {i18nService.t('metabotAvatarUpload')}
+            </button>
+            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+              {i18nService.t('metabotAvatarPlaceholder')}
+            </p>
+            {values.avatar && (
+              <button
+                type="button"
+                onClick={() => handleChange('avatar', '')}
+                className="mt-1 text-xs text-red-500 dark:text-red-400 hover:underline"
+              >
+                {i18nService.t('metabotAvatarClear')}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       <div>
@@ -200,15 +270,37 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
 
       <div>
         <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('metabotLlmId')}
+          {i18nService.t('metabotLlmProvider')}
         </label>
-        <input
-          type="text"
-          value={values.llm_id}
-          onChange={(e) => handleChange('llm_id', e.target.value)}
-          placeholder={i18nService.t('metabotLlmIdPlaceholder')}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-        />
+        {hasNoAvailableLlm ? (
+          <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-3 dark:bg-claude-darkSurface/50 bg-claude-surface/50">
+            <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('metabotNoAvailableLlm')}
+            </p>
+            {onRequestModelSettings && (
+              <button
+                type="button"
+                onClick={onRequestModelSettings}
+                className="mt-2 text-sm text-claude-accent hover:underline"
+              >
+                {i18nService.t('metabotGoToModelSettings')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <select
+            value={values.llm_id}
+            onChange={(e) => handleChange('llm_id', e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+          >
+            <option value="">{i18nService.t('metabotLlmIdPlaceholder')}</option>
+            {llmOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div>
@@ -246,8 +338,8 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
         </button>
         <button
           type="submit"
-          disabled={saving}
-          className="px-3 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accentHover transition-colors disabled:opacity-50"
+          disabled={saving || !canSave}
+          className="px-3 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accentHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? i18nService.t('saving') : saveButtonLabel}
         </button>

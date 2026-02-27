@@ -1,0 +1,19 @@
+/** MetaBot type for renderer (aligns with electron IPC and main types) */
+export interface Metabot {
+  id: number;
+  wallet_id: number;
+  name: string;
+  avatar: string | null;
+  enabled: boolean;
+  metabot_type: 'twin' | 'worker';
+  role: string;
+  soul: string;
+  goal: string | null;
+  background: string | null;
+  boss_id: number | null;
+  llm_id: string | null;
+  tools: string[];
+  skills: string[];
+  created_at: number;
+  updated_at: number;
+}

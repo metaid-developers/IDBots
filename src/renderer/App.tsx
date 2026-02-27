@@ -257,6 +257,7 @@ const App: React.FC = () => {
 
   const handleCloseSettings = () => {
     setShowSettings(false);
+    window.dispatchEvent(new CustomEvent('app:settingsClosed'));
     const config = configService.getConfig();
     apiService.setConfig({
       apiKey: config.api.key,
@@ -520,6 +521,7 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
+                onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
               />
             ) : (
               <CoworkView

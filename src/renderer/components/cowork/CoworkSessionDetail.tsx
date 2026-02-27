@@ -1150,9 +1150,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
-  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null } | null>(null);
+  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; llm_id: string | null } | null>(null);
 
-  // Fetch MetaBot when session has metabotId
+  // Fetch MetaBot when session has metabotId (for avatar/name and llm_id for model restriction)
   useEffect(() => {
     const metabotId = currentSession?.metabotId;
     if (metabotId == null || typeof metabotId !== 'number') {
@@ -1163,7 +1163,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const fetchMetaBot = async () => {
       const result = await window.electron?.metabot?.get?.(metabotId);
       if (cancelled || !result?.success || !result.metabot) return;
-      setSessionMetabot({ name: result.metabot.name, avatar: result.metabot.avatar ?? null });
+      setSessionMetabot({
+        name: result.metabot.name,
+        avatar: result.metabot.avatar ?? null,
+        llm_id: result.metabot.llm_id ?? null,
+      });
     };
     void fetchMetaBot();
     return () => { cancelled = true; };
@@ -1846,6 +1850,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             onManageSkills={onManageSkills}
             size="large"
             showModelSelector={true}
+            restrictToLlmId={sessionMetabot?.llm_id ?? undefined}
           />
         </div>
       </div>

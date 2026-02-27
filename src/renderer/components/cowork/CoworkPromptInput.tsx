@@ -65,6 +65,8 @@ interface CoworkPromptInputProps {
   onWorkingDirectoryChange?: (dir: string) => void;
   showFolderSelector?: boolean;
   showModelSelector?: boolean;
+  /** When set, restrict model choices to this LLM provider (e.g. from MetaBot llm_id). */
+  restrictToLlmId?: string | null;
   onManageSkills?: () => void;
 }
 
@@ -81,6 +83,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onWorkingDirectoryChange,
       showFolderSelector = false,
       showModelSelector = false,
+      restrictToLlmId,
       onManageSkills,
     } = props;
     const dispatch = useDispatch();
@@ -483,7 +486,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     />
                   </>
                 )}
-                {showModelSelector && <ModelSelector dropdownDirection="up" />}
+                {showModelSelector && <ModelSelector dropdownDirection="up" restrictToLlmId={restrictToLlmId} />}
                 <button
                   type="button"
                   onClick={handleAddFile}

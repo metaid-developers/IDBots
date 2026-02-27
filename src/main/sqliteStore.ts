@@ -210,6 +210,59 @@ export class SqliteStore {
         ON scheduled_task_runs(task_id, started_at DESC);
     `);
 
+    // MetaID pins: full-field persistence from manapi.metaid.io
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metaid_pins (
+        id TEXT PRIMARY KEY,
+        number INTEGER,
+        metaid TEXT,
+        address TEXT,
+        creator TEXT,
+        createMetaId TEXT,
+        globalMetaId TEXT,
+        initialOwner TEXT,
+        output TEXT,
+        outputValue INTEGER,
+        timestamp INTEGER,
+        genesisFee INTEGER,
+        genesisHeight INTEGER,
+        genesisTransaction TEXT,
+        txIndex INTEGER,
+        txInIndex INTEGER,
+        "offset" INTEGER,
+        location TEXT,
+        operation TEXT,
+        path TEXT,
+        parentPath TEXT,
+        originalPath TEXT,
+        encryption TEXT,
+        version TEXT,
+        contentType TEXT,
+        contentTypeDetect TEXT,
+        contentBody TEXT,
+        contentLength INTEGER,
+        contentSummary TEXT,
+        originalContentBody TEXT,
+        originalContentSummary TEXT,
+        status INTEGER,
+        originalId TEXT,
+        isTransfered INTEGER,
+        preview TEXT,
+        content TEXT,
+        pop TEXT,
+        popLv INTEGER,
+        popScore TEXT,
+        popScoreV1 TEXT,
+        chainName TEXT,
+        dataValue INTEGER,
+        mrc20MintId TEXT,
+        host TEXT,
+        blocked INTEGER,
+        is_recommended INTEGER,
+        modify_history TEXT
+      );
+    `);
+
     // MetaBot multi-agent architecture tables
     // Order: metabot_wallets first (wallet exists before metabot), then metabots with wallet_id FK.
     this.db.run(`

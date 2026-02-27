@@ -419,7 +419,7 @@ export class MetabotStore {
    * Get the first Twin (metabot_type = 'twin') and its wallet for skill scripts (e.g. send_buzz).
    * Returns null if no twin exists.
    */
-  getTwinWallet(): { name: string; mnemonic: string; path: string } | null {
+  getTwinWallet(): { id: number; name: string; mnemonic: string; path: string } | null {
     const twinRow = this.getOne<MetabotRow>(
       "SELECT * FROM metabots WHERE metabot_type = 'twin' ORDER BY id ASC LIMIT 1"
     );
@@ -427,6 +427,7 @@ export class MetabotStore {
     const wallet = this.getMetabotWalletById(twinRow.wallet_id);
     if (!wallet) return null;
     return {
+      id: twinRow.id,
       name: twinRow.name,
       mnemonic: wallet.mnemonic,
       path: wallet.path,

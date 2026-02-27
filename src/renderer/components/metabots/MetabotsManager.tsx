@@ -2,11 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlassIcon, PlusCircleIcon } from '@heroicons/react/24/outline';
 import { CpuChipIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import MetaBotForm, { type MetaBotFormValues } from './MetaBotForm';
+import { configService } from '../../services/config';
+import { ALL_PROVIDER_KEYS } from '../../config';
+import type { Metabot } from '../../types/metabot';
+import MetaBotForm, { type MetaBotFormValues, type LlmOption } from './MetaBotForm';
 
 type ViewMode = 'list' | 'add' | 'edit';
 
-const MetabotsManager: React.FC = () => {
+const providerRequiresApiKey = (provider: string) => provider !== 'ollama';
+const providerLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
+
+const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ onRequestModelSettings }) => {
   const [list, setList] = useState<Metabot[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -114,6 +120,32 @@ const MetabotsManager: React.FC = () => {
 
   const editMetabot = editId != null ? list.find((m) => m.id === editId) : null;
 
+  const [settingsClosedTrigger, setSettingsClosedTrigger] = useState(0);
+  useEffect(() => {
+    const handler = () => setSettingsClosedTrigger((n) => n + 1);
+    window.addEventListener('app:settingsClosed', handler);
+    return () => window.removeEventListener('app:settingsClosed', handler);
+  }, []);
+
+  const llmOptions = useMemo((): LlmOption[] => {
+    const config = configService.getConfig();
+    const providers = (config.providers ?? {}) as Record<string, { enabled?: boolean; apiKey?: string }>;
+    const configured: LlmOption[] = [];
+    for (const key of ALL_PROVIDER_KEYS) {
+      const p = providers[key];
+      if (!p?.enabled) continue;
+      if (providerRequiresApiKey(key) && !(p.apiKey ?? '').trim()) continue;
+      configured.push({ id: key, label: providerLabel(key) });
+    }
+    const usedByOthers = new Set(
+      list
+        .filter((m) => (viewMode === 'edit' && editId != null ? m.id !== editId : true))
+        .map((m) => m.llm_id)
+        .filter((id): id is string => !!id)
+    );
+    return configured.filter((opt) => !usedByOthers.has(opt.id));
+  }, [list, viewMode, editId, settingsClosedTrigger]);
+
   if (viewMode === 'add') {
     return (
       <div className="space-y-4">
@@ -125,6 +157,8 @@ const MetabotsManager: React.FC = () => {
           onCancel={handleCancelForm}
           onSave={handleSaveNew}
           saveLabel={i18nService.t('save')}
+          llmOptions={llmOptions}
+          onRequestModelSettings={onRequestModelSettings}
         />
       </div>
     );
@@ -151,6 +185,8 @@ const MetabotsManager: React.FC = () => {
           isEdit={true}
           onCancel={handleCancelForm}
           onSave={handleSaveEdit}
+          llmOptions={llmOptions}
+          onRequestModelSettings={onRequestModelSettings}
         />
       </div>
     );

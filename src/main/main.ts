@@ -23,6 +23,7 @@ import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
+import { startMetaidRpcServer } from './services/metaidRpcServer';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -504,6 +505,7 @@ let imGatewayManager: IMGatewayManager | null = null;
 let scheduledTaskStore: ScheduledTaskStore | null = null;
 let metabotStore: MetabotStore | null = null;
 let scheduler: Scheduler | null = null;
+let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -552,6 +554,7 @@ const getCoworkRunner = () => {
           const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
           if (metabot && wallet) {
             return {
+              IDBOTS_METABOT_ID: String(metabotId),
               IDBOTS_TWIN_MNEMONIC: wallet.mnemonic,
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_TWIN_PATH: wallet.path,
@@ -561,6 +564,7 @@ const getCoworkRunner = () => {
         const twin = metabotStore.getTwinWallet();
         if (!twin) return {};
         return {
+          IDBOTS_METABOT_ID: String(twin.id),
           IDBOTS_TWIN_MNEMONIC: twin.mnemonic,
           IDBOTS_TWIN_NAME: twin.name,
           IDBOTS_TWIN_PATH: twin.path,
@@ -2361,6 +2365,11 @@ if (!gotTheLock) {
     destroyTray();
     skillManager?.stopWatching();
 
+    if (metaidRpcServer) {
+      metaidRpcServer.close();
+      metaidRpcServer = null;
+    }
+
     // Stop Cowork sessions without blocking shutdown.
     if (coworkRunner) {
       console.log('[Main] Stopping cowork sessions...');
@@ -2448,6 +2457,7 @@ if (!gotTheLock) {
     }
 
     store = await initStore();
+    metaidRpcServer = startMetaidRpcServer(getMetabotStore, getStore);
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.
     const resetCount = getCoworkStore().resetRunningSessions();

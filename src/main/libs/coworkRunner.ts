@@ -1828,31 +1828,50 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
-   * Build MetaBot persona prefix for system prompt. Returns empty string if no MetaBot or no getter.
-   * Safe fallback for legacy sessions without metabot_id.
-   * Includes explicit name/identity so the model reliably answers "What is your name?" from metabots table.
+   * Build MetaBot persona block for system prompt using structured XML.
+   * Returns empty string if session has no metabot_id or MetaBot not found (silent fallback).
+   * Scoped to current session to avoid persona cross-contamination between MetaBots.
+   * Only injects tags that have non-empty values (NULL/empty from DB are skipped).
    */
-  private buildMetabotPersonaPrefix(sessionId: string): string {
+  private buildMetabotPersonaBlock(sessionId: string): string {
     if (!this.getMetabotById) return '';
     const session = this.store.getSession(sessionId);
     const metabotId = session?.metabotId;
     if (metabotId == null || typeof metabotId !== 'number') return '';
     const metabot = this.getMetabotById(metabotId);
     if (!metabot) return '';
-    const parts: string[] = [
-      `You are ${metabot.name}. Your name is ${metabot.name}. When asked your name (e.g. "你叫什么名字" or "What is your name"), answer: ${metabot.name}.`,
-      `Role: ${metabot.role || 'assistant'}.`,
-    ];
+
+    const tags: string[] = [];
+    if (metabot.name?.trim()) {
+      tags.push(`  <name>${this.escapeXmlText(metabot.name.trim())}</name>`);
+    }
+    if (metabot.role?.trim()) {
+      tags.push(`  <role>${this.escapeXmlText(metabot.role.trim())}</role>`);
+    }
     if (metabot.background?.trim()) {
-      parts.push(`Background: ${metabot.background.trim()}.`);
+      tags.push(`  <background>${this.escapeXmlText(metabot.background.trim())}</background>`);
     }
     if (metabot.soul?.trim()) {
-      parts.push(`Your core soul/personality: ${metabot.soul.trim()}.`);
+      tags.push(`  <soul>${this.escapeXmlText(metabot.soul.trim())}</soul>`);
     }
     if (metabot.goal?.trim()) {
-      parts.push(`Your goal: ${metabot.goal.trim()}.`);
+      tags.push(`  <goal>${this.escapeXmlText(metabot.goal.trim())}</goal>`);
     }
-    return parts.join(' ');
+    if (tags.length === 0) return '';
+
+    const identityBlock = ['<metabot_identity>', ...tags, '</metabot_identity>'].join('\n');
+    const instructionBlock =
+      '<instruction>\nYou must strictly adhere to the persona, soul, and background defined in the &lt;metabot_identity&gt; block above for all responses in this session.\n</instruction>';
+    return `${identityBlock}\n${instructionBlock}`;
+  }
+
+  private escapeXmlText(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   private composeEffectiveSystemPrompt(
@@ -1861,7 +1880,8 @@ export class CoworkRunner extends EventEmitter {
     cwd: string,
     confirmationMode: 'modal' | 'text',
     userMemoriesXml: string,
-    memoryEnabled: boolean
+    memoryEnabled: boolean,
+    personaBlock?: string
   ): string {
     const safetyPrompt = this.buildWorkspaceSafetyPrompt(workspaceRoot, cwd, confirmationMode);
     const localTimePrompt = this.buildLocalTimeContextPrompt();
@@ -1880,9 +1900,15 @@ export class CoworkRunner extends EventEmitter {
       );
     }
     const trimmedBasePrompt = baseSystemPrompt?.trim();
-    return [safetyPrompt, localTimePrompt, userMemoriesXml, memoryRecallPrompt.join('\n'), trimmedBasePrompt]
-      .filter((section): section is string => Boolean(section?.trim()))
-      .join('\n\n');
+    const sections = [
+      personaBlock,
+      safetyPrompt,
+      localTimePrompt,
+      userMemoriesXml,
+      memoryRecallPrompt.join('\n'),
+      trimmedBasePrompt,
+    ];
+    return sections.filter((section): section is string => Boolean(section?.trim())).join('\n\n');
   }
 
   private extractToolCommand(toolInput: Record<string, unknown>): string {
@@ -2135,15 +2161,15 @@ export class CoworkRunner extends EventEmitter {
     }
 
     const baseSystemPrompt = options.systemPrompt ?? session.systemPrompt;
-    const personaPrefix = this.buildMetabotPersonaPrefix(sessionId);
-    const baseWithPersona = [personaPrefix, baseSystemPrompt].filter((s) => s?.trim()).join('\n\n');
+    const personaBlock = this.buildMetabotPersonaBlock(sessionId);
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
-      baseWithPersona,
+      baseSystemPrompt,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
       this.buildUserMemoriesXml(sessionId),
-      this.store.getConfig().memoryEnabled
+      this.store.getConfig().memoryEnabled,
+      personaBlock
     );
 
     // Run claude-code using the SDK
@@ -2190,15 +2216,15 @@ export class CoworkRunner extends EventEmitter {
     // Use provided systemPrompt (e.g. with updated skill routing) or fall back to session's stored one.
     // Always prepend workspace safety prompt so folder boundary rules are enforced at prompt level.
     const baseSystemPrompt = options.systemPrompt ?? session.systemPrompt;
-    const personaPrefix = this.buildMetabotPersonaPrefix(sessionId);
-    const baseWithPersona = [personaPrefix, baseSystemPrompt].filter((s) => s?.trim()).join('\n\n');
+    const personaBlock = this.buildMetabotPersonaBlock(sessionId);
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
-      baseWithPersona,
+      baseSystemPrompt,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
       this.buildUserMemoriesXml(sessionId),
-      this.store.getConfig().memoryEnabled
+      this.store.getConfig().memoryEnabled,
+      personaBlock
     );
 
     try {

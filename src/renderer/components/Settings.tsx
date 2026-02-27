@@ -633,7 +633,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     return unsubscribe;
   }, []);
 
-  // Compute visible providers based on language
+  // All LLM providers shown uniformly (no language filtering per SDD)
   const visibleProviders = useMemo(() => {
     const visibleKeys = getVisibleProviders(language);
     const filtered: Partial<ProvidersConfig> = {};

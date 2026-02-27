@@ -1,0 +1,179 @@
+#!/usr/bin/env node
+
+/**
+ * RPC worker: create Pin using meta-contract (mvc) only - no @metalet to avoid instanceof conflicts.
+ * Reads mnemonic/path from env, metaidData from stdin, outputs result to stdout.
+ */
+
+import { TxComposer, mvc } from 'meta-contract';
+
+const METALET_HOST = 'https://www.metalet.space';
+const NET = 'livenet';
+
+async function fetchMVCUtxos(address: string): Promise<{ txid: string; outIndex: number; value: number; height: number }[]> {
+  const all: any[] = [];
+  let flag: string | undefined;
+  while (true) {
+    const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
+    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const json = await res.json();
+    const list = json?.data?.list ?? [];
+    if (!list.length) break;
+    all.push(...list.filter((u: any) => u.value >= 600));
+    flag = list[list.length - 1]?.flag;
+    if (!flag) break;
+  }
+  return all;
+}
+
+async function broadcastTx(rawTx: string): Promise<string> {
+  const res = await fetch(`${METALET_HOST}/wallet-api/v3/tx/broadcast`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chain: 'mvc', net: NET, rawTx }),
+  });
+  const json = await res.json();
+  if (json?.code !== 0) throw new Error(json?.message || 'Broadcast failed');
+  return json.data;
+}
+
+const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
+const P2PKH_UNLOCK_SIZE = 1 + 1 + 72 + 1 + 33;
+
+interface RpcPayload {
+  metaidData: {
+    operation: string;
+    path?: string;
+    encryption?: string;
+    version?: string;
+    contentType?: string;
+    payload: string | Buffer;
+  };
+}
+
+interface SA_utxo {
+  txId: string;
+  outputIndex: number;
+  satoshis: number;
+  address: string;
+  height: number;
+}
+
+function parseAddressIndexFromPath(path: string): number {
+  if (!path || typeof path !== 'string') return 0;
+  const m = path.match(/\/0\/(\d+)$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function buildMvcOpReturn(data: RpcPayload['metaidData']): (string | Buffer)[] {
+  const result: (string | Buffer)[] = ['metaid', data.operation];
+  if (data.operation !== 'init') {
+    result.push((data.path || '').toLowerCase());
+    result.push(data.encryption || '0');
+    result.push(data.version || '1.0');
+    result.push(data.contentType || 'text/plain;utf-8');
+    const body =
+      typeof data.payload === 'string'
+        ? Buffer.from(data.payload, 'utf-8')
+        : Buffer.isBuffer(data.payload)
+          ? data.payload
+          : Buffer.from(String(data.payload));
+    result.push(body);
+  }
+  return result;
+}
+
+function pickUtxo(utxos: SA_utxo[], amount: number, feeb: number): SA_utxo[] {
+  let requiredAmount = amount + 34 * 2 * feeb + 100;
+  if (requiredAmount <= 0) return [];
+  const sum = utxos.reduce((acc, u) => acc + u.satoshis, 0);
+  if (sum < requiredAmount) throw new Error('Not enough balance');
+
+  const confirmed = utxos.filter((u) => u.height > 0).sort(() => Math.random() - 0.5);
+  const unconfirmed = utxos.filter((u) => u.height <= 0).sort(() => Math.random() - 0.5);
+  let current = 0;
+  const candidate: SA_utxo[] = [];
+  for (const u of [...confirmed, ...unconfirmed]) {
+    current += u.satoshis;
+    requiredAmount += feeb * P2PKH_UNLOCK_SIZE;
+    candidate.push(u);
+    if (current > requiredAmount) return candidate;
+  }
+  return candidate;
+}
+
+async function main() {
+  const mnemonic = process.env.IDBOTS_TWIN_MNEMONIC?.trim();
+  const pathStr = (process.env.IDBOTS_TWIN_PATH || DEFAULT_PATH).trim();
+  if (!mnemonic) {
+    console.error(JSON.stringify({ success: false, error: 'IDBOTS_TWIN_MNEMONIC required' }));
+    process.exit(1);
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.from(chunk));
+  }
+  const payload: RpcPayload = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+  const { metaidData } = payload;
+  const addressIndex = parseAddressIndexFromPath(pathStr);
+
+  const network = mvc.Networks.livenet;
+  const mneObj = mvc.Mnemonic.fromString(mnemonic);
+  const hdpk = mneObj.toHDPrivateKey('', network as any);
+  const derivePath = `m/44'/10001'/0'/0/${addressIndex}`;
+  const childPk = hdpk.deriveChild(derivePath);
+  const address = childPk.publicKey.toAddress(network as any).toString();
+  const privateKey = childPk.privateKey;
+
+  const utxos = await fetchMVCUtxos(address);
+  const usableUtxos: SA_utxo[] = utxos.map((u) => ({
+    txId: u.txid,
+    outputIndex: u.outIndex,
+    satoshis: u.value,
+    address,
+    height: u.height,
+  }));
+
+  const txComposer = new TxComposer();
+  txComposer.appendP2PKHOutput({
+    address: new mvc.Address(address, network as any),
+    satoshis: 1,
+  });
+  txComposer.appendOpReturnOutput(buildMvcOpReturn(metaidData));
+
+  const tx = txComposer.tx;
+  const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
+  const picked = pickUtxo(usableUtxos, totalOutput, 1);
+
+  const addressObj = new mvc.Address(address, network as any);
+  for (const utxo of picked) {
+    txComposer.appendP2PKHInput({
+      address: addressObj,
+      txId: utxo.txId,
+      outputIndex: utxo.outputIndex,
+      satoshis: utxo.satoshis,
+    });
+  }
+  txComposer.appendChangeOutput(addressObj, 1);
+
+  for (let i = 0; i < tx.inputs.length; i++) {
+    txComposer.unlockP2PKHInput(privateKey, i);
+  }
+
+  const rawHex = txComposer.getRawHex();
+  const inputTotal = tx.inputs.reduce((s, inp) => s + (inp.output?.satoshis || 0), 0);
+  const outputTotal = tx.outputs.reduce((s, o) => s + o.satoshis, 0);
+  const totalCost = inputTotal - outputTotal;
+
+  const txid = await broadcastTx(rawHex);
+  console.log(JSON.stringify({ success: true, txids: [txid], totalCost }));
+}
+
+main().catch((err) => {
+  const msg = err && typeof err === 'object' && 'message' in err
+    ? String((err as Error).message)
+    : String(err);
+  console.error(JSON.stringify({ success: false, error: msg }));
+  process.exit(1);
+});

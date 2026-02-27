@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import { ChevronDownIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import { RootState } from '../../store';
 import { clearCurrentSession, setCurrentSession, setStreaming } from '../../store/slices/coworkSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
@@ -18,6 +19,89 @@ import { QuickActionBar, PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import type { CoworkSession } from '../../types/cowork';
 
+type MetaBotForSelector = { id: number; name: string; avatar: string | null; metabot_type: string };
+
+const MetaBotSelector: React.FC<{
+  metabots: MetaBotForSelector[];
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
+  label: string;
+  placeholder: string;
+}> = ({ metabots, selectedId, onSelect, label, placeholder }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isOpen]);
+  const selected = metabots.find((m) => m.id === selectedId) ?? metabots[0];
+  return (
+    <div className="flex items-center gap-3">
+      <label className="text-sm font-medium dark:text-claude-darkText text-claude-text shrink-0">
+        {label}
+      </label>
+      <div ref={containerRef} className="relative min-w-[200px]">
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="w-full flex items-center gap-2 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-4 py-2.5 text-sm focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer"
+          aria-label={placeholder}
+        >
+          {selected ? (
+            <>
+              {selected.avatar && (selected.avatar.startsWith('data:') || selected.avatar.startsWith('http')) ? (
+                <img src={selected.avatar} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+              ) : (
+                <div className="w-6 h-6 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
+                  <CpuChipIcon className="h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                </div>
+              )}
+              <span className="truncate flex-1 text-left">{selected.name}</span>
+            </>
+          ) : (
+            <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary">{placeholder}</span>
+          )}
+          <ChevronDownIcon className={`h-4 w-4 flex-shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {isOpen && (
+          <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover z-50 overflow-hidden max-h-48 overflow-y-auto">
+            {metabots.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  onSelect(m.id);
+                  setIsOpen(false);
+                }}
+                className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${selectedId === m.id ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''}`}
+              >
+                {m.avatar && (m.avatar.startsWith('data:') || m.avatar.startsWith('http')) ? (
+                  <img src={m.avatar} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+                ) : (
+                  <div className="w-6 h-6 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
+                      {m.name.slice(0, 2) || '?'}
+                    </span>
+                  </div>
+                )}
+                <span className="truncate flex-1">{m.name}</span>
+                <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary shrink-0">
+                  ({m.metabot_type})
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
   onShowSkills?: () => void;
@@ -33,6 +117,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const [isInitialized, setIsInitialized] = useState(false);
   const [metabots, setMetabots] = useState<Array<{ id: number; name: string; avatar: string | null; metabot_type: string }>>([]);
   const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(null);
+  const [selectedMetabotLlmId, setSelectedMetabotLlmId] = useState<string | null>(null);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
@@ -78,6 +163,22 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     };
     void loadMetaBots();
   }, []);
+
+  useEffect(() => {
+    const id = selectedMetabotId;
+    if (id == null) {
+      setSelectedMetabotLlmId(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchMetaBot = async () => {
+      const result = await window.electron?.metabot?.get?.(id);
+      if (cancelled || !result?.success || !result.metabot) return;
+      setSelectedMetabotLlmId(result.metabot.llm_id ?? null);
+    };
+    void fetchMetaBot();
+    return () => { cancelled = true; };
+  }, [selectedMetabotId]);
 
   useEffect(() => {
     const init = async () => {
@@ -379,7 +480,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               {updateBadge}
             </div>
           )}
-          <ModelSelector />
+          <ModelSelector restrictToLlmId={selectedMetabotLlmId} />
         </div>
         <WindowTitleBar inline />
       </div>
@@ -398,35 +499,15 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             </p>
           </div>
 
-          {/* MetaBot selector (when creating new session) */}
+          {/* MetaBot selector (when creating new session) - shows avatar and name */}
           {metabots.length > 0 && (
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium dark:text-claude-darkText text-claude-text shrink-0">
-                {i18nService.t('coworkMetaBotLabel')}
-              </label>
-              <div className="relative min-w-[180px]">
-                <select
-                  value={selectedMetabotId ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value ? Number(e.target.value) : null;
-                    setSelectedMetabotId(v);
-                  }}
-                  className="w-full rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border dark:text-claude-darkText text-claude-text px-4 py-2.5 text-sm focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 appearance-none cursor-pointer"
-                  aria-label={i18nService.t('coworkMetaBotPlaceholder')}
-                >
-                  {metabots.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.metabot_type})
-                    </option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-              </div>
-            </div>
+            <MetaBotSelector
+              metabots={metabots}
+              selectedId={selectedMetabotId}
+              onSelect={setSelectedMetabotId}
+              label={i18nService.t('coworkMetaBotLabel')}
+              placeholder={i18nService.t('coworkMetaBotPlaceholder')}
+            />
           )}
 
           {/* Prompt Input Area - Large version with folder selector */}

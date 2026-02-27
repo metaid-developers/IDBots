@@ -36,7 +36,7 @@ MetaBot 生态的基础设施 Skill。管理 MetaBot 的**身份 (MetaID)**、**
 ### 3. 数据发布 (Data Publishing)
 MetaBot 在链上发布基础数据或协议节点。
 
-- **发布 Buzz**: **须在技能根目录下执行**。命令：`npx ts-node scripts/send_buzz.ts "<agentName>" "<content>"` (基于 `simpleBuzz` 协议)。若使用环境变量，可写：`cd "$SKILLS_ROOT/metabot-basic" && npx ts-node scripts/send_buzz.ts "<agentName>" "<content>"`。
+- **发布 Buzz**: **须在技能根目录下执行**。命令：`npx ts-node scripts/send_buzz.ts "<content>"` 或 `npx ts-node scripts/send_buzz.ts @<filepath>` (基于 `simpleBuzz` 协议)。**无需传入 MetaBot 名称**：当前会话的 MetaBot 由 `IDBOTS_METABOT_ID` 自动注入。示例：`cd "$SKILLS_ROOT/metabot-basic" && npx ts-node scripts/send_buzz.ts "Hello from MetaBot"`。
 - **发布带图片附件的 Buzz**: 当用户要求将**本地图片**作为附件发 buzz，或使用**已有 pinId** 作为图片附件发 buzz 时，使用 `send_buzz_with_image.ts`。流程：先上链得 pinId（若为本地图片则调用 metabot-file 上传）→ 组装 simplebuzz `attachments: ["metafile://<pinId>.png"]` → 发送。
     - **本地图片**: `npx ts-node scripts/send_buzz_with_image.ts "<agentName>" "<content>" --image <path>`
     - **已有 pinId**: `npx ts-node scripts/send_buzz_with_image.ts "<agentName>" "<content>" --pinid <pinid> [--ext .png]`
@@ -52,10 +52,11 @@ MetaBot 在链上发布基础数据或协议节点。
   - 若环境中存在 `SKILLS_ROOT` 或 `IDBOTS_SKILLS_ROOT`，则本 Skill 根目录为 `$SKILLS_ROOT/metabot-basic`（或 `$IDBOTS_SKILLS_ROOT/metabot-basic`）。可先执行 `cd "$SKILLS_ROOT/metabot-basic"` 再执行下文命令。
 - **正确的一次性执行方式（发送 Buzz 示例）**  
   - 先切换目录再执行（推荐）：  
-    `cd "<技能根目录>" && npx ts-node scripts/send_buzz.ts "<发送者名称>" "<内容>"`  
+    `cd "<技能根目录>" && npx ts-node scripts/send_buzz.ts "<内容>"`  
+  - 从文件读取内容：`cd "<技能根目录>" && npx ts-node scripts/send_buzz.ts @<文件路径>`  
   - 或使用 npm 脚本（同样需在技能根目录下）：  
-    `cd "<技能根目录>" && npm run send-buzz -- "<发送者名称>" "<内容>"`  
-  其中 `<技能根目录>` 用上面两种方式之一得到；内容含双引号时注意 shell 转义。
+    `cd "<技能根目录>" && npm run send-buzz -- "<内容>"`  
+  其中 `<技能根目录>` 用上面两种方式之一得到。**无需传入 MetaBot 名称**，会话会自动注入 `IDBOTS_METABOT_ID`。内容含双引号时注意 shell 转义。
 - **禁止使用的路径**  
   仅使用本 Skill 下的 `scripts/`（即技能根目录下的 `scripts/`）。**不要**使用项目根目录的 `scripts/` 或 `Dev-docs/reference_scripts/metabot-basic/` 下的脚本，否则可能依赖缺失或行为不一致。
 
@@ -74,7 +75,7 @@ MetaBot 在链上发布基础数据或协议节点。
 | `create_avatar.ts` | **头像管理** | `[AgentName] [FilePath]`。限制 < 1MB。 |
 | `create_chatpubkey.ts` | **聊天初始化** | 上链 Chat 公钥，启用加密通讯。 |
 | `send_space.ts` | **MVC 转账** | 交互式或参数调用。单位：Satoshis。 |
-| `send_buzz.ts` | **发送文字 buzz** | 在 IDBots Cowork 中，当前会话选中的 MetaBot 钱包会自动注入；`<agentName>` 应填**当前会话的 MetaBot 名称**（与 metabots 表一致）；`<content>` 为正文。 |
+| `send_buzz.ts` | **发送文字 buzz** | 在 IDBots Cowork 中，当前会话的 MetaBot 由 `IDBOTS_METABOT_ID` 自动注入，**只需传入** `<content>`（正文）或 `@<filepath>`（从文件读取）。例如：`npx ts-node scripts/send_buzz.ts "Hello"` 或 `npx ts-node scripts/send_buzz.ts @./content.txt`。 |
 | `send_doge.ts` | **DOGE 转账** | 交互式或参数调用。 |
 | **`send_buzz_with_image.ts`** | **带图 Buzz** | 在 IDBots Cowork 中当前会话 MetaBot 钱包自动注入；`<agentName>` 填当前会话 MetaBot 名称；`<content>`；`--image <path>` 或 `--pinid <pinid>`。 |
 | `metaid.ts` | **底层操作** | 提供 `createPin`, `pay` 等原子操作。 |
@@ -83,7 +84,7 @@ MetaBot 在链上发布基础数据或协议节点。
 ## 行为规范 (AI Constraints)
 
 1. **身份认知与调用**: 作为当前会话选中的 MetaBot，当你接收到用户类似「发送一条 buzz 说你好」「把这段话发到链上」的指令时，你**不需要**向用户索要私钥或账户名。你的名字、灵魂、目标等信息来自 metabots 表，请准确回答「你叫什么名字」等问题。
-2. **执行脚本**: 请**先 cd 到本 Skill 根目录**，再执行 `npx ts-node scripts/send_buzz.ts "<当前会话MetaBot名称>" "<content>"`。在 IDBots Cowork 中，当前会话的 MetaBot 钱包（助记词）会自动注入，buzz 将以你的身份发出。
+2. **执行脚本**: 请**先 cd 到本 Skill 根目录**，再执行 `npx ts-node scripts/send_buzz.ts "<content>"`。**无需传入你的名称**：在 IDBots Cowork 中，当前会话的 MetaBot（`IDBOTS_METABOT_ID`）会自动注入，buzz 将以你的身份发出。
 3. **参数传递**: 确保提取用户意图中的**纯文本内容**作为 `<content>` 参数传递，如果有引号请注意转义。
 4. **执行优先**: 当用户要求“创建一个叫 Alice 的 MetaBot”时，不要返回操作指南，**直接生成并运行**对应的 `create_agents.ts` 命令。
 5. **创建命令格式**: 创建**单个** MetaBot 时**必须**使用 `--name "名字"` 形式，且**只有一个**名字（即 `--name` 后的那一个参数）。例如创建名为 Alice 的 MetaBot：`npx ts-node scripts/create_agents.ts --name "Alice"`。禁止把 `--name` 或其它 `--` 开头的参数当作 Agent 名字。

@@ -319,37 +319,20 @@ export const CONFIG_KEYS = {
   SKILLS: 'skills',
 };
 
-// 模型提供商分类
+// Model provider classification (kept for compatibility)
 export const CHINA_PROVIDERS = ['deepseek', 'moonshot', 'qwen', 'zhipu', 'minimax', 'xiaomi', 'ollama'] as const;
 export const GLOBAL_PROVIDERS = ['openai', 'gemini', 'anthropic', 'openrouter'] as const;
 export const EN_PRIORITY_PROVIDERS = ['openai', 'anthropic', 'gemini'] as const;
 
+/** All supported LLM provider keys for the Model settings page. No language filtering. */
+export const ALL_PROVIDER_KEYS = [
+  'openai', 'gemini', 'anthropic', 'deepseek', 'moonshot', 'zhipu', 'minimax', 'qwen', 'xiaomi', 'openrouter', 'ollama',
+] as const;
+
 /**
- * 根据语言获取可见的模型提供商
+ * Returns all supported LLM provider keys for the Model settings page.
+ * No language-based filtering; all providers are shown uniformly.
  */
-export const getVisibleProviders = (language: 'zh' | 'en'): readonly string[] => {
-  // 开发环境下显示所有提供商
-  // if (import.meta.env.DEV) {
-  //   return [...CHINA_PROVIDERS, ...GLOBAL_PROVIDERS];
-  // }
-
-  // 中文 → 中国版，英文 → 国际版
-  if (language === 'zh') {
-    return CHINA_PROVIDERS;
-  }
-
-  const orderedProviders = [
-    ...EN_PRIORITY_PROVIDERS,
-    ...CHINA_PROVIDERS,
-    ...GLOBAL_PROVIDERS,
-  ];
-  const uniqueProviders = [...new Set(orderedProviders)];
-  const ollamaIndex = uniqueProviders.indexOf('ollama');
-  if (ollamaIndex === -1) {
-    return uniqueProviders;
-  }
-
-  uniqueProviders.splice(ollamaIndex, 1);
-  uniqueProviders.push('ollama');
-  return uniqueProviders;
+export const getVisibleProviders = (_language: 'zh' | 'en'): readonly string[] => {
+  return ALL_PROVIDER_KEYS;
 };
