@@ -112,8 +112,8 @@ export const checkForAppUpdate = async (currentVersion: string): Promise<AppUpda
   }
 
   const toEntry = (log?: ChangeLogLang): ChangeLogEntry => ({
-    title: log?.title || '',
-    content: log?.content || [],
+    title: typeof log?.title === 'string' ? log.title : '',
+    content: Array.isArray(log?.content) ? log.content : [],
   });
 
   return {
