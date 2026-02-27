@@ -35,6 +35,13 @@ type UpdateApiResponse = {
 
 export type ChangeLogEntry = { title: string; content: string[] };
 
+export interface AppUpdateDownloadProgress {
+  received: number;
+  total: number | undefined;
+  percent: number | undefined;
+  speed: number | undefined;
+}
+
 export interface AppUpdateInfo {
   latestVersion: string;
   date: string;

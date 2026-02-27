@@ -233,6 +233,16 @@ contextBridge.exposeInMainWorld('electron', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
   },
+  appUpdate: {
+    download: (url: string) => ipcRenderer.invoke('appUpdate:download', url),
+    cancelDownload: () => ipcRenderer.invoke('appUpdate:cancelDownload'),
+    install: (filePath: string) => ipcRenderer.invoke('appUpdate:install', filePath),
+    onDownloadProgress: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('appUpdate:downloadProgress', handler);
+      return () => ipcRenderer.removeListener('appUpdate:downloadProgress', handler);
+    },
+  },
   log: {
     getPath: () => ipcRenderer.invoke('log:getPath'),
     openFolder: () => ipcRenderer.invoke('log:openFolder'),
