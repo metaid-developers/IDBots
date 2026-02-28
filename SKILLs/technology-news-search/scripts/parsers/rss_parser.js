@@ -26,6 +26,80 @@ function extractRedditUpvotes(contentStr) {
   return match ? parseInt(match[1], 10) : 0;
 }
 
+// Regex to detect if string contains CJK characters
+const CJK_REGEX = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/;
+
+function tokenizeKeyword(keyword) {
+  /**
+   * Split keyword into searchable tokens.
+   * - Chinese: bigram split (每2个字一组) + full keyword
+   * - English: split by spaces
+   * - Mixed: handle both parts
+   *
+   * Returns: { full: string, tokens: string[], isCJK: boolean }
+   */
+  const full = keyword.toLowerCase();
+
+  if (CJK_REGEX.test(keyword)) {
+    // Chinese or mixed: extract CJK bigrams + any English words
+    const tokens = new Set();
+    // Add the full keyword
+    tokens.add(full);
+    // CJK bigram segmentation
+    const cjkChars = keyword.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+/g);
+    if (cjkChars) {
+      for (const segment of cjkChars) {
+        if (segment.length >= 2) {
+          for (let i = 0; i <= segment.length - 2; i++) {
+            tokens.add(segment.substring(i, i + 2));
+          }
+        }
+        if (segment.length >= 1) {
+          tokens.add(segment);
+        }
+      }
+    }
+    // Also add English words if mixed
+    const englishWords = keyword.match(/[a-zA-Z]+/g);
+    if (englishWords) {
+      for (const w of englishWords) {
+        if (w.length >= 2) tokens.add(w.toLowerCase());
+      }
+    }
+    return { full, tokens: Array.from(tokens), isCJK: true };
+  } else {
+    // English: split by spaces, keep words with length >= 2
+    const words = full.split(/\s+/).filter(w => w.length >= 2);
+    return { full, tokens: words.length > 1 ? [full, ...words] : [full], isCJK: false };
+  }
+}
+
+function matchKeyword(title, summary, keywordInfo) {
+  /**
+   * Match keyword against title and summary using tokenized matching.
+   *
+   * Returns: 'exact_title' | 'token_title' | 'exact_summary' | 'token_summary' | null
+   */
+  const titleLower = (title || '').toLowerCase();
+  const summaryLower = (summary || '').toLowerCase();
+
+  // Check full keyword match first
+  if (titleLower.includes(keywordInfo.full)) return 'exact_title';
+  if (summaryLower.includes(keywordInfo.full)) return 'exact_summary';
+
+  // Check token matches
+  for (const token of keywordInfo.tokens) {
+    if (token === keywordInfo.full) continue; // Already checked
+    if (titleLower.includes(token)) return 'token_title';
+  }
+  for (const token of keywordInfo.tokens) {
+    if (token === keywordInfo.full) continue;
+    if (summaryLower.includes(token)) return 'token_summary';
+  }
+
+  return null;
+}
+
 function cleanText(text) {
   if (!text) return '';
 
@@ -61,6 +135,7 @@ async function parseRssFeed(sourceConfig, keyword = null, limit = 10) {
    *   Promise<Array>: List of article objects
    */
   const articles = [];
+  const keywordInfo = keyword ? tokenizeKeyword(keyword) : null;
 
   try {
     const feed = await parser.parseURL(sourceConfig.url);
@@ -93,13 +168,11 @@ async function parseRssFeed(sourceConfig, keyword = null, limit = 10) {
         const pubDate = item.pubDate || item.published || item.updated || new Date();
         const publishedAt = new Date(pubDate).toISOString();
 
-        // Keyword filtering
-        if (keyword) {
-          const keywordLower = keyword.toLowerCase();
-          if (!title.toLowerCase().includes(keywordLower) &&
-              !summary.toLowerCase().includes(keywordLower)) {
-            continue;
-          }
+        // Keyword filtering with tokenized matching
+        let matchType = null;
+        if (keywordInfo) {
+          matchType = matchKeyword(title, summary, keywordInfo);
+          if (!matchType) continue;
         }
 
         // Build article object
@@ -112,6 +185,11 @@ async function parseRssFeed(sourceConfig, keyword = null, limit = 10) {
           language: sourceConfig.language || 'en',
           category: sourceConfig.category || 'general'
         };
+
+        // Store match type for heat score calculation
+        if (matchType) {
+          article._matchType = matchType;
+        }
 
         // Extract Reddit upvotes if applicable
         if (sourceConfig.url && sourceConfig.url.includes('reddit.com')) {
@@ -137,5 +215,7 @@ async function parseRssFeed(sourceConfig, keyword = null, limit = 10) {
 }
 
 module.exports = {
-  parseRssFeed
+  parseRssFeed,
+  tokenizeKeyword,
+  matchKeyword
 };

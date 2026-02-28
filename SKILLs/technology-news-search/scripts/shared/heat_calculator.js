@@ -53,16 +53,28 @@ function calculateHeatScore(article, allArticles, keyword) {
 
   // Keyword match quality
   if (keyword) {
-    const keywordLower = keyword.toLowerCase();
-    const titleLower = (article.title || '').toLowerCase();
-    const summaryLower = (article.summary || '').toLowerCase();
+    // Use pre-computed match type if available (from tokenized matching)
+    if (article._matchType) {
+      switch (article._matchType) {
+        case 'exact_title':  score += 30; break; // Full keyword in title
+        case 'token_title':  score += 20; break; // Token match in title
+        case 'web_search':   score += 15; break; // Web search result (keyword-relevant)
+        case 'exact_summary': score += 10; break; // Full keyword in summary
+        case 'token_summary': score += 5;  break; // Token match in summary
+      }
+    } else {
+      // Fallback: simple substring matching (e.g., for HN articles)
+      const keywordLower = keyword.toLowerCase();
+      const titleLower = (article.title || '').toLowerCase();
+      const summaryLower = (article.summary || '').toLowerCase();
 
-    if (keywordLower === titleLower) {
-      score += 30; // Exact match
-    } else if (titleLower.includes(keywordLower)) {
-      score += 15; // Partial match in title
-    } else if (summaryLower.includes(keywordLower)) {
-      score += 5; // Match in summary
+      if (keywordLower === titleLower) {
+        score += 30;
+      } else if (titleLower.includes(keywordLower)) {
+        score += 15;
+      } else if (summaryLower.includes(keywordLower)) {
+        score += 5;
+      }
     }
   }
 
