@@ -245,6 +245,24 @@ function getWebSearchScriptPath() {
 }
 
 /**
+ * Close the browser opened by web-search bridge server.
+ * Only closes the browser spawned by the skill, not the user's own browser.
+ */
+async function closeWebSearchBrowser() {
+  const serverUrl = process.env.WEB_SEARCH_SERVER || 'http://127.0.0.1:8923';
+  try {
+    await fetch(`${serverUrl}/api/browser/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // Ignore errors — server may not be running or browser already closed
+  }
+}
+
+/**
  * Call web-search skill script and return raw markdown output.
  */
 async function callWebSearch(query, maxResults) {
@@ -258,6 +276,10 @@ async function callWebSearch(query, maxResults) {
 
   const isWindows = process.platform === 'win32';
   const queryArg = `@${tmpFile}`;
+
+  // Suppress per-call browser cleanup so consecutive searches reuse the same browser.
+  // The browser is closed after all searches complete via closeWebSearchBrowser().
+  const childEnv = { ...process.env, WEB_SEARCH_NO_CLEANUP: '1' };
 
   try {
     let stdout;
@@ -286,14 +308,14 @@ async function callWebSearch(query, maxResults) {
       const result = await execFileAsync(
         bashPath,
         [scriptPath, queryArg, String(maxResults)],
-        { timeout: config.timeout * 2, maxBuffer: 10 * 1024 * 1024, env: process.env }
+        { timeout: config.timeout * 2, maxBuffer: 10 * 1024 * 1024, env: childEnv }
       );
       stdout = result.stdout;
     } else {
       const result = await execFileAsync(
         'bash',
         [scriptPath, queryArg, String(maxResults)],
-        { timeout: config.timeout * 2, maxBuffer: 10 * 1024 * 1024, env: process.env }
+        { timeout: config.timeout * 2, maxBuffer: 10 * 1024 * 1024, env: childEnv }
       );
       stdout = result.stdout;
     }
@@ -844,7 +866,9 @@ async function main() {
     }
   } catch (err) {
     outputError(err.message || String(err));
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await closeWebSearchBrowser();
   }
 }
 
