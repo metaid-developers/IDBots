@@ -7,7 +7,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import type { Database } from 'sql.js';
+import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { getSkillsRoot } from '../libs/coworkUtil';
 
@@ -47,7 +47,7 @@ export async function createPin(
   metabot_id: number,
   metaidData: MetaidDataPayload,
   options?: { feeRate?: number }
-): Promise<{ txids: string[]; totalCost: number }> {
+): Promise<{ txids: string[]; pinId: string; totalCost: number }> {
   const wallet = metabotStore.getMetabotWalletByMetabotId(metabot_id);
   if (!wallet) {
     throw new Error(`MetaBot ${metabot_id} has no wallet`);
@@ -105,9 +105,11 @@ export async function createPin(
       try {
         const result = JSON.parse(output);
         if (result.success && result.txids) {
-          appendMetaidLog('INFO', 'createPin success', { txid: result.txids[0] });
+          const pinId = result.pinId ?? `${result.txids[0]}i0`;
+          appendMetaidLog('INFO', 'createPin success', { txid: result.txids[0], pinId });
           resolve({
             txids: result.txids,
+            pinId,
             totalCost: result.totalCost ?? 0,
           });
         } else {
@@ -148,16 +150,49 @@ function toSqlInt(v: unknown): number | null {
   return Number.isFinite(n) ? Math.floor(n) : null;
 }
 
+let storeGetter: (() => SqliteStore | null) | null = null;
+
+export function setMetaidCoreStore(getter: () => SqliteStore | null): void {
+  storeGetter = getter;
+}
+
+function rowToPinData(columns: string[], row: unknown[]): PinDataRow {
+  const obj: PinDataRow = {};
+  const boolKeys = new Set(['isTransfered', 'blocked', 'is_recommended']);
+  const jsonKeys = new Set(['mrc20MintId', 'modify_history']);
+  columns.forEach((col, i) => {
+    const v = row[i];
+    if (boolKeys.has(col)) {
+      obj[col] = v === 1 || v === '1' || v === true;
+    } else if (jsonKeys.has(col) && typeof v === 'string' && v) {
+      try {
+        obj[col] = JSON.parse(v);
+      } catch {
+        obj[col] = v;
+      }
+    } else {
+      obj[col] = v ?? null;
+    }
+  });
+  return obj;
+}
+
 /**
- * Fetch PIN data from manapi.metaid.io and optionally persist to SQLite.
- * When persist is true, db and save must be provided.
+ * Fetch PIN data: prefer local SQLite, fallback to manapi.metaid.io.
+ * If local hit: return from DB. If miss: fetch remote, persist when persist=true, then return.
  */
-export async function getPinData(
-  pinId: string,
-  persist: boolean,
-  db?: Database,
-  save?: () => void
-): Promise<PinDataRow> {
+export async function getPinData(pinId: string, persist: boolean): Promise<PinDataRow> {
+  const store = storeGetter?.() ?? null;
+  if (store) {
+    const db = store.getDatabase();
+    const result = db.exec('SELECT * FROM metaid_pins WHERE id = ?', [pinId]);
+    if (result[0]?.values?.[0]) {
+      const columns = result[0].columns as string[];
+      const row = result[0].values[0] as unknown[];
+      return rowToPinData(columns, row);
+    }
+  }
+
   const url = `${MANAPI_BASE}/pin/${encodeURIComponent(pinId)}`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -169,7 +204,8 @@ export async function getPinData(
     throw new Error(json?.message ?? 'No data in manapi response');
   }
 
-  if (persist && db && save) {
+  if (persist && store) {
+    const db = store.getDatabase();
     const id = (data.id != null ? String(data.id) : pinId) || pinId;
     const cols = [
       'id', 'number', 'metaid', 'address', 'creator', 'createMetaId', 'globalMetaId', 'initialOwner',
@@ -234,7 +270,7 @@ export async function getPinData(
       `INSERT OR REPLACE INTO metaid_pins (${cols.join(',')}) VALUES (${placeholders})`,
       values
     );
-    save();
+    store.getSaveFunction()();
   }
 
   return data as PinDataRow;

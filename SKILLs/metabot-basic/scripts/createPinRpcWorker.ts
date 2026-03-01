@@ -167,7 +167,9 @@ async function main() {
   const totalCost = inputTotal - outputTotal;
 
   const txid = await broadcastTx(rawHex);
-  console.log(JSON.stringify({ success: true, txids: [txid], totalCost }));
+  // pinId = txid + "i0": i0 is the 0th output (1 sat UTXO) representing ownership of the MetaID data
+  const pinId = `${txid}i0`;
+  console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost }));
 }
 
 main().catch((err) => {

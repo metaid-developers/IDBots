@@ -9,7 +9,7 @@ import fs from 'fs';
 import { app } from 'electron';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
-import { createPin, getPinData, type MetaidDataPayload } from './metaidCore';
+import { createPin, getPinData, setMetaidCoreStore, type MetaidDataPayload } from './metaidCore';
 
 const RPC_HOST = '127.0.0.1';
 const RPC_PORT = 31200;
@@ -20,6 +20,8 @@ export function startMetaidRpcServer(
   getMetabotStore: () => MetabotStore,
   getStore: () => SqliteStore
 ): http.Server {
+  setMetaidCoreStore(getStore);
+
   const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     const cors = {
@@ -47,13 +49,7 @@ export function startMetaidRpcServer(
         return;
       }
       try {
-        const store = getStore();
-        const data = await getPinData(
-          pinId,
-          persist,
-          store.getDatabase(),
-          store.getSaveFunction()
-        );
+        const data = await getPinData(pinId, persist);
         res.writeHead(200);
         res.end(JSON.stringify({ success: true, data }));
       } catch (err) {
@@ -111,12 +107,14 @@ export function startMetaidRpcServer(
       const store = getMetabotStore();
       const result = await createPin(store, metabot_id, metaidData as MetaidDataPayload);
       res.writeHead(200);
+      const txid = result.txids[0];
+      const pinId = result.pinId ?? `${txid}i0`;
       res.end(
         JSON.stringify({
           success: true,
           txids: result.txids,
-          txid: result.txids[0],
-          pinId: result.txids[0],
+          txid,
+          pinId,
           totalCost: result.totalCost,
         })
       );
