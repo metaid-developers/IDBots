@@ -543,8 +543,12 @@ const getCoworkRunner = () => {
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
         const skillIds = session?.activeSkillIds ?? [];
-        // Inject MetaBot wallet when metabot-basic is selected, or when no skills selected (default)
-        const shouldInject = skillIds.length === 0 || skillIds.includes('metabot-basic');
+        // Inject MetaBot wallet when metabot-basic, metabot-post-buzz, or metabot-omni-caster is selected, or when no skills selected (default)
+        const shouldInject =
+          skillIds.length === 0 ||
+          skillIds.includes('metabot-basic') ||
+          skillIds.includes('metabot-post-buzz') ||
+          skillIds.includes('metabot-omni-caster');
         if (!shouldInject) return {};
         const metabotStore = getMetabotStore();
         // Prefer session's selected MetaBot; fall back to Twin for legacy sessions without metabotId
@@ -558,6 +562,7 @@ const getCoworkRunner = () => {
               IDBOTS_TWIN_MNEMONIC: wallet.mnemonic,
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_TWIN_PATH: wallet.path,
+              IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
             };
           }
         }
@@ -568,6 +573,7 @@ const getCoworkRunner = () => {
           IDBOTS_TWIN_MNEMONIC: twin.mnemonic,
           IDBOTS_TWIN_NAME: twin.name,
           IDBOTS_TWIN_PATH: twin.path,
+          IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
         };
       },
       getMetabotById: (id: number) => {
