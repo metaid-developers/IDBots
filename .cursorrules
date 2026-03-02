@@ -37,3 +37,5 @@ When writing backend code or IPC handlers, assume the following key tables exist
 - Functional React components with Hooks.
 - Keep business logic in `src/renderer/services/` (or Redux slices) away from UI components.
 - 2-space indentation, single quotes, semicolons.
+- If you’re using TypeScript, you must use strong typing.
+

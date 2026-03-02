@@ -23,6 +23,9 @@ import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
+import { createMetaBotWallet } from './services/metabotWalletService';
+import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
+import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 
 // 设置应用程序名称
@@ -1669,6 +1672,20 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('metabot:checkNameExists', async (_event, options: { name: string; excludeId?: number }) => {
+    try {
+      const list = getMetabotStore().listMetabots();
+      const name = (options.name || '').trim().toLowerCase();
+      if (!name) return { success: true, exists: false };
+      const exists = list.some(
+        (m) => m.name.toLowerCase() === name && (options.excludeId == null || m.id !== options.excludeId)
+      );
+      return { success: true, exists };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to check name', exists: false };
+    }
+  });
+
   ipcMain.handle('metabot:get', async (_event, id: number) => {
     try {
       const metabot = getMetabotStore().getMetabotById(id);
@@ -1749,6 +1766,112 @@ if (!gotTheLock) {
       return { success: true, metabot };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update metabot' };
+    }
+  });
+
+  ipcMain.handle('idbots:addMetaBot', async (_event, input: {
+    name: string;
+    avatar?: string | null;
+    role: string;
+    soul: string;
+    goal?: string | null;
+    background?: string | null;
+    boss_id?: number | null;
+    llm_id?: string | null;
+  }) => {
+    try {
+      const walletResult = await createMetaBotWallet({});
+      const store = getMetabotStore();
+      const wallet = store.insertMetabotWallet({
+        mnemonic: walletResult.mnemonic,
+        path: walletResult.path,
+      });
+      const metabot = store.createMetabot({
+        wallet_id: wallet.id,
+        mvc_address: walletResult.mvc_address,
+        btc_address: walletResult.btc_address,
+        doge_address: walletResult.doge_address,
+        public_key: walletResult.public_key,
+        chat_public_key: walletResult.chat_public_key,
+        chat_public_key_pin_id: null,
+        name: input.name,
+        avatar: input.avatar ?? null,
+        enabled: true,
+        metaid: walletResult.metaid,
+        globalmetaid: walletResult.globalmetaid,
+        metabot_info_pinid: null,
+        metabot_type: 'worker',
+        created_by: '0000',
+        role: input.role,
+        soul: input.soul,
+        goal: input.goal ?? null,
+        background: input.background ?? null,
+        boss_id: null,
+        llm_id: input.llm_id ?? null,
+        tools: [],
+        skills: [],
+      });
+      const subsidyResult = await requestMvcGasSubsidy({
+        mvcAddress: metabot.mvc_address,
+        mnemonic: walletResult.mnemonic,
+        path: walletResult.path,
+      });
+      return { success: true, metabot, subsidy: subsidyResult };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      console.error('[MetaBot] idbots:addMetaBot failed:', errMsg);
+      if (errStack) console.error('[MetaBot] idbots:addMetaBot stack:', errStack);
+      return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:getAddressBalance', async (_event, options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) => {
+    try {
+      const store = getMetabotStore();
+      let btcAddr: string | undefined;
+      let mvcAddr: string | undefined;
+      let dogeAddr: string | undefined;
+      if (options.metabotId != null) {
+        const m = store.getMetabotById(options.metabotId);
+        if (m) {
+          btcAddr = m.btc_address;
+          mvcAddr = m.mvc_address;
+          dogeAddr = m.doge_address;
+        }
+      }
+      if (options.addresses) {
+        btcAddr = options.addresses.btc ?? btcAddr;
+        mvcAddr = options.addresses.mvc ?? mvcAddr;
+        dogeAddr = options.addresses.doge ?? dogeAddr;
+      }
+      const results: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } } = {};
+      const promises: Promise<void>[] = [];
+      if (btcAddr) {
+        promises.push(
+          getAddressBalance('btc', btcAddr)
+            .then((r) => { results.btc = { value: r.value, unit: r.unit }; })
+            .catch(() => { results.btc = { value: 0, unit: 'BTC' }; })
+        );
+      }
+      if (mvcAddr) {
+        promises.push(
+          getAddressBalance('mvc', mvcAddr)
+            .then((r) => { results.mvc = { value: r.value, unit: r.unit }; })
+            .catch(() => { results.mvc = { value: 0, unit: 'SPACE' }; })
+        );
+      }
+      if (dogeAddr) {
+        promises.push(
+          getAddressBalance('doge', dogeAddr)
+            .then((r) => { results.doge = { value: r.value, unit: r.unit }; })
+            .catch(() => { results.doge = { value: 0, unit: 'DOGE' }; })
+        );
+      }
+      await Promise.all(promises);
+      return { success: true, balance: results };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get balance' };
     }
   });
 

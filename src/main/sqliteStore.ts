@@ -299,13 +299,13 @@ export class SqliteStore {
         doge_address TEXT UNIQUE NOT NULL,
         public_key TEXT UNIQUE NOT NULL,
         chat_public_key TEXT UNIQUE NOT NULL,
-        chat_public_key_pin_id TEXT UNIQUE NOT NULL,
+        chat_public_key_pin_id TEXT,
         name TEXT UNIQUE NOT NULL,
         avatar BLOB,
         enabled INTEGER NOT NULL DEFAULT 1,
         metaid TEXT UNIQUE NOT NULL,
         globalmetaid TEXT UNIQUE,
-        metabot_info_pinid TEXT UNIQUE NOT NULL,
+        metabot_info_pinid TEXT,
         metabot_type TEXT CHECK(metabot_type IN ('twin', 'worker')) NOT NULL,
         created_by TEXT NOT NULL,
         role TEXT NOT NULL,
@@ -325,6 +325,11 @@ export class SqliteStore {
 
     // Migration: existing DBs with old schema (metabot_wallets.metabot_id, metabots without wallet_id, avatar TEXT)
     this.migrateMetabotWalletRelationAndAvatar(basePath);
+
+    // Migration: make metabot_info_pinid optional (nullable, no UNIQUE) for new MetaBots without on-chain info pin
+    this.migrateMetabotInfoPinidOptional();
+    // Migration: make chat_public_key_pin_id optional (same pattern - placeholder before on-chain push)
+    this.migrateChatPublicKeyPinIdOptional();
 
     // Seed default Twin when no twin exists (for vertical slice: send Buzz)
     this.seedDefaultTwin();
@@ -512,6 +517,122 @@ export class SqliteStore {
       }
     } catch (e) {
       console.warn('migrateMetabotWalletRelationAndAvatar:', e);
+    }
+  }
+
+  /**
+   * Migration: Recreate metabots with metabot_info_pinid optional (nullable, no UNIQUE)
+   * so multiple MetaBots can be created without on-chain info pin.
+   */
+  private migrateMetabotInfoPinidOptional(): void {
+    try {
+      const migrated = this.get<boolean>('metabot_info_pinid_optional_migrated');
+      if (migrated) return;
+
+      const colsResult = this.db.exec('PRAGMA table_info(metabots)');
+      const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!columns.includes('metabot_info_pinid')) return;
+
+      const hasAvatarBlob = columns.includes('avatar_blob');
+      this.db.run('PRAGMA foreign_keys = OFF');
+      this.db.run(`CREATE TABLE IF NOT EXISTS metabots_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wallet_id INTEGER NOT NULL,
+        mvc_address TEXT UNIQUE NOT NULL,
+        btc_address TEXT UNIQUE NOT NULL,
+        doge_address TEXT UNIQUE NOT NULL,
+        public_key TEXT UNIQUE NOT NULL,
+        chat_public_key TEXT UNIQUE NOT NULL,
+        chat_public_key_pin_id TEXT,
+        name TEXT UNIQUE NOT NULL,
+        avatar BLOB,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        metaid TEXT UNIQUE NOT NULL,
+        globalmetaid TEXT UNIQUE,
+        metabot_info_pinid TEXT,
+        metabot_type TEXT CHECK(metabot_type IN ('twin', 'worker')) NOT NULL,
+        created_by TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        goal TEXT,
+        background TEXT,
+        boss_id INTEGER,
+        llm_id TEXT,
+        tools TEXT DEFAULT '[]',
+        skills TEXT DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL${hasAvatarBlob ? ', avatar_blob BLOB' : ''},
+        FOREIGN KEY (wallet_id) REFERENCES metabot_wallets(id) ON DELETE RESTRICT,
+        FOREIGN KEY (boss_id) REFERENCES metabots_new(id)
+      )`);
+
+      const colList = columns.join(', ');
+      this.db.run(`INSERT INTO metabots_new (${colList}) SELECT ${colList} FROM metabots`);
+      this.db.run('DROP TABLE metabots');
+      this.db.run('ALTER TABLE metabots_new RENAME TO metabots');
+      this.set('metabot_info_pinid_optional_migrated', true);
+      this.db.run('PRAGMA foreign_keys = ON');
+    } catch (e) {
+      console.warn('migrateMetabotInfoPinidOptional:', e);
+      this.db.run('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  /**
+   * Migration: Recreate metabots with chat_public_key_pin_id optional (nullable, no UNIQUE)
+   * for users who already ran migrateMetabotInfoPinidOptional before that column was relaxed.
+   */
+  private migrateChatPublicKeyPinIdOptional(): void {
+    try {
+      const migrated = this.get<boolean>('chat_public_key_pin_id_optional_migrated');
+      if (migrated) return;
+
+      const colsResult = this.db.exec('PRAGMA table_info(metabots)');
+      const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!columns.includes('chat_public_key_pin_id')) return;
+
+      const hasAvatarBlob = columns.includes('avatar_blob');
+      this.db.run('PRAGMA foreign_keys = OFF');
+      this.db.run(`CREATE TABLE IF NOT EXISTS metabots_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wallet_id INTEGER NOT NULL,
+        mvc_address TEXT UNIQUE NOT NULL,
+        btc_address TEXT UNIQUE NOT NULL,
+        doge_address TEXT UNIQUE NOT NULL,
+        public_key TEXT UNIQUE NOT NULL,
+        chat_public_key TEXT UNIQUE NOT NULL,
+        chat_public_key_pin_id TEXT,
+        name TEXT UNIQUE NOT NULL,
+        avatar BLOB,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        metaid TEXT UNIQUE NOT NULL,
+        globalmetaid TEXT UNIQUE,
+        metabot_info_pinid TEXT,
+        metabot_type TEXT CHECK(metabot_type IN ('twin', 'worker')) NOT NULL,
+        created_by TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        goal TEXT,
+        background TEXT,
+        boss_id INTEGER,
+        llm_id TEXT,
+        tools TEXT DEFAULT '[]',
+        skills TEXT DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL${hasAvatarBlob ? ', avatar_blob BLOB' : ''},
+        FOREIGN KEY (wallet_id) REFERENCES metabot_wallets(id) ON DELETE RESTRICT,
+        FOREIGN KEY (boss_id) REFERENCES metabots_new(id)
+      )`);
+
+      const colList = columns.join(', ');
+      this.db.run(`INSERT INTO metabots_new (${colList}) SELECT ${colList} FROM metabots`);
+      this.db.run('DROP TABLE metabots');
+      this.db.run('ALTER TABLE metabots_new RENAME TO metabots');
+      this.set('chat_public_key_pin_id_optional_migrated', true);
+      this.db.run('PRAGMA foreign_keys = ON');
+    } catch (e) {
+      console.warn('migrateChatPublicKeyPinIdOptional:', e);
+      this.db.run('PRAGMA foreign_keys = ON');
     }
   }
 

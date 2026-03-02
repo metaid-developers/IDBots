@@ -2,6 +2,9 @@
 export interface Metabot {
   id: number;
   wallet_id: number;
+  mvc_address?: string;
+  btc_address?: string;
+  doge_address?: string;
   name: string;
   avatar: string | null;
   enabled: boolean;

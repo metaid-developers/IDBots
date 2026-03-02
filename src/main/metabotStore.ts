@@ -9,6 +9,13 @@ import type {
 
 const DEFAULT_WALLET_PATH = "m/44'/10001'/0'/0/0";
 
+/** sql.js rejects undefined in bind params; normalize to null. */
+function sanitizeBindParams(params: unknown[]): (string | number | Buffer | Uint8Array | null)[] {
+  return params.map((v) =>
+    v === undefined || (typeof v === 'number' && Number.isNaN(v)) ? null : (v as string | number | Buffer | Uint8Array)
+  );
+}
+
 function parseJsonArray(raw: string | null | undefined): string[] {
   if (raw == null || raw === '') return [];
   try {
@@ -27,14 +34,14 @@ interface MetabotRow {
   doge_address: string;
   public_key: string;
   chat_public_key: string;
-  chat_public_key_pin_id: string;
+  chat_public_key_pin_id: string | null;
   name: string;
   avatar: string | null;
   avatar_blob?: Uint8Array | null;
   enabled: number;
   metaid: string;
   globalmetaid: string | null;
-  metabot_info_pinid: string;
+  metabot_info_pinid: string | null;
   metabot_type: string;
   created_by: string;
   role: string;
@@ -87,13 +94,13 @@ function rowToMetabot(row: MetabotRow): Metabot {
     doge_address: row.doge_address,
     public_key: row.public_key,
     chat_public_key: row.chat_public_key,
-    chat_public_key_pin_id: row.chat_public_key_pin_id,
+    chat_public_key_pin_id: row.chat_public_key_pin_id ?? null,
     name: row.name,
     avatar: avatarFromRow(row),
     enabled: (row.enabled ?? 1) === 1,
     metaid: row.metaid,
     globalmetaid: row.globalmetaid ?? null,
-    metabot_info_pinid: row.metabot_info_pinid,
+    metabot_info_pinid: row.metabot_info_pinid ?? null,
     metabot_type: row.metabot_type === 'twin' ? 'twin' : 'worker',
     created_by: row.created_by,
     role: row.role,
@@ -204,6 +211,33 @@ export class MetabotStore {
     const avatarDb = avatarToDb(input.avatar ?? null);
     const useBlob = this.hasAvatarBlobColumn();
 
+    const params = sanitizeBindParams([
+      input.wallet_id,
+      input.mvc_address,
+      input.btc_address,
+      input.doge_address,
+      input.public_key,
+      input.chat_public_key,
+      input.chat_public_key_pin_id ?? null,
+      input.name,
+      useBlob ? (avatarDb instanceof Buffer ? avatarDb : null) : avatarDb,
+      enabled,
+      input.metaid,
+      input.globalmetaid ?? null,
+      input.metabot_info_pinid ?? null,
+      input.metabot_type,
+      input.created_by,
+      input.role,
+      input.soul,
+      input.goal ?? null,
+      input.background ?? null,
+      input.boss_id ?? null,
+      input.llm_id ?? null,
+      toolsJson,
+      skillsJson,
+      now,
+      now,
+    ]);
     if (useBlob) {
       this.db.run(
         `INSERT INTO metabots (
@@ -211,33 +245,7 @@ export class MetabotStore {
           name, avatar_blob, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
           role, soul, goal, background, boss_id, llm_id, tools, skills, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          input.wallet_id,
-          input.mvc_address,
-          input.btc_address,
-          input.doge_address,
-          input.public_key,
-          input.chat_public_key,
-          input.chat_public_key_pin_id,
-          input.name,
-          avatarDb instanceof Buffer ? avatarDb : null,
-          enabled,
-          input.metaid,
-          input.globalmetaid ?? null,
-          input.metabot_info_pinid,
-          input.metabot_type,
-          input.created_by,
-          input.role,
-          input.soul,
-          input.goal ?? null,
-          input.background ?? null,
-          input.boss_id ?? null,
-          input.llm_id ?? null,
-          toolsJson,
-          skillsJson,
-          now,
-          now,
-        ]
+        params
       );
     } else {
       this.db.run(
@@ -246,40 +254,48 @@ export class MetabotStore {
           name, avatar, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
           role, soul, goal, background, boss_id, llm_id, tools, skills, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          input.wallet_id,
-          input.mvc_address,
-          input.btc_address,
-          input.doge_address,
-          input.public_key,
-          input.chat_public_key,
-          input.chat_public_key_pin_id,
-          input.name,
-          avatarDb,
-          enabled,
-          input.metaid,
-          input.globalmetaid ?? null,
-          input.metabot_info_pinid,
-          input.metabot_type,
-          input.created_by,
-          input.role,
-          input.soul,
-          input.goal ?? null,
-          input.background ?? null,
-          input.boss_id ?? null,
-          input.llm_id ?? null,
-          toolsJson,
-          skillsJson,
-          now,
-          now,
-        ]
+        params
       );
+    }
+    // Must read last_insert_rowid immediately, before any other DB operation (e.g. saveDb)
+    const result = this.db.exec('SELECT last_insert_rowid() as id');
+    const rawId = result[0]?.values?.[0]?.[0];
+    const id = typeof rawId === 'number' ? rawId : Number(rawId) || 0;
+    if (!id || id <= 0) {
+      throw new Error(`createMetabot failed: last_insert_rowid returned invalid id (raw=${JSON.stringify(rawId)})`);
     }
     this.saveDb();
 
-    const result = this.db.exec('SELECT last_insert_rowid() as id');
-    const id = (result[0]?.values[0]?.[0] as number) ?? 0;
-    return this.getMetabotById(id)!;
+    // Build return object from input (avoid getMetabotById which may fail if db.exec does not bind params)
+    const metabot: Metabot = {
+      id,
+      wallet_id: input.wallet_id,
+      mvc_address: input.mvc_address,
+      btc_address: input.btc_address,
+      doge_address: input.doge_address,
+      public_key: input.public_key,
+      chat_public_key: input.chat_public_key,
+      chat_public_key_pin_id: input.chat_public_key_pin_id ?? null,
+      name: input.name,
+      avatar: input.avatar ?? null,
+      enabled: input.enabled !== false,
+      metaid: input.metaid,
+      globalmetaid: input.globalmetaid ?? null,
+      metabot_info_pinid: input.metabot_info_pinid ?? null,
+      metabot_type: input.metabot_type === 'twin' ? 'twin' : 'worker',
+      created_by: input.created_by,
+      role: input.role,
+      soul: input.soul,
+      goal: input.goal ?? null,
+      background: input.background ?? null,
+      boss_id: input.boss_id ?? null,
+      llm_id: input.llm_id ?? null,
+      tools: input.tools ?? [],
+      skills: input.skills ?? [],
+      created_at: now,
+      updated_at: now,
+    };
+    return metabot;
   }
 
   updateMetabot(id: number, input: MetabotUpdate): Metabot | null {
@@ -311,13 +327,13 @@ export class MetabotStore {
           input.doge_address ?? existing.doge_address,
           input.public_key ?? existing.public_key,
           input.chat_public_key ?? existing.chat_public_key,
-          input.chat_public_key_pin_id ?? existing.chat_public_key_pin_id,
+          input.chat_public_key_pin_id !== undefined ? input.chat_public_key_pin_id : existing.chat_public_key_pin_id,
           input.name ?? existing.name,
           avatarDb instanceof Buffer ? avatarDb : null,
           enabled,
           input.metaid ?? existing.metaid,
           input.globalmetaid !== undefined ? input.globalmetaid : existing.globalmetaid,
-          input.metabot_info_pinid ?? existing.metabot_info_pinid,
+          input.metabot_info_pinid !== undefined ? input.metabot_info_pinid : existing.metabot_info_pinid,
           input.metabot_type ?? existing.metabot_type,
           input.created_by ?? existing.created_by,
           input.role ?? existing.role,
@@ -346,13 +362,13 @@ export class MetabotStore {
           input.doge_address ?? existing.doge_address,
           input.public_key ?? existing.public_key,
           input.chat_public_key ?? existing.chat_public_key,
-          input.chat_public_key_pin_id ?? existing.chat_public_key_pin_id,
+          input.chat_public_key_pin_id !== undefined ? input.chat_public_key_pin_id : existing.chat_public_key_pin_id,
           input.name ?? existing.name,
           avatarDb,
           enabled,
           input.metaid ?? existing.metaid,
           input.globalmetaid !== undefined ? input.globalmetaid : existing.globalmetaid,
-          input.metabot_info_pinid ?? existing.metabot_info_pinid,
+          input.metabot_info_pinid !== undefined ? input.metabot_info_pinid : existing.metabot_info_pinid,
           input.metabot_type ?? existing.metabot_type,
           input.created_by ?? existing.created_by,
           input.role ?? existing.role,
@@ -388,17 +404,17 @@ export class MetabotStore {
 
     this.db.run(
       `INSERT INTO metabot_wallets (mnemonic, path, created_at) VALUES (?, ?, ?)`,
-      [input.mnemonic, path, now]
+      sanitizeBindParams([input.mnemonic, path, now])
     );
-    this.saveDb();
-
+    // Must read last_insert_rowid immediately, before any other DB operation (e.g. saveDb)
     const result = this.db.exec('SELECT last_insert_rowid() as id');
-    const id = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const row = this.getOne<MetabotWalletRow>(
-      'SELECT * FROM metabot_wallets WHERE id = ?',
-      [id]
-    );
-    return row ? rowToMetabotWallet(row) : ({} as MetabotWallet);
+    const rawId = result[0]?.values?.[0]?.[0];
+    const id = typeof rawId === 'number' ? rawId : Number(rawId) || 0;
+    if (!id || id <= 0) {
+      throw new Error(`insertMetabotWallet failed: last_insert_rowid returned invalid id (raw=${JSON.stringify(rawId)})`);
+    }
+    this.saveDb();
+    return { id, mnemonic: input.mnemonic, path, created_at: now };
   }
 
   getMetabotWalletById(wallet_id: number): MetabotWallet | null {

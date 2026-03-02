@@ -29,7 +29,7 @@ const defaultValues: MetaBotFormValues = {
   soul: '',
   goal: '',
   background: '',
-  boss_id: '',
+  boss_id: '1',
   llm_id: '',
 };
 
@@ -39,10 +39,14 @@ interface MetaBotFormProps {
   onCancel: () => void;
   onSave: (values: MetaBotFormValues) => Promise<void>;
   saveLabel?: string;
-  /** Available LLM providers for exclusive selection. Empty = none available. */
+  /** Available LLM providers for selection. Multiple MetaBots may share the same LLM. Empty = none available. */
   llmOptions: LlmOption[];
   /** Called when user clicks "Go to Model Settings" (e.g. to open Settings tab). */
   onRequestModelSettings?: () => void;
+  /** Check if name already exists (for uniqueness). Returns true if duplicate. */
+  onCheckNameExists?: (name: string, excludeId?: number) => Promise<boolean>;
+  /** Exclude this metabot ID when checking name (for edit mode). */
+  excludeIdForNameCheck?: number | null;
 }
 
 const MetaBotForm: React.FC<MetaBotFormProps> = ({
@@ -53,6 +57,8 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   saveLabel,
   llmOptions,
   onRequestModelSettings,
+  onCheckNameExists,
+  excludeIdForNameCheck,
 }) => {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [values, setValues] = useState<MetaBotFormValues>({
@@ -61,6 +67,7 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [nameDuplicate, setNameDuplicate] = useState(false);
 
   useEffect(() => {
     if (initialValues) {
@@ -71,6 +78,14 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   const handleChange = (field: keyof MetaBotFormValues, value: string | 'twin' | 'worker') => {
     setValues((prev) => ({ ...prev, [field]: value }));
     setError('');
+    if (field === 'name') setNameDuplicate(false);
+  };
+
+  const handleNameBlur = async () => {
+    const name = values.name.trim();
+    if (!name || !onCheckNameExists) return;
+    const exists = await onCheckNameExists(name, excludeIdForNameCheck ?? undefined);
+    setNameDuplicate(exists);
   };
 
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -97,6 +112,18 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
     if (!values.name.trim()) {
       setError(i18nService.t('metabotNameRequired'));
       return;
+    }
+    if (nameDuplicate) {
+      setError(i18nService.t('metabotNameDuplicate'));
+      return;
+    }
+    if (onCheckNameExists) {
+      const exists = await onCheckNameExists(values.name.trim(), excludeIdForNameCheck ?? undefined);
+      if (exists) {
+        setError(i18nService.t('metabotNameDuplicate'));
+        setNameDuplicate(true);
+        return;
+      }
     }
     if (!values.role.trim()) {
       setError(i18nService.t('metabotRoleRequired'));
@@ -141,8 +168,11 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
           type="text"
           value={values.name}
           onChange={(e) => handleChange('name', e.target.value)}
+          onBlur={handleNameBlur}
           placeholder={i18nService.t('metabotNamePlaceholder')}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+          className={`w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent ${
+            nameDuplicate ? 'border-red-500 dark:border-red-500' : ''
+          }`}
         />
       </div>
 
@@ -189,19 +219,7 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
         </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('metabotType')}
-        </label>
-        <select
-          value={values.metabot_type}
-          onChange={(e) => handleChange('metabot_type', e.target.value as 'twin' | 'worker')}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-        >
-          <option value="worker">{i18nService.t('metabotTypeWorker')}</option>
-          <option value="twin" disabled>{i18nService.t('metabotTypeTwin')}</option>
-        </select>
-      </div>
+      {/* Hidden: Type, Parent MetaBot ID, Tools, Skills - default values injected silently */}
 
       <div>
         <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
@@ -257,19 +275,6 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
 
       <div>
         <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('metabotBossId')}
-        </label>
-        <input
-          type="text"
-          value={values.boss_id}
-          onChange={(e) => handleChange('boss_id', e.target.value)}
-          placeholder={i18nService.t('metabotBossIdPlaceholder')}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
           {i18nService.t('metabotLlmProvider')}
         </label>
         {hasNoAvailableLlm ? (
@@ -301,30 +306,6 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
             ))}
           </select>
         )}
-      </div>
-
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('metabotTools')}
-        </label>
-        <input
-          type="text"
-          value={i18nService.t('metabotToolsDefault')}
-          disabled
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary border dark:border-claude-darkBorder border-claude-border cursor-not-allowed"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('metabotSkills')}
-        </label>
-        <input
-          type="text"
-          value={i18nService.t('metabotSkillsDefault')}
-          disabled
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary border dark:border-claude-darkBorder border-claude-border cursor-not-allowed"
-        />
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-4">

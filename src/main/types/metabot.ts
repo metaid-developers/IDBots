@@ -15,7 +15,7 @@ export interface Metabot {
   doge_address: string;
   public_key: string;
   chat_public_key: string;
-  chat_public_key_pin_id: string;
+  chat_public_key_pin_id: string | null;
   name: string;
   /** Avatar: data URL or URL string for display; stored as BLOB on-chain aligned in DB */
   avatar: string | null;
@@ -23,7 +23,7 @@ export interface Metabot {
   enabled: boolean;
   metaid: string;
   globalmetaid: string | null;
-  metabot_info_pinid: string;
+  metabot_info_pinid: string | null;
   metabot_type: MetabotType;
   created_by: string;
   role: string;
@@ -48,13 +48,13 @@ export interface MetabotInsert {
   doge_address: string;
   public_key: string;
   chat_public_key: string;
-  chat_public_key_pin_id: string;
+  chat_public_key_pin_id?: string | null;
   name: string;
   avatar?: string | null;
   enabled?: boolean;
   metaid: string;
   globalmetaid?: string | null;
-  metabot_info_pinid: string;
+  metabot_info_pinid?: string | null;
   metabot_type: MetabotType;
   created_by: string;
   role: string;
@@ -75,13 +75,13 @@ export interface MetabotUpdate {
   doge_address?: string;
   public_key?: string;
   chat_public_key?: string;
-  chat_public_key_pin_id?: string;
+  chat_public_key_pin_id?: string | null;
   name?: string;
   avatar?: string | null;
   enabled?: boolean;
   metaid?: string;
   globalmetaid?: string | null;
-  metabot_info_pinid?: string;
+  metabot_info_pinid?: string | null;
   metabot_type?: MetabotType;
   created_by?: string;
   role?: string;

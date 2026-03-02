@@ -379,6 +379,27 @@ interface IElectronAPI {
   };
   idbots: {
     getMetaBots: () => Promise<{ success: boolean; list?: Array<{ id: number; name: string; avatar: string | null; metabot_type: string }>; error?: string }>;
+    addMetaBot: (input: {
+      name: string;
+      avatar?: string | null;
+      role: string;
+      soul: string;
+      goal?: string | null;
+      background?: string | null;
+      boss_id?: number | null;
+      llm_id?: string | null;
+    }) => Promise<{
+      success: boolean;
+      metabot?: Metabot;
+      subsidy?: { success: boolean; error?: string };
+      error?: string;
+    }>;
+    getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
+      Promise<{
+        success: boolean;
+        balance?: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } };
+        error?: string;
+      }>;
   };
   metabot: {
     list: () => Promise<{ success: boolean; list?: Metabot[]; error?: string }>;
@@ -386,6 +407,7 @@ interface IElectronAPI {
     create: (input: MetabotCreateInput) => Promise<{ success: boolean; metabot?: Metabot; error?: string }>;
     update: (id: number, input: MetabotUpdateInput) => Promise<{ success: boolean; metabot?: Metabot | null; error?: string }>;
     setEnabled: (id: number, enabled: boolean) => Promise<{ success: boolean; metabot?: Metabot | null; error?: string }>;
+    checkNameExists: (options: { name: string; excludeId?: number }) => Promise<{ success: boolean; exists?: boolean; error?: string }>;
   };
   permissions: {
     checkCalendar: () => Promise<{ success: boolean; status?: string; error?: string; autoRequested?: boolean }>;

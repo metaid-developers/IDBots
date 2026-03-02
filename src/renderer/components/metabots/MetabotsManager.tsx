@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MagnifyingGlassIcon, PlusCircleIcon } from '@heroicons/react/24/outline';
-import { CpuChipIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import { ALL_PROVIDER_KEYS } from '../../config';
 import type { Metabot } from '../../types/metabot';
 import MetaBotForm, { type MetaBotFormValues, type LlmOption } from './MetaBotForm';
+import MetaBotCreateSuccessModal from './MetaBotCreateSuccessModal';
+import MetaBotListCard from './MetaBotListCard';
 
 type ViewMode = 'list' | 'add' | 'edit';
 
@@ -19,6 +20,11 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editId, setEditId] = useState<number | null>(null);
   const [actionError, setActionError] = useState('');
+  const [createSuccessModal, setCreateSuccessModal] = useState<{
+    metabot: Metabot;
+    subsidySuccess: boolean;
+    subsidyError?: string;
+  } | null>(null);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -75,24 +81,35 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   };
 
   const handleSaveNew = async (values: MetaBotFormValues) => {
-    const result = await window.electron.metabot.create({
+    const result = await window.electron.idbots.addMetaBot({
       name: values.name.trim(),
       avatar: values.avatar.trim() || null,
-      metabot_type: values.metabot_type,
       role: values.role.trim(),
       soul: values.soul.trim(),
       goal: values.goal.trim() || null,
       background: values.background.trim() || null,
-      boss_id: values.boss_id.trim() ? parseInt(values.boss_id, 10) : null,
+      boss_id: values.boss_id.trim() ? parseInt(values.boss_id, 10) : 1,
       llm_id: values.llm_id.trim() || null,
     });
     if (!result.success) {
       throw new Error(result.error || i18nService.t('metabotSaveFailed'));
     }
-    window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotSaveSuccess') }));
-    setList((prev) => (result.metabot ? [result.metabot, ...prev] : prev));
+    if (!result.metabot) {
+      throw new Error(i18nService.t('metabotSaveFailed'));
+    }
+    setList((prev) => [result.metabot!, ...prev]);
+    setCreateSuccessModal({
+      metabot: result.metabot,
+      subsidySuccess: result.subsidy?.success ?? false,
+      subsidyError: result.subsidy?.error,
+    });
     setViewMode('list');
   };
+
+  const handleCheckNameExists = useCallback(async (name: string, excludeId?: number): Promise<boolean> => {
+    const result = await window.electron.metabot.checkNameExists({ name: name.trim(), excludeId });
+    return result.success && result.exists === true;
+  }, []);
 
   const handleSaveEdit = async (values: MetaBotFormValues) => {
     if (editId == null) return;
@@ -137,14 +154,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       if (providerRequiresApiKey(key) && !(p.apiKey ?? '').trim()) continue;
       configured.push({ id: key, label: providerLabel(key) });
     }
-    const usedByOthers = new Set(
-      list
-        .filter((m) => (viewMode === 'edit' && editId != null ? m.id !== editId : true))
-        .map((m) => m.llm_id)
-        .filter((id): id is string => !!id)
-    );
-    return configured.filter((opt) => !usedByOthers.has(opt.id));
-  }, [list, viewMode, editId, settingsClosedTrigger]);
+    return configured;
+  }, [settingsClosedTrigger]);
 
   if (viewMode === 'add') {
     return (
@@ -159,6 +170,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
           saveLabel={i18nService.t('save')}
           llmOptions={llmOptions}
           onRequestModelSettings={onRequestModelSettings}
+          onCheckNameExists={handleCheckNameExists}
+          excludeIdForNameCheck={null}
         />
       </div>
     );
@@ -179,7 +192,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
             soul: editMetabot.soul,
             goal: editMetabot.goal || '',
             background: editMetabot.background || '',
-            boss_id: editMetabot.boss_id != null ? String(editMetabot.boss_id) : '',
+            boss_id: editMetabot.boss_id != null ? String(editMetabot.boss_id) : '1',
             llm_id: editMetabot.llm_id || '',
           }}
           isEdit={true}
@@ -187,10 +200,18 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
           onSave={handleSaveEdit}
           llmOptions={llmOptions}
           onRequestModelSettings={onRequestModelSettings}
+          onCheckNameExists={handleCheckNameExists}
+          excludeIdForNameCheck={editId}
         />
       </div>
     );
   }
+
+  const handleCloseSuccessModal = () => setCreateSuccessModal(null);
+  const handleSyncToChain = () => {
+    console.log('trigger sync');
+    handleCloseSuccessModal();
+  };
 
   return (
     <div className="space-y-4">
@@ -244,65 +265,27 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
           {i18nService.t('metabotNoItems')}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3">
-          {filteredList.map((m) => (
-            <div
-              key={m.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => handleEdit(m.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleEdit(m.id);
-                }
-              }}
-              className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50 cursor-pointer text-left"
-            >
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  {m.avatar && (m.avatar.startsWith('data:') || m.avatar.startsWith('http')) ? (
-                    <img
-                      src={m.avatar}
-                      alt=""
-                      className="w-9 h-9 rounded-lg object-cover flex-shrink-0"
-                    />
-                  ) : (
-                    <div className="w-9 h-9 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
-                      <CpuChipIcon className="h-5 w-5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-                    </div>
-                  )}
-                  <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
-                    {m.name}
-                  </span>
-                </div>
-                <div
-                  className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
-                    m.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
-                  }`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleToggleEnabled(m.id, !m.enabled);
-                  }}
-                  role="switch"
-                  aria-checked={m.enabled}
-                  title={m.enabled ? i18nService.t('metabotActive') : i18nService.t('metabotInactive')}
-                >
-                  <div
-                    className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-                      m.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                    }`}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {m.metabot_type}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {filteredList.map((m) => (
+              <MetaBotListCard
+                key={m.id}
+                metabot={m}
+                onEdit={() => handleEdit(m.id)}
+                onToggleEnabled={(enabled) => handleToggleEnabled(m.id, enabled)}
+              />
+            ))}
+          </div>
+          {createSuccessModal && (
+            <MetaBotCreateSuccessModal
+              metabot={createSuccessModal.metabot}
+              subsidySuccess={createSuccessModal.subsidySuccess}
+              subsidyError={createSuccessModal.subsidyError}
+              onClose={handleCloseSuccessModal}
+              onSyncToChain={handleSyncToChain}
+            />
+          )}
+        </>
       )}
     </div>
   );

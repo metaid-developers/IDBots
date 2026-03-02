@@ -298,6 +298,18 @@ contextBridge.exposeInMainWorld('electron', {
   },
   idbots: {
     getMetaBots: () => ipcRenderer.invoke('idbots:getMetaBots'),
+    addMetaBot: (input: {
+      name: string;
+      avatar?: string | null;
+      role: string;
+      soul: string;
+      goal?: string | null;
+      background?: string | null;
+      boss_id?: number | null;
+      llm_id?: string | null;
+    }) => ipcRenderer.invoke('idbots:addMetaBot', input),
+    getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
+      ipcRenderer.invoke('idbots:getAddressBalance', options),
   },
   metabot: {
     list: () => ipcRenderer.invoke('metabot:list'),
@@ -326,6 +338,8 @@ contextBridge.exposeInMainWorld('electron', {
       llm_id?: string | null;
     }) => ipcRenderer.invoke('metabot:update', id, input),
     setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('metabot:setEnabled', id, enabled),
+    checkNameExists: (options: { name: string; excludeId?: number }) =>
+      ipcRenderer.invoke('metabot:checkNameExists', options),
   },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
