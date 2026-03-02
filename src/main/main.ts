@@ -27,6 +27,7 @@ import { createMetaBotWallet } from './services/metabotWalletService';
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
+import { syncMetaBotToChain } from './services/metaidCore';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -562,9 +563,9 @@ const getCoworkRunner = () => {
           if (metabot && wallet) {
             return {
               IDBOTS_METABOT_ID: String(metabotId),
-              IDBOTS_TWIN_MNEMONIC: wallet.mnemonic,
+              IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
               IDBOTS_TWIN_NAME: metabot.name,
-              IDBOTS_TWIN_PATH: wallet.path,
+              IDBOTS_METABOT_PATH: wallet.path,
               IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
             };
           }
@@ -573,9 +574,9 @@ const getCoworkRunner = () => {
         if (!twin) return {};
         return {
           IDBOTS_METABOT_ID: String(twin.id),
-          IDBOTS_TWIN_MNEMONIC: twin.mnemonic,
+          IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
           IDBOTS_TWIN_NAME: twin.name,
-          IDBOTS_TWIN_PATH: twin.path,
+          IDBOTS_METABOT_PATH: twin.path,
           IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
         };
       },
@@ -1823,6 +1824,47 @@ if (!gotTheLock) {
       console.error('[MetaBot] idbots:addMetaBot failed:', errMsg);
       if (errStack) console.error('[MetaBot] idbots:addMetaBot stack:', errStack);
       return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:syncMetaBot', async (_event, metabotId: number) => {
+    try {
+      console.log('[MetaBot] idbots:syncMetaBot requested', { metabotId });
+      const store = getMetabotStore();
+      const result = await syncMetaBotToChain(store, metabotId);
+      console.log('[MetaBot] idbots:syncMetaBot result', {
+        success: result.success,
+        error: result.error,
+        metabotInfoPinId: result.metabotInfoPinId,
+        chatPublicKeyPinId: result.chatPublicKeyPinId,
+        txidCount: result.txids?.length ?? 0,
+      });
+      return result;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[MetaBot] idbots:syncMetaBot failed:', errMsg);
+      return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:getMetaBotMnemonic', async (_event, metabotId: number) => {
+    try {
+      const store = getMetabotStore();
+      const wallet = store.getMetabotWalletByMetabotId(metabotId);
+      if (!wallet) return { success: false, error: 'Wallet not found for this MetaBot' };
+      return { success: true, mnemonic: wallet.mnemonic };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get mnemonic' };
+    }
+  });
+
+  ipcMain.handle('idbots:deleteMetaBot', async (_event, metabotId: number) => {
+    try {
+      const store = getMetabotStore();
+      const ok = store.deleteMetabot(metabotId);
+      return { success: ok };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete MetaBot' };
     }
   });
 

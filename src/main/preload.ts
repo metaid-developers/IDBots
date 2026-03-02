@@ -310,6 +310,9 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke('idbots:addMetaBot', input),
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       ipcRenderer.invoke('idbots:getAddressBalance', options),
+    getMetaBotMnemonic: (metabotId: number) => ipcRenderer.invoke('idbots:getMetaBotMnemonic', metabotId),
+    deleteMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:deleteMetaBot', metabotId),
+    syncMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:syncMetaBot', metabotId),
   },
   metabot: {
     list: () => ipcRenderer.invoke('metabot:list'),

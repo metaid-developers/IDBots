@@ -1,7 +1,6 @@
-#!/usr/bin/env node
-
 /**
- * RPC worker: create Pin using meta-contract (mvc) only - no @metalet to avoid instanceof conflicts.
+ * Create Pin worker: runs in subprocess via ELECTRON_RUN_AS_NODE to avoid meta-contract
+ * instanceof issues in the main process.
  * Reads mnemonic/path from env, metaidData from stdin, outputs result to stdout.
  */
 
@@ -11,15 +10,15 @@ const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
 
 async function fetchMVCUtxos(address: string): Promise<{ txid: string; outIndex: number; value: number; height: number }[]> {
-  const all: any[] = [];
+  const all: { txid: string; outIndex: number; value: number; height: number }[] = [];
   let flag: string | undefined;
   while (true) {
     const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
     const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
-    const json = await res.json();
+    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
     const list = json?.data?.list ?? [];
     if (!list.length) break;
-    all.push(...list.filter((u: any) => u.value >= 600));
+    all.push(...list.filter((u) => u.value >= 600));
     flag = list[list.length - 1]?.flag;
     if (!flag) break;
   }
@@ -32,9 +31,9 @@ async function broadcastTx(rawTx: string): Promise<string> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chain: 'mvc', net: NET, rawTx }),
   });
-  const json = await res.json();
+  const json = (await res.json()) as { code?: number; message?: string; data?: string };
   if (json?.code !== 0) throw new Error(json?.message || 'Broadcast failed');
-  return json.data;
+  return json.data ?? '';
 }
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
@@ -47,7 +46,8 @@ interface RpcPayload {
     encryption?: string;
     version?: string;
     contentType?: string;
-    payload: string | Buffer;
+    payload: string;
+    encoding?: 'utf-8' | 'base64';
   };
 }
 
@@ -59,9 +59,9 @@ interface SA_utxo {
   height: number;
 }
 
-function parseAddressIndexFromPath(path: string): number {
-  if (!path || typeof path !== 'string') return 0;
-  const m = path.match(/\/0\/(\d+)$/);
+function parseAddressIndexFromPath(pathStr: string): number {
+  if (!pathStr || typeof pathStr !== 'string') return 0;
+  const m = pathStr.match(/\/0\/(\d+)$/);
   return m ? parseInt(m[1], 10) : 0;
 }
 
@@ -72,12 +72,8 @@ function buildMvcOpReturn(data: RpcPayload['metaidData']): (string | Buffer)[] {
     result.push(data.encryption || '0');
     result.push(data.version || '1.0');
     result.push(data.contentType || 'text/plain;utf-8');
-    const body =
-      typeof data.payload === 'string'
-        ? Buffer.from(data.payload, 'utf-8')
-        : Buffer.isBuffer(data.payload)
-          ? data.payload
-          : Buffer.from(String(data.payload));
+    const encoding = data.encoding === 'base64' ? 'base64' : 'utf-8';
+    const body = Buffer.from(data.payload, encoding);
     result.push(body);
   }
   return result;
@@ -102,11 +98,11 @@ function pickUtxo(utxos: SA_utxo[], amount: number, feeb: number): SA_utxo[] {
   return candidate;
 }
 
-async function main() {
-  const mnemonic = process.env.IDBOTS_TWIN_MNEMONIC?.trim();
-  const pathStr = (process.env.IDBOTS_TWIN_PATH || DEFAULT_PATH).trim();
+async function main(): Promise<void> {
+  const mnemonic = process.env.IDBOTS_METABOT_MNEMONIC?.trim();
+  const pathStr = (process.env.IDBOTS_METABOT_PATH || DEFAULT_PATH).trim();
   if (!mnemonic) {
-    console.error(JSON.stringify({ success: false, error: 'IDBOTS_TWIN_MNEMONIC required' }));
+    console.error(JSON.stringify({ success: false, error: 'IDBOTS_METABOT_MNEMONIC required' }));
     process.exit(1);
   }
 
@@ -167,12 +163,11 @@ async function main() {
   const totalCost = inputTotal - outputTotal;
 
   const txid = await broadcastTx(rawHex);
-  // pinId = txid + "i0": i0 is the 0th output (1 sat UTXO) representing ownership of the MetaID data
   const pinId = `${txid}i0`;
   console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost }));
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   const msg = err && typeof err === 'object' && 'message' in err
     ? String((err as Error).message)
     : String(err);

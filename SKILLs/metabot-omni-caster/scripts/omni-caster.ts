@@ -2,12 +2,18 @@
 /**
  * MetaBot Omni-Caster: Universal MetaID protocol gateway.
  * Accepts path and payload from CLI, builds MetaID 7-tuple, and sends to local RPC.
+ * Supports both JSON/text payloads and binary file uploads.
  *
- * Usage:
+ * Usage (JSON protocol):
  *   IDBOTS_METABOT_ID=1 npx ts-node omni-caster.ts --path "/protocols/paylike" --payload '{"isLike":1,"likeTo":"..."}'
+ *
+ * Usage (binary file upload):
+ *   IDBOTS_METABOT_ID=1 npx ts-node omni-caster.ts --path "/file" --payload-file ./image.png --content-type image/png
  */
 
 import { parseArgs } from 'util';
+import fs from 'fs';
+import path from 'path';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -17,8 +23,29 @@ process.on('unhandledRejection', (reason, promise) => {
 interface ParsedArgs {
   path?: string;
   payload?: string;
+  'payload-file'?: string;
   operation?: string;
   'content-type'?: string;
+  encoding?: string;
+}
+
+/** Infer MIME type from file extension. */
+function inferContentType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const map: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+    '.zip': 'application/zip',
+    '.mp4': 'video/mp4',
+    '.mp3': 'audio/mpeg',
+    '.txt': 'text/plain',
+  };
+  return map[ext] ?? 'application/octet-stream';
 }
 
 async function main(): Promise<void> {
@@ -26,8 +53,10 @@ async function main(): Promise<void> {
     options: {
       path: { type: 'string', short: 'p' },
       payload: { type: 'string' },
+      'payload-file': { type: 'string' },
       operation: { type: 'string', short: 'o' },
       'content-type': { type: 'string', short: 'c' },
+      encoding: { type: 'string', short: 'e' },
     },
     allowPositionals: true,
   });
@@ -55,39 +84,81 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (!args.payload || args.payload.trim() === '') {
-    console.error('Error: --payload is required.');
+  const hasPayload = args.payload !== undefined && args.payload !== '';
+  const hasPayloadFile = args['payload-file'] !== undefined && args['payload-file'].trim() !== '';
+
+  if (hasPayload && hasPayloadFile) {
+    console.error('Error: Use either --payload or --payload-file, not both.');
+    process.exit(1);
+  }
+  if (!hasPayload && !hasPayloadFile) {
+    console.error('Error: Either --payload or --payload-file is required.');
     process.exit(1);
   }
 
   const operation = args.operation || 'create';
-  const contentType = args['content-type'] || 'application/json';
-
-  // JSON safety: if content-type contains "json", parse and re-stringify to sanitize
+  let contentType = args['content-type'] ?? 'application/json';
   let cleanPayload: string;
-  if (contentType.toLowerCase().includes('json')) {
-    try {
-      const parsed = JSON.parse(args.payload);
-      cleanPayload = JSON.stringify(parsed);
-    } catch {
-      console.error('Payload is not valid JSON');
+  let encoding: 'utf-8' | 'base64' = 'utf-8';
+
+  if (hasPayloadFile) {
+    const filePath = args['payload-file']!.trim();
+    if (!fs.existsSync(filePath)) {
+      console.error(`Error: File not found: ${filePath}`);
       process.exit(1);
     }
+    const buffer = fs.readFileSync(filePath);
+    cleanPayload = buffer.toString('base64');
+    encoding = 'base64';
+    if (!args['content-type']) {
+      contentType = inferContentType(filePath);
+    }
   } else {
-    cleanPayload = args.payload;
+    const payloadStr = args.payload!;
+    if (args.encoding === 'base64') {
+      encoding = 'base64';
+    }
+    if (contentType.toLowerCase().includes('json')) {
+      try {
+        const parsed = JSON.parse(payloadStr);
+        cleanPayload = JSON.stringify(parsed);
+      } catch {
+        console.error('Payload is not valid JSON');
+        process.exit(1);
+      }
+    } else {
+      cleanPayload = payloadStr;
+      // Auto-detect binary: image/*, application/octet-stream, *;binary
+      if (encoding === 'utf-8') {
+        const ct = contentType.toLowerCase();
+        if (
+          ct.startsWith('image/') ||
+          ct.startsWith('video/') ||
+          ct.startsWith('audio/') ||
+          ct === 'application/octet-stream' ||
+          ct.endsWith(';binary')
+        ) {
+          encoding = 'base64';
+        }
+      }
+    }
   }
 
-  // Build request body (RPC expects metabot_id + metaidData)
+  const metaidData: Record<string, unknown> = {
+    operation,
+    path: args.path!.trim(),
+    encryption: '0' as const,
+    version: '1.0',
+    contentType,
+    payload: cleanPayload,
+  };
+  if (encoding === 'base64') {
+    metaidData.encoding = 'base64';
+  }
+
   const requestBody = {
     metabot_id: metabotId,
-    metaidData: {
-      operation,
-      path: args.path.trim(),
-      encryption: '0' as const,
-      version: '1.0',
-      contentType,
-      payload: cleanPayload,
-    },
+    metaidData,
   };
 
   await runCreatePin(rpcUrl, requestBody);

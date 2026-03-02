@@ -1,10 +1,11 @@
 /**
  * MetaBot List Card
  * Displays MetaBot with async balance loading, copy address, role and goal.
+ * Addresses are collapsed by default; delete button triggers safe-delete flow.
  */
 
 import React, { useEffect, useState } from 'react';
-import { CpuChipIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
+import { CpuChipIcon, DocumentDuplicateIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 
@@ -12,6 +13,7 @@ interface MetaBotListCardProps {
   metabot: Metabot;
   onEdit: () => void;
   onToggleEnabled: (enabled: boolean) => void;
+  onDelete: () => void;
 }
 
 interface BalanceState {
@@ -21,8 +23,9 @@ interface BalanceState {
   loading: boolean;
 }
 
-const MetaBotListCard: React.FC<MetaBotListCardProps> = ({ metabot, onEdit, onToggleEnabled }) => {
+const MetaBotListCard: React.FC<MetaBotListCardProps> = ({ metabot, onEdit, onToggleEnabled, onDelete }) => {
   const [balance, setBalance] = useState<BalanceState>({ loading: true });
+  const [isAddressExpanded, setIsAddressExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +135,32 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({ metabot, onEdit, onTo
         </p>
       )}
 
-      <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsAddressExpanded((v) => !v);
+          }}
+          className="text-xs text-claude-accent hover:underline"
+        >
+          {isAddressExpanded ? i18nService.t('metabotHideAddresses') : i18nService.t('metabotShowAddresses')}
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="text-sm text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 transition-colors"
+          title={i18nService.t('metabotDelete')}
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      {isAddressExpanded && (
+      <div className="space-y-2 mt-2">
         {btcAddr && (
           <div className="flex items-center gap-2 text-xs">
             <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-8 shrink-0">BTC</span>
@@ -200,6 +228,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({ metabot, onEdit, onTo
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

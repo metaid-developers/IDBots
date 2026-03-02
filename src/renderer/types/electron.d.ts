@@ -400,6 +400,15 @@ interface IElectronAPI {
         balance?: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } };
         error?: string;
       }>;
+    getMetaBotMnemonic: (metabotId: number) => Promise<{ success: boolean; mnemonic?: string; error?: string }>;
+    deleteMetaBot: (metabotId: number) => Promise<{ success: boolean; error?: string }>;
+    syncMetaBot: (metabotId: number) => Promise<{
+      success: boolean;
+      error?: string;
+      metabotInfoPinId?: string;
+      chatPublicKeyPinId?: string;
+      txids?: string[];
+    }>;
   };
   metabot: {
     list: () => Promise<{ success: boolean; list?: Metabot[]; error?: string }>;
