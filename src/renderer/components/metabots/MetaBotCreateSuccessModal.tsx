@@ -1,25 +1,39 @@
 /**
  * MetaBot Create Success Modal
  * Shows celebration UI, subsidy result, identity and addresses after creation.
+ * Supports sync-to-chain flow with loading and success states.
  */
 
 import React from 'react';
-import { CpuChipIcon } from '@heroicons/react/24/outline';
+import { CpuChipIcon, CheckCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
+
+export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error';
 
 export interface MetaBotCreateSuccessModalProps {
   metabot: Metabot;
   subsidySuccess: boolean;
   subsidyError?: string;
+  syncStatus?: SyncStatus;
+  syncError?: string;
   onClose: () => void;
   onSyncToChain: () => void;
 }
+
+const SYNC_STEPS = [
+  { key: 'name', labelKey: 'metabotSyncStepName' as const },
+  { key: 'avatar', labelKey: 'metabotSyncStepAvatar' as const },
+  { key: 'chatpubkey', labelKey: 'metabotSyncStepChatPubKey' as const },
+  { key: 'bio', labelKey: 'metabotSyncStepBio' as const },
+];
 
 const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
   metabot,
   subsidySuccess,
   subsidyError,
+  syncStatus = 'idle',
+  syncError,
   onClose,
   onSyncToChain,
 }) => {
@@ -39,12 +53,17 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
     return `${addr.slice(0, 8)}...${addr.slice(-8)}`;
   };
 
+  const isSyncing = syncStatus === 'syncing';
+  const isSyncSuccess = syncStatus === 'success';
+  const isSyncError = syncStatus === 'error';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/50 dark:bg-black/60"
-        onClick={onClose}
+        onClick={isSyncing ? undefined : onClose}
         role="presentation"
+        style={{ cursor: isSyncing ? 'wait' : undefined }}
       />
       <div className="relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden">
         {/* Celebration header */}
@@ -143,22 +162,61 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
           )}
         </div>
 
+        {/* Sync status: success with 4 checkmarks */}
+        {isSyncSuccess && (
+          <div className="px-6 py-3 border-t dark:border-claude-darkBorder border-claude-border">
+            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium mb-2">
+              <CheckCircleIcon className="h-5 w-5 shrink-0" />
+              {i18nService.t('metabotSyncSuccess')}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {SYNC_STEPS.map((step) => (
+                <div
+                  key={step.key}
+                  className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                >
+                  <CheckCircleIcon className="h-4 w-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                  {i18nService.t(step.labelKey)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Sync error */}
+        {isSyncError && syncError && (
+          <div className="mx-6 mb-3 px-3 py-2 rounded-lg text-sm bg-red-500/10 dark:bg-red-500/10 text-red-600 dark:text-red-400">
+            {i18nService.t('metabotSyncError')}: {syncError}
+          </div>
+        )}
+
         {/* Buttons */}
         <div className="px-6 pb-6 flex items-center justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+            disabled={isSyncing}
+            className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {i18nService.t('metabotClose')}
           </button>
-          <button
-            type="button"
-            onClick={onSyncToChain}
-            className="px-4 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accentHover transition-colors"
-          >
-            {i18nService.t('metabotSyncToChain')}
-          </button>
+          {!isSyncSuccess && (
+            <button
+              type="button"
+              onClick={onSyncToChain}
+              disabled={isSyncing}
+              className="px-4 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accentHover transition-colors disabled:opacity-70 disabled:cursor-wait flex items-center gap-2"
+            >
+              {isSyncing ? (
+                <>
+                  <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                  {i18nService.t('metabotSyncSyncing')}
+                </>
+              ) : (
+                i18nService.t('metabotSyncToChain')
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

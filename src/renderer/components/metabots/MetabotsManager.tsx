@@ -6,6 +6,7 @@ import { ALL_PROVIDER_KEYS } from '../../config';
 import type { Metabot } from '../../types/metabot';
 import MetaBotForm, { type MetaBotFormValues, type LlmOption } from './MetaBotForm';
 import MetaBotCreateSuccessModal from './MetaBotCreateSuccessModal';
+import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
 import MetaBotListCard from './MetaBotListCard';
 
 type ViewMode = 'list' | 'add' | 'edit';
@@ -25,6 +26,9 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     subsidySuccess: boolean;
     subsidyError?: string;
   } | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [syncError, setSyncError] = useState<string>('');
+  const [deleteTarget, setDeleteTarget] = useState<Metabot | null>(null);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -207,10 +211,40 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     );
   }
 
-  const handleCloseSuccessModal = () => setCreateSuccessModal(null);
-  const handleSyncToChain = () => {
-    console.log('trigger sync');
-    handleCloseSuccessModal();
+  const handleCloseSuccessModal = () => {
+    setCreateSuccessModal(null);
+    setSyncStatus('idle');
+    setSyncError('');
+  };
+  const handleDeleteRequest = (metabot: Metabot) => setDeleteTarget(metabot);
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const result = await window.electron.idbots.deleteMetaBot(deleteTarget.id);
+    if (result.success) {
+      setList((prev) => prev.filter((m) => m.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotDeleteSuccess') }));
+    } else {
+      setActionError(result.error || i18nService.t('metabotUpdateFailed'));
+    }
+  };
+  const handleSyncToChain = async () => {
+    if (!createSuccessModal) return;
+    setSyncStatus('syncing');
+    setSyncError('');
+    try {
+      const result = await window.electron.idbots.syncMetaBot(createSuccessModal.metabot.id);
+      if (result.success) {
+        setSyncStatus('success');
+        await loadList();
+      } else {
+        setSyncStatus('error');
+        setSyncError(result.error ?? 'Unknown error');
+      }
+    } catch (err) {
+      setSyncStatus('error');
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    }
   };
 
   return (
@@ -273,6 +307,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
                 metabot={m}
                 onEdit={() => handleEdit(m.id)}
                 onToggleEnabled={(enabled) => handleToggleEnabled(m.id, enabled)}
+                onDelete={() => handleDeleteRequest(m)}
               />
             ))}
           </div>
@@ -281,8 +316,17 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
               metabot={createSuccessModal.metabot}
               subsidySuccess={createSuccessModal.subsidySuccess}
               subsidyError={createSuccessModal.subsidyError}
+              syncStatus={syncStatus}
+              syncError={syncError}
               onClose={handleCloseSuccessModal}
               onSyncToChain={handleSyncToChain}
+            />
+          )}
+          {deleteTarget && (
+            <MetaBotDeleteConfirmModal
+              metabot={deleteTarget}
+              onClose={() => setDeleteTarget(null)}
+              onConfirm={handleDeleteConfirm}
             />
           )}
         </>

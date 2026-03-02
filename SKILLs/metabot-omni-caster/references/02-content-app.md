@@ -111,3 +111,22 @@
 }
 
 ```
+
+## 45. MetaBot-Skill (MetaBot 技能协议)
+
+* **Intro**: MetaBot技能封装协议。用户上传技能.zip后，再用这个协议封装
+* **Path**: `/protocols/metabot-skill`
+* **Version**: `1.0.0`
+* **Content-Type**: `application/json`
+* **Payload Schema**:
+
+```json5
+{
+  "name": "metabot-post-buzz",
+  "description": "让 MetaBot 可以发 buzz 的官方核心技能。",
+  "version": "1.0.1",
+  /** 指向提前上传到 /file 路径下的 ZIP 压缩包的 PINID */
+  "skill-file": "metafile://<zip_pinid>"
+}
+
+```
