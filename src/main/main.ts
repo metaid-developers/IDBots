@@ -28,6 +28,7 @@ import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 import { syncMetaBotToChain } from './services/metaidCore';
+import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -1051,6 +1052,57 @@ if (!gotTheLock) {
     config: Record<string, string>
   ) => {
     return getSkillManager().testEmailConnectivity(skillId, config);
+  });
+
+  // Official skills sync IPC handlers (MetaWeb)
+  ipcMain.handle('idbots:getOfficialSkillsStatus', async () => {
+    try {
+      return await getOfficialSkillsStatus();
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get official skills status' };
+    }
+  });
+
+  ipcMain.handle('idbots:installOfficialSkill', async (_event, skill: {
+    name: string;
+    skillFileUri: string;
+    remoteVersion: string;
+    remoteCreator: string;
+  }) => {
+    try {
+      const result = await installOfficialSkill(
+        skill.name,
+        skill.skillFileUri,
+        skill.remoteVersion,
+        skill.remoteCreator
+      );
+      if (result.success) {
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('skills:changed');
+          }
+        });
+      }
+      return result;
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to install skill' };
+    }
+  });
+
+  ipcMain.handle('idbots:syncAllOfficialSkills', async () => {
+    try {
+      const result = await syncAllOfficialSkills();
+      if (result.success) {
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('skills:changed');
+          }
+        });
+      }
+      return result;
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to sync official skills' };
+    }
   });
 
   // Cowork IPC handlers

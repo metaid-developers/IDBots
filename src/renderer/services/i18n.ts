@@ -402,6 +402,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     clearSkill: '清除技能',
     clearAll: '全部清除',
     clearAllSkills: '清除所有已选技能',
+    localSkills: '本地技能',
+    officialRecommended: '官方推荐技能',
+    skillDownload: '下载',
+    skillUpdate: '更新',
+    skillInstalled: '已安装',
+    oneClickSync: '一键同步',
+    skillConflict: '创作者冲突',
+    skillOfficialLoading: '处理中...',
+    skillOfficialSyncSuccess: '同步成功',
+    skillOfficialSyncFailed: '同步失败',
 
     // MetaBot
     metabots: 'MetaBot',
@@ -1085,6 +1095,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     clearSkill: 'Clear Skill',
     clearAll: 'Clear All',
     clearAllSkills: 'Clear all selected skills',
+    localSkills: 'Local Skills',
+    officialRecommended: 'Official Recommended',
+    skillDownload: 'Download',
+    skillUpdate: 'Update',
+    skillInstalled: 'Installed',
+    oneClickSync: 'One-Click Sync',
+    skillConflict: 'Creator conflict',
+    skillOfficialLoading: 'Processing...',
+    skillOfficialSyncSuccess: 'Sync completed',
+    skillOfficialSyncFailed: 'Sync failed',
 
     // MetaBot
     metabots: 'MetaBot',
