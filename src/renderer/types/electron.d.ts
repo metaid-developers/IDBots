@@ -128,6 +128,8 @@ interface WindowState {
   isFocused: boolean;
 }
 
+import type { OfficialSkillItem } from './skill';
+
 interface Skill {
   id: string;
   name: string;
@@ -379,6 +381,10 @@ interface IElectronAPI {
   };
   idbots: {
     getMetaBots: () => Promise<{ success: boolean; list?: Array<{ id: number; name: string; avatar: string | null; metabot_type: string }>; error?: string }>;
+    getOfficialSkillsStatus: () => Promise<{ success: boolean; skills?: OfficialSkillItem[]; error?: string }>;
+    installOfficialSkill: (skill: { name: string; skillFileUri: string; remoteVersion: string; remoteCreator: string }) =>
+      Promise<{ success: boolean; error?: string }>;
+    syncAllOfficialSkills: () => Promise<{ success: boolean; error?: string }>;
     addMetaBot: (input: {
       name: string;
       avatar?: string | null;

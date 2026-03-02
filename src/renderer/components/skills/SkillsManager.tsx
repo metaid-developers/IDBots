@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
+  ArrowPathIcon,
   ArrowUpTrayIcon,
+  ExclamationTriangleIcon,
   FolderOpenIcon,
   LinkIcon,
   MagnifyingGlassIcon,
@@ -14,7 +16,7 @@ import { i18nService } from '../../services/i18n';
 import { skillService } from '../../services/skill';
 import { setSkills } from '../../store/slices/skillSlice';
 import { RootState } from '../../store';
-import { Skill } from '../../types/skill';
+import { Skill, OfficialSkillItem } from '../../types/skill';
 import ErrorMessage from '../ErrorMessage';
 import Tooltip from '../ui/Tooltip';
 
@@ -22,6 +24,7 @@ const SkillsManager: React.FC = () => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
 
+  const [activeTab, setActiveTab] = useState<'local' | 'official'>('local');
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
   const [skillDownloadSource, setSkillDownloadSource] = useState('');
   const [skillActionError, setSkillActionError] = useState('');
@@ -30,6 +33,11 @@ const SkillsManager: React.FC = () => {
   const [isGithubImportOpen, setIsGithubImportOpen] = useState(false);
   const [skillPendingDelete, setSkillPendingDelete] = useState<Skill | null>(null);
   const [isDeletingSkill, setIsDeletingSkill] = useState(false);
+  const [officialSkills, setOfficialSkills] = useState<OfficialSkillItem[]>([]);
+  const [officialSkillsLoading, setOfficialSkillsLoading] = useState(false);
+  const [officialSkillsError, setOfficialSkillsError] = useState('');
+  const [installingSkillName, setInstallingSkillName] = useState<string | null>(null);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
 
   const addSkillMenuRef = useRef<HTMLDivElement>(null);
   const addSkillButtonRef = useRef<HTMLButtonElement>(null);
@@ -97,6 +105,83 @@ const SkillsManager: React.FC = () => {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [isGithubImportOpen]);
+
+  useEffect(() => {
+    if (activeTab !== 'local') return;
+    let isActive = true;
+    const load = async () => {
+      const loaded = await skillService.loadSkills();
+      if (isActive) dispatch(setSkills(loaded));
+    };
+    load();
+    return () => { isActive = false; };
+  }, [activeTab, dispatch]);
+
+  useEffect(() => {
+    if (activeTab !== 'official') return;
+    let isActive = true;
+    const fetchOfficial = async () => {
+      setOfficialSkillsLoading(true);
+      setOfficialSkillsError('');
+      const result = await window.electron.idbots.getOfficialSkillsStatus();
+      if (!isActive) return;
+      setOfficialSkillsLoading(false);
+      if (result.success && result.skills) {
+        setOfficialSkills(result.skills);
+      } else {
+        setOfficialSkillsError(result.error || 'Failed to load official skills');
+        setOfficialSkills([]);
+      }
+    };
+    fetchOfficial();
+    return () => { isActive = false; };
+  }, [activeTab]);
+
+  const handleInstallOfficialSkill = async (skill: OfficialSkillItem) => {
+    if (installingSkillName || isSyncingAll) return;
+    if (skill.status !== 'download' && skill.status !== 'update') return;
+    setInstallingSkillName(skill.name);
+    setSkillActionError('');
+    try {
+      const result = await window.electron.idbots.installOfficialSkill({
+        name: skill.name,
+        skillFileUri: skill.skillFileUri,
+        remoteVersion: skill.remoteVersion,
+        remoteCreator: skill.remoteCreator,
+      });
+      if (result.success) {
+        const updated = await window.electron.idbots.getOfficialSkillsStatus();
+        if (updated.success && updated.skills) setOfficialSkills(updated.skills);
+        const loaded = await skillService.loadSkills();
+        dispatch(setSkills(loaded));
+        setActiveTab('local');
+      } else {
+        setSkillActionError(result.error || i18nService.t('skillDownloadFailed'));
+      }
+    } finally {
+      setInstallingSkillName(null);
+    }
+  };
+
+  const handleSyncAllOfficial = async () => {
+    if (isSyncingAll || installingSkillName) return;
+    setIsSyncingAll(true);
+    setSkillActionError('');
+    try {
+      const result = await window.electron.idbots.syncAllOfficialSkills();
+      if (result.success) {
+        const updated = await window.electron.idbots.getOfficialSkillsStatus();
+        if (updated.success && updated.skills) setOfficialSkills(updated.skills);
+        const loaded = await skillService.loadSkills();
+        dispatch(setSkills(loaded));
+        setActiveTab('local');
+      } else {
+        setSkillActionError(result.error || i18nService.t('skillOfficialSyncFailed'));
+      }
+    } finally {
+      setIsSyncingAll(false);
+    }
+  };
 
   const filteredSkills = useMemo(() => {
     const query = skillSearchQuery.toLowerCase();
@@ -207,6 +292,31 @@ const SkillsManager: React.FC = () => {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1">
+        <button
+          type="button"
+          onClick={() => setActiveTab('local')}
+          className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            activeTab === 'local'
+              ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
+          }`}
+        >
+          {i18nService.t('localSkills')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('official')}
+          className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            activeTab === 'official'
+              ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
+          }`}
+        >
+          {i18nService.t('officialRecommended')}
+        </button>
+      </div>
+
       <div>
         <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('skillsDescription')}
@@ -220,6 +330,104 @@ const SkillsManager: React.FC = () => {
         />
       )}
 
+      {activeTab === 'official' ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={handleSyncAllOfficial}
+              disabled={officialSkillsLoading || isSyncingAll || installingSkillName !== null}
+              className="px-3 py-2 text-sm rounded-xl bg-claude-accent text-white font-medium hover:bg-claude-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isSyncingAll ? (
+                <ArrowPathIcon className="h-4 w-4 animate-spin" />
+              ) : null}
+              <span>{isSyncingAll ? i18nService.t('skillOfficialLoading') : i18nService.t('oneClickSync')}</span>
+            </button>
+          </div>
+          {officialSkillsLoading ? (
+            <div className="py-12 text-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('loading')}
+            </div>
+          ) : officialSkillsError ? (
+            <div className="py-8 text-center text-sm text-red-500">
+              {officialSkillsError}
+            </div>
+          ) : officialSkills.length === 0 ? (
+            <div className="py-12 text-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('noSkillsAvailable')}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {officialSkills.map((skill) => (
+                <div
+                  key={skill.name}
+                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
+                        <PuzzlePieceIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                      </div>
+                      <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+                        {skill.name}
+                      </span>
+                    </div>
+                    <div className="flex-shrink-0">
+                      {skill.status === 'download' && (
+                        <button
+                          type="button"
+                          onClick={() => handleInstallOfficialSkill(skill)}
+                          disabled={installingSkillName !== null || isSyncingAll}
+                          className="px-2.5 py-1 text-xs rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        >
+                          {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                          {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
+                        </button>
+                      )}
+                      {skill.status === 'update' && (
+                        <button
+                          type="button"
+                          onClick={() => handleInstallOfficialSkill(skill)}
+                          disabled={installingSkillName !== null || isSyncingAll}
+                          className="px-2.5 py-1 text-xs rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        >
+                          {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                          {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
+                        </button>
+                      )}
+                      {skill.status === 'installed' && (
+                        <span className="px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                          {i18nService.t('skillInstalled')}
+                        </span>
+                      )}
+                      {skill.status === 'conflict' && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-red-500/20 text-red-500 cursor-not-allowed"
+                          title={i18nService.t('skillConflict')}
+                        >
+                          <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                          {i18nService.t('skillConflict')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {skill.description && (
+                    <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
+                      {skill.description}
+                    </p>
+                  )}
+                  <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    v{skill.remoteVersion}
+                    {skill.status === 'update' && skill.localVersion ? ` (v${skill.localVersion} → v${skill.remoteVersion})` : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
@@ -451,6 +659,8 @@ const SkillsManager: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

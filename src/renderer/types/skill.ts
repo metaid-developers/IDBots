@@ -1,3 +1,17 @@
+// Official skill from MetaWeb (sync status)
+export type OfficialSkillStatus = 'download' | 'update' | 'installed' | 'conflict';
+
+export interface OfficialSkillItem {
+  name: string;
+  remoteVersion: string;
+  skillFileUri: string;
+  remoteCreator: string;
+  description?: string;
+  status: OfficialSkillStatus;
+  localVersion?: string;
+  localCreator?: string;
+}
+
 // Skill type definition
 export interface Skill {
   id: string;
