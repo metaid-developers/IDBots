@@ -809,6 +809,16 @@ const UserMessageItem: React.FC<{ message: CoworkMessage; skills: Skill[] }> = (
   // Get image attachments from metadata
   const imageAttachments = ((message.metadata as CoworkMessageMetadata)?.imageAttachments ?? []) as CoworkImageAttachment[];
 
+  // Debug: log what we read from metadata for user messages
+  console.log('[UserMessageItem] render', {
+    messageId: message.id,
+    hasMetadata: !!message.metadata,
+    metadataKeys: message.metadata ? Object.keys(message.metadata) : [],
+    imageAttachmentsCount: imageAttachments.length,
+    imageAttachmentsNames: imageAttachments.map(a => a.name),
+    imageAttachmentsBase64Lengths: imageAttachments.map(a => a.base64Data?.length ?? 0),
+  });
+
   return (
     <div
       className="py-2 px-4"

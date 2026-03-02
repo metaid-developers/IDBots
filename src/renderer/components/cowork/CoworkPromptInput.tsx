@@ -242,6 +242,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       ? (attachmentLines ? `${trimmedValue}\n\n${attachmentLines}` : trimmedValue)
       : attachmentLines;
 
+    if (imageAtts.length > 0) {
+      console.log('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
+        count: imageAtts.length,
+        names: imageAtts.map(a => a.name),
+        base64Lengths: imageAtts.map(a => a.base64Data.length),
+      });
+    }
     onSubmit(finalPrompt, skillPrompt, imageAtts.length > 0 ? imageAtts : undefined);
     setValue('');
     dispatch(setDraftPrompt(''));

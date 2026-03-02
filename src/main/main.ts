@@ -531,7 +531,31 @@ const getCoworkRunner = () => {
 
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
+      // Debug: log user messages with metadata to trace imageAttachments
+      if (message?.type === 'user') {
+        const meta = message.metadata;
+        console.log('[main] coworkRunner message event (user)', {
+          sessionId,
+          messageId: message.id,
+          hasMetadata: !!meta,
+          metadataKeys: meta ? Object.keys(meta) : [],
+          hasImageAttachments: !!(meta?.imageAttachments),
+          imageAttachmentsCount: Array.isArray(meta?.imageAttachments) ? meta.imageAttachments.length : 0,
+          imageAttachmentsBase64Lengths: Array.isArray(meta?.imageAttachments) ? meta.imageAttachments.map((a: any) => a?.base64Data?.length ?? 0) : [],
+        });
+      }
       const safeMessage = sanitizeCoworkMessageForIpc(message);
+      // Debug: check sanitized result
+      if (message?.type === 'user') {
+        const safeMeta = safeMessage?.metadata;
+        console.log('[main] sanitized user message', {
+          hasMetadata: !!safeMeta,
+          metadataKeys: safeMeta ? Object.keys(safeMeta) : [],
+          hasImageAttachments: !!(safeMeta?.imageAttachments),
+          imageAttachmentsCount: Array.isArray(safeMeta?.imageAttachments) ? safeMeta.imageAttachments.length : 0,
+          imageAttachmentsBase64Lengths: Array.isArray(safeMeta?.imageAttachments) ? safeMeta.imageAttachments.map((a: any) => a?.base64Data?.length ?? 0) : [],
+        });
+      }
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (!win.isDestroyed()) {
@@ -1115,6 +1139,12 @@ if (!gotTheLock) {
     imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
   }) => {
     try {
+      console.log('[main] cowork:session:continue handler', {
+        sessionId: options.sessionId,
+        hasImageAttachments: !!options.imageAttachments,
+        imageAttachmentsCount: options.imageAttachments?.length ?? 0,
+        imageAttachmentsNames: options.imageAttachments?.map(a => a.name),
+      });
       const runner = getCoworkRunner();
       runner.continueSession(options.sessionId, options.prompt, {
         systemPrompt: options.systemPrompt,
