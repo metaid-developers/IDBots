@@ -185,6 +185,7 @@ const normalizeApiFormat = (value: unknown): 'anthropic' | 'openai' => (
 );
 const ABOUT_CONTACT_EMAIL = 'lobsterai.project@rd.netease.com';
 const ABOUT_USER_MANUAL_URL = 'https://lobsterai.youdao.com/#/docs/lobsterai_user_manual';
+const ABOUT_SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
 
 const copyTextFallback = (text: string): boolean => {
   const textarea = document.createElement('textarea');
@@ -388,6 +389,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   // About tab
   const [appVersion, setAppVersion] = useState('');
   const [emailCopied, setEmailCopied] = useState(false);
+  const [isExportingLogs, setIsExportingLogs] = useState(false);
 
   useEffect(() => {
     window.electron.appInfo.getVersion().then(setAppVersion);
@@ -410,6 +412,45 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const handleOpenUserManual = useCallback(() => {
     void window.electron.shell.openExternal(ABOUT_USER_MANUAL_URL);
   }, []);
+
+  const handleOpenServiceTerms = useCallback(() => {
+    void window.electron.shell.openExternal(ABOUT_SERVICE_TERMS_URL);
+  }, []);
+
+  const handleExportLogs = useCallback(async () => {
+    if (isExportingLogs) {
+      return;
+    }
+
+    setError(null);
+    setNoticeMessage(null);
+    setIsExportingLogs(true);
+    try {
+      const result = await window.electron.log.exportZip();
+      if (!result.success) {
+        setError(result.error || i18nService.t('aboutExportLogsFailed'));
+        return;
+      }
+      if (result.canceled) {
+        return;
+      }
+
+      if (result.path) {
+        await window.electron.shell.showItemInFolder(result.path);
+      }
+
+      if ((result.missingEntries?.length ?? 0) > 0) {
+        const missingList = result.missingEntries?.join(', ') || '';
+        setNoticeMessage(`${i18nService.t('aboutExportLogsPartial')}: ${missingList}`);
+      } else {
+        setNoticeMessage(i18nService.t('aboutExportLogsSuccess'));
+      }
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : i18nService.t('aboutExportLogsFailed'));
+    } finally {
+      setIsExportingLogs(false);
+    }
+  }, [isExportingLogs]);
 
   const coworkConfig = useSelector((state: RootState) => state.cowork.config);
 
@@ -2616,7 +2657,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
 
       case 'about':
         return (
-          <div className="flex flex-col items-center pt-6 pb-4">
+          <div className="flex min-h-full flex-col items-center pt-6 pb-3">
             {/* Logo & App Name */}
             <img src="logo.png" alt="LobsterAI" className="w-16 h-16 mb-3" />
             <h3 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">LobsterAI</h3>
@@ -2665,9 +2706,39 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
             </div>
 
             {/* Footer */}
-            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-6">
-              &copy; {new Date().getFullYear()} NetEase Youdao
-            </p>
+            <div className="mt-auto w-full pt-14 pb-2 flex flex-col items-center">
+              <div className="flex items-center justify-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenServiceTerms();
+                  }}
+                  className="bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
+                >
+                  {i18nService.t('aboutServiceTerms')}
+                </button>
+                <span className="mx-3 text-xs opacity-40">|</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleExportLogs();
+                  }}
+                  disabled={isExportingLogs}
+                  className="bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer hover:text-claude-accent dark:hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isExportingLogs ? i18nService.t('aboutExportingLogs') : i18nService.t('aboutExportLogs')}
+                </button>
+              </div>
+
+              <p className="mt-5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {language === 'zh' ? '网易有道 版权所有' : 'NetEase Youdao. All rights reserved.'}
+              </p>
+              <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                Copyright &copy; {new Date().getFullYear()} NetEase Youdao. All Rights Reserved.
+              </p>
+            </div>
           </div>
         );
 
