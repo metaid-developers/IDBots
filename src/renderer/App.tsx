@@ -27,6 +27,7 @@ import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
+import Onboarding from './components/onboarding/Onboarding';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -34,6 +35,7 @@ const App: React.FC = () => {
   const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -108,6 +110,23 @@ const App: React.FC = () => {
         // 初始化定时任务服务
         await scheduledTaskService.init();
 
+        // Onboarding check: redirect to onboarding if no LLM config or no MetaBots
+        const hasProviderWithApiKey =
+          config.providers &&
+          Object.values(config.providers).some(
+            (p: { enabled?: boolean; apiKey?: string }) =>
+              p?.enabled && p?.apiKey && String(p.apiKey).trim() !== ''
+          );
+        let showOnboarding = !hasProviderWithApiKey;
+        if (hasProviderWithApiKey) {
+          try {
+            const mbRes = await window.electron.idbots.getMetaBots();
+            showOnboarding = !mbRes?.success || !mbRes?.list?.length;
+          } catch {
+            showOnboarding = true;
+          }
+        }
+        setNeedsOnboarding(showOnboarding);
         setIsInitialized(true);
       } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -148,6 +167,32 @@ const App: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  const handleOnboardingComplete = useCallback(() => {
+    const config = configService.getConfig();
+    apiService.setConfig({ apiKey: config.api.key, baseUrl: config.api.baseUrl });
+    if (config.providers) {
+      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean }[] = [];
+      Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
+        if (providerConfig.enabled && providerConfig.models) {
+          providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean }) => {
+            allModels.push({
+              id: model.id,
+              name: model.name,
+              provider: providerName.charAt(0).toUpperCase() + providerName.slice(1),
+              supportsImage: model.supportsImage ?? false,
+            });
+          });
+        }
+      });
+      if (allModels.length > 0) {
+        dispatch(setAvailableModels(allModels));
+        const preferred = allModels.find((m) => m.id === config.model.defaultModel) ?? allModels[0];
+        dispatch(setSelectedModel(preferred));
+      }
+    }
+    setNeedsOnboarding(false);
+  }, [dispatch]);
 
   useEffect(() => {
     if (!isInitialized || !selectedModel?.id) return;
@@ -478,6 +523,10 @@ const App: React.FC = () => {
         </div>
       </div>
     );
+  }
+
+  if (needsOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} />;
   }
 
   return (

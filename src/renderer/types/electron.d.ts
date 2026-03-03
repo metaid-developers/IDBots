@@ -394,6 +394,7 @@ interface IElectronAPI {
       background?: string | null;
       boss_id?: number | null;
       llm_id?: string | null;
+      metabot_type?: 'twin' | 'worker';
     }) => Promise<{
       success: boolean;
       metabot?: Metabot;

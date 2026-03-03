@@ -1,9 +1,8 @@
 ---
-
-## name: metabot-omni-caster
+name: metabot-omni-caster
 description: MetaBot 的全能链上协议编织者 (Omni-Caster)。当用户需要执行 MetaID 生态的各种交互（点赞、评论、加群、发长文等），或者表达需要数据上链时，且没有其他专用技能时，统一调用此通用技能。
 official: true
-
+---
 # MetaBot Omni-Caster (全能链上协议网关)
 
 这是 MetaBot 最强大的通用能力。通过查阅预置的 MetaID 协议标准，本技能可以将用户的几乎任何意图转化为符合规范的 7 元组数据并广播上链。理论上可以完成一切和 MetaID数据上链相关的功能

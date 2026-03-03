@@ -2,28 +2,159 @@
   "version": 1,
   "description": "Default skill configuration for IDBots",
   "defaults": {
-    "metabot-omni-caster": { "order": 1, "enabled": true },
-    "metabot-file": { "order": 2, "enabled": true },
-    "docx": { "order": 10, "enabled": true },
-    "web-search": { "order": 15, "enabled": true },
-    "xlsx": { "order": 20, "enabled": true },
-    "pptx": { "order": 30, "enabled": true },
-    "pdf": { "order": 40, "enabled": true },
-    "scheduled-task": { "order": 45, "enabled": true },
-    "remotion": { "order": 50, "enabled": true },
-    "develop-web-game": { "order": 60, "enabled": true },
-    "playwright": { "order": 70, "enabled": true },
-    "create-plan": { "order": 80, "enabled": true },
-    "canvas-design": { "order": 90, "enabled": true },
-    "frontend-design": { "order": 100, "enabled": true },
-    "local-tools": { "order": 200, "enabled": true },
-    "weather": { "order": 210, "enabled": true },
-    "imap-smtp-email": { "order": 211, "enabled": true },
-    "seedance": { "order": 212, "enabled": true },
-    "seedream": { "order": 213, "enabled": true },
-    "technology-news-search": { "order": 214, "enabled": true },
-    "films-search": { "order": 222, "enabled": true },
-    "music-search": { "order": 223, "enabled": true },
-    "skill-creator": { "order": 300, "enabled": true }
+    "metabot-omni-caster": {
+      "order": 1,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "docx": {
+      "order": 10,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "web-search": {
+      "order": 15,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "xlsx": {
+      "order": 20,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "pptx": {
+      "order": 30,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "pdf": {
+      "order": 40,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "scheduled-task": {
+      "order": 45,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "remotion": {
+      "order": 50,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "develop-web-game": {
+      "order": 60,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "playwright": {
+      "order": 70,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "create-plan": {
+      "order": 80,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "canvas-design": {
+      "order": 90,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "frontend-design": {
+      "order": 100,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "local-tools": {
+      "order": 200,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "weather": {
+      "order": 210,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "imap-smtp-email": {
+      "order": 211,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "seedance": {
+      "order": 212,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "seedream": {
+      "order": 213,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "technology-news-search": {
+      "order": 214,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "films-search": {
+      "order": 222,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "music-search": {
+      "order": 223,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "skill-creator": {
+      "order": 300,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    }
   }
 }

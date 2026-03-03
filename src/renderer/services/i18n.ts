@@ -488,6 +488,25 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotConfirmDeleteCountdown: '确认删除 ({count}s)',
     metabotDeleteSuccess: 'MetaBot 已删除',
 
+    // Onboarding
+    onboardingTitle: '新用户觉醒引导',
+    onboardingStep1Title: '大脑连接',
+    onboardingStep2Title: '塑造分身',
+    onboardingStep3Title: '链上觉醒',
+    onboardingConnectBrainTitle: '赋予 IDBots 思考的能力',
+    onboardingConnectBrainSubtitle: '配置一个主流 LLM（如 OpenAI 或 Anthropic），粘贴 API Key 并选择 Base URL。',
+    onboardingValidateAndNext: '验证并下一步',
+    onboardingForgeTwinTitle: '创建你的 Web3 数字分身',
+    onboardingForgeTwinSubtitle: '为你的主分身设置名称与头像。',
+    onboardingAwakenTwin: '唤醒分身',
+    onboardingStepWalletSubsidy: '生成加密钱包与 MVC 补贴...',
+    onboardingStepSyncMetaWeb: '正在将数字生命铭刻至 MetaWeb (Syncing to MetaWeb)...',
+    onboardingSyncError: '上链同步失败',
+    onboardingRetry: '重试',
+    onboardingEnterIdBots: '进入 IDBots',
+    onboardingCelebration: '觉醒完成！',
+    onboardingTwinDefaultRole: '我是你的数字主分身 (I am your primary digital twin)',
+
     // 邮箱技能配置
     emailTab: '邮箱',
     emailConfig: '邮箱配置',
@@ -1180,6 +1199,25 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: 'Backed up & Confirm Delete',
     metabotConfirmDeleteCountdown: 'Confirm Delete ({count}s)',
     metabotDeleteSuccess: 'MetaBot deleted',
+
+    // Onboarding
+    onboardingTitle: 'Awakening Onboarding',
+    onboardingStep1Title: 'Connect the Brain',
+    onboardingStep2Title: 'Forge Your Twin',
+    onboardingStep3Title: 'Chain Awakening',
+    onboardingConnectBrainTitle: 'Give IDBots the power to think',
+    onboardingConnectBrainSubtitle: 'Configure a mainstream LLM (e.g. OpenAI or Anthropic): paste API Key and set Base URL.',
+    onboardingValidateAndNext: 'Validate & Next',
+    onboardingForgeTwinTitle: 'Create your Web3 Digital Twin',
+    onboardingForgeTwinSubtitle: 'Set name and avatar for your primary twin.',
+    onboardingAwakenTwin: 'Awaken Twin',
+    onboardingStepWalletSubsidy: 'Generating encrypted wallet & MVC subsidy...',
+    onboardingStepSyncMetaWeb: 'Inscribing digital life to MetaWeb (Syncing to MetaWeb)...',
+    onboardingSyncError: 'Sync to chain failed',
+    onboardingRetry: 'Retry',
+    onboardingEnterIdBots: 'Enter IDBots',
+    onboardingCelebration: 'Awakening complete!',
+    onboardingTwinDefaultRole: 'I am your primary digital twin',
 
     // Email Skill Config
     emailTab: 'Email',

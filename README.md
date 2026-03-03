@@ -81,6 +81,8 @@ So compared to typical agents, a MetaBot:
 
 See the repository for full build and packaging options.
 
+**First run (after clone):** On first launch you must complete **Onboarding** and configure at least one LLM (API key, and base URL if required for your provider). Until that is done, Cowork and other LLM-dependent features will not work.
+
 ---
 
 ## License

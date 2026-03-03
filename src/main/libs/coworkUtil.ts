@@ -292,6 +292,7 @@ function resolveWindowsGitBashPath(): string | null {
     ? [join(process.resourcesPath, 'mingit')]
     : [
       join(__dirname, '..', '..', 'resources', 'mingit'),
+      join(app.getAppPath(), 'resources', 'mingit'),
       join(process.cwd(), 'resources', 'mingit'),
     ];
   for (const root of bundledRoots) {

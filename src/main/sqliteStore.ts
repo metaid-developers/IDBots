@@ -331,9 +331,6 @@ export class SqliteStore {
     // Migration: make chat_public_key_pin_id optional (same pattern - placeholder before on-chain push)
     this.migrateChatPublicKeyPinIdOptional();
 
-    // Seed default Twin when no twin exists (for vertical slice: send Buzz)
-    this.seedDefaultTwin();
-
     // Migrations - safely add columns if they don't exist
     try {
       // Check if execution_mode column exists
@@ -636,66 +633,6 @@ export class SqliteStore {
     }
   }
 
-  /**
-   * Seed default Twin (metabot_type = 'twin') when none exists. Used for send Buzz vertical slice.
-   */
-  private seedDefaultTwin(): void {
-    try {
-      const existing = this.db.exec("SELECT 1 FROM metabots WHERE metabot_type = 'twin' LIMIT 1");
-      if (existing[0]?.values?.length) return;
-
-      const now = Date.now();
-      const defaultPath = "m/44'/10001'/0'/0/0";
-      const defaultMnemonic = 'polar end mule shine canoe cake scout puzzle pigeon abstract sock gospel';
-
-      this.db.run(
-        `INSERT INTO metabot_wallets (mnemonic, path, created_at) VALUES (?, ?, ?)`,
-        [defaultMnemonic, defaultPath, now]
-      );
-      const walletIdResult = this.db.exec('SELECT last_insert_rowid() as id');
-      const walletId = (walletIdResult[0]?.values?.[0]?.[0] as number) ?? 0;
-      if (walletId === 0) return;
-
-      this.db.run(
-        `INSERT INTO metabots (
-          wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key, chat_public_key_pin_id,
-          name, avatar, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
-          role, soul, goal, background, boss_id, llm_id, tools, skills, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          walletId,
-          '1MFi1WM2NXnV3kjdLKaUw7Ad23LSvSD9fY',
-          '1MFi1WM2NXnV3kjdLKaUw7Ad23LSvSD9fY',
-          'DRPoYmHffwgmakvE4ua3UsLDuB4kEBYukq',
-          '03fb7c351e368d0e714790a536df849aa0367d2890882bcb817743783b109bae74',
-          '046911f36efaacc35dffccbff66f4aa3968fb473b8fb50348a339238a81c0c78a000851753ef0cd0f8a05ccb11b1f369e0625776bdc9477a25879ab938b5da7f98',
-          '73a1b0f2831f61b1ed0fe360f67975988c1bf6a654321665b8ee0e8263412180i0',
-          'loop AI',
-          null,
-          1,
-          'c746eda65c50faf1bc5f6a4e147022e059906a60f04d55ff600e0c06b45d8444',
-          'idq1mc4fynwqdluw8nfe7ylmnd6280uxuzzj5n6q9z',
-          '0000000000000004d4f3028a9a1f4b28c34485174b518b5864753d8f82d1fb81i0',
-          'twin',
-          '0d166d6c6e2ac2f839fb63e22bd93ed571fc06940eadca0986427402eb688a4d',
-          '分身',
-          '你是Sunny Fung的分身，你善于解决问题，耐心热情，有问必答。熟悉 MetaID 生态，立誓要推广 MetaID 到全世界',
-          null,
-          null,
-          null,
-          null,
-          '[]',
-          '[]',
-          now,
-          now,
-        ]
-      );
-      this.save();
-    } catch (e) {
-      console.warn('seedDefaultTwin:', e);
-    }
-  }
-
   save() {
     const data = this.db.export();
     const buffer = Buffer.from(data);
@@ -755,11 +692,14 @@ export class SqliteStore {
   }
 
   private tryReadLegacyMemoryText(): string {
+    // Prefer app-bound paths over process.cwd() so behavior is consistent when started from different directories or packaged.
     const candidates = [
-      path.join(process.cwd(), 'MEMORY.md'),
       path.join(app.getAppPath(), 'MEMORY.md'),
-      path.join(process.cwd(), 'memory.md'),
+      path.join(app.getPath('userData'), 'MEMORY.md'),
+      path.join(process.cwd(), 'MEMORY.md'),
       path.join(app.getAppPath(), 'memory.md'),
+      path.join(app.getPath('userData'), 'memory.md'),
+      path.join(process.cwd(), 'memory.md'),
     ];
 
     for (const candidate of candidates) {

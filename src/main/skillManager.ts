@@ -180,6 +180,7 @@ const resolveWindowsGitExecutable = (): string | null => {
     ? [path.join(process.resourcesPath, 'mingit')]
     : [
       path.join(__dirname, '..', '..', 'resources', 'mingit'),
+      path.join(app.getAppPath(), 'resources', 'mingit'),
       path.join(process.cwd(), 'resources', 'mingit'),
     ];
 

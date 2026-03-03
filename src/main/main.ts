@@ -1831,6 +1831,7 @@ if (!gotTheLock) {
     background?: string | null;
     boss_id?: number | null;
     llm_id?: string | null;
+    metabot_type?: 'twin' | 'worker';
   }) => {
     try {
       const walletResult = await createMetaBotWallet({});
@@ -1839,6 +1840,7 @@ if (!gotTheLock) {
         mnemonic: walletResult.mnemonic,
         path: walletResult.path,
       });
+      const metabotType = input.metabot_type === 'twin' ? 'twin' : 'worker';
       const metabot = store.createMetabot({
         wallet_id: wallet.id,
         mvc_address: walletResult.mvc_address,
@@ -1853,7 +1855,7 @@ if (!gotTheLock) {
         metaid: walletResult.metaid,
         globalmetaid: walletResult.globalmetaid,
         metabot_info_pinid: null,
-        metabot_type: 'worker',
+        metabot_type: metabotType,
         created_by: '0000',
         role: input.role,
         soul: input.soul,

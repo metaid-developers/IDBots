@@ -311,6 +311,7 @@ contextBridge.exposeInMainWorld('electron', {
       background?: string | null;
       boss_id?: number | null;
       llm_id?: string | null;
+      metabot_type?: 'twin' | 'worker';
     }) => ipcRenderer.invoke('idbots:addMetaBot', input),
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       ipcRenderer.invoke('idbots:getAddressBalance', options),
