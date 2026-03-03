@@ -30,7 +30,7 @@ npm run dist:linux      # Linux (.AppImage)
 
 ## Architecture Overview
 
-LobsterAI is an Electron + React desktop application with two primary modes:
+IDBots is an Electron + React desktop application with two primary modes:
 1. **Cowork Mode** - AI-assisted coding sessions using Claude Agent SDK with tool execution
 2. **Artifacts System** - Rich preview of code outputs (HTML, SVG, React, Mermaid)
 
@@ -165,7 +165,7 @@ The Artifacts feature provides rich preview of code outputs similar to Claude's 
 - App config stored in SQLite `kv` table
 - Cowork config stored in `cowork_config` table (workingDirectory, systemPrompt, executionMode)
 - Cowork sessions and messages stored in `cowork_sessions` and `cowork_messages` tables
-- Database file: `lobsterai.sqlite` in user data directory
+- Database file: `idbots.sqlite` in user data directory
 
 ### TypeScript Configuration
 
