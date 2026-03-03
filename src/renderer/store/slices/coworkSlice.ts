@@ -35,7 +35,7 @@ const initialState: CoworkState = {
     executionMode: 'local',
     memoryEnabled: true,
     memoryImplicitUpdateEnabled: true,
-    memoryLlmJudgeEnabled: false,
+    memoryLlmJudgeEnabled: true,
     memoryGuardLevel: 'strict',
     memoryUserMemoriesMaxItems: 12,
   },

@@ -29,6 +29,11 @@ import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 import { syncMetaBotToChain } from './services/metaidCore';
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
+import {
+  startMetaWebListener,
+  stopMetaWebListener,
+  type ListenerConfig,
+} from './services/metaWebListenerService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -1102,6 +1107,48 @@ if (!gotTheLock) {
       return result;
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to sync official skills' };
+    }
+  });
+
+  // MetaWebListener IPC (real WebSocket + DB; isolated from IM Gateway)
+  const METAWEB_LISTENER_CONFIG_KEY = 'metaweb_listener_config';
+  const getListenerConfigFromStore = (): ListenerConfig => {
+    const stored = getStore().get<ListenerConfig>(METAWEB_LISTENER_CONFIG_KEY);
+    return stored ?? { groupChats: false, privateChats: false, serviceRequests: false };
+  };
+  ipcMain.handle('idbots:getListenerConfig', async () => {
+    return { success: true, config: getListenerConfigFromStore() };
+  });
+  ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
+    const config = getListenerConfigFromStore();
+    if (payload.type === 'groupChats' || payload.type === 'privateChats' || payload.type === 'serviceRequests') {
+      const next: ListenerConfig = {
+        ...config,
+        [payload.type]: payload.enabled,
+      };
+      getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
+    }
+    return { success: true };
+  });
+  ipcMain.handle('idbots:startMetaWebListener', async () => {
+    try {
+      const sqliteStore = getStore();
+      const db = sqliteStore.getDatabase();
+      const saveDb = sqliteStore.getSaveFunction();
+      const config = getListenerConfigFromStore();
+      const getMetaBots = () =>
+        getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
+      const emitLog = (log: string) => {
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.webContents.isDestroyed()) {
+            win.webContents.send('idbots:listener-log', log);
+          }
+        });
+      };
+      startMetaWebListener(db, getMetaBots, config, emitLog, saveDb);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to start MetaWeb listener' };
     }
   });
 

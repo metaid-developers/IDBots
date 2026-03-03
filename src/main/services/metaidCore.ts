@@ -61,9 +61,21 @@ export async function createPin(
     throw new Error(`MetaBot ${metabot_id} wallet mnemonic is empty`);
   }
 
-  // Worker lives in dist-electron/libs/createPinWorker.js (compiled from src/main/libs/createPinWorker.ts)
-  const workerPath = path.join(__dirname, '..', 'libs', 'createPinWorker.js');
+  // Worker: dist-electron/libs/createPinWorker.js when main runs from dist-electron; fallback for packaged/dev edge cases
   const appPath = app.getAppPath();
+  const candidatePaths = [
+    path.join(__dirname, '..', 'libs', 'createPinWorker.js'),
+    path.join(appPath, 'dist-electron', 'libs', 'createPinWorker.js'),
+    path.join(appPath, 'libs', 'createPinWorker.js'),
+  ];
+  const workerPathResolved = candidatePaths.find((p) => fs.existsSync(p)) ?? candidatePaths[0];
+  if (!fs.existsSync(workerPathResolved)) {
+    appendMetaidLog('ERROR', 'createPinWorker.js not found', { candidatePaths });
+    throw new Error(
+      `createPinWorker.js not found. Tried: ${candidatePaths.join(', ')}. Run "npm run compile:electron" and ensure IDBots is started from project root.`
+    );
+  }
+  const workerPath = path.isAbsolute(workerPathResolved) ? workerPathResolved : path.resolve(appPath, workerPathResolved);
 
   const baseEnv = { ...process.env };
   delete baseEnv.ELECTRON_RUN_AS_NODE;

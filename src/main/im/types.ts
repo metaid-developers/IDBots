@@ -115,9 +115,48 @@ export interface DiscordGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== NIM (NetEase IM) Types ====================
+
+export interface NimConfig {
+  enabled: boolean;
+  appKey: string;
+  account: string;
+  token: string;
+  debug?: boolean;
+  /** Comma-separated account IDs to accept messages from (optional filter) */
+  accountWhitelist?: string;
+}
+
+export interface NimGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  botAccount: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
+// ==================== Xiaomifeng Types ====================
+
+export interface XiaomifengConfig {
+  enabled: boolean;
+  clientId: string;
+  secret: string;
+  debug?: boolean;
+}
+
+export interface XiaomifengGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  botAccount: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
@@ -143,8 +182,11 @@ export interface IMGatewayStatus {
 
 export type TelegramMediaType = 'image' | 'video' | 'audio' | 'voice' | 'document' | 'sticker';
 
+/** Unified media type for DingTalk, Discord, NIM, etc. */
+export type IMMediaType = 'image' | 'video' | 'audio' | 'voice' | 'document' | 'sticker';
+
 export interface IMMediaAttachment {
-  type: TelegramMediaType;
+  type: IMMediaType;
   localPath: string;          // 下载后的本地路径
   mimeType: string;           // MIME 类型
   fileName?: string;          // 原始文件名
@@ -322,6 +364,24 @@ export const DEFAULT_DISCORD_STATUS: DiscordGatewayStatus = {
   startedAt: null,
   lastError: null,
   botUsername: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
+export const DEFAULT_NIM_STATUS: NimGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  botAccount: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
+export const DEFAULT_XIAOMIFENG_STATUS: XiaomifengGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  botAccount: null,
   lastInboundAt: null,
   lastOutboundAt: null,
 };

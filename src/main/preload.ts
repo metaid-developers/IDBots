@@ -319,6 +319,17 @@ contextBridge.exposeInMainWorld('electron', {
     deleteMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:deleteMetaBot', metabotId),
     syncMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:syncMetaBot', metabotId),
   },
+  metaWebListener: {
+    getListenerConfig: () => ipcRenderer.invoke('idbots:getListenerConfig'),
+    toggleListener: (payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) =>
+      ipcRenderer.invoke('idbots:toggleListener', payload),
+    startMetaWebListener: () => ipcRenderer.invoke('idbots:startMetaWebListener'),
+    onListenerLog: (callback: (log: string) => void) => {
+      const handler = (_event: unknown, log: string) => callback(log);
+      ipcRenderer.on('idbots:listener-log', handler);
+      return () => ipcRenderer.removeListener('idbots:listener-log', handler);
+    },
+  },
   metabot: {
     list: () => ipcRenderer.invoke('metabot:list'),
     get: (id: number) => ipcRenderer.invoke('metabot:get', id),

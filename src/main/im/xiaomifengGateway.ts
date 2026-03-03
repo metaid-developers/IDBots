@@ -118,7 +118,7 @@ function getSdkDataPath(account: string): string {
   try {
     baseDir = app.getPath('userData');
   } catch {
-    baseDir = path.join(os.homedir(), '.lobsterai');
+    baseDir = path.join(os.homedir(), '.idbots');
   }
   const dataDir = path.join(baseDir, SDK_DATA_DIR, account);
   if (!fs.existsSync(dataDir)) {

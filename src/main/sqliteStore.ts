@@ -210,6 +210,53 @@ export class SqliteStore {
         ON scheduled_task_runs(task_id, started_at DESC);
     `);
 
+    // MetaWeb listener: group chat, private chat, protocol events (SDD Task 11)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS group_chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pin_id TEXT UNIQUE NOT NULL,
+        group_id TEXT NOT NULL,
+        sender_metaid TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        content TEXT,
+        content_type TEXT,
+        encryption TEXT DEFAULT '0',
+        chain_timestamp INTEGER,
+        is_processed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS private_chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pin_id TEXT UNIQUE NOT NULL,
+        sender_metaid TEXT NOT NULL,
+        to_metaid TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        content TEXT,
+        content_type TEXT,
+        encryption TEXT DEFAULT 'ecdh',
+        chain_timestamp INTEGER,
+        is_processed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS protocol_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pin_id TEXT UNIQUE NOT NULL,
+        txid TEXT NOT NULL,
+        protocol_path TEXT NOT NULL,
+        sender_metaid TEXT NOT NULL,
+        target_metaid TEXT,
+        payload TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        error_msg TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+
     // MetaID pins: full-field persistence from manapi.metaid.io
     this.db.run(`
       CREATE TABLE IF NOT EXISTS metaid_pins (

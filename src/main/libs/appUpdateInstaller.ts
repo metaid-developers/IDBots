@@ -68,8 +68,8 @@ export async function downloadUpdate(
   const ext = path.extname(parsedUrl.pathname) || (process.platform === 'darwin' ? '.dmg' : '.exe');
   const tempDir = app.getPath('temp');
   const ts = Date.now();
-  const downloadPath = path.join(tempDir, `lobsterai-update-${ts}${ext}.download`);
-  const finalPath = path.join(tempDir, `lobsterai-update-${ts}${ext}`);
+  const downloadPath = path.join(tempDir, `idbots-update-${ts}${ext}.download`);
+  const finalPath = path.join(tempDir, `idbots-update-${ts}${ext}`);
 
   console.log(`[AppUpdate] Temp path: ${downloadPath}`);
   console.log(`[AppUpdate] Final path: ${finalPath}`);
@@ -363,7 +363,7 @@ async function installWindowsNsis(exePath: string): Promise<void> {
   console.log(`[AppUpdate]   appPid: ${process.pid}`);
 
   // We must NOT spawn the installer directly as a child of the app, because
-  // the NSIS customInit macro runs `taskkill /IM "LobsterAI.exe" /F /T`
+  // the NSIS customInit macro runs `taskkill /IM "IDBots.exe" /F /T`
   // which kills the entire process tree — including child processes.
   //
   // Strategy: use a tiny PowerShell script (launched via hidden VBS) that
@@ -372,9 +372,9 @@ async function installWindowsNsis(exePath: string): Promise<void> {
   // desktop shortcuts, start menu entries, "Run after finish", etc.
   const ts = Date.now();
   const tempDir = app.getPath('temp');
-  const logPath = path.join(tempDir, `lobsterai-update-${ts}.log`);
-  const scriptPath = path.join(tempDir, `lobsterai-update-${ts}.ps1`);
-  const vbsPath = path.join(tempDir, `lobsterai-update-${ts}.vbs`);
+  const logPath = path.join(tempDir, `idbots-update-${ts}.log`);
+  const scriptPath = path.join(tempDir, `idbots-update-${ts}.ps1`);
+  const vbsPath = path.join(tempDir, `idbots-update-${ts}.vbs`);
 
   console.log(`[AppUpdate] Script log: ${logPath}`);
 

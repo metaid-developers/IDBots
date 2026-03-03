@@ -41,24 +41,24 @@ const MetaBotSelector: React.FC<{
   }, [isOpen]);
   const selected = metabots.find((m) => m.id === selectedId) ?? metabots[0];
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center justify-center gap-3">
       <label className="text-sm font-medium dark:text-claude-darkText text-claude-text shrink-0">
         {label}
       </label>
-      <div ref={containerRef} className="relative min-w-[200px]">
+      <div ref={containerRef} className="relative min-w-[280px]">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="w-full flex items-center gap-2 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-4 py-2.5 text-sm focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer"
+          className="w-full flex items-center gap-2 rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border px-5 py-3 text-base focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/40 cursor-pointer"
           aria-label={placeholder}
         >
           {selected ? (
             <>
               {selected.avatar && (selected.avatar.startsWith('data:') || selected.avatar.startsWith('http')) ? (
-                <img src={selected.avatar} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+                <img src={selected.avatar} alt="" className="w-7 h-7 rounded-md object-cover flex-shrink-0" />
               ) : (
-                <div className="w-6 h-6 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
-                  <CpuChipIcon className="h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <div className="w-7 h-7 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
+                  <CpuChipIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                 </div>
               )}
               <span className="truncate flex-1 text-left">{selected.name}</span>
@@ -69,7 +69,7 @@ const MetaBotSelector: React.FC<{
           <ChevronDownIcon className={`h-4 w-4 flex-shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
         {isOpen && (
-          <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover z-50 overflow-hidden max-h-48 overflow-y-auto">
+          <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-popover z-50 overflow-hidden max-h-56 overflow-y-auto">
             {metabots.map((m) => (
               <button
                 key={m.id}
@@ -78,12 +78,12 @@ const MetaBotSelector: React.FC<{
                   onSelect(m.id);
                   setIsOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${selectedId === m.id ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''}`}
+                className={`w-full flex items-center gap-2 px-5 py-3 text-left text-base hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors ${selectedId === m.id ? 'dark:bg-claude-darkSurfaceHover/50 bg-claude-surfaceHover/50' : ''}`}
               >
                 {m.avatar && (m.avatar.startsWith('data:') || m.avatar.startsWith('http')) ? (
-                  <img src={m.avatar} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+                  <img src={m.avatar} alt="" className="w-7 h-7 rounded-md object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-6 h-6 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
+                  <div className="w-7 h-7 rounded-md dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover flex items-center justify-center flex-shrink-0">
                     <span className="text-[10px] font-semibold dark:text-claude-darkText text-claude-text uppercase">
                       {m.name.slice(0, 2) || '?'}
                     </span>
@@ -488,7 +488,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-3xl mx-auto px-4 py-16 space-y-12">
-          {/* Welcome Section */}
+          {/* Welcome Section - centered */}
           <div className="text-center space-y-5">
             <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
             <h2 className="text-3xl font-bold tracking-tight dark:text-claude-darkText text-claude-text">
@@ -499,8 +499,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             </p>
           </div>
 
-          {/* MetaBot selector (when creating new session) - shows avatar and name */}
+          {/* MetaBot selector (when creating new session) - centered, slightly larger */}
           {metabots.length > 0 && (
+            <div className="flex justify-center">
             <MetaBotSelector
               metabots={metabots}
               selectedId={selectedMetabotId}
@@ -508,6 +509,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               label={i18nService.t('coworkMetaBotLabel')}
               placeholder={i18nService.t('coworkMetaBotPlaceholder')}
             />
+            </div>
           )}
 
           {/* Prompt Input Area - Large version with folder selector */}

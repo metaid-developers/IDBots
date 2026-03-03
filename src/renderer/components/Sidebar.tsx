@@ -5,18 +5,19 @@ import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
-import { MagnifyingGlassIcon, PuzzlePieceIcon, ClockIcon, CpuChipIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, PuzzlePieceIcon, ClockIcon, CpuChipIcon, SignalIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from './icons/ComposeIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'metabots';
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'listenerHub';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowMetabots: () => void;
+  onShowListenerHub: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -30,6 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowCowork,
   onShowScheduledTasks,
   onShowMetabots,
+  onShowListenerHub,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -157,6 +159,21 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <CpuChipIcon className="h-4 w-4" />
             {i18nService.t('metabots')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(false);
+              onShowListenerHub();
+            }}
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${
+              activeView === 'listenerHub'
+                ? 'dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
+                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+            }`}
+          >
+            <SignalIcon className="h-4 w-4" />
+            {i18nService.t('listenerHub')}
           </button>
         </div>
       </div>

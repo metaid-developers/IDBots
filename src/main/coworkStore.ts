@@ -31,7 +31,7 @@ const normalizeRecentWorkspacePath = (cwd: string): string => {
 
 const DEFAULT_MEMORY_ENABLED = true;
 const DEFAULT_MEMORY_IMPLICIT_UPDATE_ENABLED = true;
-const DEFAULT_MEMORY_LLM_JUDGE_ENABLED = false;
+const DEFAULT_MEMORY_LLM_JUDGE_ENABLED = true;
 const DEFAULT_MEMORY_GUARD_LEVEL: CoworkMemoryGuardLevel = 'strict';
 const DEFAULT_MEMORY_USER_MEMORIES_MAX_ITEMS = 12;
 const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;

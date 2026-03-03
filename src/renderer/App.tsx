@@ -9,6 +9,7 @@ import { CoworkView } from './components/cowork';
 import { SkillsView } from './components/skills';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import MetabotsView from './components/metabots/MetabotsView';
+import ListenerHubView from './components/listenerHub/ListenerHubView';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import { configService } from './services/config';
@@ -32,7 +33,7 @@ import Onboarding from './components/onboarding/Onboarding';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'listenerHub'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -228,6 +229,10 @@ const App: React.FC = () => {
 
   const handleShowMetabots = useCallback(() => {
     setMainView('metabots');
+  }, []);
+
+  const handleShowListenerHub = useCallback(() => {
+    setMainView('listenerHub');
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
@@ -543,6 +548,7 @@ const App: React.FC = () => {
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowMetabots={handleShowMetabots}
+          onShowListenerHub={handleShowListenerHub}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
@@ -571,6 +577,13 @@ const App: React.FC = () => {
                 onNewChat={handleNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
                 onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
+              />
+            ) : mainView === 'listenerHub' ? (
+              <ListenerHubView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+                updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
             ) : (
               <CoworkView

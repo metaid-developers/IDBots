@@ -2,7 +2,7 @@
  * NIM Media Utilities
  * 云信媒体消息处理：下载、发送、类型推断、清理
  * 
- * 参考 openclaw-nim/src/media.ts 实现，适配 LobsterAI Gateway 架构
+ * 参考 openclaw-nim/src/media.ts 实现，适配 IDBots Gateway 架构
  */
 
 import * as fs from 'fs';

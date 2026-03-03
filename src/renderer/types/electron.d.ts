@@ -417,6 +417,12 @@ interface IElectronAPI {
       txids?: string[];
     }>;
   };
+  metaWebListener: {
+    getListenerConfig: () => Promise<{ success: boolean; config?: { groupChats: boolean; privateChats: boolean; serviceRequests: boolean }; error?: string }>;
+    toggleListener: (payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
+    startMetaWebListener: () => Promise<{ success: boolean; error?: string }>;
+    onListenerLog: (callback: (log: string) => void) => () => void;
+  };
   metabot: {
     list: () => Promise<{ success: boolean; list?: Metabot[]; error?: string }>;
     get: (id: number) => Promise<{ success: boolean; metabot?: Metabot | null; error?: string }>;
