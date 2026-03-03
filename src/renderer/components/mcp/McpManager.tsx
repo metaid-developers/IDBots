@@ -2,13 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   MagnifyingGlassIcon,
-  PlusCircleIcon,
   TrashIcon,
   PencilIcon,
-  ServerStackIcon,
   ArrowTopRightOnSquareIcon,
-  LinkIcon,
 } from '@heroicons/react/24/outline';
+import ConnectorIcon from '../icons/ConnectorIcon';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
 import { setMcpServers } from '../../store/slices/mcpSlice';
@@ -25,51 +23,7 @@ const TRANSPORT_BADGE_COLORS: Record<string, string> = {
   http: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
 };
 
-type McpTab = 'installed' | 'marketplace';
-
-/** Parse a URL / npm package / npx command into McpServerFormData for the form modal. */
-function parseUrlInput(input: string): Partial<McpServerFormData> | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  // npx command: "npx -y @pkg/name arg1 arg2"
-  if (trimmed.startsWith('npx ')) {
-    const parts = trimmed.split(/\s+/);
-    const command = parts[0];
-    const args = parts.slice(1);
-    const pkgArg = args.find(a => !a.startsWith('-'));
-    const name = pkgArg ? pkgArg.replace(/^@/, '').replace(/\//g, '-').replace(/@.*$/, '') : 'custom-mcp';
-    return { name, transportType: 'stdio', command, args };
-  }
-
-  // npm scoped package: "@scope/package"
-  if (trimmed.startsWith('@') && trimmed.includes('/') && !trimmed.includes(' ')) {
-    const name = trimmed.replace(/^@/, '').replace(/\//g, '-').replace(/@.*$/, '');
-    return { name, transportType: 'stdio', command: 'npx', args: ['-y', trimmed] };
-  }
-
-  // GitHub URL
-  if (trimmed.match(/^https?:\/\/(www\.)?github\.com\//)) {
-    const match = trimmed.match(/github\.com\/([^/]+)\/([^/]+)/);
-    const name = match ? match[2].replace(/\.git$/, '') : 'github-mcp';
-    return { name, transportType: 'stdio', command: 'npx', args: ['-y', name], githubUrl: trimmed };
-  }
-
-  // HTTP(S) URL → SSE/HTTP MCP
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    const urlObj = new URL(trimmed);
-    const name = urlObj.hostname.replace(/\./g, '-');
-    return { name, transportType: 'sse', url: trimmed };
-  }
-
-  // Plain package name
-  if (/^[a-zA-Z0-9@._-]+$/.test(trimmed)) {
-    const name = trimmed.replace(/^@/, '').replace(/\//g, '-').replace(/@.*$/, '');
-    return { name, transportType: 'stdio', command: 'npx', args: ['-y', trimmed] };
-  }
-
-  return null;
-}
+type McpTab = 'installed' | 'marketplace' | 'custom';
 
 const McpManager: React.FC = () => {
   const dispatch = useDispatch();
@@ -84,9 +38,6 @@ const McpManager: React.FC = () => {
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
   const [activeCategory, setActiveCategory] = useState('all');
-  const [isUrlModalOpen, setIsUrlModalOpen] = useState(false);
-  const [urlInput, setUrlInput] = useState('');
-  const [urlError, setUrlError] = useState('');
 
   useEffect(() => {
     let isActive = true;
@@ -113,6 +64,16 @@ const McpManager: React.FC = () => {
     return servers.filter(server =>
       server.name.toLowerCase().includes(query)
       || server.description.toLowerCase().includes(query)
+    );
+  }, [servers, searchQuery]);
+
+  const filteredCustom = useMemo(() => {
+    const custom = servers.filter(s => !s.isBuiltIn);
+    const query = searchQuery.toLowerCase();
+    if (!query) return custom;
+    return custom.filter(s =>
+      s.name.toLowerCase().includes(query)
+      || s.description.toLowerCase().includes(query)
     );
   }, [servers, searchQuery]);
 
@@ -170,12 +131,6 @@ const McpManager: React.FC = () => {
     setPendingDelete(null);
   };
 
-  const handleOpenCreateForm = () => {
-    setEditingServer(null);
-    setInstallingRegistry(null);
-    setIsFormOpen(true);
-  };
-
   const handleOpenEditForm = (server: McpServerConfig) => {
     setEditingServer(server);
     setInstallingRegistry(null);
@@ -216,49 +171,11 @@ const McpManager: React.FC = () => {
       }
     }
     handleCloseForm();
-    // After installing from marketplace, switch to installed tab to show result
-    if (installingRegistry) {
-      setActiveTab('installed');
-    }
   };
 
-  const handleOpenUrlModal = () => {
-    setUrlInput('');
-    setUrlError('');
-    setIsUrlModalOpen(true);
-  };
-
-  const handleCloseUrlModal = () => {
-    setIsUrlModalOpen(false);
-    setUrlInput('');
-    setUrlError('');
-  };
-
-  const handleUrlInstall = () => {
-    const parsed = parseUrlInput(urlInput);
-    if (!parsed) {
-      setUrlError(i18nService.t('mcpUrlRequired'));
-      return;
-    }
-    handleCloseUrlModal();
+  const handleOpenCreateForm = () => {
+    setEditingServer(null);
     setInstallingRegistry(null);
-    const pseudoServer: McpServerConfig = {
-      id: '',
-      name: parsed.name || 'custom-mcp',
-      description: parsed.description || '',
-      enabled: false,
-      transportType: parsed.transportType || 'stdio',
-      command: parsed.command,
-      args: parsed.args,
-      env: parsed.env,
-      url: parsed.url,
-      headers: parsed.headers,
-      isBuiltIn: false,
-      githubUrl: parsed.githubUrl,
-      createdAt: 0,
-      updatedAt: 0,
-    };
-    setEditingServer(pseudoServer);
     setIsFormOpen(true);
   };
 
@@ -280,10 +197,14 @@ const McpManager: React.FC = () => {
 
   const existingNames = useMemo(() => servers.map(s => s.name), [servers]);
 
-  // Count of available marketplace items (for badge)
   const marketplaceCount = useMemo(
     () => mcpRegistry.filter(e => !installedRegistryIds.has(e.id)).length,
     [installedRegistryIds]
+  );
+
+  const customCount = useMemo(
+    () => servers.filter(s => !s.isBuiltIn).length,
+    [servers]
   );
 
   const tabClass = (tab: McpTab) =>
@@ -312,7 +233,7 @@ const McpManager: React.FC = () => {
         />
       )}
 
-      {/* Tab bar + search + actions */}
+      {/* Tab bar + search */}
       <div className="flex items-center gap-3">
         {/* Tabs */}
         <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border mr-auto">
@@ -334,40 +255,29 @@ const McpManager: React.FC = () => {
             )}
             <div className={tabIndicatorClass('marketplace')} />
           </button>
+          <button type="button" onClick={() => setActiveTab('custom')} className={tabClass('custom')}>
+            {i18nService.t('mcpCustom')}
+            {customCount > 0 && (
+              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
+                {customCount}
+              </span>
+            )}
+            <div className={tabIndicatorClass('custom')} />
+          </button>
         </div>
 
-        {/* Search */}
-        <div className="relative w-48">
-          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-          <input
-            type="text"
-            placeholder={i18nService.t('searchMcpServers')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
-          />
-        </div>
-
-        {/* Actions - only on installed tab */}
-        {activeTab === 'installed' && (
-          <>
-            <button
-              type="button"
-              onClick={handleOpenUrlModal}
-              className="p-1.5 rounded-lg border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
-              title={i18nService.t('mcpInstallFromUrl')}
-            >
-              <LinkIcon className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenCreateForm}
-              className="p-1.5 rounded-lg border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
-              title={i18nService.t('addMcpServer')}
-            >
-              <PlusCircleIcon className="h-4 w-4" />
-            </button>
-          </>
+        {/* Search (shown on all tabs except when no servers) */}
+        {(
+          <div className="relative w-48">
+            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+            <input
+              type="text"
+              placeholder={i18nService.t('searchMcpServers')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
+            />
+          </div>
         )}
       </div>
 
@@ -387,7 +297,7 @@ const McpManager: React.FC = () => {
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
-                      <ServerStackIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                      <ConnectorIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                     </div>
                     <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
                       {server.name}
@@ -504,7 +414,7 @@ const McpManager: React.FC = () => {
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
-                        <ServerStackIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                        <ConnectorIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                       </div>
                       <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
                         {entry.name}
@@ -555,6 +465,109 @@ const McpManager: React.FC = () => {
         </div>
       )}
 
+      {/* ── Tab: Custom ─────────────────────────────────── */}
+      {activeTab === 'custom' && (
+        <div className="space-y-6">
+          {/* Custom servers grid (add button + server cards) */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* Add custom server card */}
+            <button
+              type="button"
+              onClick={handleOpenCreateForm}
+              className="rounded-xl border-2 border-dashed dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:border-claude-accent hover:text-claude-accent dark:hover:border-claude-accent dark:hover:text-claude-accent transition-colors flex items-center justify-center min-h-[120px] text-sm"
+            >
+              + {i18nService.t('addMcpServer')}
+            </button>
+            {filteredCustom.map((server) => (
+                <div
+                  key={server.id}
+                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
+                        <ConnectorIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                      </div>
+                      <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+                        {server.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {server.githubUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenGithub(server.githubUrl!)}
+                          className="p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
+                          title={i18nService.t('mcpViewOnGithub')}
+                        >
+                          <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditForm(server)}
+                        className="p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent dark:hover:text-claude-accent transition-colors"
+                        title={i18nService.t('editMcpServer')}
+                      >
+                        <PencilIcon className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRequestDelete(server)}
+                        className="p-1 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                        title={i18nService.t('deleteMcpServer')}
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                      <div
+                        className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
+                          server.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+                        }`}
+                        onClick={() => handleToggleEnabled(server.id)}
+                      >
+                        <div
+                          className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+                            server.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <Tooltip
+                    content={server.description || getTransportSummary(server)}
+                    position="bottom"
+                    maxWidth="360px"
+                    className="block w-full"
+                  >
+                    <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
+                      {server.description || getTransportSummary(server)}
+                    </p>
+                  </Tooltip>
+
+                  <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    <span className={`px-1.5 py-0.5 rounded font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}>
+                      {server.transportType}
+                    </span>
+                    {server.transportType === 'stdio' && server.command && (
+                      <>
+                        <span>·</span>
+                        <span className="truncate">{server.command}</span>
+                      </>
+                    )}
+                    {(server.transportType === 'sse' || server.transportType === 'http') && server.url && (
+                      <>
+                        <span>·</span>
+                        <span className="truncate">{server.url}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* Delete confirmation modal */}
       {pendingDelete && (
         <div
@@ -598,57 +611,7 @@ const McpManager: React.FC = () => {
         </div>
       )}
 
-      {/* URL install modal */}
-      {isUrlModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={handleCloseUrlModal}
-        >
-          <div
-            className="w-full max-w-md mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-lg font-semibold dark:text-claude-darkText text-claude-text mb-4">
-              {i18nService.t('mcpInstallFromUrlTitle')}
-            </div>
-            <div className="space-y-3">
-              <input
-                type="text"
-                value={urlInput}
-                onChange={(e) => { setUrlInput(e.target.value); setUrlError(''); }}
-                placeholder={i18nService.t('mcpInstallFromUrlPlaceholder')}
-                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') handleUrlInstall(); }}
-              />
-              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {i18nService.t('mcpInstallFromUrlHint')}
-              </p>
-              {urlError && (
-                <div className="text-xs text-red-500">{urlError}</div>
-              )}
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleCloseUrlModal}
-                  className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-                >
-                  {i18nService.t('cancel')}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUrlInstall}
-                  className="px-3 py-1.5 text-xs rounded-lg bg-claude-accent text-white hover:bg-claude-accent/90 transition-colors"
-                >
-                  {i18nService.t('mcpInstall')}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add/Edit/Install form modal */}
+      {/* Edit / Registry-install form modal */}
       <McpServerFormModal
         isOpen={isFormOpen}
         server={editingServer}

@@ -470,7 +470,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: '保存',
     // MCP 市场 & 注册表
     mcpInstalled: '已安装',
-    mcpMarketplace: '发现更多',
+    mcpMarketplace: '市场',
+    mcpCustom: '自定义',
+    mcpCustomDescription: '手动配置 MCP 服务器',
+    mcpResetForm: '重置',
     mcpInstall: '安装',
     mcpInstallFromUrl: '通过 URL 安装',
     mcpInstallFromUrlTitle: '通过 URL 安装 MCP',
@@ -1203,7 +1206,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     saveMcpServer: 'Save',
     // MCP Marketplace & Registry
     mcpInstalled: 'Installed',
-    mcpMarketplace: 'Discover More',
+    mcpMarketplace: 'Marketplace',
+    mcpCustom: 'Custom',
+    mcpCustomDescription: 'Manually configure an MCP server',
+    mcpResetForm: 'Reset',
     mcpInstall: 'Install',
     mcpInstallFromUrl: 'Install from URL',
     mcpInstallFromUrlTitle: 'Install MCP from URL',
