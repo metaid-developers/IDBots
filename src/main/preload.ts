@@ -329,6 +329,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('idbots:listener-log', handler);
       return () => ipcRenderer.removeListener('idbots:listener-log', handler);
     },
+    assignGroupChatTask: (params: import('./services/assignGroupChatTaskService').AssignGroupChatTaskParams) =>
+      ipcRenderer.invoke('idbots:assignGroupChatTask', params),
   },
   metabot: {
     list: () => ipcRenderer.invoke('metabot:list'),

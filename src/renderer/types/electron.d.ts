@@ -218,6 +218,24 @@ interface MetabotUpdateInput {
   llm_id?: string | null;
 }
 
+interface AssignGroupChatTaskParams {
+  target_metabot_name: string;
+  group_id: string;
+  reply_on_mention?: boolean;
+  random_reply_probability?: number;
+  cooldown_seconds?: number;
+  context_message_count?: number;
+  discussion_background?: string;
+  participation_goal?: string;
+  supervisor_metaid?: string;
+}
+
+interface AssignGroupChatTaskResult {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+
 interface IElectronAPI {
   platform: string;
   store: {
@@ -422,6 +440,7 @@ interface IElectronAPI {
     toggleListener: (payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
     startMetaWebListener: () => Promise<{ success: boolean; error?: string }>;
     onListenerLog: (callback: (log: string) => void) => () => void;
+    assignGroupChatTask: (params: AssignGroupChatTaskParams) => Promise<AssignGroupChatTaskResult>;
   };
   metabot: {
     list: () => Promise<{ success: boolean; list?: Metabot[]; error?: string }>;

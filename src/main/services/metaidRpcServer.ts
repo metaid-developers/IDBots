@@ -10,11 +10,13 @@ import { app } from 'electron';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { createPin, getPinData, setMetaidCoreStore, type MetaidDataPayload } from './metaidCore';
+import { assignGroupChatTask, type AssignGroupChatTaskParams } from './assignGroupChatTaskService';
 
 const RPC_HOST = '127.0.0.1';
 const RPC_PORT = 31200;
 
 const PIN_ROUTE_PREFIX = '/api/metaid/pin/';
+const ASSIGN_GROUP_CHAT_TASK_PATH = '/api/idbots/assign-group-chat-task';
 
 export function startMetaidRpcServer(
   getMetabotStore: () => MetabotStore,
@@ -40,6 +42,33 @@ export function startMetaidRpcServer(
     const url = req.url ?? '';
     const [pathname, search] = url.split('?');
     const persist = new URLSearchParams(search || '').get('persist') === 'true';
+
+    if (req.method === 'POST' && pathname === ASSIGN_GROUP_CHAT_TASK_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      let params: AssignGroupChatTaskParams;
+      try {
+        params = JSON.parse(body) as AssignGroupChatTaskParams;
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+      try {
+        const db = getStore().getDatabase();
+        const saveDb = getStore().getSaveFunction();
+        const result = assignGroupChatTask(db, saveDb, getMetabotStore(), params);
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        const message = err && typeof err === 'object' && 'message' in err ? String((err as Error).message) : String(err);
+        res.writeHead(500);
+        res.end(JSON.stringify({ success: false, message: '', error: message }));
+      }
+      return;
+    }
 
     if (req.method === 'GET' && pathname.startsWith(PIN_ROUTE_PREFIX)) {
       const pinId = pathname.slice(PIN_ROUTE_PREFIX.length).trim();
@@ -70,7 +99,7 @@ export function startMetaidRpcServer(
       return;
     }
 
-    if (req.method !== 'POST' || req.url !== '/api/metaid/create-pin') {
+    if (req.method !== 'POST' || pathname !== '/api/metaid/create-pin') {
       res.writeHead(404);
       res.end(JSON.stringify({ success: false, error: 'Not found' }));
       return;

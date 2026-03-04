@@ -210,18 +210,30 @@ export class SqliteStore {
         ON scheduled_task_runs(task_id, started_at DESC);
     `);
 
-    // MetaWeb listener: group chat, private chat, protocol events (SDD Task 11)
+    // MetaWeb listener: group chat, private chat (SDD Task 11.5 - flattened + raw_data), protocol events
+    // Do not DROP: preserve existing messages across restarts and when user stops listening
     this.db.run(`
       CREATE TABLE IF NOT EXISTS group_chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pin_id TEXT UNIQUE NOT NULL,
+        tx_id TEXT,
         group_id TEXT NOT NULL,
+        channel_id TEXT,
         sender_metaid TEXT NOT NULL,
-        message_type TEXT NOT NULL,
+        sender_global_metaid TEXT,
+        sender_address TEXT,
+        sender_name TEXT,
+        sender_avatar TEXT,
+        sender_chat_pubkey TEXT,
+        protocol TEXT NOT NULL,
         content TEXT,
         content_type TEXT,
-        encryption TEXT DEFAULT '0',
+        encryption TEXT,
+        reply_pin TEXT,
+        mention TEXT,
         chain_timestamp INTEGER,
+        chain TEXT,
+        raw_data TEXT,
         is_processed INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now'))
       );
@@ -230,13 +242,22 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS private_chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         pin_id TEXT UNIQUE NOT NULL,
-        sender_metaid TEXT NOT NULL,
+        tx_id TEXT,
+        from_metaid TEXT NOT NULL,
+        from_global_metaid TEXT,
+        from_name TEXT,
+        from_avatar TEXT,
+        from_chat_pubkey TEXT,
         to_metaid TEXT NOT NULL,
-        message_type TEXT NOT NULL,
+        to_global_metaid TEXT,
+        protocol TEXT NOT NULL,
         content TEXT,
         content_type TEXT,
-        encryption TEXT DEFAULT 'ecdh',
+        encryption TEXT,
+        reply_pin TEXT,
         chain_timestamp INTEGER,
+        chain TEXT,
+        raw_data TEXT,
         is_processed INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now'))
       );
@@ -254,6 +275,28 @@ export class SqliteStore {
         error_msg TEXT,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+
+    // Cognitive Orchestrator: mission control for group chat (SDD Task 12.1)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS group_chat_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL,
+        metabot_id INTEGER NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        reply_on_mention INTEGER NOT NULL DEFAULT 1,
+        random_reply_probability REAL NOT NULL DEFAULT 0.1,
+        cooldown_seconds INTEGER NOT NULL DEFAULT 15,
+        context_message_count INTEGER NOT NULL DEFAULT 30,
+        discussion_background TEXT,
+        participation_goal TEXT,
+        supervisor_metaid TEXT,
+        allowed_skills TEXT,
+        original_prompt TEXT,
+        start_time TEXT DEFAULT (datetime('now')),
+        last_replied_at TEXT,
+        last_processed_msg_id INTEGER NOT NULL DEFAULT 0
       );
     `);
 
