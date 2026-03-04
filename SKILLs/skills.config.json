@@ -9,6 +9,13 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
+    "metabot-chat": {
+      "order": 2,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
     "docx": {
       "order": 10,
       "version": "1.0.0",

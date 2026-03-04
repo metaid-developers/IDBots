@@ -28,25 +28,41 @@ type EmitLogFn = (log: string) => void;
 /** In-memory map: globalmetaid -> SocketIOClient */
 const activeSockets = new Map<string, SocketIOClient>();
 
+/** UserInfo nested shape (may be null from API) */
+interface UserInfoShape {
+  name?: string;
+  avatar?: string;
+  chatPublicKey?: string;
+  [k: string]: unknown;
+}
+
 /** Unified chat message shape from idchat.io push (group or private) */
 interface UnifiedChatMessage {
   txId?: string;
   pinId?: string;
   groupId?: string;
+  channelId?: string;
   metanetId?: string;
   address?: string;
   globalMetaId?: string;
   metaId?: string;
+  nickName?: string;
+  userInfo?: UserInfoShape | null;
   protocol?: string;
   content?: string;
   contentType?: string;
   encryption?: string;
   chatType?: number;
   timestamp?: number;
+  replyPin?: string;
+  mention?: unknown[];
+  chain?: string;
+  from?: string;
+  to?: string;
   fromGlobalMetaId?: string;
-  fromUserInfo?: { chatPublicKey?: string; [k: string]: unknown };
+  fromUserInfo?: UserInfoShape | null;
   toGlobalMetaId?: string;
-  toUserInfo?: { chatPublicKey?: string; [k: string]: unknown };
+  toUserInfo?: UserInfoShape | null;
   [k: string]: unknown;
 }
 
@@ -165,23 +181,42 @@ function routeGroupChat(
   const pinId = pinIdFromMessage(D);
   if (!pinId) return;
 
-  const senderMetaid = D.globalMetaId ?? D.metaId ?? D.address ?? '';
-  const messageType = String(D.chatType ?? 0);
+  const userInfo = D.userInfo ?? {};
+  const mentionStr = Array.isArray(D.mention) ? JSON.stringify(D.mention) : '[]';
+  const rawDataStr = JSON.stringify(D);
+
+  const sender_metaid = D.metaId ?? D.globalMetaId ?? D.address ?? '';
   let content = D.content ?? '';
   if (D.encryption === 'aes' && (D.chatType === 0 || D.chatType === 1)) {
     const secretKeyStr = groupId.substring(0, 16);
     content = decryptGroupMessage(content, secretKeyStr);
   }
 
-  const content_type = D.contentType ?? '';
-  const encryption = D.encryption ?? '0';
+  const tx_id = D.txId ?? null;
+  const channel_id = D.channelId ?? null;
+  const sender_global_metaid = D.globalMetaId ?? null;
+  const sender_address = D.address ?? null;
+  const sender_name = (userInfo as UserInfoShape)?.name ?? D.nickName ?? '';
+  const sender_avatar = (userInfo as UserInfoShape)?.avatar ?? '';
+  const sender_chat_pubkey = (userInfo as UserInfoShape)?.chatPublicKey ?? '';
+  const protocol = D.protocol ?? '';
+  const content_type = D.contentType ?? null;
+  const encryption = D.encryption ?? null;
+  const reply_pin = D.replyPin ?? '';
   const chain_timestamp = typeof D.timestamp === 'number' ? D.timestamp : null;
+  const chain = D.chain ?? null;
 
   db.run(
     `INSERT OR IGNORE INTO group_chat_messages (
-      pin_id, group_id, sender_metaid, message_type, content, content_type, encryption, chain_timestamp, is_processed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-    [pinId, groupId, senderMetaid, messageType, content, content_type, encryption, chain_timestamp]
+      pin_id, tx_id, group_id, channel_id, sender_metaid, sender_global_metaid, sender_address,
+      sender_name, sender_avatar, sender_chat_pubkey, protocol, content, content_type, encryption,
+      reply_pin, mention, chain_timestamp, chain, raw_data, is_processed
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [
+      pinId, tx_id, groupId, channel_id, sender_metaid, sender_global_metaid, sender_address,
+      sender_name, sender_avatar, sender_chat_pubkey, protocol, content, content_type, encryption,
+      reply_pin, mentionStr, chain_timestamp, chain, rawDataStr,
+    ]
   );
   saveDb();
 
@@ -200,24 +235,42 @@ function routePrivateChat(
   const pinId = pinIdFromMessage(D);
   if (!pinId) return;
 
-  const senderMetaid = D.fromGlobalMetaId ?? '';
-  const toMetaid = targetGlobalMetaId;
-  const messageType = String(D.chatType ?? 0);
+  const fromInfo = D.fromUserInfo ?? {};
+  const toInfo = D.toUserInfo ?? {};
+  const rawDataStr = JSON.stringify(D);
+
+  const from_metaid = (D as { from?: string }).from ?? D.fromGlobalMetaId ?? '';
+  const to_metaid = (D as { to?: string }).to ?? D.toGlobalMetaId ?? targetGlobalMetaId;
+  const from_global_metaid = D.fromGlobalMetaId ?? null;
+  const to_global_metaid = D.toGlobalMetaId ?? null;
+  const from_name = (fromInfo as UserInfoShape)?.name ?? '';
+  const from_avatar = (fromInfo as UserInfoShape)?.avatar ?? '';
+  const from_chat_pubkey = (fromInfo as UserInfoShape)?.chatPublicKey ?? '';
+  const protocol = D.protocol ?? '';
   const content = D.content ?? '';
-  const content_type = D.contentType ?? '';
-  const encryption = D.encryption ?? 'ecdh';
+  const content_type = D.contentType ?? null;
+  const encryption = D.encryption ?? null;
+  const reply_pin = D.replyPin ?? '';
   const chain_timestamp = typeof D.timestamp === 'number' ? D.timestamp : null;
+  const chain = D.chain ?? null;
+  const tx_id = D.txId ?? null;
 
   db.run(
     `INSERT OR IGNORE INTO private_chat_messages (
-      pin_id, sender_metaid, to_metaid, message_type, content, content_type, encryption, chain_timestamp, is_processed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-    [pinId, senderMetaid, toMetaid, messageType, content, content_type, encryption, chain_timestamp]
+      pin_id, tx_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey,
+      to_metaid, to_global_metaid, protocol, content, content_type, encryption, reply_pin,
+      chain_timestamp, chain, raw_data, is_processed
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [
+      pinId, tx_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey,
+      to_metaid, to_global_metaid, protocol, content, content_type, encryption, reply_pin,
+      chain_timestamp, chain, rawDataStr,
+    ]
   );
   saveDb();
 
   const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  emitLog(`[${timeStr}] 💬 [Target: ${targetName}] Private message from ${senderMetaid.slice(0, 12)}…`);
+  emitLog(`[${timeStr}] 💬 [Target: ${targetName}] Private message from ${(from_global_metaid ?? from_metaid).slice(0, 12)}…`);
 }
 
 function routeProtocolEvent(

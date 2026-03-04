@@ -89,7 +89,14 @@ function providerRequiresApiKey(providerName: string): boolean {
   return providerName !== 'ollama';
 }
 
-function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvider | null; error?: string } {
+/**
+ * Resolve which provider and model to use. When overrideModelId is provided (e.g. MetaBot's llm_id),
+ * find the enabled provider that offers that model; otherwise use app default or first available.
+ */
+function resolveMatchedProvider(
+  appConfig: AppConfig,
+  overrideModelId?: string | null
+): { matched: MatchedProvider | null; error?: string } {
   const providers = appConfig.providers ?? {};
 
   const resolveFallbackModel = (): string | undefined => {
@@ -102,17 +109,56 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
     return undefined;
   };
 
-  const modelId = appConfig.model?.defaultModel || resolveFallbackModel();
+  const modelId =
+    (overrideModelId?.trim() || null) || appConfig.model?.defaultModel || resolveFallbackModel();
   if (!modelId) {
     return { matched: null, error: 'No available model configured in enabled providers.' };
   }
 
-  const providerEntry = Object.entries(providers).find(([, provider]) => {
-    if (!provider?.enabled || !provider.models) {
-      return false;
+  let providerEntry: [string, ProviderConfig] | undefined = Object.entries(providers).find(
+    ([, provider]) => {
+      if (!provider?.enabled || !provider.models) return false;
+      return provider.models.some((model) => model.id === modelId);
     }
-    return provider.models.some((model) => model.id === modelId);
-  });
+  ) as [string, ProviderConfig] | undefined;
+
+  let resolvedModelId: string = modelId;
+
+  // When overrideModelId is given (e.g. MetaBot llm_id "deepseek"), exact model id may not match.
+  // Fallback 1: treat as provider key (e.g. "deepseek" -> provider "deepseek", use its first or default model).
+  if (!providerEntry && overrideModelId?.trim()) {
+    const key = overrideModelId.trim().toLowerCase();
+    const byProviderKey = Object.entries(providers).find(
+      ([name, provider]) =>
+        name.toLowerCase() === key && provider?.enabled && provider?.models?.length
+    ) as [string, ProviderConfig] | undefined;
+    if (byProviderKey) {
+      const [providerName, providerConfig] = byProviderKey;
+      const defaultInApp = appConfig.model?.defaultModel;
+      const useModel =
+        providerConfig.models?.some((m) => m.id === defaultInApp)
+          ? defaultInApp
+          : providerConfig.models?.[0]?.id;
+      if (useModel) {
+        providerEntry = [providerName, providerConfig];
+        resolvedModelId = useModel;
+      }
+    }
+  }
+
+  // Fallback 2: match by model id prefix (e.g. "deepseek" -> "deepseek-chat").
+  if (!providerEntry && overrideModelId?.trim()) {
+    const prefix = overrideModelId.trim().toLowerCase();
+    for (const [providerName, provider] of Object.entries(providers)) {
+      if (!provider?.enabled || !provider.models) continue;
+      const firstMatch = provider.models.find((m) => m.id.toLowerCase().startsWith(prefix));
+      if (firstMatch) {
+        providerEntry = [providerName, provider];
+        resolvedModelId = firstMatch.id;
+        break;
+      }
+    }
+  }
 
   if (!providerEntry) {
     return { matched: null, error: `No enabled provider found for model: ${modelId}` };
@@ -134,8 +180,81 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
     matched: {
       providerName,
       providerConfig,
-      modelId,
+      modelId: resolvedModelId,
       apiFormat,
+    },
+  };
+}
+
+/**
+ * Resolve API config for a given model id (e.g. MetaBot's llm_id). When modelId is provided and
+ * non-empty, finds the enabled provider that offers that model; otherwise uses app default.
+ * Use this for per-MetaBot LLM (orchestrator chat completion).
+ */
+export function resolveApiConfigForModel(
+  modelId?: string | null,
+  target: OpenAICompatProxyTarget = 'local'
+): ApiConfigResolution {
+  const sqliteStore = getStore();
+  if (!sqliteStore) {
+    return { config: null, error: 'Store is not initialized.' };
+  }
+  const appConfig = sqliteStore.get<AppConfig>('app_config');
+  if (!appConfig) {
+    return { config: null, error: 'Application config not found.' };
+  }
+  const { matched, error } = resolveMatchedProvider(appConfig, modelId ?? undefined);
+  if (!matched) {
+    return { config: null, error };
+  }
+  return buildApiConfigFromMatched(matched, target);
+}
+
+function buildApiConfigFromMatched(
+  matched: MatchedProvider,
+  target: OpenAICompatProxyTarget
+): ApiConfigResolution {
+  const resolvedBaseURL = matched.providerConfig.baseUrl.trim();
+  const resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
+  const effectiveApiKey =
+    matched.providerName === 'ollama' && matched.apiFormat === 'anthropic' && !resolvedApiKey
+      ? 'sk-ollama-local'
+      : resolvedApiKey;
+
+  if (matched.apiFormat === 'anthropic') {
+    return {
+      config: {
+        apiKey: effectiveApiKey,
+        baseURL: resolvedBaseURL,
+        model: matched.modelId,
+        apiType: 'anthropic',
+      },
+    };
+  }
+
+  const proxyStatus = getCoworkOpenAICompatProxyStatus();
+  if (!proxyStatus.running) {
+    return { config: null, error: 'OpenAI compatibility proxy is not running.' };
+  }
+
+  configureCoworkOpenAICompatProxy({
+    baseURL: resolvedBaseURL,
+    apiKey: resolvedApiKey || undefined,
+    model: matched.modelId,
+    provider: matched.providerName,
+  });
+
+  const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL(target);
+  if (!proxyBaseURL) {
+    return { config: null, error: 'OpenAI compatibility proxy base URL is unavailable.' };
+  }
+
+  return {
+    config: {
+      apiKey: resolvedApiKey || 'idbots-openai-compat',
+      baseURL: proxyBaseURL,
+      model: matched.modelId,
+      apiType: 'openai',
     },
   };
 }
@@ -165,56 +284,7 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
     };
   }
 
-  const resolvedBaseURL = matched.providerConfig.baseUrl.trim();
-  const resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
-  const effectiveApiKey = matched.providerName === 'ollama'
-    && matched.apiFormat === 'anthropic'
-    && !resolvedApiKey
-    ? 'sk-ollama-local'
-    : resolvedApiKey;
-
-  if (matched.apiFormat === 'anthropic') {
-    return {
-      config: {
-        apiKey: effectiveApiKey,
-        baseURL: resolvedBaseURL,
-        model: matched.modelId,
-        apiType: 'anthropic',
-      },
-    };
-  }
-
-  const proxyStatus = getCoworkOpenAICompatProxyStatus();
-  if (!proxyStatus.running) {
-    return {
-      config: null,
-      error: 'OpenAI compatibility proxy is not running.',
-    };
-  }
-
-  configureCoworkOpenAICompatProxy({
-    baseURL: resolvedBaseURL,
-    apiKey: resolvedApiKey || undefined,
-    model: matched.modelId,
-    provider: matched.providerName,
-  });
-
-  const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL(target);
-  if (!proxyBaseURL) {
-    return {
-      config: null,
-      error: 'OpenAI compatibility proxy base URL is unavailable.',
-    };
-  }
-
-  return {
-    config: {
-      apiKey: resolvedApiKey || 'idbots-openai-compat',
-      baseURL: proxyBaseURL,
-      model: matched.modelId,
-      apiType: 'openai',
-    },
-  };
+  return buildApiConfigFromMatched(matched, target);
 }
 
 export function getCurrentApiConfig(target: OpenAICompatProxyTarget = 'local'): CoworkApiConfig | null {

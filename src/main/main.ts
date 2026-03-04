@@ -34,6 +34,11 @@ import {
   stopMetaWebListener,
   type ListenerConfig,
 } from './services/metaWebListenerService';
+import { startOrchestrator as startCognitiveOrchestrator, stopOrchestrator as stopCognitiveOrchestrator } from './services/cognitiveOrchestrator';
+import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
+import { createPin } from './services/metaidCore';
+import { encryptGroupMessageECB } from './services/metaWebCrypto';
+import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -1149,6 +1154,21 @@ if (!gotTheLock) {
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to start MetaWeb listener' };
+    }
+  });
+
+  ipcMain.handle('idbots:assignGroupChatTask', async (_event, params: AssignGroupChatTaskParams) => {
+    try {
+      const db = getStore().getDatabase();
+      const saveDb = getStore().getSaveFunction();
+      const result = assignGroupChatTask(db, saveDb, getMetabotStore(), params);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        message: '',
+        error: error instanceof Error ? error.message : 'Failed to assign group chat task',
+      };
     }
   });
 
@@ -2667,6 +2687,18 @@ if (!gotTheLock) {
     if (scheduler) {
       scheduler.stop();
     }
+
+    stopCognitiveOrchestrator();
+
+    // Deactivate all group chat tasks so they do not auto-start on next launch
+    try {
+      const db = getStore().getDatabase();
+      db.run('UPDATE group_chat_tasks SET is_active = 0');
+      getStore().getSaveFunction()();
+      console.log('[Main] Deactivated all group_chat_tasks (is_active = 0)');
+    } catch (err) {
+      console.error('[Main] Failed to deactivate group_chat_tasks:', err);
+    }
   };
 
   app.on('before-quit', (e) => {
@@ -2763,6 +2795,44 @@ if (!gotTheLock) {
 
     // 创建窗口
     createWindow();
+
+    // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
+    startCognitiveOrchestrator(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      (id: number) => {
+        const m = getMetabotStore().getMetabotById(id);
+        return m
+          ? {
+              id: m.id,
+              name: m.name,
+              role: m.role ?? '',
+              soul: m.soul ?? '',
+              llm_id: m.llm_id ?? null,
+              globalmetaid: m.globalmetaid ?? null,
+              metaid: m.metaid,
+            }
+          : null;
+      },
+      performChatCompletionForOrchestrator,
+      async (metabotId: number, groupId: string, nickName: string, content: string) => {
+        const encryptedContent = encryptGroupMessageECB(content, groupId);
+        const payload = {
+          groupId,
+          nickName,
+          content: encryptedContent,
+          contentType: 'text/plain',
+          encryption: 'aes',
+          timestamp: Date.now(),
+        };
+        await createPin(getMetabotStore(), metabotId, {
+          operation: 'create',
+          path: '/protocols/simplegroupchat',
+          contentType: 'application/json',
+          payload: JSON.stringify(payload),
+        });
+      }
+    );
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager().startAllEnabled().catch((error) => {
