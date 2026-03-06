@@ -2568,6 +2568,9 @@ export class CoworkRunner extends EventEmitter {
       options.systemPrompt = systemPrompt;
     }
 
+    const hasAvailableSkillsInPrompt = typeof systemPrompt === 'string' && systemPrompt.includes('<available_skills>');
+    console.log('[Orchestrator] [CoworkRunner] runClaudeCodeLocal: systemPrompt length=', systemPrompt?.length ?? 0, 'has <available_skills>=', hasAvailableSkillsInPrompt);
+
     try {
       coworkLog('INFO', 'runClaudeCodeLocal', 'Starting local Claude Code session', {
         sessionId,

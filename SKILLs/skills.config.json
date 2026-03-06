@@ -9,8 +9,15 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "metabot-chat": {
+    "metabot-omni-reader": {
       "order": 2,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "metabot-chat": {
+      "order": 3,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
