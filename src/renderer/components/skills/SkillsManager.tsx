@@ -337,7 +337,7 @@ const SkillsManager: React.FC = () => {
               type="button"
               onClick={handleSyncAllOfficial}
               disabled={officialSkillsLoading || isSyncingAll || installingSkillName !== null}
-              className="px-3 py-2 text-sm rounded-xl bg-claude-accent text-white font-medium hover:bg-claude-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="btn-idchat-primary-filled px-3 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isSyncingAll ? (
                 <ArrowPathIcon className="h-4 w-4 animate-spin" />
@@ -652,7 +652,7 @@ const SkillsManager: React.FC = () => {
                 type="button"
                 onClick={handleImportFromGithub}
                 disabled={isDownloadingSkill || !skillDownloadSource.trim()}
-                className="w-full py-2.5 rounded-xl bg-claude-accent text-white text-sm font-medium hover:bg-claude-accent/90 transition-colors disabled:opacity-50"
+                className="btn-idchat-primary-filled w-full py-2.5 text-sm font-medium disabled:opacity-50"
               >
                 {isDownloadingSkill ? i18nService.t('importingSkill') : i18nService.t('importSkill')}
               </button>

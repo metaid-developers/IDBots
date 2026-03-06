@@ -413,7 +413,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
           type="button"
           onClick={handleSubmit}
           disabled={submitting}
-          className="px-4 py-2 text-sm font-medium bg-claude-accent text-white rounded-lg hover:bg-claude-accentHover transition-colors disabled:opacity-50"
+          className="btn-idchat-primary-filled px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
           {submitting
             ? i18nService.t('saving')

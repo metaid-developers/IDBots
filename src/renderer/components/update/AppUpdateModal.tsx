@@ -33,7 +33,7 @@ const AppUpdateModal: React.FC<AppUpdateModalProps> = ({ latestVersion, onConfir
           <button
             type="button"
             onClick={onConfirm}
-            className="px-3 py-1.5 text-sm rounded-lg bg-claude-accent text-white hover:bg-claude-accentHover transition-colors"
+            className="btn-idchat-primary-filled px-3 py-1.5 text-sm"
           >
             {i18nService.t('updateAvailableConfirm')}
           </button>

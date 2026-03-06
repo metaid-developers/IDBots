@@ -133,7 +133,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             >
               {i18nService.t('scheduledTasksTabTasks')}
               {activeTab === 'tasks' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-claude-accent rounded-t" />
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand rounded-t" />
               )}
             </button>
             <button
@@ -147,7 +147,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             >
               {i18nService.t('scheduledTasksTabHistory')}
               {activeTab === 'history' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-claude-accent rounded-t" />
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand rounded-t" />
               )}
             </button>
           </div>
@@ -155,7 +155,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             <button
               type="button"
               onClick={() => dispatch(setViewMode('create'))}
-              className="px-3 py-1 text-sm font-medium bg-claude-accent text-white rounded-lg hover:bg-claude-accentHover transition-colors"
+              className="btn-idchat-primary-filled px-3 py-1 text-sm font-medium"
             >
               {i18nService.t('scheduledTasksNewTask')}
             </button>

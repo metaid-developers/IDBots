@@ -434,7 +434,7 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
         <div className="flex items-center justify-end px-6 py-4 border-t dark:border-claude-darkBorder border-claude-border bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted">
           <button
             onClick={handleSubmit}
-            className="px-5 py-2 text-sm font-medium rounded-lg bg-claude-accent hover:bg-claude-accentHover text-white transition-colors"
+            className="btn-idchat-primary-filled px-5 py-2 text-sm font-medium"
           >
             {i18nService.t('coworkQuestionWizardSubmit')}
           </button>
