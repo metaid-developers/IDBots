@@ -16,7 +16,12 @@ export interface AssignGroupChatTaskParams {
   context_message_count?: number;
   discussion_background?: string;
   participation_goal?: string;
-  supervisor_metaid?: string;
+  /** Boss identity: use globalmetaid for user identification. */
+  supervisor_globalmetaid?: string;
+  /** Allowed skill names for tool hook, e.g. ["metabot-omni-caster"]. Stored as JSON array string. */
+  allowed_skills?: string[] | string | null;
+  /** Original user instruction for reference; stored in group_chat_tasks.original_prompt. */
+  original_prompt?: string | null;
 }
 
 export interface AssignGroupChatTaskResult {
@@ -60,7 +65,22 @@ export function assignGroupChatTask(
   const context_message_count = Math.max(1, Math.min(500, Math.floor(params.context_message_count ?? 30)));
   const discussion_background = params.discussion_background?.trim() ?? null;
   const participation_goal = params.participation_goal?.trim() ?? null;
-  const supervisor_metaid = params.supervisor_metaid?.trim() ?? null;
+  const supervisor_globalmetaid = params.supervisor_globalmetaid?.trim() ?? null;
+
+  let allowed_skills: string | null = null;
+  if (params.allowed_skills != null) {
+    if (Array.isArray(params.allowed_skills)) {
+      allowed_skills = JSON.stringify(params.allowed_skills.filter((s) => typeof s === 'string' && s.trim()));
+    } else if (typeof params.allowed_skills === 'string' && params.allowed_skills.trim()) {
+      try {
+        const parsed = JSON.parse(params.allowed_skills) as unknown;
+        allowed_skills = Array.isArray(parsed) ? JSON.stringify(parsed.map(String).filter(Boolean)) : params.allowed_skills.trim();
+      } catch {
+        allowed_skills = params.allowed_skills.trim();
+      }
+    }
+  }
+  const original_prompt = params.original_prompt?.trim() ?? null;
 
   const existing = db.exec(
     'SELECT id FROM group_chat_tasks WHERE metabot_id = ? AND group_id = ? AND is_active = 1 LIMIT 1',
@@ -75,7 +95,8 @@ export function assignGroupChatTask(
     db.run(
       `UPDATE group_chat_tasks SET
         reply_on_mention = ?, random_reply_probability = ?, cooldown_seconds = ?,
-        context_message_count = ?, discussion_background = ?, participation_goal = ?, supervisor_metaid = ?
+        context_message_count = ?, discussion_background = ?, participation_goal = ?, supervisor_globalmetaid = ?,
+        allowed_skills = ?, original_prompt = ?
        WHERE id = ?`,
       [
         reply_on_mention,
@@ -84,7 +105,9 @@ export function assignGroupChatTask(
         context_message_count,
         discussion_background,
         participation_goal,
-        supervisor_metaid,
+        supervisor_globalmetaid,
+        allowed_skills,
+        original_prompt,
         taskId,
       ]
     );
@@ -95,11 +118,19 @@ export function assignGroupChatTask(
     };
   }
 
+  const maxIdResult = db.exec(
+    'SELECT COALESCE(MAX(id), 0) AS max_id FROM group_chat_messages WHERE group_id = ?',
+    [group_id]
+  );
+  const initialLastProcessed =
+    maxIdResult[0]?.values?.[0]?.[0] != null ? Number(maxIdResult[0].values[0][0]) : 0;
+
   db.run(
     `INSERT INTO group_chat_tasks (
       group_id, metabot_id, is_active, reply_on_mention, random_reply_probability,
-      cooldown_seconds, context_message_count, discussion_background, participation_goal, supervisor_metaid
-    ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+      cooldown_seconds, context_message_count, discussion_background, participation_goal, supervisor_globalmetaid,
+      allowed_skills, original_prompt, last_processed_msg_id
+    ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       group_id,
       metabotId,
@@ -109,7 +140,10 @@ export function assignGroupChatTask(
       context_message_count,
       discussion_background,
       participation_goal,
-      supervisor_metaid,
+      supervisor_globalmetaid,
+      allowed_skills,
+      original_prompt,
+      initialLastProcessed,
     ]
   );
   saveDb();

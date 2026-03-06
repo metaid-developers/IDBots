@@ -227,7 +227,12 @@ interface AssignGroupChatTaskParams {
   context_message_count?: number;
   discussion_background?: string;
   participation_goal?: string;
-  supervisor_metaid?: string;
+  /** Boss identity: use globalmetaid for user identification. */
+  supervisor_globalmetaid?: string;
+  /** Allowed skill names for tool hook, e.g. ["metabot-omni-caster"]. */
+  allowed_skills?: string[] | string | null;
+  /** Original user instruction for reference. */
+  original_prompt?: string | null;
 }
 
 interface AssignGroupChatTaskResult {

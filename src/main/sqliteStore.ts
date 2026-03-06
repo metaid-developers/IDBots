@@ -292,6 +292,7 @@ export class SqliteStore {
         discussion_background TEXT,
         participation_goal TEXT,
         supervisor_metaid TEXT,
+        supervisor_globalmetaid TEXT,
         allowed_skills TEXT,
         original_prompt TEXT,
         start_time TEXT DEFAULT (datetime('now')),
@@ -299,6 +300,7 @@ export class SqliteStore {
         last_processed_msg_id INTEGER NOT NULL DEFAULT 0
       );
     `);
+    this.migrateGroupChatTasksSupervisorGlobalmetaid();
 
     // MetaID pins: full-field persistence from manapi.metaid.io
     this.db.run(`
@@ -536,6 +538,25 @@ export class SqliteStore {
    * Migration: (1) Make metabot_wallets the parent: remove metabot_id, add metabots.wallet_id.
    * (2) Add avatar_blob BLOB and copy from avatar TEXT so avatar aligns with on-chain binary.
    */
+  /**
+   * Migration: Add supervisor_globalmetaid to group_chat_tasks (unified user identity by globalmetaid).
+   * Copies supervisor_metaid into supervisor_globalmetaid for existing rows.
+   */
+  private migrateGroupChatTasksSupervisorGlobalmetaid(): void {
+    try {
+      const colsResult = this.db.exec('PRAGMA table_info(group_chat_tasks)');
+      const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (columns.includes('supervisor_globalmetaid')) return;
+      this.db.run('ALTER TABLE group_chat_tasks ADD COLUMN supervisor_globalmetaid TEXT');
+      this.db.run(
+        'UPDATE group_chat_tasks SET supervisor_globalmetaid = supervisor_metaid WHERE supervisor_metaid IS NOT NULL'
+      );
+      this.save();
+    } catch (e) {
+      console.warn('migrateGroupChatTasksSupervisorGlobalmetaid:', e);
+    }
+  }
+
   private migrateMetabotWalletRelationAndAvatar(_basePath: string): void {
     try {
       const walletCols = this.db.exec("PRAGMA table_info(metabot_wallets);");

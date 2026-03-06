@@ -36,6 +36,7 @@ import {
 } from './services/metaWebListenerService';
 import { startOrchestrator as startCognitiveOrchestrator, stopOrchestrator as stopCognitiveOrchestrator } from './services/cognitiveOrchestrator';
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
+import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin } from './services/metaidCore';
 import { encryptGroupMessageECB } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
@@ -2797,6 +2798,8 @@ if (!gotTheLock) {
     createWindow();
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
+    // Cowork-style skill list + Read/Bash for allowed_skills
+    const skillMgr = getSkillManager();
     startCognitiveOrchestrator(
       getStore().getDatabase(),
       getStore().getSaveFunction(),
@@ -2831,6 +2834,12 @@ if (!gotTheLock) {
           contentType: 'application/json',
           payload: JSON.stringify(payload),
         });
+      },
+      {
+        getSkillsPromptForIds: (ids: string[]) => skillMgr.buildAutoRoutingPromptForSkillIds(ids),
+        skillsRoots: skillMgr.getAllSkillRoots(),
+        runSkillTurnViaCowork: (params) =>
+          runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
       }
     );
 

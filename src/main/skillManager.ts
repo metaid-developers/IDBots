@@ -701,6 +701,14 @@ export class SkillManager {
     return root;
   }
 
+  /**
+   * Returns all skill roots (userData + bundled/project) in the same order as listSkills.
+   * Used by cognitive orchestrator for Read/Bash multi-root support.
+   */
+  getAllSkillRoots(): string[] {
+    return this.getSkillRoots(this.ensureSkillsRoot());
+  }
+
   syncBundledSkillsToUserData(): void {
     if (!app.isPackaged) {
       return;
@@ -800,12 +808,170 @@ export class SkillManager {
     ].join('\n');
   }
 
+  /**
+   * Same format as buildAutoRoutingPrompt but restricted to skills whose id is in skillIds.
+   * Used by cognitive orchestrator for allowed_skills (no enabled/prompt filter).
+   */
+  buildAutoRoutingPromptForSkillIds(skillIds: string[]): string | null {
+    if (skillIds.length === 0) return null;
+    const set = new Set(skillIds.map((id) => id.trim()).filter(Boolean));
+    const skills = this.listSkills().filter((s) => set.has(s.id));
+    if (skills.length === 0) return null;
+
+    const skillEntries = skills
+      .map(s => `  <skill><id>${s.id}</id><name>${s.name}</name><description>${s.description}</description><location>${s.skillPath}</location></skill>`)
+      .join('\n');
+
+    const omniCasterConstraint = set.has('metabot-omni-caster')
+      ? '- For metabot-omni-caster: path and payload must come from SKILL.md and references (e.g. buzz uses /protocols/simplebuzz); do not guess.'
+      : '';
+    return [
+      '## Skills (mandatory)',
+      'Before replying: scan <available_skills> <description> entries.',
+      '- If exactly one skill clearly applies: read its SKILL.md at <location> with the Read tool, then follow it.',
+      '- If multiple could apply: choose the most specific one, then read/follow it.',
+      '- If none clearly apply: do not read any SKILL.md.',
+      '- For the selected skill, treat <location> as the canonical SKILL.md path.',
+      '- Resolve relative paths mentioned by that SKILL.md against its directory (dirname(<location>)), not the workspace root.',
+      'Constraints: never read more than one skill up front; only read additional skills if the first one explicitly references them.',
+      omniCasterConstraint,
+      '',
+      '<available_skills>',
+      skillEntries,
+      '</available_skills>',
+    ].filter(Boolean).join('\n');
+  }
+
   setSkillEnabled(id: string, enabled: boolean): SkillRecord[] {
     const state = this.loadSkillStateMap();
     state[id] = { enabled };
     this.saveSkillStateMap(state);
     this.notifySkillsChanged();
     return this.listSkills();
+  }
+
+  /**
+   * Return skill records whose id is in the given list. Used by cognitive orchestrator
+   * to build dynamic tool schemas from allowed_skills without hardcoding a registry.
+   */
+  getSkillsForIds(ids: string[]): SkillRecord[] {
+    if (ids.length === 0) return [];
+    const set = new Set(ids.map((id) => id.trim()).filter(Boolean));
+    return this.listSkills().filter((s) => set.has(s.id));
+  }
+
+  /**
+   * Run a skill by id with a JSON payload (e.g. from orchestrator tool call).
+   * Uses invocation adapter for known skills (e.g. metabot-omni-caster); otherwise
+   * runs scripts/index.ts or scripts/run.ts with --payload.
+   * Returns observation string for the LLM.
+   */
+  async runSkillById(
+    skillId: string,
+    payloadJson: string,
+    context?: { metabotId?: number }
+  ): Promise<{ success: boolean; observation: string }> {
+    const skills = this.listSkills();
+    const skill = skills.find((s) => s.id === skillId);
+    if (!skill) {
+      return { success: false, observation: `Skill not found: ${skillId}` };
+    }
+    const skillDir = path.dirname(skill.skillPath);
+    const skillsRoot = this.getSkillsRoot();
+    const envOverrides: Record<string, string> = {
+      SKILLS_ROOT: skillsRoot,
+      IDBOTS_SKILLS_ROOT: skillsRoot,
+      IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+    };
+    if (context?.metabotId != null) {
+      envOverrides.IDBOTS_METABOT_ID = String(context.metabotId);
+    }
+    const env: NodeJS.ProcessEnv = { ...process.env, ...envOverrides };
+
+    let scriptPath: string;
+    let scriptArgs: string[];
+    const id = skillId.trim().toLowerCase();
+
+    if (id === 'metabot-omni-caster') {
+      const omniScript = path.join(skillDir, 'scripts', 'omni-caster.ts');
+      if (!fs.existsSync(omniScript)) {
+        return { success: false, observation: `metabot-omni-caster: scripts/omni-caster.ts not found` };
+      }
+      let pathVal: string;
+      let payloadVal: string;
+      let operation = 'create';
+      let contentType = 'application/json';
+      try {
+        const obj = JSON.parse(payloadJson || '{}') as Record<string, unknown>;
+        pathVal = typeof obj.path === 'string' ? obj.path.trim() : '';
+        payloadVal = typeof obj.payload === 'string' ? obj.payload : JSON.stringify(obj.payload ?? {});
+        if (typeof obj.operation === 'string' && obj.operation.trim()) {
+          operation = obj.operation.trim().toLowerCase();
+        }
+        if (typeof obj.contentType === 'string' && obj.contentType.trim()) {
+          contentType = obj.contentType.trim();
+        }
+        // If LLM sent single "payload" string with nested JSON (e.g. {"path":"...","payload":"..."})
+        if (!pathVal && typeof obj.payload === 'string') {
+          try {
+            const inner = JSON.parse(obj.payload) as Record<string, unknown>;
+            if (typeof inner.path === 'string') pathVal = inner.path.trim();
+            if (typeof inner.payload === 'string') payloadVal = inner.payload;
+            else payloadVal = JSON.stringify(inner.payload ?? {});
+          } catch {
+            // use pathVal/payloadVal as already set
+          }
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, observation: `Invalid payload JSON: ${msg}` };
+      }
+      if (!pathVal) {
+        return { success: false, observation: 'metabot-omni-caster: path is required' };
+      }
+      scriptPath = omniScript;
+      scriptArgs = ['--path', pathVal, '--payload', payloadVal];
+      if (operation !== 'create') scriptArgs.push('--operation', operation);
+      if (contentType !== 'application/json') scriptArgs.push('--content-type', contentType);
+    } else {
+      const indexTs = path.join(skillDir, 'scripts', 'index.ts');
+      const indexJs = path.join(skillDir, 'scripts', 'index.js');
+      const runTs = path.join(skillDir, 'scripts', 'run.ts');
+      const runJs = path.join(skillDir, 'scripts', 'run.js');
+      if (fs.existsSync(indexTs)) {
+        scriptPath = indexTs;
+      } else if (fs.existsSync(indexJs)) {
+        scriptPath = indexJs;
+      } else if (fs.existsSync(runTs)) {
+        scriptPath = runTs;
+      } else if (fs.existsSync(runJs)) {
+        scriptPath = runJs;
+      } else {
+        return { success: false, observation: `Skill "${skillId}": no scripts/index.ts, index.js, run.ts, or run.js found` };
+      }
+      scriptArgs = ['--payload', payloadJson];
+    }
+
+    const timeoutMs = 60_000;
+    const isTs = scriptPath.endsWith('.ts');
+    let result: SkillScriptRunResult;
+
+    if (isTs) {
+      result = await runScriptWithTimeout({
+        command: 'npx',
+        args: ['ts-node', scriptPath, ...scriptArgs],
+        cwd: skillDir,
+        env,
+        timeoutMs,
+      });
+    } else {
+      result = await this.runSkillScriptWithEnv(skillDir, scriptPath, scriptArgs, envOverrides, timeoutMs);
+    }
+
+    const observation = result.success
+      ? (this.parseScriptMessage(result.stdout) ?? result.stdout?.trim() ?? 'Done.')
+      : (result.error ?? result.stderr?.trim() ?? result.stdout?.trim() ?? 'Skill script failed.');
+    return { success: result.success, observation };
   }
 
   deleteSkill(id: string): SkillRecord[] {

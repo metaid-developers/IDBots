@@ -1,0 +1,24 @@
+{
+  "buzz_newest": {
+    "description": "Get the latest Buzz tweet list",
+    "baseUrl": "https://www.show.now/man/social/buzz/newest",
+    "response_list_path": "data.list",
+    "sanitization_mapping": {
+      "creator_name": "userInfo.name",
+      "timestamp": "timestamp",
+      "content": "content",
+      "txid": "txId"
+    }
+  },
+  "protocol_list": {
+    "description": "Get latest data under a specific protocol path",
+    "baseUrl": "https://manapi.metaid.io/pin/path/list",
+    "response_list_path": "data.data.list",
+    "sanitization_mapping": {
+      "creator_name": "globalMetaId",
+      "protocol": "path",
+      "content": "contentSummary",
+      "timestamp": "timestamp"
+    }
+  }
+}

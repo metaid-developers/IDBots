@@ -17,7 +17,9 @@ official: true
   "context_message_count": 30,
   "discussion_background": "讨论背景：为什么参与这个群聊？",
   "participation_goal": "参与目标：要在这个群聊中达成什么目的？",
-  "supervisor_metaid": "上级 Boss 的 GlobalMetaID (若无则留空)"
+  "supervisor_globalmetaid": "上级 Boss 的 GlobalMetaID (若无则留空)",
+  "allowed_skills": ["metabot-omni-caster"],
+  "original_prompt": "用户原始指令全文，便于后续参考"
 }
 ```
 
@@ -30,6 +32,8 @@ official: true
 - `context_message_count`: 每次获取用于分析的历史消息条数，默认 30
 - `discussion_background`: 讨论背景：为什么参与这个群聊？
 - `participation_goal`: 参与目标：要在这个群聊中达成什么目的？
-- `supervisor_metaid`: 上级 Boss 的 GlobalMetaID，若无则留空字符串
+- `supervisor_globalmetaid`: 上级 Boss 的 GlobalMetaID，若无则留空字符串
+- `allowed_skills`: 该任务允许调用的技能名数组，如用户提到「可以使用的技能是 metabot-omni-caster」则填 `["metabot-omni-caster"]`；可多个，如 `["metabot-omni-caster","mock_get_weather"]`；未提及则留空数组 `[]` 或不传
+- `original_prompt`: 用户下达的原始自然语言指令全文，便于任务追溯与上下文参考；建议必填为完整指令
 
 **执行方式:** 当 LLM 返回上述 JSON 后，调用 `scripts/index.ts`（或通过 IPC 提交给主进程）完成任务写入。若 `target_metabot_name` 在本地 `metabots` 表中找不到，返回错误："未找到指定的 MetaBot"。若该 MetaBot 在该群已有 `is_active = 1` 的任务，则执行 UPDATE 覆盖，避免重复派发。
