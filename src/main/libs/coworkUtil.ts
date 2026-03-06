@@ -315,6 +315,96 @@ function resolveWindowsGitBashPath(): string | null {
   return null;
 }
 
+/**
+ * Resolve Node.js installation directories on Windows.
+ * Covers standard installers, nvm-windows, Volta, fnm, and Scoop.
+ * Returns de-duplicated list of directories that contain node.exe / npm / npx.
+ */
+function resolveWindowsNodeDirs(): string[] {
+  if (process.platform !== 'win32') return [];
+
+  const found = new Set<string>();
+
+  // 1. Derive from 'where node' — uses cmd.exe PATH which includes user PATH entries
+  //    even when the Electron process was launched from a non-terminal context.
+  const nodePaths = listWindowsCommandPaths('where node');
+  for (const nodePath of nodePaths) {
+    found.add(dirname(nodePath));
+  }
+
+  // 2. Scan current process.env.PATH entries that contain node.exe
+  //    (covers cases where PATH is already set but node dir wasn't found above)
+  for (const entry of (process.env.PATH || '').split(';')) {
+    const trimmed = entry.trim();
+    if (trimmed && existsSync(join(trimmed, 'node.exe'))) {
+      found.add(trimmed);
+    }
+  }
+
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const appData = process.env.APPDATA || '';
+  const userProfile = process.env.USERPROFILE || '';
+
+  // 3. Standard Node.js installer paths
+  for (const candidate of [
+    join(programFiles, 'nodejs'),
+    join(programFilesX86, 'nodejs'),
+    localAppData && join(localAppData, 'Programs', 'nodejs'),
+  ]) {
+    if (candidate && existsSync(join(candidate, 'node.exe'))) {
+      found.add(candidate);
+    }
+  }
+
+  // 4. npm global prefix — where globally-installed CLIs (npx, ts-node, etc.) live
+  if (appData) {
+    const npmGlobal = join(appData, 'npm');
+    if (existsSync(npmGlobal)) {
+      found.add(npmGlobal);
+    }
+  }
+
+  // 5. nvm-windows: active version symlink
+  if (appData) {
+    const nvmLink = join(appData, 'nvm', 'nodejs');
+    if (existsSync(join(nvmLink, 'node.exe'))) {
+      found.add(nvmLink);
+    }
+  }
+
+  // 6. Volta shims (handles node/npm/npx through its own launcher)
+  if (localAppData) {
+    const voltaBin = join(localAppData, 'Volta', 'bin');
+    if (existsSync(voltaBin)) {
+      found.add(voltaBin);
+    }
+  }
+
+  // 7. fnm (Fast Node Manager) — default install shim dir
+  if (localAppData) {
+    const fnmBin = join(localAppData, 'fnm');
+    if (existsSync(fnmBin)) {
+      found.add(fnmBin);
+    }
+  }
+
+  // 8. Scoop — node and shims directories
+  if (userProfile) {
+    const scoopNode = join(userProfile, 'scoop', 'apps', 'nodejs', 'current');
+    if (existsSync(join(scoopNode, 'node.exe'))) {
+      found.add(scoopNode);
+    }
+    const scoopShims = join(userProfile, 'scoop', 'shims');
+    if (existsSync(scoopShims)) {
+      found.add(scoopShims);
+    }
+  }
+
+  return Array.from(found).filter(Boolean);
+}
+
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
   // On Windows, resolve git-bash and ensure Git toolchain directories are available in PATH.
   if (process.platform === 'win32') {
@@ -337,6 +427,22 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
       env.PATH = appendEnvPath(env.PATH, [shimDir]);
       coworkLog('INFO', 'resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimDir}`);
     }
+
+    // Inject Node.js directories so that npx/npm/ts-node are findable inside git-bash.
+    // Electron apps launched from a shortcut/Start menu only receive the system PATH,
+    // which typically excludes user-level Node.js installations.
+    const nodeDirs = resolveWindowsNodeDirs();
+    if (nodeDirs.length > 0) {
+      env.PATH = appendEnvPath(env.PATH, nodeDirs);
+      coworkLog('INFO', 'resolveNodeDirs', `Injected Windows Node.js PATH entries: ${nodeDirs.join(', ')}`);
+    }
+
+    // Disable MSYS2/Git Bash automatic path conversion.
+    // Without this, Unix-style arguments like --path "/protocols/simplebuzz" are silently
+    // rewritten to Windows paths (e.g. C:/Program Files/Git/protocols/simplebuzz) before
+    // reaching the target process, corrupting MetaID protocol paths and similar values.
+    env.MSYS_NO_PATHCONV = '1';
+    env.MSYS2_ARG_CONV_EXCL = '*';
   }
 
   if (!app.isPackaged) {
