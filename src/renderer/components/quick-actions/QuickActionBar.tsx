@@ -1,11 +1,10 @@
 import React from 'react';
 import type { LocalizedQuickAction } from '../../types/quickAction';
 import {
-  PresentationChartBarIcon,
-  GlobeAltIcon,
-  DevicePhoneMobileIcon,
-  ChartBarIcon,
-  AcademicCapIcon,
+  PaperAirplaneIcon,
+  BookOpenIcon,
+  ChatBubbleLeftRightIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 
 interface QuickActionBarProps {
@@ -13,13 +12,12 @@ interface QuickActionBarProps {
   onActionSelect: (actionId: string) => void;
 }
 
-// 图标映射
+// Icon map for quick action buttons
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-  PresentationChartBarIcon,
-  GlobeAltIcon,
-  DevicePhoneMobileIcon,
-  ChartBarIcon,
-  AcademicCapIcon,
+  PaperAirplaneIcon,
+  BookOpenIcon,
+  ChatBubbleLeftRightIcon,
+  Squares2X2Icon,
 };
 
 const QuickActionBar: React.FC<QuickActionBarProps> = ({ actions, onActionSelect }) => {

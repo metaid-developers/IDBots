@@ -2,83 +2,51 @@
   "version": 1,
   "actions": [
     {
-      "id": "pptx",
-      "icon": "PresentationChartBarIcon",
-      "color": "#F59E0B",
-      "skillMapping": "pptx",
-      "prompts": [
-        {
-          "id": "pptx-work-report"
-        },
-        {
-          "id": "pptx-content-research"
-        },
-        {
-          "id": "pptx-education"
-        },
-        {
-          "id": "pptx-ai-intro"
-        }
-      ]
-    },
-    {
-      "id": "data-analysis",
-      "icon": "ChartBarIcon",
-      "color": "#8B5CF6",
-      "skillMapping": "xlsx",
-      "prompts": [
-        {
-          "id": "excel-summary"
-        },
-        {
-          "id": "image-to-excel"
-        },
-        {
-          "id": "word-report"
-        },
-        {
-          "id": "multi-excel-merge"
-        }
-      ]
-    },
-    {
-      "id": "education",
-      "icon": "AcademicCapIcon",
-      "color": "#10B981",
-      "skillMapping": "frontend-design",
-      "prompts": [
-        {
-          "id": "edu-english-words"
-        },
-        {
-          "id": "edu-math-explain"
-        },
-        {
-          "id": "edu-essay-writing"
-        },
-        {
-          "id": "edu-knowledge-explain"
-        }
-      ]
-    },
-    {
-      "id": "website",
-      "icon": "GlobeAltIcon",
+      "id": "send-chain",
+      "icon": "PaperAirplaneIcon",
       "color": "#3B82F6",
-      "skillMapping": "frontend-design",
+      "skillMapping": "metabot-omni-caster",
       "prompts": [
-        {
-          "id": "web-resume"
-        },
-        {
-          "id": "web-store"
-        },
-        {
-          "id": "web-event"
-        },
-        {
-          "id": "web-survey"
-        }
+        { "id": "send-buzz" },
+        { "id": "send-buzz-with-image" },
+        { "id": "inscribe-file" },
+        { "id": "send-chain-note" }
+      ]
+    },
+    {
+      "id": "read-chain",
+      "icon": "BookOpenIcon",
+      "color": "#8B5CF6",
+      "skillMapping": "metabot-omni-reader",
+      "prompts": [
+        { "id": "latest-20-buzz" },
+        { "id": "buzz-hot" },
+        { "id": "user-latest" },
+        { "id": "group-messages" }
+      ]
+    },
+    {
+      "id": "chat",
+      "icon": "ChatBubbleLeftRightIcon",
+      "color": "#10B981",
+      "skillMapping": "metabot-chat",
+      "prompts": [
+        { "id": "start-im-listener" },
+        { "id": "join-group" },
+        { "id": "send-dm" },
+        { "id": "group-reply-strategy" }
+      ]
+    },
+    {
+      "id": "more-skills",
+      "icon": "Squares2X2Icon",
+      "color": "#F59E0B",
+      "skillMapping": "create-plan",
+      "prompts": [
+        { "id": "weather-to-chain" },
+        { "id": "develop-game-metaapp" },
+        { "id": "tech-news-to-group" },
+        { "id": "video-to-chain" }
       ]
     }
   ]
