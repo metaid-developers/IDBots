@@ -320,7 +320,7 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
         <button
           type="submit"
           disabled={saving || !canSave}
-          className="px-3 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accentHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="btn-idchat-primary-filled px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {saving ? i18nService.t('saving') : saveButtonLabel}
         </button>

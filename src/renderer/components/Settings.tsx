@@ -1771,7 +1771,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                   type="button"
                   onClick={handleInstallCoworkSandbox}
                   disabled={coworkSandboxInstalling || coworkSandboxLoading}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-claude-accent hover:bg-claude-accentHover text-white text-sm font-medium transition-colors disabled:opacity-50 active:scale-[0.98]"
+                  className="btn-idchat-primary-filled inline-flex items-center justify-center px-4 py-2 text-sm font-medium disabled:opacity-50"
                 >
                   {coworkSandboxInstalling ? i18nService.t('coworkSandboxInstalling') : i18nService.t('coworkSandboxInstall')}
                 </button>
@@ -1844,7 +1844,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                 <button
                   type="button"
                   onClick={handleOpenCoworkMemoryModal}
-                  className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-claude-accent hover:bg-claude-accentHover text-white text-sm transition-colors active:scale-[0.98]"
+                  className="btn-idchat-primary-filled inline-flex items-center justify-center px-3 py-1.5 text-sm"
                 >
                   <PlusCircleIcon className="h-4 w-4 mr-1.5" />
                   {i18nService.t('coworkMemoryCrudCreate')}
@@ -2329,7 +2329,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
               <button
                 type="submit"
                 disabled={isSaving}
-                className="px-4 py-2 bg-claude-accent hover:bg-claude-accentHover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                className="btn-idchat-primary-filled px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSaving ? i18nService.t('saving') : i18nService.t('save')}
               </button>
@@ -2432,7 +2432,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                   <button
                     type="button"
                     onClick={handleSaveNewModel}
-                    className="px-3 py-1.5 text-xs text-white bg-claude-accent hover:bg-claude-accentHover rounded-xl active:scale-[0.98]"
+                    className="btn-idchat-primary-filled px-3 py-1.5 text-xs"
                   >
                     {i18nService.t('save')}
                   </button>
@@ -2484,7 +2484,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                     type="button"
                     onClick={() => { void handleSaveCoworkMemoryEntry(); }}
                     disabled={!coworkMemoryDraftText.trim() || coworkMemoryListLoading}
-                    className="px-3 py-1.5 text-sm text-white bg-claude-accent hover:bg-claude-accentHover rounded-xl disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                    className="btn-idchat-primary-filled px-3 py-1.5 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {coworkMemoryEditingId ? i18nService.t('save') : i18nService.t('coworkMemoryCrudCreate')}
                   </button>

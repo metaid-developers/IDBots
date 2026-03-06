@@ -307,7 +307,7 @@ const CoworkPermissionModal: React.FC<CoworkPermissionModalProps> = ({
           <button
             onClick={handleApprove}
             disabled={!isComplete}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-claude-accent hover:bg-claude-accentHover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-idchat-primary-filled px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {approveButtonLabel}
           </button>

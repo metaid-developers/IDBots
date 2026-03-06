@@ -111,7 +111,7 @@ const App: React.FC = () => {
         // 初始化定时任务服务
         await scheduledTaskService.init();
 
-        // Onboarding check: redirect to onboarding if no LLM config or no MetaBots
+        // Onboarding check: redirect to onboarding if no LLM config or no twin MetaBot
         const hasProviderWithApiKey =
           config.providers &&
           Object.values(config.providers).some(
@@ -122,7 +122,8 @@ const App: React.FC = () => {
         if (hasProviderWithApiKey) {
           try {
             const mbRes = await window.electron.idbots.getMetaBots();
-            showOnboarding = !mbRes?.success || !mbRes?.list?.length;
+            const hasTwin = mbRes?.success && mbRes?.list?.some((m) => m.metabot_type === 'twin');
+            showOnboarding = !hasTwin;
           } catch {
             showOnboarding = true;
           }
@@ -513,7 +514,7 @@ const App: React.FC = () => {
             <div className="dark:text-claude-darkText text-claude-text text-xl font-medium text-center">{initError}</div>
             <button
               onClick={() => handleShowSettings()}
-              className="px-6 py-2.5 bg-claude-accent hover:bg-claude-accentHover text-white rounded-xl shadow-md transition-colors text-sm font-medium"
+              className="btn-idchat-primary px-6 py-2.5 text-sm font-medium"
             >
               {i18nService.t('openSettings')}
             </button>

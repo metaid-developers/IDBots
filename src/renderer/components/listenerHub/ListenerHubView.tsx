@@ -185,7 +185,7 @@ const ListenerHubView: React.FC<ListenerHubViewProps> = ({
           <button
             type="button"
             onClick={handleStartRestart}
-            className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium bg-claude-accent text-white hover:bg-claude-accentHover transition-colors"
+            className="btn-idchat-primary-filled inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium"
           >
             <SignalIcon className="h-4 w-4" />
             {i18nService.t('listenerHubStartRestart')}

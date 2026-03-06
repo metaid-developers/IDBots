@@ -401,7 +401,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   type="button"
                   onClick={handleValidateAndNext}
                   disabled={validating}
-                  className="w-full py-2.5 rounded-xl bg-claude-accent text-white font-medium hover:bg-claude-accentHover disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="btn-idchat-primary-filled w-full py-2.5 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {validating ? (
                     <>
@@ -471,7 +471,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                 <button
                   type="button"
                   onClick={handleAwakenTwin}
-                  className="w-full py-2.5 rounded-xl bg-claude-accent text-white font-medium hover:bg-claude-accentHover"
+                  className="btn-idchat-primary-filled w-full py-2.5 font-medium"
                 >
                   {i18nService.t('onboardingAwakenTwin')}
                 </button>
@@ -535,7 +535,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                     <button
                       type="button"
                       onClick={onComplete}
-                      className="w-full py-3 rounded-xl bg-claude-accent text-white font-semibold text-lg hover:bg-claude-accentHover"
+                      className="btn-idchat-primary-filled w-full py-3 font-semibold text-lg"
                     >
                       {i18nService.t('onboardingEnterIdBots')}
                     </button>

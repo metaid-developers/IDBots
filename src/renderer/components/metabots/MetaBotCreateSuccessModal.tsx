@@ -205,7 +205,7 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
               type="button"
               onClick={onSyncToChain}
               disabled={isSyncing}
-              className="px-4 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accentHover transition-colors disabled:opacity-70 disabled:cursor-wait flex items-center gap-2"
+              className="btn-idchat-primary-filled px-4 py-2 text-sm disabled:opacity-70 disabled:cursor-wait flex items-center gap-2"
             >
               {isSyncing ? (
                 <>

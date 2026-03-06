@@ -78,7 +78,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside
       className={`shrink-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted flex flex-col sidebar-transition overflow-hidden ${
-        isCollapsed ? 'w-0' : 'w-60'
+        isCollapsed ? 'w-0' : 'w-72'
       }`}
     >
       <div className="pt-3 pb-3">
@@ -99,7 +99,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onNewChat}
-            className="w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium bg-claude-accent/10 text-claude-accent hover:bg-claude-accent/20 transition-colors"
+            className="btn-idchat-primary w-full inline-flex items-center justify-center gap-2 px-2.5 py-2 text-sm font-medium"
           >
             <ComposeIcon className="h-4 w-4" />
             {i18nService.t('newChat')}
