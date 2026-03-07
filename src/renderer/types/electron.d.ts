@@ -435,6 +435,7 @@ interface IElectronAPI {
     syncMetaBot: (metabotId: number) => Promise<{
       success: boolean;
       error?: string;
+      canSkip?: boolean;
       metabotInfoPinId?: string;
       chatPublicKeyPinId?: string;
       txids?: string[];

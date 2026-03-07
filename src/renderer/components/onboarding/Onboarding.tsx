@@ -85,6 +85,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [twinError, setTwinError] = useState('');
   const [addBotError, setAddBotError] = useState('');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSyncResult, setLastSyncResult] = useState<{ success: boolean; error?: string; canSkip?: boolean } | null>(null);
   const [walletDone, setWalletDone] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
   const [awakeningComplete, setAwakeningComplete] = useState(false);
@@ -205,10 +206,12 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         syncResult = await window.electron.idbots.syncMetaBot(id);
       }
       if (!syncResult.success) {
+        setLastSyncResult(syncResult);
         setSyncError(syncResult.error ?? i18nService.t('onboardingSyncError'));
         setRunning(false);
         return;
       }
+      setLastSyncResult(syncResult);
       setSyncDone(true);
       setAwakeningComplete(true);
     } catch (err) {
@@ -230,6 +233,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     if (newBotId != null) {
       setRunning(true);
       window.electron.idbots.syncMetaBot(newBotId).then((syncResult) => {
+        setLastSyncResult(syncResult);
         setRunning(false);
         if (syncResult.success) {
           setSyncDone(true);
@@ -240,6 +244,12 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       });
     }
   }, [newBotId]);
+
+  const handleSkipAndEnter = useCallback(() => {
+    setSyncError(null);
+    setAwakeningComplete(true);
+    onComplete();
+  }, [onComplete]);
 
   const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -511,15 +521,34 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                       </div>
                     )}
                     {syncError && (
-                      <button
-                        type="button"
-                        onClick={handleRetrySync}
-                        disabled={running}
-                        className="w-full py-2.5 rounded-xl border border-red-500/50 text-red-500 dark:text-red-400 font-medium hover:bg-red-500/10 disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {running ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
-                        {i18nService.t('onboardingRetry')}
-                      </button>
+                      <div className="space-y-2">
+                        {walletDone && lastSyncResult?.canSkip && (
+                          <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                            {i18nService.t('onboardingSkipHint')}
+                          </p>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={handleRetrySync}
+                            disabled={running}
+                            className="flex-1 py-2.5 rounded-xl border border-red-500/50 text-red-500 dark:text-red-400 font-medium hover:bg-red-500/10 disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            {running ? <ArrowPathIcon className="h-4 w-4 animate-spin" /> : null}
+                            {i18nService.t('onboardingRetry')}
+                          </button>
+                          {walletDone && lastSyncResult?.canSkip && (
+                            <button
+                              type="button"
+                              onClick={handleSkipAndEnter}
+                              disabled={running}
+                              className="flex-1 py-2.5 rounded-xl border border-white/20 dark:border-white/20 font-medium hover:bg-white/10 disabled:opacity-50"
+                            >
+                              {i18nService.t('onboardingSkip')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </>
                 ) : (

@@ -174,6 +174,8 @@ function parseDataUrlAvatar(avatar: string | null | undefined): { mime: string; 
 export interface SyncMetaBotResult {
   success: boolean;
   error?: string;
+  /** True when name pin succeeded but at least one of avatar/chatpubkey/bio failed; caller may allow skip. */
+  canSkip?: boolean;
   /** PinID for /info/bio (metabot_info_pinid) */
   metabotInfoPinId?: string;
   /** PinID for /info/chatpubkey (chat_public_key_pin_id) */
@@ -216,10 +218,12 @@ export async function syncMetaBotToChain(
   const txids: string[] = [];
   let chatPublicKeyPinId: string | null = null;
   let metabotInfoPinId: string | null = null;
+  let someStepFailed = false;
+  let lastError = '';
 
+  // Step 1: Name (mandatory; on failure do not set canSkip)
+  log('Step 1: Pinning name to /info/name');
   try {
-    // Step 1: Name
-    log('Step 1: Pinning name to /info/name');
     const nameResult = await createPin(metabotStore, metabot_id, {
       operation: 'create',
       path: '/info/name',
@@ -229,18 +233,24 @@ export async function syncMetaBotToChain(
     const nameTxid = nameResult.txids[0];
     if (!nameTxid) {
       logErr('Name pin: no txid returned');
-      return { success: false, error: 'Name pin failed: no txid' };
+      return { success: false, error: 'Name pin failed: no txid', canSkip: false };
     }
     txids.push(nameTxid);
     log('Name pin success', { txid: nameTxid, pinId: nameResult.pinId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logErr('Chain sync failed at name step', { error: msg });
+    return { success: false, error: msg, canSkip: false };
+  }
 
-    log('Waiting 3s for indexer before next step');
-    await sleep(3000);
+  log('Waiting 3s for indexer before next step');
+  await sleep(3000);
 
-    // Step 2: Avatar
-    log('Step 2: Pinning avatar to /info/avatar');
-    const avatarData = parseDataUrlAvatar(metabot.avatar);
-    if (avatarData) {
+  // Step 2: Avatar (optional on failure: continue and set canSkip later)
+  log('Step 2: Pinning avatar to /info/avatar');
+  const avatarData = parseDataUrlAvatar(metabot.avatar);
+  if (avatarData) {
+    try {
       const { mime, buffer } = avatarData;
       const contentType = `${mime};binary`;
       log('Avatar parsed', { mime, sizeBytes: buffer.length });
@@ -253,45 +263,65 @@ export async function syncMetaBotToChain(
       });
       const avatarTxid = avatarResult.txids[0];
       if (!avatarTxid) {
-        logErr('Avatar pin: no txid returned');
-        return { success: false, error: 'Avatar pin failed: no txid' };
+        logErr('Avatar pin: no txid returned (skipped)');
+        someStepFailed = true;
+        lastError = 'Avatar pin failed: no txid';
+      } else {
+        txids.push(avatarTxid);
+        log('Avatar pin success', { txid: avatarTxid, pinId: avatarResult.pinId });
       }
-      txids.push(avatarTxid);
-      log('Avatar pin success', { txid: avatarTxid, pinId: avatarResult.pinId });
-    } else {
-      log('No avatar data (skip avatar pin)');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logErr('Avatar pin failed (skipped)', { error: msg });
+      someStepFailed = true;
+      lastError = msg;
     }
+  } else {
+    log('No avatar data (skip avatar pin)');
+  }
 
-    log('Waiting 3s for indexer before next step');
-    await sleep(3000);
+  log('Waiting 3s for indexer before next step');
+  await sleep(3000);
 
-    // Step 3: ChatPubKey
-    log('Step 3: Pinning chatpubkey to /info/chatpubkey');
-    const chatPubKey = metabot.chat_public_key?.trim();
-    if (!chatPubKey) {
-      logErr('chat_public_key is empty');
-      return { success: false, error: 'Chat public key is empty' };
+  // Step 3: ChatPubKey (optional on failure)
+  log('Step 3: Pinning chatpubkey to /info/chatpubkey');
+  const chatPubKey = metabot.chat_public_key?.trim();
+  if (chatPubKey) {
+    try {
+      const chatResult = await createPin(metabotStore, metabot_id, {
+        operation: 'create',
+        path: '/info/chatpubkey',
+        contentType: 'text/plain',
+        payload: chatPubKey,
+      });
+      const chatTxid = chatResult.txids[0];
+      if (!chatTxid) {
+        logErr('ChatPubKey pin: no txid returned (skipped)');
+        someStepFailed = true;
+        lastError = 'ChatPubKey pin failed: no txid';
+      } else {
+        txids.push(chatTxid);
+        chatPublicKeyPinId = chatResult.pinId ?? `${chatTxid}i0`;
+        log('ChatPubKey pin success', { txid: chatTxid, pinId: chatPublicKeyPinId });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logErr('ChatPubKey pin failed (skipped)', { error: msg });
+      someStepFailed = true;
+      lastError = msg;
     }
-    const chatResult = await createPin(metabotStore, metabot_id, {
-      operation: 'create',
-      path: '/info/chatpubkey',
-      contentType: 'text/plain',
-      payload: chatPubKey,
-    });
-    const chatTxid = chatResult.txids[0];
-    if (!chatTxid) {
-      logErr('ChatPubKey pin: no txid returned');
-      return { success: false, error: 'ChatPubKey pin failed: no txid' };
-    }
-    txids.push(chatTxid);
-    chatPublicKeyPinId = chatResult.pinId ?? `${chatTxid}i0`;
-    log('ChatPubKey pin success', { txid: chatTxid, pinId: chatPublicKeyPinId });
+  } else {
+    logErr('chat_public_key is empty (skipped)');
+    someStepFailed = true;
+    lastError = 'Chat public key is empty';
+  }
 
-    log('Waiting 3s for indexer before next step');
-    await sleep(3000);
+  log('Waiting 3s for indexer before next step');
+  await sleep(3000);
 
-    // Step 4: Bio
-    log('Step 4: Pinning bio to /info/bio');
+  // Step 4: Bio (optional on failure)
+  log('Step 4: Pinning bio to /info/bio');
+  try {
     const bioObject = {
       role: metabot.role || '',
       soul: metabot.soul || '',
@@ -314,16 +344,40 @@ export async function syncMetaBotToChain(
     });
     const bioTxid = bioResult.txids[0];
     if (!bioTxid) {
-      logErr('Bio pin: no txid returned');
-      return { success: false, error: 'Bio pin failed: no txid' };
+      logErr('Bio pin: no txid returned (skipped)');
+      someStepFailed = true;
+      lastError = 'Bio pin failed: no txid';
+    } else {
+      txids.push(bioTxid);
+      metabotInfoPinId = bioResult.pinId ?? `${bioTxid}i0`;
+      log('Bio pin success', { txid: bioTxid, pinId: metabotInfoPinId });
     }
-    txids.push(bioTxid);
-    metabotInfoPinId = bioResult.pinId ?? `${bioTxid}i0`;
-    log('Bio pin success', { txid: bioTxid, pinId: metabotInfoPinId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logErr('Chain sync failed', { error: msg });
-    return { success: false, error: msg };
+    logErr('Bio pin failed (skipped)', { error: msg });
+    someStepFailed = true;
+    lastError = msg;
+  }
+
+  if (someStepFailed) {
+    log('Some steps failed; updating DB with partial results and returning canSkip=true');
+    try {
+      const updateInput: { chat_public_key_pin_id?: string | null; metabot_info_pinid?: string | null } = {};
+      if (chatPublicKeyPinId) updateInput.chat_public_key_pin_id = chatPublicKeyPinId;
+      if (metabotInfoPinId) updateInput.metabot_info_pinid = metabotInfoPinId;
+      log('DB update payload', updateInput);
+      metabotStore.updateMetabot(metabot_id, updateInput);
+    } catch (dbErr) {
+      logErr('Database update failed on partial sync', { error: String(dbErr) });
+    }
+    return {
+      success: false,
+      error: lastError,
+      canSkip: true,
+      txids,
+      metabotInfoPinId: metabotInfoPinId ?? undefined,
+      chatPublicKeyPinId: chatPublicKeyPinId ?? undefined,
+    };
   }
 
   // Database update
