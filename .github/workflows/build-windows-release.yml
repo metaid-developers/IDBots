@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install web-search skill dependencies
+        run: cd SKILLs/web-search && npm install
+
       - name: Build Windows installer
         run: npm run dist:win
         env:
@@ -51,6 +54,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install web-search skill dependencies
+        run: cd SKILLs/web-search && npm install
 
       - name: Build Mac installer
         run: npm run dist:mac

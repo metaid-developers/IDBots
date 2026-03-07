@@ -109,7 +109,7 @@ export class PlaywrightManager {
     }
 
     // Check for existing pages in the context
-    const contextPages = conn.context.pages().filter(page => !page.isClosed());
+    const contextPages = conn.context.pages().filter((page: Page) => !page.isClosed());
 
     if (contextPages.length === 0) {
       console.log(`[Playwright] No existing pages, creating new page`);
