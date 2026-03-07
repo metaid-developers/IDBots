@@ -1,9 +1,10 @@
 # IDBots
 
-<<<<<<< HEAD
+
 =======
+
 [中文说明](README_zh.md)
->>>>>>> 1a073bb01053d24fbd44b7d8a8fdaae8d3268a60
+
 **A MetaID-native, multi–AI Agent (MetaBot) collaboration platform.**
 
 IDBots is a locally run agent system similar in spirit to openClaw, but built entirely on the [MetaID](https://metaid.io) protocol. It is designed for multi–AI Agent collaboration, with each Agent living on-chain as a **MetaBot**.
