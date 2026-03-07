@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+<!-- 移动端优化 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- 缓存策略：允许缓存静态资源，但 HTML 页面本身不缓存 -->
+<!-- <meta http-equiv="Cache-Control" content="public, max-age=31536000">
+<meta http-equiv="Pragma" content="public"> -->
+<title></title>
+
+
+
+<!-- Alpine.js CDN -->
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<!-- Initialize Alpine Stores BEFORE Alpine processes DOM -->
+<!-- Extracted from inline block to avoid generation omissions -->
+<script src="./bootstrap-stores.js"></script>
+
+<!-- UnoCSS Runtime CDN -->
+<script>
+window.__unocss = {
+theme: {},
+shortcuts: {},
+rules: [],
+};
+</script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@unocss/runtime"></script>
+  <!-- Global Styles -->
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <!-- IDFramework config and utils (base URLs, constants, message toast, IndexedDB helpers) -->
+  <script src="./idconfig.js"></script>
+  
+  <script src="./idutils.js"></script>
+  <!-- Import IDFramework Core -->
+  <script type="module" src="./idframework.js" ></script>
+  
+  <!-- Import Web Components (use idframework version with ProfileEditModal) -->
+  <script type="module" src="./idcomponents/id-connect-button.js" ></script>
+  
+  <!-- Import App Configuration -->
+  <script type="module" src="./app.js"></script>
+
+  <div class="connect-button-wrapper">
+    <id-connect-button></id-connect-button>
+  </div>
+
+
+  <!-- App/WebView compatibility and Metalet listeners -->
+  <script src="./app-env-compat.js"></script>
+
+  
+
+
+
+ 
+
+</body>
+</html>

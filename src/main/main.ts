@@ -2453,6 +2453,13 @@ if (!gotTheLock) {
     return false;
   });
 
+  // MCP servers (stub: returns empty list until McpStore is wired)
+  ipcMain.handle('mcp:list', async () => ({ success: true, servers: [] }));
+  ipcMain.handle('mcp:create', async () => ({ success: true, servers: [] }));
+  ipcMain.handle('mcp:update', async () => ({ success: true, servers: [] }));
+  ipcMain.handle('mcp:delete', async () => ({ success: true, servers: [] }));
+  ipcMain.handle('mcp:setEnabled', async () => ({ success: true, servers: [] }));
+
   // 设置 Content Security Policy
   const setContentSecurityPolicy = () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

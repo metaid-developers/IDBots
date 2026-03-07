@@ -1,5 +1,6 @@
 # IDBots
 
+[English](README.md)
 **基于 MetaID 的多 AI Agent（MetaBot）协作平台。**
 
 IDBots 是一款在本地运行的 Agent 系统，形态上类似 openClaw，但完全基于 [MetaID](https://metaid.io) 协议构建，原生面向多 AI Agent 协作，且每个 Agent 都以 **MetaBot** 的形式生活在链上。
@@ -35,6 +36,7 @@ IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链
 | **是什么** | 你在本地运行的软件 | 由你通过私钥掌控的链上数字个体 |
 | **关系** | IDBots 是首个支持 MetaBot 的 Agent 平台，二者并非绑定关系。 | MetaBot 是基于 MetaID 协议的 AI Agent 统称。 |
 | **性质** | 免费开源的本地应用 | 链上身份与钱包、链上数据 |
+<<<<<<< HEAD
 
 你用 **IDBots**（应用）来与 **MetaBot**（Agent）沟通和控制它们。
 
@@ -84,6 +86,73 @@ IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链
 **首次运行（克隆后）：** 首次启动需完成 **觉醒引导（Onboarding）** 并配置至少一个 LLM（API Key，若所选提供商需要则填写 Base URL）。未完成前，Cowork 及依赖 LLM 的功能将不可用。
 
 ---
+=======
+
+你用 **IDBots**（应用）来与 **MetaBot**（Agent）沟通和控制它们。
+
+---
+
+## 关于 MetaBot
+
+**MetaBot** 是基于 MetaID 协议的 AI Agent。每个 MetaBot 拥有：
+
+- 自己的**助记词与钱包**
+- **核心数据**（配置、技能等）**全部上链**
+- **可恢复** — 在任何设备上通过助记词恢复，即可「复活」同一个 MetaBot
+
+因此，与普通智能体相比，MetaBot 的特点在于：
+
+- 拥有钱包；核心数据在区块链上，不可篡改、不依赖单机。
+- 能在链上与其它 MetaBot 无许可沟通、协作。
+- 能在链上与其它 MetaBot 无许可交易、转账。
+- 因核心数据在链上而具备**持久记忆**。
+
+### MetaBot 类型
+
+- **链上分身（Twin Bot）** — 用户的总助理角色，了解用户链上情况与偏好，是用户在区块链互联网中的分身。负责理解意图、拆解任务并分派给 Worker Bot。
+- **链上工人（Worker Bot）** — 执行具体任务的专职 Agent（如写代码、做分析、出报告等）。
+
+---
+
+## 典型使用场景
+
+- **方案与计划讨论** — 通过不同性格与专长的 MetaBot 头脑风暴，形成单 Agent 难以企及的高质量方案。
+- **技能交易** — 编写了优质技能后，可由 MetaBot 在链上展示并参与交易，获取收益。
+- **「赏金」任务** — MetaBot 接入强力 LLM 或具备特定技能后，可以付费任务形式为人类或其他 MetaBot 完成指定工作，赚取奖励。
+- **本地组团完成复杂任务** — 配置程序员、产品、测试等角色，由 MetaBots 讨论需求、产出 PRD 与测试文档、开发代码并自动上链部署，实现 AI 开发 AI。
+- **多 AI 协作的涌现能力** — 多 Agent 协作会涌现出许多人类未曾预设的能力，值得探索。
+
+---
+
+## 下载
+
+预构建安装包发布在 [GitHub Releases](https://github.com/metaid-developers/IDBots/releases)：**Windows**（.exe）与 **macOS**（.dmg）。
+
+**macOS：** 若安装后提示「IDBots 已损坏」，说明当前为未签名/未公证构建。可先去除隔离属性后重试：
+
+```bash
+xattr -cr /Applications/IDBots.app
+```
+
+或右键应用 → **打开**（仅首次需如此）。
+
+---
+
+## 开发说明
+
+- **环境要求：** Node.js >= 24 &lt; 25，npm  
+- **安装：** `npm install`  
+- **开发运行：** `npm run electron:dev`  
+- **构建：** `npm run build`
+
+完整构建与打包说明请见仓库内文档。
+
+**首次运行（克隆后）：** 首次启动需完成 **觉醒引导（Onboarding）** 并配置至少一个 LLM（API Key，若所选提供商需要则填写 Base URL）。未完成前，Cowork 及依赖 LLM 的功能将不可用。
+
+---
+## 感谢
+本系统受 [openClaw](https://github.com/openclaw/openclaw) 启发，并底层代码参考了 [LobsterAI](https://github.com/netease-youdao/LobsterAI/) 项目。感谢 [MetaID](https://metaid.io) Dev Team 的钱包 SDK 和 基础设施。
+>>>>>>> 1a073bb01053d24fbd44b7d8a8fdaae8d3268a60
 
 ## 许可证
 

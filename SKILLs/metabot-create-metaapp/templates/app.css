@@ -1,0 +1,134 @@
+/**
+ * Global External Styles - Theme Layer
+ * Semantic CSS Variables for IDFramework Theming System
+ */
+
+/* ============================================
+   CSS Variables - Light Mode (Default)
+   ============================================ */
+:root {
+  /* Primary Brand Colors */
+  --id-color-primary: #3b82f6;
+  --id-color-primary-hover: #2563eb;
+  --id-color-primary-active: #1d4ed8;
+  
+  /* Background Colors */
+  --id-bg-body: #f3f4f6;
+  --id-bg-card: #ffffff;
+  --id-bg-button: var(--id-color-primary);
+  --id-bg-button-hover: var(--id-color-primary-hover);
+  --id-bg-button-disabled: #9ca3af;
+  
+  /* Text Colors */
+  --id-text-main: #1f2937;
+  --id-text-secondary: #6b7280;
+  --id-text-tertiary: #9ca3af;
+  --id-text-inverse: #ffffff;
+  --id-text-title: #111827;
+  --id-text-subtitle: #6b7280;
+  --id-text-author: var(--id-color-primary);
+  --id-text-error: #991b1b;
+  
+  /* Border Colors */
+  --id-border-color: #e5e7eb;
+  --id-border-color-light: #f3f4f6;
+  --id-border-error: #fca5a5;
+  
+  /* Shadow */
+  --id-shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+  --id-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --id-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  
+  /* Dimensions */
+  --id-radius-card: 0.5rem;
+  --id-radius-button: 0.5rem;
+  --id-radius-small: 0.25rem;
+  
+  /* Spacing Units */
+  --id-spacing-xs: 0.25rem;
+  --id-spacing-sm: 0.5rem;
+  --id-spacing-md: 1rem;
+  --id-spacing-lg: 1.5rem;
+  --id-spacing-xl: 2rem;
+  --id-spacing-2xl: 3rem;
+  
+  /* Card Specific */
+  --id-card-padding: var(--id-spacing-md);
+  --id-card-gap: var(--id-spacing-md);
+  --id-card-margin-bottom: var(--id-spacing-md);
+  
+  /* Typography */
+  --id-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  --id-font-size-base: 1rem;
+  --id-font-size-sm: 0.875rem;
+  --id-font-size-xs: 0.75rem;
+  --id-font-size-lg: 1.125rem;
+  --id-font-size-xl: 2.5rem;
+  --id-font-weight-normal: 400;
+  --id-font-weight-semibold: 600;
+  --id-font-weight-bold: 700;
+  --id-line-height-base: 1.6;
+  --id-line-height-tight: 1.5;
+  
+  /* Transitions */
+  --id-transition-fast: 0.1s;
+  --id-transition-base: 0.2s;
+  --id-transition-slow: 0.3s;
+}
+
+/* ============================================
+   CSS Variables - Dark Mode
+   ============================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Primary Brand Colors (same in dark mode) */
+    --id-color-primary: #3b82f6;
+    --id-color-primary-hover: #60a5fa;
+    --id-color-primary-active: #2563eb;
+    
+    /* Background Colors */
+    --id-bg-body: #111827;
+    --id-bg-card: #1f2937;
+    --id-bg-button: var(--id-color-primary);
+    --id-bg-button-hover: var(--id-color-primary-hover);
+    --id-bg-button-disabled: #4b5563;
+    
+    /* Text Colors */
+    --id-text-main: #f9fafb;
+    --id-text-secondary: #d1d5db;
+    --id-text-tertiary: #9ca3af;
+    --id-text-inverse: #ffffff;
+    --id-text-title: #ffffff;
+    --id-text-subtitle: #d1d5db;
+    --id-text-author: #60a5fa;
+    --id-text-error: #fca5a5;
+    
+    /* Border Colors */
+    --id-border-color: #374151;
+    --id-border-color-light: #4b5563;
+    --id-border-error: #dc2626;
+    
+    /* Shadow (lighter in dark mode) */
+    --id-shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.3), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+    --id-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+    --id-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  }
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--id-font-family);
+  background-color: var(--id-bg-body);
+  color: var(--id-text-main);
+  line-height: var(--id-line-height-base);
+  padding: var(--id-spacing-md);
+  position: relative;
+}

@@ -2,106 +2,127 @@
   "version": 1,
   "description": "Default skill configuration for IDBots",
   "defaults": {
-    "metabot-omni-caster": {
-      "order": 1,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "metabot-omni-reader": {
-      "order": 2,
-      "version": "1.0.0",
+    "metabot-post_buzz": {
+      "order": 5,
+      "version": "1.0.1",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
     "metabot-chat": {
-      "order": 3,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "docx": {
-      "order": 10,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "web-search": {
-      "order": 15,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "xlsx": {
       "order": 20,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "pptx": {
-      "order": 30,
+    "metabot-omni-caster": {
+      "order": 10,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "pdf": {
+    "metabot-omni-reader": {
+      "order": 15,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "metabot-create-meataapp": {
+      "order": 20,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+   "proactive-agent-3.1.0": {
       "order": 40,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "scheduled-task": {
-      "order": 45,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "remotion": {
+    "docx": {
       "order": 50,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "develop-web-game": {
-      "order": 60,
+    "web-search": {
+      "order": 65,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "playwright": {
-      "order": 70,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "create-plan": {
+    "xlsx": {
       "order": 80,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "canvas-design": {
+    "pptx": {
       "order": 90,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "frontend-design": {
+    "pdf": {
       "order": 100,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "scheduled-task": {
+      "order": 110,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "remotion": {
+      "order": 120,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "develop-web-game": {
+      "order": 130,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "playwright": {
+      "order": 140,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "create-plan": {
+      "order": 150,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "canvas-design": {
+      "order": 160,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "frontend-design": {
+      "order": 170,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,
@@ -128,36 +149,8 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "seedance": {
-      "order": 212,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "seedream": {
-      "order": 213,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
     "technology-news-search": {
       "order": 214,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "films-search": {
-      "order": 222,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
-    "music-search": {
-      "order": 223,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,

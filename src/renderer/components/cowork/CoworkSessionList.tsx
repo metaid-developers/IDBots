@@ -53,7 +53,7 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       {sortedSessions.map((session) => (
         <CoworkSessionItem
           key={session.id}

@@ -365,4 +365,11 @@ contextBridge.exposeInMainWorld('electron', {
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
   },
+  mcp: {
+    list: () => ipcRenderer.invoke('mcp:list'),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('mcp:create', data),
+    update: (id: string, data: Record<string, unknown>) => ipcRenderer.invoke('mcp:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
+    setEnabled: (options: { id: string; enabled: boolean }) => ipcRenderer.invoke('mcp:setEnabled', options),
+  },
 });

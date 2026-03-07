@@ -1,3 +1,5 @@
+import type { McpServerConfig, McpServerFormData } from './mcp';
+
 interface ApiResponse {
   ok: boolean;
   status: number;
@@ -435,6 +437,7 @@ interface IElectronAPI {
     syncMetaBot: (metabotId: number) => Promise<{
       success: boolean;
       error?: string;
+      canSkip?: boolean;
       metabotInfoPinId?: string;
       chatPublicKeyPinId?: string;
       txids?: string[];
@@ -461,6 +464,13 @@ interface IElectronAPI {
   };
   networkStatus: {
     send: (status: 'online' | 'offline') => void;
+  };
+  mcp: {
+    list: () => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
+    create: (data: McpServerFormData) => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
+    update: (id: string, data: Partial<McpServerFormData>) => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
+    delete: (id: string) => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
+    setEnabled: (options: { id: string; enabled: boolean }) => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
   };
 }
 

@@ -82,22 +82,20 @@ async function beforePack(context) {
   }
 
   console.log('[electron-builder-hooks] Windows target detected, ensuring PortableGit is prepared...');
-  await ensurePortableGit({ required: true });
+  await ensurePortableGit({ required: false });
 }
 
 async function afterPack(context) {
   if (isWindowsTarget(context)) {
     const bashPath = findPackagedBash(context.appOutDir);
     if (!bashPath) {
-      throw new Error(
-        'Windows package is missing bundled PortableGit bash.exe. '
-        + 'Expected one of: '
-        + `${path.join(context.appOutDir, 'resources', 'mingit', 'bin', 'bash.exe')} or `
-        + `${path.join(context.appOutDir, 'resources', 'mingit', 'usr', 'bin', 'bash.exe')}`
+      console.warn(
+        '[electron-builder-hooks] Windows package has no bundled PortableGit (bash.exe). '
+        + 'Sandbox/script features may require Git on the user machine.'
       );
+    } else {
+      console.log(`[electron-builder-hooks] Verified bundled PortableGit: ${bashPath}`);
     }
-
-    console.log(`[electron-builder-hooks] Verified bundled PortableGit: ${bashPath}`);
   }
 
   if (isMacTarget(context)) {

@@ -1,8 +1,8 @@
 build/
-release/
 node_modules/
 dist/
 dist-electron/
+release/
 .DS_Store
 .env
 .env.local
@@ -37,7 +37,6 @@ SKILLs/**/.server.pid
 SKILLs/**/account.json
 
 **/account.json
-package-lock.json
 
 nul
 .work.env
