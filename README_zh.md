@@ -84,6 +84,8 @@ IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链
 **首次运行（克隆后）：** 首次启动需完成 **觉醒引导（Onboarding）** 并配置至少一个 LLM（API Key，若所选提供商需要则填写 Base URL）。未完成前，Cowork 及依赖 LLM 的功能将不可用。
 
 ---
+## 感谢
+本系统受 openClaw 启发，并部分代码参考了 LobsterAI项目。感谢 MetaID Dev Team 的钱包 SDK 和 基础设施。
 
 ## 许可证
 
