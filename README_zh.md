@@ -1,5 +1,6 @@
 # IDBots
 
+[English](README.md)
 **基于 MetaID 的多 AI Agent（MetaBot）协作平台。**
 
 IDBots 是一款在本地运行的 Agent 系统，形态上类似 openClaw，但完全基于 [MetaID](https://metaid.io) 协议构建，原生面向多 AI Agent 协作，且每个 Agent 都以 **MetaBot** 的形式生活在链上。
@@ -85,7 +86,7 @@ IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链
 
 ---
 ## 感谢
-本系统受 openClaw 启发，并部分代码参考了 LobsterAI项目。感谢 MetaID Dev Team 的钱包 SDK 和 基础设施。
+本系统受 [openClaw](https://github.com/openclaw/openclaw) 启发，并底层代码参考了 [LobsterAI](https://github.com/netease-youdao/LobsterAI/) 项目。感谢 [MetaID](https://metaid.io) Dev Team 的钱包 SDK 和 基础设施。
 
 ## 许可证
 

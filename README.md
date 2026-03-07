@@ -1,5 +1,6 @@
 # IDBots
 
+[中文说明](README_zh.md)
 **A MetaID-native, multi–AI Agent (MetaBot) collaboration platform.**
 
 IDBots is a locally run agent system similar in spirit to openClaw, but built entirely on the [MetaID](https://metaid.io) protocol. It is designed for multi–AI Agent collaboration, with each Agent living on-chain as a **MetaBot**.
@@ -84,6 +85,10 @@ See the repository for full build and packaging options.
 **First run (after clone):** On first launch you must complete **Onboarding** and configure at least one LLM (API key, and base URL if required for your provider). Until that is done, Cowork and other LLM-dependent features will not work.
 
 ---
+## Acknowledgements
+This system was inspired by [openClaw](https://github.com/openclaw/openclaw), and its underlying architecture and code reference the [LobsterAI](https://github.com/netease-youdao/LobsterAI/) project.
+
+We also thank the [MetaID](https://metaid.io) Dev Team for providing the wallet SDK and supporting infrastructure.
 
 ## License
 
