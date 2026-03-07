@@ -83,12 +83,19 @@ jobs:
         with:
           name: mac-release
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find . -name '*.exe' -path '*/windows-release*' -exec cp {} release-assets/ ';'
+          find . -name '*.dmg' -path '*/mac-release*' -exec cp {} release-assets/ ';'
+          ls -la release-assets
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            windows-release/*.exe
-            mac-release/*.dmg
+            release-assets/*.exe
+            release-assets/*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true
         env:
