@@ -264,16 +264,16 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         closeMenu();
         onSelect();
       }}
-      className={`group relative p-3 rounded-lg cursor-pointer transition-all duration-150 ${
+      className={`group relative px-2.5 py-1.5 rounded-lg cursor-pointer transition-all duration-150 ${
         isActive
           ? 'bg-black/[0.06] dark:bg-white/[0.08]'
           : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
       }`}
     >
       {/* Content area */}
-      <div className="flex items-start">
+      <div className="flex items-start leading-tight">
         <div className="flex-1 min-w-0">
-          <div className={`flex items-center mb-1 ${showStatusIndicator ? 'gap-2' : 'gap-0'}`}>
+          <div className={`flex items-center mb-0.5 ${showStatusIndicator ? 'gap-2' : 'gap-0'}`}>
             {/* Status indicator */}
             {showStatusIndicator && (
               <span
@@ -301,12 +301,12 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 className="flex-1 min-w-0 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg px-2 py-1 text-sm font-medium dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
               />
             ) : (
-              <h3 className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+              <h3 className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate leading-tight">
                 {session.title}
               </h3>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary leading-tight">
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>

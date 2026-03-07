@@ -1,0 +1,8 @@
+{
+  "name": "metabot-create-metaapp-test",
+  "private": true,
+  "scripts": {
+    "test:web": "npx http-server . -a 127.0.0.1 -p 5600 -o /test/index.html -c-1",
+    "test:chat:web": "npx http-server . -a 127.0.0.1 -p 5601 -o /test/chat.html -c-1"
+  }
+}

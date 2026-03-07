@@ -18,7 +18,7 @@ import {
   getProviderDefaultBaseUrl,
 } from '../../services/llmConnection';
 
-const AVATAR_MAX_SIZE_BYTES = 200 * 1024;
+const AVATAR_MAX_SIZE_BYTES = 100 * 1024;
 
 type OnboardingStep = 1 | 2 | 3;
 type ProviderKey = (typeof ALL_PROVIDER_KEYS)[number];
