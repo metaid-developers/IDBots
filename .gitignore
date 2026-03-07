@@ -1,5 +1,4 @@
 build/
-release/
 node_modules/
 dist/
 dist-electron/

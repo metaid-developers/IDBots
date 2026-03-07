@@ -26,10 +26,10 @@ export interface ListenerHubViewProps {
 }
 
 const ListenerHubView: React.FC<ListenerHubViewProps> = ({
-  isSidebarCollapsed,
-  onToggleSidebar,
-  onNewChat,
-  updateBadge,
+  isSidebarCollapsed: _isSidebarCollapsed,
+  onToggleSidebar: _onToggleSidebar,
+  onNewChat: _onNewChat,
+  updateBadge: _updateBadge,
 }) => {
   const [connectionStatus, setConnectionStatus] = useState<ListenerConnectionStatus>('disconnected');
   const [config, setConfig] = useState<ListenerConfig>({

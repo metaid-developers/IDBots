@@ -52,7 +52,7 @@ const McpManager: React.FC = () => {
 
   const installedRegistryIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const s of servers) {
+    for (const s of servers as McpServerConfig[]) {
       if (s.registryId) ids.add(s.registryId);
     }
     return ids;
@@ -61,17 +61,17 @@ const McpManager: React.FC = () => {
   const filteredInstalled = useMemo(() => {
     const query = searchQuery.toLowerCase();
     if (!query) return servers;
-    return servers.filter(server =>
+    return servers.filter((server: McpServerConfig) =>
       server.name.toLowerCase().includes(query)
       || server.description.toLowerCase().includes(query)
     );
   }, [servers, searchQuery]);
 
   const filteredCustom = useMemo(() => {
-    const custom = servers.filter(s => !s.isBuiltIn);
+    const custom = servers.filter((s: McpServerConfig) => !s.isBuiltIn);
     const query = searchQuery.toLowerCase();
     if (!query) return custom;
-    return custom.filter(s =>
+    return custom.filter((s: McpServerConfig) =>
       s.name.toLowerCase().includes(query)
       || s.description.toLowerCase().includes(query)
     );
@@ -93,7 +93,7 @@ const McpManager: React.FC = () => {
   }, [installedRegistryIds, searchQuery, activeCategory]);
 
   const handleToggleEnabled = async (serverId: string) => {
-    const targetServer = servers.find(s => s.id === serverId);
+    const targetServer = servers.find((s: McpServerConfig) => s.id === serverId);
     if (!targetServer) return;
     try {
       const updatedServers = await mcpService.setServerEnabled(serverId, !targetServer.enabled);
@@ -195,7 +195,7 @@ const McpManager: React.FC = () => {
     window.electron.shell.openExternal(url);
   };
 
-  const existingNames = useMemo(() => servers.map(s => s.name), [servers]);
+  const existingNames = useMemo(() => servers.map((s: McpServerConfig) => s.name), [servers]);
 
   const marketplaceCount = useMemo(
     () => mcpRegistry.filter(e => !installedRegistryIds.has(e.id)).length,
@@ -203,7 +203,7 @@ const McpManager: React.FC = () => {
   );
 
   const customCount = useMemo(
-    () => servers.filter(s => !s.isBuiltIn).length,
+    () => servers.filter((s: McpServerConfig) => !s.isBuiltIn).length,
     [servers]
   );
 
@@ -289,7 +289,7 @@ const McpManager: React.FC = () => {
               {i18nService.t('mcpNoInstalledServers')}
             </div>
           ) : (
-            filteredInstalled.map((server) => (
+            filteredInstalled.map((server: McpServerConfig) => (
               <div
                 key={server.id}
                 className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
@@ -478,7 +478,7 @@ const McpManager: React.FC = () => {
             >
               + {i18nService.t('addMcpServer')}
             </button>
-            {filteredCustom.map((server) => (
+            {filteredCustom.map((server: McpServerConfig) => (
                 <div
                   key={server.id}
                   className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
