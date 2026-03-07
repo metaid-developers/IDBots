@@ -6,7 +6,6 @@
  * Requires: Node.js 18+ (for fetch). Env: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).
  *
  * Usage:
- *   node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]
  *   npx ts-node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]
  */
 
@@ -16,14 +15,32 @@ function writeStderr(message: string): void {
   process.stderr.write(message + '\n');
 }
 
+const USAGE =
+  'Usage: npx ts-node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]';
+
 function main(): void {
   const { values, positionals } = parseArgs({
     options: {
       content: { type: 'string' },
       'content-type': { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: true,
   });
+
+  if (values.help) {
+    process.stderr.write(
+      'metabot-post-buzz: Send SimpleBuzz to MetaWeb via local RPC.\n\n' +
+        USAGE +
+        '\n\n' +
+        'Options:\n' +
+        '  --content <string>     (required) Text to post.\n' +
+        '  --content-type <string> (optional) MIME type, default: text/plain;utf-8\n' +
+        '  -h, --help             Show this message.\n' +
+        '\nEnv: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).\n'
+    );
+    process.exit(0);
+  }
 
   let content = values.content ?? '';
   const contentType = values['content-type'] ?? 'text/plain;utf-8';
@@ -39,9 +56,7 @@ function main(): void {
   // Parameter validation: --content must not be empty
   if (typeof content !== 'string' || content.trim() === '') {
     writeStderr('Error: --content is required and must not be empty.');
-    writeStderr(
-      'Usage: node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]'
-    );
+    writeStderr(USAGE);
     process.exit(1);
   }
 

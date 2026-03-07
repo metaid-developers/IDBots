@@ -1,8 +1,9 @@
 /**
  * MetaID Core Service: create Pin via worker subprocess.
  * Spawns src/main/libs/createPinWorker (compiled to dist-electron) with ELECTRON_RUN_AS_NODE
- * to avoid meta-contract "instanceof" issues in the main process. Uses process.execPath instead
- * of npx to eliminate PATH dependency.
+ * to avoid meta-contract "instanceof" issues in the main process. Uses app.getPath('exe') on
+ * Electron so the correct executable path is used on Windows and macOS (avoids process.execPath
+ * returning wrong name e.g. "lDBots.exe" on Windows).
  */
 
 import { spawn } from 'child_process';
@@ -105,8 +106,10 @@ export async function createPin(
     },
   });
 
+  // Use Electron's exe path so Windows/macOS get correct binary (e.g. IDBots.exe, not lDBots.exe)
+  const electronExe = app.getPath('exe');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [workerPath], {
+    const child = spawn(electronExe, [workerPath], {
       cwd: appPath,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],

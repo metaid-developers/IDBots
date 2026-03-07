@@ -99,15 +99,28 @@ async function getDogeWallet(mnemonic: string, addressIndex: number): Promise<Do
 /** Derive chat_public_key via ECDH with MAN pubkey (same as chatpubkey.ts) */
 function deriveChatPublicKey(mnemonic: string, addressIndex: number): Promise<string> {
   return getMvcWallet(mnemonic, addressIndex).then((wallet) => {
-    const privateKeyWIF = wallet.getPrivateKey();
-    const privKey = mvc.PrivateKey.fromWIF(privateKeyWIF);
-    const privateKeyBuffer = Buffer.from((privKey as { bn: { toArray: (e: string, n: number) => number[] } }).bn.toArray('be', 32));
-
+    const privateKeyBuffer = getPrivateKeyBufferFromWallet(wallet);
     const ecdh = crypto.createECDH('prime256v1');
     ecdh.setPrivateKey(privateKeyBuffer);
     void ecdh.computeSecret(Buffer.from(MAN_PUB_KEY, 'hex'));
     return ecdh.getPublicKey('hex', 'uncompressed');
   });
+}
+
+/**
+ * Get 32-byte private key buffer for ECDH (e.g. private chat decrypt/encrypt).
+ * Same derivation as chat key: mnemonic + path -> MVC wallet -> raw private key.
+ */
+export async function getPrivateKeyBufferForEcdh(mnemonic: string, pathStr: string): Promise<Buffer> {
+  const addressIndex = parseAddressIndexFromPath(pathStr || DEFAULT_PATH);
+  const wallet = await getMvcWallet(mnemonic, addressIndex);
+  return getPrivateKeyBufferFromWallet(wallet);
+}
+
+function getPrivateKeyBufferFromWallet(wallet: MvcWallet): Buffer {
+  const privateKeyWIF = wallet.getPrivateKey();
+  const privKey = mvc.PrivateKey.fromWIF(privateKeyWIF);
+  return Buffer.from((privKey as { bn: { toArray: (e: string, n: number) => number[] } }).bn.toArray('be', 32));
 }
 
 /** Compute metaid locally: SHA256(mvc_address) hex */

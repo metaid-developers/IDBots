@@ -35,6 +35,7 @@ import {
   type ListenerConfig,
 } from './services/metaWebListenerService';
 import { startOrchestrator as startCognitiveOrchestrator, stopOrchestrator as stopCognitiveOrchestrator } from './services/cognitiveOrchestrator';
+import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privateChatDaemon';
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin } from './services/metaidCore';
@@ -2848,6 +2849,15 @@ if (!gotTheLock) {
         runSkillTurnViaCowork: (params) =>
           runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
       }
+    );
+
+    // Start Private Chat Daemon (ECDH decrypt, ping/pong intercept, LLM reply + broadcast)
+    startPrivateChatDaemon(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      getMetabotStore(),
+      createPin,
+      (msg) => console.log(msg)
     );
 
     // Auto-reconnect IM bots that were enabled before restart

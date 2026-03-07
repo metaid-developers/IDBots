@@ -187,6 +187,47 @@ function ensureWindowsElectronNodeShim(electronPath: string): string | null {
       // Ignore chmod errors on Windows file systems that do not support POSIX modes.
     }
 
+    // Cygpath shim: Claude Code CLI uses "cygpath -u" for Read tool on Windows; if Git's cygpath
+    // is missing or not in PATH, provide a fallback so skills (e.g. Read SKILL.md) work.
+    const cygpathSh = join(shimDir, 'cygpath');
+    const cygpathShContent = [
+      '#!/usr/bin/env bash',
+      'if [ "$1" = "-u" ]; then',
+      '  p="$2"',
+      '  [ -z "$p" ] && exit 1',
+      '  p="${p//\\\\/\\/}"',
+      '  if [[ "$p" =~ ^([a-zA-Z]):(.*) ]]; then',
+      '    d="${BASH_REMATCH[1]}"',
+      '    r="${BASH_REMATCH[2]}"',
+      '    printf "/%s%s\\n" "$(echo "$d" | tr "[:upper:]" "[:lower:]")" "$r"',
+      '  else',
+      '    echo "$p"',
+      '  fi',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "-w" ]; then',
+      '  p="$2"',
+      '  [ -z "$p" ] && exit 1',
+      '  if [[ "$p" =~ ^/([a-zA-Z])(.*) ]]; then',
+      '    d="${BASH_REMATCH[1]}"',
+      '    r="${BASH_REMATCH[2]}"',
+      '    r="${r//\\//\\\\}"',
+      '    printf "%s:\\\\%s\\n" "$(echo "$d" | tr "[:lower:]" "[:upper:]")" "$r"',
+      '  else',
+      '    echo "${p//\\//\\\\}"',
+      '  fi',
+      '  exit 0',
+      'fi',
+      'exit 1',
+      '',
+    ].join('\n');
+    writeFileSync(cygpathSh, cygpathShContent, 'utf8');
+    try {
+      chmodSync(cygpathSh, 0o755);
+    } catch {
+      // Ignore chmod errors
+    }
+
     return shimDir;
   } catch (error) {
     coworkLog('WARN', 'resolveNodeShim', `Failed to prepare Electron Node shim: ${error instanceof Error ? error.message : String(error)}`);
@@ -408,7 +449,8 @@ function resolveWindowsNodeDirs(): string[] {
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
   // On Windows, resolve git-bash and ensure Git toolchain directories are available in PATH.
   if (process.platform === 'win32') {
-    env.IDBOTS_ELECTRON_PATH = process.execPath;
+    const electronExe = app.getPath('exe');
+    env.IDBOTS_ELECTRON_PATH = electronExe;
 
     const configuredBashPath = normalizeWindowsPath(env.CLAUDE_CODE_GIT_BASH_PATH);
     const bashPath = configuredBashPath && existsSync(configuredBashPath)
@@ -422,7 +464,8 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
       coworkLog('INFO', 'resolveGitBash', `Injected Windows Git toolchain PATH entries: ${gitToolDirs.join(', ')}`);
     }
 
-    const shimDir = ensureWindowsElectronNodeShim(process.execPath);
+    // Prepend shim dir so our cygpath (and node) shims are found first — avoids "cygpath -u" failures when Git's cygpath is missing
+    const shimDir = ensureWindowsElectronNodeShim(electronExe);
     if (shimDir) {
       env.PATH = appendEnvPath(env.PATH, [shimDir]);
       coworkLog('INFO', 'resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimDir}`);
@@ -555,7 +598,7 @@ export async function getEnhancedEnv(target: OpenAICompatProxyTarget = 'local'):
   const skillsRoot = getSkillsRoot();
   env.SKILLS_ROOT = skillsRoot;
   env.IDBOTS_SKILLS_ROOT = skillsRoot; // Alternative name for clarity
-  env.IDBOTS_ELECTRON_PATH = process.execPath;
+  env.IDBOTS_ELECTRON_PATH = app.getPath('exe');
 
   // Inject internal API base URL for skill scripts (e.g. scheduled-task creation)
   const internalApiBaseURL = getInternalApiBaseURL();

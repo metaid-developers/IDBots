@@ -203,6 +203,13 @@ export class MetabotStore {
     return row ? rowToMetabot(row) : null;
   }
 
+  /** Get MetaBot by globalmetaid (e.g. for private chat daemon: message to_global_metaid). */
+  getMetabotByGlobalMetaId(globalmetaid: string | null): Metabot | null {
+    if (!globalmetaid || typeof globalmetaid !== 'string' || !globalmetaid.trim()) return null;
+    const row = this.getOne<MetabotRow>('SELECT * FROM metabots WHERE globalmetaid = ? LIMIT 1', [globalmetaid.trim()]);
+    return row ? rowToMetabot(row) : null;
+  }
+
   createMetabot(input: MetabotInsert): Metabot {
     const now = Date.now();
     const toolsJson = JSON.stringify(input.tools ?? []);

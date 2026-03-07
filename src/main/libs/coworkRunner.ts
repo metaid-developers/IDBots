@@ -2445,6 +2445,8 @@ export class CoworkRunner extends EventEmitter {
 
     const claudeCodePath = getClaudeCodePath();
     const envVars = await getEnhancedEnvWithTmpdir(cwd, 'local');
+    // So the SDK's forked process uses the correct Electron exe on Windows (avoids process.execPath returning e.g. lDBots.exe)
+    envVars.IDBOTS_ELECTRON_PATH = app.getPath('exe');
     const skillEnvOverrides = await this.getSkillSessionEnvOverrides?.(sessionId);
     if (skillEnvOverrides && Object.keys(skillEnvOverrides).length > 0) {
       Object.assign(envVars, skillEnvOverrides);

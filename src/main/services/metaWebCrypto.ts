@@ -1,10 +1,12 @@
 /**
- * Crypto helpers for MetaWeb listener: group AES decrypt/encrypt, private ECDH decrypt.
+ * Crypto helpers for MetaWeb listener: group AES decrypt/encrypt, private ECDH decrypt/encrypt.
  * Group encrypt/decrypt must match reference: Dev-docs/reference_scripts/metabot-chat/scripts/crypto.ts
  * Key = first 16 characters of groupId; AES-CBC, iv 0000000000000000, PKCS7; output hex (base64-decoded cipher as hex).
+ * Private chat: ECDH P-256 shared secret + AES (same as SendChatMessageCommand _privateEncrypt).
  */
 
-import { enc, AES, mode, pad } from 'crypto-js';
+import * as nodeCrypto from 'crypto';
+import CryptoJS, { enc, AES, mode, pad } from 'crypto-js';
 
 const Utf8 = enc.Utf8;
 const iv = Utf8.parse('0000000000000000');
@@ -86,16 +88,73 @@ export function encryptGroupMessage(message: string, secretKeyStr: string): stri
 }
 
 /**
- * Decrypt private chat message (AES with ECDH shared secret).
- * @param cipherText - Base64 cipher text
- * @param sharedSecret - Hex shared secret from ECDH
- * @returns Decrypted plain text
+ * Compute ECDH shared secret (P-256) for private chat. Same curve as chat key derivation.
+ * @param privateKey32 - 32-byte private key (from getPrivateKeyBufferForEcdh)
+ * @param peerPublicKeyHex - Peer's chat public key, uncompressed hex (04 + x + y)
+ * @returns Shared secret as hex string
  */
+export function computeEcdhSharedSecret(privateKey32: Buffer, peerPublicKeyHex: string): string {
+  const ecdh = nodeCrypto.createECDH('prime256v1');
+  ecdh.setPrivateKey(privateKey32);
+  const secret = ecdh.computeSecret(Buffer.from(peerPublicKeyHex, 'hex'));
+  return secret.toString('hex');
+}
+
+/**
+ * Private chat: match SendChatMessageCommand _privateEncrypt / simple-talk _privateDecrypt.
+ * _privateEncrypt(message, sharedSecret) = AES.encrypt(String(message), String(sharedSecret)).toString() -> Base64 Salted__.
+ * _privateDecrypt(message, secretKey) = AES.decrypt(String(message), String(secretKey)).
+ * Alternative (file path): _privateEncryptHexFile uses enc.Hex.parse(sharedSecretHex), CBC, iv '0000000000000000'.
+ */
+const PRIVATE_CHAT_IV = Utf8.parse('0000000000000000');
+
 export function ecdhDecrypt(cipherText: string, sharedSecret: string): string {
+  const secretStr = String(sharedSecret ?? '').trim();
+  const isHex64 = secretStr.length === 64 && /^[0-9a-fA-F]+$/.test(secretStr);
+
+  if (isHex64 && cipherText && !cipherText.startsWith('U2FsdGVkX1')) {
+    try {
+      const key = enc.Hex.parse(secretStr);
+      const bytes = AES.decrypt(cipherText, key, {
+        iv: PRIVATE_CHAT_IV,
+        mode: mode.CBC,
+        padding: pad.Pkcs7,
+      });
+      const out = bytes.toString(Utf8);
+      if (out) return out;
+    } catch {
+      // fall through
+    }
+  }
+
   try {
-    const bytes = AES.decrypt(cipherText, sharedSecret);
+    const bytes = AES.decrypt(cipherText, secretStr);
     return bytes.toString(Utf8) || cipherText;
   } catch {
     return cipherText;
   }
+}
+
+/**
+ * Fixed salt so that encrypt("hello", sharedSecret) is deterministic and matches wallet output
+ * when the same ECDH shared secret is used (same mnemonic path and peer chat pubkey).
+ * Salt from known-good OpenSSL ciphertext for compatibility.
+ */
+const PRIVATE_CHAT_SALT = (CryptoJS.lib.WordArray as { create: (words: number[], sigBytes?: number) => CryptoJS.lib.WordArray }).create(
+  [180470613, 109027952],
+  8
+);
+
+/**
+ * Encrypt: OpenSSL passphrase mode with fixed salt (deterministic). Same as SendChatMessageCommand
+ * _privateEncrypt but with fixed salt so output matches wallet for same shared secret.
+ */
+export function ecdhEncrypt(plaintext: string, sharedSecretHex: string): string {
+  const cipherParams = (CryptoJS.lib.PasswordBasedCipher as {
+    encrypt: (cipher: unknown, message: CryptoJS.lib.WordArray, password: string, cfg: { salt: CryptoJS.lib.WordArray; format: unknown }) => CryptoJS.lib.CipherParams;
+  }).encrypt(CryptoJS.algo.AES, CryptoJS.enc.Utf8.parse(String(plaintext ?? '')), String(sharedSecretHex ?? ''), {
+    salt: PRIVATE_CHAT_SALT,
+    format: CryptoJS.format.OpenSSL,
+  });
+  return cipherParams.toString();
 }
