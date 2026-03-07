@@ -1,0 +1,100 @@
+name: Build/Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            build_args: --mac
+          - os: ubuntu-latest
+            build_args: --linux
+          - os: windows-latest
+            build_args: --win --x64
+
+    steps:
+      # Windows: 必须在 checkout 之前启用长路径，否则 git 操作可能被截断
+      - name: Enable Git long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 获取完整历史和所有标签
+          # electron-builder 在 publish 时需要访问 git 标签来确定版本和发布信息
+          fetch-depth: 0
+          submodules: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build renderer (Vite)
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run compile:electron
+
+      - name: Build web-search skill
+        run: npm run build:skill:web-search
+
+      # Windows: 下载捆绑的 PortableGit
+      - name: Setup MinGit (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/setup-mingit.js
+
+      # 非 Windows: 创建 mingit 占位目录，避免 electron-builder 报"file source doesn't exist"错误
+      - name: Create mingit placeholder (non-Windows)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: mkdir -p resources/mingit
+
+      # 当 CSC_LINK Secret 未配置时，禁用自动签名
+      - name: Configure code signing
+        shell: bash
+        run: |
+          if [ -n "${SECRET_CSC_LINK}" ]; then
+            echo "CSC_LINK=${SECRET_CSC_LINK}" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=${SECRET_CSC_KEY_PASSWORD}" >> "$GITHUB_ENV"
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          fi
+        env:
+          SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
+          SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Build and publish Electron app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >
+          npx electron-builder ${{ matrix.build_args }}
+          --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+
+      # 无论构建成功与否，上传产物供调试（保留 7 天）
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: release/
+          if-no-files-found: ignore
+          retention-days: 7
