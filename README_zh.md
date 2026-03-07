@@ -73,6 +73,20 @@ IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链
 
 ---
 
+## 下载
+
+预构建安装包发布在 [GitHub Releases](https://github.com/metaid-developers/IDBots/releases)：**Windows**（.exe）与 **macOS**（.dmg）。
+
+**macOS：** 若安装后提示「IDBots 已损坏」，说明当前为未签名/未公证构建。可先去除隔离属性后重试：
+
+```bash
+xattr -cr /Applications/IDBots.app
+```
+
+或右键应用 → **打开**（仅首次需如此）。
+
+---
+
 ## 开发说明
 
 - **环境要求：** Node.js >= 24 &lt; 25，npm  

@@ -73,35 +73,25 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-windows, build-mac]
     steps:
-      - name: Download Windows artifact
+      - name: Download all release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-release
-
-      - name: Download Mac artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mac-release
+          pattern: '*-release'
+          merge-multiple: true
+          path: release-downloads
 
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          # Try both flat and nested paths (upload-artifact may preserve or strip 'release/')
-          (cp windows-release/*.exe release-assets/ 2>/dev/null || cp windows-release/release/*.exe release-assets/ 2>/dev/null) || true
-          (cp mac-release/*.dmg release-assets/ 2>/dev/null || cp mac-release/release/*.dmg release-assets/ 2>/dev/null) || true
-          # Fallback: find anywhere under artifact dirs
-          find . -path './windows-release*' -name '*.exe' -exec cp {} release-assets/ ';'
-          find . -path './mac-release*' -name '*.dmg' -exec cp {} release-assets/ ';'
+          # Copy from merged dir (flat or any depth)
+          find release-downloads -maxdepth 5 -name '*.exe' -exec cp {} release-assets/ ';'
+          find release-downloads -maxdepth 5 -name '*.dmg' -exec cp {} release-assets/ ';'
+          echo '--- release-downloads (merged artifacts) ---'
+          find release-downloads -type f
           echo '--- release-assets ---'
           ls -la release-assets
-          echo '--- windows-release ---'
-          ls -la windows-release 2>/dev/null || true
-          ls -la windows-release/release 2>/dev/null || true
-          echo '--- mac-release ---'
-          ls -la mac-release 2>/dev/null || true
-          ls -la mac-release/release 2>/dev/null || true
           if [ -z "$(ls -A release-assets 2>/dev/null)" ]; then
-            echo 'ERROR: release-assets is empty'
+            echo 'ERROR: no .exe or .dmg found under release-downloads'
             exit 1
           fi
 

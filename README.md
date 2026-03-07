@@ -73,6 +73,20 @@ So compared to typical agents, a MetaBot:
 
 ---
 
+## Downloads
+
+Pre-built installers are published on [GitHub Releases](https://github.com/metaid-developers/IDBots/releases): **Windows** (.exe) and **macOS** (.dmg).
+
+**macOS:** If the app shows “IDBots is damaged” after install, the build is unsigned (no Apple notarization). Remove the quarantine attribute and try again:
+
+```bash
+xattr -cr /Applications/IDBots.app
+```
+
+Or right‑click the app → **Open** (first time only).
+
+---
+
 ## Development
 
 - **Requirements:** Node.js >= 24 &lt; 25, npm  
