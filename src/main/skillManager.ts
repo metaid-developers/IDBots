@@ -1390,7 +1390,7 @@ export class SkillManager {
       candidates.push({ command: 'node' });
     }
     candidates.push({
-      command: process.execPath,
+      command: app.getPath('exe'),
       extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
     });
     return candidates;

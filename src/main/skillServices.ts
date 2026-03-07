@@ -63,7 +63,9 @@ function buildSkillServiceEnv(): Record<string, string | undefined> {
 
   // Expose Electron executable so skill scripts can run JS with ELECTRON_RUN_AS_NODE
   // even when system Node.js is not installed.
-  env.IDBOTS_ELECTRON_PATH = process.execPath;
+  // Use app.getPath('exe') instead of process.execPath to avoid wrong name on Windows
+  // (e.g. process.execPath can return "lDBots.exe" instead of "IDBots.exe").
+  env.IDBOTS_ELECTRON_PATH = app.getPath('exe');
 
   return env;
 }
@@ -144,7 +146,7 @@ export class SkillServiceManager {
     }
 
     return {
-      command: process.execPath,
+      command: app.getPath('exe'),
       args: [],
       extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
     };
@@ -264,7 +266,7 @@ export class SkillServiceManager {
     const env = {
       ...baseEnv,
       ...(runtime.extraEnv ?? {}),
-      IDBOTS_ELECTRON_PATH: process.execPath,
+      IDBOTS_ELECTRON_PATH: app.getPath('exe'),
     };
 
     // Node/Electron validates stdio streams synchronously. Use fd to avoid
@@ -285,7 +287,7 @@ export class SkillServiceManager {
     fs.writeFileSync(pidFile, child.pid!.toString());
     child.unref();
 
-    const runtimeLabel = runtime.command === process.execPath ? 'electron-node' : 'node';
+    const runtimeLabel = runtime.command === app.getPath('exe') ? 'electron-node' : 'node';
     console.log(`[SkillServices] Web Search Bridge Server starting (PID: ${child.pid}, runtime: ${runtimeLabel})`);
     console.log(`[SkillServices] Logs: ${logFile}`);
   }
