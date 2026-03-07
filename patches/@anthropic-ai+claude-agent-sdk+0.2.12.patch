@@ -1,33 +1,18 @@
 diff --git a/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs b/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
-index 8ded89c..2f3d9be 100755
+index 8ded89c..6be38ff 100644
 --- a/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 +++ b/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
-@@ -6529,7 +6529,7 @@ function createAbortController(maxListeners = DEFAULT_MAX_LISTENERS) {
- }
- 
- // ../src/transport/ProcessTransport.ts
--import { spawn } from "child_process";
-+import { fork } from "child_process";
- import { createInterface } from "readline";
- 
- // ../src/utils/fsOperations.ts
-@@ -7589,14 +7589,15 @@ class ProcessTransport {
-     return isRunningWithBun() ? "bun" : "node";
-   }
+@@ -7591,7 +7591,12 @@ class ProcessTransport {
    spawnLocalProcess(spawnOptions) {
--    const { command, args, cwd: cwd2, env, signal } = spawnOptions;
-+    const { args, cwd: cwd2, env, signal } = spawnOptions;
+     const { command, args, cwd: cwd2, env, signal } = spawnOptions;
      const stderrMode = env.DEBUG_CLAUDE_AGENT_SDK || this.options.stderr ? "pipe" : "ignore";
 -    const childProcess = spawn(command, args, {
-+    logForSdkDebugging(`Forking Claude Code Node.js process: ${args[0]} ${args.slice(1).join(" ")}`);
-+    const childProcess = fork(args[0], args.slice(1), {
++    const electronPath = env.IDBOTS_ELECTRON_PATH || process.env.IDBOTS_ELECTRON_PATH;
++    const electronRunAsNode = env.ELECTRON_RUN_AS_NODE === "1" || env.ELECTRON_RUN_AS_NODE === "true";
++    const isDefaultRuntime = command === "node" || command === "bun";
++    const resolvedCommand = isDefaultRuntime && electronPath && electronRunAsNode ? electronPath : command;
++    logForSdkDebugging(`Spawning Claude Code Node.js process: ${resolvedCommand} ${args.join(" ")}`);
++    const childProcess = spawn(resolvedCommand, args, {
        cwd: cwd2,
--      stdio: ["pipe", "pipe", stderrMode],
-+      stdio: stderrMode === "pipe" ? ["pipe", "pipe", "pipe", "ipc"] : ["pipe", "pipe", "ignore", "ipc"],
+       stdio: ["pipe", "pipe", stderrMode],
        signal,
-       env,
--      windowsHide: true
-+      execPath: process.env.IDBOTS_ELECTRON_PATH || process.execPath
-     });
-     if (env.DEBUG_CLAUDE_AGENT_SDK || this.options.stderr) {
-       childProcess.stderr.on("data", (data) => {
