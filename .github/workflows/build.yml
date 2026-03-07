@@ -7,6 +7,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write  # 允许创建 GitHub Release 和上传 Release 附件
+
 jobs:
   release:
     runs-on: ${{ matrix.os }}
