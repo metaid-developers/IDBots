@@ -86,17 +86,32 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find . -name '*.exe' -path '*/windows-release*' -exec cp {} release-assets/ ';'
-          find . -name '*.dmg' -path '*/mac-release*' -exec cp {} release-assets/ ';'
+          # Try both flat and nested paths (upload-artifact may preserve or strip 'release/')
+          (cp windows-release/*.exe release-assets/ 2>/dev/null || cp windows-release/release/*.exe release-assets/ 2>/dev/null) || true
+          (cp mac-release/*.dmg release-assets/ 2>/dev/null || cp mac-release/release/*.dmg release-assets/ 2>/dev/null) || true
+          # Fallback: find anywhere under artifact dirs
+          find . -path './windows-release*' -name '*.exe' -exec cp {} release-assets/ ';'
+          find . -path './mac-release*' -name '*.dmg' -exec cp {} release-assets/ ';'
+          echo '--- release-assets ---'
           ls -la release-assets
+          echo '--- windows-release ---'
+          ls -la windows-release 2>/dev/null || true
+          ls -la windows-release/release 2>/dev/null || true
+          echo '--- mac-release ---'
+          ls -la mac-release 2>/dev/null || true
+          ls -la mac-release/release 2>/dev/null || true
+          if [ -z "$(ls -A release-assets 2>/dev/null)" ]; then
+            echo 'ERROR: release-assets is empty'
+            exit 1
+          fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release-assets/*.exe
-            release-assets/*.dmg
-          fail_on_unmatched_files: true
-          generate_release_notes: true
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG" &>/dev/null; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* --generate-notes
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
