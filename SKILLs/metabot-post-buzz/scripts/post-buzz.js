@@ -14,6 +14,10 @@ const util_1 = require("util");
 function writeStderr(message) {
     process.stderr.write(message + '\n');
 }
+function extractRpcField(record, key) {
+    const value = record[key];
+    return typeof value === 'string' ? value.trim() : '';
+}
 const USAGE = 'Usage: node post-buzz.js --content "<content>" [--content-type "<mime-type>"]';
 function main() {
     const { values, positionals } = (0, util_1.parseArgs)({
@@ -89,12 +93,51 @@ function main() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
+            const rawText = await res.text();
+            let parsed = null;
+            if (rawText.trim()) {
+                try {
+                    const maybe = JSON.parse(rawText);
+                    parsed = maybe && typeof maybe === 'object'
+                        ? maybe
+                        : null;
+                }
+                catch {
+                    parsed = null;
+                }
+            }
             if (!res.ok) {
-                const text = await res.text();
-                writeStderr(`HTTP ${res.status}: ${text}`);
+                writeStderr(`HTTP ${res.status}: ${rawText}`);
                 process.exit(1);
             }
-            // Success: silent exit 0 (same as curl -s)
+            if (parsed && parsed.success === false) {
+                const errorText = extractRpcField(parsed, 'error') || 'Unknown RPC error';
+                writeStderr(`RPC request failed: ${errorText}`);
+                process.exit(1);
+            }
+            const txidFromList = parsed && Array.isArray(parsed.txids) && typeof parsed.txids[0] === 'string'
+                ? String(parsed.txids[0]).trim()
+                : '';
+            const txid = parsed ? (extractRpcField(parsed, 'txid') || txidFromList) : '';
+            const pinId = parsed ? (extractRpcField(parsed, 'pinId') || (txid ? `${txid}i0` : '')) : '';
+            const totalCost = parsed && typeof parsed.totalCost === 'number'
+                ? parsed.totalCost
+                : undefined;
+            const result = {
+                success: true,
+                message: pinId ? `Buzz posted: ${pinId}` : 'Buzz posted successfully.',
+            };
+            if (txid)
+                result.txid = txid;
+            if (pinId)
+                result.pinId = pinId;
+            if (typeof totalCost === 'number') {
+                result.totalCost = totalCost;
+            }
+            process.stdout.write(`${JSON.stringify(result)}\n`);
+            if (typeof totalCost === 'number') {
+                writeStderr(`Cost: ${totalCost} satoshis`);
+            }
         }
         catch (err) {
             writeStderr(err instanceof Error ? err.message : String(err));

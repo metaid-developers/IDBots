@@ -2130,6 +2130,23 @@ export class CoworkRunner extends EventEmitter {
       throw new Error(`Session ${sessionId} not found`);
     }
 
+    let persistedSystemPrompt = session.systemPrompt;
+    let persistedClaudeSessionId = session.claudeSessionId;
+    if (
+      typeof options.systemPrompt === 'string'
+      && options.systemPrompt !== session.systemPrompt
+    ) {
+      persistedSystemPrompt = options.systemPrompt;
+      persistedClaudeSessionId = null;
+      this.store.updateSession(sessionId, {
+        systemPrompt: options.systemPrompt,
+        claudeSessionId: null,
+      });
+      coworkLog('INFO', 'startSession', 'System prompt changed, reset claudeSessionId', {
+        sessionId,
+      });
+    }
+
     // Mark session as running
     this.store.updateSession(sessionId, { status: 'running' });
 
@@ -2153,7 +2170,7 @@ export class CoworkRunner extends EventEmitter {
     // Store active session
     const activeSession: ActiveSession = {
       sessionId,
-      claudeSessionId: session.claudeSessionId,
+      claudeSessionId: persistedClaudeSessionId,
       workspaceRoot: options.workspaceRoot?.trim()
         ? path.resolve(options.workspaceRoot)
         : this.inferWorkspaceRootFromSessionCwd(sessionCwd),
@@ -2181,7 +2198,7 @@ export class CoworkRunner extends EventEmitter {
       this.store.updateSession(sessionId, { cwd: sessionCwd });
     }
 
-    const baseSystemPrompt = options.systemPrompt ?? session.systemPrompt;
+    const baseSystemPrompt = options.systemPrompt ?? persistedSystemPrompt;
     const personaBlock = this.buildMetabotPersonaBlock(sessionId);
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
       baseSystemPrompt,
@@ -2229,6 +2246,21 @@ export class CoworkRunner extends EventEmitter {
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
+    let persistedSystemPrompt = session.systemPrompt;
+    if (
+      typeof options.systemPrompt === 'string'
+      && options.systemPrompt !== session.systemPrompt
+    ) {
+      persistedSystemPrompt = options.systemPrompt;
+      activeSession.claudeSessionId = null;
+      this.store.updateSession(sessionId, {
+        systemPrompt: options.systemPrompt,
+        claudeSessionId: null,
+      });
+      coworkLog('INFO', 'continueSession', 'System prompt changed, reset claudeSessionId', {
+        sessionId,
+      });
+    }
     const sessionCwd = this.resolveSessionCwdForExecution(sessionId, session.cwd, activeSession.workspaceRoot);
     if (session.cwd !== sessionCwd) {
       this.store.updateSession(sessionId, { cwd: sessionCwd });
@@ -2236,7 +2268,7 @@ export class CoworkRunner extends EventEmitter {
 
     // Use provided systemPrompt (e.g. with updated skill routing) or fall back to session's stored one.
     // Always prepend workspace safety prompt so folder boundary rules are enforced at prompt level.
-    const baseSystemPrompt = options.systemPrompt ?? session.systemPrompt;
+    const baseSystemPrompt = options.systemPrompt ?? persistedSystemPrompt;
     const personaBlock = this.buildMetabotPersonaBlock(sessionId);
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
       baseSystemPrompt,

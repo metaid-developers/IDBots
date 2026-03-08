@@ -69,6 +69,7 @@ function resolveUserShellPath(): string | null {
  * Cached git-bash path on Windows. Resolved once and reused.
  */
 let cachedGitBashPath: string | null | undefined;
+const LOCAL_NO_PROXY_HOSTS = ['localhost', '127.0.0.1', '::1', '10.0.2.2'];
 
 function normalizeWindowsPath(input: string | undefined): string | null {
   if (!input) return null;
@@ -79,6 +80,34 @@ function normalizeWindowsPath(input: string | undefined): string | null {
   if (!unquoted) return null;
 
   return unquoted.replace(/\//g, '\\');
+}
+
+function mergeNoProxyList(
+  current: string | undefined,
+  additions: string[]
+): string {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+
+  const pushValue = (value: string): void => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(trimmed);
+  };
+
+  if (current) {
+    current
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .forEach(pushValue);
+  }
+
+  additions.forEach(pushValue);
+  return merged.join(',');
 }
 
 function listWindowsCommandPaths(command: string): string[] {
@@ -610,6 +639,13 @@ export async function getEnhancedEnv(target: OpenAICompatProxyTarget = 'local'):
   if (internalApiBaseURL) {
     env.IDBOTS_API_BASE_URL = internalApiBaseURL;
   }
+
+  const mergedNoProxy = mergeNoProxyList(
+    env.NO_PROXY || env.no_proxy,
+    LOCAL_NO_PROXY_HOSTS
+  );
+  env.NO_PROXY = mergedNoProxy;
+  env.no_proxy = mergedNoProxy;
 
   // Skip system proxy resolution if proxy env vars already exist
   if (env.http_proxy || env.HTTP_PROXY || env.https_proxy || env.HTTPS_PROXY) {
