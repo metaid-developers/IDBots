@@ -248,7 +248,7 @@ const BASH_TOOL: OpenAITool = {
   type: 'function',
   function: {
     name: 'Bash',
-    description: 'Run a shell command. Use to run skill scripts (e.g. npx ts-node <skill_dir>/scripts/xxx.ts --key value). Commands run with cwd = SKILLs root and have SKILLS_ROOT, IDBOTS_METABOT_ID set.',
+    description: 'Run a shell command. Use to run skill scripts (e.g. node <skill_dir>/scripts/xxx.ts --key value). Commands run with cwd = SKILLs root and have SKILLS_ROOT, IDBOTS_METABOT_ID set.',
     parameters: {
       type: 'object',
       properties: {

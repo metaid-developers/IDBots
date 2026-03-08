@@ -1,14 +1,14 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env node
 /**
  * MetaBot Omni-Reader: Configuration-driven chain data reader.
  * Loads api_registry.json, fetches from registered endpoints, and sanitizes output for the agent.
  *
  * Usage (list APIs):
- *   npx ts-node omni-reader.ts --list
+ *   node omni-reader.ts --list
  *
  * Usage (fetch data):
- *   npx ts-node omni-reader.ts --query-type buzz_newest --size 10
- *   npx ts-node omni-reader.ts --query-type protocol_list --path "/protocols/metabot-skill" --size 5
+ *   node omni-reader.ts --query-type buzz_newest --size 10
+ *   node omni-reader.ts --query-type protocol_list --path "/protocols/metabot-skill" --size 5
  */
 
 import { parseArgs } from 'util';

@@ -2794,7 +2794,8 @@ export class CoworkRunner extends EventEmitter {
       return;
     }
     const config = this.store.getConfig();
-    const executionMode: CoworkExecutionMode = config.executionMode || 'local';
+    const sessionExecutionMode = this.store.getSession(sessionId)?.executionMode;
+    const executionMode: CoworkExecutionMode = sessionExecutionMode || config.executionMode || 'local';
     const resolvedCwd = path.resolve(cwd);
 
     if (!fs.existsSync(resolvedCwd)) {

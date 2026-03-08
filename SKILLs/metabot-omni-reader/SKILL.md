@@ -19,12 +19,12 @@ When you need on-chain data to answer the user, follow these steps:
 
 **1. List available APIs (Discovery):**
 ```bash
-npx ts-node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.ts" --list
+node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.ts" --list
 ```
 
 **2. Fetch on-chain data:**
 ```bash
-npx ts-node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.ts" \
+node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.ts" \
   --query-type "<key from --list>" \
   [--size <count>] \
   [--path "<protocol path>"] \

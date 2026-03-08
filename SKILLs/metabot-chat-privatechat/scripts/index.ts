@@ -1,4 +1,4 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env node
 
 import { parseArgs } from 'util';
 import fs from 'fs';
@@ -27,7 +27,7 @@ function parsePayloadRaw(): string {
 
   if (values.help) {
     process.stderr.write(
-      'Usage: npx ts-node index.ts --payload "{\"to\":\"idq...\",\"content\":\"hello\"}"\n'
+      'Usage: node index.ts --payload "{\"to\":\"idq...\",\"content\":\"hello\"}"\n'
     );
     process.exit(0);
   }

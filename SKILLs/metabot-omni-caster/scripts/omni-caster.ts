@@ -1,14 +1,14 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env node
 /**
  * MetaBot Omni-Caster: Universal MetaID protocol gateway.
  * Accepts path and payload from CLI, builds MetaID 7-tuple, and sends to local RPC.
  * Supports both JSON/text payloads and binary file uploads.
  *
  * Usage (JSON protocol):
- *   IDBOTS_METABOT_ID=1 npx ts-node omni-caster.ts --path "/protocols/paylike" --payload '{"isLike":1,"likeTo":"..."}'
+ *   IDBOTS_METABOT_ID=1 node omni-caster.ts --path "/protocols/paylike" --payload '{"isLike":1,"likeTo":"..."}'
  *
  * Usage (binary file upload):
- *   IDBOTS_METABOT_ID=1 npx ts-node omni-caster.ts --path "/file" --payload-file ./image.png --content-type image/png
+ *   IDBOTS_METABOT_ID=1 node omni-caster.ts --path "/file" --payload-file ./image.png --content-type image/png
  */
 
 import { parseArgs } from 'util';
@@ -27,6 +27,7 @@ interface ParsedArgs {
   operation?: string;
   'content-type'?: string;
   encoding?: string;
+  help?: boolean;
 }
 
 /** Infer MIME type from file extension. */
@@ -49,7 +50,7 @@ function inferContentType(filePath: string): string {
 }
 
 async function main(): Promise<void> {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: {
       path: { type: 'string', short: 'p' },
       payload: { type: 'string' },
@@ -57,11 +58,27 @@ async function main(): Promise<void> {
       operation: { type: 'string', short: 'o' },
       'content-type': { type: 'string', short: 'c' },
       encoding: { type: 'string', short: 'e' },
+      help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: true,
   });
 
   const args = values as ParsedArgs;
+
+  if (args.help) {
+    console.error(
+      'Usage: node omni-caster.ts --path "<protocol-path>" (--payload \'<json-or-text>\' | --payload-file <file>)'
+      + ' [--operation <create|modify|revoke>] [--content-type <mime>] [--encoding <utf-8|base64>]'
+    );
+    process.exit(0);
+  }
+
+  for (const positional of positionals) {
+    if (positional.startsWith('-')) {
+      console.error(`Unknown option: ${positional}`);
+      process.exit(1);
+    }
+  }
 
   // Environment validation
   const metabotIdStr = process.env.IDBOTS_METABOT_ID;

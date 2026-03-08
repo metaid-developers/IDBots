@@ -690,6 +690,25 @@ export class SkillManager {
 
   constructor(private getStore: () => SqliteStore) {}
 
+  private getSkillIdCandidates(skillId: string): string[] {
+    const trimmed = String(skillId || '').trim();
+    if (!trimmed) return [];
+    return Array.from(new Set([
+      trimmed,
+      trimmed.replace(/_/g, '-'),
+      trimmed.replace(/-/g, '_'),
+    ]));
+  }
+
+  private resolveSkillById(skillId: string, skills: SkillRecord[] = this.listSkills()): SkillRecord | null {
+    const candidates = this.getSkillIdCandidates(skillId);
+    for (const candidate of candidates) {
+      const match = skills.find((s) => s.id === candidate);
+      if (match) return match;
+    }
+    return null;
+  }
+
   getSkillsRoot(): string {
     const envOverride = process.env.IDBOTS_SKILLS_ROOT?.trim() || process.env.SKILLS_ROOT?.trim();
     if (envOverride) {
@@ -819,7 +838,11 @@ export class SkillManager {
    */
   buildAutoRoutingPromptForSkillIds(skillIds: string[]): string | null {
     if (skillIds.length === 0) return null;
-    const set = new Set(skillIds.map((id) => id.trim()).filter(Boolean));
+    const set = new Set(
+      skillIds
+        .flatMap((id) => this.getSkillIdCandidates(id))
+        .filter(Boolean)
+    );
     const skills = this.listSkills().filter((s) => set.has(s.id));
     if (skills.length === 0) return null;
 
@@ -849,7 +872,9 @@ export class SkillManager {
 
   setSkillEnabled(id: string, enabled: boolean): SkillRecord[] {
     const state = this.loadSkillStateMap();
-    state[id] = { enabled };
+    const resolved = this.resolveSkillById(id);
+    const targetId = resolved?.id || id;
+    state[targetId] = { enabled };
     this.saveSkillStateMap(state);
     this.notifySkillsChanged();
     return this.listSkills();
@@ -861,7 +886,11 @@ export class SkillManager {
    */
   getSkillsForIds(ids: string[]): SkillRecord[] {
     if (ids.length === 0) return [];
-    const set = new Set(ids.map((id) => id.trim()).filter(Boolean));
+    const set = new Set(
+      ids
+        .flatMap((id) => this.getSkillIdCandidates(id))
+        .filter(Boolean)
+    );
     return this.listSkills().filter((s) => set.has(s.id));
   }
 
@@ -877,7 +906,7 @@ export class SkillManager {
     context?: { metabotId?: number }
   ): Promise<{ success: boolean; observation: string }> {
     const skills = this.listSkills();
-    const skill = skills.find((s) => s.id === skillId);
+    const skill = this.resolveSkillById(skillId, skills);
     if (!skill) {
       return { success: false, observation: `Skill not found: ${skillId}` };
     }
@@ -981,20 +1010,7 @@ export class SkillManager {
     }
 
     const timeoutMs = 60_000;
-    const isTs = scriptPath.endsWith('.ts');
-    let result: SkillScriptRunResult;
-
-    if (isTs) {
-      result = await runScriptWithTimeout({
-        command: 'npx',
-        args: ['ts-node', scriptPath, ...scriptArgs],
-        cwd: skillDir,
-        env,
-        timeoutMs,
-      });
-    } else {
-      result = await this.runSkillScriptWithEnv(skillDir, scriptPath, scriptArgs, env, envOverrides, timeoutMs);
-    }
+    const result = await this.runSkillScriptWithEnv(skillDir, scriptPath, scriptArgs, env, envOverrides, timeoutMs);
 
     const observation = result.success
       ? (this.parseScriptMessage(result.stdout) ?? result.stdout?.trim() ?? 'Done.')
@@ -1271,7 +1287,10 @@ export class SkillManager {
         const config = JSON.parse(raw) as SkillsConfig;
         if (config.defaults && typeof config.defaults === 'object') {
           for (const [id, settings] of Object.entries(config.defaults)) {
-            merged[id] = { ...merged[id], ...settings };
+            const ids = Array.from(new Set([id, id.replace(/_/g, '-'), id.replace(/-/g, '_')]));
+            for (const aliasId of ids) {
+              merged[aliasId] = { ...merged[aliasId], ...settings };
+            }
           }
         }
       } catch (error) {
@@ -1407,8 +1426,7 @@ export class SkillManager {
   }
 
   private resolveSkillDir(skillId: string): string {
-    const skills = this.listSkills();
-    const skill = skills.find(s => s.id === skillId);
+    const skill = this.resolveSkillById(skillId);
     if (!skill) {
       throw new Error('Skill not found');
     }

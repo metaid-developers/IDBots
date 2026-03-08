@@ -12,6 +12,7 @@ import fs from 'fs';
 import { app } from 'electron';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
+import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -99,6 +100,7 @@ export async function createPin(
     Buffer.isBuffer(metaidData.payload) ? 'base64' : (metaidData.encoding ?? 'utf-8');
 
   const payloadStr = JSON.stringify({
+    feeRate: options?.feeRate ?? 1,
     metaidData: {
       ...metaidData,
       payload: serializedPayload,
@@ -106,13 +108,33 @@ export async function createPin(
     },
   });
 
-  // Use Electron's exe path so Windows/macOS get correct binary (e.g. IDBots.exe, not lDBots.exe)
-  const electronExe = app.getPath('exe');
+  // Use robust Electron executable resolution; some Windows installs can report
+  // inconsistent process/app paths during first-run/update windows.
+  const electronExe = resolveElectronExecutablePath();
+  if (!electronExe || !fs.existsSync(electronExe)) {
+    appendMetaidLog('ERROR', 'Electron executable not found for createPin worker', {
+      electronExe,
+      appExe: (() => {
+        try {
+          return app.getPath('exe');
+        } catch {
+          return null;
+        }
+      })(),
+      processExecPath: process.execPath,
+    });
+    throw new Error(`Electron executable not found: ${electronExe || '(empty)'}`);
+  }
+
+  // Never use app.getAppPath() as cwd in packaged mode (it may be app.asar file).
+  // A file cwd makes spawn fail with ENOENT/ENOTDIR on Windows first-run paths.
+  const spawnCwd = app.getPath('userData');
   return new Promise((resolve, reject) => {
     const child = spawn(electronExe, [workerPath], {
-      cwd: appPath,
+      cwd: spawnCwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
 
     let stdout = '';

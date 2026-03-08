@@ -1,4 +1,4 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env node
 /**
  * IDBots metabot-post-buzz: Send SimpleBuzz to MetaWeb via local RPC gateway.
  * Cross-platform TypeScript replacement for post-buzz.sh.
@@ -6,7 +6,7 @@
  * Requires: Node.js 18+ (for fetch). Env: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).
  *
  * Usage:
- *   npx ts-node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]
+ *   node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]
  */
 
 import { parseArgs } from 'util';
@@ -16,7 +16,7 @@ function writeStderr(message: string): void {
 }
 
 const USAGE =
-  'Usage: npx ts-node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]';
+  'Usage: node post-buzz.ts --content "<content>" [--content-type "<mime-type>"]';
 
 function main(): void {
   const { values, positionals } = parseArgs({

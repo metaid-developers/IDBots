@@ -1,4 +1,4 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env node
 
 import { parseArgs } from 'util';
 import * as nodeCrypto from 'crypto';
@@ -269,7 +269,7 @@ function parseCli(): {
 
   if (values.help) {
     process.stderr.write(
-      'Usage: npx ts-node send-privatechat.ts --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]\n'
+      'Usage: node send-privatechat.ts --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]\n'
     );
     process.exit(0);
   }

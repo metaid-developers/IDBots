@@ -233,13 +233,23 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     setSyncStatus('syncing');
     setSyncError('');
     try {
-      const result = await window.electron.idbots.syncMetaBot(createSuccessModal.metabot.id);
+      const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const SYNC_RETRY_DELAY_MS = 2500;
+      let result = await window.electron.idbots.syncMetaBot(createSuccessModal.metabot.id);
+      if (!result.success) {
+        await delay(SYNC_RETRY_DELAY_MS);
+        result = await window.electron.idbots.syncMetaBot(createSuccessModal.metabot.id);
+      }
       if (result.success) {
         setSyncStatus('success');
         await loadList();
       } else {
         setSyncStatus('error');
-        setSyncError(result.error ?? 'Unknown error');
+        if (result.canSkip && (result.txids?.length ?? 0) > 0) {
+          setSyncError(`${result.error ?? 'Unknown error'} (txids: ${result.txids?.length ?? 0})`);
+        } else {
+          setSyncError(result.error ?? 'Unknown error');
+        }
       }
     } catch (err) {
       setSyncStatus('error');

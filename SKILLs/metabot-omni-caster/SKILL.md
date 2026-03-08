@@ -25,7 +25,7 @@ official: true
 
 **JSON/文本协议：**
 ```bash
-npx ts-node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
+node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
   --path "<协议的逻辑路径>" \
   --payload '<JSON 字符串或文本内容>' \
   [--operation "<操作类型>"] \
@@ -34,7 +34,7 @@ npx ts-node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
 
 **文件（二进制）上链：**
 ```bash
-npx ts-node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
+node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
   --path "/file" \
   --payload-file <本地文件路径> \
   [--content-type "<MIME 类型>"]

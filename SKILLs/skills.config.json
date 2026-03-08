@@ -2,7 +2,7 @@
   "version": 1,
   "description": "Default skill configuration for IDBots",
   "defaults": {
-    "metabot-post_buzz": {
+    "metabot-post-buzz": {
       "order": 5,
       "version": "1.0.1",
       "creator-metaid": "",

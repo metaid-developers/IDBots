@@ -592,13 +592,19 @@ const getCoworkRunner = () => {
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
         const skillIds = session?.activeSkillIds ?? [];
+        const normalizedSkillIds = new Set(
+          skillIds
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)
+            .flatMap((id) => [id, id.replace(/_/g, '-'), id.replace(/-/g, '_')])
+        );
         // Inject MetaBot wallet when on-chain skills are selected, or when no skills selected (default)
         const shouldInject =
           skillIds.length === 0 ||
-          skillIds.includes('metabot-basic') ||
-          skillIds.includes('metabot-post-buzz') ||
-          skillIds.includes('metabot-omni-caster') ||
-          skillIds.includes('metabot-chat-privatechat');
+          normalizedSkillIds.has('metabot-basic') ||
+          normalizedSkillIds.has('metabot-post-buzz') ||
+          normalizedSkillIds.has('metabot-omni-caster') ||
+          normalizedSkillIds.has('metabot-chat-privatechat');
         if (!shouldInject) return {};
         const metabotStore = getMetabotStore();
         // Prefer session's selected MetaBot; fall back to Twin for legacy sessions without metabotId

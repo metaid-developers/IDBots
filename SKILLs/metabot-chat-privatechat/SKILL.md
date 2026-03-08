@@ -14,7 +14,7 @@ official: true
 ## 命令 (Command)
 
 ```bash
-npx ts-node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]
+node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]
 ```
 
 ## 参数说明
@@ -41,7 +41,7 @@ npx ts-node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" 
 ## 示例
 
 ```bash
-npx ts-node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" \
+node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" \
   --to "idq1zfazvxaq69uw6txe3ewce30ewyhy9a7mzykgv0" \
   --content "hello"
 ```
