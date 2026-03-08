@@ -2,49 +2,54 @@
 name: weather
 description: Get current weather and forecasts (no API key required).
 homepage: https://wttr.in/:help
-metadata: {"clawdbot":{"emoji":"🌤️","requires":{"bins":["curl"]}}}
+metadata: {"clawdbot":{"emoji":"🌤️","requires":{"bins":["node"]}}}
 official: true
 ---
 
 # Weather
 
-Two free services, no API keys needed.
+Cross-platform weather queries (no API keys required).
 
-## wttr.in (primary)
+## Preferred command (cross-platform)
 
-Quick one-liner:
 ```bash
-curl -s "wttr.in/London?format=3"
-# Output: London: ⛅️ +8°C
+node "$SKILLS_ROOT/weather/scripts/index.js" --city "London"
 ```
 
-Compact format:
+## Common examples
+
 ```bash
-curl -s "wttr.in/London?format=%l:+%c+%t+%h+%w"
-# Output: London: ⛅️ +8°C 71% ↙5km/h
+node "$SKILLS_ROOT/weather/scripts/index.js" --city "New York" --format compact
 ```
 
-Full forecast:
 ```bash
-curl -s "wttr.in/London?T"
+node "$SKILLS_ROOT/weather/scripts/index.js" --city "Tokyo" --format forecast
 ```
 
-Format codes: `%c` condition · `%t` temp · `%h` humidity · `%w` wind · `%l` location · `%m` moon
-
-Tips:
-- URL-encode spaces: `wttr.in/New+York`
-- Airport codes: `wttr.in/JFK`
-- Units: `?m` (metric) `?u` (USCS)
-- Today only: `?1` · Current only: `?0`
-- PNG: `curl -s "wttr.in/Berlin.png" -o /tmp/weather.png`
-
-## Open-Meteo (fallback, JSON)
-
-Free, no key, good for programmatic use:
 ```bash
-curl -s "https://api.open-meteo.com/v1/forecast?latitude=51.5&longitude=-0.12&current_weather=true"
+node "$SKILLS_ROOT/weather/scripts/index.js" --lat 51.5 --lon -0.12
 ```
 
-Find coordinates for a city, then query. Returns JSON with temp, windspeed, weathercode.
+```bash
+node "$SKILLS_ROOT/weather/scripts/index.js" --city "San Francisco" --provider open-meteo --units us
+```
+
+## Notes
+
+- Default provider is `wttr` and it auto-falls back to Open-Meteo if wttr.in is unreachable.
+- `--format` supports `current` (default), `compact`, and `forecast`.
+- `--units` supports `metric` (default) and `us`.
+- Use `--help` for all options.
+- If location is missing, command fails with explicit guidance.
+
+## Raw curl fallback (optional)
+
+If you need direct curl calls:
+
+```bash
+curl -s "https://wttr.in/London?format=3&m"
+curl -s "https://wttr.in/London?format=%l:+%c+%t+%h+%w&m"
+curl -s "https://api.open-meteo.com/v1/forecast?latitude=51.5&longitude=-0.12&current=temperature_2m,weather_code"
+```
 
 Docs: https://open-meteo.com/en/docs

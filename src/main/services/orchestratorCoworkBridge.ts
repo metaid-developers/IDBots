@@ -111,8 +111,8 @@ export function runOrchestratorSkillTurn(
       fail(`Skill turn timed out after ${SKILL_TURN_TIMEOUT_MS / 1000}s`);
     }, SKILL_TURN_TIMEOUT_MS);
 
-    runner.once('complete', onComplete);
-    runner.once('error', onError);
+    runner.on('complete', onComplete);
+    runner.on('error', onError);
 
     console.log('[Orchestrator] [Bridge] Calling runner.startSession sessionId=', sessionId);
     runner
