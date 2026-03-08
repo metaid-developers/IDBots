@@ -54,6 +54,48 @@ const SANDBOX_WORKSPACE_GUEST_ROOT = '/workspace/project';
 const SANDBOX_WORKSPACE_LEGACY_ROOT = '/workspace';
 const SAFE_ATTACHMENT_PROMPT_LABEL = '附件路径';
 const ATTACHMENT_LINE_RE = /^\s*(?:[-*]\s*)?(输入文件|input\s*file|附件路径|附件文件|attachment\s*path|attachment\s*file)\s*[:：]\s*(.+?)\s*$/i;
+const BINARY_ATTACHMENT_EXTENSIONS = new Set([
+  '.pdf',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.svg',
+  '.ico',
+  '.heic',
+  '.heif',
+  '.tif',
+  '.tiff',
+  '.mp3',
+  '.wav',
+  '.flac',
+  '.ogg',
+  '.m4a',
+  '.aac',
+  '.mp4',
+  '.mov',
+  '.mkv',
+  '.avi',
+  '.webm',
+  '.zip',
+  '.rar',
+  '.7z',
+  '.tar',
+  '.gz',
+  '.bz2',
+  '.xz',
+  '.doc',
+  '.docx',
+  '.ppt',
+  '.pptx',
+  '.xls',
+  '.xlsx',
+  '.odt',
+  '.ods',
+  '.odp',
+]);
 const INFERRED_FILE_REFERENCE_RE = /([^\s"'`，。！？：:；;（）()\[\]{}<>《》【】]+?\.[A-Za-z][A-Za-z0-9]{0,7})/g;
 const SANDBOX_ATTACHMENT_DIR = path.join('.cowork-temp', 'attachments');
 const LEGACY_SKILLS_ROOT_HINTS = [
@@ -251,6 +293,49 @@ function extractHostFromUrl(rawValue: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function shouldForceTextOnlyAttachmentMode(
+  anthropicBaseUrl: string | undefined,
+  anthropicModel: string | undefined
+): boolean {
+  const host = extractHostFromUrl(anthropicBaseUrl)?.toLowerCase();
+  const normalizedModel = String(anthropicModel ?? '').trim().toLowerCase();
+
+  // DeepSeek Anthropic-compatible endpoint currently rejects image/document
+  // content blocks in some flows. Force text-only file references.
+  if (host && (host === 'api.deepseek.com' || host.endsWith('.deepseek.com'))) {
+    return true;
+  }
+  return normalizedModel.startsWith('deepseek');
+}
+
+function isUnsupportedMultimodalContentError(message: string): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  if (!normalized.includes('unknown variant')) return false;
+  if (!normalized.includes('messages[') || !normalized.includes('.content')) return false;
+  return /unknown variant [`'"]?(image|document|input_image|input_document|input_file|file)[`'"]?/i.test(message);
+}
+
+function buildUnsupportedMultimodalUserHint(errorMessage: string): string {
+  const compactError = errorMessage.replace(/\s+/g, ' ').trim();
+  const briefError = compactError.length > 280
+    ? `${compactError.slice(0, 277)}...`
+    : compactError;
+  const lines = [
+    '当前模型网关不支持图片/文档类内容块（image/document）。',
+    '系统已自动降级为“文件路径文本引用”并重试，但上游仍拒绝该请求。',
+    '请改用以下方式之一：',
+    '1. 切换到支持多模态输入的模型。',
+    '2. 先将文件转换为纯文本（txt/markdown）再让助手读取。',
+    '3. 对图片/PDF先本地提取文本，再把文本发送给助手。',
+  ];
+  if (briefError) {
+    lines.push(`原始错误: ${briefError}`);
+  }
+  lines.push(`Log file: ${getCoworkLogPath()}`);
+  return lines.join('\n');
 }
 
 function mergeNoProxyList(currentValue: string | undefined, requiredHosts: string[]): string {
@@ -1123,6 +1208,56 @@ export class CoworkRunner extends EventEmitter {
       )
     );
     return normalized.join('\n');
+  }
+
+  /**
+   * Convert attachment marker lines to plain-text references.
+   * This avoids SDK/provider paths that auto-upgrade local files to image/document blocks.
+   */
+  private rewriteAttachmentLinesAsTextReferences(prompt: string): string {
+    const entries = this.parseAttachmentEntries(prompt);
+    if (entries.length === 0) {
+      return prompt;
+    }
+
+    const lines = prompt.split(/\r?\n/);
+    for (const entry of entries) {
+      const safePath = entry.rawPath.replace(/`/g, '\\`');
+      lines[entry.lineIndex] = `本地文件路径（仅文本引用） \`${safePath}\``;
+    }
+    return lines.join('\n');
+  }
+
+  private resolveToolFilePathFromInput(
+    toolInput: Record<string, unknown>,
+    cwd: string
+  ): string | null {
+    const rawCandidates = [
+      toolInput.file_path,
+      toolInput.filePath,
+      toolInput.path,
+      toolInput.uri,
+    ];
+
+    for (const candidate of rawCandidates) {
+      if (typeof candidate !== 'string' || !candidate.trim()) continue;
+      const raw = candidate.trim();
+      if (raw.startsWith('file://')) {
+        try {
+          const fromUri = new URL(raw).pathname;
+          return path.resolve(decodeURIComponent(fromUri));
+        } catch {
+          continue;
+        }
+      }
+      return this.resolveAttachmentPath(raw, cwd);
+    }
+    return null;
+  }
+
+  private isLikelyBinaryAttachmentPath(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    return ext ? BINARY_ATTACHMENT_EXTENSIONS.has(ext) : false;
   }
 
   private resolveAttachmentPath(inputPath: string, cwd: string): string {
@@ -2547,6 +2682,33 @@ export class CoworkRunner extends EventEmitter {
       return;
     }
 
+    const forceTextOnlyAttachments = shouldForceTextOnlyAttachmentMode(
+      envVars.ANTHROPIC_BASE_URL,
+      envVars.ANTHROPIC_MODEL
+    );
+    const promptAttachmentPaths = new Set<string>();
+    if (forceTextOnlyAttachments) {
+      const attachmentEntries = this.parseAttachmentEntries(prompt);
+      for (const entry of attachmentEntries) {
+        const resolved = this.resolveAttachmentPath(entry.rawPath, cwd);
+        promptAttachmentPaths.add(path.resolve(resolved));
+      }
+    }
+    const promptForQuery = forceTextOnlyAttachments
+      ? this.rewriteAttachmentLinesAsTextReferences(prompt)
+      : prompt;
+    if (forceTextOnlyAttachments && promptForQuery !== prompt) {
+      coworkLog('INFO', 'runClaudeCodeLocal', 'Force text-only attachment references for provider compatibility', {
+        sessionId,
+        anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
+        anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
+      });
+      this.addSystemMessage(
+        sessionId,
+        '当前模型不支持原生图片/文档输入，附件将按“文件路径文本引用”处理。'
+      );
+    }
+
     const options: Record<string, unknown> = {
       cwd,
       abortController,
@@ -2575,6 +2737,46 @@ export class CoworkRunner extends EventEmitter {
           toolInput && typeof toolInput === 'object'
             ? (toolInput as Record<string, unknown>)
             : { value: toolInput };
+
+        if (forceTextOnlyAttachments) {
+          const normalizedToolName = resolvedName.trim().toLowerCase();
+          if (normalizedToolName === 'read' || normalizedToolName === 'view') {
+            const toolFilePath = this.resolveToolFilePathFromInput(resolvedInput, cwd);
+            if (!toolFilePath && promptAttachmentPaths.size > 0) {
+              coworkLog('WARN', 'runClaudeCodeLocal', 'Blocked Read/View due to unresolved attachment path in text-only provider mode', {
+                sessionId,
+                toolName: resolvedName,
+                toolInputKeys: Object.keys(resolvedInput),
+                anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
+                anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
+              });
+              return {
+                behavior: 'deny',
+                message: '当前模型不支持原生文档/图片块，且本次附件路径未能从工具参数中安全解析。请切换支持多模态输入的模型，或先将附件转成纯文本后再处理。',
+              };
+            }
+            if (toolFilePath) {
+              const absoluteToolPath = path.resolve(toolFilePath);
+              const isPromptAttachment = promptAttachmentPaths.has(absoluteToolPath);
+              const isLikelyBinary = this.isLikelyBinaryAttachmentPath(absoluteToolPath);
+              if (isPromptAttachment || isLikelyBinary) {
+                coworkLog('WARN', 'runClaudeCodeLocal', 'Blocked binary file Read/View for text-only provider mode', {
+                  sessionId,
+                  toolName: resolvedName,
+                  filePath: absoluteToolPath,
+                  isPromptAttachment,
+                  isLikelyBinary,
+                  anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
+                  anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
+                });
+                return {
+                  behavior: 'deny',
+                  message: `当前模型不支持原生文档/图片块，无法直接 ${resolvedName} 二进制附件：${absoluteToolPath}。请切换支持多模态输入的模型，或先将文件转成纯文本后再读取。`,
+                };
+              }
+            }
+          }
+        }
 
         const blockedToolResult = this.denyBlockedBuiltinWebTool(sessionId, 'local', resolvedName);
         if (blockedToolResult) {
@@ -2780,7 +2982,7 @@ export class CoworkRunner extends EventEmitter {
         }),
       };
 
-      const result = await query({ prompt, options } as any);
+      const result = await query({ prompt: promptForQuery, options } as any);
       coworkLog('INFO', 'runClaudeCodeLocal', 'Claude Code process started, iterating events');
       for await (const event of result as AsyncIterable<unknown>) {
         if (this.isSessionStopRequested(sessionId, activeSession)) {
@@ -2831,6 +3033,40 @@ export class CoworkRunner extends EventEmitter {
           runtimeError = retryError;
           errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
         }
+      }
+
+      const isMultimodalCompatError = isUnsupportedMultimodalContentError(errorMessage);
+      if (isMultimodalCompatError && !isRetry) {
+        this.store.updateSession(sessionId, { claudeSessionId: null });
+        activeSession.claudeSessionId = null;
+        coworkLog('WARN', 'runClaudeCodeLocal', 'Provider rejected image/document content block; retrying with fresh text-only session', {
+          sessionId,
+          errorMessage,
+          anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
+          anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
+        });
+        this.addSystemMessage(
+          sessionId,
+          '模型端拒绝了图片/文档内容块，已自动重置本轮会话并改为文本路径模式重试。'
+        );
+        try {
+          await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
+          return;
+        } catch (retryError) {
+          runtimeError = retryError;
+          errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+        }
+      }
+
+      if (isUnsupportedMultimodalContentError(errorMessage)) {
+        coworkLog('WARN', 'runClaudeCodeLocal', 'Provider still rejected multimodal content after fallback', {
+          sessionId,
+          errorMessage,
+          anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
+          anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
+        });
+        this.handleError(sessionId, buildUnsupportedMultimodalUserHint(errorMessage));
+        throw runtimeError;
       }
 
       const stderrOutput = stderrTail;
