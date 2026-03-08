@@ -8,6 +8,7 @@ import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
 import type { SandboxRuntimeInfo } from './coworkSandboxRuntime';
 import { coworkLog } from './coworkLogger';
+import { isPathWithin } from './runtimePaths';
 
 export type CoworkSandboxPaths = {
   baseDir: string;
@@ -507,7 +508,7 @@ export class VirtioSerialBridge {
 
     // Security: ensure resolved path stays within hostCwd
     const resolvedCwd = path.resolve(this.hostCwd);
-    if (!resolved.startsWith(resolvedCwd + path.sep) && resolved !== resolvedCwd) {
+    if (!isPathWithin(resolvedCwd, resolved)) {
       console.warn(`[VirtioSerialBridge] Rejected path traversal: ${relativePath}`);
       return null;
     }

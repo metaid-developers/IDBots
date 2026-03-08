@@ -78,14 +78,16 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener(`api:stream:${requestId}:abort`, handler);
     },
   },
-  ipcRenderer: {
-    send: (channel: string, ...args: any[]) => {
-      ipcRenderer.send(channel, ...args);
+  appEvents: {
+    onOpenSettings: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('app:openSettings', handler);
+      return () => ipcRenderer.removeListener('app:openSettings', handler);
     },
-    on: (channel: string, func: (...args: any[]) => void) => {
-      const handler = (_event: any, ...args: any[]) => func(...args);
-      ipcRenderer.on(channel, handler);
-      return () => ipcRenderer.removeListener(channel, handler);
+    onNewTask: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('app:newTask', handler);
+      return () => ipcRenderer.removeListener('app:newTask', handler);
     },
   },
   window: {
@@ -364,12 +366,5 @@ contextBridge.exposeInMainWorld('electron', {
   },
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
-  },
-  mcp: {
-    list: () => ipcRenderer.invoke('mcp:list'),
-    create: (data: Record<string, unknown>) => ipcRenderer.invoke('mcp:create', data),
-    update: (id: string, data: Record<string, unknown>) => ipcRenderer.invoke('mcp:update', id, data),
-    delete: (id: string) => ipcRenderer.invoke('mcp:delete', id),
-    setEnabled: (options: { id: string; enabled: boolean }) => ipcRenderer.invoke('mcp:setEnabled', options),
   },
 });

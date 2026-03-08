@@ -6,67 +6,16 @@ import { execSync, spawn, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-
-/**
- * Resolve the user's login shell PATH on macOS/Linux.
- * Packaged Electron apps on macOS don't inherit the user's shell profile,
- * so node/npm won't be in PATH unless we resolve it explicitly.
- */
-function resolveUserShellPath(): string | null {
-  if (process.platform === 'win32') return null;
-
-  try {
-    const shell = process.env.SHELL || '/bin/bash';
-    // Use login-interactive shell to source profile, then print PATH
-    const result = execSync(`${shell} -ilc 'echo __PATH__=$PATH'`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-      env: { ...process.env },
-    });
-    const match = result.match(/__PATH__=(.+)/);
-    return match ? match[1].trim() : null;
-  } catch (error) {
-    console.warn('[SkillServices] Failed to resolve user shell PATH:', error);
-    return null;
-  }
-}
+import { getEnhancedEnv } from './libs/coworkUtil';
+import { resolveElectronExecutablePath } from './libs/runtimePaths';
 
 /**
  * Build an environment for spawning skill service scripts.
- * Merges the user's shell PATH with the current process environment.
+ * Reuses cowork env hardening so Windows/macOS/Linux behavior stays aligned.
  */
-function buildSkillServiceEnv(): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env };
-
-  if (app.isPackaged) {
-    if (!env.HOME) {
-      env.HOME = app.getPath('home');
-    }
-
-    const userPath = resolveUserShellPath();
-    if (userPath) {
-      env.PATH = userPath;
-      console.log('[SkillServices] Resolved user shell PATH for skill services');
-    } else {
-      // Fallback: append common node installation paths
-      const commonPaths = [
-        '/usr/local/bin',
-        '/opt/homebrew/bin',
-        `${env.HOME}/.nvm/current/bin`,
-        `${env.HOME}/.volta/bin`,
-        `${env.HOME}/.fnm/current/bin`,
-      ];
-      env.PATH = [env.PATH, ...commonPaths].filter(Boolean).join(':');
-      console.log('[SkillServices] Using fallback PATH for skill services');
-    }
-  }
-
-  // Expose Electron executable so skill scripts can run JS with ELECTRON_RUN_AS_NODE
-  // even when system Node.js is not installed.
-  // Use app.getPath('exe') instead of process.execPath to avoid wrong name on Windows
-  // (e.g. process.execPath can return "lDBots.exe" instead of "IDBots.exe").
-  env.IDBOTS_ELECTRON_PATH = app.getPath('exe');
-
+async function buildSkillServiceEnv(): Promise<Record<string, string | undefined>> {
+  const env = await getEnhancedEnv('local');
+  env.IDBOTS_ELECTRON_PATH = resolveElectronExecutablePath();
   return env;
 }
 
@@ -145,8 +94,9 @@ export class SkillServiceManager {
       return { command: 'node', args: [] };
     }
 
+    const electronExecutable = resolveElectronExecutablePath();
     return {
-      command: app.getPath('exe'),
+      command: electronExecutable,
       args: [],
       extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
     };
@@ -196,7 +146,7 @@ export class SkillServiceManager {
     console.log('[SkillServices] Starting skill services...');
 
     // Resolve environment once for all service spawns
-    this.skillEnv = buildSkillServiceEnv();
+    this.skillEnv = await buildSkillServiceEnv();
 
     try {
       await this.startWebSearchService();
@@ -266,7 +216,7 @@ export class SkillServiceManager {
     const env = {
       ...baseEnv,
       ...(runtime.extraEnv ?? {}),
-      IDBOTS_ELECTRON_PATH: app.getPath('exe'),
+      IDBOTS_ELECTRON_PATH: resolveElectronExecutablePath(),
     };
 
     // Node/Electron validates stdio streams synchronously. Use fd to avoid
@@ -287,7 +237,7 @@ export class SkillServiceManager {
     fs.writeFileSync(pidFile, child.pid!.toString());
     child.unref();
 
-    const runtimeLabel = runtime.command === app.getPath('exe') ? 'electron-node' : 'node';
+    const runtimeLabel = runtime.command === resolveElectronExecutablePath() ? 'electron-node' : 'node';
     console.log(`[SkillServices] Web Search Bridge Server starting (PID: ${child.pid}, runtime: ${runtimeLabel})`);
     console.log(`[SkillServices] Logs: ${logFile}`);
   }
@@ -371,6 +321,10 @@ export class SkillServiceManager {
    */
   private getWebSearchPath(): string | null {
     const candidates: string[] = [];
+    const envSkillsRoot = process.env.IDBOTS_SKILLS_ROOT?.trim() || process.env.SKILLS_ROOT?.trim();
+    if (envSkillsRoot) {
+      candidates.push(path.join(path.resolve(envSkillsRoot), 'web-search'));
+    }
 
     if (app.isPackaged) {
       // Prefer userData for packaged apps so scripts run from a real filesystem path.

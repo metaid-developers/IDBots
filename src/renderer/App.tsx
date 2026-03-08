@@ -393,7 +393,7 @@ const App: React.FC = () => {
 
   // 监听托盘菜单打开设置的 IPC 事件
   useEffect(() => {
-    const unsubscribe = window.electron.ipcRenderer.on('app:openSettings', () => {
+    const unsubscribe = window.electron.appEvents.onOpenSettings(() => {
       handleShowSettings();
     });
     return unsubscribe;
@@ -401,7 +401,7 @@ const App: React.FC = () => {
 
   // 监听托盘菜单新建任务的 IPC 事件
   useEffect(() => {
-    const unsubscribe = window.electron.ipcRenderer.on('app:newTask', () => {
+    const unsubscribe = window.electron.appEvents.onNewTask(() => {
       handleNewChat();
     });
     return unsubscribe;

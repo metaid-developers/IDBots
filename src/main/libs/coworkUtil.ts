@@ -1,13 +1,14 @@
 import { app, session } from 'electron';
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'fs';
-import { delimiter, dirname, join } from 'path';
+import { delimiter, dirname, join, resolve } from 'path';
 import type { SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import { loadClaudeSdk } from './claudeSdk';
 import { buildEnvForConfig, getClaudeCodePath, getCurrentApiConfig } from './claudeSettings';
 import type { OpenAICompatProxyTarget } from './coworkOpenAICompatProxy';
 import { getInternalApiBaseURL } from './coworkOpenAICompatProxy';
 import { coworkLog } from './coworkLogger';
+import { resolveElectronExecutablePath } from './runtimePaths';
 
 function appendEnvPath(current: string | undefined, additions: string[]): string | undefined {
   const items = new Set<string>();
@@ -449,7 +450,7 @@ function resolveWindowsNodeDirs(): string[] {
 function applyPackagedEnvOverrides(env: Record<string, string | undefined>): void {
   // On Windows, resolve git-bash and ensure Git toolchain directories are available in PATH.
   if (process.platform === 'win32') {
-    const electronExe = app.getPath('exe');
+    const electronExe = resolveElectronExecutablePath();
     env.IDBOTS_ELECTRON_PATH = electronExe;
 
     const configuredBashPath = normalizeWindowsPath(env.CLAUDE_CODE_GIT_BASH_PATH);
@@ -554,6 +555,13 @@ async function resolveSystemProxy(targetUrl: string): Promise<string | null> {
  * Get SKILLs directory path (handles both development and production)
  */
 export function getSkillsRoot(): string {
+  const envRoots = [process.env.IDBOTS_SKILLS_ROOT, process.env.SKILLS_ROOT]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (envRoots.length > 0) {
+    return resolve(envRoots[0]);
+  }
+
   if (app.isPackaged) {
     // In production, SKILLs are copied to userData
     return join(app.getPath('userData'), 'SKILLs');
@@ -561,9 +569,6 @@ export function getSkillsRoot(): string {
 
   // In development, __dirname can vary with bundling output (e.g. dist-electron/ or dist-electron/libs/).
   // Resolve from several stable anchors and pick the first existing SKILLs directory.
-  const envRoots = [process.env.IDBOTS_SKILLS_ROOT, process.env.SKILLS_ROOT]
-    .map((value) => value?.trim())
-    .filter((value): value is string => Boolean(value));
   const candidates = [
     ...envRoots,
     join(app.getAppPath(), 'SKILLs'),
@@ -598,7 +603,7 @@ export async function getEnhancedEnv(target: OpenAICompatProxyTarget = 'local'):
   const skillsRoot = getSkillsRoot();
   env.SKILLS_ROOT = skillsRoot;
   env.IDBOTS_SKILLS_ROOT = skillsRoot; // Alternative name for clarity
-  env.IDBOTS_ELECTRON_PATH = app.getPath('exe');
+  env.IDBOTS_ELECTRON_PATH = resolveElectronExecutablePath();
 
   // Inject internal API base URL for skill scripts (e.g. scheduled-task creation)
   const internalApiBaseURL = getInternalApiBaseURL();

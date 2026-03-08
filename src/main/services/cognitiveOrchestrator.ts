@@ -15,6 +15,7 @@ import {
   type OpenAITool,
   type ToolCallResult,
 } from './cognitiveChatCompletion';
+import { isPathWithin } from '../libs/runtimePaths';
 
 const TICK_INTERVAL_MS = 10_000;
 const LOG_EVERY_N_TICKS = 6; // log summary every ~1 min when no trigger
@@ -270,7 +271,7 @@ function executeRead(filePath: string, allowedRoots: string[]): string {
     const realPath = fs.realpathSync(resolved);
     const underSomeRoot = allowedRoots.some((root) => {
       const r = path.resolve(root);
-      return realPath === r || realPath.startsWith(r + path.sep);
+      return isPathWithin(r, realPath);
     });
     if (!underSomeRoot) {
       console.error('[Orchestrator] [Read] Path escapes SKILLs roots:', filePath);

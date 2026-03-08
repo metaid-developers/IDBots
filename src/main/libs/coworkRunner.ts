@@ -15,6 +15,7 @@ import { coworkLog, getCoworkLogPath } from './coworkLogger';
 import { isQuestionLikeMemoryText, type CoworkMemoryGuardLevel } from './coworkMemoryExtractor';
 import { z } from 'zod';
 import { ensureSandboxReady, getSandboxRuntimeInfoIfReady, type SandboxRuntimeInfo } from './coworkSandboxRuntime';
+import { isPathWithin, resolveElectronExecutablePath } from './runtimePaths';
 import {
   buildSandboxRequest,
   collectSkillFilesForSandbox,
@@ -90,21 +91,16 @@ const MEMORY_REQUEST_TAIL_SPLIT_RE = /[,，。]\s*(?:请|麻烦)?你(?:帮我|�
 const MEMORY_PROCEDURAL_TEXT_RE = /(执行以下命令|run\s+(?:the\s+)?following\s+command|\b(?:cd|npm|pnpm|yarn|node|python|bash|sh|git|curl|wget)\b|\$[A-Z_][A-Z0-9_]*|&&|--[a-z0-9-]+|\/tmp\/|\.sh\b|\.bat\b|\.ps1\b)/i;
 const MEMORY_ASSISTANT_STYLE_TEXT_RE = /^(?:使用|use)\s+[A-Za-z0-9._-]+\s*(?:技能|skill)/i;
 
+function isStaleConversationSessionError(message: string): boolean {
+  return /No conversation found with session ID/i.test(message);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function findSkillsMarkerIndex(value: string): number {
   return value.toLowerCase().lastIndexOf(SKILLS_MARKER);
-}
-
-function isPathWithin(basePath: string, targetPath: string): boolean {
-  if (process.platform === 'win32') {
-    const normalizedBase = basePath.toLowerCase();
-    const normalizedTarget = targetPath.toLowerCase();
-    return normalizedTarget === normalizedBase || normalizedTarget.startsWith(`${normalizedBase}${path.sep}`);
-  }
-  return targetPath === basePath || targetPath.startsWith(`${basePath}${path.sep}`);
 }
 
 function resolveSkillPathFromRoots(
@@ -317,6 +313,8 @@ interface ActiveSession {
   lastStreamingThinkingUpdateAt: number;
   hasAssistantTextOutput: boolean;
   hasAssistantThinkingOutput: boolean;
+  staleResumeDetected: boolean;
+  staleResumeRetryAllowed: boolean;
   executionMode: CoworkExecutionMode;
   sandboxProcess?: ChildProcessByStdio<null, Readable, Readable>;
   sandboxIpcDir?: string;
@@ -2152,6 +2150,8 @@ export class CoworkRunner extends EventEmitter {
       lastStreamingThinkingUpdateAt: 0,
       hasAssistantTextOutput: false,
       hasAssistantThinkingOutput: false,
+      staleResumeDetected: false,
+      staleResumeRetryAllowed: true,
       executionMode: 'local',
       autoApprove: options.autoApprove ?? false,
     };
@@ -2434,6 +2434,8 @@ export class CoworkRunner extends EventEmitter {
     activeSession.currentStreamingThinkingTruncated = false;
     activeSession.lastStreamingTextUpdateAt = 0;
     activeSession.lastStreamingThinkingUpdateAt = 0;
+    activeSession.staleResumeDetected = false;
+    activeSession.staleResumeRetryAllowed = !isRetry;
 
     const apiConfig = getCurrentApiConfig('local');
     if (!apiConfig) {
@@ -2446,7 +2448,7 @@ export class CoworkRunner extends EventEmitter {
     const claudeCodePath = getClaudeCodePath();
     const envVars = await getEnhancedEnvWithTmpdir(cwd, 'local');
     // So the SDK's forked process uses the correct Electron exe on Windows (avoids process.execPath returning e.g. lDBots.exe)
-    envVars.IDBOTS_ELECTRON_PATH = app.getPath('exe');
+    envVars.IDBOTS_ELECTRON_PATH = resolveElectronExecutablePath();
     const skillEnvOverrides = await this.getSkillSessionEnvOverrides?.(sessionId);
     if (skillEnvOverrides && Object.keys(skillEnvOverrides).length > 0) {
       Object.assign(envVars, skillEnvOverrides);
@@ -2714,6 +2716,14 @@ export class CoworkRunner extends EventEmitter {
         this.handleClaudeEvent(sessionId, event);
       }
 
+      if (activeSession.staleResumeDetected && !isRetry) {
+        this.store.updateSession(sessionId, { claudeSessionId: null });
+        activeSession.claudeSessionId = null;
+        coworkLog('INFO', 'runClaudeCodeLocal', 'Cleared stale claudeSessionId after result-event stale session, retrying once without resume', { sessionId });
+        await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
+        return;
+      }
+
       if (this.isSessionStopRequested(sessionId, activeSession)) {
         this.store.updateSession(sessionId, { status: 'idle' });
         return;
@@ -2734,8 +2744,9 @@ export class CoworkRunner extends EventEmitter {
         return;
       }
 
-      let errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const isStaleResumeError = errorMessage.includes('No conversation found with session ID');
+      let runtimeError: unknown = error;
+      let errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+      const isStaleResumeError = isStaleConversationSessionError(errorMessage);
       if (isStaleResumeError && !isRetry) {
         this.store.updateSession(sessionId, { claudeSessionId: null });
         activeSession.claudeSessionId = null;
@@ -2744,15 +2755,15 @@ export class CoworkRunner extends EventEmitter {
           await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
           return;
         } catch (retryError) {
-          error = retryError;
-          errorMessage = error instanceof Error ? (error as Error).message : 'Unknown error';
+          runtimeError = retryError;
+          errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
         }
       }
 
       const stderrOutput = stderrTail;
       coworkLog('ERROR', 'runClaudeCodeLocal', 'Claude Code process failed', {
         errorMessage,
-        errorStack: error instanceof Error ? (error as Error).stack : undefined,
+        errorStack: runtimeError instanceof Error ? runtimeError.stack : undefined,
         stderr: stderrOutput || '(no stderr captured)',
         claudeCodePath,
         claudeCodePathExists: fs.existsSync(claudeCodePath),
@@ -2762,7 +2773,7 @@ export class CoworkRunner extends EventEmitter {
         ? `${errorMessage}\n\nProcess stderr:\n${stderrOutput.slice(-2000)}\n\nLog file: ${getCoworkLogPath()}`
         : `${errorMessage}\n\nLog file: ${getCoworkLogPath()}`;
       this.handleError(sessionId, detailedError);
-      throw error;
+      throw runtimeError;
     } finally {
       this.clearPendingPermissions(sessionId);
       this.activeSessions.delete(sessionId);
@@ -3893,6 +3904,23 @@ export class CoworkRunner extends EventEmitter {
             : payloadError
               ? payloadError
               : 'Claude run failed';
+
+        if (
+          activeSession.executionMode === 'local'
+          && activeSession.staleResumeRetryAllowed
+          && isStaleConversationSessionError(errorMessage)
+        ) {
+          activeSession.staleResumeRetryAllowed = false;
+          activeSession.staleResumeDetected = true;
+          coworkLog(
+            'INFO',
+            'handleClaudeEvent',
+            'Detected stale claudeSessionId in result event, scheduling one-time retry without resume',
+            { sessionId }
+          );
+          return;
+        }
+
         this.handleError(sessionId, errorMessage);
         return;
       }

@@ -6,7 +6,12 @@
 
 import type { Database } from 'sql.js';
 import { SocketIOClient } from './metaWebSocket';
-import { decryptGroupMessage } from './metaWebCrypto';
+import {
+  decryptGroupMessage,
+  computeEcdhSharedSecret,
+  computeEcdhSharedSecretSha256,
+  ecdhDecrypt,
+} from './metaWebCrypto';
 
 const SOCKET_URL = 'https://api.idchat.io';
 const SOCKET_PATH = '/socket/socket.io';
@@ -27,6 +32,8 @@ type EmitLogFn = (log: string) => void;
 
 /** In-memory map: globalmetaid -> SocketIOClient */
 const activeSockets = new Map<string, SocketIOClient>();
+/** In-memory map: target globalmetaid -> 32-byte private key buffer */
+const listenerPrivateKeyMap = new Map<string, Buffer>();
 
 /** UserInfo nested shape (may be null from API) */
 interface UserInfoShape {
@@ -112,6 +119,65 @@ function pinIdFromMessage(m: UnifiedChatMessage): string {
 }
 
 type SaveDbFn = () => void;
+type ResolvePrivateKeyByGlobalMetaIdFn = (
+  globalMetaId: string
+) => Promise<Buffer | null>;
+
+function tryDecryptPrivateCipher(cipherText: string, sharedSecret: string): string | null {
+  if (!cipherText || !sharedSecret) return null;
+  const plain = ecdhDecrypt(cipherText, sharedSecret);
+  if (!plain || plain === cipherText) return null;
+  return plain;
+}
+
+function decryptPrivateMessageForTarget(
+  D: UnifiedChatMessage,
+  targetGlobalMetaId: string,
+  emitLog: EmitLogFn
+): string {
+  const cipherText = String(D.content ?? '').trim();
+  if (!cipherText) return '';
+
+  const privateKeyBuffer = listenerPrivateKeyMap.get(targetGlobalMetaId);
+  if (!privateKeyBuffer) {
+    emitLog(
+      `[MetaWeb] [PrivateDecrypt] No private key for target ${targetGlobalMetaId.slice(0, 12)}…`
+    );
+    return cipherText;
+  }
+
+  const targetIsSender = (D.fromGlobalMetaId ?? '').trim() === targetGlobalMetaId;
+  const peerUserInfo = targetIsSender ? (D.toUserInfo ?? {}) : (D.fromUserInfo ?? {});
+  const peerChatPubkey = String((peerUserInfo as UserInfoShape)?.chatPublicKey ?? '').trim();
+  if (!peerChatPubkey) {
+    emitLog('[MetaWeb] [PrivateDecrypt] Missing peer chatPublicKey; keep ciphertext.');
+    return cipherText;
+  }
+
+  try {
+    const secretSha256 = computeEcdhSharedSecretSha256(privateKeyBuffer, peerChatPubkey);
+    const plainBySha256 = tryDecryptPrivateCipher(cipherText, secretSha256);
+    if (plainBySha256 != null) return plainBySha256;
+
+    // Backward compatibility: some old payloads may use raw shared secret.
+    const secretRaw = computeEcdhSharedSecret(privateKeyBuffer, peerChatPubkey);
+    const plainByRaw = tryDecryptPrivateCipher(cipherText, secretRaw);
+    if (plainByRaw != null) {
+      emitLog('[MetaWeb] [PrivateDecrypt] Decrypted with raw shared secret fallback.');
+      return plainByRaw;
+    }
+  } catch (error) {
+    emitLog(
+      `[MetaWeb] [PrivateDecrypt] ECDH/decrypt failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return cipherText;
+  }
+
+  emitLog('[MetaWeb] [PrivateDecrypt] Failed with both sha256/raw secrets; keep ciphertext.');
+  return cipherText;
+}
 
 /**
  * Route and persist one received message; emit log on success.
@@ -247,7 +313,7 @@ function routePrivateChat(
   const from_avatar = (fromInfo as UserInfoShape)?.avatar ?? '';
   const from_chat_pubkey = (fromInfo as UserInfoShape)?.chatPublicKey ?? '';
   const protocol = D.protocol ?? '';
-  const content = D.content ?? '';
+  const content = decryptPrivateMessageForTarget(D, targetGlobalMetaId, emitLog);
   const content_type = D.contentType ?? null;
   const encryption = D.encryption ?? null;
   const reply_pin = D.replyPin ?? '';
@@ -311,36 +377,59 @@ export function startMetaWebListener(
   getMetaBots: () => MetaBotForListener[],
   config: ListenerConfig,
   emitLog: EmitLogFn,
-  saveDb: SaveDbFn
-): void {
+  saveDb: SaveDbFn,
+  resolvePrivateKeyByGlobalMetaId?: ResolvePrivateKeyByGlobalMetaIdFn
+): Promise<void> {
   stopMetaWebListener();
 
   const bots = getMetaBots().filter((b) => b.globalmetaid && b.globalmetaid.trim());
   if (bots.length === 0) {
     emitLog('[MetaWeb] No MetaBots with globalmetaid; listener not started.');
-    return;
+    return Promise.resolve();
   }
 
-  for (const bot of bots) {
-    const metaid = bot.globalmetaid!.trim();
-    const name = bot.name || metaid.slice(0, 12);
-    const handler = (data: unknown) => {
-      handleReceivedMessage(data, metaid, name, db, config, emitLog, saveDb);
-    };
-    const client = new SocketIOClient(
-      {
-        url: SOCKET_URL,
-        path: SOCKET_PATH,
-        metaid,
-        type: 'pc',
-      },
-      handler
-    );
-    activeSockets.set(metaid, client);
-    client.connect();
-  }
+  return (async () => {
+    for (const bot of bots) {
+      const metaid = bot.globalmetaid!.trim();
+      const name = bot.name || metaid.slice(0, 12);
 
-  emitLog(`[MetaWeb] Listener started for ${bots.length} MetaBot(s).`);
+      if (resolvePrivateKeyByGlobalMetaId) {
+        try {
+          const keyBuffer = await resolvePrivateKeyByGlobalMetaId(metaid);
+          if (keyBuffer && keyBuffer.length > 0) {
+            listenerPrivateKeyMap.set(metaid, keyBuffer);
+          } else {
+            emitLog(
+              `[MetaWeb] [PrivateDecrypt] Missing wallet private key for ${name} (${metaid.slice(0, 12)}…)`
+            );
+          }
+        } catch (error) {
+          emitLog(
+            `[MetaWeb] [PrivateDecrypt] Load key failed for ${name}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+
+      const handler = (data: unknown) => {
+        handleReceivedMessage(data, metaid, name, db, config, emitLog, saveDb);
+      };
+      const client = new SocketIOClient(
+        {
+          url: SOCKET_URL,
+          path: SOCKET_PATH,
+          metaid,
+          type: 'pc',
+        },
+        handler
+      );
+      activeSockets.set(metaid, client);
+      client.connect();
+    }
+
+    emitLog(`[MetaWeb] Listener started for ${bots.length} MetaBot(s).`);
+  })();
 }
 
 /**
@@ -351,6 +440,7 @@ export function stopMetaWebListener(): void {
     client.disconnect();
   }
   activeSockets.clear();
+  listenerPrivateKeyMap.clear();
 }
 
 export function isListenerRunning(): boolean {

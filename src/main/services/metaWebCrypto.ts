@@ -101,6 +101,14 @@ export function computeEcdhSharedSecret(privateKey32: Buffer, peerPublicKeyHex: 
 }
 
 /**
+ * Compute SHA-256(sharedSecretRawHexBytes), matching metabot-basic/scripts/chatpubkey.ts.
+ */
+export function computeEcdhSharedSecretSha256(privateKey32: Buffer, peerPublicKeyHex: string): string {
+  const rawSecretHex = computeEcdhSharedSecret(privateKey32, peerPublicKeyHex);
+  return nodeCrypto.createHash('sha256').update(Buffer.from(rawSecretHex, 'hex')).digest('hex');
+}
+
+/**
  * Private chat: match SendChatMessageCommand _privateEncrypt / simple-talk _privateDecrypt.
  * _privateEncrypt(message, sharedSecret) = AES.encrypt(String(message), String(sharedSecret)).toString() -> Base64 Salted__.
  * _privateDecrypt(message, secretKey) = AES.decrypt(String(message), String(secretKey)).

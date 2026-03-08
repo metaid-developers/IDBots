@@ -65,6 +65,10 @@ function compareVersions(a: string, b: string): number {
  * in production use userData/SKILLs.
  */
 function getSkillsRoot(): string {
+  const envOverride = process.env.IDBOTS_SKILLS_ROOT?.trim() || process.env.SKILLS_ROOT?.trim();
+  if (envOverride) {
+    return path.resolve(envOverride);
+  }
   if (app.isPackaged) {
     return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
   }
@@ -254,7 +258,7 @@ export async function installOfficialSkill(
 
     // Find SKILL.md in extracted tree; its parent dir is the content root (handles any nesting)
     const SKILL_FILE = 'SKILL.md';
-    function findSkillMdDir(dir: string): string | null {
+    const findSkillMdDir = (dir: string): string | null => {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const e of entries) {
         const full = path.join(dir, e.name);
@@ -266,7 +270,7 @@ export async function installOfficialSkill(
         }
       }
       return null;
-    }
+    };
     const contentRoot = findSkillMdDir(tempDir);
     if (!contentRoot) {
       fs.rmSync(tempDir, { recursive: true, force: true });

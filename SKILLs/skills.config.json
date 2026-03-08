@@ -16,6 +16,13 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
+    "metabot-chat-privatechat": {
+      "order": 18,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
     "metabot-omni-caster": {
       "order": 10,
       "version": "1.0.0",

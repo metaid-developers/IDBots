@@ -290,9 +290,9 @@ interface IElectronAPI {
   saveApiConfig: (config: CoworkApiConfig) => Promise<{ success: boolean; error?: string }>;
   generateSessionTitle: (userInput: string | null) => Promise<string>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
-  ipcRenderer: {
-    send: (channel: string, ...args: any[]) => void;
-    on: (channel: string, func: (...args: any[]) => void) => () => void;
+  appEvents: {
+    onOpenSettings: (callback: () => void) => () => void;
+    onNewTask: (callback: () => void) => () => void;
   };
   window: {
     minimize: () => void;

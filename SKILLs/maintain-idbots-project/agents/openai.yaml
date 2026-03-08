@@ -1,0 +1,4 @@
+interface:
+  display_name: "IDBots Maintenance"
+  short_description: "Security hardening and maintenance workflow"
+  default_prompt: "Use $maintain-idbots-project to harden security boundaries, fix lint/tests, and temporarily hide unfinished features."

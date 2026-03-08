@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import extractZip from 'extract-zip';
 import { SqliteStore } from './sqliteStore';
+import { getEnhancedEnv } from './libs/coworkUtil';
+import { isPathWithin, resolveElectronExecutablePath } from './libs/runtimePaths';
 
 export type SkillRecord = {
   id: string;
@@ -104,8 +106,7 @@ const isZipFile = (filePath: string): boolean => path.extname(filePath).toLowerC
 const resolveWithin = (root: string, target: string): string => {
   const resolvedRoot = path.resolve(root);
   const resolvedTarget = path.resolve(root, target);
-  if (resolvedTarget === resolvedRoot) return resolvedTarget;
-  if (!resolvedTarget.startsWith(resolvedRoot + path.sep)) {
+  if (!isPathWithin(resolvedRoot, resolvedTarget)) {
     throw new Error('Invalid target path');
   }
   return resolvedTarget;
@@ -690,6 +691,10 @@ export class SkillManager {
   constructor(private getStore: () => SqliteStore) {}
 
   getSkillsRoot(): string {
+    const envOverride = process.env.IDBOTS_SKILLS_ROOT?.trim() || process.env.SKILLS_ROOT?.trim();
+    if (envOverride) {
+      return path.resolve(envOverride);
+    }
     return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
   }
 
@@ -885,8 +890,31 @@ export class SkillManager {
     };
     if (context?.metabotId != null) {
       envOverrides.IDBOTS_METABOT_ID = String(context.metabotId);
+      try {
+        const db = this.getStore().getDatabase();
+        const row = db.exec(
+          `SELECT mw.mnemonic AS mnemonic, mw.path AS path, m.name AS name
+           FROM metabots m
+           JOIN metabot_wallets mw ON mw.id = m.wallet_id
+           WHERE m.id = ?
+           LIMIT 1`,
+          [context.metabotId]
+        );
+        const values = row[0]?.values?.[0] as unknown[] | undefined;
+        if (values) {
+          const mnemonic = typeof values[0] === 'string' ? values[0].trim() : '';
+          const walletPath = typeof values[1] === 'string' ? values[1].trim() : '';
+          const metabotName = typeof values[2] === 'string' ? values[2].trim() : '';
+          if (mnemonic) envOverrides.IDBOTS_METABOT_MNEMONIC = mnemonic;
+          if (walletPath) envOverrides.IDBOTS_METABOT_PATH = walletPath;
+          if (metabotName) envOverrides.IDBOTS_TWIN_NAME = metabotName;
+        }
+      } catch {
+        // Ignore wallet env injection failure; scripts can still use RPC-only mode.
+      }
     }
-    const env: NodeJS.ProcessEnv = { ...process.env, ...envOverrides };
+    const baseEnv = await getEnhancedEnv('local');
+    const env: NodeJS.ProcessEnv = { ...baseEnv, ...envOverrides };
 
     let scriptPath: string;
     let scriptArgs: string[];
@@ -965,7 +993,7 @@ export class SkillManager {
         timeoutMs,
       });
     } else {
-      result = await this.runSkillScriptWithEnv(skillDir, scriptPath, scriptArgs, envOverrides, timeoutMs);
+      result = await this.runSkillScriptWithEnv(skillDir, scriptPath, scriptArgs, env, envOverrides, timeoutMs);
     }
 
     const observation = result.success
@@ -1337,11 +1365,13 @@ export class SkillManager {
           .filter(([key]) => key.trim())
           .map(([key, value]) => [key, String(value ?? '')])
       );
+      const baseEnv = await getEnhancedEnv('local');
 
       const imapResult = await this.runSkillScriptWithEnv(
         skillDir,
         imapScript,
         ['list-mailboxes'],
+        baseEnv,
         envOverrides,
         20000
       );
@@ -1349,6 +1379,7 @@ export class SkillManager {
         skillDir,
         smtpScript,
         ['verify'],
+        baseEnv,
         envOverrides,
         20000
       );
@@ -1389,8 +1420,9 @@ export class SkillManager {
     if (!app.isPackaged) {
       candidates.push({ command: 'node' });
     }
+    const electronExecutable = resolveElectronExecutablePath();
     candidates.push({
-      command: app.getPath('exe'),
+      command: electronExecutable,
       extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
     });
     return candidates;
@@ -1400,6 +1432,7 @@ export class SkillManager {
     skillDir: string,
     scriptPath: string,
     scriptArgs: string[],
+    baseEnv: NodeJS.ProcessEnv,
     envOverrides: Record<string, string>,
     timeoutMs: number
   ): Promise<SkillScriptRunResult> {
@@ -1407,7 +1440,7 @@ export class SkillManager {
 
     for (const runtime of this.getScriptRuntimeCandidates()) {
       const env: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...baseEnv,
         ...runtime.extraEnv,
         ...envOverrides,
       };

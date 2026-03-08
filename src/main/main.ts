@@ -23,7 +23,7 @@ import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
-import { createMetaBotWallet } from './services/metabotWalletService';
+import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
@@ -317,6 +317,9 @@ const disableGpu =
   process.env.IDBOTS_DISABLE_GPU === 'true' ||
   process.env.ELECTRON_DISABLE_GPU === '1' ||
   process.env.ELECTRON_DISABLE_GPU === 'true';
+const disableLinuxSandbox =
+  process.env.IDBOTS_DISABLE_LINUX_SANDBOX === '1' ||
+  process.env.IDBOTS_DISABLE_LINUX_SANDBOX === 'true';
 const reloadOnChildProcessGone =
   process.env.ELECTRON_RELOAD_ON_CHILD_PROCESS_GONE === '1' ||
   process.env.ELECTRON_RELOAD_ON_CHILD_PROCESS_GONE === 'true';
@@ -364,6 +367,33 @@ const normalizeWindowsShellPath = (inputPath: string): string => {
   }
 
   return normalized;
+};
+
+const EXTERNAL_URL_PROTOCOL_ALLOWLIST = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+const REMOTE_FETCH_PROTOCOL_ALLOWLIST = new Set(['http:', 'https:']);
+
+const isAllowedExternalUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    if (!EXTERNAL_URL_PROTOCOL_ALLOWLIST.has(parsed.protocol)) {
+      return false;
+    }
+    if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && !parsed.hostname) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isAllowedRemoteFetchUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    return REMOTE_FETCH_PROTOCOL_ALLOWLIST.has(parsed.protocol) && !!parsed.hostname;
+  } catch {
+    return false;
+  }
 };
 
 // ==================== macOS Permissions ====================
@@ -461,7 +491,9 @@ const requestCalendarPermission = async (): Promise<boolean> => {
 
 // 配置应用
 if (isLinux) {
-  app.commandLine.appendSwitch('no-sandbox');
+  if (disableLinuxSandbox) {
+    app.commandLine.appendSwitch('no-sandbox');
+  }
   app.commandLine.appendSwitch('disable-dev-shm-usage');
 }
 if (disableGpu) {
@@ -560,12 +592,13 @@ const getCoworkRunner = () => {
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
         const skillIds = session?.activeSkillIds ?? [];
-        // Inject MetaBot wallet when metabot-basic, metabot-post-buzz, or metabot-omni-caster is selected, or when no skills selected (default)
+        // Inject MetaBot wallet when on-chain skills are selected, or when no skills selected (default)
         const shouldInject =
           skillIds.length === 0 ||
           skillIds.includes('metabot-basic') ||
           skillIds.includes('metabot-post-buzz') ||
-          skillIds.includes('metabot-omni-caster');
+          skillIds.includes('metabot-omni-caster') ||
+          skillIds.includes('metabot-chat-privatechat');
         if (!shouldInject) return {};
         const metabotStore = getMetabotStore();
         // Prefer session's selected MetaBot; fall back to Twin for legacy sessions without metabotId
@@ -1152,7 +1185,25 @@ if (!gotTheLock) {
           }
         });
       };
-      startMetaWebListener(db, getMetaBots, config, emitLog, saveDb);
+      const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
+        const metabotStore = getMetabotStore();
+        const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
+        if (!metabot) return null;
+        const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
+        if (!wallet?.mnemonic?.trim()) return null;
+        return getPrivateKeyBufferForEcdh(
+          wallet.mnemonic,
+          wallet.path || "m/44'/10001'/0'/0/0"
+        );
+      };
+      await startMetaWebListener(
+        db,
+        getMetaBots,
+        config,
+        emitLog,
+        saveDb,
+        resolvePrivateKeyByGlobalMetaId
+      );
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to start MetaWeb listener' };
@@ -2304,7 +2355,14 @@ if (!gotTheLock) {
 
   ipcMain.handle('shell:openExternal', async (_event, url: string) => {
     try {
-      await shell.openExternal(url);
+      const normalized = typeof url === 'string' ? url.trim() : '';
+      if (!normalized) {
+        return { success: false, error: 'Invalid URL' };
+      }
+      if (!isAllowedExternalUrl(normalized)) {
+        return { success: false, error: 'Unsupported URL protocol' };
+      }
+      await shell.openExternal(normalized);
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -2319,6 +2377,16 @@ if (!gotTheLock) {
     body?: string;
   }) => {
     try {
+      if (!isAllowedRemoteFetchUrl(options.url)) {
+        return {
+          ok: false,
+          status: 400,
+          statusText: 'Invalid URL',
+          headers: {},
+          data: null,
+          error: 'Only http/https URLs are supported',
+        };
+      }
       const response = await session.defaultSession.fetch(options.url, {
         method: options.method,
         headers: options.headers,
@@ -2370,6 +2438,15 @@ if (!gotTheLock) {
     activeStreamControllers.set(options.requestId, controller);
 
     try {
+      if (!isAllowedRemoteFetchUrl(options.url)) {
+        activeStreamControllers.delete(options.requestId);
+        return {
+          ok: false,
+          status: 400,
+          statusText: 'Invalid URL',
+          error: 'Only http/https URLs are supported',
+        };
+      }
       const response = await session.defaultSession.fetch(options.url, {
         method: options.method,
         headers: options.headers,
@@ -2454,12 +2531,7 @@ if (!gotTheLock) {
     return false;
   });
 
-  // MCP servers (stub: returns empty list until McpStore is wired)
-  ipcMain.handle('mcp:list', async () => ({ success: true, servers: [] }));
-  ipcMain.handle('mcp:create', async () => ({ success: true, servers: [] }));
-  ipcMain.handle('mcp:update', async () => ({ success: true, servers: [] }));
-  ipcMain.handle('mcp:delete', async () => ({ success: true, servers: [] }));
-  ipcMain.handle('mcp:setEnabled', async () => ({ success: true, servers: [] }));
+  // MCP is currently suspended and not exposed to renderer.
 
   // 设置 Content Security Policy
   const setContentSecurityPolicy = () => {
@@ -2470,8 +2542,7 @@ if (!gotTheLock) {
         isDev ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}` : "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: https: http:",
-        // 允许连接到所有域名，不做限制
-        "connect-src *",
+        "connect-src 'self' https: http: ws: wss:",
         "font-src 'self' data:",
         "media-src 'self'",
         "worker-src 'self' blob:",
@@ -2570,6 +2641,36 @@ if (!gotTheLock) {
     // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
     mainWindow.webContents.session.setProxy({ mode: 'system' }).then(() => {
       console.log('已设置为跟随系统代理');
+    });
+
+    // Block unexpected window popups/navigation; only allow explicit external links.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedExternalUrl(url)) {
+        void shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
+
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (url === 'about:blank') {
+        return;
+      }
+      try {
+        const parsed = new URL(url);
+        const isAppFile = parsed.protocol === 'file:';
+        const devOrigin = new URL(DEV_SERVER_URL).origin;
+        const isDevSameOrigin = isDev && parsed.origin === devOrigin;
+        if (isAppFile || isDevSameOrigin) {
+          return;
+        }
+      } catch {
+        // Treat malformed URLs as blocked.
+      }
+
+      event.preventDefault();
+      if (isAllowedExternalUrl(url)) {
+        void shell.openExternal(url);
+      }
     });
 
     // 处理窗口关闭
