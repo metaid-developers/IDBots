@@ -27,7 +27,7 @@
     "build:skill:web-search": "npx tsc -p SKILLs/web-search/tsconfig.json",
     "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:5175 electron .",
     "electron:dev": "npx rimraf dist-electron && npm run compile:electron && concurrently \"vite --port 5175\" \"wait-on -v -t 120000 -d 10000 http://localhost:5175 && npm run start:electron\"",
-    "postinstall": "patch-package && electron-builder install-app-deps",
+    "postinstall": "patch-package && node scripts/patch-claude-sdk-cli.js && electron-builder install-app-deps",
     "pack": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skill:web-search && electron-builder --dir",
     "dist": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skill:web-search && electron-builder",
     "dist:mac": "node -r dotenv/config node_modules/.bin/electron-builder --mac --config electron-builder.json",
