@@ -16,6 +16,12 @@ Cross-platform weather queries (no API keys required).
 node "$SKILLS_ROOT/weather/scripts/index.js" --city "London"
 ```
 
+No city provided (auto-detect by wttr.in, network permitting):
+
+```bash
+node "$SKILLS_ROOT/weather/scripts/index.js"
+```
+
 ## Common examples
 
 ```bash

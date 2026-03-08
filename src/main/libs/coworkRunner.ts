@@ -1975,6 +1975,27 @@ export class CoworkRunner extends EventEmitter {
     };
   }
 
+  private denyUnsupportedSkillTool(
+    sessionId: string,
+    executionMode: 'local' | 'sandbox',
+    toolName: string
+  ): PermissionResult | null {
+    const normalized = String(toolName ?? '').trim().toLowerCase();
+    if (normalized !== 'skill') {
+      return null;
+    }
+
+    coworkLog('WARN', 'toolPolicy', 'Blocked unsupported Skill tool', {
+      sessionId,
+      executionMode,
+      toolName,
+    });
+    return {
+      behavior: 'deny',
+      message: 'Tool blocked by app policy: use Read/Bash with SKILL.md (Skill tool is not wired to this registry).',
+    };
+  }
+
   private truncateCommandPreview(command: string, maxLength = 120): string {
     const compact = command.replace(/\s+/g, ' ').trim();
     if (compact.length <= maxLength) return compact;
@@ -2510,6 +2531,10 @@ export class CoworkRunner extends EventEmitter {
         const blockedToolResult = this.denyBlockedBuiltinWebTool(sessionId, 'local', resolvedName);
         if (blockedToolResult) {
           return blockedToolResult;
+        }
+        const skillToolResult = this.denyUnsupportedSkillTool(sessionId, 'local', resolvedName);
+        if (skillToolResult) {
+          return skillToolResult;
         }
 
         // Auto-approve mode (kept for compatibility with legacy callers).
@@ -3130,6 +3155,11 @@ export class CoworkRunner extends EventEmitter {
             this.writeSandboxPermissionResponse(activeSession, paths.responsesDir, requestId, blockedToolResult);
             return;
           }
+          const skillToolResult = this.denyUnsupportedSkillTool(sessionId, 'sandbox', toolName);
+          if (skillToolResult) {
+            this.writeSandboxPermissionResponse(activeSession, paths.responsesDir, requestId, skillToolResult);
+            return;
+          }
 
           const responsePath = path.join(paths.responsesDir, `${requestId}.json`);
           this.sandboxPermissions.set(requestId, { sessionId, responsePath });
@@ -3572,6 +3602,11 @@ export class CoworkRunner extends EventEmitter {
         const blockedToolResult = this.denyBlockedBuiltinWebTool(sessionId, 'sandbox', toolName);
         if (blockedToolResult) {
           this.writeSandboxPermissionResponse(activeSession, paths.responsesDir, reqId, blockedToolResult);
+          return;
+        }
+        const skillToolResult = this.denyUnsupportedSkillTool(sessionId, 'sandbox', toolName);
+        if (skillToolResult) {
+          this.writeSandboxPermissionResponse(activeSession, paths.responsesDir, reqId, skillToolResult);
           return;
         }
 

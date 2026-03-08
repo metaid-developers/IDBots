@@ -13,9 +13,29 @@
 
 const http = require('node:http');
 const https = require('node:https');
+const { spawnSync } = require('node:child_process');
 const { parseArgs } = require('node:util');
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+let proxyConfigured = false;
+let curlAvailableCache;
+
+const TIMEZONE_CITY_HINTS = {
+  'Asia/Hong_Kong': 'Hong Kong',
+  'Asia/Shanghai': 'Shanghai',
+  'Asia/Tokyo': 'Tokyo',
+  'Asia/Singapore': 'Singapore',
+  'Asia/Seoul': 'Seoul',
+  'Europe/London': 'London',
+  'Europe/Paris': 'Paris',
+  'Europe/Berlin': 'Berlin',
+  'America/New_York': 'New York',
+  'America/Los_Angeles': 'Los Angeles',
+  'America/Chicago': 'Chicago',
+  'America/Denver': 'Denver',
+  'America/Toronto': 'Toronto',
+  'Australia/Sydney': 'Sydney',
+};
 
 const WEATHER_CODE_LABELS = {
   0: 'Clear sky',
@@ -56,6 +76,7 @@ function printHelp() {
       'Usage:',
       '  node weather/scripts/index.js --city "<city>" [--format current|compact|forecast] [--units metric|us]',
       '  node weather/scripts/index.js --lat <number> --lon <number> [--units metric|us]',
+      '  node weather/scripts/index.js   # auto-detect location via wttr.in',
       '',
       'Options:',
       '  --city, -c      City name (for example "London", "New York").',
@@ -67,6 +88,65 @@ function printHelp() {
       '  --help, -h      Show this help message.',
     ].join('\n')
   );
+}
+
+function configureProxyDispatcherIfNeeded() {
+  if (proxyConfigured) return;
+  proxyConfigured = true;
+  const proxy = process.env.https_proxy || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.HTTP_PROXY;
+  if (!proxy) return;
+
+  try {
+    const { ProxyAgent, setGlobalDispatcher } = require('undici');
+    setGlobalDispatcher(new ProxyAgent(proxy));
+  } catch (error) {
+    // Ignore: fetch can still attempt direct connection.
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`weather skill warning: failed to configure proxy dispatcher (${detail})`);
+  }
+}
+
+function hasCurl() {
+  if (curlAvailableCache !== undefined) return curlAvailableCache;
+  try {
+    const probe = spawnSync('curl', ['--version'], { stdio: 'ignore' });
+    curlAvailableCache = probe.status === 0;
+  } catch {
+    curlAvailableCache = false;
+  }
+  return curlAvailableCache;
+}
+
+function requestWithCurl(url, timeoutMs) {
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const result = spawnSync('curl', [
+    '-sS',
+    '-L',
+    '--max-time',
+    String(timeoutSec),
+    '-H',
+    'User-Agent: IDBots-weather-skill/1.0',
+    '-H',
+    'Accept: */*',
+    url,
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    env: process.env,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error((result.stderr || `curl exited with code ${result.status}`).trim());
+  }
+
+  const text = (result.stdout || '').trim();
+  if (!text) {
+    throw new Error('curl returned empty response');
+  }
+  return text;
 }
 
 function toErrorMessage(error) {
@@ -162,23 +242,44 @@ function requestWithNode(url, timeoutMs) {
 }
 
 async function requestText(url, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const errors = [];
+  configureProxyDispatcherIfNeeded();
+
   if (typeof fetch === 'function') {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'IDBots-weather-skill/1.0',
-        Accept: '*/*',
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`);
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'IDBots-weather-skill/1.0',
+          Accept: '*/*',
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`);
+      }
+      return text;
+    } catch (error) {
+      errors.push(`fetch: ${toErrorMessage(error)}`);
     }
-    return text;
   }
 
-  return requestWithNode(url, timeoutMs);
+  try {
+    return await requestWithNode(url, timeoutMs);
+  } catch (error) {
+    errors.push(`node-http: ${toErrorMessage(error)}`);
+  }
+
+  if (hasCurl()) {
+    try {
+      return requestWithCurl(url, timeoutMs);
+    } catch (error) {
+      errors.push(`curl: ${toErrorMessage(error)}`);
+    }
+  }
+
+  throw new Error(`all request methods failed for ${url}: ${errors.join(' | ')}`);
 }
 
 async function requestJson(url, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -222,12 +323,18 @@ async function queryWttrByCity(city, format, units) {
 
   const unitPart = units === 'us' ? 'u' : 'm';
   const query = `${formatPart}&${unitPart}`;
-  const url = `https://wttr.in/${encodeURIComponent(city)}?${query}`;
+  const locationPath = city ? encodeURIComponent(city) : '';
+  const url = `https://wttr.in/${locationPath}?${query}`;
   const text = (await requestText(url)).trim();
   if (!text) {
     throw new Error('wttr.in returned empty response');
   }
   return text;
+}
+
+function inferCityFromTimezone() {
+  const tz = (process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || '').trim();
+  return TIMEZONE_CITY_HINTS[tz] || '';
 }
 
 async function geocodeCity(city) {
@@ -302,11 +409,11 @@ async function main() {
   const format = normalizeFormat(getStringOption(values, 'format'));
   const units = normalizeUnits(getStringOption(values, 'units'));
   const coordinates = parseCoordinates(values);
-  const city = getStringOption(values, 'city') || (process.env.IDBOTS_WEATHER_DEFAULT_CITY || '').trim();
+  const city = getStringOption(values, 'city')
+    || (process.env.IDBOTS_WEATHER_DEFAULT_CITY || '').trim()
+    || inferCityFromTimezone();
 
-  if (!city && !coordinates) {
-    throw new Error('Missing location. Pass --city "<city>" or --lat/--lon.');
-  }
+  const hasCity = Boolean(city);
 
   if (coordinates) {
     const label = city || `(${coordinates.latitude}, ${coordinates.longitude})`;
@@ -321,15 +428,24 @@ async function main() {
   }
 
   if (provider === 'open-meteo') {
+    if (!hasCity) {
+      throw new Error('Open-Meteo mode requires location. Pass --city "<city>" or --lat/--lon.');
+    }
     const summary = await queryOpenMeteoByCity(city, units);
     console.log(summary);
     return;
   }
 
   try {
-    const text = await queryWttrByCity(city, format, units);
+    const text = await queryWttrByCity(hasCity ? city : '', format, units);
     console.log(text);
   } catch (wttrError) {
+    if (!hasCity) {
+      throw new Error(
+        `wttr.in auto-location failed: ${toErrorMessage(wttrError)}. `
+        + 'Please pass --city "<city>" for a deterministic fallback.'
+      );
+    }
     // wttr.in can be blocked in some networks; fallback to Open-Meteo for stability.
     const fallbackText = await queryOpenMeteoByCity(city, units);
     console.error(`wttr.in failed, switched to Open-Meteo: ${toErrorMessage(wttrError)}`);
