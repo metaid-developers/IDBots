@@ -11,7 +11,7 @@ permissions:
   contents: write  # 允许创建 GitHub Release 和上传 Release 附件
 
 jobs:
-  release:
+  build:
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -86,22 +86,88 @@ jobs:
           SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
           SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
-      - name: Build and publish Electron app
+      - name: Build Electron app package
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: >
           npx electron-builder ${{ matrix.build_args }}
-          --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+          --publish never
 
-      # 无论构建成功与否，上传产物供调试（保留 7 天）
       - name: Upload build artifacts
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
-          path: release/
-          if-no-files-found: ignore
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
           retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-windows-latest
+          path: release-assets/windows
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-macos-latest
+          path: release-assets/macos
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-ubuntu-latest
+          path: release-assets/linux
+
+      - name: Verify release assets
+        run: |
+          echo "Collected assets:"
+          find release-assets -type f | sort
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: IDBots ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            Cross-platform desktop installers for IDBots.
+
+            Included packages:
+            - Windows NSIS installer (.exe)
+            - macOS DMG package (.dmg)
+            - Linux AppImage package (.AppImage)
+
+            Notes:
+            - This macOS build is currently unsigned and not notarized.
+            - Gatekeeper prompts on macOS are expected for this release.
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/windows/*.exe
+            release-assets/windows/*.blockmap
+            release-assets/windows/latest*.yml
+            release-assets/macos/*.dmg
+            release-assets/macos/*.zip
+            release-assets/macos/*.blockmap
+            release-assets/macos/latest*.yml
+            release-assets/linux/*.AppImage
+            release-assets/linux/*.blockmap
+            release-assets/linux/latest*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
