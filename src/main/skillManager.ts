@@ -41,6 +41,9 @@ type EmailConnectivityTestResult = {
 type SkillDefaultConfig = {
   order?: number;
   enabled?: boolean;
+  version?: string;
+  'creator-metaid'?: string;
+  installedAt?: number;
 };
 
 type SkillsConfig = {
@@ -99,6 +102,26 @@ const extractDescription = (content: string): string => {
 const normalizeFolderName = (name: string): string => {
   const normalized = name.replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '');
   return normalized || 'skill';
+};
+
+const compareVersions = (a: string | undefined, b: string | undefined): number => {
+  const parse = (value: string | undefined): number[] => {
+    return String(value || '0')
+      .replace(/^v/i, '')
+      .split(/[.-]/)
+      .map((part) => parseInt(part, 10) || 0);
+  };
+
+  const aa = parse(a);
+  const bb = parse(b);
+  const len = Math.max(aa.length, bb.length);
+  for (let i = 0; i < len; i += 1) {
+    const va = aa[i] ?? 0;
+    const vb = bb[i] ?? 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+  }
+  return 0;
 };
 
 const isZipFile = (filePath: string): boolean => path.extname(filePath).toLowerCase() === '.zip';
@@ -745,22 +768,40 @@ export class SkillManager {
     }
 
     try {
+      const bundledDefaults = this.loadSkillDefaultsFromRoot(bundledRoot);
+      const userDefaults = this.loadSkillDefaultsFromRoot(userRoot);
+      const syncedSkillIds = new Set<string>();
       const bundledSkillDirs = listSkillDirs(bundledRoot);
       bundledSkillDirs.forEach((dir) => {
         const id = path.basename(dir);
         const targetDir = path.join(userRoot, id);
         const targetExists = fs.existsSync(targetDir);
         const shouldRepair = id === 'web-search' && targetExists && isWebSearchSkillBroken(targetDir);
-        if (targetExists && !shouldRepair) return;
+        const bundledVersion = bundledDefaults[id]?.version;
+        const localVersion = userDefaults[id]?.version;
+        const shouldUpgradeByVersion = targetExists && compareVersions(bundledVersion, localVersion) > 0;
+        const shouldBootstrapOfficialUpdate = targetExists
+          && !localVersion
+          && this.isOfficialSkillDir(dir)
+          && this.isSkillManifestDifferent(dir, targetDir);
+        const shouldSync = !targetExists || shouldRepair || shouldUpgradeByVersion || shouldBootstrapOfficialUpdate;
+        if (!shouldSync) return;
+
+        const forceCopy = targetExists;
         try {
           fs.cpSync(dir, targetDir, {
             recursive: true,
             dereference: true,
-            force: shouldRepair,
+            force: forceCopy,
             errorOnExist: false,
           });
+          syncedSkillIds.add(id);
           if (shouldRepair) {
             console.log('[skills] Repaired bundled skill "web-search" in user data');
+          } else if (shouldUpgradeByVersion) {
+            console.log(`[skills] Upgraded bundled skill "${id}" in user data (${localVersion || 'unknown'} -> ${bundledVersion || 'unknown'})`);
+          } else if (shouldBootstrapOfficialUpdate) {
+            console.log(`[skills] Refreshed legacy bundled skill "${id}" in user data`);
           }
         } catch (error) {
           console.warn(`[skills] Failed to sync bundled skill "${id}":`, error);
@@ -771,6 +812,9 @@ export class SkillManager {
       const targetConfig = path.join(userRoot, SKILLS_CONFIG_FILE);
       if (fs.existsSync(bundledConfig) && !fs.existsSync(targetConfig)) {
         fs.cpSync(bundledConfig, targetConfig, { dereference: false });
+      }
+      if (syncedSkillIds.size > 0) {
+        this.mergeBundledSkillDefaults(userRoot, bundledRoot, syncedSkillIds);
       }
     } catch (error) {
       console.warn('[skills] Failed to sync bundled skills:', error);
@@ -1279,6 +1323,92 @@ export class SkillManager {
 
   private saveSkillStateMap(map: SkillStateMap): void {
     this.getStore().set(SKILL_STATE_KEY, map);
+  }
+
+  private loadSkillDefaultsFromRoot(root: string): Record<string, SkillDefaultConfig> {
+    const configPath = path.join(root, SKILLS_CONFIG_FILE);
+    if (!fs.existsSync(configPath)) {
+      return {};
+    }
+    try {
+      const raw = fs.readFileSync(configPath, 'utf8');
+      const parsed = JSON.parse(raw) as SkillsConfig;
+      return parsed.defaults && typeof parsed.defaults === 'object'
+        ? parsed.defaults
+        : {};
+    } catch (error) {
+      console.warn('[skills] Failed to load skill defaults from root:', root, error);
+      return {};
+    }
+  }
+
+  private isOfficialSkillDir(skillDir: string): boolean {
+    try {
+      const skillFilePath = path.join(skillDir, SKILL_FILE_NAME);
+      if (!fs.existsSync(skillFilePath)) return false;
+      const raw = fs.readFileSync(skillFilePath, 'utf8');
+      const { frontmatter } = parseFrontmatter(raw);
+      return isTruthy(frontmatter.official) || isTruthy(frontmatter.isOfficial);
+    } catch {
+      return false;
+    }
+  }
+
+  private isSkillManifestDifferent(bundledSkillDir: string, localSkillDir: string): boolean {
+    try {
+      const bundledSkillPath = path.join(bundledSkillDir, SKILL_FILE_NAME);
+      const localSkillPath = path.join(localSkillDir, SKILL_FILE_NAME);
+      if (!fs.existsSync(bundledSkillPath) || !fs.existsSync(localSkillPath)) {
+        return true;
+      }
+      const bundledRaw = fs.readFileSync(bundledSkillPath, 'utf8').replace(/\r\n/g, '\n');
+      const localRaw = fs.readFileSync(localSkillPath, 'utf8').replace(/\r\n/g, '\n');
+      return bundledRaw !== localRaw;
+    } catch {
+      return true;
+    }
+  }
+
+  private mergeBundledSkillDefaults(
+    userRoot: string,
+    bundledRoot: string,
+    syncedSkillIds: Set<string>
+  ): void {
+    const bundledConfigPath = path.join(bundledRoot, SKILLS_CONFIG_FILE);
+    const targetConfigPath = path.join(userRoot, SKILLS_CONFIG_FILE);
+    if (!fs.existsSync(bundledConfigPath) || !fs.existsSync(targetConfigPath)) {
+      return;
+    }
+
+    try {
+      const bundledRaw = fs.readFileSync(bundledConfigPath, 'utf8');
+      const targetRaw = fs.readFileSync(targetConfigPath, 'utf8');
+      const bundledConfig = JSON.parse(bundledRaw) as SkillsConfig;
+      const targetConfig = JSON.parse(targetRaw) as SkillsConfig;
+
+      if (!bundledConfig.defaults || typeof bundledConfig.defaults !== 'object') return;
+      if (!targetConfig.defaults || typeof targetConfig.defaults !== 'object') {
+        targetConfig.defaults = {};
+      }
+
+      for (const skillId of syncedSkillIds) {
+        const bundledDefault = bundledConfig.defaults[skillId];
+        if (!bundledDefault) continue;
+        const existing = targetConfig.defaults[skillId] ?? {};
+        targetConfig.defaults[skillId] = {
+          ...existing,
+          version: bundledDefault.version ?? existing.version,
+          'creator-metaid': bundledDefault['creator-metaid'] ?? existing['creator-metaid'],
+          installedAt: Date.now(),
+          enabled: existing.enabled ?? bundledDefault.enabled ?? true,
+          order: existing.order ?? bundledDefault.order,
+        };
+      }
+
+      fs.writeFileSync(targetConfigPath, JSON.stringify(targetConfig, null, 2), 'utf8');
+    } catch (error) {
+      console.warn('[skills] Failed to merge bundled skill defaults:', error);
+    }
   }
 
   private loadSkillsDefaults(roots: string[]): Record<string, SkillDefaultConfig> {

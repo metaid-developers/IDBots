@@ -4,7 +4,7 @@
   "defaults": {
     "metabot-post-buzz": {
       "order": 5,
-      "version": "1.0.1",
+      "version": "1.0.2",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
