@@ -14,7 +14,7 @@ official: true
 ## 命令 (Command)
 
 ```bash
-node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]
+node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.js" --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]
 ```
 
 ## 参数说明
@@ -41,7 +41,7 @@ node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" --to "<
 ## 示例
 
 ```bash
-node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.ts" \
+node "$SKILLS_ROOT/metabot-chat-privatechat/scripts/send-privatechat.js" \
   --to "idq1zfazvxaq69uw6txe3ewce30ewyhy9a7mzykgv0" \
   --content "hello"
 ```

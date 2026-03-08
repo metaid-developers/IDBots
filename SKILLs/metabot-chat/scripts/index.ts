@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * metabot-chat skill: submit parsed task params to main process via RPC.
- * Usage: node index.ts --payload '<JSON>'
- * Or:    echo '<JSON>' | node index.ts
+ * Usage: node index.js --payload '<JSON>'
+ * Or:    echo '<JSON>' | node index.js
  * JSON must include target_metabot_name and group_id; other fields optional.
  */
 

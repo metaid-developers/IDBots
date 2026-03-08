@@ -897,7 +897,7 @@ export class SkillManager {
   /**
    * Run a skill by id with a JSON payload (e.g. from orchestrator tool call).
    * Uses invocation adapter for known skills (e.g. metabot-omni-caster); otherwise
-   * runs scripts/index.ts or scripts/run.ts with --payload.
+   * runs scripts/index.js|index.ts or scripts/run.js|run.ts with --payload.
    * Returns observation string for the LLM.
    */
   async runSkillById(
@@ -950,9 +950,11 @@ export class SkillManager {
     const id = skillId.trim().toLowerCase();
 
     if (id === 'metabot-omni-caster') {
-      const omniScript = path.join(skillDir, 'scripts', 'omni-caster.ts');
+      const omniScriptJs = path.join(skillDir, 'scripts', 'omni-caster.js');
+      const omniScriptTs = path.join(skillDir, 'scripts', 'omni-caster.ts');
+      const omniScript = fs.existsSync(omniScriptJs) ? omniScriptJs : omniScriptTs;
       if (!fs.existsSync(omniScript)) {
-        return { success: false, observation: `metabot-omni-caster: scripts/omni-caster.ts not found` };
+        return { success: false, observation: 'metabot-omni-caster: scripts/omni-caster.js or omni-caster.ts not found' };
       }
       let pathVal: string;
       let payloadVal: string;
@@ -991,20 +993,20 @@ export class SkillManager {
       if (operation !== 'create') scriptArgs.push('--operation', operation);
       if (contentType !== 'application/json') scriptArgs.push('--content-type', contentType);
     } else {
-      const indexTs = path.join(skillDir, 'scripts', 'index.ts');
       const indexJs = path.join(skillDir, 'scripts', 'index.js');
-      const runTs = path.join(skillDir, 'scripts', 'run.ts');
+      const indexTs = path.join(skillDir, 'scripts', 'index.ts');
       const runJs = path.join(skillDir, 'scripts', 'run.js');
-      if (fs.existsSync(indexTs)) {
-        scriptPath = indexTs;
-      } else if (fs.existsSync(indexJs)) {
+      const runTs = path.join(skillDir, 'scripts', 'run.ts');
+      if (fs.existsSync(indexJs)) {
         scriptPath = indexJs;
-      } else if (fs.existsSync(runTs)) {
-        scriptPath = runTs;
+      } else if (fs.existsSync(indexTs)) {
+        scriptPath = indexTs;
       } else if (fs.existsSync(runJs)) {
         scriptPath = runJs;
+      } else if (fs.existsSync(runTs)) {
+        scriptPath = runTs;
       } else {
-        return { success: false, observation: `Skill "${skillId}": no scripts/index.ts, index.js, run.ts, or run.js found` };
+        return { success: false, observation: `Skill "${skillId}": no scripts/index.js, index.ts, run.js, or run.ts found` };
       }
       scriptArgs = ['--payload', payloadJson];
     }

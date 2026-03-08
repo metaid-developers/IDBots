@@ -27,7 +27,7 @@ function parsePayloadRaw(): string {
 
   if (values.help) {
     process.stderr.write(
-      'Usage: node index.ts --payload "{\"to\":\"idq...\",\"content\":\"hello\"}"\n'
+      'Usage: node index.js --payload "{\"to\":\"idq...\",\"content\":\"hello\"}"\n'
     );
     process.exit(0);
   }

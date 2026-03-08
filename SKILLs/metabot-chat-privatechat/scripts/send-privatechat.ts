@@ -269,7 +269,7 @@ function parseCli(): {
 
   if (values.help) {
     process.stderr.write(
-      'Usage: node send-privatechat.ts --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]\n'
+      'Usage: node send-privatechat.js --to "<globalMetaId>" --content "<message>" [--reply-pin "<pinId>"]\n'
     );
     process.exit(0);
   }

@@ -5,10 +5,10 @@
  * Supports both JSON/text payloads and binary file uploads.
  *
  * Usage (JSON protocol):
- *   IDBOTS_METABOT_ID=1 node omni-caster.ts --path "/protocols/paylike" --payload '{"isLike":1,"likeTo":"..."}'
+ *   IDBOTS_METABOT_ID=1 node omni-caster.js --path "/protocols/paylike" --payload '{"isLike":1,"likeTo":"..."}'
  *
  * Usage (binary file upload):
- *   IDBOTS_METABOT_ID=1 node omni-caster.ts --path "/file" --payload-file ./image.png --content-type image/png
+ *   IDBOTS_METABOT_ID=1 node omni-caster.js --path "/file" --payload-file ./image.png --content-type image/png
  */
 
 import { parseArgs } from 'util';
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
 
   if (args.help) {
     console.error(
-      'Usage: node omni-caster.ts --path "<protocol-path>" (--payload \'<json-or-text>\' | --payload-file <file>)'
+      'Usage: node omni-caster.js --path "<protocol-path>" (--payload \'<json-or-text>\' | --payload-file <file>)'
       + ' [--operation <create|modify|revoke>] [--content-type <mime>] [--encoding <utf-8|base64>]'
     );
     process.exit(0);

@@ -4,11 +4,11 @@
  * Loads api_registry.json, fetches from registered endpoints, and sanitizes output for the agent.
  *
  * Usage (list APIs):
- *   node omni-reader.ts --list
+ *   node omni-reader.js --list
  *
  * Usage (fetch data):
- *   node omni-reader.ts --query-type buzz_newest --size 10
- *   node omni-reader.ts --query-type protocol_list --path "/protocols/metabot-skill" --size 5
+ *   node omni-reader.js --query-type buzz_newest --size 10
+ *   node omni-reader.js --query-type protocol_list --path "/protocols/metabot-skill" --size 5
  */
 
 import { parseArgs } from 'util';

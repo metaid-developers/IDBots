@@ -19,13 +19,13 @@ official: true
   - `references/04-chat-messaging.md`：发送群聊私聊信息相关的都可以看这个文档，包括群聊信息协议，私聊信息协议等。
 2. **定位协议**：找到与用户意图匹配的协议（例如：点赞对应 `PayLike` Path `/protocols/paylike`，文件上链 Path 为 `/file`）。
 3. **构造 Payload**：**JSON 协议**：按文档 Payload Schema 构建 JSON 字符串；**文件上链**：使用 `--payload-file` 指定本地文件路径，脚本自动转为 base64 并设置 `encoding: base64`。
-4. **执行命令**：调用底层的 `omni-caster.ts` 脚本完成上链。
+4. **执行命令**：调用底层的 `omni-caster.js` 脚本完成上链。
 
 ## 💻 命令语法 (Command)
 
 **JSON/文本协议：**
 ```bash
-node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
+node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
   --path "<协议的逻辑路径>" \
   --payload '<JSON 字符串或文本内容>' \
   [--operation "<操作类型>"] \
@@ -34,7 +34,7 @@ node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
 
 **文件（二进制）上链：**
 ```bash
-node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.ts" \
+node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
   --path "/file" \
   --payload-file <本地文件路径> \
   [--content-type "<MIME 类型>"]

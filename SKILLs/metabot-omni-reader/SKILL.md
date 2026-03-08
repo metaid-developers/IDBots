@@ -12,19 +12,19 @@ This is MetaBot's "eyes" for perceiving the on-chain world. You can run the unde
 When you need on-chain data to answer the user, follow these steps:
 
 1. **Discover APIs**: If you are unsure which query types are supported, **run the `--list` command first**. The script will return all available `query-type` keys and their descriptions.
-2. **Run the command**: Based on the user's request and the `--list` output, call `omni-reader.ts` with the appropriate `--query-type`.
+2. **Run the command**: Based on the user's request and the `--list` output, call `omni-reader.js` with the appropriate `--query-type`.
 3. **Summarize**: Read the script's JSON output and answer the user in natural language. Never dump raw JSON to the user.
 
 ## 💻 Command Syntax
 
 **1. List available APIs (Discovery):**
 ```bash
-node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.ts" --list
+node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.js" --list
 ```
 
 **2. Fetch on-chain data:**
 ```bash
-node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.ts" \
+node "$SKILLS_ROOT/metabot-omni-reader/scripts/omni-reader.js" \
   --query-type "<key from --list>" \
   [--size <count>] \
   [--path "<protocol path>"] \
