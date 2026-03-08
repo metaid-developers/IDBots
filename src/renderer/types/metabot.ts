@@ -5,6 +5,8 @@ export interface Metabot {
   mvc_address?: string;
   btc_address?: string;
   doge_address?: string;
+  chat_public_key_pin_id?: string | null;
+  metabot_info_pinid?: string | null;
   name: string;
   avatar: string | null;
   enabled: boolean;

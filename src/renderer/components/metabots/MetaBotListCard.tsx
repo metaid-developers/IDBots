@@ -14,6 +14,8 @@ interface MetaBotListCardProps {
   onEdit: () => void;
   onToggleEnabled: (enabled: boolean) => void;
   onDelete: () => void;
+  isChainSynced: boolean;
+  onSyncToChain: () => void;
 }
 
 interface BalanceState {
@@ -23,7 +25,14 @@ interface BalanceState {
   loading: boolean;
 }
 
-const MetaBotListCard: React.FC<MetaBotListCardProps> = ({ metabot, onEdit, onToggleEnabled, onDelete }) => {
+const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
+  metabot,
+  onEdit,
+  onToggleEnabled,
+  onDelete,
+  isChainSynced,
+  onSyncToChain,
+}) => {
   const [balance, setBalance] = useState<BalanceState>({ loading: true });
   const [isAddressExpanded, setIsAddressExpanded] = useState(false);
 
@@ -133,6 +142,21 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({ metabot, onEdit, onTo
         <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mb-3 line-clamp-2">
           {metabot.goal}
         </p>
+      )}
+
+      {!isChainSynced && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSyncToChain();
+          }}
+          className="mb-3 inline-flex items-center gap-2 text-xs text-red-500 dark:text-red-400 hover:underline"
+          title={i18nService.t('metabotUnsyncedSyncNow')}
+        >
+          <span className="inline-block h-2 w-2 rounded-full bg-red-500 dark:bg-red-400" aria-hidden />
+          <span>{i18nService.t('metabotUnsyncedSyncNow')}</span>
+        </button>
       )}
 
       <div className="flex items-center justify-between gap-2">

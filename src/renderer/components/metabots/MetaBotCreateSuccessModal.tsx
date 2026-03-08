@@ -17,6 +17,8 @@ export interface MetaBotCreateSuccessModalProps {
   subsidyError?: string;
   syncStatus?: SyncStatus;
   syncError?: string;
+  mode?: 'create' | 'syncOnly';
+  showSubsidyStatus?: boolean;
   onClose: () => void;
   onSyncToChain: () => void;
 }
@@ -34,6 +36,8 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
   subsidyError,
   syncStatus = 'idle',
   syncError,
+  mode = 'create',
+  showSubsidyStatus = true,
   onClose,
   onSyncToChain,
 }) => {
@@ -56,6 +60,11 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
   const isSyncing = syncStatus === 'syncing';
   const isSyncSuccess = syncStatus === 'success';
   const isSyncError = syncStatus === 'error';
+  const isCreateMode = mode === 'create';
+  const title = isCreateMode ? i18nService.t('metabotCreateSuccess') : i18nService.t('metabotResyncTitle');
+  const subtitle = isCreateMode
+    ? i18nService.t('metabotCreateSuccessSubtitle')
+    : i18nService.t('metabotResyncSubtitle');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -68,26 +77,34 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
       <div className="relative w-full max-w-md rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg shadow-xl overflow-hidden">
         {/* Celebration header */}
         <div className="px-6 py-6 text-center border-b dark:border-claude-darkBorder border-claude-border">
-          <div className="text-4xl mb-2 animate-bounce" role="img" aria-hidden>
-            🎉 🤖 ✨
-          </div>
+          {isCreateMode ? (
+            <div className="text-4xl mb-2 animate-bounce" role="img" aria-hidden>
+              🎉 🤖 ✨
+            </div>
+          ) : (
+            <div className="text-3xl mb-2" role="img" aria-hidden>
+              🔗
+            </div>
+          )}
           <h2 className="text-xl font-semibold dark:text-claude-darkText text-claude-text">
-            {i18nService.t('metabotCreateSuccess')}
+            {title}
           </h2>
           <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
-            {i18nService.t('metabotCreateSuccessSubtitle')}
+            {subtitle}
           </p>
-          <div
-            className={`mt-3 text-sm px-3 py-2 rounded-lg ${
-              subsidySuccess
-                ? 'dark:bg-emerald-900/30 bg-emerald-100 dark:text-emerald-400 text-emerald-700'
-                : 'dark:bg-red-900/30 bg-red-100 dark:text-red-400 text-red-700'
-            }`}
-          >
-            {subsidySuccess
-              ? i18nService.t('metabotMvcSubsidySuccess')
-              : `${i18nService.t('metabotMvcSubsidyFailed')}${subsidyError ? `: ${subsidyError}` : ''}`}
-          </div>
+          {showSubsidyStatus && (
+            <div
+              className={`mt-3 text-sm px-3 py-2 rounded-lg ${
+                subsidySuccess
+                  ? 'dark:bg-emerald-900/30 bg-emerald-100 dark:text-emerald-400 text-emerald-700'
+                  : 'dark:bg-red-900/30 bg-red-100 dark:text-red-400 text-red-700'
+              }`}
+            >
+              {subsidySuccess
+                ? i18nService.t('metabotMvcSubsidySuccess')
+                : `${i18nService.t('metabotMvcSubsidyFailed')}${subsidyError ? `: ${subsidyError}` : ''}`}
+            </div>
+          )}
         </div>
 
         {/* Identity */}

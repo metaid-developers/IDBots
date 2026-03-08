@@ -25,6 +25,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     metabot: Metabot;
     subsidySuccess: boolean;
     subsidyError?: string;
+    mode?: 'create' | 'syncOnly';
+    showSubsidyStatus?: boolean;
   } | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string>('');
@@ -106,6 +108,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       metabot: result.metabot,
       subsidySuccess: result.subsidy?.success ?? false,
       subsidyError: result.subsidy?.error,
+      mode: 'create',
+      showSubsidyStatus: true,
     });
     setViewMode('list');
   };
@@ -228,17 +232,16 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       setActionError(result.error || i18nService.t('metabotUpdateFailed'));
     }
   };
-  const handleSyncToChain = async () => {
-    if (!createSuccessModal) return;
+  const performSyncToChain = async (metabot: Metabot) => {
     setSyncStatus('syncing');
     setSyncError('');
     try {
       const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
       const SYNC_RETRY_DELAY_MS = 2500;
-      let result = await window.electron.idbots.syncMetaBot(createSuccessModal.metabot.id);
+      let result = await window.electron.idbots.syncMetaBot(metabot.id);
       if (!result.success) {
         await delay(SYNC_RETRY_DELAY_MS);
-        result = await window.electron.idbots.syncMetaBot(createSuccessModal.metabot.id);
+        result = await window.electron.idbots.syncMetaBot(metabot.id);
       }
       if (result.success) {
         setSyncStatus('success');
@@ -255,6 +258,21 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       setSyncStatus('error');
       setSyncError(err instanceof Error ? err.message : 'Sync failed');
     }
+  };
+
+  const handleSyncToChain = async () => {
+    if (!createSuccessModal) return;
+    await performSyncToChain(createSuccessModal.metabot);
+  };
+
+  const handleSyncUnsyncedMetabot = (metabot: Metabot) => {
+    setCreateSuccessModal({
+      metabot,
+      subsidySuccess: true,
+      mode: 'syncOnly',
+      showSubsidyStatus: false,
+    });
+    void performSyncToChain(metabot);
   };
 
   return (
@@ -318,6 +336,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
                 onEdit={() => handleEdit(m.id)}
                 onToggleEnabled={(enabled) => handleToggleEnabled(m.id, enabled)}
                 onDelete={() => handleDeleteRequest(m)}
+                isChainSynced={!!(m.metabot_info_pinid && m.metabot_info_pinid.trim())}
+                onSyncToChain={() => handleSyncUnsyncedMetabot(m)}
               />
             ))}
           </div>
@@ -328,6 +348,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
               subsidyError={createSuccessModal.subsidyError}
               syncStatus={syncStatus}
               syncError={syncError}
+              mode={createSuccessModal.mode}
+              showSubsidyStatus={createSuccessModal.showSubsidyStatus}
               onClose={handleCloseSuccessModal}
               onSyncToChain={handleSyncToChain}
             />
