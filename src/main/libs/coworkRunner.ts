@@ -52,7 +52,8 @@ const SANDBOX_SKILLS_GUEST_PATH = '/workspace/skills';
 const SANDBOX_SKILLS_GUEST_PATH_WINDOWS = '/workspace/project/SKILLs';
 const SANDBOX_WORKSPACE_GUEST_ROOT = '/workspace/project';
 const SANDBOX_WORKSPACE_LEGACY_ROOT = '/workspace';
-const ATTACHMENT_LINE_RE = /^\s*(?:[-*]\s*)?(输入文件|input\s*file)\s*[:：]\s*(.+?)\s*$/i;
+const SAFE_ATTACHMENT_PROMPT_LABEL = '附件路径';
+const ATTACHMENT_LINE_RE = /^\s*(?:[-*]\s*)?(输入文件|input\s*file|附件路径|附件文件|attachment\s*path|attachment\s*file)\s*[:：]\s*(.+?)\s*$/i;
 const INFERRED_FILE_REFERENCE_RE = /([^\s"'`，。！？：:；;（）()\[\]{}<>《》【】]+?\.[A-Za-z][A-Za-z0-9]{0,7})/g;
 const SANDBOX_ATTACHMENT_DIR = path.join('.cowork-temp', 'attachments');
 const LEGACY_SKILLS_ROOT_HINTS = [
@@ -1109,6 +1110,21 @@ export class CoworkRunner extends EventEmitter {
     return entries;
   }
 
+  /**
+   * Normalize legacy "输入文件/Input file" markers to a neutral attachment label.
+   * This avoids providers that reject non-text image blocks from auto-attachment parsing.
+   */
+  private normalizeAttachmentPromptLabels(prompt: string): string {
+    const lines = prompt.split(/\r?\n/);
+    const normalized = lines.map((line) =>
+      line.replace(
+        /^(\s*(?:[-*]\s*)?)(?:输入文件|input\s*file)\s*([:：]\s*)/i,
+        `$1${SAFE_ATTACHMENT_PROMPT_LABEL}$2`
+      )
+    );
+    return normalized.join('\n');
+  }
+
   private resolveAttachmentPath(inputPath: string, cwd: string): string {
     if (inputPath.startsWith('~/')) {
       const home = process.env.HOME || process.env.USERPROFILE || '';
@@ -1301,7 +1317,7 @@ export class CoworkRunner extends EventEmitter {
       if (existingAttachmentPaths.has(filePath)) {
         continue;
       }
-      linesToAppend.push(`输入文件: ${this.toWorkspaceRelativePromptPath(cwd, filePath)}`);
+      linesToAppend.push(`${SAFE_ATTACHMENT_PROMPT_LABEL}: ${this.toWorkspaceRelativePromptPath(cwd, filePath)}`);
     }
 
     if (linesToAppend.length === 0) {
@@ -2863,7 +2879,10 @@ export class CoworkRunner extends EventEmitter {
     }
 
     const shouldPrepareSandboxPrompt = executionMode !== 'local' || activeSession.executionMode === 'sandbox';
-    let effectivePrompt = this.augmentPromptWithReferencedWorkspaceFiles(prompt, resolvedCwd);
+    let effectivePrompt = this.augmentPromptWithReferencedWorkspaceFiles(
+      this.normalizeAttachmentPromptLabels(prompt),
+      resolvedCwd
+    );
     let unresolvedSandboxAttachments: string[] = [];
     if (shouldPrepareSandboxPrompt) {
       const prepared = this.preparePromptForSandbox(effectivePrompt, resolvedCwd, sessionId);

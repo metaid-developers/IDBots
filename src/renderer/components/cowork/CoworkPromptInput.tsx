@@ -18,8 +18,6 @@ type CoworkAttachment = {
   name: string;
 };
 
-const INPUT_FILE_LABEL = '输入文件';
-
 const getFileNameFromPath = (path: string): string => {
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] || path;
@@ -117,6 +115,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
   const skills = useSelector((state: RootState) => state.skill.skills);
+  const inputFileLabel = i18nService.t('coworkInputFileLabel');
 
   const isLarge = size === 'large';
   const minHeight = isLarge ? 60 : 24;
@@ -199,7 +198,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       : undefined;
 
     const attachmentLines = attachments.map((attachment) =>
-      `${INPUT_FILE_LABEL}: ${attachment.path}`
+      `${inputFileLabel}: ${attachment.path}`
     ).join('\n');
     const finalPrompt = trimmedValue
       ? (attachmentLines ? `${trimmedValue}\n\n${attachmentLines}` : trimmedValue)
@@ -209,7 +208,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     setValue('');
     dispatch(setDraftPrompt(''));
     setAttachments([]);
-  }, [value, isStreaming, disabled, onSubmit, activeSkillIds, skills, attachments, showFolderSelector, workingDirectory, dispatch]);
+  }, [value, isStreaming, disabled, onSubmit, activeSkillIds, skills, attachments, inputFileLabel, showFolderSelector, workingDirectory, dispatch]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
