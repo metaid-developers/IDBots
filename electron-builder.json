@@ -19,7 +19,9 @@
       "filter": [
         "**/*",
         "!**/.env",
-        "!**/.env.*"
+        "!**/.env.*",
+        "!**/.venv/**",
+        "!**/venv/**"
       ]
     },
     {
@@ -43,6 +45,7 @@
     ],
     "icon": "build/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
+    "notarize": false,
     "hardenedRuntime": true,
     "gatekeeperAssess": false,
     "entitlements": "build/entitlements.mac.plist",
