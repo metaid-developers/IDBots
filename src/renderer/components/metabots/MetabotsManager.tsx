@@ -5,11 +5,18 @@ import { configService } from '../../services/config';
 import { ALL_PROVIDER_KEYS } from '../../config';
 import type { Metabot } from '../../types/metabot';
 import MetaBotForm, { type MetaBotFormValues, type LlmOption } from './MetaBotForm';
-import MetaBotCreateSuccessModal from './MetaBotCreateSuccessModal';
+import MetaBotCreateSuccessModal, { type SyncStepKey } from './MetaBotCreateSuccessModal';
 import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
 import MetaBotListCard from './MetaBotListCard';
 
 type ViewMode = 'list' | 'add' | 'edit';
+interface EditSyncPlan {
+  metabotId: number;
+  syncName: boolean;
+  syncAvatar: boolean;
+  syncBio: boolean;
+  syncStepKeys: SyncStepKey[];
+}
 
 const providerRequiresApiKey = (provider: string) => provider !== 'ollama';
 const providerLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
@@ -25,9 +32,11 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     metabot: Metabot;
     subsidySuccess: boolean;
     subsidyError?: string;
-    mode?: 'create' | 'syncOnly';
+    mode?: 'create' | 'syncOnly' | 'editSync';
+    syncStepKeys?: SyncStepKey[];
     showSubsidyStatus?: boolean;
   } | null>(null);
+  const [editSyncPlan, setEditSyncPlan] = useState<EditSyncPlan | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<Metabot | null>(null);
@@ -121,26 +130,95 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
 
   const handleSaveEdit = async (values: MetaBotFormValues) => {
     if (editId == null) return;
+    const current = list.find((m) => m.id === editId);
+    if (!current) throw new Error(i18nService.t('metabotLoadFailed'));
+
+    const nextName = values.name.trim();
+    const nextAvatarRaw = values.avatar.trim();
+    const nextRole = values.role.trim();
+    const nextSoul = values.soul.trim();
+    const nextGoalRaw = values.goal.trim();
+    const nextBackgroundRaw = values.background.trim();
+    const nextBossId = values.boss_id.trim() ? parseInt(values.boss_id, 10) : null;
+    const nextLlmRaw = values.llm_id.trim();
+
+    const oldName = (current.name || '').trim();
+    const oldAvatarRaw = (current.avatar || '').trim();
+    const oldRole = (current.role || '').trim();
+    const oldSoul = (current.soul || '').trim();
+    const oldGoalRaw = (current.goal || '').trim();
+    const oldBackgroundRaw = (current.background || '').trim();
+    const oldBossId = current.boss_id ?? null;
+    const oldLlmRaw = (current.llm_id || '').trim();
+
+    const syncName = nextName !== oldName;
+    const syncAvatar = nextAvatarRaw !== oldAvatarRaw;
+    const syncBio =
+      nextRole !== oldRole ||
+      nextSoul !== oldSoul ||
+      nextGoalRaw !== oldGoalRaw ||
+      nextBackgroundRaw !== oldBackgroundRaw ||
+      nextLlmRaw !== oldLlmRaw ||
+      nextBossId !== oldBossId;
+
+    const syncStepKeys: SyncStepKey[] = [];
+    if (syncName) syncStepKeys.push('name');
+    if (syncAvatar) syncStepKeys.push('avatar');
+    if (syncBio) syncStepKeys.push('bio');
+
     const result = await window.electron.metabot.update(editId, {
-      name: values.name.trim(),
-      avatar: values.avatar.trim() || null,
+      name: nextName,
+      avatar: nextAvatarRaw || null,
       metabot_type: values.metabot_type,
-      role: values.role.trim(),
-      soul: values.soul.trim(),
-      goal: values.goal.trim() || null,
-      background: values.background.trim() || null,
-      boss_id: values.boss_id.trim() ? parseInt(values.boss_id, 10) : null,
-      llm_id: values.llm_id.trim() || null,
+      role: nextRole,
+      soul: nextSoul,
+      goal: nextGoalRaw || null,
+      background: nextBackgroundRaw || null,
+      boss_id: nextBossId,
+      llm_id: nextLlmRaw || null,
     });
     if (!result.success) {
       throw new Error(result.error || i18nService.t('metabotSaveFailed'));
     }
-    window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotSaveSuccess') }));
-    if (result.metabot) {
-      setList((prev) => prev.map((m) => (m.id === editId ? result.metabot! : m)));
-    }
+    const updatedMetabot = result.metabot ?? {
+      ...current,
+      name: nextName,
+      avatar: nextAvatarRaw || null,
+      metabot_type: values.metabot_type,
+      role: nextRole,
+      soul: nextSoul,
+      goal: nextGoalRaw || null,
+      background: nextBackgroundRaw || null,
+      boss_id: nextBossId,
+      llm_id: nextLlmRaw || null,
+    };
+    setList((prev) => prev.map((m) => (m.id === editId ? updatedMetabot : m)));
     setViewMode('list');
     setEditId(null);
+
+    if (syncStepKeys.length === 0) {
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotSaveSuccess') }));
+      return;
+    }
+
+    const syncPlan: EditSyncPlan = {
+      metabotId: editId,
+      syncName,
+      syncAvatar,
+      syncBio,
+      syncStepKeys,
+    };
+    setSyncStatus('syncing');
+    setSyncError('');
+    setEditSyncPlan(syncPlan);
+    setCreateSuccessModal({
+      metabot: updatedMetabot,
+      subsidySuccess: true,
+      mode: 'editSync',
+      syncStepKeys,
+      showSubsidyStatus: false,
+    });
+    void performEditSyncToChain(syncPlan);
   };
 
   const editMetabot = editId != null ? list.find((m) => m.id === editId) : null;
@@ -206,6 +284,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
           isEdit={true}
           onCancel={handleCancelForm}
           onSave={handleSaveEdit}
+          saveLabel={i18nService.t('metabotSaveAndSyncChain')}
           llmOptions={llmOptions}
           onRequestModelSettings={onRequestModelSettings}
           onCheckNameExists={handleCheckNameExists}
@@ -217,6 +296,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
 
   const handleCloseSuccessModal = () => {
     setCreateSuccessModal(null);
+    setEditSyncPlan(null);
     setSyncStatus('idle');
     setSyncError('');
   };
@@ -260,8 +340,54 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     }
   };
 
+  async function performEditSyncToChain(plan: EditSyncPlan) {
+    setSyncStatus('syncing');
+    setSyncError('');
+    console.log('[MetaBot] edit sync start', plan);
+    try {
+      const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const SYNC_RETRY_DELAY_MS = 2500;
+      let result = await window.electron.idbots.syncMetaBotEditChanges({
+        metabotId: plan.metabotId,
+        syncName: plan.syncName,
+        syncAvatar: plan.syncAvatar,
+        syncBio: plan.syncBio,
+      });
+      if (!result.success) {
+        await delay(SYNC_RETRY_DELAY_MS);
+        result = await window.electron.idbots.syncMetaBotEditChanges({
+          metabotId: plan.metabotId,
+          syncName: plan.syncName,
+          syncAvatar: plan.syncAvatar,
+          syncBio: plan.syncBio,
+        });
+      }
+      console.log('[MetaBot] edit sync result', result);
+      if (result.success) {
+        setSyncStatus('success');
+        await loadList();
+        window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotSaveSuccess') }));
+      } else {
+        setSyncStatus('error');
+        setSyncError(result.error ?? 'Unknown error');
+      }
+    } catch (err) {
+      setSyncStatus('error');
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
+    }
+  }
+
   const handleSyncToChain = async () => {
     if (!createSuccessModal) return;
+    if (createSuccessModal.mode === 'editSync') {
+      if (!editSyncPlan) {
+        setSyncStatus('error');
+        setSyncError(i18nService.t('metabotSyncError'));
+        return;
+      }
+      await performEditSyncToChain(editSyncPlan);
+      return;
+    }
     await performSyncToChain(createSuccessModal.metabot);
   };
 
@@ -270,8 +396,10 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       metabot,
       subsidySuccess: true,
       mode: 'syncOnly',
+      syncStepKeys: undefined,
       showSubsidyStatus: false,
     });
+    setEditSyncPlan(null);
     void performSyncToChain(metabot);
   };
 
@@ -349,6 +477,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
               syncStatus={syncStatus}
               syncError={syncError}
               mode={createSuccessModal.mode}
+              syncStepKeys={createSuccessModal.syncStepKeys}
               showSubsidyStatus={createSuccessModal.showSubsidyStatus}
               onClose={handleCloseSuccessModal}
               onSyncToChain={handleSyncToChain}

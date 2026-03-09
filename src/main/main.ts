@@ -27,7 +27,7 @@ import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/meta
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
-import { syncMetaBotToChain } from './services/metaidCore';
+import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/metaidCore';
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
 import {
   startMetaWebListener,
@@ -2023,6 +2023,31 @@ if (!gotTheLock) {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[MetaBot] idbots:syncMetaBot failed:', errMsg);
+      return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:syncMetaBotEditChanges', async (_event, input: {
+    metabotId: number;
+    syncName?: boolean;
+    syncAvatar?: boolean;
+    syncBio?: boolean;
+  }) => {
+    try {
+      console.log('[MetaBot] idbots:syncMetaBotEditChanges requested', input);
+      const store = getMetabotStore();
+      const result = await syncMetaBotEditChangesToChain(store, input);
+      console.log('[MetaBot] idbots:syncMetaBotEditChanges result', {
+        success: result.success,
+        error: result.error,
+        metabotInfoPinId: result.metabotInfoPinId,
+        syncedSteps: result.syncedSteps,
+        txidCount: result.txids?.length ?? 0,
+      });
+      return result;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[MetaBot] idbots:syncMetaBotEditChanges failed:', errMsg);
       return { success: false, error: errMsg };
     }
   });

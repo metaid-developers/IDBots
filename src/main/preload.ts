@@ -320,6 +320,12 @@ contextBridge.exposeInMainWorld('electron', {
     getMetaBotMnemonic: (metabotId: number) => ipcRenderer.invoke('idbots:getMetaBotMnemonic', metabotId),
     deleteMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:deleteMetaBot', metabotId),
     syncMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:syncMetaBot', metabotId),
+    syncMetaBotEditChanges: (input: {
+      metabotId: number;
+      syncName?: boolean;
+      syncAvatar?: boolean;
+      syncBio?: boolean;
+    }) => ipcRenderer.invoke('idbots:syncMetaBotEditChanges', input),
   },
   metaWebListener: {
     getListenerConfig: () => ipcRenderer.invoke('idbots:getListenerConfig'),

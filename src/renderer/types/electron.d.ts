@@ -447,6 +447,18 @@ interface IElectronAPI {
       chatPublicKeyPinId?: string;
       txids?: string[];
     }>;
+    syncMetaBotEditChanges: (input: {
+      metabotId: number;
+      syncName?: boolean;
+      syncAvatar?: boolean;
+      syncBio?: boolean;
+    }) => Promise<{
+      success: boolean;
+      error?: string;
+      metabotInfoPinId?: string;
+      txids?: string[];
+      syncedSteps?: Array<'name' | 'avatar' | 'bio'>;
+    }>;
   };
   metaWebListener: {
     getListenerConfig: () => Promise<{ success: boolean; config?: { groupChats: boolean; privateChats: boolean; serviceRequests: boolean }; error?: string }>;

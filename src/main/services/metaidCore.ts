@@ -209,6 +209,23 @@ export interface SyncMetaBotResult {
   txids?: string[];
 }
 
+export type SyncMetaBotEditStep = 'name' | 'avatar' | 'bio';
+
+export interface SyncMetaBotEditChangesInput {
+  metabotId: number;
+  syncName?: boolean;
+  syncAvatar?: boolean;
+  syncBio?: boolean;
+}
+
+export interface SyncMetaBotEditChangesResult {
+  success: boolean;
+  error?: string;
+  metabotInfoPinId?: string;
+  txids?: string[];
+  syncedSteps?: SyncMetaBotEditStep[];
+}
+
 /**
  * Sync MetaBot basic info to chain: Name, Avatar, ChatPubKey, Bio.
  * Sequential execution with sleep between steps to avoid UTXO double-spend (indexer delay).
@@ -447,6 +464,181 @@ export async function syncMetaBotToChain(
     metabotInfoPinId: metabotInfoPinId ?? undefined,
     chatPublicKeyPinId: chatPublicKeyPinId ?? undefined,
     txids,
+  };
+}
+
+function resolveFirstTwinBossId(metabotStore: MetabotStore): string {
+  const firstTwin = metabotStore
+    .listMetabots()
+    .filter((item) => item.metabot_type === 'twin')
+    .sort((a, b) => a.id - b.id)[0];
+  return firstTwin ? String(firstTwin.id) : '0000';
+}
+
+export async function syncMetaBotEditChangesToChain(
+  metabotStore: MetabotStore,
+  input: SyncMetaBotEditChangesInput
+): Promise<SyncMetaBotEditChangesResult> {
+  const metabotId = Number(input.metabotId);
+  const syncName = input.syncName === true;
+  const syncAvatar = input.syncAvatar === true;
+  const syncBio = input.syncBio === true;
+  const plannedSteps: SyncMetaBotEditStep[] = [];
+  if (syncName) plannedSteps.push('name');
+  if (syncAvatar) plannedSteps.push('avatar');
+  if (syncBio) plannedSteps.push('bio');
+
+  const log = (msg: string, data?: object) => {
+    console.log(`[syncMetaBotEdit] metabot_id=${metabotId} ${msg}`, data ?? '');
+  };
+  const logErr = (msg: string, data?: object) => {
+    console.error(`[syncMetaBotEdit] metabot_id=${metabotId} ERROR ${msg}`, data ?? '');
+  };
+
+  if (!metabotId || !Number.isFinite(metabotId)) {
+    logErr('Invalid metabot id', { metabotId: input.metabotId });
+    return { success: false, error: 'Invalid metabot id' };
+  }
+  if (plannedSteps.length === 0) {
+    log('No requested steps, skip sync');
+    return { success: true, txids: [], syncedSteps: [] };
+  }
+
+  const metabot = metabotStore.getMetabotById(metabotId);
+  if (!metabot) {
+    logErr('MetaBot not found');
+    return { success: false, error: `MetaBot ${metabotId} not found` };
+  }
+
+  log('Starting edit sync', { plannedSteps });
+
+  const txids: string[] = [];
+  const syncedSteps: SyncMetaBotEditStep[] = [];
+  let metabotInfoPinId: string | null = null;
+
+  for (let i = 0; i < plannedSteps.length; i += 1) {
+    const step = plannedSteps[i];
+    try {
+      if (step === 'name') {
+        log('Pinning name to /info/name');
+        const nameResult = await createPin(metabotStore, metabotId, {
+          operation: 'create',
+          path: '/info/name',
+          contentType: 'text/plain',
+          payload: metabot.name || 'MetaBot',
+        });
+        const nameTxid = nameResult.txids[0];
+        if (!nameTxid) {
+          logErr('Name pin returned no txid');
+          return { success: false, error: 'Name pin failed: no txid', txids, syncedSteps };
+        }
+        txids.push(nameTxid);
+        syncedSteps.push('name');
+        log('Name pin success', { txid: nameTxid, pinId: nameResult.pinId });
+      } else if (step === 'avatar') {
+        log('Pinning avatar to /info/avatar');
+        const avatarData = parseDataUrlAvatar(metabot.avatar);
+        if (!avatarData) {
+          logErr('Avatar data invalid for chain sync', { avatarType: typeof metabot.avatar });
+          return { success: false, error: 'Avatar sync failed: invalid data URL', txids, syncedSteps };
+        }
+        const avatarResult = await createPin(metabotStore, metabotId, {
+          operation: 'create',
+          path: '/info/avatar',
+          contentType: `${avatarData.mime};binary`,
+          payload: avatarData.buffer,
+          encoding: 'base64',
+        });
+        const avatarTxid = avatarResult.txids[0];
+        if (!avatarTxid) {
+          logErr('Avatar pin returned no txid');
+          return { success: false, error: 'Avatar pin failed: no txid', txids, syncedSteps };
+        }
+        txids.push(avatarTxid);
+        syncedSteps.push('avatar');
+        log('Avatar pin success', {
+          txid: avatarTxid,
+          pinId: avatarResult.pinId,
+          sizeBytes: avatarData.buffer.length,
+          mime: avatarData.mime,
+        });
+      } else if (step === 'bio') {
+        const bossId = resolveFirstTwinBossId(metabotStore);
+        const bioObject = {
+          role: metabot.role || '',
+          soul: metabot.soul || '',
+          goal: metabot.goal || '',
+          background: metabot.background || '',
+          llm: metabot.llm_id || '',
+          tools: metabot.tools ?? [],
+          skills: metabot.skills ?? [],
+          boss_id: bossId,
+          createdBy: metabot.created_by || '0000',
+        };
+        const bioJson = JSON.stringify(bioObject);
+        log('Pinning bio to /info/bio', { bossId, payloadLength: bioJson.length });
+        const bioResult = await createPin(metabotStore, metabotId, {
+          operation: 'create',
+          path: '/info/bio',
+          contentType: 'application/json',
+          payload: bioJson,
+        });
+        const bioTxid = bioResult.txids[0];
+        if (!bioTxid) {
+          logErr('Bio pin returned no txid');
+          return { success: false, error: 'Bio pin failed: no txid', txids, syncedSteps };
+        }
+        txids.push(bioTxid);
+        syncedSteps.push('bio');
+        metabotInfoPinId = bioResult.pinId ?? `${bioTxid}i0`;
+        log('Bio pin success', { txid: bioTxid, pinId: metabotInfoPinId, bossId });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logErr(`Step failed: ${step}`, { error: msg, plannedSteps, syncedSteps, txids });
+      return { success: false, error: msg, txids, syncedSteps, metabotInfoPinId: metabotInfoPinId ?? undefined };
+    }
+
+    if (i < plannedSteps.length - 1) {
+      log('Waiting 3s for indexer before next step');
+      await sleep(3000);
+    }
+  }
+
+  if (metabotInfoPinId) {
+    try {
+      const updated = metabotStore.updateMetabot(metabotId, {
+        metabot_info_pinid: metabotInfoPinId,
+      });
+      if (!updated) {
+        logErr('Failed to update metabot_info_pinid after bio sync');
+        return {
+          success: false,
+          error: 'Bio sync succeeded but failed to update metabot_info_pinid',
+          txids,
+          syncedSteps,
+          metabotInfoPinId,
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logErr('Database update failed after bio sync', { error: msg });
+      return {
+        success: false,
+        error: `Bio sync succeeded but database update failed: ${msg}`,
+        txids,
+        syncedSteps,
+        metabotInfoPinId,
+      };
+    }
+  }
+
+  log('Edit sync completed successfully', { plannedSteps, syncedSteps, txidCount: txids.length });
+  return {
+    success: true,
+    txids,
+    syncedSteps,
+    metabotInfoPinId: metabotInfoPinId ?? undefined,
   };
 }
 

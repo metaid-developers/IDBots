@@ -10,6 +10,7 @@ import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 
 export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error';
+export type SyncStepKey = 'name' | 'avatar' | 'chatpubkey' | 'bio';
 
 export interface MetaBotCreateSuccessModalProps {
   metabot: Metabot;
@@ -17,18 +18,20 @@ export interface MetaBotCreateSuccessModalProps {
   subsidyError?: string;
   syncStatus?: SyncStatus;
   syncError?: string;
-  mode?: 'create' | 'syncOnly';
+  mode?: 'create' | 'syncOnly' | 'editSync';
+  syncStepKeys?: SyncStepKey[];
   showSubsidyStatus?: boolean;
   onClose: () => void;
   onSyncToChain: () => void;
 }
 
-const SYNC_STEPS = [
-  { key: 'name', labelKey: 'metabotSyncStepName' as const },
-  { key: 'avatar', labelKey: 'metabotSyncStepAvatar' as const },
-  { key: 'chatpubkey', labelKey: 'metabotSyncStepChatPubKey' as const },
-  { key: 'bio', labelKey: 'metabotSyncStepBio' as const },
-];
+const FULL_SYNC_STEP_KEYS: SyncStepKey[] = ['name', 'avatar', 'chatpubkey', 'bio'];
+const SYNC_STEP_LABEL_KEYS: Record<SyncStepKey, 'metabotSyncStepName' | 'metabotSyncStepAvatar' | 'metabotSyncStepChatPubKey' | 'metabotSyncStepBio'> = {
+  name: 'metabotSyncStepName',
+  avatar: 'metabotSyncStepAvatar',
+  chatpubkey: 'metabotSyncStepChatPubKey',
+  bio: 'metabotSyncStepBio',
+};
 
 const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
   metabot,
@@ -37,6 +40,7 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
   syncStatus = 'idle',
   syncError,
   mode = 'create',
+  syncStepKeys,
   showSubsidyStatus = true,
   onClose,
   onSyncToChain,
@@ -61,10 +65,19 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
   const isSyncSuccess = syncStatus === 'success';
   const isSyncError = syncStatus === 'error';
   const isCreateMode = mode === 'create';
-  const title = isCreateMode ? i18nService.t('metabotCreateSuccess') : i18nService.t('metabotResyncTitle');
+  const isEditSyncMode = mode === 'editSync';
+  const showPrimaryAction = isEditSyncMode ? isSyncError : !isSyncSuccess;
+  const title = isCreateMode
+    ? i18nService.t('metabotCreateSuccess')
+    : isEditSyncMode
+      ? i18nService.t('metabotEditSyncTitle')
+      : i18nService.t('metabotResyncTitle');
   const subtitle = isCreateMode
     ? i18nService.t('metabotCreateSuccessSubtitle')
-    : i18nService.t('metabotResyncSubtitle');
+    : isEditSyncMode
+      ? i18nService.t('metabotEditSyncSubtitle')
+      : i18nService.t('metabotResyncSubtitle');
+  const stepsToRender = syncStepKeys && syncStepKeys.length > 0 ? syncStepKeys : FULL_SYNC_STEP_KEYS;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -180,6 +193,15 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
         </div>
 
         {/* Sync status: success with 4 checkmarks */}
+        {isEditSyncMode && isSyncing && (
+          <div className="px-6 py-3 border-t dark:border-claude-darkBorder border-claude-border">
+            <div className="flex items-center gap-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <ArrowPathIcon className="h-4 w-4 animate-spin shrink-0" />
+              {i18nService.t('metabotSyncSyncing')}
+            </div>
+          </div>
+        )}
+
         {isSyncSuccess && (
           <div className="px-6 py-3 border-t dark:border-claude-darkBorder border-claude-border">
             <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium mb-2">
@@ -187,13 +209,13 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
               {i18nService.t('metabotSyncSuccess')}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {SYNC_STEPS.map((step) => (
+              {stepsToRender.map((stepKey) => (
                 <div
-                  key={step.key}
+                  key={stepKey}
                   className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary"
                 >
                   <CheckCircleIcon className="h-4 w-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-                  {i18nService.t(step.labelKey)}
+                  {i18nService.t(SYNC_STEP_LABEL_KEYS[stepKey])}
                 </div>
               ))}
             </div>
@@ -217,7 +239,7 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
           >
             {i18nService.t('metabotClose')}
           </button>
-          {!isSyncSuccess && (
+          {showPrimaryAction && (
             <button
               type="button"
               onClick={onSyncToChain}
@@ -230,7 +252,7 @@ const MetaBotCreateSuccessModal: React.FC<MetaBotCreateSuccessModalProps> = ({
                   {i18nService.t('metabotSyncSyncing')}
                 </>
               ) : (
-                i18nService.t('metabotSyncToChain')
+                isEditSyncMode ? i18nService.t('onboardingRetry') : i18nService.t('metabotSyncToChain')
               )}
             </button>
           )}
