@@ -176,7 +176,12 @@ function getWindowsGitToolDirs(bashPath: string): string[] {
   return candidates.filter((dir) => existsSync(dir));
 }
 
-function ensureWindowsElectronNodeShim(electronPath: string): string | null {
+type WindowsNodeShimInfo = {
+  shimDir: string;
+  shimScriptPath: string;
+};
+
+function ensureWindowsElectronNodeShim(): WindowsNodeShimInfo | null {
   if (process.platform !== 'win32') {
     return null;
   }
@@ -185,8 +190,264 @@ function ensureWindowsElectronNodeShim(electronPath: string): string | null {
     const shimDir = join(app.getPath('userData'), 'cowork', 'bin');
     mkdirSync(shimDir, { recursive: true });
 
+    const shimScriptPath = join(shimDir, 'idbots-node-shim.js');
+
     const nodeSh = join(shimDir, 'node');
     const nodeCmd = join(shimDir, 'node.cmd');
+    const npxSh = join(shimDir, 'npx');
+    const npxCmd = join(shimDir, 'npx.cmd');
+    const tsNodeSh = join(shimDir, 'ts-node');
+    const tsNodeCmd = join(shimDir, 'ts-node.cmd');
+
+    const shimScriptContent = [
+      '#!/usr/bin/env node',
+      '\'use strict\';',
+      '',
+      'const fs = require(\'fs\');',
+      'const path = require(\'path\');',
+      'const { spawnSync } = require(\'child_process\');',
+      '',
+      'const modeArg = process.argv[2] || \'\';',
+      'const mode = modeArg.startsWith(\'--mode=\') ? modeArg.slice(\'--mode=\'.length) : \'node\';',
+      'const args = modeArg.startsWith(\'--mode=\') ? process.argv.slice(3) : process.argv.slice(2);',
+      '',
+      'const electronPath = process.env.IDBOTS_ELECTRON_PATH || \'\';',
+      'if (!electronPath) {',
+      '  console.error(\'IDBOTS_ELECTRON_PATH is not set\');',
+      '  process.exit(127);',
+      '}',
+      '',
+      'const shimDir = process.env.IDBOTS_NODE_SHIM_DIR',
+      '  ? path.resolve(process.env.IDBOTS_NODE_SHIM_DIR)',
+      '  : path.dirname(__filename);',
+      'const normalizedShimDir = path.resolve(shimDir).toLowerCase();',
+      '',
+      'function exists(filePath) {',
+      '  try {',
+      '    return fs.existsSync(filePath);',
+      '  } catch {',
+      '    return false;',
+      '  }',
+      '}',
+      '',
+      'function runCommand(command, commandArgs, env) {',
+      '  const result = spawnSync(command, commandArgs, {',
+      '    stdio: \'inherit\',',
+      '    env,',
+      '    cwd: process.cwd(),',
+      '    windowsHide: true,',
+      '  });',
+      '  if (typeof result.status === \'number\') {',
+      '    process.exit(result.status);',
+      '  }',
+      '  if (result.error) {',
+      '    const code = result.error.code === \'ENOENT\' ? 127 : 1;',
+      '    console.error(result.error.message || String(result.error));',
+      '    process.exit(code);',
+      '  }',
+      '  process.exit(1);',
+      '}',
+      '',
+      'function runAsNode(nodeArgs) {',
+      '  const env = { ...process.env, ELECTRON_RUN_AS_NODE: \'1\' };',
+      '  runCommand(electronPath, nodeArgs, env);',
+      '}',
+      '',
+      'function toAbsoluteMaybe(value) {',
+      '  if (!value) return null;',
+      '  return path.isAbsolute(value) ? value : path.resolve(process.cwd(), value);',
+      '}',
+      '',
+      'function findScriptFallback(scriptArg) {',
+      '  const absolute = toAbsoluteMaybe(scriptArg);',
+      '  if (!absolute) return null;',
+      '  if (exists(absolute)) return absolute;',
+      '',
+      '  const ext = path.extname(absolute).toLowerCase();',
+      '  const dir = path.dirname(absolute);',
+      '  const baseName = ext ? path.basename(absolute, ext) : path.basename(absolute);',
+      '  const candidates = [];',
+      '',
+      '  if (ext === \'.ts\') {',
+      '    candidates.push(path.join(dir, `${baseName}.js`));',
+      '    candidates.push(path.join(dir, \'dist\', `${baseName}.js`));',
+      '  } else if (ext === \'.js\') {',
+      '    candidates.push(path.join(dir, \'dist\', `${baseName}.js`));',
+      '  } else {',
+      '    candidates.push(`${absolute}.js`);',
+      '    candidates.push(path.join(dir, \'dist\', `${path.basename(absolute)}.js`));',
+      '  }',
+      '',
+      '  for (const candidate of candidates) {',
+      '    if (exists(candidate)) return candidate;',
+      '  }',
+      '  return null;',
+      '}',
+      '',
+      'function resolveNodeArgs(rawArgs) {',
+      '  if (!Array.isArray(rawArgs) || rawArgs.length === 0) {',
+      '    return rawArgs;',
+      '  }',
+      '',
+      '  const first = rawArgs[0];',
+      '  if (!first || first.startsWith(\'-\')) {',
+      '    return rawArgs;',
+      '  }',
+      '',
+      '  const resolved = findScriptFallback(first);',
+      '  if (!resolved) {',
+      '    return rawArgs;',
+      '  }',
+      '',
+      '  return [resolved, ...rawArgs.slice(1)];',
+      '}',
+      '',
+      'function findExecutableOnPath(names) {',
+      '  const envPath = process.env.PATH || \'\';',
+      '  const pathEntries = envPath',
+      '    .split(path.delimiter)',
+      '    .map((entry) => entry.trim().replace(/^["\']+|["\']+$/g, \'\'))',
+      '    .filter(Boolean);',
+      '',
+      '  for (const entry of pathEntries) {',
+      '    const resolvedEntry = path.resolve(entry);',
+      '    if (resolvedEntry.toLowerCase() === normalizedShimDir) continue;',
+      '',
+      '    for (const name of names) {',
+      '      const full = path.join(resolvedEntry, name);',
+      '      if (exists(full)) {',
+      '        return full;',
+      '      }',
+      '    }',
+      '  }',
+      '',
+      '  return null;',
+      '}',
+      '',
+      'function parseTsNodeInvocation(rawArgs) {',
+      '  const optionsWithValue = new Set([',
+      '    \'-P\', \'--project\',',
+      '    \'-r\', \'--require\',',
+      '    \'-O\', \'--compiler-options\',',
+      '    \'--compiler\', \'--cwd\',',
+      '    \'--scopeDir\', \'--transpiler\',',
+      '  ]);',
+      '',
+      '  for (let i = 0; i < rawArgs.length; i += 1) {',
+      '    const arg = rawArgs[i];',
+      '    if (arg === \'--\') {',
+      '      const scriptIndex = i + 1;',
+      '      if (scriptIndex < rawArgs.length) {',
+      '        return { scriptIndex, trailingArgs: rawArgs.slice(scriptIndex + 1) };',
+      '      }',
+      '      return null;',
+      '    }',
+      '    if (!arg.startsWith(\'-\')) {',
+      '      return { scriptIndex: i, trailingArgs: rawArgs.slice(i + 1) };',
+      '    }',
+      '    if (optionsWithValue.has(arg)) {',
+      '      i += 1;',
+      '    }',
+      '  }',
+      '',
+      '  return null;',
+      '}',
+      '',
+      'function runTsNode(rawArgs) {',
+      '  const parsed = parseTsNodeInvocation(rawArgs);',
+      '  if (!parsed) {',
+      '    const realTsNode = findExecutableOnPath([\'ts-node.cmd\', \'ts-node.exe\', \'ts-node\']);',
+      '    if (realTsNode) {',
+      '      runCommand(realTsNode, rawArgs, process.env);',
+      '      return;',
+      '    }',
+      '    console.error(\'Unable to parse ts-node arguments and ts-node runtime was not found\');',
+      '    process.exit(127);',
+      '  }',
+      '',
+      '  const scriptArg = rawArgs[parsed.scriptIndex];',
+      '  const resolvedScript = findScriptFallback(scriptArg);',
+      '  if (resolvedScript && resolvedScript.toLowerCase().endsWith(\'.js\')) {',
+      '    runAsNode([resolvedScript, ...parsed.trailingArgs]);',
+      '    return;',
+      '  }',
+      '',
+      '  const realTsNode = findExecutableOnPath([\'ts-node.cmd\', \'ts-node.exe\', \'ts-node\']);',
+      '  if (realTsNode) {',
+      '    runCommand(realTsNode, rawArgs, process.env);',
+      '    return;',
+      '  }',
+      '',
+      '  console.error(`ts-node is unavailable and no compiled JavaScript fallback was found for: ${scriptArg}`);',
+      '  process.exit(127);',
+      '}',
+      '',
+      'function parseNpxInvocation(rawArgs) {',
+      '  const optionsWithValue = new Set([',
+      '    \'-p\', \'--package\',',
+      '    \'-c\', \'--call\',',
+      '    \'--cache\', \'--userconfig\',',
+      '    \'--registry\', \'--node-arg\',',
+      '    \'--node-args\',',
+      '  ]);',
+      '',
+      '  let index = 0;',
+      '  while (index < rawArgs.length) {',
+      '    const arg = rawArgs[index];',
+      '    if (arg === \'--\') {',
+      '      index += 1;',
+      '      break;',
+      '    }',
+      '    if (!arg.startsWith(\'-\')) {',
+      '      break;',
+      '    }',
+      '    if (optionsWithValue.has(arg)) {',
+      '      index += 2;',
+      '      continue;',
+      '    }',
+      '    index += 1;',
+      '  }',
+      '',
+      '  if (index >= rawArgs.length) {',
+      '    return null;',
+      '  }',
+      '',
+      '  return {',
+      '    command: rawArgs[index],',
+      '    commandArgs: rawArgs.slice(index + 1),',
+      '  };',
+      '}',
+      '',
+      'function runNpx(rawArgs) {',
+      '  const parsed = parseNpxInvocation(rawArgs);',
+      '  if (parsed && parsed.command === \'ts-node\') {',
+      '    runTsNode(parsed.commandArgs);',
+      '    return;',
+      '  }',
+      '',
+      '  const realNpx = findExecutableOnPath([\'npx.cmd\', \'npx.exe\', \'npx\']);',
+      '  if (realNpx) {',
+      '    runCommand(realNpx, rawArgs, process.env);',
+      '    return;',
+      '  }',
+      '',
+      '  if (parsed) {',
+      '    console.error(`npx runtime was not found and cannot execute: ${parsed.command}`);',
+      '  } else {',
+      '    console.error(\'npx runtime was not found\');',
+      '  }',
+      '  process.exit(127);',
+      '}',
+      '',
+      'if (mode === \'npx\') {',
+      '  runNpx(args);',
+      '} else if (mode === \'ts-node\') {',
+      '  runTsNode(args);',
+      '} else {',
+      '  runAsNode(resolveNodeArgs(args));',
+      '}',
+      '',
+    ].join('\n');
 
     const nodeShContent = [
       '#!/usr/bin/env bash',
@@ -194,7 +455,39 @@ function ensureWindowsElectronNodeShim(electronPath: string): string | null {
       '  echo "IDBOTS_ELECTRON_PATH is not set" >&2',
       '  exit 127',
       'fi',
-      'exec env ELECTRON_RUN_AS_NODE=1 "${IDBOTS_ELECTRON_PATH}" "$@"',
+      'if [ -z "${IDBOTS_NODE_SHIM_SCRIPT:-}" ]; then',
+      '  echo "IDBOTS_NODE_SHIM_SCRIPT is not set" >&2',
+      '  exit 127',
+      'fi',
+      'exec env ELECTRON_RUN_AS_NODE=1 "${IDBOTS_ELECTRON_PATH}" "${IDBOTS_NODE_SHIM_SCRIPT}" --mode=node "$@"',
+      '',
+    ].join('\n');
+
+    const npxShContent = [
+      '#!/usr/bin/env bash',
+      'if [ -z "${IDBOTS_ELECTRON_PATH:-}" ]; then',
+      '  echo "IDBOTS_ELECTRON_PATH is not set" >&2',
+      '  exit 127',
+      'fi',
+      'if [ -z "${IDBOTS_NODE_SHIM_SCRIPT:-}" ]; then',
+      '  echo "IDBOTS_NODE_SHIM_SCRIPT is not set" >&2',
+      '  exit 127',
+      'fi',
+      'exec env ELECTRON_RUN_AS_NODE=1 "${IDBOTS_ELECTRON_PATH}" "${IDBOTS_NODE_SHIM_SCRIPT}" --mode=npx "$@"',
+      '',
+    ].join('\n');
+
+    const tsNodeShContent = [
+      '#!/usr/bin/env bash',
+      'if [ -z "${IDBOTS_ELECTRON_PATH:-}" ]; then',
+      '  echo "IDBOTS_ELECTRON_PATH is not set" >&2',
+      '  exit 127',
+      'fi',
+      'if [ -z "${IDBOTS_NODE_SHIM_SCRIPT:-}" ]; then',
+      '  echo "IDBOTS_NODE_SHIM_SCRIPT is not set" >&2',
+      '  exit 127',
+      'fi',
+      'exec env ELECTRON_RUN_AS_NODE=1 "${IDBOTS_ELECTRON_PATH}" "${IDBOTS_NODE_SHIM_SCRIPT}" --mode=ts-node "$@"',
       '',
     ].join('\n');
 
@@ -204,15 +497,56 @@ function ensureWindowsElectronNodeShim(electronPath: string): string | null {
       '  echo IDBOTS_ELECTRON_PATH is not set 1>&2',
       '  exit /b 127',
       ')',
+      'if "%IDBOTS_NODE_SHIM_SCRIPT%"=="" (',
+      '  echo IDBOTS_NODE_SHIM_SCRIPT is not set 1>&2',
+      '  exit /b 127',
+      ')',
       'set ELECTRON_RUN_AS_NODE=1',
-      '"%IDBOTS_ELECTRON_PATH%" %*',
+      '"%IDBOTS_ELECTRON_PATH%" "%IDBOTS_NODE_SHIM_SCRIPT%" --mode=node %*',
       '',
     ].join('\r\n');
 
+    const npxCmdContent = [
+      '@echo off',
+      'if "%IDBOTS_ELECTRON_PATH%"=="" (',
+      '  echo IDBOTS_ELECTRON_PATH is not set 1>&2',
+      '  exit /b 127',
+      ')',
+      'if "%IDBOTS_NODE_SHIM_SCRIPT%"=="" (',
+      '  echo IDBOTS_NODE_SHIM_SCRIPT is not set 1>&2',
+      '  exit /b 127',
+      ')',
+      'set ELECTRON_RUN_AS_NODE=1',
+      '"%IDBOTS_ELECTRON_PATH%" "%IDBOTS_NODE_SHIM_SCRIPT%" --mode=npx %*',
+      '',
+    ].join('\r\n');
+
+    const tsNodeCmdContent = [
+      '@echo off',
+      'if "%IDBOTS_ELECTRON_PATH%"=="" (',
+      '  echo IDBOTS_ELECTRON_PATH is not set 1>&2',
+      '  exit /b 127',
+      ')',
+      'if "%IDBOTS_NODE_SHIM_SCRIPT%"=="" (',
+      '  echo IDBOTS_NODE_SHIM_SCRIPT is not set 1>&2',
+      '  exit /b 127',
+      ')',
+      'set ELECTRON_RUN_AS_NODE=1',
+      '"%IDBOTS_ELECTRON_PATH%" "%IDBOTS_NODE_SHIM_SCRIPT%" --mode=ts-node %*',
+      '',
+    ].join('\r\n');
+
+    writeFileSync(shimScriptPath, shimScriptContent, 'utf8');
     writeFileSync(nodeSh, nodeShContent, 'utf8');
     writeFileSync(nodeCmd, nodeCmdContent, 'utf8');
+    writeFileSync(npxSh, npxShContent, 'utf8');
+    writeFileSync(npxCmd, npxCmdContent, 'utf8');
+    writeFileSync(tsNodeSh, tsNodeShContent, 'utf8');
+    writeFileSync(tsNodeCmd, tsNodeCmdContent, 'utf8');
     try {
       chmodSync(nodeSh, 0o755);
+      chmodSync(npxSh, 0o755);
+      chmodSync(tsNodeSh, 0o755);
     } catch {
       // Ignore chmod errors on Windows file systems that do not support POSIX modes.
     }
@@ -357,7 +691,10 @@ function ensureWindowsElectronNodeShim(electronPath: string): string | null {
       // Ignore chmod errors
     }
 
-    return shimDir;
+    return {
+      shimDir,
+      shimScriptPath,
+    };
   } catch (error) {
     coworkLog('WARN', 'resolveNodeShim', `Failed to prepare Electron Node shim: ${error instanceof Error ? error.message : String(error)}`);
     return null;
@@ -594,10 +931,12 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
     }
 
     // Prepend shim dir so our cygpath (and node) shims are found first — avoids "cygpath -u" failures when Git's cygpath is missing
-    const shimDir = ensureWindowsElectronNodeShim(electronExe);
-    if (shimDir) {
-      env.PATH = appendEnvPath(env.PATH, [shimDir]);
-      coworkLog('INFO', 'resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimDir}`);
+    const shimInfo = ensureWindowsElectronNodeShim();
+    if (shimInfo) {
+      env.PATH = appendEnvPath(env.PATH, [shimInfo.shimDir]);
+      env.IDBOTS_NODE_SHIM_SCRIPT = shimInfo.shimScriptPath;
+      env.IDBOTS_NODE_SHIM_DIR = shimInfo.shimDir;
+      coworkLog('INFO', 'resolveNodeShim', `Injected Electron Node shim PATH entry: ${shimInfo.shimDir}`);
     }
 
     // Inject Node.js directories so that npx/npm/ts-node are findable inside git-bash.

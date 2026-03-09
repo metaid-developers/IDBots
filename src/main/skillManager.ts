@@ -59,6 +59,7 @@ const SKILL_STATE_KEY = 'skills_state';
 const WATCH_DEBOUNCE_MS = 250;
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+const SKILL_SCRIPT_REFERENCE_RE = /scripts\/[A-Za-z0-9._/-]+\.js/g;
 
 const parseFrontmatter = (raw: string): { frontmatter: Record<string, string>; content: string } => {
   const normalized = raw.replace(/^\uFEFF/, '');
@@ -102,6 +103,21 @@ const extractDescription = (content: string): string => {
 const normalizeFolderName = (name: string): string => {
   const normalized = name.replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '');
   return normalized || 'skill';
+};
+
+const extractScriptReferencesFromSkillMarkdown = (content: string): string[] => {
+  const matches = content.match(SKILL_SCRIPT_REFERENCE_RE);
+  if (!matches) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      matches
+        .map((value) => value.replace(/\\/g, '/').replace(/^\.\/+/, ''))
+        .filter((value) => value.startsWith('scripts/'))
+    )
+  );
 };
 
 const compareVersions = (a: string | undefined, b: string | undefined): number => {
@@ -779,16 +795,46 @@ export class SkillManager {
         const shouldRepair = id === 'web-search' && targetExists && isWebSearchSkillBroken(targetDir);
         const bundledVersion = bundledDefaults[id]?.version;
         const localVersion = userDefaults[id]?.version;
+        const canRepairFromBundled = compareVersions(bundledVersion, localVersion) >= 0;
+        const isOfficial = this.isOfficialSkillDir(dir);
         const shouldUpgradeByVersion = targetExists && compareVersions(bundledVersion, localVersion) > 0;
         const shouldBootstrapOfficialUpdate = targetExists
           && !localVersion
-          && this.isOfficialSkillDir(dir)
+          && isOfficial
           && this.isSkillManifestDifferent(dir, targetDir);
-        const shouldSync = !targetExists || shouldRepair || shouldUpgradeByVersion || shouldBootstrapOfficialUpdate;
+        const shouldRepairRuntime = targetExists
+          && isOfficial
+          && canRepairFromBundled
+          && this.isSkillRuntimeBroken(dir, targetDir);
+        const shouldPatchRuntimeOnly = targetExists
+          && isOfficial
+          && !canRepairFromBundled
+          && this.isSkillRuntimeBroken(dir, targetDir);
+        const shouldRefreshManifest = targetExists
+          && isOfficial
+          && canRepairFromBundled
+          && this.isSkillManifestDifferent(dir, targetDir);
+        const shouldSync = !targetExists
+          || shouldRepair
+          || shouldUpgradeByVersion
+          || shouldBootstrapOfficialUpdate
+          || shouldRepairRuntime
+          || shouldPatchRuntimeOnly
+          || shouldRefreshManifest;
         if (!shouldSync) return;
 
-        const forceCopy = targetExists;
         try {
+          if (shouldPatchRuntimeOnly) {
+            const patched = this.patchSkillRuntimeFromBundled(dir, targetDir);
+            if (patched) {
+              console.log(`[skills] Patched missing runtime files for skill "${id}" without version override`);
+            } else {
+              console.warn(`[skills] Skill "${id}" runtime appears broken, but no patchable bundled files were found`);
+            }
+            return;
+          }
+
+          const forceCopy = targetExists;
           fs.cpSync(dir, targetDir, {
             recursive: true,
             dereference: true,
@@ -802,6 +848,10 @@ export class SkillManager {
             console.log(`[skills] Upgraded bundled skill "${id}" in user data (${localVersion || 'unknown'} -> ${bundledVersion || 'unknown'})`);
           } else if (shouldBootstrapOfficialUpdate) {
             console.log(`[skills] Refreshed legacy bundled skill "${id}" in user data`);
+          } else if (shouldRepairRuntime) {
+            console.log(`[skills] Repaired runtime files for bundled skill "${id}" in user data`);
+          } else if (shouldRefreshManifest) {
+            console.log(`[skills] Refreshed bundled skill "${id}" due to manifest drift in user data`);
           }
         } catch (error) {
           console.warn(`[skills] Failed to sync bundled skill "${id}":`, error);
@@ -872,6 +922,7 @@ export class SkillManager {
       '- If a skill command fails, diagnose and retry within the same skill workflow before considering alternatives.',
       '- For the selected skill, treat <location> as the canonical SKILL.md path.',
       '- Resolve relative paths mentioned by that SKILL.md against its directory (dirname(<location>)), not the workspace root.',
+      '- Prefer precompiled JavaScript entrypoints (scripts/*.js or scripts/dist/*.js); avoid npx ts-node unless absolutely required.',
       'Constraints: never read more than one skill up front; only read additional skills if the first one explicitly references them.',
       '',
       '<available_skills>',
@@ -913,6 +964,7 @@ export class SkillManager {
       '- If a skill command fails, diagnose and retry within the same skill workflow before considering alternatives.',
       '- For the selected skill, treat <location> as the canonical SKILL.md path.',
       '- Resolve relative paths mentioned by that SKILL.md against its directory (dirname(<location>)), not the workspace root.',
+      '- Prefer precompiled JavaScript entrypoints (scripts/*.js or scripts/dist/*.js); avoid npx ts-node unless absolutely required.',
       'Constraints: never read more than one skill up front; only read additional skills if the first one explicitly references them.',
       omniCasterConstraint,
       '',
@@ -1002,11 +1054,17 @@ export class SkillManager {
     const id = skillId.trim().toLowerCase();
 
     if (id === 'metabot-omni-caster') {
-      const omniScriptJs = path.join(skillDir, 'scripts', 'omni-caster.js');
-      const omniScriptTs = path.join(skillDir, 'scripts', 'omni-caster.ts');
-      const omniScript = fs.existsSync(omniScriptJs) ? omniScriptJs : omniScriptTs;
-      if (!fs.existsSync(omniScript)) {
-        return { success: false, observation: 'metabot-omni-caster: scripts/omni-caster.js or omni-caster.ts not found' };
+      const omniScriptCandidates = [
+        path.join(skillDir, 'scripts', 'omni-caster.js'),
+        path.join(skillDir, 'scripts', 'dist', 'omni-caster.js'),
+        path.join(skillDir, 'scripts', 'omni-caster.ts'),
+      ];
+      const omniScript = omniScriptCandidates.find((candidate) => fs.existsSync(candidate));
+      if (!omniScript) {
+        return {
+          success: false,
+          observation: 'metabot-omni-caster: scripts/omni-caster.js, scripts/dist/omni-caster.js, or scripts/omni-caster.ts not found',
+        };
       }
       let pathVal: string;
       let payloadVal: string;
@@ -1045,21 +1103,22 @@ export class SkillManager {
       if (operation !== 'create') scriptArgs.push('--operation', operation);
       if (contentType !== 'application/json') scriptArgs.push('--content-type', contentType);
     } else {
-      const indexJs = path.join(skillDir, 'scripts', 'index.js');
-      const indexTs = path.join(skillDir, 'scripts', 'index.ts');
-      const runJs = path.join(skillDir, 'scripts', 'run.js');
-      const runTs = path.join(skillDir, 'scripts', 'run.ts');
-      if (fs.existsSync(indexJs)) {
-        scriptPath = indexJs;
-      } else if (fs.existsSync(indexTs)) {
-        scriptPath = indexTs;
-      } else if (fs.existsSync(runJs)) {
-        scriptPath = runJs;
-      } else if (fs.existsSync(runTs)) {
-        scriptPath = runTs;
-      } else {
-        return { success: false, observation: `Skill "${skillId}": no scripts/index.js, index.ts, run.js, or run.ts found` };
+      const entryCandidates = [
+        path.join(skillDir, 'scripts', 'index.js'),
+        path.join(skillDir, 'scripts', 'dist', 'index.js'),
+        path.join(skillDir, 'scripts', 'run.js'),
+        path.join(skillDir, 'scripts', 'dist', 'run.js'),
+        path.join(skillDir, 'scripts', 'index.ts'),
+        path.join(skillDir, 'scripts', 'run.ts'),
+      ];
+      const selectedEntry = entryCandidates.find((candidate) => fs.existsSync(candidate));
+      if (!selectedEntry) {
+        return {
+          success: false,
+          observation: `Skill "${skillId}": no scripts/index.js, scripts/dist/index.js, run.js, scripts/dist/run.js, index.ts, or run.ts found`,
+        };
       }
+      scriptPath = selectedEntry;
       scriptArgs = ['--payload', payloadJson];
     }
 
@@ -1366,6 +1425,97 @@ export class SkillManager {
       return bundledRaw !== localRaw;
     } catch {
       return true;
+    }
+  }
+
+  private isSkillRuntimeBroken(bundledSkillDir: string, localSkillDir: string): boolean {
+    try {
+      const bundledSkillPath = path.join(bundledSkillDir, SKILL_FILE_NAME);
+      const localSkillPath = path.join(localSkillDir, SKILL_FILE_NAME);
+      if (!fs.existsSync(localSkillPath)) {
+        return true;
+      }
+      if (!fs.existsSync(bundledSkillPath)) {
+        return false;
+      }
+
+      const bundledRaw = fs.readFileSync(bundledSkillPath, 'utf8');
+      const scriptReferences = extractScriptReferencesFromSkillMarkdown(bundledRaw);
+      for (const relativeScriptPath of scriptReferences) {
+        const bundledScriptPath = path.join(bundledSkillDir, relativeScriptPath);
+        if (!fs.existsSync(bundledScriptPath)) {
+          continue;
+        }
+        const localScriptPath = path.join(localSkillDir, relativeScriptPath);
+        if (fs.existsSync(localScriptPath)) {
+          continue;
+        }
+        const localDistFallback = path.join(
+          localSkillDir,
+          'scripts',
+          'dist',
+          path.basename(relativeScriptPath)
+        );
+        if (!fs.existsSync(localDistFallback)) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  private patchSkillRuntimeFromBundled(bundledSkillDir: string, localSkillDir: string): boolean {
+    try {
+      const bundledSkillPath = path.join(bundledSkillDir, SKILL_FILE_NAME);
+      if (!fs.existsSync(bundledSkillPath)) {
+        return false;
+      }
+
+      const bundledRaw = fs.readFileSync(bundledSkillPath, 'utf8');
+      const scriptReferences = extractScriptReferencesFromSkillMarkdown(bundledRaw);
+      if (scriptReferences.length === 0) {
+        return false;
+      }
+
+      let patched = false;
+      for (const relativeScriptPath of scriptReferences) {
+        const bundledScriptPath = path.join(bundledSkillDir, relativeScriptPath);
+        if (!fs.existsSync(bundledScriptPath)) {
+          continue;
+        }
+
+        const localScriptPath = path.join(localSkillDir, relativeScriptPath);
+        if (!fs.existsSync(localScriptPath)) {
+          fs.mkdirSync(path.dirname(localScriptPath), { recursive: true });
+          fs.cpSync(bundledScriptPath, localScriptPath, {
+            recursive: false,
+            force: false,
+            errorOnExist: false,
+          });
+          patched = true;
+        }
+
+        const fileName = path.basename(relativeScriptPath);
+        const bundledDistFallback = path.join(bundledSkillDir, 'scripts', 'dist', fileName);
+        const localDistFallback = path.join(localSkillDir, 'scripts', 'dist', fileName);
+        if (!fs.existsSync(localDistFallback) && fs.existsSync(bundledDistFallback)) {
+          fs.mkdirSync(path.dirname(localDistFallback), { recursive: true });
+          fs.cpSync(bundledDistFallback, localDistFallback, {
+            recursive: false,
+            force: false,
+            errorOnExist: false,
+          });
+          patched = true;
+        }
+      }
+
+      return patched;
+    } catch (error) {
+      console.warn('[skills] Failed to patch runtime files from bundled skill:', error);
+      return false;
     }
   }
 

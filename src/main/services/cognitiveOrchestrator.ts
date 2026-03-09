@@ -15,6 +15,7 @@ import {
   type OpenAITool,
   type ToolCallResult,
 } from './cognitiveChatCompletion';
+import { getEnhancedEnv } from '../libs/coworkUtil';
 import { isPathWithin } from '../libs/runtimePaths';
 
 const TICK_INTERVAL_MS = 10_000;
@@ -248,7 +249,7 @@ const BASH_TOOL: OpenAITool = {
   type: 'function',
   function: {
     name: 'Bash',
-    description: 'Run a shell command. Use to run skill scripts (e.g. node <skill_dir>/scripts/xxx.ts --key value). Commands run with cwd = SKILLs root and have SKILLS_ROOT, IDBOTS_METABOT_ID set.',
+    description: 'Run a shell command. Use to run skill scripts (e.g. node <skill_dir>/scripts/xxx.js --key value). Commands run with cwd = SKILLs root and have SKILLS_ROOT, IDBOTS_METABOT_ID set.',
     parameters: {
       type: 'object',
       properties: {
@@ -289,14 +290,126 @@ function executeRead(filePath: string, allowedRoots: string[]): string {
   }
 }
 
+function stripWrappingQuotes(value: string): { value: string; quote: '"' | '\'' | null } {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2) {
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === '"' || first === '\'') && first === last) {
+      return { value: trimmed.slice(1, -1), quote: first };
+    }
+  }
+  return { value: trimmed, quote: null };
+}
+
+function quoteCommandToken(raw: string, preferredQuote: '"' | '\'' | null): string {
+  if (preferredQuote != null) {
+    if (preferredQuote === '"') {
+      return `"${raw.replace(/"/g, '\\"')}"`;
+    }
+    // Use double-quote fallback to avoid brittle single-quote escaping rules across shells.
+    return `"${raw.replace(/"/g, '\\"')}"`;
+  }
+  if (/\s/.test(raw)) {
+    return `"${raw.replace(/"/g, '\\"')}"`;
+  }
+  return raw;
+}
+
+function resolveTsScriptFallback(scriptToken: string, cwd: string): string | null {
+  const parsedToken = stripWrappingQuotes(scriptToken);
+  const scriptPath = parsedToken.value;
+  if (!scriptPath.toLowerCase().endsWith('.ts')) {
+    return null;
+  }
+
+  const absoluteScript = path.isAbsolute(scriptPath) ? scriptPath : path.resolve(cwd, scriptPath);
+  const scriptDir = path.dirname(absoluteScript);
+  const scriptBase = path.basename(absoluteScript, '.ts');
+
+  const candidates = [
+    path.join(scriptDir, `${scriptBase}.js`),
+    path.join(scriptDir, 'dist', `${scriptBase}.js`),
+  ];
+  const match = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!match) {
+    return null;
+  }
+
+  const renderedPath = path.isAbsolute(scriptPath)
+    ? match
+    : path.relative(cwd, match) || '.';
+  return quoteCommandToken(renderedPath, parsedToken.quote);
+}
+
+function normalizeTsNodeCommand(command: string, cwd: string): string {
+  const rules: Array<{
+    regex: RegExp;
+    prefix: string;
+  }> = [
+    {
+      regex: /\bnpx\s+ts-node\s+((?:"[^"]+"|'[^']+'|\S+\.ts))/i,
+      prefix: 'node ',
+    },
+    {
+      regex: /\bts-node\s+((?:"[^"]+"|'[^']+'|\S+\.ts))/i,
+      prefix: 'node ',
+    },
+    {
+      regex: /\bnode\s+((?:"[^"]+"|'[^']+'|\S+\.ts))/i,
+      prefix: 'node ',
+    },
+  ];
+
+  for (const rule of rules) {
+    const match = command.match(rule.regex);
+    if (!match || !match[1]) continue;
+    const scriptReplacement = resolveTsScriptFallback(match[1], cwd);
+    if (!scriptReplacement) continue;
+    return command.replace(rule.regex, `${rule.prefix}${scriptReplacement}`);
+  }
+
+  return command;
+}
+
+function resolveShellCommand(command: string, cwd: string): { command: string; cwd: string } {
+  const cdPrefixMatch = command.match(/^\s*cd\s+((?:"[^"]+"|'[^']+'|[^\s&]+))\s*&&\s*([\s\S]+)$/i);
+  if (!cdPrefixMatch) {
+    return {
+      command: normalizeTsNodeCommand(command, cwd),
+      cwd,
+    };
+  }
+
+  const parsedCd = stripWrappingQuotes(cdPrefixMatch[1]);
+  const nextCommand = cdPrefixMatch[2];
+  const nextCwd = path.isAbsolute(parsedCd.value)
+    ? path.resolve(parsedCd.value)
+    : path.resolve(cwd, parsedCd.value);
+
+  if (!fs.existsSync(nextCwd)) {
+    return {
+      command: normalizeTsNodeCommand(command, cwd),
+      cwd,
+    };
+  }
+
+  return {
+    command: normalizeTsNodeCommand(nextCommand, nextCwd),
+    cwd: nextCwd,
+  };
+}
+
 function runBashOnce(
   command: string,
   cwd: string,
   metabotId?: number
 ): Promise<{ code: number; output: string }> {
-  return new Promise((resolve) => {
+  return (async (): Promise<{ code: number; output: string }> => {
+    const resolved = resolveShellCommand(command, cwd);
+    const baseEnv = await getEnhancedEnv('local');
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...baseEnv,
       SKILLS_ROOT: cwd,
       IDBOTS_SKILLS_ROOT: cwd,
       IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
@@ -304,45 +417,53 @@ function runBashOnce(
     if (metabotId != null) {
       env.IDBOTS_METABOT_ID = String(metabotId);
     }
-    const shell = process.platform === 'win32' ? 'cmd' : 'sh';
-    const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-c', command];
-    const child = spawn(shell, shellArgs, {
-      cwd,
-      env,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    const timeout = setTimeout(() => {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // ignore
-      }
-      resolve({
-        code: -1,
-        output:
-          (stdout ? stdout + '\n' : '') +
-          (stderr ? stderr + '\n' : '') +
-          `[Command timed out after ${BASH_TIMEOUT_MS / 1000}s]`,
+
+    return await new Promise<{ code: number; output: string }>((resolvePromise) => {
+      const shell = process.platform === 'win32' ? 'cmd.exe' : 'sh';
+      const shellArgs = process.platform === 'win32' ? ['/d', '/s', '/c', resolved.command] : ['-c', resolved.command];
+      const child = spawn(shell, shellArgs, {
+        cwd: resolved.cwd,
+        env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
-    }, BASH_TIMEOUT_MS);
-    child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString();
+
+      let stdout = '';
+      let stderr = '';
+      const timeout = setTimeout(() => {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // ignore
+        }
+        resolvePromise({
+          code: -1,
+          output:
+            (stdout ? stdout + '\n' : '') +
+            (stderr ? stderr + '\n' : '') +
+            `[Command timed out after ${BASH_TIMEOUT_MS / 1000}s]`,
+        });
+      }, BASH_TIMEOUT_MS);
+
+      child.stdout?.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+      child.stderr?.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        const out = (stdout?.trim() ?? '') + (stderr?.trim() ? '\n' + stderr.trim() : '');
+        resolvePromise({ code: code ?? -1, output: code === 0 ? (out || 'Done.') : `Exit code ${code}\n${out}` });
+      });
+      child.on('error', (err) => {
+        clearTimeout(timeout);
+        resolvePromise({ code: -1, output: `Error: ${err.message}` });
+      });
     });
-    child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('close', (code) => {
-      clearTimeout(timeout);
-      const out = (stdout?.trim() ?? '') + (stderr?.trim() ? '\n' + stderr.trim() : '');
-      resolve({ code: code ?? -1, output: code === 0 ? (out || 'Done.') : `Exit code ${code}\n${out}` });
-    });
-    child.on('error', (err) => {
-      clearTimeout(timeout);
-      resolve({ code: -1, output: `Error: ${err.message}` });
-    });
+  })().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return { code: -1, output: `Error: ${message}` };
   });
 }
 
