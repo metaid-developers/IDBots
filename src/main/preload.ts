@@ -153,6 +153,8 @@ contextBridge.exposeInMainWorld('electron', {
     }) =>
       ipcRenderer.invoke('cowork:config:set', config),
     listMemoryEntries: (input: {
+      sessionId?: string;
+      metabotId?: number;
       query?: string;
       status?: 'created' | 'stale' | 'deleted' | 'all';
       includeDeleted?: boolean;
@@ -161,12 +163,16 @@ contextBridge.exposeInMainWorld('electron', {
     }) =>
       ipcRenderer.invoke('cowork:memory:listEntries', input),
     createMemoryEntry: (input: {
+      sessionId?: string;
+      metabotId?: number;
       text: string;
       confidence?: number;
       isExplicit?: boolean;
     }) =>
       ipcRenderer.invoke('cowork:memory:createEntry', input),
     updateMemoryEntry: (input: {
+      sessionId?: string;
+      metabotId?: number;
       id: string;
       text?: string;
       confidence?: number;
@@ -174,10 +180,21 @@ contextBridge.exposeInMainWorld('electron', {
       isExplicit?: boolean;
     }) =>
       ipcRenderer.invoke('cowork:memory:updateEntry', input),
-    deleteMemoryEntry: (input: { id: string }) =>
+    deleteMemoryEntry: (input: { sessionId?: string; metabotId?: number; id: string }) =>
       ipcRenderer.invoke('cowork:memory:deleteEntry', input),
-    getMemoryStats: (input?: { sessionId?: string }) =>
+    getMemoryStats: (input?: { sessionId?: string; metabotId?: number }) =>
       ipcRenderer.invoke('cowork:memory:getStats', input),
+    getMemoryPolicy: (input?: { sessionId?: string; metabotId?: number }) =>
+      ipcRenderer.invoke('cowork:memory:getPolicy', input),
+    setMemoryPolicy: (input: {
+      metabotId: number;
+      memoryEnabled?: boolean;
+      memoryImplicitUpdateEnabled?: boolean;
+      memoryLlmJudgeEnabled?: boolean;
+      memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
+      memoryUserMemoriesMaxItems?: number;
+    }) =>
+      ipcRenderer.invoke('cowork:memory:setPolicy', input),
     getSandboxStatus: () =>
       ipcRenderer.invoke('cowork:sandbox:status'),
     installSandbox: () =>

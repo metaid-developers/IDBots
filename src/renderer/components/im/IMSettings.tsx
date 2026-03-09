@@ -13,6 +13,13 @@ import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 
+interface IMMetabotOption {
+  id: number;
+  name: string;
+  avatar: string | null;
+  metabot_type: string;
+}
+
 // Platform metadata
 const platformMeta: Record<IMPlatform, { label: string; logo: string }> = {
   dingtalk: { label: '钉钉', logo: 'dingding.png' },
@@ -42,6 +49,9 @@ const IMSettings: React.FC = () => {
   const [connectivityResults, setConnectivityResults] = useState<Partial<Record<IMPlatform, IMConnectivityTestResult>>>({});
   const [connectivityModalPlatform, setConnectivityModalPlatform] = useState<IMPlatform | null>(null);
   const [language, setLanguage] = useState<'zh' | 'en'>(i18nService.getLanguage());
+  const [metabotOptions, setMetabotOptions] = useState<IMMetabotOption[]>([]);
+  const [metabotLoading, setMetabotLoading] = useState(false);
+  const [metabotLoadError, setMetabotLoadError] = useState('');
 
   // Subscribe to language changes
   useEffect(() => {
@@ -57,6 +67,26 @@ const IMSettings: React.FC = () => {
     return () => {
       imService.destroy();
     };
+  }, []);
+
+  useEffect(() => {
+    const loadMetabots = async () => {
+      setMetabotLoading(true);
+      setMetabotLoadError('');
+      try {
+        const result = await window.electron.idbots.getMetaBots();
+        if (result.success && Array.isArray(result.list)) {
+          setMetabotOptions(result.list as IMMetabotOption[]);
+        } else {
+          setMetabotLoadError(result.error || i18nService.t('metabotLoadFailed'));
+        }
+      } catch (error: any) {
+        setMetabotLoadError(error?.message || i18nService.t('metabotLoadFailed'));
+      } finally {
+        setMetabotLoading(false);
+      }
+    };
+    void loadMetabots();
   }, []);
 
   // Handle DingTalk config change
@@ -82,6 +112,75 @@ const IMSettings: React.FC = () => {
   // Save config on blur
   const handleSaveConfig = async () => {
     await imService.updateConfig(config);
+  };
+
+  const getDefaultMetabotId = (): number | null => {
+    if (metabotOptions.length === 0) return null;
+    const twin = metabotOptions.find((item) => item.metabot_type === 'twin');
+    return twin?.id ?? metabotOptions[0].id;
+  };
+
+  const getResolvedPlatformMetabotId = (platform: IMPlatform): number | null => {
+    const configuredId = config[platform].metabotId ?? null;
+    if (configuredId != null && metabotOptions.some((item) => item.id === configuredId)) {
+      return configuredId;
+    }
+    return getDefaultMetabotId();
+  };
+
+  const handlePlatformMetabotChange = async (platform: IMPlatform, rawValue: string) => {
+    const trimmed = rawValue.trim();
+    const parsed = trimmed ? Number(trimmed) : NaN;
+    const metabotId = Number.isFinite(parsed) ? parsed : null;
+    const setConfigAction = {
+      dingtalk: setDingTalkConfig,
+      feishu: setFeishuConfig,
+      telegram: setTelegramConfig,
+      discord: setDiscordConfig,
+    }[platform];
+    dispatch(setConfigAction({ metabotId }));
+    await imService.updateConfig({
+      [platform]: {
+        ...config[platform],
+        metabotId,
+      },
+    } as Partial<IMGatewayConfig>);
+  };
+
+  const renderMetabotSelector = (platform: IMPlatform) => {
+    const selectedMetabotId = getResolvedPlatformMetabotId(platform);
+    const empty = metabotOptions.length === 0;
+    return (
+      <div className="space-y-1.5">
+        <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {i18nService.t('imMatchedMetabot')}
+        </label>
+        <select
+          value={selectedMetabotId != null ? String(selectedMetabotId) : ''}
+          onChange={(e) => { void handlePlatformMetabotChange(platform, e.target.value); }}
+          disabled={metabotLoading || empty}
+          className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {empty ? (
+            <option value="">
+              {metabotLoading ? i18nService.t('loading') : i18nService.t('imMatchedMetabotEmpty')}
+            </option>
+          ) : (
+            metabotOptions.map((item) => (
+              <option key={item.id} value={String(item.id)}>
+                {item.metabot_type === 'twin' ? `${item.name} (twin)` : item.name}
+              </option>
+            ))
+          )}
+        </select>
+        <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+          {i18nService.t('imMatchedMetabotHint')}
+        </p>
+        {metabotLoadError && (
+          <p className="text-xs text-red-500 dark:text-red-400">{metabotLoadError}</p>
+        )}
+      </div>
+    );
   };
 
   const getCheckTitle = (code: IMConnectivityCheck['code']): string => {
@@ -377,6 +476,8 @@ const IMSettings: React.FC = () => {
               />
             </div>
 
+            {renderMetabotSelector('dingtalk')}
+
             <div className="pt-1">
               {renderConnectivityTestButton('dingtalk')}
             </div>
@@ -423,6 +524,8 @@ const IMSettings: React.FC = () => {
               />
             </div>
 
+            {renderMetabotSelector('feishu')}
+
             <div className="pt-1">
               {renderConnectivityTestButton('feishu')}
             </div>
@@ -456,6 +559,8 @@ const IMSettings: React.FC = () => {
                 {i18nService.t('telegramTokenHint') || '从 @BotFather 获取 Bot Token'}
               </p>
             </div>
+
+            {renderMetabotSelector('telegram')}
 
             <div className="pt-1">
               {renderConnectivityTestButton('telegram')}
@@ -497,6 +602,8 @@ const IMSettings: React.FC = () => {
                 从 Discord Developer Portal 获取 Bot Token
               </p>
             </div>
+
+            {renderMetabotSelector('discord')}
 
             <div className="pt-1">
               {renderConnectivityTestButton('discord')}

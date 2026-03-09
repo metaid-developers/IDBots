@@ -1513,8 +1513,19 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:sandbox:status', async () => {
     return getSandboxStatus();
   });
+  const resolveMemoryMetabotIdFromInput = (
+    store: CoworkStore,
+    input?: { sessionId?: string; metabotId?: number }
+  ): number | null => {
+    if (typeof input?.metabotId === 'number' && Number.isFinite(input.metabotId) && input.metabotId > 0) {
+      return Math.floor(input.metabotId);
+    }
+    return store.resolveMetabotIdForMemory(input?.sessionId);
+  };
+
   ipcMain.handle('cowork:memory:listEntries', async (_event, input: {
     sessionId?: string;
+    metabotId?: number;
     query?: string;
     status?: 'created' | 'stale' | 'deleted' | 'all';
     includeDeleted?: boolean;
@@ -1523,7 +1534,7 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
@@ -1545,13 +1556,14 @@ if (!gotTheLock) {
   });
   ipcMain.handle('cowork:memory:createEntry', async (_event, input: {
     sessionId?: string;
+    metabotId?: number;
     text: string;
     confidence?: number;
     isExplicit?: boolean;
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
@@ -1571,6 +1583,7 @@ if (!gotTheLock) {
   });
   ipcMain.handle('cowork:memory:updateEntry', async (_event, input: {
     sessionId?: string;
+    metabotId?: number;
     id: string;
     text?: string;
     confidence?: number;
@@ -1579,7 +1592,7 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
@@ -1604,12 +1617,16 @@ if (!gotTheLock) {
   });
   ipcMain.handle('cowork:memory:deleteEntry', async (_event, input: {
     sessionId?: string;
+    metabotId?: number;
     id: string;
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
-      const success = store.deleteUserMemory(input.id, metabotId ?? undefined);
+      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      if (metabotId == null) {
+        return { success: false, error: 'No MetaBot available for memory' };
+      }
+      const success = store.deleteUserMemory(input.id, metabotId);
       return success
         ? { success: true }
         : { success: false, error: 'Memory entry not found' };
@@ -1620,10 +1637,10 @@ if (!gotTheLock) {
       };
     }
   });
-  ipcMain.handle('cowork:memory:getStats', async (_event, input?: { sessionId?: string }) => {
+  ipcMain.handle('cowork:memory:getStats', async (_event, input?: { sessionId?: string; metabotId?: number }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = store.resolveMetabotIdForMemory(input?.sessionId);
+      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
@@ -1633,6 +1650,60 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get memory stats',
+      };
+    }
+  });
+  ipcMain.handle('cowork:memory:getPolicy', async (_event, input?: { sessionId?: string; metabotId?: number }) => {
+    try {
+      const store = getCoworkStore();
+      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const policy = metabotId == null
+        ? store.getEffectiveMemoryPolicyForMetabot(null)
+        : store.getEffectiveMemoryPolicyForMetabot(metabotId);
+      return { success: true, policy };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get memory policy',
+      };
+    }
+  });
+  ipcMain.handle('cowork:memory:setPolicy', async (_event, input: {
+    metabotId: number;
+    memoryEnabled?: boolean;
+    memoryImplicitUpdateEnabled?: boolean;
+    memoryLlmJudgeEnabled?: boolean;
+    memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
+    memoryUserMemoriesMaxItems?: number;
+  }) => {
+    try {
+      const store = getCoworkStore();
+      const metabotId = typeof input?.metabotId === 'number' && Number.isFinite(input.metabotId) && input.metabotId > 0
+        ? Math.floor(input.metabotId)
+        : null;
+      if (metabotId == null) {
+        return { success: false, error: 'Invalid metabotId for memory policy' };
+      }
+      const policy = store.setMemoryPolicyForMetabot(metabotId, {
+        memoryEnabled: typeof input?.memoryEnabled === 'boolean' ? input.memoryEnabled : undefined,
+        memoryImplicitUpdateEnabled:
+          typeof input?.memoryImplicitUpdateEnabled === 'boolean' ? input.memoryImplicitUpdateEnabled : undefined,
+        memoryLlmJudgeEnabled:
+          typeof input?.memoryLlmJudgeEnabled === 'boolean' ? input.memoryLlmJudgeEnabled : undefined,
+        memoryGuardLevel:
+          input?.memoryGuardLevel === 'strict' || input?.memoryGuardLevel === 'standard' || input?.memoryGuardLevel === 'relaxed'
+            ? input.memoryGuardLevel
+            : undefined,
+        memoryUserMemoriesMaxItems:
+          typeof input?.memoryUserMemoriesMaxItems === 'number' && Number.isFinite(input.memoryUserMemoriesMaxItems)
+            ? input.memoryUserMemoriesMaxItems
+            : undefined,
+      });
+      return { success: true, policy };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to set memory policy',
       };
     }
   });
@@ -2987,6 +3058,7 @@ if (!gotTheLock) {
     startPrivateChatDaemon(
       getStore().getDatabase(),
       getStore().getSaveFunction(),
+      getCoworkStore(),
       getMetabotStore(),
       createPin,
       (msg) => console.log(msg)

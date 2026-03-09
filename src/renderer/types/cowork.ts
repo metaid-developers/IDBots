@@ -118,6 +118,16 @@ export interface CoworkMemoryStats {
   implicit: number;
 }
 
+export interface CoworkMemoryPolicy {
+  metabotId: number | null;
+  memoryEnabled: boolean;
+  memoryImplicitUpdateEnabled: boolean;
+  memoryLlmJudgeEnabled: boolean;
+  memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
+  memoryUserMemoriesMaxItems: number;
+  source: 'global' | 'metabot';
+}
+
 // Cowork pending permission request
 export interface CoworkPermissionRequest {
   sessionId: string;

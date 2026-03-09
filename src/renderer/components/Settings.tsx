@@ -18,6 +18,7 @@ import type {
   CoworkExecutionMode,
   CoworkUserMemoryEntry,
   CoworkMemoryStats,
+  CoworkMemoryPolicy,
   CoworkSandboxProgress,
   CoworkSandboxStatus,
 } from '../types/cowork';
@@ -54,6 +55,20 @@ type ProviderType = (typeof providerKeys)[number];
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
 type ProviderConfig = ProvidersConfig[string];
 type Model = NonNullable<ProviderConfig['models']>[number];
+type MemoryMetabotOption = {
+  id: number;
+  name: string;
+  avatar: string | null;
+  metabot_type: string;
+};
+type MetabotMemoryPolicyDraft = Pick<
+  CoworkMemoryPolicy,
+  | 'memoryEnabled'
+  | 'memoryImplicitUpdateEnabled'
+  | 'memoryLlmJudgeEnabled'
+  | 'memoryGuardLevel'
+  | 'memoryUserMemoriesMaxItems'
+>;
 
 interface ProviderExportEntry {
   enabled: boolean;
@@ -376,6 +391,18 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const [coworkMemoryStats, setCoworkMemoryStats] = useState<CoworkMemoryStats | null>(null);
   const [coworkMemoryListLoading, setCoworkMemoryListLoading] = useState<boolean>(false);
   const [coworkMemoryQuery, setCoworkMemoryQuery] = useState<string>('');
+  const [coworkMemoryMetabots, setCoworkMemoryMetabots] = useState<MemoryMetabotOption[]>([]);
+  const [coworkMemoryMetabotId, setCoworkMemoryMetabotId] = useState<number | null>(null);
+  const [coworkMetabotMemoryEnabled, setCoworkMetabotMemoryEnabled] = useState<boolean>(true);
+  const [coworkMetabotMemoryImplicitUpdateEnabled, setCoworkMetabotMemoryImplicitUpdateEnabled] = useState<boolean>(true);
+  const [coworkMetabotMemoryLlmJudgeEnabled, setCoworkMetabotMemoryLlmJudgeEnabled] = useState<boolean>(true);
+  const [coworkMetabotMemoryGuardLevel, setCoworkMetabotMemoryGuardLevel] = useState<'strict' | 'standard' | 'relaxed'>('strict');
+  const [coworkMetabotMemoryMaxItems, setCoworkMetabotMemoryMaxItems] = useState<number>(12);
+  const [coworkMetabotMemoryPolicySource, setCoworkMetabotMemoryPolicySource] = useState<'global' | 'metabot'>('global');
+  const [coworkMetabotMemoryPolicyBaseline, setCoworkMetabotMemoryPolicyBaseline] = useState<MetabotMemoryPolicyDraft | null>(null);
+  const [coworkMetabotMemoryPolicyLoading, setCoworkMetabotMemoryPolicyLoading] = useState<boolean>(false);
+  const [coworkMetabotMemoryPolicySaving, setCoworkMetabotMemoryPolicySaving] = useState<boolean>(false);
+  const [coworkMetabotMemoryPolicyNotice, setCoworkMetabotMemoryPolicyNotice] = useState<string | null>(null);
   const [coworkMemoryEditingId, setCoworkMemoryEditingId] = useState<string | null>(null);
   const [coworkMemoryDraftText, setCoworkMemoryDraftText] = useState<string>('');
   const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
@@ -750,14 +777,105 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     }
   };
 
+  const applyMetabotMemoryPolicyToState = useCallback((policy: CoworkMemoryPolicy) => {
+    setCoworkMetabotMemoryEnabled(policy.memoryEnabled);
+    setCoworkMetabotMemoryImplicitUpdateEnabled(policy.memoryImplicitUpdateEnabled);
+    setCoworkMetabotMemoryLlmJudgeEnabled(policy.memoryLlmJudgeEnabled);
+    setCoworkMetabotMemoryGuardLevel(policy.memoryGuardLevel);
+    setCoworkMetabotMemoryMaxItems(policy.memoryUserMemoriesMaxItems);
+    setCoworkMetabotMemoryPolicySource(policy.source);
+    setCoworkMetabotMemoryPolicyBaseline({
+      memoryEnabled: policy.memoryEnabled,
+      memoryImplicitUpdateEnabled: policy.memoryImplicitUpdateEnabled,
+      memoryLlmJudgeEnabled: policy.memoryLlmJudgeEnabled,
+      memoryGuardLevel: policy.memoryGuardLevel,
+      memoryUserMemoriesMaxItems: policy.memoryUserMemoriesMaxItems,
+    });
+  }, []);
+
+  const loadCoworkMetabotMemoryPolicy = useCallback(async () => {
+    if (coworkMemoryMetabotId == null) {
+      setCoworkMetabotMemoryPolicyBaseline(null);
+      setCoworkMetabotMemoryPolicySource('global');
+      setCoworkMetabotMemoryPolicyNotice(null);
+      return;
+    }
+    setCoworkMetabotMemoryPolicyLoading(true);
+    setCoworkMetabotMemoryPolicyNotice(null);
+    try {
+      const policy = await coworkService.getMemoryPolicy({ metabotId: coworkMemoryMetabotId });
+      if (!policy) {
+        setCoworkMetabotMemoryPolicyBaseline(null);
+        setCoworkMetabotMemoryPolicySource('global');
+        return;
+      }
+      applyMetabotMemoryPolicyToState(policy);
+    } catch (loadError) {
+      console.error('Failed to load MetaBot memory policy:', loadError);
+      setCoworkMetabotMemoryPolicyBaseline(null);
+      setCoworkMetabotMemoryPolicySource('global');
+    } finally {
+      setCoworkMetabotMemoryPolicyLoading(false);
+    }
+  }, [applyMetabotMemoryPolicyToState, coworkMemoryMetabotId]);
+
+  const hasCoworkMetabotMemoryPolicyChanges = useMemo(() => {
+    if (!coworkMetabotMemoryPolicyBaseline) return false;
+    return coworkMetabotMemoryPolicyBaseline.memoryEnabled !== coworkMetabotMemoryEnabled
+      || coworkMetabotMemoryPolicyBaseline.memoryImplicitUpdateEnabled !== coworkMetabotMemoryImplicitUpdateEnabled
+      || coworkMetabotMemoryPolicyBaseline.memoryLlmJudgeEnabled !== coworkMetabotMemoryLlmJudgeEnabled
+      || coworkMetabotMemoryPolicyBaseline.memoryGuardLevel !== coworkMetabotMemoryGuardLevel
+      || coworkMetabotMemoryPolicyBaseline.memoryUserMemoriesMaxItems !== coworkMetabotMemoryMaxItems;
+  }, [
+    coworkMetabotMemoryEnabled,
+    coworkMetabotMemoryImplicitUpdateEnabled,
+    coworkMetabotMemoryLlmJudgeEnabled,
+    coworkMetabotMemoryGuardLevel,
+    coworkMetabotMemoryMaxItems,
+    coworkMetabotMemoryPolicyBaseline,
+  ]);
+
+  const handleSaveCoworkMetabotMemoryPolicy = async () => {
+    if (coworkMemoryMetabotId == null) return;
+    setCoworkMetabotMemoryPolicySaving(true);
+    setCoworkMetabotMemoryPolicyNotice(null);
+    try {
+      const normalizedMaxItems = Math.max(1, Math.min(60, Math.floor(coworkMetabotMemoryMaxItems || 12)));
+      const policy = await coworkService.setMemoryPolicy({
+        metabotId: coworkMemoryMetabotId,
+        memoryEnabled: coworkMetabotMemoryEnabled,
+        memoryImplicitUpdateEnabled: coworkMetabotMemoryImplicitUpdateEnabled,
+        memoryLlmJudgeEnabled: coworkMetabotMemoryLlmJudgeEnabled,
+        memoryGuardLevel: coworkMetabotMemoryGuardLevel,
+        memoryUserMemoriesMaxItems: normalizedMaxItems,
+      });
+      if (!policy) {
+        throw new Error(i18nService.t('coworkMemoryMetabotPolicySaveFailed'));
+      }
+      applyMetabotMemoryPolicyToState(policy);
+      setCoworkMetabotMemoryPolicyNotice(i18nService.t('coworkMemoryMetabotPolicySaved'));
+      await loadCoworkMemoryData();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : i18nService.t('coworkMemoryMetabotPolicySaveFailed'));
+    } finally {
+      setCoworkMetabotMemoryPolicySaving(false);
+    }
+  };
+
   const loadCoworkMemoryData = useCallback(async () => {
+    if (coworkMemoryMetabotId == null) {
+      setCoworkMemoryEntries([]);
+      setCoworkMemoryStats(null);
+      return;
+    }
     setCoworkMemoryListLoading(true);
     try {
       const [entries, stats] = await Promise.all([
         coworkService.listMemoryEntries({
+          metabotId: coworkMemoryMetabotId,
           query: coworkMemoryQuery.trim() || undefined,
         }),
-        coworkService.getMemoryStats(),
+        coworkService.getMemoryStats({ metabotId: coworkMemoryMetabotId }),
       ]);
       setCoworkMemoryEntries(entries);
       setCoworkMemoryStats(stats);
@@ -770,7 +888,49 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     }
   }, [
     coworkMemoryQuery,
+    coworkMemoryMetabotId,
   ]);
+
+  const loadCoworkMemoryMetabots = useCallback(async () => {
+    try {
+      const result = await window.electron?.idbots?.getMetaBots();
+      const list = result?.success && Array.isArray(result.list)
+        ? result.list.filter((item): item is MemoryMetabotOption => (
+            typeof item?.id === 'number'
+            && Number.isFinite(item.id)
+            && item.id > 0
+            && typeof item?.name === 'string'
+          ))
+        : [];
+      setCoworkMemoryMetabots(list);
+      setCoworkMemoryMetabotId((current) => {
+        if (current != null && list.some((item) => item.id === current)) {
+          return current;
+        }
+        const defaultTwin = list.find((item) => item.metabot_type === 'twin');
+        if (defaultTwin) return defaultTwin.id;
+        return list.length > 0 ? list[0].id : null;
+      });
+    } catch (loadError) {
+      console.error('Failed to load MetaBots for memory scope:', loadError);
+      setCoworkMemoryMetabots([]);
+      setCoworkMemoryMetabotId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCoworkMemoryMetabots();
+  }, [loadCoworkMemoryMetabots]);
+
+  useEffect(() => {
+    if (activeTab !== 'coworkMemory') return;
+    void loadCoworkMemoryMetabots();
+  }, [activeTab, loadCoworkMemoryMetabots]);
+
+  useEffect(() => {
+    if (activeTab !== 'coworkMemory') return;
+    void loadCoworkMetabotMemoryPolicy();
+  }, [activeTab, loadCoworkMetabotMemoryPolicy]);
 
   useEffect(() => {
     if (activeTab !== 'coworkMemory') return;
@@ -783,7 +943,14 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     setShowMemoryModal(false);
   };
 
+  useEffect(() => {
+    setCoworkMemoryEditingId(null);
+    setCoworkMemoryDraftText('');
+    setShowMemoryModal(false);
+  }, [coworkMemoryMetabotId]);
+
   const handleSaveCoworkMemoryEntry = async () => {
+    if (coworkMemoryMetabotId == null) return;
     const text = coworkMemoryDraftText.trim();
     if (!text) return;
 
@@ -791,6 +958,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     try {
       if (coworkMemoryEditingId) {
         await coworkService.updateMemoryEntry({
+          metabotId: coworkMemoryMetabotId,
           id: coworkMemoryEditingId,
           text,
           status: 'created',
@@ -798,6 +966,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
         });
       } else {
         await coworkService.createMemoryEntry({
+          metabotId: coworkMemoryMetabotId,
           text,
           isExplicit: true,
         });
@@ -818,9 +987,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   };
 
   const handleDeleteCoworkMemoryEntry = async (entry: CoworkUserMemoryEntry) => {
+    if (coworkMemoryMetabotId == null) return;
     setCoworkMemoryListLoading(true);
     try {
-      await coworkService.deleteMemoryEntry({ id: entry.id });
+      await coworkService.deleteMemoryEntry({ id: entry.id, metabotId: coworkMemoryMetabotId });
       if (coworkMemoryEditingId === entry.id) {
         resetCoworkMemoryEditor();
       }
@@ -848,6 +1018,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   };
 
   const handleOpenCoworkMemoryModal = () => {
+    if (coworkMemoryMetabotId == null) return;
     resetCoworkMemoryEditor();
     setShowMemoryModal(true);
   };
@@ -1841,14 +2012,134 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                     {i18nService.t('coworkMemoryManageHint')}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleOpenCoworkMemoryModal}
-                  className="btn-idchat-primary-filled inline-flex items-center justify-center px-3 py-1.5 text-sm"
-                >
-                  <PlusCircleIcon className="h-4 w-4 mr-1.5" />
-                  {i18nService.t('coworkMemoryCrudCreate')}
-                </button>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('coworkMemoryScopeMetabot')}
+                  </div>
+                  <select
+                    value={coworkMemoryMetabotId ?? ''}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setCoworkMemoryMetabotId(Number.isFinite(next) && next > 0 ? next : null);
+                    }}
+                    className="min-w-[180px] rounded-lg border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+                    disabled={coworkMemoryMetabots.length === 0}
+                  >
+                    {coworkMemoryMetabots.length === 0 ? (
+                      <option value="">{i18nService.t('coworkMemoryNoMetabotAvailable')}</option>
+                    ) : (
+                      coworkMemoryMetabots.map((metabot) => (
+                        <option key={metabot.id} value={metabot.id}>
+                          {metabot.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleOpenCoworkMemoryModal}
+                    disabled={coworkMemoryMetabotId == null}
+                    className="btn-idchat-primary-filled inline-flex items-center justify-center px-3 py-1.5 text-sm disabled:opacity-60"
+                  >
+                    <PlusCircleIcon className="h-4 w-4 mr-1.5" />
+                    {i18nService.t('coworkMemoryCrudCreate')}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-lg border px-3 py-3 dark:border-claude-darkBorder border-claude-border">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                    {i18nService.t('coworkMemoryMetabotPolicyTitle')}
+                  </div>
+                  <div className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {coworkMetabotMemoryPolicySource === 'metabot'
+                      ? i18nService.t('coworkMemoryMetabotPolicySourceMetabot')
+                      : i18nService.t('coworkMemoryMetabotPolicySourceGlobal')}
+                  </div>
+                </div>
+                {coworkMetabotMemoryPolicyNotice && (
+                  <div className="text-[11px] text-green-600 dark:text-green-400">
+                    {coworkMetabotMemoryPolicyNotice}
+                  </div>
+                )}
+                {coworkMetabotMemoryPolicyLoading ? (
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('loading')}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs dark:text-claude-darkText text-claude-text">
+                      <input
+                        type="checkbox"
+                        checked={coworkMetabotMemoryEnabled}
+                        onChange={(event) => setCoworkMetabotMemoryEnabled(event.target.checked)}
+                        disabled={coworkMemoryMetabotId == null || coworkMetabotMemoryPolicySaving}
+                      />
+                      <span>{i18nService.t('coworkMemoryEnabled')}</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs dark:text-claude-darkText text-claude-text">
+                      <input
+                        type="checkbox"
+                        checked={coworkMetabotMemoryImplicitUpdateEnabled}
+                        onChange={(event) => setCoworkMetabotMemoryImplicitUpdateEnabled(event.target.checked)}
+                        disabled={coworkMemoryMetabotId == null || coworkMetabotMemoryPolicySaving || !coworkMetabotMemoryEnabled}
+                      />
+                      <span>{i18nService.t('coworkMemoryCaptureEachTurn')}</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs dark:text-claude-darkText text-claude-text">
+                      <input
+                        type="checkbox"
+                        checked={coworkMetabotMemoryLlmJudgeEnabled}
+                        onChange={(event) => setCoworkMetabotMemoryLlmJudgeEnabled(event.target.checked)}
+                        disabled={coworkMemoryMetabotId == null || coworkMetabotMemoryPolicySaving || !coworkMetabotMemoryEnabled}
+                      />
+                      <span>{i18nService.t('coworkMemoryLlmJudgeEnabled')}</span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs dark:text-claude-darkText text-claude-text">
+                        <span className="block mb-1 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                          {i18nService.t('coworkMemoryGuardLevel')}
+                        </span>
+                        <select
+                          value={coworkMetabotMemoryGuardLevel}
+                          onChange={(event) => setCoworkMetabotMemoryGuardLevel(event.target.value as 'strict' | 'standard' | 'relaxed')}
+                          className="w-full rounded border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+                          disabled={coworkMemoryMetabotId == null || coworkMetabotMemoryPolicySaving || !coworkMetabotMemoryEnabled}
+                        >
+                          <option value="strict">{i18nService.t('coworkMemoryGuardStrict')}</option>
+                          <option value="standard">{i18nService.t('coworkMemoryGuardStandard')}</option>
+                          <option value="relaxed">{i18nService.t('coworkMemoryGuardRelaxed')}</option>
+                        </select>
+                      </label>
+                      <label className="text-xs dark:text-claude-darkText text-claude-text">
+                        <span className="block mb-1 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                          {i18nService.t('coworkMemoryMaxResults')}
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={coworkMetabotMemoryMaxItems}
+                          onChange={(event) => {
+                            const next = Number(event.target.value);
+                            setCoworkMetabotMemoryMaxItems(Number.isFinite(next) ? next : 12);
+                          }}
+                          className="w-full rounded border px-2 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+                          disabled={coworkMemoryMetabotId == null || coworkMetabotMemoryPolicySaving || !coworkMetabotMemoryEnabled}
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveCoworkMetabotMemoryPolicy}
+                      disabled={coworkMemoryMetabotId == null || coworkMetabotMemoryPolicySaving || !hasCoworkMetabotMemoryPolicyChanges}
+                      className="rounded border px-3 py-1.5 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-60"
+                    >
+                      {coworkMetabotMemoryPolicySaving ? i18nService.t('saving') : i18nService.t('coworkMemoryMetabotPolicySave')}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {coworkMemoryStats && (
@@ -1857,11 +2148,18 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                 </div>
               )}
 
+              {coworkMemoryMetabotId == null && (
+                <div className="text-xs text-amber-600 dark:text-amber-400">
+                  {i18nService.t('coworkMemoryNoMetabotAvailable')}
+                </div>
+              )}
+
               <input
                 type="text"
                 value={coworkMemoryQuery}
                 onChange={(event) => setCoworkMemoryQuery(event.target.value)}
                 placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
+                disabled={coworkMemoryMetabotId == null}
                 className="w-full rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
               />
 

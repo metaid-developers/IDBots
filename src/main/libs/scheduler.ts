@@ -245,6 +245,7 @@ export class Scheduler {
     const runner = this.getCoworkRunner();
     await runner.startSession(session.id, task.prompt, {
       skipInitialUserMessage: true,
+      disableMemoryUpdates: true,
       confirmationMode: 'text',
     });
 

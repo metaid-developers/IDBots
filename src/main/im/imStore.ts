@@ -46,13 +46,36 @@ export class IMStore {
         im_conversation_id TEXT NOT NULL,
         platform TEXT NOT NULL,
         cowork_session_id TEXT NOT NULL,
+        metabot_id INTEGER NULL,
         created_at INTEGER NOT NULL,
         last_active_at INTEGER NOT NULL,
         PRIMARY KEY (im_conversation_id, platform)
       );
     `);
 
+    this.ensureSessionMappingSchema();
     this.saveDb();
+  }
+
+  private ensureSessionMappingSchema(): void {
+    try {
+      const result = this.db.exec("PRAGMA table_info(im_session_mappings)");
+      const columns = (result[0]?.values || []).map((row) => String(row[1]));
+      if (!columns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE im_session_mappings ADD COLUMN metabot_id INTEGER NULL');
+      }
+    } catch (error) {
+      console.warn('[IMStore] Failed to ensure im_session_mappings schema:', error);
+    }
+  }
+
+  private parseNumberOrNull(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
   }
 
   /**
@@ -262,6 +285,61 @@ export class IMStore {
     return hasDingTalk || hasFeishu || hasTelegram || hasDiscord;
   }
 
+  /**
+   * Resolve platform-bound metabot id with fallback:
+   * 1) use provided id when it exists and enabled
+   * 2) first enabled twin
+   * 3) first enabled metabot
+   */
+  resolvePlatformMetabotId(candidate?: number | null): number | null {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && this.isEnabledMetabotId(candidate)) {
+      return candidate;
+    }
+    return this.getDefaultPlatformMetabotId();
+  }
+
+  getDefaultPlatformMetabotId(): number | null {
+    const twinId = this.getFirstEnabledTwinMetabotId();
+    if (twinId != null) return twinId;
+    return this.getFirstEnabledMetabotId();
+  }
+
+  private isEnabledMetabotId(id: number): boolean {
+    try {
+      const result = this.db.exec(
+        'SELECT id FROM metabots WHERE id = ? AND enabled = 1 LIMIT 1',
+        [id]
+      );
+      return !!result[0]?.values?.[0]?.[0];
+    } catch {
+      return false;
+    }
+  }
+
+  private getFirstEnabledTwinMetabotId(): number | null {
+    try {
+      const result = this.db.exec(
+        "SELECT id FROM metabots WHERE enabled = 1 AND metabot_type = 'twin' ORDER BY id ASC LIMIT 1"
+      );
+      const raw = result[0]?.values?.[0]?.[0];
+      return typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number(raw) || null : null);
+    } catch {
+      return null;
+    }
+  }
+
+  private getFirstEnabledMetabotId(): number | null {
+    try {
+      const result = this.db.exec(
+        'SELECT id FROM metabots WHERE enabled = 1 ORDER BY id ASC LIMIT 1'
+      );
+      const raw = result[0]?.values?.[0]?.[0];
+      return typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number(raw) || null : null);
+    } catch {
+      return null;
+    }
+  }
+
   // ==================== Session Mapping Operations ====================
 
   /**
@@ -269,7 +347,7 @@ export class IMStore {
    */
   getSessionMapping(imConversationId: string, platform: IMPlatform): IMSessionMapping | null {
     const result = this.db.exec(
-      'SELECT im_conversation_id, platform, cowork_session_id, created_at, last_active_at FROM im_session_mappings WHERE im_conversation_id = ? AND platform = ?',
+      'SELECT im_conversation_id, platform, cowork_session_id, metabot_id, created_at, last_active_at FROM im_session_mappings WHERE im_conversation_id = ? AND platform = ?',
       [imConversationId, platform]
     );
     if (!result[0]?.values[0]) return null;
@@ -278,25 +356,32 @@ export class IMStore {
       imConversationId: row[0] as string,
       platform: row[1] as IMPlatform,
       coworkSessionId: row[2] as string,
-      createdAt: row[3] as number,
-      lastActiveAt: row[4] as number,
+      metabotId: this.parseNumberOrNull(row[3]),
+      createdAt: row[4] as number,
+      lastActiveAt: row[5] as number,
     };
   }
 
   /**
    * Create a new session mapping
    */
-  createSessionMapping(imConversationId: string, platform: IMPlatform, coworkSessionId: string): IMSessionMapping {
+  createSessionMapping(
+    imConversationId: string,
+    platform: IMPlatform,
+    coworkSessionId: string,
+    metabotId: number | null
+  ): IMSessionMapping {
     const now = Date.now();
     this.db.run(
-      'INSERT INTO im_session_mappings (im_conversation_id, platform, cowork_session_id, created_at, last_active_at) VALUES (?, ?, ?, ?, ?)',
-      [imConversationId, platform, coworkSessionId, now, now]
+      'INSERT INTO im_session_mappings (im_conversation_id, platform, cowork_session_id, metabot_id, created_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [imConversationId, platform, coworkSessionId, metabotId, now, now]
     );
     this.saveDb();
     return {
       imConversationId,
       platform,
       coworkSessionId,
+      metabotId,
       createdAt: now,
       lastActiveAt: now,
     };
@@ -326,12 +411,24 @@ export class IMStore {
   }
 
   /**
+   * Delete all session mappings for a platform.
+   * Returns removed cowork session ids so caller can stop stale sessions.
+   */
+  deleteSessionMappingsByPlatform(platform: IMPlatform): string[] {
+    const list = this.listSessionMappings(platform);
+    if (list.length === 0) return [];
+    this.db.run('DELETE FROM im_session_mappings WHERE platform = ?', [platform]);
+    this.saveDb();
+    return list.map((item) => item.coworkSessionId);
+  }
+
+  /**
    * List all session mappings for a platform
    */
   listSessionMappings(platform?: IMPlatform): IMSessionMapping[] {
     const query = platform
-      ? 'SELECT im_conversation_id, platform, cowork_session_id, created_at, last_active_at FROM im_session_mappings WHERE platform = ? ORDER BY last_active_at DESC'
-      : 'SELECT im_conversation_id, platform, cowork_session_id, created_at, last_active_at FROM im_session_mappings ORDER BY last_active_at DESC';
+      ? 'SELECT im_conversation_id, platform, cowork_session_id, metabot_id, created_at, last_active_at FROM im_session_mappings WHERE platform = ? ORDER BY last_active_at DESC'
+      : 'SELECT im_conversation_id, platform, cowork_session_id, metabot_id, created_at, last_active_at FROM im_session_mappings ORDER BY last_active_at DESC';
     const params = platform ? [platform] : [];
     const result = this.db.exec(query, params);
     if (!result[0]?.values) return [];
@@ -339,8 +436,9 @@ export class IMStore {
       imConversationId: row[0] as string,
       platform: row[1] as IMPlatform,
       coworkSessionId: row[2] as string,
-      createdAt: row[3] as number,
-      lastActiveAt: row[4] as number,
+      metabotId: this.parseNumberOrNull(row[3]),
+      createdAt: row[4] as number,
+      lastActiveAt: row[5] as number,
     }));
   }
 }

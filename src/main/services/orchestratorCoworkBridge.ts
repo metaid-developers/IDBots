@@ -119,6 +119,7 @@ export function runOrchestratorSkillTurn(
       .startSession(sessionId, userMessage, {
         systemPrompt,
         autoApprove: true,
+        disableMemoryUpdates: true,
         confirmationMode: 'text',
         workspaceRoot: cwd,
       })

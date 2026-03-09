@@ -133,7 +133,12 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS user_memory_sources (
         id TEXT PRIMARY KEY,
         memory_id TEXT NOT NULL,
+        metabot_id INTEGER,
         session_id TEXT,
+        source_channel TEXT,
+        source_type TEXT,
+        external_conversation_id TEXT,
+        source_id TEXT,
         message_id TEXT,
         role TEXT NOT NULL DEFAULT 'system',
         is_active INTEGER NOT NULL DEFAULT 1,
@@ -157,6 +162,44 @@ export class SqliteStore {
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_user_memory_sources_memory_id
       ON user_memory_sources(memory_id, is_active);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_user_memory_sources_channel_conversation
+      ON user_memory_sources(source_channel, external_conversation_id, created_at DESC);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_user_memory_sources_metabot
+      ON user_memory_sources(metabot_id, created_at DESC);
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_memory_policies (
+        metabot_id INTEGER PRIMARY KEY,
+        memory_enabled INTEGER NOT NULL DEFAULT 1,
+        memory_implicit_update_enabled INTEGER NOT NULL DEFAULT 1,
+        memory_llm_judge_enabled INTEGER NOT NULL DEFAULT 1,
+        memory_guard_level TEXT NOT NULL DEFAULT 'strict',
+        memory_user_memories_max_items INTEGER NOT NULL DEFAULT 12,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (metabot_id) REFERENCES metabots(id) ON DELETE CASCADE
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS cowork_conversation_mappings (
+        channel TEXT NOT NULL,
+        external_conversation_id TEXT NOT NULL,
+        metabot_id INTEGER NOT NULL DEFAULT 0,
+        cowork_session_id TEXT NOT NULL,
+        metadata_json TEXT,
+        created_at INTEGER NOT NULL,
+        last_active_at INTEGER NOT NULL,
+        PRIMARY KEY (channel, external_conversation_id, metabot_id)
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_conversation_mappings_session
+      ON cowork_conversation_mappings(cowork_session_id);
     `);
 
     // Create scheduled tasks tables
@@ -507,6 +550,38 @@ export class SqliteStore {
       }
     } catch (error) {
       console.warn('Failed to migrate user_memories metabot_id:', error);
+    }
+
+    // Migration: Ensure user_memory_sources has standardized source fields.
+    try {
+      const srcColsResult = this.db.exec("PRAGMA table_info(user_memory_sources);");
+      const srcColumns = (srcColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!srcColumns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN metabot_id INTEGER');
+      }
+      if (!srcColumns.includes('source_channel')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN source_channel TEXT');
+      }
+      if (!srcColumns.includes('source_type')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN source_type TEXT');
+      }
+      if (!srcColumns.includes('external_conversation_id')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN external_conversation_id TEXT');
+      }
+      if (!srcColumns.includes('source_id')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN source_id TEXT');
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memory_sources_channel_conversation
+        ON user_memory_sources(source_channel, external_conversation_id, created_at DESC)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memory_sources_metabot
+        ON user_memory_sources(metabot_id, created_at DESC)
+      `);
+      this.save();
+    } catch (error) {
+      console.warn('Failed to migrate user_memory_sources source fields:', error);
     }
 
     // Migration: Add expires_at and notify_platforms_json columns to scheduled_tasks

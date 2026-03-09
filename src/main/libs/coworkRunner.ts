@@ -411,6 +411,8 @@ interface ActiveSession {
   sandboxTurnResolve?: (result: { status: 'ok' } | { status: 'error'; message: string; hvfDenied: boolean }) => void;
   /** When true, auto-approve all tool permissions (for scheduled tasks) */
   autoApprove?: boolean;
+  /** When true, this session will not read/write persistent user memories. */
+  disableMemoryUpdates?: boolean;
 }
 
 interface PendingPermission {
@@ -485,9 +487,32 @@ export class CoworkRunner extends EventEmitter {
     return this.stoppedSessions.has(sessionId) || Boolean(activeSession?.abortController.signal.aborted);
   }
 
+  private getSessionMemoryPolicy(sessionId: string): {
+    memoryEnabled: boolean;
+    memoryImplicitUpdateEnabled: boolean;
+    memoryLlmJudgeEnabled: boolean;
+    memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
+    memoryUserMemoriesMaxItems: number;
+  } {
+    const effective = this.store.getEffectiveMemoryPolicyForSession(sessionId);
+    return {
+      memoryEnabled: effective.memoryEnabled,
+      memoryImplicitUpdateEnabled: effective.memoryImplicitUpdateEnabled,
+      memoryLlmJudgeEnabled: effective.memoryLlmJudgeEnabled,
+      memoryGuardLevel: effective.memoryGuardLevel,
+      memoryUserMemoriesMaxItems: effective.memoryUserMemoriesMaxItems,
+    };
+  }
+
+  private isSessionMemoryEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
+    const target = activeSession ?? this.activeSessions.get(sessionId);
+    if (target?.disableMemoryUpdates) return false;
+    return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
+  }
+
   private applyTurnMemoryUpdatesForSession(sessionId: string): void {
-    const config = this.store.getConfig();
-    if (!config.memoryEnabled) {
+    const policy = this.getSessionMemoryPolicy(sessionId);
+    if (!policy.memoryEnabled || !this.isSessionMemoryEnabled(sessionId)) {
       return;
     }
 
@@ -496,19 +521,38 @@ export class CoworkRunner extends EventEmitter {
       return;
     }
 
-    const lastUser = [...session.messages].reverse().find((message) => message.type === 'user' && message.content?.trim());
-    const lastAssistant = [...session.messages].reverse().find((message) => {
+    let lastUser: CoworkMessage | null = null;
+    let lastUserIndex = -1;
+    for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+      const message = session.messages[index];
+      if (message.type === 'user' && message.content?.trim()) {
+        lastUser = message;
+        lastUserIndex = index;
+        break;
+      }
+    }
+    if (!lastUser || lastUserIndex < 0) {
+      return;
+    }
+
+    const isValidAssistantMessage = (message: CoworkMessage): boolean => {
       if (message.type !== 'assistant') return false;
       if (!message.content?.trim()) return false;
       if (message.metadata?.isThinking) return false;
       return true;
-    });
+    };
 
-    if (!lastUser || !lastAssistant) {
-      return;
+    let lastAssistant: CoworkMessage | null = null;
+    for (let index = session.messages.length - 1; index > lastUserIndex; index -= 1) {
+      const message = session.messages[index];
+      if (isValidAssistantMessage(message)) {
+        lastAssistant = message;
+        break;
+      }
     }
 
-    const key = `${sessionId}:${lastUser.id}:${lastAssistant.id}`;
+    const assistantText = lastAssistant?.content ?? '';
+    const key = `${sessionId}:${lastUser.id}:${lastAssistant?.id ?? 'no-assistant'}`;
     if (this.lastTurnMemoryKeyBySession.get(sessionId) === key || this.turnMemoryQueueKeys.has(key)) {
       return;
     }
@@ -517,12 +561,12 @@ export class CoworkRunner extends EventEmitter {
       key,
       sessionId,
       userText: lastUser.content,
-      assistantText: lastAssistant.content,
-      implicitEnabled: config.memoryImplicitUpdateEnabled,
-      memoryLlmJudgeEnabled: config.memoryLlmJudgeEnabled,
-      guardLevel: config.memoryGuardLevel,
+      assistantText,
+      implicitEnabled: policy.memoryImplicitUpdateEnabled,
+      memoryLlmJudgeEnabled: policy.memoryLlmJudgeEnabled,
+      guardLevel: policy.memoryGuardLevel,
       userMessageId: lastUser.id,
-      assistantMessageId: lastAssistant.id,
+      assistantMessageId: lastAssistant?.id,
       enqueuedAt: Date.now(),
     });
     void this.drainTurnMemoryQueue();
@@ -589,9 +633,10 @@ export class CoworkRunner extends EventEmitter {
       .replace(/'/g, '&apos;');
   }
 
-  private buildUserMemoriesXml(sessionId: string): string {
-    const config = this.store.getConfig();
-    if (!config.memoryEnabled) {
+  private buildUserMemoriesXml(sessionId: string, options?: { enabled?: boolean }): string {
+    const memoryPolicy = this.getSessionMemoryPolicy(sessionId);
+    const memoryEnabled = options?.enabled ?? this.isSessionMemoryEnabled(sessionId);
+    if (!memoryEnabled) {
       return '<userMemories></userMemories>';
     }
 
@@ -605,8 +650,9 @@ export class CoworkRunner extends EventEmitter {
       metabotId,
       status: 'created',
       includeDeleted: false,
-      limit: config.memoryUserMemoriesMaxItems,
+      limit: memoryPolicy.memoryUserMemoriesMaxItems,
       offset: 0,
+      touchLastUsed: true,
     });
 
     if (memories.length === 0) {
@@ -698,12 +744,14 @@ export class CoworkRunner extends EventEmitter {
     max_results?: number;
     before?: string;
     after?: string;
-  }): string {
+  }, sessionId: string): string {
+    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
     const chats = this.store.conversationSearch({
       query: args.query,
       maxResults: args.max_results,
       before: args.before,
       after: args.after,
+      metabotId,
     });
     return this.formatChatSearchOutput(chats);
   }
@@ -713,12 +761,14 @@ export class CoworkRunner extends EventEmitter {
     sort_order?: 'asc' | 'desc';
     before?: string;
     after?: string;
-  }): string {
+  }, sessionId: string): string {
+    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
     const chats = this.store.recentChats({
       n: args.n,
       sortOrder: args.sort_order,
       before: args.before,
       after: args.after,
+      metabotId,
     });
     return this.formatChatSearchOutput(chats);
   }
@@ -812,6 +862,8 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           messageId: lastUserMsg?.id,
           role: 'user',
+          sourceType: 'memory_tool_add',
+          sourceId: lastUserMsg?.id,
         },
       });
       return {
@@ -2271,6 +2323,7 @@ export class CoworkRunner extends EventEmitter {
       skillIds?: string[];
       systemPrompt?: string;
       autoApprove?: boolean;
+      disableMemoryUpdates?: boolean;
       workspaceRoot?: string;
       confirmationMode?: 'modal' | 'text';
     } = {}
@@ -2343,6 +2396,7 @@ export class CoworkRunner extends EventEmitter {
       staleResumeRetryAllowed: true,
       executionMode: 'local',
       autoApprove: options.autoApprove ?? false,
+      disableMemoryUpdates: Boolean(options.disableMemoryUpdates),
     };
     this.activeSessions.set(sessionId, activeSession);
     if (session.cwd !== sessionCwd) {
@@ -2351,13 +2405,14 @@ export class CoworkRunner extends EventEmitter {
 
     const baseSystemPrompt = options.systemPrompt ?? persistedSystemPrompt;
     const personaBlock = this.buildMetabotPersonaBlock(sessionId);
+    const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
       baseSystemPrompt,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildUserMemoriesXml(sessionId),
-      this.store.getConfig().memoryEnabled,
+      this.buildUserMemoriesXml(sessionId, { enabled: sessionMemoryEnabled }),
+      sessionMemoryEnabled,
       personaBlock
     );
 
@@ -2421,13 +2476,14 @@ export class CoworkRunner extends EventEmitter {
     // Always prepend workspace safety prompt so folder boundary rules are enforced at prompt level.
     const baseSystemPrompt = options.systemPrompt ?? persistedSystemPrompt;
     const personaBlock = this.buildMetabotPersonaBlock(sessionId);
+    const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
       baseSystemPrompt,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildUserMemoriesXml(sessionId),
-      this.store.getConfig().memoryEnabled,
+      this.buildUserMemoriesXml(sessionId, { enabled: sessionMemoryEnabled }),
+      sessionMemoryEnabled,
       personaBlock
     );
 
@@ -2514,7 +2570,7 @@ export class CoworkRunner extends EventEmitter {
           max_results: typeof toolInput.max_results === 'number' ? toolInput.max_results : undefined,
           before: typeof toolInput.before === 'string' ? toolInput.before : undefined,
           after: typeof toolInput.after === 'string' ? toolInput.after : undefined,
-        });
+        }, sessionId);
         return { success: true, text };
       }
 
@@ -2527,7 +2583,7 @@ export class CoworkRunner extends EventEmitter {
           sort_order: sortOrder,
           before: typeof toolInput.before === 'string' ? toolInput.before : undefined,
           after: typeof toolInput.after === 'string' ? toolInput.after : undefined,
-        });
+        }, sessionId);
         return { success: true, text };
       }
 
@@ -2622,7 +2678,7 @@ export class CoworkRunner extends EventEmitter {
     isRetry: boolean = false
   ): Promise<void> {
     const { sessionId, abortController } = activeSession;
-    const config = this.store.getConfig();
+    const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
 
     if (this.isSessionStopRequested(sessionId, activeSession)) {
       this.store.updateSession(sessionId, { status: 'idle' });
@@ -2888,7 +2944,7 @@ export class CoworkRunner extends EventEmitter {
             before?: string;
             after?: string;
           }) => {
-            const text = this.runConversationSearchTool(args);
+            const text = this.runConversationSearchTool(args, sessionId);
             return {
               content: [
                 {
@@ -2914,14 +2970,14 @@ export class CoworkRunner extends EventEmitter {
             before?: string;
             after?: string;
           }) => {
-            const text = this.runRecentChatsTool(args);
+            const text = this.runRecentChatsTool(args, sessionId);
             return {
               content: [{ type: 'text', text }],
             } as any;
           }
         ),
       ];
-      if (config.memoryEnabled) {
+      if (sessionMemoryEnabled) {
         memoryTools.push(
           tool(
             'memory_user_edits',
@@ -3298,7 +3354,7 @@ export class CoworkRunner extends EventEmitter {
       cwd: cwdMapping.guestPath,
       workspaceRoot: cwdMapping.guestPath,
       hostWorkspaceRoot: cwdMapping.hostPath,
-      memoryEnabled: this.store.getConfig().memoryEnabled,
+      memoryEnabled: this.isSessionMemoryEnabled(sessionId, activeSession),
       autoApprove: Boolean(activeSession.autoApprove),
       confirmationMode: activeSession.confirmationMode,
       env: sandboxEnv,
@@ -3823,7 +3879,7 @@ export class CoworkRunner extends EventEmitter {
       cwd: cwdMapping.guestPath,
       workspaceRoot: cwdMapping.guestPath,
       hostWorkspaceRoot: cwdMapping.hostPath,
-      memoryEnabled: this.store.getConfig().memoryEnabled,
+      memoryEnabled: this.isSessionMemoryEnabled(sessionId, activeSession),
       autoApprove: Boolean(activeSession.autoApprove),
       confirmationMode: activeSession.confirmationMode,
       env: sandboxEnv,

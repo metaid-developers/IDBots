@@ -23,6 +23,7 @@ import type {
   CoworkSandboxProgress,
   CoworkUserMemoryEntry,
   CoworkMemoryStats,
+  CoworkMemoryPolicy,
   CoworkPermissionResult,
   CoworkStartOptions,
   CoworkContinueOptions,
@@ -373,6 +374,7 @@ class CoworkService {
 
   async listMemoryEntries(input: {
     sessionId?: string;
+    metabotId?: number;
     query?: string;
     status?: 'created' | 'stale' | 'deleted' | 'all';
     includeDeleted?: boolean;
@@ -388,6 +390,7 @@ class CoworkService {
 
   async createMemoryEntry(input: {
     sessionId?: string;
+    metabotId?: number;
     text: string;
     confidence?: number;
     isExplicit?: boolean;
@@ -401,6 +404,7 @@ class CoworkService {
 
   async updateMemoryEntry(input: {
     sessionId?: string;
+    metabotId?: number;
     id: string;
     text?: string;
     confidence?: number;
@@ -414,19 +418,42 @@ class CoworkService {
     return result.entry;
   }
 
-  async deleteMemoryEntry(input: { sessionId?: string; id: string }): Promise<boolean> {
+  async deleteMemoryEntry(input: { sessionId?: string; metabotId?: number; id: string }): Promise<boolean> {
     const api = window.electron?.cowork?.deleteMemoryEntry;
     if (!api) return false;
     const result = await api(input);
     return Boolean(result?.success);
   }
 
-  async getMemoryStats(input?: { sessionId?: string }): Promise<CoworkMemoryStats | null> {
+  async getMemoryStats(input?: { sessionId?: string; metabotId?: number }): Promise<CoworkMemoryStats | null> {
     const api = window.electron?.cowork?.getMemoryStats;
     if (!api) return null;
     const result = await api(input);
     if (!result?.success || !result.stats) return null;
     return result.stats;
+  }
+
+  async getMemoryPolicy(input?: { sessionId?: string; metabotId?: number }): Promise<CoworkMemoryPolicy | null> {
+    const api = window.electron?.cowork?.getMemoryPolicy;
+    if (!api) return null;
+    const result = await api(input);
+    if (!result?.success || !result.policy) return null;
+    return result.policy;
+  }
+
+  async setMemoryPolicy(input: {
+    metabotId: number;
+    memoryEnabled?: boolean;
+    memoryImplicitUpdateEnabled?: boolean;
+    memoryLlmJudgeEnabled?: boolean;
+    memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
+    memoryUserMemoriesMaxItems?: number;
+  }): Promise<CoworkMemoryPolicy | null> {
+    const api = window.electron?.cowork?.setMemoryPolicy;
+    if (!api) return null;
+    const result = await api(input);
+    if (!result?.success || !result.policy) return null;
+    return result.policy;
   }
 
   onSandboxDownloadProgress(callback: (progress: CoworkSandboxProgress) => void): () => void {

@@ -113,8 +113,7 @@ function extractImplicit(options: ExtractTurnMemoryOptions): ExtractedMemoryChan
   if (maxImplicitAdds === 0) return [];
   const threshold = confidenceThreshold(options.guardLevel);
   const strippedUser = options.userText.replace(CODE_BLOCK_RE, ' ').trim();
-  const strippedAssistant = options.assistantText.replace(CODE_BLOCK_RE, ' ').trim();
-  if (!strippedUser || !strippedAssistant) return [];
+  if (!strippedUser) return [];
 
   const candidates = strippedUser
     .split(/[。！？!?；;\n]/g)
@@ -181,8 +180,7 @@ function extractImplicit(options: ExtractTurnMemoryOptions): ExtractedMemoryChan
 
 export function extractTurnMemoryChanges(options: ExtractTurnMemoryOptions): ExtractedMemoryChange[] {
   const userText = (options.userText || '').trim();
-  const assistantText = (options.assistantText || '').trim();
-  if (!userText || !assistantText) return [];
+  if (!userText) return [];
 
   const explicitAdds = extractExplicit(userText, 'add', EXPLICIT_ADD_RE, 'explicit:add-command');
   const explicitDeletes = extractExplicit(userText, 'delete', EXPLICIT_DELETE_RE, 'explicit:delete-command');

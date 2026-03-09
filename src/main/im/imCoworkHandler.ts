@@ -68,6 +68,10 @@ export class IMCoworkHandler extends EventEmitter {
     this.setupEventListeners();
   }
 
+  private getImConversationChannel(platform: IMPlatform): string {
+    return `im:${platform}`;
+  }
+
   /**
    * Set up event listeners for CoworkRunner
    */
@@ -82,14 +86,18 @@ export class IMCoworkHandler extends EventEmitter {
   /**
    * Process an incoming IM message using CoworkRunner
    */
-  async processMessage(message: IMMessage): Promise<string> {
+  async processMessage(message: IMMessage, targetMetabotId: number | null = null): Promise<string> {
+    const resolvedTargetMetabotId =
+      typeof targetMetabotId === 'number' && Number.isFinite(targetMetabotId)
+        ? targetMetabotId
+        : null;
     const pendingPermissionReply = await this.handlePendingPermissionReply(message);
     if (pendingPermissionReply !== null) {
       return pendingPermissionReply;
     }
 
     try {
-      return await this.processMessageInternal(message, false);
+      return await this.processMessageInternal(message, false, resolvedTargetMetabotId);
     } catch (error) {
       if (!this.isSessionNotFoundError(error)) {
         throw error;
@@ -98,14 +106,19 @@ export class IMCoworkHandler extends EventEmitter {
       console.warn(
         `[IMCoworkHandler] Cowork session mapping is stale for ${message.platform}:${message.conversationId}, recreating session`
       );
-      return this.processMessageInternal(message, true);
+      return this.processMessageInternal(message, true, resolvedTargetMetabotId);
     }
   }
 
-  private async processMessageInternal(message: IMMessage, forceNewSession: boolean): Promise<string> {
+  private async processMessageInternal(
+    message: IMMessage,
+    forceNewSession: boolean,
+    targetMetabotId: number | null
+  ): Promise<string> {
     const coworkSessionId = await this.getOrCreateCoworkSession(
       message.conversationId,
       message.platform,
+      targetMetabotId,
       forceNewSession
     );
     this.sessionConversationMap.set(coworkSessionId, {
@@ -176,12 +189,16 @@ export class IMCoworkHandler extends EventEmitter {
   private async getOrCreateCoworkSession(
     imConversationId: string,
     platform: IMPlatform,
+    targetMetabotId: number | null,
     forceNewSession: boolean = false
   ): Promise<string> {
+    const channel = this.getImConversationChannel(platform);
+
     if (forceNewSession) {
       const stale = this.imStore.getSessionMapping(imConversationId, platform);
       if (stale) {
         this.imStore.deleteSessionMapping(imConversationId, platform);
+        this.coworkStore.deleteConversationMapping(channel, imConversationId, stale.metabotId);
         this.imSessionIds.delete(stale.coworkSessionId);
         this.sessionConversationMap.delete(stale.coworkSessionId);
         this.clearPendingPermissionsBySessionId(stale.coworkSessionId);
@@ -189,37 +206,90 @@ export class IMCoworkHandler extends EventEmitter {
       }
     }
 
+    if (!forceNewSession) {
+      const centralMapping = this.coworkStore.getConversationMapping(channel, imConversationId, targetMetabotId);
+      if (centralMapping) {
+        const session = this.coworkStore.getSession(centralMapping.coworkSessionId);
+        if (session) {
+          const existing = this.imStore.getSessionMapping(imConversationId, platform);
+          if (!existing || existing.coworkSessionId !== centralMapping.coworkSessionId) {
+            if (existing) {
+              this.imStore.deleteSessionMapping(imConversationId, platform);
+            }
+            this.imStore.createSessionMapping(
+              imConversationId,
+              platform,
+              centralMapping.coworkSessionId,
+              targetMetabotId
+            );
+          } else {
+            this.imStore.updateSessionLastActive(imConversationId, platform);
+          }
+          this.coworkStore.touchConversationMapping(channel, imConversationId, targetMetabotId);
+          this.imSessionIds.add(centralMapping.coworkSessionId);
+          this.sessionConversationMap.set(centralMapping.coworkSessionId, {
+            conversationId: imConversationId,
+            platform,
+          });
+          return centralMapping.coworkSessionId;
+        }
+        this.coworkStore.deleteConversationMapping(channel, imConversationId, targetMetabotId);
+      }
+    }
+
     // Check existing mapping
     const existing = forceNewSession ? null : this.imStore.getSessionMapping(imConversationId, platform);
     if (existing) {
-      const session = this.coworkStore.getSession(existing.coworkSessionId);
-      if (!session) {
-        console.warn(
-          `[IMCoworkHandler] Found stale mapping for ${platform}:${imConversationId}, session ${existing.coworkSessionId} is missing`
+      const mappingMetabotId = typeof existing.metabotId === 'number' ? existing.metabotId : null;
+      if (mappingMetabotId !== targetMetabotId) {
+        console.log(
+          `[IMCoworkHandler] MetaBot route changed for ${platform}:${imConversationId}, recreate session`,
+          { from: mappingMetabotId, to: targetMetabotId }
         );
         this.imStore.deleteSessionMapping(imConversationId, platform);
+        this.coworkStore.deleteConversationMapping(channel, imConversationId, mappingMetabotId);
         this.imSessionIds.delete(existing.coworkSessionId);
         this.sessionConversationMap.delete(existing.coworkSessionId);
         this.clearPendingPermissionsBySessionId(existing.coworkSessionId);
         this.coworkRunner.stopSession(existing.coworkSessionId);
       } else {
-        this.imStore.updateSessionLastActive(imConversationId, platform);
-        this.imSessionIds.add(existing.coworkSessionId);
-        this.sessionConversationMap.set(existing.coworkSessionId, {
-          conversationId: imConversationId,
-          platform,
-        });
-        return existing.coworkSessionId;
+        const session = this.coworkStore.getSession(existing.coworkSessionId);
+        if (!session) {
+          console.warn(
+            `[IMCoworkHandler] Found stale mapping for ${platform}:${imConversationId}, session ${existing.coworkSessionId} is missing`
+          );
+          this.imStore.deleteSessionMapping(imConversationId, platform);
+          this.coworkStore.deleteConversationMapping(channel, imConversationId, mappingMetabotId);
+          this.imSessionIds.delete(existing.coworkSessionId);
+          this.sessionConversationMap.delete(existing.coworkSessionId);
+          this.clearPendingPermissionsBySessionId(existing.coworkSessionId);
+          this.coworkRunner.stopSession(existing.coworkSessionId);
+        } else {
+          this.imStore.updateSessionLastActive(imConversationId, platform);
+          this.coworkStore.upsertConversationMapping({
+            channel,
+            externalConversationId: imConversationId,
+            metabotId: mappingMetabotId,
+            coworkSessionId: existing.coworkSessionId,
+          });
+          this.imSessionIds.add(existing.coworkSessionId);
+          this.sessionConversationMap.set(existing.coworkSessionId, {
+            conversationId: imConversationId,
+            platform,
+          });
+          return existing.coworkSessionId;
+        }
       }
     }
 
     // Create new Cowork session
-    return this.createCoworkSessionForConversation(imConversationId, platform);
+    return this.createCoworkSessionForConversation(imConversationId, platform, targetMetabotId);
   }
 
   private async createCoworkSessionForConversation(
     imConversationId: string,
-    platform: IMPlatform
+    platform: IMPlatform,
+    targetMetabotId: number | null
   ): Promise<string> {
     // Create new Cowork session
     const config = this.coworkStore.getConfig();
@@ -239,11 +309,19 @@ export class IMCoworkHandler extends EventEmitter {
       title,
       resolvedWorkspaceRoot,
       systemPrompt,
-      'local' // IM always uses local mode
+      'local', // IM always uses local mode
+      [],
+      targetMetabotId
     );
 
     // Save mapping
-    this.imStore.createSessionMapping(imConversationId, platform, session.id);
+    this.imStore.createSessionMapping(imConversationId, platform, session.id, targetMetabotId);
+    this.coworkStore.upsertConversationMapping({
+      channel: this.getImConversationChannel(platform),
+      externalConversationId: imConversationId,
+      metabotId: targetMetabotId,
+      coworkSessionId: session.id,
+    });
     this.imSessionIds.add(session.id);
     this.sessionConversationMap.set(session.id, {
       conversationId: imConversationId,

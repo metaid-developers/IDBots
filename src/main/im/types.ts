@@ -9,6 +9,7 @@ export interface DingTalkConfig {
   enabled: boolean;
   clientId: string;
   clientSecret: string;
+  metabotId?: number | null;
   robotCode?: string;
   corpId?: string;
   agentId?: string;
@@ -51,6 +52,7 @@ export interface FeishuConfig {
   enabled: boolean;
   appId: string;
   appSecret: string;
+  metabotId?: number | null;
   domain: 'feishu' | 'lark' | string;
   encryptKey?: string;
   verificationToken?: string;
@@ -85,6 +87,7 @@ export interface FeishuMessageContext {
 export interface TelegramConfig {
   enabled: boolean;
   botToken: string;
+  metabotId?: number | null;
   debug?: boolean;
 }
 
@@ -102,6 +105,7 @@ export interface TelegramGatewayStatus {
 export interface DiscordConfig {
   enabled: boolean;
   botToken: string;
+  metabotId?: number | null;
   debug?: boolean;
 }
 
@@ -226,6 +230,7 @@ export interface IMSessionMapping {
   imConversationId: string;
   platform: IMPlatform;
   coworkSessionId: string;
+  metabotId: number | null;
   createdAt: number;
   lastActiveAt: number;
 }
@@ -294,6 +299,7 @@ export const DEFAULT_DINGTALK_CONFIG: DingTalkConfig = {
   enabled: false,
   clientId: '',
   clientSecret: '',
+  metabotId: null,
   messageType: 'markdown',
   debug: true,
 };
@@ -302,6 +308,7 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   enabled: false,
   appId: '',
   appSecret: '',
+  metabotId: null,
   domain: 'feishu',
   renderMode: 'card',
   debug: true,
@@ -310,12 +317,14 @@ export const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
 export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
   enabled: false,
   botToken: '',
+  metabotId: null,
   debug: true,
 };
 
 export const DEFAULT_DISCORD_CONFIG: DiscordConfig = {
   enabled: false,
   botToken: '',
+  metabotId: null,
   debug: true,
 };
 

@@ -284,6 +284,33 @@ function parseTimeToMs(input?: string | null): number | null {
   return timestamp;
 }
 
+function parseIdNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeDbBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+      return true;
+    }
+    if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+      return false;
+    }
+  }
+  return fallback;
+}
+
 function shouldAutoDeleteMemoryText(text: string): boolean {
   const normalized = normalizeMemoryText(text);
   if (!normalized) return false;
@@ -371,6 +398,10 @@ export interface CoworkUserMemorySourceInput {
   sessionId?: string;
   messageId?: string;
   role?: 'user' | 'assistant' | 'tool' | 'system';
+  sourceChannel?: string;
+  sourceType?: string;
+  externalConversationId?: string;
+  sourceId?: string;
 }
 
 export interface CoworkUserMemoryStats {
@@ -400,6 +431,36 @@ export interface CoworkConfig {
   memoryLlmJudgeEnabled: boolean;
   memoryGuardLevel: CoworkMemoryGuardLevel;
   memoryUserMemoriesMaxItems: number;
+}
+
+export interface CoworkMemoryPolicy {
+  metabotId: number;
+  memoryEnabled: boolean;
+  memoryImplicitUpdateEnabled: boolean;
+  memoryLlmJudgeEnabled: boolean;
+  memoryGuardLevel: CoworkMemoryGuardLevel;
+  memoryUserMemoriesMaxItems: number;
+  updatedAt: number;
+}
+
+export interface CoworkEffectiveMemoryPolicy {
+  metabotId: number | null;
+  memoryEnabled: boolean;
+  memoryImplicitUpdateEnabled: boolean;
+  memoryLlmJudgeEnabled: boolean;
+  memoryGuardLevel: CoworkMemoryGuardLevel;
+  memoryUserMemoriesMaxItems: number;
+  source: 'global' | 'metabot';
+}
+
+export interface CoworkConversationMapping {
+  channel: string;
+  externalConversationId: string;
+  metabotId: number | null;
+  coworkSessionId: string;
+  metadataJson: string | null;
+  createdAt: number;
+  lastActiveAt: number;
 }
 
 export type CoworkConfigUpdate = Partial<Pick<
@@ -474,6 +535,26 @@ interface CoworkUserMemoryRow {
   metabot_id?: number | null;
 }
 
+interface CoworkMemoryPolicyRow {
+  metabot_id: number | string;
+  memory_enabled: number | string | null;
+  memory_implicit_update_enabled: number | string | null;
+  memory_llm_judge_enabled: number | string | null;
+  memory_guard_level: string | null;
+  memory_user_memories_max_items: number | string | null;
+  updated_at: number | string | null;
+}
+
+interface CoworkConversationMappingRow {
+  channel: string;
+  external_conversation_id: string;
+  metabot_id: number | string;
+  cowork_session_id: string;
+  metadata_json: string | null;
+  created_at: number | string;
+  last_active_at: number | string;
+}
+
 export class CoworkStore {
   private db: Database;
   private saveDb: () => void;
@@ -481,6 +562,194 @@ export class CoworkStore {
   constructor(db: Database, saveDb: () => void) {
     this.db = db;
     this.saveDb = saveDb;
+    this.ensureSchemaCompatibility();
+  }
+
+  private ensureSchemaCompatibility(): void {
+    this.ensureMemorySchemaCompatibility();
+    this.ensureMemoryPolicySchemaCompatibility();
+    this.ensureConversationMappingSchemaCompatibility();
+  }
+
+  private ensureMemorySchemaCompatibility(): void {
+    let changed = false;
+    try {
+      const sessionCols = this.db.exec('PRAGMA table_info(cowork_sessions);');
+      const sessionColumns = (sessionCols[0]?.values || []).map((row) => String(row[1]));
+      if (!sessionColumns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN metabot_id INTEGER NULL;');
+        changed = true;
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_sessions metabot_id column:', error);
+    }
+
+    try {
+      const memoryCols = this.db.exec('PRAGMA table_info(user_memories);');
+      const memoryColumns = (memoryCols[0]?.values || []).map((row) => String(row[1]));
+      if (!memoryColumns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE user_memories ADD COLUMN metabot_id INTEGER REFERENCES metabots(id);');
+        const fallbackMetabotId = this.getDefaultMetabotId() ?? this.getAnyMetabotId();
+        if (fallbackMetabotId != null) {
+          this.db.run('UPDATE user_memories SET metabot_id = ? WHERE metabot_id IS NULL', [fallbackMetabotId]);
+        }
+        changed = true;
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify user_memories metabot_id column:', error);
+    }
+
+    try {
+      const sourceCols = this.db.exec('PRAGMA table_info(user_memory_sources);');
+      const sourceColumns = (sourceCols[0]?.values || []).map((row) => String(row[1]));
+      if (!sourceColumns.includes('metabot_id')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN metabot_id INTEGER NULL;');
+        changed = true;
+      }
+      if (!sourceColumns.includes('source_channel')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN source_channel TEXT NULL;');
+        changed = true;
+      }
+      if (!sourceColumns.includes('source_type')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN source_type TEXT NULL;');
+        changed = true;
+      }
+      if (!sourceColumns.includes('external_conversation_id')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN external_conversation_id TEXT NULL;');
+        changed = true;
+      }
+      if (!sourceColumns.includes('source_id')) {
+        this.db.run('ALTER TABLE user_memory_sources ADD COLUMN source_id TEXT NULL;');
+        changed = true;
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memory_sources_channel_conversation
+        ON user_memory_sources(source_channel, external_conversation_id, created_at DESC)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memory_sources_metabot
+        ON user_memory_sources(metabot_id, created_at DESC)
+      `);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify user_memory_sources source columns:', error);
+    }
+
+    try {
+      const fallbackMetabotId = this.getDefaultMetabotId() ?? this.getAnyMetabotId();
+      if (fallbackMetabotId != null) {
+        this.db.run('UPDATE cowork_sessions SET metabot_id = ? WHERE metabot_id IS NULL', [fallbackMetabotId]);
+        if ((this.db.getRowsModified?.() || 0) > 0) {
+          changed = true;
+        }
+        this.db.run('UPDATE user_memories SET metabot_id = ? WHERE metabot_id IS NULL', [fallbackMetabotId]);
+        if ((this.db.getRowsModified?.() || 0) > 0) {
+          changed = true;
+        }
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to backfill NULL metabot_id values:', error);
+    }
+
+    if (changed) {
+      this.saveDb();
+    }
+  }
+
+  private ensureMemoryPolicySchemaCompatibility(): void {
+    try {
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS metabot_memory_policies (
+          metabot_id INTEGER PRIMARY KEY,
+          memory_enabled INTEGER NOT NULL DEFAULT 1,
+          memory_implicit_update_enabled INTEGER NOT NULL DEFAULT 1,
+          memory_llm_judge_enabled INTEGER NOT NULL DEFAULT 1,
+          memory_guard_level TEXT NOT NULL DEFAULT 'strict',
+          memory_user_memories_max_items INTEGER NOT NULL DEFAULT 12,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (metabot_id) REFERENCES metabots(id) ON DELETE CASCADE
+        )
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_metabot_memory_policies_updated
+        ON metabot_memory_policies(updated_at DESC)
+      `);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify metabot_memory_policies schema:', error);
+      return;
+    }
+
+    try {
+      const cols = this.db.exec('PRAGMA table_info(metabot_memory_policies);');
+      const columns = (cols[0]?.values || []).map((row) => String(row[1]));
+      let changed = false;
+      if (!columns.includes('memory_enabled')) {
+        this.db.run('ALTER TABLE metabot_memory_policies ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 1');
+        changed = true;
+      }
+      if (!columns.includes('memory_implicit_update_enabled')) {
+        this.db.run('ALTER TABLE metabot_memory_policies ADD COLUMN memory_implicit_update_enabled INTEGER NOT NULL DEFAULT 1');
+        changed = true;
+      }
+      if (!columns.includes('memory_llm_judge_enabled')) {
+        this.db.run('ALTER TABLE metabot_memory_policies ADD COLUMN memory_llm_judge_enabled INTEGER NOT NULL DEFAULT 1');
+        changed = true;
+      }
+      if (!columns.includes('memory_guard_level')) {
+        this.db.run("ALTER TABLE metabot_memory_policies ADD COLUMN memory_guard_level TEXT NOT NULL DEFAULT 'strict'");
+        changed = true;
+      }
+      if (!columns.includes('memory_user_memories_max_items')) {
+        this.db.run('ALTER TABLE metabot_memory_policies ADD COLUMN memory_user_memories_max_items INTEGER NOT NULL DEFAULT 12');
+        changed = true;
+      }
+      if (!columns.includes('updated_at')) {
+        this.db.run('ALTER TABLE metabot_memory_policies ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
+        this.db.run('UPDATE metabot_memory_policies SET updated_at = ? WHERE updated_at = 0', [Date.now()]);
+        changed = true;
+      }
+      if (changed) {
+        this.saveDb();
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to migrate metabot_memory_policies columns:', error);
+    }
+  }
+
+  private ensureConversationMappingSchemaCompatibility(): void {
+    try {
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS cowork_conversation_mappings (
+          channel TEXT NOT NULL,
+          external_conversation_id TEXT NOT NULL,
+          metabot_id INTEGER NOT NULL DEFAULT 0,
+          cowork_session_id TEXT NOT NULL,
+          metadata_json TEXT,
+          created_at INTEGER NOT NULL,
+          last_active_at INTEGER NOT NULL,
+          PRIMARY KEY (channel, external_conversation_id, metabot_id)
+        )
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_conversation_mappings_session
+        ON cowork_conversation_mappings(cowork_session_id)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_conversation_mappings_channel_last_active
+        ON cowork_conversation_mappings(channel, last_active_at DESC)
+      `);
+      this.db.run(`
+        INSERT OR IGNORE INTO cowork_conversation_mappings (
+          channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+        )
+        SELECT 'cowork_ui', id, COALESCE(metabot_id, 0), id, NULL, created_at, updated_at
+        FROM cowork_sessions
+      `);
+      if ((this.db.getRowsModified?.() || 0) > 0) {
+        this.saveDb();
+      }
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_conversation_mappings schema:', error);
+    }
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
@@ -510,20 +779,28 @@ export class CoworkStore {
 
   /** Get metabot_id for a session; returns null if session not found or has no metabot_id. */
   getMetabotIdForSession(sessionId: string): number | null {
-    const row = this.getOne<{ metabot_id: number | null }>(
+    const row = this.getOne<{ metabot_id: number | string | null }>(
       'SELECT metabot_id FROM cowork_sessions WHERE id = ?',
       [sessionId]
     );
     if (!row || row.metabot_id == null) return null;
-    return typeof row.metabot_id === 'number' ? row.metabot_id : null;
+    return parseIdNumber(row.metabot_id);
   }
 
   /** Get default MetaBot id (first twin) for fallback when session has no metabot_id. */
   getDefaultMetabotId(): number | null {
-    const row = this.getOne<{ id: number }>(
+    const row = this.getOne<{ id: number | string }>(
       "SELECT id FROM metabots WHERE metabot_type = 'twin' ORDER BY id ASC LIMIT 1"
     );
-    return row?.id ?? null;
+    return parseIdNumber(row?.id);
+  }
+
+  /** Get first MetaBot id regardless of type, for environments without a twin bot. */
+  getAnyMetabotId(): number | null {
+    const row = this.getOne<{ id: number | string }>(
+      'SELECT id FROM metabots ORDER BY id ASC LIMIT 1'
+    );
+    return parseIdNumber(row?.id);
   }
 
   /** Resolve metabot_id from sessionId or use default twin. Returns null only if no default. */
@@ -532,7 +809,322 @@ export class CoworkStore {
       const fromSession = this.getMetabotIdForSession(sessionId);
       if (fromSession != null) return fromSession;
     }
-    return this.getDefaultMetabotId();
+    return this.getDefaultMetabotId() ?? this.getAnyMetabotId();
+  }
+
+  getEffectiveMemoryPolicyForMetabot(metabotId?: number | null): CoworkEffectiveMemoryPolicy {
+    const config = this.getConfig();
+    const resolvedMetabotId = parseIdNumber(metabotId);
+    if (resolvedMetabotId == null) {
+      return {
+        metabotId: null,
+        memoryEnabled: config.memoryEnabled,
+        memoryImplicitUpdateEnabled: config.memoryImplicitUpdateEnabled,
+        memoryLlmJudgeEnabled: config.memoryLlmJudgeEnabled,
+        memoryGuardLevel: config.memoryGuardLevel,
+        memoryUserMemoriesMaxItems: config.memoryUserMemoriesMaxItems,
+        source: 'global',
+      };
+    }
+
+    const row = this.getOne<CoworkMemoryPolicyRow>(`
+      SELECT metabot_id, memory_enabled, memory_implicit_update_enabled, memory_llm_judge_enabled,
+             memory_guard_level, memory_user_memories_max_items, updated_at
+      FROM metabot_memory_policies
+      WHERE metabot_id = ?
+      LIMIT 1
+    `, [resolvedMetabotId]);
+
+    if (!row) {
+      return {
+        metabotId: resolvedMetabotId,
+        memoryEnabled: config.memoryEnabled,
+        memoryImplicitUpdateEnabled: config.memoryImplicitUpdateEnabled,
+        memoryLlmJudgeEnabled: config.memoryLlmJudgeEnabled,
+        memoryGuardLevel: config.memoryGuardLevel,
+        memoryUserMemoriesMaxItems: config.memoryUserMemoriesMaxItems,
+        source: 'global',
+      };
+    }
+
+    return {
+      metabotId: resolvedMetabotId,
+      memoryEnabled: normalizeDbBoolean(row.memory_enabled, config.memoryEnabled),
+      memoryImplicitUpdateEnabled: normalizeDbBoolean(
+        row.memory_implicit_update_enabled,
+        config.memoryImplicitUpdateEnabled
+      ),
+      memoryLlmJudgeEnabled: normalizeDbBoolean(row.memory_llm_judge_enabled, config.memoryLlmJudgeEnabled),
+      memoryGuardLevel: normalizeMemoryGuardLevel(row.memory_guard_level ?? config.memoryGuardLevel),
+      memoryUserMemoriesMaxItems: clampMemoryUserMemoriesMaxItems(
+        Number(row.memory_user_memories_max_items ?? config.memoryUserMemoriesMaxItems)
+      ),
+      source: 'metabot',
+    };
+  }
+
+  getEffectiveMemoryPolicyForSession(sessionId?: string | null): CoworkEffectiveMemoryPolicy {
+    const metabotId = this.resolveMetabotIdForMemory(sessionId);
+    return this.getEffectiveMemoryPolicyForMetabot(metabotId);
+  }
+
+  setMemoryPolicyForMetabot(
+    metabotId: number,
+    updates: Partial<Pick<
+      CoworkEffectiveMemoryPolicy,
+      | 'memoryEnabled'
+      | 'memoryImplicitUpdateEnabled'
+      | 'memoryLlmJudgeEnabled'
+      | 'memoryGuardLevel'
+      | 'memoryUserMemoriesMaxItems'
+    >>
+  ): CoworkMemoryPolicy {
+    const resolvedMetabotId = parseIdNumber(metabotId);
+    if (resolvedMetabotId == null || resolvedMetabotId <= 0) {
+      throw new Error('Invalid metabotId');
+    }
+    const exists = this.getOne<{ id: number | string }>(
+      'SELECT id FROM metabots WHERE id = ? LIMIT 1',
+      [resolvedMetabotId]
+    );
+    if (!exists) {
+      throw new Error(`MetaBot ${resolvedMetabotId} not found`);
+    }
+
+    const base = this.getEffectiveMemoryPolicyForMetabot(resolvedMetabotId);
+    const nextMemoryEnabled = updates.memoryEnabled !== undefined
+      ? Boolean(updates.memoryEnabled)
+      : base.memoryEnabled;
+    const nextImplicit = updates.memoryImplicitUpdateEnabled !== undefined
+      ? Boolean(updates.memoryImplicitUpdateEnabled)
+      : base.memoryImplicitUpdateEnabled;
+    const nextJudge = updates.memoryLlmJudgeEnabled !== undefined
+      ? Boolean(updates.memoryLlmJudgeEnabled)
+      : base.memoryLlmJudgeEnabled;
+    const nextGuard = updates.memoryGuardLevel !== undefined
+      ? normalizeMemoryGuardLevel(updates.memoryGuardLevel)
+      : base.memoryGuardLevel;
+    const nextMaxItems = updates.memoryUserMemoriesMaxItems !== undefined
+      ? clampMemoryUserMemoriesMaxItems(Number(updates.memoryUserMemoriesMaxItems))
+      : base.memoryUserMemoriesMaxItems;
+    const now = Date.now();
+
+    this.db.run(`
+      INSERT INTO metabot_memory_policies (
+        metabot_id, memory_enabled, memory_implicit_update_enabled, memory_llm_judge_enabled,
+        memory_guard_level, memory_user_memories_max_items, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(metabot_id) DO UPDATE SET
+        memory_enabled = excluded.memory_enabled,
+        memory_implicit_update_enabled = excluded.memory_implicit_update_enabled,
+        memory_llm_judge_enabled = excluded.memory_llm_judge_enabled,
+        memory_guard_level = excluded.memory_guard_level,
+        memory_user_memories_max_items = excluded.memory_user_memories_max_items,
+        updated_at = excluded.updated_at
+    `, [
+      resolvedMetabotId,
+      nextMemoryEnabled ? 1 : 0,
+      nextImplicit ? 1 : 0,
+      nextJudge ? 1 : 0,
+      nextGuard,
+      nextMaxItems,
+      now,
+    ]);
+    this.saveDb();
+
+    return {
+      metabotId: resolvedMetabotId,
+      memoryEnabled: nextMemoryEnabled,
+      memoryImplicitUpdateEnabled: nextImplicit,
+      memoryLlmJudgeEnabled: nextJudge,
+      memoryGuardLevel: nextGuard,
+      memoryUserMemoriesMaxItems: nextMaxItems,
+      updatedAt: now,
+    };
+  }
+
+  private normalizeConversationChannel(channel: string): string {
+    return String(channel || '').trim().toLowerCase();
+  }
+
+  private normalizeExternalConversationId(externalConversationId: string): string {
+    return String(externalConversationId || '').trim();
+  }
+
+  private normalizeMappingMetabotId(metabotId?: number | null): number {
+    const parsed = parseIdNumber(metabotId);
+    if (parsed == null || parsed <= 0) return 0;
+    return Math.floor(parsed);
+  }
+
+  private mapConversationMappingRow(row: CoworkConversationMappingRow): CoworkConversationMapping {
+    const parsedMetabotId = parseIdNumber(row.metabot_id);
+    return {
+      channel: String(row.channel || ''),
+      externalConversationId: String(row.external_conversation_id || ''),
+      metabotId: parsedMetabotId && parsedMetabotId > 0 ? parsedMetabotId : null,
+      coworkSessionId: String(row.cowork_session_id || ''),
+      metadataJson: row.metadata_json ?? null,
+      createdAt: parseIdNumber(row.created_at) ?? 0,
+      lastActiveAt: parseIdNumber(row.last_active_at) ?? 0,
+    };
+  }
+
+  getConversationMapping(
+    channel: string,
+    externalConversationId: string,
+    metabotId?: number | null
+  ): CoworkConversationMapping | null {
+    const normalizedChannel = this.normalizeConversationChannel(channel);
+    const normalizedConversationId = this.normalizeExternalConversationId(externalConversationId);
+    if (!normalizedChannel || !normalizedConversationId) return null;
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+
+    let row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+      FROM cowork_conversation_mappings
+      WHERE channel = ? AND external_conversation_id = ? AND metabot_id = ?
+      LIMIT 1
+    `, [normalizedChannel, normalizedConversationId, normalizedMetabotId]);
+
+    if (!row && normalizedMetabotId !== 0) {
+      row = this.getOne<CoworkConversationMappingRow>(`
+        SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+        FROM cowork_conversation_mappings
+        WHERE channel = ? AND external_conversation_id = ? AND metabot_id = 0
+        LIMIT 1
+      `, [normalizedChannel, normalizedConversationId]);
+    }
+
+    return row ? this.mapConversationMappingRow(row) : null;
+  }
+
+  upsertConversationMapping(input: {
+    channel: string;
+    externalConversationId: string;
+    metabotId?: number | null;
+    coworkSessionId: string;
+    metadataJson?: string | null;
+  }): CoworkConversationMapping {
+    const normalizedChannel = this.normalizeConversationChannel(input.channel);
+    const normalizedConversationId = this.normalizeExternalConversationId(input.externalConversationId);
+    const normalizedMetabotId = this.normalizeMappingMetabotId(input.metabotId);
+    const sessionId = String(input.coworkSessionId || '').trim();
+    if (!normalizedChannel || !normalizedConversationId || !sessionId) {
+      throw new Error('Invalid conversation mapping input');
+    }
+    const now = Date.now();
+
+    this.db.run(`
+      INSERT INTO cowork_conversation_mappings (
+        channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(channel, external_conversation_id, metabot_id) DO UPDATE SET
+        cowork_session_id = excluded.cowork_session_id,
+        metadata_json = COALESCE(excluded.metadata_json, cowork_conversation_mappings.metadata_json),
+        last_active_at = excluded.last_active_at
+    `, [
+      normalizedChannel,
+      normalizedConversationId,
+      normalizedMetabotId,
+      sessionId,
+      input.metadataJson ?? null,
+      now,
+      now,
+    ]);
+    this.saveDb();
+
+    const row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+      FROM cowork_conversation_mappings
+      WHERE channel = ? AND external_conversation_id = ? AND metabot_id = ?
+      LIMIT 1
+    `, [normalizedChannel, normalizedConversationId, normalizedMetabotId]);
+
+    if (!row) {
+      throw new Error('Failed to upsert conversation mapping');
+    }
+    return this.mapConversationMappingRow(row);
+  }
+
+  touchConversationMapping(channel: string, externalConversationId: string, metabotId?: number | null): void {
+    const normalizedChannel = this.normalizeConversationChannel(channel);
+    const normalizedConversationId = this.normalizeExternalConversationId(externalConversationId);
+    if (!normalizedChannel || !normalizedConversationId) return;
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    this.db.run(`
+      UPDATE cowork_conversation_mappings
+      SET last_active_at = ?
+      WHERE channel = ? AND external_conversation_id = ? AND metabot_id = ?
+    `, [Date.now(), normalizedChannel, normalizedConversationId, normalizedMetabotId]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+  }
+
+  deleteConversationMapping(channel: string, externalConversationId: string, metabotId?: number | null): void {
+    const normalizedChannel = this.normalizeConversationChannel(channel);
+    const normalizedConversationId = this.normalizeExternalConversationId(externalConversationId);
+    if (!normalizedChannel || !normalizedConversationId) return;
+    if (metabotId == null) {
+      this.db.run(`
+        DELETE FROM cowork_conversation_mappings
+        WHERE channel = ? AND external_conversation_id = ?
+      `, [normalizedChannel, normalizedConversationId]);
+    } else {
+      this.db.run(`
+        DELETE FROM cowork_conversation_mappings
+        WHERE channel = ? AND external_conversation_id = ? AND metabot_id = ?
+      `, [normalizedChannel, normalizedConversationId, this.normalizeMappingMetabotId(metabotId)]);
+    }
+    this.saveDb();
+  }
+
+  deleteConversationMappingsByChannel(channel: string): void {
+    const normalizedChannel = this.normalizeConversationChannel(channel);
+    if (!normalizedChannel) return;
+    this.db.run('DELETE FROM cowork_conversation_mappings WHERE channel = ?', [normalizedChannel]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+  }
+
+  deleteConversationMappingsBySession(sessionId: string): void {
+    this.db.run('DELETE FROM cowork_conversation_mappings WHERE cowork_session_id = ?', [sessionId]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+  }
+
+  getConversationSourceContextBySession(sessionId?: string): {
+    sourceChannel: string;
+    externalConversationId: string | null;
+  } {
+    if (!sessionId) {
+      return {
+        sourceChannel: 'cowork_ui',
+        externalConversationId: null,
+      };
+    }
+    const row = this.getOne<{ channel: string; external_conversation_id: string | null }>(`
+      SELECT channel, external_conversation_id
+      FROM cowork_conversation_mappings
+      WHERE cowork_session_id = ?
+      ORDER BY
+        CASE WHEN channel = 'cowork_ui' THEN 1 ELSE 0 END ASC,
+        last_active_at DESC
+      LIMIT 1
+    `, [sessionId]);
+    if (!row) {
+      return {
+        sourceChannel: 'cowork_ui',
+        externalConversationId: sessionId,
+      };
+    }
+    return {
+      sourceChannel: row.channel || 'cowork_ui',
+      externalConversationId: row.external_conversation_id ?? sessionId,
+    };
   }
 
   createSession(
@@ -550,6 +1142,14 @@ export class CoworkStore {
       INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, created_at, updated_at)
       VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?)
     `, [id, title, cwd, systemPrompt, executionMode, JSON.stringify(activeSkillIds), metabotId, now, now]);
+
+    this.upsertConversationMapping({
+      channel: 'cowork_ui',
+      externalConversationId: id,
+      metabotId,
+      coworkSessionId: id,
+      metadataJson: null,
+    });
 
     this.saveDb();
 
@@ -581,7 +1181,7 @@ export class CoworkStore {
       system_prompt: string;
       execution_mode?: string | null;
       active_skill_ids?: string | null;
-      metabot_id?: number | null;
+      metabot_id?: number | string | null;
       created_at: number;
       updated_at: number;
     }
@@ -618,7 +1218,7 @@ export class CoworkStore {
       messages,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      metabotId: row.metabot_id ?? undefined,
+      metabotId: parseIdNumber(row.metabot_id) ?? undefined,
     };
   }
 
@@ -668,6 +1268,7 @@ export class CoworkStore {
   deleteSession(id: string): void {
     const metabotId = this.getMetabotIdForSession(id) ?? this.getDefaultMetabotId();
     this.markMemorySourcesInactiveBySession(id);
+    this.db.run('DELETE FROM cowork_conversation_mappings WHERE cowork_session_id = ?', [id]);
     this.db.run('DELETE FROM cowork_sessions WHERE id = ?', [id]);
     if (metabotId != null) {
       this.markOrphanImplicitMemoriesStale(metabotId);
@@ -975,15 +1576,38 @@ export class CoworkStore {
     };
   }
 
-  private addMemorySource(memoryId: string, source?: CoworkUserMemorySourceInput): void {
+  private addMemorySource(memoryId: string, metabotId: number, source?: CoworkUserMemorySourceInput): void {
     const now = Date.now();
+    const sessionId = source?.sessionId || null;
+    const context = this.getConversationSourceContextBySession(sessionId ?? undefined);
+    const sourceChannel = source?.sourceChannel?.trim()
+      ? source.sourceChannel.trim()
+      : context.sourceChannel;
+    const externalConversationId = source?.externalConversationId?.trim()
+      ? source.externalConversationId.trim()
+      : context.externalConversationId;
+    const sourceType = source?.sourceType?.trim()
+      ? source.sourceType.trim()
+      : 'session_turn';
+    const sourceId = source?.sourceId?.trim()
+      ? source.sourceId.trim()
+      : (source?.messageId || null);
+
     this.db.run(`
-      INSERT INTO user_memory_sources (id, memory_id, session_id, message_id, role, is_active, created_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
+      INSERT INTO user_memory_sources (
+        id, memory_id, metabot_id, session_id, source_channel, source_type, external_conversation_id, source_id,
+        message_id, role, is_active, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     `, [
       uuidv4(),
       memoryId,
-      source?.sessionId || null,
+      metabotId,
+      sessionId,
+      sourceChannel || null,
+      sourceType || null,
+      externalConversationId || null,
+      sourceId,
       source?.messageId || null,
       source?.role || 'system',
       now,
@@ -1051,7 +1675,7 @@ export class CoworkStore {
         SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = 'created', updated_at = ?
         WHERE id = ?
       `, [mergedText, buildMemoryFingerprint(mergedText), mergedConfidence, mergedExplicit, now, existing.id]);
-      this.addMemorySource(existing.id, input.source);
+      this.addMemorySource(existing.id, metabotId, input.source);
       const memory = this.getOne<CoworkUserMemoryRow>(`
         SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
         FROM user_memories
@@ -1069,7 +1693,7 @@ export class CoworkStore {
         id, metabot_id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, NULL)
     `, [id, metabotId, normalizedText, fingerprint, confidence, explicitFlag, now, now]);
-    this.addMemorySource(id, input.source);
+    this.addMemorySource(id, metabotId, input.source);
 
     const memory = this.getOne<CoworkUserMemoryRow>(`
       SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
@@ -1090,6 +1714,7 @@ export class CoworkStore {
     limit?: number;
     offset?: number;
     includeDeleted?: boolean;
+    touchLastUsed?: boolean;
   }): CoworkUserMemory[] {
     const metabotId = options.metabotId;
     const query = normalizeMemoryText(options.query || '');
@@ -1123,7 +1748,27 @@ export class CoworkStore {
       LIMIT ? OFFSET ?
     `, [...params, limit, offset]);
 
-    return rows.map((row) => this.mapMemoryRow(row));
+    const entries = rows.map((row) => this.mapMemoryRow(row));
+    if (options.touchLastUsed) {
+      this.touchUserMemoriesLastUsed(metabotId, entries.map((entry) => entry.id));
+    }
+    return entries;
+  }
+
+  private touchUserMemoriesLastUsed(metabotId: number, memoryIds: string[]): void {
+    const uniqueIds = Array.from(new Set(memoryIds.map((id) => id.trim()).filter(Boolean)));
+    if (uniqueIds.length === 0) return;
+    const placeholders = uniqueIds.map(() => '?').join(', ');
+    const now = Date.now();
+    this.db.run(`
+      UPDATE user_memories
+      SET last_used_at = ?
+      WHERE metabot_id = ?
+        AND id IN (${placeholders})
+    `, [now, metabotId, ...uniqueIds]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
   }
 
   createUserMemory(input: {
@@ -1175,22 +1820,20 @@ export class CoworkStore {
     const updated = this.getOne<CoworkUserMemoryRow>(`
       SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
       FROM user_memories
-      WHERE id = ?
-    `, [input.id]);
+      WHERE id = ? AND metabot_id = ?
+    `, [input.id, input.metabotId]);
 
     this.saveDb();
     return updated ? this.mapMemoryRow(updated) : null;
   }
 
-  deleteUserMemory(id: string, metabotId?: number): boolean {
+  deleteUserMemory(id: string, metabotId: number): boolean {
     const now = Date.now();
-    const whereClause = metabotId != null ? 'id = ? AND metabot_id = ?' : 'id = ?';
-    const params = metabotId != null ? [now, id, metabotId] : [now, id];
     this.db.run(`
       UPDATE user_memories
       SET status = 'deleted', updated_at = ?
-      WHERE ${whereClause}
-    `, params);
+      WHERE id = ? AND metabot_id = ?
+    `, [now, id, metabotId]);
     this.db.run(`
       UPDATE user_memory_sources
       SET is_active = 0
@@ -1235,12 +1878,13 @@ export class CoworkStore {
   }
 
   autoDeleteNonPersonalMemories(metabotId?: number): number {
-    const resolvedMetabotId = metabotId ?? this.getDefaultMetabotId();
-    const rows = resolvedMetabotId == null
-      ? []
+    const rows = metabotId == null
+      ? this.getAll<Pick<CoworkUserMemoryRow, 'id' | 'text'>>(
+          `SELECT id, text FROM user_memories WHERE status = 'created'`
+        )
       : this.getAll<Pick<CoworkUserMemoryRow, 'id' | 'text'>>(
           `SELECT id, text FROM user_memories WHERE status = 'created' AND metabot_id = ?`,
-          [resolvedMetabotId]
+          [metabotId]
         );
     if (rows.length === 0) return 0;
 
@@ -1346,15 +1990,19 @@ export class CoworkStore {
             role: 'user',
             sessionId: options.sessionId,
             messageId: options.userMessageId,
+            sourceType: change.isExplicit ? 'turn_explicit' : 'turn_implicit',
+            sourceId: options.userMessageId,
           },
           metabotId,
         });
 
         if (!change.isExplicit && options.assistantMessageId) {
-          this.addMemorySource(write.memory.id, {
+          this.addMemorySource(write.memory.id, metabotId, {
             role: 'assistant',
             sessionId: options.sessionId,
             messageId: options.assistantMessageId,
+            sourceType: 'turn_assistant',
+            sourceId: options.assistantMessageId,
           });
         }
 
@@ -1413,6 +2061,7 @@ export class CoworkStore {
     maxResults?: number;
     before?: string;
     after?: string;
+    metabotId?: number | null;
   }): CoworkConversationSearchRecord[] {
     const terms = extractConversationSearchTerms(options.query);
     if (terms.length === 0) return [];
@@ -1435,6 +2084,11 @@ export class CoworkStore {
     if (afterMs !== null) {
       clauses.push('m.created_at > ?');
       params.push(afterMs);
+    }
+    const metabotId = parseIdNumber(options.metabotId);
+    if (metabotId != null) {
+      clauses.push('s.metabot_id = ?');
+      params.push(metabotId);
     }
 
     const rows = this.getAll<{
@@ -1500,6 +2154,7 @@ export class CoworkStore {
     sortOrder?: 'asc' | 'desc';
     before?: string;
     after?: string;
+    metabotId?: number | null;
   }): CoworkConversationSearchRecord[] {
     const n = Math.max(1, Math.min(20, Math.floor(options.n ?? 3)));
     const sortOrder = options.sortOrder === 'asc' ? 'asc' : 'desc';
@@ -1516,6 +2171,11 @@ export class CoworkStore {
     if (afterMs !== null) {
       clauses.push('updated_at > ?');
       params.push(afterMs);
+    }
+    const metabotId = parseIdNumber(options.metabotId);
+    if (metabotId != null) {
+      clauses.push('metabot_id = ?');
+      params.push(metabotId);
     }
 
     const whereClause = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';

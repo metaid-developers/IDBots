@@ -28,6 +28,8 @@ import type { CoworkStore } from '../coworkStore';
 
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
+const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord'] as const;
+type ManagedIMPlatform = typeof MANAGED_IM_PLATFORMS[number];
 
 export interface IMGatewayManagerOptions {
   coworkRunner?: CoworkRunner;
@@ -188,11 +190,12 @@ export class IMGatewayManager extends EventEmitter {
     ): Promise<void> => {
       try {
         let response: string;
+        const targetMetabotId = this.getRouteMetabotIdForPlatform(message.platform);
 
         // Always use Cowork mode if handler is available
         if (this.coworkHandler) {
           console.log('[IMGatewayManager] Using Cowork mode for message processing');
-          response = await this.coworkHandler.processMessage(message);
+          response = await this.coworkHandler.processMessage(message, targetMetabotId);
         } else {
           // Fallback to regular chat handler
           if (!this.chatHandler) {
@@ -275,7 +278,10 @@ export class IMGatewayManager extends EventEmitter {
    * Update configuration
    */
   setConfig(config: Partial<IMGatewayConfig>): void {
+    const prevConfig = this.imStore.getConfig();
     this.imStore.setConfig(config);
+    const nextConfig = this.imStore.getConfig();
+    this.handleMetabotRouteChange(prevConfig, nextConfig);
 
     // Update chat handler if settings changed
     if (config.settings) {
@@ -755,6 +761,61 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'feishu') return status.feishu.error;
     if (platform === 'telegram') return status.telegram.lastError;
     return status.discord.lastError;
+  }
+
+  private isManagedPlatform(platform: IMPlatform): platform is ManagedIMPlatform {
+    return MANAGED_IM_PLATFORMS.includes(platform as ManagedIMPlatform);
+  }
+
+  private normalizeMetabotId(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
+  private resolveRouteMetabotId(
+    platform: ManagedIMPlatform,
+    config: IMGatewayConfig
+  ): number | null {
+    const candidate = this.normalizeMetabotId(config[platform].metabotId);
+    return this.imStore.resolvePlatformMetabotId(candidate);
+  }
+
+  private getRouteMetabotIdForPlatform(platform: IMPlatform): number | null {
+    if (!this.isManagedPlatform(platform)) return null;
+    return this.resolveRouteMetabotId(platform, this.getConfig());
+  }
+
+  private handleMetabotRouteChange(prevConfig: IMGatewayConfig, nextConfig: IMGatewayConfig): void {
+    for (const platform of MANAGED_IM_PLATFORMS) {
+      const prevMetabotId = this.resolveRouteMetabotId(platform, prevConfig);
+      const nextMetabotId = this.resolveRouteMetabotId(platform, nextConfig);
+      if (prevMetabotId === nextMetabotId) continue;
+
+      console.log('[IMGatewayManager] Route metabot changed, clearing mappings', {
+        platform,
+        from: prevMetabotId,
+        to: nextMetabotId,
+      });
+
+      const removedSessionIds = this.imStore.deleteSessionMappingsByPlatform(platform);
+      this.coworkStore?.deleteConversationMappingsByChannel(`im:${platform}`);
+      if (!this.coworkRunner || removedSessionIds.length === 0) continue;
+      for (const sessionId of removedSessionIds) {
+        try {
+          this.coworkRunner.stopSession(sessionId);
+        } catch (error: any) {
+          console.warn('[IMGatewayManager] Failed to stop stale IM session', {
+            platform,
+            sessionId,
+            error: error?.message ?? String(error),
+          });
+        }
+      }
+    }
   }
 
   private calculateVerdict(checks: IMConnectivityCheck[]): IMConnectivityVerdict {

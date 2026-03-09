@@ -14,6 +14,7 @@ import {
 } from './metaWebCrypto';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import type { MetabotStore } from '../metabotStore';
+import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -142,10 +143,64 @@ function buildPrivateReplySystemPrompt(metabot: {
   ].join('\n');
 }
 
+function buildMemoryContextBlock(memories: string[]): string {
+  if (memories.length === 0) {
+    return '';
+  }
+  const lines = memories.map((text) => `- ${text}`);
+  return [
+    'Known durable user memories (if relevant, use naturally):',
+    ...lines,
+  ].join('\n');
+}
+
+function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string {
+  const globalMetaId = (row.from_global_metaid ?? '').trim();
+  if (globalMetaId) return globalMetaId;
+  const fallbackMetaId = (row.from_metaid ?? '').trim();
+  if (fallbackMetaId) return fallbackMetaId;
+  return 'unknown-peer';
+}
+
+function resolvePrivateConversationSession(
+  coworkStore: CoworkStore,
+  metabotId: number,
+  row: PrivateChatMessageRow
+): { sessionId: string; externalConversationId: string } {
+  const peerId = normalizePrivateConversationPeerId(row);
+  const externalConversationId = `metaweb-private:${peerId}`;
+  const existing = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabotId);
+  if (existing) {
+    const session = coworkStore.getSession(existing.coworkSessionId);
+    if (session) {
+      coworkStore.touchConversationMapping('metaweb_private', externalConversationId, metabotId);
+      return { sessionId: existing.coworkSessionId, externalConversationId };
+    }
+  }
+
+  const workspace = coworkStore.getConfig().workingDirectory;
+  const session = coworkStore.createSession(
+    `Private-${peerId.slice(0, 12)}`,
+    workspace,
+    '',
+    'local',
+    [],
+    metabotId
+  );
+  coworkStore.upsertConversationMapping({
+    channel: 'metaweb_private',
+    externalConversationId,
+    metabotId,
+    coworkSessionId: session.id,
+  });
+  return { sessionId: session.id, externalConversationId };
+}
+
 async function processOne(
   row: PrivateChatMessageRow,
   db: Database,
   saveDb: SaveDbFn,
+  coworkStore: CoworkStore,
   metabotStore: MetabotStore,
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>,
@@ -268,6 +323,31 @@ async function processOne(
       return;
     }
 
+    const { sessionId, externalConversationId } = resolvePrivateConversationSession(coworkStore, metabot.id, row);
+    const userMessage = coworkStore.addMessage(sessionId, {
+      type: 'user',
+      content: plaintext,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId,
+        fromGlobalMetaId,
+      },
+    });
+
+    const memoryPolicy = coworkStore.getEffectiveMemoryPolicyForMetabot(metabot.id);
+    const memoryContext = memoryPolicy.memoryEnabled
+      ? buildMemoryContextBlock(
+          coworkStore.listUserMemories({
+            metabotId: metabot.id,
+            status: 'created',
+            includeDeleted: false,
+            limit: memoryPolicy.memoryUserMemoriesMaxItems,
+            offset: 0,
+            touchLastUsed: true,
+          }).map((entry) => entry.text)
+        )
+      : '';
+
     const llmId = typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
       ? metabot.llm_id.trim()
       : null;
@@ -283,7 +363,7 @@ async function processOne(
       soul: metabot.soul,
       goal: metabot.goal,
       background: metabot.background,
-    });
+    }) + (memoryContext ? `\n\n${memoryContext}` : '');
     let reply: string;
     try {
       reply = await performChat(systemPrompt, plaintext, llmId);
@@ -297,6 +377,35 @@ async function processOne(
     if (!trimmed) {
       markProcessed(db, row.id, saveDb);
       return;
+    }
+
+    const assistantMessage = coworkStore.addMessage(sessionId, {
+      type: 'assistant',
+      content: trimmed,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId,
+      },
+    });
+
+    if (memoryPolicy.memoryEnabled) {
+      try {
+        const result = await coworkStore.applyTurnMemoryUpdates({
+          sessionId,
+          userText: plaintext,
+          assistantText: trimmed,
+          implicitEnabled: memoryPolicy.memoryImplicitUpdateEnabled,
+          memoryLlmJudgeEnabled: memoryPolicy.memoryLlmJudgeEnabled,
+          guardLevel: memoryPolicy.memoryGuardLevel,
+          userMessageId: userMessage.id,
+          assistantMessageId: assistantMessage.id,
+        });
+        emitLog(
+          `[PrivateChat] Memory updates: total=${result.totalChanges} created=${result.created} updated=${result.updated} deleted=${result.deleted} skipped=${result.skipped}`
+        );
+      } catch (error) {
+        emitLog(`[PrivateChat] Memory update failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
     const encryptedReply = ecdhEncrypt(trimmed, sharedSecretForReply);
@@ -326,6 +435,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 export function startPrivateChatDaemon(
   db: Database,
   saveDb: SaveDbFn,
+  coworkStore: CoworkStore,
   metabotStore: MetabotStore,
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
   emitLog: (msg: string) => void
@@ -335,7 +445,7 @@ export function startPrivateChatDaemon(
   const tick = () => {
     const rows = parsePrivateChatRows(db);
     for (const row of rows) {
-      processOne(row, db, saveDb, metabotStore, createPin, performChat, emitLog).catch((e) => {
+      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
       });
     }

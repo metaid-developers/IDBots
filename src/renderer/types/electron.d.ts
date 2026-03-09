@@ -92,6 +92,16 @@ interface CoworkMemoryStats {
   implicit: number;
 }
 
+interface CoworkMemoryPolicy {
+  metabotId: number | null;
+  memoryEnabled: boolean;
+  memoryImplicitUpdateEnabled: boolean;
+  memoryLlmJudgeEnabled: boolean;
+  memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
+  memoryUserMemoriesMaxItems: number;
+  source: 'global' | 'metabot';
+}
+
 interface CoworkPermissionRequest {
   sessionId: string;
   toolName: string;
@@ -332,6 +342,7 @@ interface IElectronAPI {
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;
     listMemoryEntries: (input: {
       sessionId?: string;
+      metabotId?: number;
       query?: string;
       status?: 'created' | 'stale' | 'deleted' | 'all';
       includeDeleted?: boolean;
@@ -340,20 +351,31 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; entries?: CoworkUserMemoryEntry[]; error?: string }>;
     createMemoryEntry: (input: {
       sessionId?: string;
+      metabotId?: number;
       text: string;
       confidence?: number;
       isExplicit?: boolean;
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
     updateMemoryEntry: (input: {
       sessionId?: string;
+      metabotId?: number;
       id: string;
       text?: string;
       confidence?: number;
       status?: 'created' | 'stale' | 'deleted';
       isExplicit?: boolean;
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
-    deleteMemoryEntry: (input: { sessionId?: string; id: string }) => Promise<{ success: boolean; error?: string }>;
-    getMemoryStats: (input?: { sessionId?: string }) => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
+    deleteMemoryEntry: (input: { sessionId?: string; metabotId?: number; id: string }) => Promise<{ success: boolean; error?: string }>;
+    getMemoryStats: (input?: { sessionId?: string; metabotId?: number }) => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
+    getMemoryPolicy: (input?: { sessionId?: string; metabotId?: number }) => Promise<{ success: boolean; policy?: CoworkMemoryPolicy; error?: string }>;
+    setMemoryPolicy: (input: {
+      metabotId: number;
+      memoryEnabled?: boolean;
+      memoryImplicitUpdateEnabled?: boolean;
+      memoryLlmJudgeEnabled?: boolean;
+      memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
+      memoryUserMemoriesMaxItems?: number;
+    }) => Promise<{ success: boolean; policy?: CoworkMemoryPolicy; error?: string }>;
     getSandboxStatus: () => Promise<CoworkSandboxStatus>;
     installSandbox: () => Promise<{ success: boolean; status: CoworkSandboxStatus; error?: string }>;
     onSandboxDownloadProgress: (callback: (data: CoworkSandboxProgress) => void) => () => void;
@@ -504,6 +526,7 @@ interface DingTalkConfig {
   enabled: boolean;
   clientId: string;
   clientSecret: string;
+  metabotId?: number | null;
   robotCode?: string;
   corpId?: string;
   agentId?: string;
@@ -516,6 +539,7 @@ interface FeishuConfig {
   enabled: boolean;
   appId: string;
   appSecret: string;
+  metabotId?: number | null;
   domain: 'feishu' | 'lark' | string;
   encryptKey?: string;
   verificationToken?: string;
@@ -526,12 +550,14 @@ interface FeishuConfig {
 interface TelegramConfig {
   enabled: boolean;
   botToken: string;
+  metabotId?: number | null;
   debug?: boolean;
 }
 
 interface DiscordConfig {
   enabled: boolean;
   botToken: string;
+  metabotId?: number | null;
   debug?: boolean;
 }
 
