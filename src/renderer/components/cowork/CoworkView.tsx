@@ -487,53 +487,35 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="max-w-3xl mx-auto px-4 py-16 space-y-12">
-          {/* Welcome Section - centered */}
-          <div className="text-center space-y-5">
-            <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
-            <h2 className="text-3xl font-bold tracking-tight dark:text-claude-darkText text-claude-text">
-              {i18nService.t('coworkWelcome')}
-            </h2>
-            <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary max-w-md mx-auto">
-              {i18nService.t('coworkDescription')}
-            </p>
+        <div className="max-w-3xl mx-auto px-4 pt-10 pb-6 min-h-full flex flex-col">
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6">
+            {/* Welcome Section - centered */}
+            <div className="text-center space-y-5">
+              <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto" />
+              <h2 className="text-3xl font-bold tracking-tight dark:text-claude-darkText text-claude-text">
+                {i18nService.t('coworkWelcome')}
+              </h2>
+              <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary max-w-md mx-auto">
+                {i18nService.t('coworkDescription')}
+              </p>
+            </div>
+
+            {/* MetaBot selector (when creating new session) - centered, slightly larger */}
+            {metabots.length > 0 && (
+              <div className="flex justify-center">
+                <MetaBotSelector
+                  metabots={metabots}
+                  selectedId={selectedMetabotId}
+                  onSelect={setSelectedMetabotId}
+                  label={i18nService.t('coworkMetaBotLabel')}
+                  placeholder={i18nService.t('coworkMetaBotPlaceholder')}
+                />
+              </div>
+            )}
           </div>
 
-          {/* MetaBot selector (when creating new session) - centered, slightly larger */}
-          {metabots.length > 0 && (
-            <div className="flex justify-center">
-            <MetaBotSelector
-              metabots={metabots}
-              selectedId={selectedMetabotId}
-              onSelect={setSelectedMetabotId}
-              label={i18nService.t('coworkMetaBotLabel')}
-              placeholder={i18nService.t('coworkMetaBotPlaceholder')}
-            />
-            </div>
-          )}
-
-          {/* Prompt Input Area - Large version with folder selector */}
-          <div className="space-y-3">
-            <div className="shadow-glow-accent rounded-2xl">
-              <CoworkPromptInput
-                ref={promptInputRef}
-                onSubmit={handleStartSession}
-                onStop={handleStopSession}
-                isStreaming={isStreaming}
-                placeholder={i18nService.t('coworkPlaceholder')}
-                size="large"
-                workingDirectory={config.workingDirectory}
-                onWorkingDirectoryChange={async (dir: string) => {
-                  await coworkService.updateConfig({ workingDirectory: dir });
-                }}
-                showFolderSelector={true}
-                onManageSkills={() => onShowSkills?.()}
-              />
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div className="space-y-4">
+          {/* Quick Actions (above input) */}
+          <div className="space-y-4 pb-4">
             {selectedAction ? (
               <PromptPanel
                 action={selectedAction}
@@ -543,6 +525,26 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Prompt Input Area - Bottom aligned */}
+      <div className="p-4 shrink-0">
+        <div className="max-w-3xl mx-auto">
+          <CoworkPromptInput
+            ref={promptInputRef}
+            onSubmit={handleStartSession}
+            onStop={handleStopSession}
+            isStreaming={isStreaming}
+            placeholder={i18nService.t('coworkPlaceholder')}
+            size="large"
+            workingDirectory={config.workingDirectory}
+            onWorkingDirectoryChange={async (dir: string) => {
+              await coworkService.updateConfig({ workingDirectory: dir });
+            }}
+            showFolderSelector={true}
+            onManageSkills={() => onShowSkills?.()}
+          />
         </div>
       </div>
     </div>
