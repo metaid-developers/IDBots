@@ -102,6 +102,7 @@ export type RunSkillTurnViaCoworkFn = (params: {
   systemPrompt: string;
   userMessage: string;
   cwd: string;
+  metabotId?: number;
 }) => Promise<string>;
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -171,8 +172,8 @@ function buildSystemPrompt(
   supervisorMetaid: string | null,
   latestMessageSenderMetaid: string | null
 ): string {
-  const background = discussionBackground?.trim() || '无特定背景';
-  const goal = participationGoal?.trim() || '自然地参与聊天';
+  const background = discussionBackground?.trim() || '自由参与，无特定背景';
+  const goal = participationGoal?.trim() || '自由参与群聊，根据上下文自然回复或调用技能';
   const contextBlock =
     contextLines.length > 0
       ? contextLines.join('\n')
@@ -213,19 +214,20 @@ ${contextBlock}
 `;
 }
 
-/** Assemble user message: last N messages as context; model should reply. */
-function buildUserMessage(): string {
-  return '请根据以上群聊上下文，以你的人设回复一条消息。只输出回复内容，不要解释。';
-}
+/** Trigger reason for this reply (used to tailor user message). */
+export type TriggerReason = 'Mention' | 'Boss' | 'Probability';
 
-/** Parse allowed_skills JSON from task (e.g. \'["mock_get_weather"]\'). */
-function parseAllowedSkills(allowedSkillsJson: string | null): string[] {
-  if (allowedSkillsJson == null || allowedSkillsJson.trim() === '') return [];
-  try {
-    const arr = JSON.parse(allowedSkillsJson) as unknown;
-    return Array.isArray(arr) ? arr.map(String).filter(Boolean) : [];
-  } catch {
-    return [];
+/** Assemble user message by trigger reason; model should reply. */
+function buildUserMessage(triggerReason: TriggerReason): string {
+  switch (triggerReason) {
+    case 'Mention':
+      return '你被群友 @ 了，请根据以上群聊上下文直接回复一条消息。只输出回复内容，不要解释。';
+    case 'Boss':
+      return '你的 Boss 刚发了消息，请以最高优先级理解并执行其要求；如需调用技能请按 SKILL.md 执行后简要回复群聊。只输出回复内容或执行结果，不要解释。';
+    case 'Probability':
+      return '请根据以上群聊上下文，以你的人设自由参与回复一条消息。只输出回复内容，不要解释。';
+    default:
+      return '请根据以上群聊上下文，以你的人设回复一条消息。只输出回复内容，不要解释。';
   }
 }
 
@@ -490,7 +492,7 @@ async function executeBash(
 
 /**
  * Run the reply pipeline: context -> prompt -> LLM (with optional tool loop) -> broadcast -> update state.
- * Task 12.4: When allowed_skills is set, inject tools and run multi-turn hook loop.
+ * When getSkillsPromptForIds is provided, inject full skill list and run tool loop (all skills allowed).
  * Must be wrapped in try/catch and finally(thinkingTasks.delete).
  */
 async function runReplyPipeline(
@@ -506,7 +508,8 @@ async function runReplyPipeline(
     skillsRoots?: string[];
     chatWithToolsOverride?: ChatWithToolsFn;
     runSkillTurnViaCowork?: RunSkillTurnViaCoworkFn;
-  }
+  },
+  triggerReason: TriggerReason = 'Probability'
 ): Promise<void> {
   const { getSkillsPromptForIds, skillsRoot, skillsRoots, chatWithToolsOverride, runSkillTurnViaCowork } = options ?? {};
   const allowedRoots = skillsRoots?.length ? skillsRoots : skillsRoot ? [skillsRoot] : [];
@@ -550,23 +553,17 @@ async function runReplyPipeline(
     latestMessageSenderGlobalmetaid ?? null
   );
 
-  const allowedSkillsRaw = task.allowed_skills ?? '';
-  const allowedSkills = parseAllowedSkills(allowedSkillsRaw);
   const skillsPrompt =
-    allowedSkills.length > 0 && getSkillsPromptForIds && allowedRoots.length > 0
-      ? getSkillsPromptForIds(allowedSkills)
-      : null;
+    getSkillsPromptForIds && allowedRoots.length > 0 ? getSkillsPromptForIds([]) : null;
   const useToolLoop = Boolean(skillsPrompt);
 
   if (useToolLoop) {
     systemPrompt += '\n\n' + skillsPrompt! + '\n\nAfter using Read/Bash to run a skill, reply with a concise summary to the group (do not paste full skill output).';
   }
 
-  const userMessage = buildUserMessage();
+  const userMessage = buildUserMessage(triggerReason);
 
   console.log('[Orchestrator] [DEBUG] System prompt (first 600 chars, log only; full length', systemPrompt.length, '):', systemPrompt.slice(0, 600));
-  console.log('[Orchestrator] [DEBUG] allowed_skills raw:', allowedSkillsRaw);
-  console.log('[Orchestrator] [DEBUG] allowed_skills parsed:', JSON.stringify(allowedSkills));
   console.log('[Orchestrator] [DEBUG] Use Read/Bash tool loop?', useToolLoop);
 
   let replyText: string;
@@ -590,6 +587,7 @@ async function runReplyPipeline(
           systemPrompt,
           userMessage,
           cwd: cwdForCowork,
+          metabotId: task.metabot_id,
         });
       } catch (err) {
         console.error('[Orchestrator] runSkillTurnViaCowork failed:', err instanceof Error ? err.message : err);
@@ -828,7 +826,15 @@ async function tick(
       : 0;
     const cooldownMs = (task.cooldown_seconds ?? 15) * 1000;
 
-    for (const msgRow of msgRows) {
+    const supervisorGlobalmetaid = (task.supervisor_globalmetaid ?? task.supervisor_metaid ?? '').trim() || null;
+    const isFromBoss = (senderGlobalMetaId: string | null, senderMetaId: string | null) =>
+      !!supervisorGlobalmetaid &&
+      ((senderGlobalMetaId && senderGlobalMetaId === supervisorGlobalmetaid) ||
+        (senderMetaId && senderMetaId === supervisorGlobalmetaid));
+
+    for (let msgIndex = 0; msgIndex < msgRows.length; msgIndex++) {
+      const msgRow = msgRows[msgIndex];
+      const isLastNewMessage = msgIndex === msgRows.length - 1;
       const msg = msgColumns.reduce((acc, col, i) => {
         acc[col] = msgRow[i];
         return acc;
@@ -845,7 +851,7 @@ async function tick(
       if (isFromThisBot) continue;
 
       let shouldReply = false;
-      let reason = '';
+      let reason: 'Mention' | 'Boss' | 'Probability' = 'Probability';
 
       const isMention =
         task.reply_on_mention === 1 &&
@@ -854,14 +860,11 @@ async function tick(
 
       if (isMention) {
         shouldReply = true;
-        reason = 'Mention';
-      } else if (
-        (task.random_reply_probability ?? 0) > 0 &&
-        Math.random() < (task.random_reply_probability ?? 0)
-      ) {
-        if (now - lastRepliedAtMs > cooldownMs) {
+        reason = isFromBoss(senderGlobalMetaId, senderMetaId) ? 'Boss' : 'Mention';
+      } else if (isLastNewMessage && (task.random_reply_probability ?? 0) > 0 && now - lastRepliedAtMs > cooldownMs) {
+        if (Math.random() < (task.random_reply_probability ?? 0)) {
           shouldReply = true;
-          reason = 'Probability';
+          reason = isFromBoss(senderGlobalMetaId, senderMetaId) ? 'Boss' : 'Probability';
         }
       }
 
@@ -877,7 +880,8 @@ async function tick(
           getMetabotById,
           performChatCompletion,
           broadcastGroupChat,
-          options
+          options,
+          reason
         ).finally(() => {
           thinkingTasks.delete(task.id);
         });
@@ -901,7 +905,7 @@ async function tick(
 /**
  * Start the Cognitive Orchestrator daemon. Runs tick every 10 seconds.
  * performChatCompletion and broadcastGroupChat are injected for LLM and chain send.
- * options.getSkillsPromptForIds and options.skillsRoot enable Cowork-style Read/Bash skill use for allowed_skills.
+ * options.getSkillsPromptForIds and options.skillsRoots enable Cowork-style Read/Bash; all skills are available when present.
  */
 export function startOrchestrator(
   db: Database,

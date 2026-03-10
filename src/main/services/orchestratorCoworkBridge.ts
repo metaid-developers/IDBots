@@ -12,6 +12,8 @@ export interface RunOrchestratorSkillTurnParams {
   systemPrompt: string;
   userMessage: string;
   cwd: string;
+  /** MetaBot id for this group task; session will use its wallet env for skill scripts. */
+  metabotId?: number;
 }
 
 /**
@@ -24,11 +26,12 @@ export function runOrchestratorSkillTurn(
   store: CoworkStore,
   params: RunOrchestratorSkillTurnParams
 ): Promise<string> {
-  const { systemPrompt, userMessage, cwd } = params;
+  const { systemPrompt, userMessage, cwd, metabotId } = params;
 
   const hasAvailableSkills = systemPrompt.includes('<available_skills>');
   console.log('[Orchestrator] [Bridge] runOrchestratorSkillTurn start:', {
     cwd,
+    metabotId,
     systemPromptLength: systemPrompt.length,
     userMessageLength: userMessage.length,
     hasAvailableSkills,
@@ -40,7 +43,7 @@ export function runOrchestratorSkillTurn(
     systemPrompt,
     'local',
     [],
-    null
+    metabotId ?? null
   );
   const sessionId = session.id;
 

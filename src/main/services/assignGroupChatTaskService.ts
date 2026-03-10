@@ -18,7 +18,9 @@ export interface AssignGroupChatTaskParams {
   participation_goal?: string;
   /** Boss identity: use globalmetaid for user identification. */
   supervisor_globalmetaid?: string;
-  /** Allowed skill names for tool hook, e.g. ["metabot-omni-caster"]. Stored as JSON array string. */
+  /**
+   * @deprecated All skills are allowed by default; this field is stored but no longer used for filtering.
+   */
   allowed_skills?: string[] | string | null;
   /** Original user instruction for reference; stored in group_chat_tasks.original_prompt. */
   original_prompt?: string | null;

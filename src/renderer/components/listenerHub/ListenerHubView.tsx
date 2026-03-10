@@ -51,9 +51,24 @@ const ListenerHubView: React.FC<ListenerHubViewProps> = ({
     }
   }, []);
 
+  const fetchStatus = useCallback(async () => {
+    try {
+      const result = await window.electron.metaWebListener.getListenerStatus();
+      if (result?.running) {
+        setConnectionStatus('connected');
+        return;
+      }
+      setConnectionStatus('disconnected');
+    } catch (e) {
+      console.warn('[ListenerHub] getListenerStatus failed:', e);
+      setConnectionStatus('disconnected');
+    }
+  }, []);
+
   useEffect(() => {
     fetchConfig();
-  }, [fetchConfig]);
+    fetchStatus();
+  }, [fetchConfig, fetchStatus]);
 
   // Subscribe to real listener logs from main process
   useEffect(() => {
@@ -79,13 +94,17 @@ const ListenerHubView: React.FC<ListenerHubViewProps> = ({
   const handleStartRestart = useCallback(async () => {
     setConnectionStatus('connecting');
     try {
-      await window.electron.metaWebListener.startMetaWebListener();
-      setConnectionStatus('connected');
+      const result = await window.electron.metaWebListener.startMetaWebListener();
+      if (!result?.success) {
+        setConnectionStatus('disconnected');
+        return;
+      }
+      await fetchStatus();
     } catch (e) {
       console.warn('[ListenerHub] startMetaWebListener failed:', e);
       setConnectionStatus('disconnected');
     }
-  }, []);
+  }, [fetchStatus]);
 
   const statusBadgeClass =
     connectionStatus === 'connected'

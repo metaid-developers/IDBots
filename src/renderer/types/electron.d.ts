@@ -484,6 +484,7 @@ interface IElectronAPI {
   };
   metaWebListener: {
     getListenerConfig: () => Promise<{ success: boolean; config?: { groupChats: boolean; privateChats: boolean; serviceRequests: boolean }; error?: string }>;
+    getListenerStatus: () => Promise<{ success: boolean; running?: boolean; error?: string }>;
     toggleListener: (payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
     startMetaWebListener: () => Promise<{ success: boolean; error?: string }>;
     onListenerLog: (callback: (log: string) => void) => () => void;

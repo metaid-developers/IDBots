@@ -18,6 +18,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const util_1 = require("util");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const crypto_1 = require("crypto");
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
     process.exit(1);
@@ -39,6 +40,22 @@ function inferContentType(filePath) {
         '.txt': 'text/plain',
     };
     return map[ext] ?? 'application/octet-stream';
+}
+function groupIdToSecretKey(groupId) {
+    const normalized = String(groupId ?? '').trim();
+    if (normalized.length >= 16) {
+        return normalized.slice(0, 16);
+    }
+    return normalized.padEnd(16, '0');
+}
+function encryptSimpleGroupChatContent(message, groupId) {
+    const secretKey = groupIdToSecretKey(groupId);
+    const cipher = (0, crypto_1.createCipheriv)('aes-128-cbc', Buffer.from(secretKey, 'utf8'), Buffer.from('0000000000000000', 'utf8'));
+    const encrypted = Buffer.concat([
+        cipher.update(String(message ?? ''), 'utf8'),
+        cipher.final(),
+    ]);
+    return encrypted.toString('hex');
 }
 async function main() {
     const { values, positionals } = (0, util_1.parseArgs)({
@@ -117,6 +134,19 @@ async function main() {
         if (contentType.toLowerCase().includes('json')) {
             try {
                 const parsed = JSON.parse(payloadStr);
+                if (args.path.trim() === '/protocols/simplegroupchat') {
+                    const groupId = typeof parsed.groupId === 'string' ? parsed.groupId.trim() : '';
+                    if (!groupId) {
+                        console.error('Payload for /protocols/simplegroupchat must include a non-empty groupId.');
+                        process.exit(1);
+                    }
+                    if (typeof parsed.content !== 'string') {
+                        console.error('Payload for /protocols/simplegroupchat must include a string content field.');
+                        process.exit(1);
+                    }
+                    parsed.content = encryptSimpleGroupChatContent(parsed.content, groupId);
+                    parsed.encryption = 'aes';
+                }
                 cleanPayload = JSON.stringify(parsed);
             }
             catch {

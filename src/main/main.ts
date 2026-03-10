@@ -31,6 +31,7 @@ import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/me
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
 import {
   startMetaWebListener,
+  isListenerRunning,
   stopMetaWebListener,
   type ListenerConfig,
 } from './services/metaWebListenerService';
@@ -591,6 +592,11 @@ const getCoworkRunner = () => {
     coworkRunner = new CoworkRunner(getCoworkStore(), {
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
+        const overrides: Record<string, string> = {};
+        if (session?.title === '[Orchestrator] skill-turn' && session.cwd) {
+          overrides.SKILLS_ROOT = session.cwd;
+          overrides.IDBOTS_SKILLS_ROOT = session.cwd;
+        }
         const skillIds = session?.activeSkillIds ?? [];
         const normalizedSkillIds = new Set(
           skillIds
@@ -598,39 +604,42 @@ const getCoworkRunner = () => {
             .filter(Boolean)
             .flatMap((id) => [id, id.replace(/_/g, '-'), id.replace(/-/g, '_')])
         );
-        // Inject MetaBot wallet when on-chain skills are selected, or when no skills selected (default)
+        // Inject MetaBot wallet when on-chain skills are selected, or when no skills selected (default, e.g. orchestrator)
         const shouldInject =
           skillIds.length === 0 ||
           normalizedSkillIds.has('metabot-basic') ||
           normalizedSkillIds.has('metabot-post-buzz') ||
           normalizedSkillIds.has('metabot-omni-caster') ||
           normalizedSkillIds.has('metabot-chat-privatechat');
-        if (!shouldInject) return {};
+        if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         const metabotStore = getMetabotStore();
-        // Prefer session's selected MetaBot; fall back to Twin for legacy sessions without metabotId
         const metabotId = session?.metabotId;
         if (metabotId != null && typeof metabotId === 'number') {
           const metabot = metabotStore.getMetabotById(metabotId);
           const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
           if (metabot && wallet) {
-            return {
+            Object.assign(overrides, {
               IDBOTS_METABOT_ID: String(metabotId),
               IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_METABOT_PATH: wallet.path,
               IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
-            };
+            });
+            return overrides;
           }
         }
         const twin = metabotStore.getTwinWallet();
-        if (!twin) return {};
-        return {
-          IDBOTS_METABOT_ID: String(twin.id),
-          IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
-          IDBOTS_TWIN_NAME: twin.name,
-          IDBOTS_METABOT_PATH: twin.path,
-          IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
-        };
+        if (!twin && Object.keys(overrides).length === 0) return overrides;
+        if (twin) {
+          Object.assign(overrides, {
+            IDBOTS_METABOT_ID: String(twin.id),
+            IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
+            IDBOTS_TWIN_NAME: twin.name,
+            IDBOTS_METABOT_PATH: twin.path,
+            IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+          });
+        }
+        return overrides;
       },
       getMetabotById: (id: number) => {
         const m = getMetabotStore().getMetabotById(id);
@@ -1164,6 +1173,9 @@ if (!gotTheLock) {
   };
   ipcMain.handle('idbots:getListenerConfig', async () => {
     return { success: true, config: getListenerConfigFromStore() };
+  });
+  ipcMain.handle('idbots:getListenerStatus', async () => {
+    return { success: true, running: isListenerRunning() };
   });
   ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
     const config = getListenerConfigFromStore();
@@ -3047,7 +3059,8 @@ if (!gotTheLock) {
         });
       },
       {
-        getSkillsPromptForIds: (ids: string[]) => skillMgr.buildAutoRoutingPromptForSkillIds(ids),
+        getSkillsPromptForIds: (_ids: string[]) =>
+          skillMgr.buildAutoRoutingPromptForSkillIds(skillMgr.listSkills().map((s) => s.id)),
         skillsRoots: skillMgr.getAllSkillRoots(),
         runSkillTurnViaCowork: (params) =>
           runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),

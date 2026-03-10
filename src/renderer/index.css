@@ -10,6 +10,7 @@
   --bg-panel: #FFFFFF;
   --bg-hover: #F1F5F9;
   --color-primary: #ffdc51;
+  --color-accent-text: 194 65 12;
   --color-accent: #06B6D4;
   --text-primary: #303133;
   --text-secondary: #64748B;
@@ -26,6 +27,7 @@
   --bg-panel: #1f2937;
   --bg-hover: #1E293B;
   --color-primary: #FFDC51;
+  --color-accent-text: 255 220 81;
   --color-accent: #22D3EE;
   --text-primary: #fff;
   --text-secondary: #94A3B8;
@@ -122,6 +124,35 @@ blockquote {
 .light main {
   background-color: var(--bg-main);
   color: var(--text-primary);
+}
+
+/* Accent text contrast improvements (light mode) */
+.text-claude-accent {
+  color: rgb(var(--color-accent-text));
+}
+
+.text-claude-accent\/70 {
+  color: rgb(var(--color-accent-text) / 0.7);
+}
+
+.text-claude-accent\/80 {
+  color: rgb(var(--color-accent-text) / 0.8);
+}
+
+.text-claude-accentHover {
+  color: rgb(var(--color-accent-text));
+}
+
+.hover\:text-claude-accent:hover {
+  color: rgb(var(--color-accent-text));
+}
+
+.hover\:text-claude-accent\/80:hover {
+  color: rgb(var(--color-accent-text) / 0.8);
+}
+
+.hover\:text-claude-accentHover:hover {
+  color: rgb(var(--color-accent-text));
 }
 
 body {

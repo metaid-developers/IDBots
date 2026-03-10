@@ -47,3 +47,4 @@ nul
 
 .playwright-mcp/
 .cowork-temp/
+.tmp-bin/
