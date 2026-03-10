@@ -147,6 +147,14 @@ export class SqliteStore {
       );
     `);
 
+    let userMemorySourceColumns: string[] = [];
+    try {
+      const srcColsResult = this.db.exec("PRAGMA table_info(user_memory_sources);");
+      userMemorySourceColumns = (srcColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+    } catch {
+      userMemorySourceColumns = [];
+    }
+
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_user_memories_status_updated_at
       ON user_memories(status, updated_at DESC);
@@ -163,14 +171,18 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_user_memory_sources_memory_id
       ON user_memory_sources(memory_id, is_active);
     `);
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_user_memory_sources_channel_conversation
-      ON user_memory_sources(source_channel, external_conversation_id, created_at DESC);
-    `);
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_user_memory_sources_metabot
-      ON user_memory_sources(metabot_id, created_at DESC);
-    `);
+    if (userMemorySourceColumns.includes('source_channel') && userMemorySourceColumns.includes('external_conversation_id')) {
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memory_sources_channel_conversation
+        ON user_memory_sources(source_channel, external_conversation_id, created_at DESC);
+      `);
+    }
+    if (userMemorySourceColumns.includes('metabot_id')) {
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memory_sources_metabot
+        ON user_memory_sources(metabot_id, created_at DESC);
+      `);
+    }
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS metabot_memory_policies (
