@@ -48,49 +48,8 @@
 
 ```
 
-## 3. SimpleMsg (私信文本消息)
 
-* **Intro**: 点对点 (P2P) 加密私聊文本。
-* **Path**: `/protocols/simplemsg`
-* **Version**: `1.0.0`
-* **Content-Type**: `application/json`
-* **Payload Schema**:
-
-```json5
-{
-  /** 接收方的 MetaID */
-  "to": "{MetaID}",
-  /** 私聊加密方式，默认 ecdh */
-  "encrypt": "ecdh",
-  "content": "{Encrypted content}",
-  "contentType": "text/plain",
-  "timestamp": 1234567890000,
-  "replyPin": "{pinId}"
-}
-
-```
-
-## 4. SimpleFileMsg (私聊文件消息)
-
-* **Intro**: 点对点私聊发送文件。
-* **Path**: `/protocols/simplefilemsg`
-* **Version**: `1.0.0`
-* **Content-Type**: `application/json`
-* **Payload Schema**:
-
-```json5
-{
-  "to": "{MetaID}",
-  "encrypt": "ecdh",
-  "attachment": "metafile://{pinId.jpg}",
-  "fileType": "png/jpg/doc/pdf/excel",
-  "timestamp": 1234567890000,
-  "replyPin": "{pinId}"
-}
-
-```
-
-## 5. SimpleBlock (私聊拉黑)
+## 3. SimpleBlock (私聊拉黑)
 
 * **Intro**: 阻止某人给自己发私信。
 * **Path**: `/protocols/simpleblock`

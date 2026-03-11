@@ -1,118 +1,212 @@
 #!/usr/bin/env node
-"use strict";
+'use strict';
 /**
- * MetaBot Omni-Reader: Configuration-driven chain data reader.
- * Loads api_registry.json, fetches from registered endpoints, and sanitizes output for the agent.
+ * MetaBot Omni-Reader: Fetches on-chain (MetaWeb) data from manapi.metaid.io and
+ * file.metaid.io/metafile-indexer. Registry-driven: each query-type has a
+ * urlTemplate (with {{param}} placeholders), responsePath, and optional sanitization.
  *
- * Usage (list APIs):
+ * Usage:
  *   node omni-reader.js --list
- *
- * Usage (fetch data):
- *   node omni-reader.js --query-type buzz_newest --size 10
- *   node omni-reader.js --query-type protocol_list --path "/protocols/metabot-skill" --size 5
+ *   node omni-reader.js --query-type info_metaid --metaid "idq12sdfqxwt..."
+ *   node omni-reader.js --query-type metaid_pin_list --metaid "xxx" --path "/protocols/simplebuzz" --size 20
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const util_1 = require("util");
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
+
+const fs = require('fs');
+const path = require('path');
+
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    process.exit(1);
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
-/** Safe deep get: get value at dot-separated path, e.g. get(obj, 'data.list') */
+
+const REGISTRY_PATH = path.join(__dirname, '..', 'api_registry.json');
+
+/** Deep get by dot path, e.g. get(obj, 'data.list') */
 function get(obj, pathStr, defaultValue = null) {
-    if (obj == null || typeof pathStr !== 'string' || pathStr === '')
-        return defaultValue;
-    const keys = pathStr.split('.');
-    let current = obj;
-    for (const key of keys) {
-        if (current == null || typeof current !== 'object')
-            return defaultValue;
-        current = current[key];
-    }
-    return current === undefined ? defaultValue : current;
+  if (obj == null || typeof pathStr !== 'string') return defaultValue;
+  if (pathStr === '' || pathStr === '.') return obj;
+  const keys = pathStr.split('.');
+  let current = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') return defaultValue;
+    current = current[key];
+  }
+  return current === undefined ? defaultValue : current;
 }
+
 function loadRegistry() {
-    const registryPath = path_1.default.join(__dirname, '../api_registry.json');
-    const raw = fs_1.default.readFileSync(registryPath, 'utf-8');
-    return JSON.parse(raw);
+  const raw = fs.readFileSync(REGISTRY_PATH, 'utf-8');
+  return JSON.parse(raw);
 }
-function parseSize(val) {
-    if (val == null)
-        return 10;
-    const n = parseInt(val, 10);
-    if (Number.isNaN(n) || n < 1 || n > 100)
-        return 10;
-    return n;
-}
-function sanitizeItem(item, mapping) {
-    const clean = {};
-    for (const [targetKey, sourcePath] of Object.entries(mapping)) {
-        let val = get(item, sourcePath, null);
-        if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-            try {
-                val = JSON.parse(val);
-            }
-            catch {
-                // keep as string
-            }
-        }
-        clean[targetKey] = val;
+
+/** Parse CLI: first pass for --list and --query-type, then collect all --key value */
+function parseArgs() {
+  const argv = process.argv.slice(2);
+  const result = { list: false, 'query-type': null, params: {} };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--list' || arg === '-l') {
+      result.list = true;
+      continue;
     }
-    return clean;
+    if (arg === '--query-type' && argv[i + 1] != null) {
+      result['query-type'] = argv[++i];
+      continue;
+    }
+    if (arg.startsWith('--') && arg.length > 2) {
+      const key = arg.slice(2);
+      const value = argv[i + 1] != null && !String(argv[i + 1]).startsWith('--')
+        ? argv[++i]
+        : '';
+      result.params[key] = value;
+    }
+  }
+  return result;
 }
-function outputError(message) {
-    console.log(JSON.stringify({ error: message }));
-    process.exit(1);
-}
-async function main() {
-    const { values } = (0, util_1.parseArgs)({
-        options: {
-            list: { type: 'boolean', short: 'l' },
-            'query-type': { type: 'string' },
-            size: { type: 'string' },
-            path: { type: 'string' },
-            'target-id': { type: 'string' },
-        },
-        allowPositionals: true,
+
+/** Substitute {{name}} in template; strip query params whose value is empty. */
+function substituteTemplate(template, params) {
+  const paramNames = [];
+  const re = /\{\{(\w+)\}\}/g;
+  let m;
+  while ((m = re.exec(template)) !== null) paramNames.push(m[1]);
+  let out = template;
+  for (const name of paramNames) {
+    const raw = params[name] != null ? String(params[name]).trim() : '';
+    out = out.replace(new RegExp(`\\{\\{${name}\\}\\}`, 'g'), encodeURIComponent(raw));
+  }
+  const q = out.indexOf('?');
+  if (q !== -1) {
+    const base = out.slice(0, q);
+    const query = out.slice(q + 1);
+    const pairs = query.split('&').filter((p) => {
+      const eq = p.indexOf('=');
+      if (eq === -1) return true;
+      let v;
+      try {
+        v = decodeURIComponent(p.slice(eq + 1));
+      } catch {
+        v = p.slice(eq + 1);
+      }
+      return v !== '' && v !== 'undefined';
     });
-    const args = values;
-    const registry = loadRegistry();
-    if (args.list) {
-        const lines = Object.entries(registry).map(([k, v]) => `- ${k}: ${v.description}`);
-        console.log('Available query types:\n' + lines.join('\n'));
-        process.exit(0);
-    }
-    const queryType = args['query-type'];
-    if (!queryType || !registry[queryType]) {
-        outputError('Invalid query-type. Run with --list to see available options.');
-    }
-    const config = registry[queryType];
-    const size = parseSize(typeof args.size === 'string' ? args.size : undefined);
-    let url = `${config.baseUrl}?size=${size}`;
-    if (args.path != null && args.path !== '') {
-        url += `&path=${encodeURIComponent(args.path)}`;
-    }
-    if (args['target-id'] != null && args['target-id'] !== '') {
-        url += `&targetId=${encodeURIComponent(args['target-id'])}`;
-    }
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            outputError(`Request failed: ${response.status} ${response.statusText} for ${url}`);
-        }
-        const data = (await response.json());
-        const rawList = get(data, config.response_list_path, []);
-        const list = Array.isArray(rawList) ? rawList : [];
-        const sanitizedData = list.map((item) => sanitizeItem(item, config.sanitization_mapping));
-        console.log(JSON.stringify({ status: 'success', count: sanitizedData.length, data: sanitizedData }, null, 2));
-    }
-    catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        outputError(`Request error: ${message}`);
-    }
+    out = pairs.length ? base + '?' + pairs.join('&') : base;
+  }
+  return out;
 }
+
+/** Sanitize item by mapping: targetKey <- get(item, sourcePath) */
+function sanitizeItem(item, mapping) {
+  if (!mapping || typeof item !== 'object') return item;
+  const clean = {};
+  for (const [targetKey, sourcePath] of Object.entries(mapping)) {
+    let val = get(item, sourcePath, null);
+    if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+      try {
+        val = JSON.parse(val);
+      } catch {
+        // keep as string
+      }
+    }
+    clean[targetKey] = val;
+  }
+  return clean;
+}
+
+function outputError(message) {
+  console.log(JSON.stringify({ error: message }));
+  process.exit(1);
+}
+
+async function main() {
+  const args = parseArgs();
+  const registry = loadRegistry();
+
+  if (args.list) {
+    const lines = Object.entries(registry).map(([k, v]) => {
+      const desc = v.description || '';
+      return `- ${k}: ${desc}`;
+    });
+    console.log('Available query types:\n' + lines.join('\n'));
+    process.exit(0);
+  }
+
+  const queryType = args['query-type'];
+  if (!queryType || !registry[queryType]) {
+    outputError('Invalid or missing --query-type. Run with --list to see available options.');
+  }
+
+  const config = registry[queryType];
+  const urlTemplate = config.urlTemplate;
+  if (!urlTemplate) {
+    outputError(`Registry entry "${queryType}" has no urlTemplate.`);
+  }
+
+  const url = substituteTemplate(urlTemplate, args.params);
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      outputError(`Request failed: ${response.status} ${response.statusText} for ${url}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await response.text();
+      console.log(
+        JSON.stringify({
+          status: 'success',
+          contentType: contentType.split(';')[0],
+          data: text.slice(0, 5000),
+          truncated: text.length > 5000,
+        })
+      );
+      return;
+    }
+
+    const body = await response.json();
+
+    const responsePath = config.responsePath != null ? config.responsePath : 'data';
+    const payload = responsePath === '' || responsePath === '.' ? body : get(body, responsePath, null);
+
+    const responseType = config.responseType || 'object';
+    const mapping = config.sanitization_mapping;
+
+    if (responseType === 'list' && Array.isArray(payload)) {
+      const sanitized = mapping
+        ? payload.map((item) => sanitizeItem(item, mapping))
+        : payload;
+      console.log(
+        JSON.stringify(
+          { status: 'success', count: sanitized.length, data: sanitized, total: body.data?.total },
+          null,
+          2
+        )
+      );
+    } else if (responseType === 'list' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const list = payload.list != null ? payload.list : payload.Pins || payload.files || [];
+      const arr = Array.isArray(list) ? list : [];
+      const sanitized = mapping ? arr.map((item) => sanitizeItem(item, mapping)) : arr;
+      const extra = {};
+      if (payload.total != null) extra.total = payload.total;
+      if (payload.nextCursor != null) extra.nextCursor = payload.nextCursor;
+      if (payload.next_cursor != null) extra.next_cursor = payload.next_cursor;
+      if (payload.LastId != null) extra.lastId = payload.LastId;
+      console.log(
+        JSON.stringify(
+          { status: 'success', count: sanitized.length, data: sanitized, ...extra },
+          null,
+          2
+        )
+      );
+    } else {
+      const out = mapping && payload && typeof payload === 'object' ? sanitizeItem(payload, mapping) : payload;
+      console.log(JSON.stringify({ status: 'success', data: out }, null, 2));
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    outputError(`Request error: ${message}`);
+  }
+}
+
 main();

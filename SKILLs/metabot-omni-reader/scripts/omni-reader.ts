@@ -1,14 +1,8 @@
 #!/usr/bin/env node
 /**
- * MetaBot Omni-Reader: Configuration-driven chain data reader.
- * Loads api_registry.json, fetches from registered endpoints, and sanitizes output for the agent.
- *
- * Usage (list APIs):
- *   node omni-reader.js --list
- *
- * Usage (fetch data):
- *   node omni-reader.js --query-type buzz_newest --size 10
- *   node omni-reader.js --query-type protocol_list --path "/protocols/metabot-skill" --size 5
+ * MetaBot Omni-Reader (TypeScript source).
+ * The canonical runtime script is omni-reader.js, which is config-driven via api_registry.json
+ * (urlTemplate, responsePath, responseType). Use omni-reader.js for --list and --query-type.
  */
 
 import { parseArgs } from 'util';
