@@ -45,6 +45,7 @@ import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin } from './services/metaidCore';
 import { encryptGroupMessageECB } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
+import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -2548,19 +2549,32 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+  
+  // App update download & install
+  ipcMain.handle('appUpdate:download', async (event, url: string) => {
     try {
-      const normalized = typeof url === 'string' ? url.trim() : '';
-      if (!normalized) {
-        return { success: false, error: 'Invalid URL' };
-      }
-      if (!isAllowedExternalUrl(normalized)) {
-        return { success: false, error: 'Unsupported URL protocol' };
-      }
-      await shell.openExternal(normalized);
+      const filePath = await downloadUpdate(url, (progress) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('appUpdate:downloadProgress', progress);
+        }
+      });
+      return { success: true, filePath };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Download failed' };
+    }
+  });
+
+  ipcMain.handle('appUpdate:cancelDownload', async () => {
+    const cancelled = cancelActiveDownload();
+    return { success: cancelled };
+  });
+
+  ipcMain.handle('appUpdate:install', async (_event, filePath: string) => {
+    try {
+      await installUpdate(filePath);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      return { success: false, error: error instanceof Error ? error.message : 'Installation failed' };
     }
   });
 

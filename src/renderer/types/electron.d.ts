@@ -16,6 +16,13 @@ interface ApiStreamResponse {
   error?: string;
 }
 
+interface AppUpdateDownloadProgress {
+  received: number;
+  total: number | undefined;
+  percent: number | undefined;
+  speed: number | undefined;
+}
+
 // Cowork types for IPC
 interface CoworkSession {
   id: string;
@@ -260,6 +267,7 @@ interface AssignGroupChatTaskResult {
 
 interface IElectronAPI {
   platform: string;
+  arch: string;
   store: {
     get: (key: string) => Promise<any>;
     set: (key: string, value: any) => Promise<void>;
@@ -402,6 +410,12 @@ interface IElectronAPI {
   appInfo: {
     getVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
+  };
+  appUpdate: {
+    download: (url: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+    cancelDownload: () => Promise<{ success: boolean }>;
+    install: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    onDownloadProgress: (callback: (data: AppUpdateDownloadProgress) => void) => () => void;
   };
   im: {
     getConfig: () => Promise<{ success: boolean; config?: IMGatewayConfig; error?: string }>;

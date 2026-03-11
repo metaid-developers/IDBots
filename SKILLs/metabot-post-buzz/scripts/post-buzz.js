@@ -7,7 +7,7 @@
  * Requires: Node.js 18+ (for fetch). Env: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).
  *
  * Usage:
- *   node post-buzz.js --content "<content>" [--content-type "<mime-type>"]
+ *   node post-buzz.js --content "<content>" [--content-type "<mime-type>"] [--network mvc|doge|btc]
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const util_1 = require("util");
@@ -18,12 +18,13 @@ function extractRpcField(record, key) {
     const value = record[key];
     return typeof value === 'string' ? value.trim() : '';
 }
-const USAGE = 'Usage: node post-buzz.js --content "<content>" [--content-type "<mime-type>"]';
+const USAGE = 'Usage: node post-buzz.js --content "<content>" [--content-type "<mime-type>"] [--network mvc|doge|btc]';
 function main() {
     const { values, positionals } = (0, util_1.parseArgs)({
         options: {
             content: { type: 'string' },
             'content-type': { type: 'string' },
+            network: { type: 'string' },
             help: { type: 'boolean', short: 'h' },
         },
         allowPositionals: true,
@@ -35,12 +36,15 @@ function main() {
             'Options:\n' +
             '  --content <string>     (required) Text to post.\n' +
             '  --content-type <string> (optional) MIME type, default: text/plain;utf-8\n' +
+            '  --network <string>     (optional) Target network: mvc (default), doge, btc\n' +
             '  -h, --help             Show this message.\n' +
             '\nEnv: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).\n');
         process.exit(0);
     }
     let content = values.content ?? '';
     const contentType = values['content-type'] ?? 'text/plain;utf-8';
+    const networkRaw = values.network?.toLowerCase?.()?.trim() ?? '';
+    const network = networkRaw === 'doge' || networkRaw === 'btc' ? networkRaw : 'mvc';
     // Unknown options (unrecognized flags end up as positionals starting with -)
     for (const p of positionals) {
         if (p.startsWith('-')) {
@@ -77,6 +81,7 @@ function main() {
     // metaidData.payload must be a JSON string (same as jq --arg payload "$PAYLOAD_JSON" in the shell)
     const body = {
         metabot_id: metabotId,
+        network: network,
         metaidData: {
             operation: 'create',
             path: '/protocols/simplebuzz',

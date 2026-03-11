@@ -110,7 +110,7 @@ export function startMetaidRpcServer(
       body += chunk;
     }
 
-    let payload: { metabot_id: number; metaidData: MetaidDataPayload };
+    let payload: { metabot_id: number; metaidData: MetaidDataPayload; network?: string };
     try {
       payload = JSON.parse(body);
     } catch {
@@ -119,7 +119,7 @@ export function startMetaidRpcServer(
       return;
     }
 
-    const { metabot_id, metaidData } = payload;
+    const { metabot_id, metaidData, network: networkRaw } = payload;
     if (
       typeof metabot_id !== 'number' ||
       !metaidData ||
@@ -132,9 +132,15 @@ export function startMetaidRpcServer(
       return;
     }
 
+    const network = (networkRaw != null && String(networkRaw).trim() !== '')
+      ? String(networkRaw).toLowerCase().trim()
+      : 'mvc';
+
     try {
       const store = getMetabotStore();
-      const result = await createPin(store, metabot_id, metaidData as MetaidDataPayload);
+      const result = await createPin(store, metabot_id, metaidData as MetaidDataPayload, {
+        network: network as 'mvc' | 'doge' | 'btc',
+      });
       res.writeHead(200);
       const txid = result.txids[0];
       const pinId = result.pinId ?? `${txid}i0`;

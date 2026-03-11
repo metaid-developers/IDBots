@@ -41,6 +41,8 @@ const P2PKH_UNLOCK_SIZE = 1 + 1 + 72 + 1 + 33;
 
 interface RpcPayload {
   feeRate?: number;
+  /** Target network: 'mvc' (default), 'doge', 'btc'. Omit or empty defaults to 'mvc'. */
+  network?: string;
   metaidData: {
     operation: string;
     path?: string;
@@ -144,7 +146,41 @@ async function main(): Promise<void> {
     chunks.push(Buffer.from(chunk));
   }
   const payload: RpcPayload = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
-  const { metaidData } = payload;
+  const { metaidData, network: networkParam } = payload;
+  const networkKind = (String(networkParam ?? '').toLowerCase().trim() || 'mvc') as string;
+
+  if (networkKind === 'doge') {
+    const { runDogeCreatePin } = await import('./dogeInscribe');
+    const { fetchDogeFeeRates } = await import('./dogeApi');
+    let feeRate = payload.feeRate;
+    if (feeRate == null || !Number.isFinite(feeRate) || feeRate <= 0) {
+      const feeRates = await fetchDogeFeeRates();
+      feeRate = feeRates.length > 0 ? feeRates[0].feeRate : 5000000;
+    }
+    const result = await runDogeCreatePin(
+      mnemonic,
+      pathStr,
+      metaidData,
+      feeRate
+    );
+    console.log(
+      JSON.stringify({
+        success: true,
+        txids: result.txids,
+        pinId: result.pinId,
+        totalCost: result.totalCost,
+      })
+    );
+    return;
+  }
+
+  if (networkKind === 'btc') {
+    console.error(
+      JSON.stringify({ success: false, error: 'BTC chain not yet supported' })
+    );
+    process.exit(1);
+  }
+
   const feeRates = buildFeeRatePlan(payload.feeRate ?? 1);
   const addressIndex = parseAddressIndexFromPath(pathStr);
 

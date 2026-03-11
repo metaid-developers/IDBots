@@ -45,14 +45,18 @@ export interface MetaidDataPayload {
   encoding?: 'utf-8' | 'base64';
 }
 
+/** Supported network for createPin. Default 'mvc' for backward compatibility. */
+export type CreatePinNetwork = 'mvc' | 'doge' | 'btc';
+
 /**
  * Create Pin for a MetaBot: spawn skill worker with mnemonic, returns txids.
+ * @param options.network - Target network: 'mvc' (default), 'doge', 'btc'. Omit or empty defaults to 'mvc'.
  */
 export async function createPin(
   metabotStore: MetabotStore,
   metabot_id: number,
   metaidData: MetaidDataPayload,
-  options?: { feeRate?: number }
+  options?: { feeRate?: number; network?: CreatePinNetwork | string }
 ): Promise<{ txids: string[]; pinId: string; totalCost: number }> {
   const wallet = metabotStore.getMetabotWalletByMetabotId(metabot_id);
   if (!wallet) {
@@ -99,8 +103,14 @@ export async function createPin(
   const encoding: 'utf-8' | 'base64' =
     Buffer.isBuffer(metaidData.payload) ? 'base64' : (metaidData.encoding ?? 'utf-8');
 
+  const network = (
+    (options?.network != null && String(options.network).trim() !== '')
+      ? String(options.network).toLowerCase().trim()
+      : 'mvc'
+  ) as CreatePinNetwork;
   const payloadStr = JSON.stringify({
     feeRate: options?.feeRate ?? 1,
+    network,
     metaidData: {
       ...metaidData,
       payload: serializedPayload,

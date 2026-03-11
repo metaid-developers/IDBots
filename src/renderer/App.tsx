@@ -17,7 +17,7 @@ import { apiService } from './services/api';
 import { themeService } from './services/theme';
 import { coworkService } from './services/cowork';
 import { scheduledTaskService } from './services/scheduledTask';
-import { checkForAppUpdate, type AppUpdateInfo, UPDATE_POLL_INTERVAL_MS } from './services/appUpdate';
+import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateDownloadProgress, UPDATE_POLL_INTERVAL_MS, UPDATE_HEARTBEAT_INTERVAL_MS } from './services/appUpdate';
 import { defaultConfig } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
@@ -42,7 +42,13 @@ const App: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateModalState, setUpdateModalState] = useState<'info' | 'downloading' | 'installing' | 'error'>('info');
+  const [downloadProgress, setDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const mockUpdateModeRef = useRef(false);
+  const mockDownloadTimerRef = useRef<number | null>(null);
+  const mockInstallTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
   const dispatch = useDispatch();
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
@@ -50,6 +56,54 @@ const App: React.FC = () => {
   const pendingPermissions = useSelector((state: RootState) => state.cowork.pendingPermissions);
   const pendingPermission = pendingPermissions[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
+
+  const clearMockTimers = useCallback(() => {
+    if (mockDownloadTimerRef.current != null) {
+      window.clearInterval(mockDownloadTimerRef.current);
+      mockDownloadTimerRef.current = null;
+    }
+    if (mockInstallTimerRef.current != null) {
+      window.clearTimeout(mockInstallTimerRef.current);
+      mockInstallTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearMockTimers();
+    };
+  }, [clearMockTimers]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    const config = configService.getConfig();
+    if (!config.app.isDevelopment) return;
+    if (!window.location.search.includes('mockUpdate=1')) return;
+
+    mockUpdateModeRef.current = true;
+
+    const mockInfo: AppUpdateInfo = {
+      latestVersion: '9.9.9',
+      date: '2026-03-11',
+      changeLog: {
+        zh: {
+          title: '更新内容',
+          content: ['优化更新流程展示', '修复若干稳定性问题'],
+        },
+        en: {
+          title: 'Changes',
+          content: ['Improve update flow preview', 'Fix stability issues'],
+        },
+      },
+      url: 'https://idbots.ai/downloads/IDBots-latest',
+    };
+
+    setUpdateInfo(mockInfo);
+    setUpdateModalState('info');
+    setUpdateError(null);
+    setDownloadProgress(null);
+    setShowUpdateModal(true);
+  }, [isInitialized]);
 
   // 初始化应用
   useEffect(() => {
@@ -268,7 +322,10 @@ const App: React.FC = () => {
   }, [showToast]);
 
   const runUpdateCheck = useCallback(async () => {
-    try {
+    if (mockUpdateModeRef.current) {
+      return;
+    }
+    try { 
       const currentVersion = await window.electron.appInfo.getVersion();
       const nextUpdate = await checkForAppUpdate(currentVersion);
       setUpdateInfo(nextUpdate);
@@ -284,22 +341,65 @@ const App: React.FC = () => {
 
   const handleOpenUpdateModal = useCallback(() => {
     if (!updateInfo) return;
+    setUpdateModalState('info');
+    setUpdateError(null);
+    setDownloadProgress(null);
     setShowUpdateModal(true);
   }, [updateInfo]);
 
   const handleConfirmUpdate = useCallback(async () => {
     if (!updateInfo) return;
-    setShowUpdateModal(false);
+
+    setUpdateModalState('downloading');
+    setDownloadProgress(null);
+    setUpdateError(null);
+
+    const unsubscribe = window.electron.appUpdate.onDownloadProgress((progress) => {
+      setDownloadProgress(progress);
+    });
+
     try {
-      const result = await window.electron.shell.openExternal(updateInfo.url);
-      if (!result.success) {
-        showToast(i18nService.t('updateOpenFailed'));
+      const downloadResult = await window.electron.appUpdate.download(updateInfo.url);
+      unsubscribe();
+
+      if (!downloadResult.success) {
+        if (downloadResult.error === 'Download cancelled') {
+          return;
+        }
+        setUpdateModalState('error');
+        setUpdateError(downloadResult.error || i18nService.t('updateDownloadFailed'));
+        return;
+      }
+
+      setUpdateModalState('installing');
+      const installResult = await window.electron.appUpdate.install(downloadResult.filePath!);
+
+      if (!installResult.success) {
+        setUpdateModalState('error');
+        setUpdateError(installResult.error || i18nService.t('updateInstallFailed'));
       }
     } catch (error) {
-      console.error('Failed to open update url:', error);
-      showToast(i18nService.t('updateOpenFailed'));
+      unsubscribe();
+      const msg = error instanceof Error ? error.message : '';
+      if (msg === 'Download cancelled') {
+        return;
+      }
+      setUpdateModalState('error');
+      setUpdateError(msg || i18nService.t('updateDownloadFailed'));
     }
-  }, [updateInfo, showToast]);
+  }, [updateInfo]);
+
+  const handleCancelDownload = useCallback(async () => {
+    await window.electron.appUpdate.cancelDownload();
+    setUpdateModalState('info');
+    setDownloadProgress(null);
+  }, []);
+
+  const handleRetryUpdate = useCallback(() => {
+    setUpdateModalState('info');
+    setUpdateError(null);
+    setDownloadProgress(null);
+  }, []);
 
   const handlePermissionResponse = useCallback(async (result: CoworkPermissionResult) => {
     if (!pendingPermission) return;
@@ -424,20 +524,33 @@ const App: React.FC = () => {
     if (!isInitialized) return;
 
     let cancelled = false;
+    let lastCheckTime = 0;
 
-    const checkUpdate = async () => {
+    const maybeCheck = async () => {
       if (cancelled) return;
+      const now = Date.now();
+      if (lastCheckTime > 0 && now - lastCheckTime < UPDATE_POLL_INTERVAL_MS) return;
+      lastCheckTime = now;
       await runUpdateCheck();
     };
 
-    void checkUpdate();
+    void maybeCheck();
+
     const timer = window.setInterval(() => {
-      void checkUpdate();
-    }, UPDATE_POLL_INTERVAL_MS);
+      void maybeCheck();
+    }, UPDATE_HEARTBEAT_INTERVAL_MS);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void maybeCheck();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isInitialized, runUpdateCheck]);
 
@@ -610,9 +723,18 @@ const App: React.FC = () => {
       )}
       {showUpdateModal && updateInfo && (
         <AppUpdateModal
-          latestVersion={updateInfo.latestVersion}
-          onCancel={() => setShowUpdateModal(false)}
+          updateInfo={updateInfo}
           onConfirm={handleConfirmUpdate}
+          onCancel={() => {
+            if (updateModalState === 'info' || updateModalState === 'error') {
+              setShowUpdateModal(false);
+            }
+          }}
+          modalState={updateModalState}
+          downloadProgress={downloadProgress}
+          errorMessage={updateError}
+          onCancelDownload={handleCancelDownload}
+          onRetry={handleRetryUpdate}
         />
       )}
       {permissionModal}

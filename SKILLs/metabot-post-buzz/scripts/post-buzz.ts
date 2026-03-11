@@ -6,7 +6,7 @@
  * Requires: Node.js 18+ (for fetch). Env: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).
  *
  * Usage:
- *   node post-buzz.js --content "<content>" [--content-type "<mime-type>"]
+ *   node post-buzz.js --content "<content>" [--content-type "<mime-type>"] [--network mvc|doge|btc]
  */
 
 import { parseArgs } from 'util';
@@ -21,13 +21,14 @@ function extractRpcField(record: Record<string, unknown>, key: string): string {
 }
 
 const USAGE =
-  'Usage: node post-buzz.js --content "<content>" [--content-type "<mime-type>"]';
+  'Usage: node post-buzz.js --content "<content>" [--content-type "<mime-type>"] [--network mvc|doge|btc]';
 
 function main(): void {
   const { values, positionals } = parseArgs({
     options: {
       content: { type: 'string' },
       'content-type': { type: 'string' },
+      network: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: true,
@@ -41,6 +42,7 @@ function main(): void {
         'Options:\n' +
         '  --content <string>     (required) Text to post.\n' +
         '  --content-type <string> (optional) MIME type, default: text/plain;utf-8\n' +
+        '  --network <string>     (optional) Target network: mvc (default), doge, btc\n' +
         '  -h, --help             Show this message.\n' +
         '\nEnv: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).\n'
     );
@@ -49,6 +51,9 @@ function main(): void {
 
   let content = values.content ?? '';
   const contentType = values['content-type'] ?? 'text/plain;utf-8';
+  const networkRaw = values.network?.toLowerCase?.()?.trim() ?? '';
+  const network =
+    networkRaw === 'doge' || networkRaw === 'btc' ? networkRaw : 'mvc';
 
   // Unknown options (unrecognized flags end up as positionals starting with -)
   for (const p of positionals) {
@@ -96,8 +101,9 @@ function main(): void {
   };
 
   // metaidData.payload must be a JSON string (same as jq --arg payload "$PAYLOAD_JSON" in the shell)
-  const body = {
+  const body: Record<string, unknown> = {
     metabot_id: metabotId,
+    network,
     metaidData: {
       operation: 'create',
       path: '/protocols/simplebuzz',
