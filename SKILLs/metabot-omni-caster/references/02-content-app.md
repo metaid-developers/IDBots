@@ -112,7 +112,7 @@
 
 ```
 
-## 45. MetaBot-Skill (MetaBot 技能协议)
+## 5. MetaBot-Skill (MetaBot 技能协议)
 
 * **Intro**: MetaBot技能封装协议。用户上传技能.zip后，再用这个协议封装
 * **Path**: `/protocols/metabot-skill`
