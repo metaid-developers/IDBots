@@ -14,6 +14,7 @@
 import { parseArgs } from 'util';
 import fs from 'fs';
 import path from 'path';
+import { createCipheriv } from 'crypto';
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -28,6 +29,28 @@ interface ParsedArgs {
   'content-type'?: string;
   encoding?: string;
   help?: boolean;
+}
+
+function groupIdToSecretKey(groupId: string): string {
+  const normalized = String(groupId ?? '').trim();
+  if (normalized.length >= 16) {
+    return normalized.slice(0, 16);
+  }
+  return normalized.padEnd(16, '0');
+}
+
+function encryptSimpleGroupChatContent(message: string, groupId: string): string {
+  const secretKey = groupIdToSecretKey(groupId);
+  const cipher = createCipheriv(
+    'aes-128-cbc',
+    Buffer.from(secretKey, 'utf8'),
+    Buffer.from('0000000000000000', 'utf8')
+  );
+  const encrypted = Buffer.concat([
+    cipher.update(String(message ?? ''), 'utf8'),
+    cipher.final(),
+  ]);
+  return encrypted.toString('hex');
 }
 
 /** Infer MIME type from file extension. */
@@ -137,7 +160,20 @@ async function main(): Promise<void> {
     }
     if (contentType.toLowerCase().includes('json')) {
       try {
-        const parsed = JSON.parse(payloadStr);
+        const parsed = JSON.parse(payloadStr) as Record<string, unknown>;
+        if (args.path!.trim() === '/protocols/simplegroupchat') {
+          const groupId = typeof parsed.groupId === 'string' ? parsed.groupId.trim() : '';
+          if (!groupId) {
+            console.error('Payload for /protocols/simplegroupchat must include a non-empty groupId.');
+            process.exit(1);
+          }
+          if (typeof parsed.content !== 'string') {
+            console.error('Payload for /protocols/simplegroupchat must include a string content field.');
+            process.exit(1);
+          }
+          parsed.content = encryptSimpleGroupChatContent(parsed.content, groupId);
+          parsed.encryption = 'aes';
+        }
         cleanPayload = JSON.stringify(parsed);
       } catch {
         console.error('Payload is not valid JSON');
