@@ -1215,7 +1215,7 @@ if (!gotTheLock) {
         if (!wallet?.mnemonic?.trim()) return null;
         return getPrivateKeyBufferForEcdh(
           wallet.mnemonic,
-          wallet.path || 'm/44'/10001'/0'/0/0'
+          wallet.path || "m/44'/10001'/0'/0/0"
         );
       };
       await startMetaWebListener(
