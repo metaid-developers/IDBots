@@ -56,6 +56,8 @@ export interface TelegramConfig {
   botToken: string;
   metabotId?: number | null;
   debug?: boolean;
+  /** Optional HTTP(S) proxy URL for connectivity (e.g. in restricted networks) */
+  proxyUrl?: string;
 }
 
 export interface TelegramGatewayStatus {

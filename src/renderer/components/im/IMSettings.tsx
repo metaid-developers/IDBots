@@ -100,7 +100,7 @@ const IMSettings: React.FC = () => {
   };
 
   // Handle Telegram config change
-  const handleTelegramChange = (field: 'botToken', value: string) => {
+  const handleTelegramChange = (field: 'botToken' | 'proxyUrl', value: string) => {
     dispatch(setTelegramConfig({ [field]: value }));
   };
 
@@ -557,6 +557,24 @@ const IMSettings: React.FC = () => {
               />
               <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                 {i18nService.t('telegramTokenHint') || '从 @BotFather 获取 Bot Token'}
+              </p>
+            </div>
+
+            {/* Proxy URL (optional, for restricted networks) */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('telegramProxyUrlLabel')}
+              </label>
+              <input
+                type="text"
+                value={config.telegram.proxyUrl ?? ''}
+                onChange={(e) => handleTelegramChange('proxyUrl', e.target.value)}
+                onBlur={handleSaveConfig}
+                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                placeholder="http://127.0.0.1:7890"
+              />
+              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('telegramProxyUrlHint')}
               </p>
             </div>
 

@@ -609,6 +609,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imConnectivityCheckSuggestion_discord_group_requires_mention: '在频道中使用 @机器人 + 内容。',
     imConnectivityCheckSuggestion_telegram_privacy_mode_hint: '在 @BotFather 调整 Privacy Mode 设置。',
     imConnectivityCheckSuggestion_dingtalk_bot_membership_hint: '确认机器人已加入目标会话并允许收发消息。',
+    telegramTokenHint: '从 @BotFather 获取 Bot Token',
+    telegramProxyUrlLabel: '代理地址（选填）',
+    telegramProxyUrlHint: '网络受限时填写 HTTP(S) 代理，如 http://127.0.0.1:7890，用于连通性测试与连接 Telegram API。留空则直连。',
 
     // 通用设置
     autoLaunch: '开机自启动',
@@ -1361,6 +1364,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imConnectivityCheckSuggestion_discord_group_requires_mention: 'Use @bot plus your message in channels.',
     imConnectivityCheckSuggestion_telegram_privacy_mode_hint: 'Review Privacy Mode in @BotFather settings.',
     imConnectivityCheckSuggestion_dingtalk_bot_membership_hint: 'Ensure the bot is in the target conversation with send/receive rights.',
+    telegramTokenHint: 'Get Bot Token from @BotFather',
+    telegramProxyUrlLabel: 'Proxy URL (optional)',
+    telegramProxyUrlHint: 'In restricted networks, set an HTTP(S) proxy (e.g. http://127.0.0.1:7890) for connectivity test and Telegram API. Leave empty for direct connection.',
 
     // General Settings
     autoLaunch: 'Launch at Login',

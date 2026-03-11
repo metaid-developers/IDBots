@@ -13,6 +13,7 @@ import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
 import { getOapiAccessToken } from './dingtalkMedia';
+import { probeTelegramAuth } from './telegramProbe';
 import {
   IMGatewayConfig,
   IMGatewayStatus,
@@ -650,20 +651,20 @@ export class IMGatewayManager extends EventEmitter {
   private getMissingCredentials(platform: IMPlatform, config: IMGatewayConfig): string[] {
     if (platform === 'dingtalk') {
       const fields: string[] = [];
-      if (!config.dingtalk.clientId) fields.push('clientId');
-      if (!config.dingtalk.clientSecret) fields.push('clientSecret');
+      if (!(config.dingtalk.clientId || '').trim()) fields.push('clientId');
+      if (!(config.dingtalk.clientSecret || '').trim()) fields.push('clientSecret');
       return fields;
     }
     if (platform === 'feishu') {
       const fields: string[] = [];
-      if (!config.feishu.appId) fields.push('appId');
-      if (!config.feishu.appSecret) fields.push('appSecret');
+      if (!(config.feishu.appId || '').trim()) fields.push('appId');
+      if (!(config.feishu.appSecret || '').trim()) fields.push('appSecret');
       return fields;
     }
     if (platform === 'telegram') {
-      return config.telegram.botToken ? [] : ['botToken'];
+      return (config.telegram.botToken || '').trim() ? [] : ['botToken'];
     }
-    return config.discord.botToken ? [] : ['botToken'];
+    return (config.discord.botToken || '').trim() ? [] : ['botToken'];
   }
 
   private async runAuthProbe(platform: IMPlatform, config: IMGatewayConfig): Promise<string> {
@@ -693,22 +694,19 @@ export class IMGatewayManager extends EventEmitter {
     }
 
     if (platform === 'telegram') {
-      const response = await axios.get(
-        `https://api.telegram.org/bot${config.telegram.botToken}/getMe`,
-        { timeout: CONNECTIVITY_TIMEOUT_MS }
-      );
-      if (!response.data?.ok) {
-        const description = response.data?.description || 'unknown error';
-        throw new Error(description);
-      }
-      const username = response.data?.result?.username ? `@${response.data.result.username}` : 'unknown';
-      return `Telegram 鉴权通过（Bot: ${username}）。`;
+      const token = (config.telegram.botToken || '').trim();
+      return probeTelegramAuth(token, {
+        timeoutMs: CONNECTIVITY_TIMEOUT_MS,
+        retries: 3,
+        proxyUrl: config.telegram.proxyUrl,
+      });
     }
 
+    const discordToken = (config.discord.botToken || '').trim();
     const response = await axios.get('https://discord.com/api/v10/users/@me', {
       timeout: CONNECTIVITY_TIMEOUT_MS,
       headers: {
-        Authorization: `Bot ${config.discord.botToken}`,
+        Authorization: `Bot ${discordToken}`,
       },
     });
     const username = response.data?.username ? `${response.data.username}#${response.data.discriminator || '0000'}` : 'unknown';

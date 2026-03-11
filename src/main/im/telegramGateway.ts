@@ -133,11 +133,12 @@ export class TelegramGateway extends EventEmitter {
       return;
     }
 
-    if (!config.botToken) {
+    const token = (config.botToken || '').trim();
+    if (!token) {
       throw new Error('Telegram bot token is required');
     }
 
-    this.config = config;
+    this.config = { ...config, botToken: token };
     const log = config.debug ? console.log : () => {};
 
     log('[Telegram Gateway] Starting...');
@@ -146,7 +147,7 @@ export class TelegramGateway extends EventEmitter {
       // Create bot instance with custom fetch wrapper
       // The wrapper converts grammy's polyfill AbortSignal to native AbortSignal
       // to avoid "Expected signal to be an instanceof AbortSignal" errors
-      this.bot = new Bot(config.botToken, {
+      this.bot = new Bot(token, {
         client: {
           // Use our custom fetch wrapper
           fetch: grammyFetch as unknown as typeof fetch,
