@@ -20,8 +20,9 @@ export interface TelegramProbeOptions {
 /**
  * Parse proxy URL into axios-compatible proxy config.
  * Returns undefined if proxyUrl is empty or invalid.
+ * Exported for use by TelegramGateway when sending via proxy.
  */
-function parseProxy(proxyUrl: string | undefined): AxiosRequestConfig['proxy'] {
+export function parseTelegramProxy(proxyUrl: string | undefined): AxiosRequestConfig['proxy'] {
   const u = (proxyUrl || '').trim();
   if (!u) return undefined;
   try {
@@ -34,6 +35,10 @@ function parseProxy(proxyUrl: string | undefined): AxiosRequestConfig['proxy'] {
   } catch {
     return undefined;
   }
+}
+
+function parseProxy(proxyUrl: string | undefined): AxiosRequestConfig['proxy'] {
+  return parseTelegramProxy(proxyUrl);
 }
 
 /**

@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-import { RootState } from '../../store';
+import { RootState, store } from '../../store';
 import { imService } from '../../services/im';
 import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, clearError } from '../../store/slices/imSlice';
 import { i18nService } from '../../services/i18n';
@@ -139,12 +139,8 @@ const IMSettings: React.FC = () => {
       discord: setDiscordConfig,
     }[platform];
     dispatch(setConfigAction({ metabotId }));
-    await imService.updateConfig({
-      [platform]: {
-        ...config[platform],
-        metabotId,
-      },
-    } as Partial<IMGatewayConfig>);
+    const stateAfterDispatch = store.getState();
+    await imService.updateConfig(stateAfterDispatch.im.config);
   };
 
   const renderMetabotSelector = (platform: IMPlatform) => {

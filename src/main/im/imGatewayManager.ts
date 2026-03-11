@@ -789,18 +789,24 @@ export class IMGatewayManager extends EventEmitter {
 
   private handleMetabotRouteChange(prevConfig: IMGatewayConfig, nextConfig: IMGatewayConfig): void {
     for (const platform of MANAGED_IM_PLATFORMS) {
-      const prevMetabotId = this.resolveRouteMetabotId(platform, prevConfig);
-      const nextMetabotId = this.resolveRouteMetabotId(platform, nextConfig);
-      if (prevMetabotId === nextMetabotId) continue;
+      const prevResolved = this.resolveRouteMetabotId(platform, prevConfig);
+      const nextResolved = this.resolveRouteMetabotId(platform, nextConfig);
+      const prevConfigured = this.normalizeMetabotId(prevConfig[platform].metabotId);
+      const nextConfigured = this.normalizeMetabotId(nextConfig[platform].metabotId);
+      const resolvedChanged = prevResolved !== nextResolved;
+      const configuredChanged = prevConfigured !== nextConfigured;
+      if (!resolvedChanged && !configuredChanged) continue;
 
       console.log('[IMGatewayManager] Route metabot changed, clearing mappings', {
         platform,
-        from: prevMetabotId,
-        to: nextMetabotId,
+        from: prevResolved,
+        to: nextResolved,
+        configuredChange: configuredChanged,
       });
 
       const removedSessionIds = this.imStore.deleteSessionMappingsByPlatform(platform);
       this.coworkStore?.deleteConversationMappingsByChannel(`im:${platform}`);
+      this.coworkHandler?.clearPlatformSessions(removedSessionIds);
       if (!this.coworkRunner || removedSessionIds.length === 0) continue;
       for (const sessionId of removedSessionIds) {
         try {

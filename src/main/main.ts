@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativ
 import type { WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import * as bip39 from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
 import { SqliteStore } from './sqliteStore';
 import { CoworkStore } from './coworkStore';
@@ -24,6 +26,7 @@ import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
+import { fetchMetaidRestoreProfile } from './services/metabotRestoreService';
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
@@ -71,6 +74,7 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'application/json': '.json',
   'text/csv': '.csv',
 };
+const RESTORE_MNEMONIC_WORDS = 12;
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -1211,7 +1215,7 @@ if (!gotTheLock) {
         if (!wallet?.mnemonic?.trim()) return null;
         return getPrivateKeyBufferForEcdh(
           wallet.mnemonic,
-          wallet.path || "m/44'/10001'/0'/0/0"
+          wallet.path || 'm/44'/10001'/0'/0/0'
         );
       };
       await startMetaWebListener(
@@ -2086,6 +2090,83 @@ if (!gotTheLock) {
       const errStack = error instanceof Error ? error.stack : undefined;
       console.error('[MetaBot] idbots:addMetaBot failed:', errMsg);
       if (errStack) console.error('[MetaBot] idbots:addMetaBot stack:', errStack);
+      return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:restoreMetaBotFromMnemonic', async (_event, input: { mnemonic: string; path?: string }) => {
+    try {
+      const mnemonic = (input?.mnemonic ?? '').trim().toLowerCase();
+      const pathInput = (input?.path ?? "m/44'/10001'/0'/0/0").trim();
+      const path = pathInput || "m/44'/10001'/0'/0/0";
+      const words = mnemonic.split(/\s+/).filter(Boolean);
+
+      console.log('[MetaBot] restore requested', { path, wordCount: words.length });
+
+      if (words.length !== RESTORE_MNEMONIC_WORDS) {
+        return { success: false, error: 'MNEMONIC_INVALID' };
+      }
+      if (!bip39.validateMnemonic(mnemonic, wordlist)) {
+        return { success: false, error: 'MNEMONIC_INVALID' };
+      }
+      if (!path) {
+        return { success: false, error: 'PATH_INVALID' };
+      }
+
+      const walletResult = await createMetaBotWallet({ mnemonic, path });
+      console.log('[MetaBot] restore wallet derived', {
+        mvc: walletResult.mvc_address,
+        globalmetaid: walletResult.globalmetaid,
+      });
+
+      const profile = await fetchMetaidRestoreProfile(walletResult.mvc_address);
+      const name = profile.name.trim();
+      if (!name) {
+        return { success: false, error: 'NAME_EMPTY' };
+      }
+
+      const store = getMetabotStore();
+      const exists = store.listMetabots().some((m) => m.name.trim().toLowerCase() === name.toLowerCase());
+      if (exists) {
+        return { success: false, error: 'NAME_DUPLICATE' };
+      }
+
+      const wallet = store.insertMetabotWallet({
+        mnemonic: walletResult.mnemonic,
+        path: walletResult.path,
+      });
+
+      const metabot = store.createMetabot({
+        wallet_id: wallet.id,
+        mvc_address: walletResult.mvc_address,
+        btc_address: walletResult.btc_address,
+        doge_address: walletResult.doge_address,
+        public_key: walletResult.public_key,
+        chat_public_key: walletResult.chat_public_key,
+        chat_public_key_pin_id: profile.chatpubkeyPinId ?? null,
+        name,
+        avatar: profile.avatarDataUrl ?? null,
+        enabled: true,
+        metaid: walletResult.metaid,
+        globalmetaid: walletResult.globalmetaid,
+        metabot_info_pinid: null,
+        metabot_type: 'worker',
+        created_by: profile.bio.created_by || '0000',
+        role: profile.bio.role || '',
+        soul: profile.bio.soul || '',
+        goal: profile.bio.goal ?? null,
+        background: profile.bio.background ?? null,
+        boss_id: profile.bio.boss_id ?? null,
+        llm_id: profile.bio.llm_id ?? null,
+        tools: profile.bio.tools ?? [],
+        skills: profile.bio.skills ?? [],
+      });
+
+      console.log('[MetaBot] restore success', { id: metabot.id, name: metabot.name });
+      return { success: true, metabot };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[MetaBot] restore failed:', errMsg);
       return { success: false, error: errMsg };
     }
   });

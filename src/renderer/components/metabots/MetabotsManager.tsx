@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { MagnifyingGlassIcon, PlusCircleIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, PlusCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import { ALL_PROVIDER_KEYS } from '../../config';
@@ -7,6 +7,7 @@ import type { Metabot } from '../../types/metabot';
 import MetaBotForm, { type MetaBotFormValues, type LlmOption } from './MetaBotForm';
 import MetaBotCreateSuccessModal, { type SyncStepKey } from './MetaBotCreateSuccessModal';
 import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
+import MetaBotRestoreMnemonicModal from './MetaBotRestoreMnemonicModal';
 import MetaBotListCard from './MetaBotListCard';
 
 type ViewMode = 'list' | 'add' | 'edit';
@@ -40,6 +41,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncError, setSyncError] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<Metabot | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -403,6 +405,10 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     void performSyncToChain(metabot);
   };
 
+  const handleRestoreCompleted = (metabot: Metabot) => {
+    setList((prev) => (prev.some((m) => m.id === metabot.id) ? prev : [metabot, ...prev]));
+  };
+
   return (
     <div className="space-y-4">
       <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -443,6 +449,14 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
         >
           <PlusCircleIcon className="h-4 w-4" />
           <span>{i18nService.t('metabotAdd')}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActionError(''); setShowRestoreModal(true); }}
+          className="px-3 py-2 text-sm rounded-xl border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
+        >
+          <ArrowPathIcon className="h-4 w-4" />
+          <span>{i18nService.t('metabotRestore')}</span>
         </button>
       </div>
 
@@ -488,6 +502,12 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
               metabot={deleteTarget}
               onClose={() => setDeleteTarget(null)}
               onConfirm={handleDeleteConfirm}
+            />
+          )}
+          {showRestoreModal && (
+            <MetaBotRestoreMnemonicModal
+              onClose={() => setShowRestoreModal(false)}
+              onRestored={handleRestoreCompleted}
             />
           )}
         </>

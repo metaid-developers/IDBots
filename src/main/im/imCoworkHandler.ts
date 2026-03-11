@@ -693,6 +693,24 @@ export class IMCoworkHandler extends EventEmitter {
   }
 
   /**
+   * Clear in-memory state for given session IDs (e.g. when platform metabot route changes).
+   * Removes them from imSessionIds and sessionConversationMap, clears pending permissions,
+   * and rejects any pending accumulators so in-flight promises resolve instead of hanging.
+   */
+  clearPlatformSessions(sessionIds: string[]): void {
+    for (const sessionId of sessionIds) {
+      this.imSessionIds.delete(sessionId);
+      this.sessionConversationMap.delete(sessionId);
+      this.clearPendingPermissionsBySessionId(sessionId);
+      const accumulator = this.messageAccumulators.get(sessionId);
+      if (accumulator) {
+        this.cleanupAccumulator(sessionId);
+        accumulator.reject(new Error('IM route changed; please send your message again.'));
+      }
+    }
+  }
+
+  /**
    * Cleanup when handler is destroyed
    */
   destroy(): void {

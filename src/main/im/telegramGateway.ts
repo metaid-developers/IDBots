@@ -2,6 +2,7 @@
  * Telegram Gateway
  * Manages Telegram bot using polling mode with grammy
  * Supports text messages and media (photo, video, audio, voice, document, sticker)
+ * When proxyUrl is set, all API calls (getMe, getUpdates, sendMessage, etc.) go through the proxy.
  */
 
 import { EventEmitter } from 'events';
@@ -9,6 +10,7 @@ import { Bot, InputFile, type BotError, type Context } from 'grammy';
 import { run, type RunnerHandle } from '@grammyjs/runner';
 import * as fs from 'fs';
 import * as path from 'path';
+import axios from 'axios';
 import {
   TelegramConfig,
   TelegramGatewayStatus,
@@ -18,44 +20,90 @@ import {
 } from './types';
 import { extractMediaFromMessage, cleanupOldMediaFiles } from './telegramMedia';
 import { parseMediaMarkers } from './dingtalkMediaParser';
+import { parseTelegramProxy } from './telegramProbe';
 
 // Import node-fetch for HTTP requests (grammy's default)
 const nodeFetch = require('node-fetch');
 
+const GATEWAY_REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Normalize optional RequestInit signal to native AbortSignal so node-fetch/axios accept it.
+ */
+function withNativeSignal(init: RequestInit = {}): RequestInit {
+  if (!init.signal) return init;
+  const grammySignal = init.signal;
+  const nativeController = new AbortController();
+  if (grammySignal.aborted) {
+    nativeController.abort();
+  } else {
+    grammySignal.addEventListener('abort', () => nativeController.abort());
+  }
+  return { ...init, signal: nativeController.signal };
+}
+
 /**
  * Custom fetch wrapper that uses Node.js native AbortController
  * instead of the abort-controller polyfill.
- *
- * This is needed because:
- * 1. grammy uses abort-controller polyfill to create AbortSignal
- * 2. node-fetch checks signal via `proto.constructor.name === 'AbortSignal'`
- * 3. After esbuild bundling, the polyfill's class name may be mangled
- * 4. This causes "Expected signal to be an instanceof AbortSignal" error
- *
- * Solution: Create a new native AbortController and link it to grammy's signal
  */
 async function grammyFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  // If there's a signal from grammy, create a native AbortController
-  // and link the abort event
-  if (options.signal) {
-    const grammySignal = options.signal;
-    const nativeController = new AbortController();
+  return nodeFetch(url, withNativeSignal(options));
+}
 
-    // If already aborted, abort immediately
-    if (grammySignal.aborted) {
-      nativeController.abort();
-    } else {
-      // Link grammy's signal to native controller
-      grammySignal.addEventListener('abort', () => {
-        nativeController.abort();
-      });
-    }
-
-    // Replace the signal with native one
-    options = { ...options, signal: nativeController.signal };
+/**
+ * Build a fetch implementation that routes all requests through an HTTP(S) proxy.
+ * Used when the app runs in a restricted network where api.telegram.org is not directly reachable.
+ */
+function makeProxyFetch(proxyUrl: string): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
+  const proxy = parseTelegramProxy(proxyUrl);
+  if (!proxy) {
+    return grammyFetch as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   }
 
-  return nodeFetch(url, options);
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const opts = (typeof input !== 'string' && !(input instanceof URL) && input instanceof Request)
+      ? { method: input.method, headers: input.headers, body: input.body, signal: input.signal }
+      : (init || {});
+    const normalized = withNativeSignal(opts);
+    const method = (normalized.method || 'GET').toUpperCase();
+    const headers: Record<string, string> = {};
+    if (normalized.headers) {
+      const h = normalized.headers;
+      if (Array.isArray(h)) {
+        for (const [k, v] of h) {
+          headers[k] = v;
+        }
+      } else if (typeof (h as Headers).forEach === 'function') {
+        (h as Headers).forEach((v, k) => {
+          headers[k] = v;
+        });
+      } else {
+        Object.assign(headers, h as Record<string, string>);
+      }
+    }
+    try {
+      const axRes = await axios({
+        url,
+        method: method as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+        data: normalized.body,
+        headers,
+        proxy,
+        timeout: GATEWAY_REQUEST_TIMEOUT_MS,
+        signal: normalized.signal,
+        responseType: 'arraybuffer',
+        validateStatus: () => true,
+      });
+      return new Response(axRes.data, {
+        status: axRes.status,
+        statusText: axRes.statusText || '',
+        headers: axRes.headers as HeadersInit,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(message);
+    }
+  };
 }
 
 // 媒体组缓冲接口
@@ -141,17 +189,23 @@ export class TelegramGateway extends EventEmitter {
     this.config = { ...config, botToken: token };
     const log = config.debug ? console.log : () => {};
 
+    const proxyUrl = (config.proxyUrl || '').trim();
+    if (proxyUrl) {
+      console.log('[Telegram Gateway] Using proxy for API requests:', proxyUrl.replace(/:[^:@]+@/, ':****@'));
+    }
+
     log('[Telegram Gateway] Starting...');
 
     try {
-      // Create bot instance with custom fetch wrapper
-      // The wrapper converts grammy's polyfill AbortSignal to native AbortSignal
-      // to avoid "Expected signal to be an instanceof AbortSignal" errors
+      // Use proxy fetch when proxyUrl is set so getMe, getUpdates, sendMessage all go through proxy
+      const gatewayFetch = proxyUrl
+        ? makeProxyFetch(proxyUrl)
+        : (grammyFetch as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>);
+
+      // Create bot instance with custom fetch (and optional proxy)
       this.bot = new Bot(token, {
         client: {
-          // Use our custom fetch wrapper
-          fetch: grammyFetch as unknown as typeof fetch,
-          // Increase API timeout to 60 seconds for file uploads (default is 500s which is too long)
+          fetch: gatewayFetch as unknown as typeof fetch,
           timeoutSeconds: 60,
         },
       });

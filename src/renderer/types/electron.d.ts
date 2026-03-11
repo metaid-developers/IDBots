@@ -453,6 +453,7 @@ interface IElectronAPI {
       subsidy?: { success: boolean; error?: string };
       error?: string;
     }>;
+    restoreMetaBotFromMnemonic: (input: { mnemonic: string; path?: string }) => Promise<{ success: boolean; metabot?: Metabot; error?: string }>;
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       Promise<{
         success: boolean;
