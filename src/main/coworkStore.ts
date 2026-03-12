@@ -1381,6 +1381,41 @@ export class CoworkStore implements MemoryBackend {
     }));
   }
 
+
+  private shouldApplyExplicitMemoryFromUserText(text: string, guardLevel: CoworkMemoryGuardLevel): boolean {
+    const trimmed = text?.trim();
+    if (!trimmed) return false;
+    const changes = extractTurnMemoryChanges({
+      userText: trimmed,
+      assistantText: '',
+      guardLevel,
+      maxImplicitAdds: 0,
+    });
+    return changes.some((change) => change.isExplicit);
+  }
+
+  private enqueueExplicitMemoryUpdate(sessionId: string, message: CoworkMessage): void {
+    if (message.type !== 'user') return;
+    if (!message.content?.trim()) return;
+
+    const policy = this.getEffectiveMemoryPolicyForSession(sessionId);
+    if (!this.shouldApplyExplicitMemoryFromUserText(message.content, policy.memoryGuardLevel)) {
+      return;
+    }
+
+    void this.applyTurnMemoryUpdates({
+      sessionId,
+      userText: message.content,
+      assistantText: '',
+      implicitEnabled: false,
+      memoryLlmJudgeEnabled: policy.memoryLlmJudgeEnabled,
+      guardLevel: policy.memoryGuardLevel,
+      userMessageId: message.id,
+    }).catch((error) => {
+      console.warn('[CoworkStore] Failed to apply explicit memory updates:', error);
+    });
+  }
+
   addMessage(sessionId: string, message: Omit<CoworkMessage, 'id' | 'timestamp'>): CoworkMessage {
     const id = uuidv4();
     const now = Date.now();
@@ -1409,13 +1444,15 @@ export class CoworkStore implements MemoryBackend {
 
     this.saveDb();
 
-    return {
+    const createdMessage: CoworkMessage = {
       id,
       type: message.type,
       content: message.content,
       timestamp: now,
       metadata: message.metadata,
     };
+    this.enqueueExplicitMemoryUpdate(sessionId, createdMessage);
+    return createdMessage;
   }
 
   updateMessage(sessionId: string, messageId: string, updates: { content?: string; metadata?: CoworkMessageMetadata }): void {
