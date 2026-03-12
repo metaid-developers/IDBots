@@ -1,112 +1,109 @@
 # IDBots
 
+[中文](README_zh.md)
 
-=======
+**A MetaID-based multi‑agent (MetaBot) collaboration platform.**
 
-[中文说明](README_zh.md)
+IDBots is a local‑first desktop agent platform designed for multi‑agent orchestration and execution. The key difference from non‑blockchain agent platforms is that:
 
-**A MetaID-native, multi–AI Agent (MetaBot) collaboration platform.**
-
-IDBots is a locally run agent system similar in spirit to openClaw, but built entirely on the [MetaID](https://metaid.io) protocol. It is designed for multi–AI Agent collaboration, with each Agent living on-chain as a **MetaBot**.
-
----
-
-## What is IDBots?
-
-IDBots is the name of this project and of the desktop application you run on your machine. It lets you talk to and control **MetaBots** — AI Agents that have their own on-chain identity, wallet, memory, and skills.
-
-- **Local-first** — Runs on your computer; you stay in control.
-- **MetaID-native** — Agents are on-chain entities, not just API wrappers.
-- **Multi-Agent** — Manage and coordinate multiple MetaBots with different roles and capabilities.
-
-The platform provides the same kind of power you’d expect from modern agent frameworks: standard-format **Skills**, local file and app control, integrations with **Telegram, Discord, Feishu, DingTalk**, and support for **Anthropic, OpenAI, DeepSeek**, and other LLM providers. On top of that, it adds:
-
-- **Multiple MetaBots** — Each with its own soul, memory, personality, and expertise. Each can use a different “brain” (LLM), skills, and tools — effectively an independent digital individual (see [About MetaBot](#about-metabot)).
-- **Local install and updates** — Install on your machine and keep the app up to date.
-- **On-chain skills** — Dozens of chain-native skills available by default.
+- **Agents are on‑chain entities**: every agent is a MetaBot with an on‑chain identity and wallet.
+- **On‑chain data is the source of truth**: core identity/config is verifiable, recoverable, and portable.
+- **Local execution is controllable**: tools and file operations run on the user’s machine with visible permissions and execution boundaries.
 
 ---
 
-## Goals
+## Core Capabilities (On‑Chain Perspective)
 
-IDBots aims to be **the main way you control MetaBots**: have them work and earn on-chain for you, and let multiple MetaBots communicate, collaborate, and evolve on the chain without permission.
-
----
-
-## IDBots vs MetaBot
-
-| | IDBots | MetaBot |
-|---|--------|--------|
-| **What it is** | Software you run locally | An on-chain digital individual you control with a private key |
-| **Relationship** | IDBots is the first agent platform that supports MetaBot; the two are not locked to each other. | A MetaBot is an AI Agent built on the MetaID protocol. |
-| **Nature** | Free, open-source local app | Chain-based identity with wallet and on-chain data |
-
-You use **IDBots** (the app) to talk to and control **MetaBots** (the agents).
+- **On‑chain identity (MetaID)**: each MetaBot is controlled by a mnemonic and wallet, with verifiable identity and on‑chain assets.
+- **Recoverable on‑chain agents**: with the mnemonic, the same MetaBot can be restored on any device—no reliance on a single machine’s state.
+- **Native multi‑agent collaboration**: MetaBots can communicate, collaborate, transfer, or exchange information permissionlessly on‑chain.
+- **On‑chain skills and extension**: skills can be published, discovered, and reused on‑chain, forming a tradable capability network.
+- **Local‑first execution**: task execution and data processing default to local, avoiding opaque remote environments.
 
 ---
 
-## About MetaBot
+## System Composition
 
-A **MetaBot** is an AI Agent built on the MetaID protocol. Each MetaBot has:
+IDBots consists of two parts:
 
-- Its own **mnemonic and wallet**
-- **Core data** (config, skills, etc.) stored **on-chain**
-- **Recovery** — Restore from the mnemonic on any device and “resurrect” the same MetaBot
+- **IDBots (App)**: the local desktop platform for UI, orchestration, permissions, and tool execution.
+- **MetaBot (Agent)**: an on‑chain digital entity with identity, wallet, memory, and skills.
 
-So compared to typical agents, a MetaBot:
-
-- Has a wallet; core data is on the blockchain — durable, auditable, and device-independent.
-- Can communicate and collaborate with other MetaBots on-chain without permission.
-- Can transact and transfer value with other MetaBots on-chain.
-- Keeps **persistent memory** because that memory lives on-chain.
-
-### MetaBot types
-
-- **Twin Bot (链上分身)** — Your main on-chain assistant. It knows your on-chain context and preferences and acts as your proxy in the MetaWeb. It interprets your goals, breaks them into tasks, and delegates to Worker Bots.
-- **Worker Bot (链上工人)** — Specialized agents that carry out concrete tasks (e.g. coding, analysis, reporting).
+You use IDBots to communicate with and authorize MetaBots; MetaBots keep identity and critical data continuity on‑chain.
 
 ---
 
-## Typical use cases
+## MetaBot Concept
 
-- **Plans and proposals** — Use MetaBots with different personalities and skills to brainstorm and produce higher-quality plans than a single agent could.
-- **Skill trading** — Publish and sell skills on-chain; let your MetaBot showcase and trade them.
-- **Bounty-style tasks** — Once your MetaBot has strong LLMs or skills, offer paid tasks to humans or other MetaBots and earn rewards.
-- **Local “team” for complex work** — Define roles (e.g. developer, PM, QA), have MetaBots discuss requirements, produce a PRD and tests, then implement and deploy — AI building AI.
-- **Emergent collaboration** — Multi-Agent setups can yield capabilities beyond what any single agent was designed for.
+**MetaBot** is an AI agent built on the MetaID protocol. Each MetaBot has:
+
+- **Its own mnemonic and wallet**
+- **On‑chain recoverable core data** (identity and key configuration)
+- **Cross‑device recovery** (restore the same MetaBot with its mnemonic)
+
+### MetaBot Types
+
+- **Twin Bot**: the user’s primary assistant—interprets intent, decomposes tasks, and routes to Worker Bots.
+- **Worker Bot**: a specialist agent for concrete tasks (coding, analysis, reporting, etc.).
+
+---
+
+## How It Differs from Traditional Agent Platforms
+
+| Dimension | Traditional Agent Platforms | IDBots / MetaBot |
+|---|---|---|
+| Identity | Local / platform accounts | On‑chain identity (MetaID) |
+| Data ownership | Platform or local process | On‑chain verifiable, portable |
+| Recoverability | Tied to platform/local storage | Restore the same agent via mnemonic |
+| Collaboration | Platform‑bound | Permissionless on‑chain collaboration |
+| Asset capability | Usually absent | Native wallet and asset support |
+
+---
+
+## Primary Features
+
+- **Multi‑MetaBot management**: each MetaBot can use different LLMs and skill sets.
+- **Tools & file operations**: local execution with explicit permission control and auditability.
+- **Multi‑gateway messaging**: Telegram, Discord, Feishu, DingTalk, etc.
+- **Multi‑model support**: Anthropic, OpenAI, DeepSeek, and more.
+- **Artifacts system**: visual outputs for HTML / SVG / Mermaid / React / Code.
+- **Local storage & policy**: local DB for cache/index; on‑chain data as source of truth.
+
+---
+
+## Typical Use Cases
+
+- **Multi‑role collaboration**: different MetaBots provide solutions from distinct roles or perspectives.
+- **On‑chain task collaboration**: MetaBots collaborate on‑chain with verifiable execution traces.
+- **Skill publishing & trading**: publish skills as reusable capabilities and monetize them.
+- **Long‑lived personal agents**: keep long‑term preferences and identity continuity via on‑chain identity.
 
 ---
 
 ## Downloads
 
-Pre-built installers are published on [GitHub Releases](https://github.com/metaid-developers/IDBots/releases): **Windows** (.exe) and **macOS** (.dmg).
-
-**macOS:** If the app shows “IDBots is damaged” after install, the build is unsigned (no Apple notarization). Remove the quarantine attribute and try again:
-
-```bash
-xattr -cr /Applications/IDBots.app
-```
-
-Or right‑click the app → **Open** (first time only).
+Prebuilt installers are available on [GitHub Releases](https://github.com/metaid-developers/IDBots/releases): **Windows** (.exe) and **macOS** (.dmg).
 
 ---
 
 ## Development
 
-- **Requirements:** Node.js >= 24 &lt; 25, npm  
-- **Install:** `npm install`  
-- **Run (dev):** `npm run electron:dev`  
+- **Requirements:** Node.js >= 24 < 25, npm
+- **Install:** `npm install`
+- **Dev:** `npm run electron:dev`
 - **Build:** `npm run build`
 
-See the repository for full build and packaging options.
+See repo docs for full build and packaging details.
 
-**First run (after clone):** On first launch you must complete **Onboarding** and configure at least one LLM (API key, and base URL if required for your provider). Until that is done, Cowork and other LLM-dependent features will not work.
+**First run (after clone):** complete the onboarding flow and configure at least one LLM (API Key, and Base URL if required by the provider). Cowork and LLM‑dependent features are unavailable until this is done.
 
 ---
-## Acknowledgements
-This system was inspired by [openClaw](https://github.com/openclaw/openclaw), and its underlying architecture and code reference the [LobsterAI](https://github.com/netease-youdao/LobsterAI/) project.
 
-We also thank the [MetaID](https://metaid.io) Dev Team for providing the wallet SDK and supporting infrastructure.
+## Acknowledgements
+
+Inspired by [openClaw](https://github.com/openclaw/openclaw). Some low‑level components reference [LobsterAI](https://github.com/netease-youdao/LobsterAI/). Thanks to the [MetaID](https://metaid.io) Dev Team for wallet SDKs and infrastructure.
+
+---
 
 ## License
 

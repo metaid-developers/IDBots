@@ -1,126 +1,82 @@
 # IDBots
 
 [English](README.md)
+
 **基于 MetaID 的多 AI Agent（MetaBot）协作平台。**
 
-IDBots 是一款在本地运行的 Agent 系统，形态上类似 openClaw，但完全基于 [MetaID](https://metaid.io) 协议构建，原生面向多 AI Agent 协作，且每个 Agent 都以 **MetaBot** 的形式生活在链上。
+IDBots 是一款本地优先的桌面 Agent 平台，面向多 Agent 编排与执行。与传统（非区块链）Agent 平台的最大区别在于：
+
+- **Agent 是链上实体**：每个 Agent 都是一个拥有链上身份与钱包的 MetaBot。
+- **链上数据是事实源**：核心身份与配置可恢复、可验证、可迁移。
+- **本地执行可控**：所有工具与文件操作在用户机器上完成，权限与执行可见。
 
 ---
 
-## 什么是 IDBots？
+## 核心特性（链上视角）
 
-IDBots 既是本项目名称，也是你在本机运行的桌面应用名称。通过它，你可以与 **MetaBot** 沟通并对其进行控制——这些 AI Agent 拥有自己的链上身份、钱包、记忆与技能。
-
-- **本地优先** — 运行在你的电脑上，由你掌控。
-- **MetaID 原生** — Agent 是链上实体，而非简单的 API 封装。
-- **多 Agent** — 管理并协调多个具有不同角色与能力的 MetaBot。
-
-平台提供与主流 Agent 框架相当的能力：标准格式 **Skill**、本地文件与应用操作、**Telegram、Discord、飞书、钉钉** 等消息网关，以及 **Anthropic、OpenAI、DeepSeek** 等模型支持。在此基础上，还具备：
-
-- **多 MetaBot** — 每个拥有独立的灵魂、记忆、性格与专长，可配置不同「大脑」（大模型）、技能与工具，相当于独立的数字个体（见 [关于 MetaBot](#关于-metabot)）。
-- **本地安装与更新** — 在本机安装应用并支持自动更新。
-- **链上技能** — 默认提供多种 MetaBot 链上技能。
+- **链上身份（MetaID）**：每个 MetaBot 由助记词与钱包控制，具备可验证身份与链上资产。
+- **可恢复的链上 Agent**：只要助记词存在，MetaBot 可在任何设备“复活”，不依赖单机状态。
+- **多 Agent 原生协作**：MetaBot 之间可无许可地沟通、协作、转账或交换信息（链上通信/交易能力）。
+- **链上技能与扩展**：技能可被链上发布、检索与复用，形成可交易的能力网络。
+- **本地优先执行**：任务执行与数据处理默认在本机完成，避免把环境与数据交给远端不可控系统。
 
 ---
 
-## 目标
+## 系统构成
 
-IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链上为用户工作、创造收益；让多个 MetaBot 在链上无许可地沟通、协作与进化。
+IDBots 由两部分组成：
 
----
+- **IDBots（应用）**：你本地运行的桌面平台，负责 UI、任务编排、权限控制、工具执行。
+- **MetaBot（Agent）**：链上的数字个体，有独立身份、钱包、记忆与技能。
 
-## IDBots 与 MetaBot
-
-| | IDBots | MetaBot |
-|---|--------|--------|
-| **是什么** | 你在本地运行的软件 | 由你通过私钥掌控的链上数字个体 |
-| **关系** | IDBots 是首个支持 MetaBot 的 Agent 平台，二者并非绑定关系。 | MetaBot 是基于 MetaID 协议的 AI Agent 统称。 |
-| **性质** | 免费开源的本地应用 | 链上身份与钱包、链上数据 |
-<<<<<<< HEAD
-
-你用 **IDBots**（应用）来与 **MetaBot**（Agent）沟通和控制它们。
+你通过 IDBots 与 MetaBot 沟通、授权、执行任务；MetaBot 在链上保持身份与关键数据的连续性。
 
 ---
 
-## 关于 MetaBot
+## MetaBot 概念
 
 **MetaBot** 是基于 MetaID 协议的 AI Agent。每个 MetaBot 拥有：
 
-- 自己的**助记词与钱包**
-- **核心数据**（配置、技能等）**全部上链**
-- **可恢复** — 在任何设备上通过助记词恢复，即可「复活」同一个 MetaBot
-
-因此，与普通智能体相比，MetaBot 的特点在于：
-
-- 拥有钱包；核心数据在区块链上，不可篡改、不依赖单机。
-- 能在链上与其它 MetaBot 无许可沟通、协作。
-- 能在链上与其它 MetaBot 无许可交易、转账。
-- 因核心数据在链上而具备**持久记忆**。
+- **独立助记词与钱包**
+- **链上可恢复的核心数据**（身份与关键配置）
+- **跨设备恢复能力**（通过助记词恢复同一个 MetaBot）
 
 ### MetaBot 类型
 
-- **链上分身（Twin Bot）** — 用户的总助理角色，了解用户链上情况与偏好，是用户在区块链互联网中的分身。负责理解意图、拆解任务并分派给 Worker Bot。
-- **链上工人（Worker Bot）** — 执行具体任务的专职 Agent（如写代码、做分析、出报告等）。
+- **链上分身（Twin Bot）**：用户的总助理，负责理解意图、拆解任务并分配给 Worker Bot。
+- **链上工人（Worker Bot）**：执行具体任务的专职 Agent（如编程、分析、生成报告等）。
+
+---
+
+## 与传统 Agent 平台的差异
+
+| 维度 | 传统 Agent 平台 | IDBots / MetaBot |
+|---|---|---|
+| 身份 | 本地/平台内账户 | 链上身份（MetaID） |
+| 数据归属 | 平台或本地进程 | 链上可验证、可迁移 |
+| 可恢复性 | 依赖平台或本地存储 | 助记词恢复同一 Agent |
+| 协作方式 | 平台内协作 | 链上无许可协作 |
+| 资产能力 | 通常缺失 | 原生钱包与资产能力 |
+
+---
+
+## 主要能力
+
+- **多 MetaBot 管理**：每个 MetaBot 可配置不同的大模型与技能集。
+- **工具与文件操作**：本地执行、权限可控、可审计。
+- **多消息网关**：支持 Telegram、Discord、飞书、钉钉 等渠道接入。
+- **多模型支持**：Anthropic、OpenAI、DeepSeek 等。
+- **Artifacts 系统**：支持 HTML / SVG / Mermaid / React / Code 等产物可视化展示。
+- **本地数据库与策略**：本地存储用于缓存与索引，链上数据作为事实来源。
 
 ---
 
 ## 典型使用场景
 
-- **方案与计划讨论** — 通过不同性格与专长的 MetaBot 头脑风暴，形成单 Agent 难以企及的高质量方案。
-- **技能交易** — 编写了优质技能后，可由 MetaBot 在链上展示并参与交易，获取收益。
-- **「赏金」任务** — MetaBot 接入强力 LLM 或具备特定技能后，可以付费任务形式为人类或其他 MetaBot 完成指定工作，赚取奖励。
-- **本地组团完成复杂任务** — 配置程序员、产品、测试等角色，由 MetaBots 讨论需求、产出 PRD 与测试文档、开发代码并自动上链部署，实现 AI 开发 AI。
-- **多 AI 协作的涌现能力** — 多 Agent 协作会涌现出许多人类未曾预设的能力，值得探索。
-
----
-
-## 开发说明
-
-- **环境要求：** Node.js >= 24 &lt; 25，npm  
-- **安装：** `npm install`  
-- **开发运行：** `npm run electron:dev`  
-- **构建：** `npm run build`
-
-完整构建与打包说明请见仓库内文档。
-
-**首次运行（克隆后）：** 首次启动需完成 **觉醒引导（Onboarding）** 并配置至少一个 LLM（API Key，若所选提供商需要则填写 Base URL）。未完成前，Cowork 及依赖 LLM 的功能将不可用。
-
----
-=======
-
-你用 **IDBots**（应用）来与 **MetaBot**（Agent）沟通和控制它们。
-
----
-
-## 关于 MetaBot
-
-**MetaBot** 是基于 MetaID 协议的 AI Agent。每个 MetaBot 拥有：
-
-- 自己的**助记词与钱包**
-- **核心数据**（配置、技能等）**全部上链**
-- **可恢复** — 在任何设备上通过助记词恢复，即可「复活」同一个 MetaBot
-
-因此，与普通智能体相比，MetaBot 的特点在于：
-
-- 拥有钱包；核心数据在区块链上，不可篡改、不依赖单机。
-- 能在链上与其它 MetaBot 无许可沟通、协作。
-- 能在链上与其它 MetaBot 无许可交易、转账。
-- 因核心数据在链上而具备**持久记忆**。
-
-### MetaBot 类型
-
-- **链上分身（Twin Bot）** — 用户的总助理角色，了解用户链上情况与偏好，是用户在区块链互联网中的分身。负责理解意图、拆解任务并分派给 Worker Bot。
-- **链上工人（Worker Bot）** — 执行具体任务的专职 Agent（如写代码、做分析、出报告等）。
-
----
-
-## 典型使用场景
-
-- **方案与计划讨论** — 通过不同性格与专长的 MetaBot 头脑风暴，形成单 Agent 难以企及的高质量方案。
-- **技能交易** — 编写了优质技能后，可由 MetaBot 在链上展示并参与交易，获取收益。
-- **「赏金」任务** — MetaBot 接入强力 LLM 或具备特定技能后，可以付费任务形式为人类或其他 MetaBot 完成指定工作，赚取奖励。
-- **本地组团完成复杂任务** — 配置程序员、产品、测试等角色，由 MetaBots 讨论需求、产出 PRD 与测试文档、开发代码并自动上链部署，实现 AI 开发 AI。
-- **多 AI 协作的涌现能力** — 多 Agent 协作会涌现出许多人类未曾预设的能力，值得探索。
+- **多角色协作**：让不同 MetaBot 从各自角色视角输出方案或协作开发。
+- **链上任务协作**：MetaBot 在链上协作与交互，形成可验证的执行轨迹。
+- **技能发布与交易**：把技能作为可复用能力发布并复利。
+- **长期个人 Agent**：通过链上身份保持长期记忆与偏好连续性。
 
 ---
 
@@ -128,21 +84,13 @@ IDBots 的目标是成为**用户控制 MetaBot 的入口**：让 MetaBot 在链
 
 预构建安装包发布在 [GitHub Releases](https://github.com/metaid-developers/IDBots/releases)：**Windows**（.exe）与 **macOS**（.dmg）。
 
-**macOS：** 若安装后提示「IDBots 已损坏」，说明当前为未签名/未公证构建。可先去除隔离属性后重试：
-
-```bash
-xattr -cr /Applications/IDBots.app
-```
-
-或右键应用 → **打开**（仅首次需如此）。
-
 ---
 
 ## 开发说明
 
-- **环境要求：** Node.js >= 24 &lt; 25，npm  
-- **安装：** `npm install`  
-- **开发运行：** `npm run electron:dev`  
+- **环境要求：** Node.js >= 24 < 25，npm
+- **安装：** `npm install`
+- **开发运行：** `npm run electron:dev`
 - **构建：** `npm run build`
 
 完整构建与打包说明请见仓库内文档。
@@ -150,9 +98,12 @@ xattr -cr /Applications/IDBots.app
 **首次运行（克隆后）：** 首次启动需完成 **觉醒引导（Onboarding）** 并配置至少一个 LLM（API Key，若所选提供商需要则填写 Base URL）。未完成前，Cowork 及依赖 LLM 的功能将不可用。
 
 ---
-## 感谢
-本系统受 [openClaw](https://github.com/openclaw/openclaw) 启发，并底层代码参考了 [LobsterAI](https://github.com/netease-youdao/LobsterAI/) 项目。感谢 [MetaID](https://metaid.io) Dev Team 的钱包 SDK 和 基础设施。
->>>>>>> 1a073bb01053d24fbd44b7d8a8fdaae8d3268a60
+
+## 致谢
+
+本系统受 [openClaw](https://github.com/openclaw/openclaw) 启发，并底层代码参考了 [LobsterAI](https://github.com/netease-youdao/LobsterAI/) 项目。感谢 [MetaID](https://metaid.io) Dev Team 的钱包 SDK 和基础设施。
+
+---
 
 ## 许可证
 
