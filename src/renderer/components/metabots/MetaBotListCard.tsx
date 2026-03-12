@@ -9,6 +9,7 @@ import { CpuChipIcon, DocumentDuplicateIcon, TrashIcon } from '@heroicons/react/
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 import MetaBotBackupMnemonicModal from './MetaBotBackupMnemonicModal';
+import MetaBotTransferModal from './MetaBotTransferModal';
 
 interface MetaBotListCardProps {
   metabot: Metabot;
@@ -37,6 +38,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [balance, setBalance] = useState<BalanceState>({ loading: true });
   const [isAddressExpanded, setIsAddressExpanded] = useState(false);
   const [showBackupMnemonicModal, setShowBackupMnemonicModal] = useState(false);
+  const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +81,12 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const formatShort = (addr: string) => {
     if (!addr || addr.length < 16) return addr;
     return `${addr.slice(0, 6)}...${addr.slice(-6)}`;
+  };
+
+  const parseBalanceValue = (balanceStr: string | undefined): string => {
+    if (!balanceStr || balanceStr === i18nService.t('metabotBalanceLoading') || balanceStr === i18nService.t('metabotBalanceError')) return '0';
+    const parts = balanceStr.trim().split(/\s+/);
+    return parts[0] ?? '0';
   };
 
   const btcAddr = metabot.btc_address ?? '';
@@ -230,6 +238,17 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
                 >
                   <DocumentDuplicateIcon className="h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTransferModal({ chain: 'mvc' });
+                  }}
+                  className="shrink-0 px-1.5 py-0.5 rounded text-xs bg-claude-accent/20 dark:bg-claude-accent/30 text-claude-accent hover:bg-claude-accent/30 dark:hover:bg-claude-accent/40"
+                  title={i18nService.t('metabotTransfer')}
+                >
+                  {i18nService.t('metabotTransfer')}
+                </button>
               </div>
             )}
             {dogeAddr && (
@@ -252,6 +271,17 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
                 >
                   <DocumentDuplicateIcon className="h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTransferModal({ chain: 'doge' });
+                  }}
+                  className="shrink-0 px-1.5 py-0.5 rounded text-xs bg-claude-accent/20 dark:bg-claude-accent/30 text-claude-accent hover:bg-claude-accent/30 dark:hover:bg-claude-accent/40"
+                  title={i18nService.t('metabotTransfer')}
+                >
+                  {i18nService.t('metabotTransfer')}
+                </button>
               </div>
             )}
             <div className="pt-1">
@@ -273,6 +303,28 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
         <MetaBotBackupMnemonicModal
           metabot={metabot}
           onClose={() => setShowBackupMnemonicModal(false)}
+        />
+      )}
+      {transferModal && (
+        <MetaBotTransferModal
+          metabot={metabot}
+          chain={transferModal.chain}
+          fromAddress={transferModal.chain === 'mvc' ? mvcAddr : dogeAddr}
+          maxBalance={parseBalanceValue(transferModal.chain === 'mvc' ? balance.mvc : balance.doge)}
+          unit={transferModal.chain === 'mvc' ? 'SPACE' : 'DOGE'}
+          onClose={() => setTransferModal(null)}
+          onSuccess={() => {
+            setTransferModal(null);
+            window.electron.idbots.getAddressBalance({ metabotId: metabot.id }).then((res) => {
+              if (res.success && res.balance) {
+                setBalance((prev) => ({
+                  ...prev,
+                  mvc: res.balance!.mvc != null ? `${res.balance!.mvc.value.toFixed(8)} ${res.balance!.mvc.unit}` : prev.mvc,
+                  doge: res.balance!.doge != null ? `${res.balance!.doge.value.toFixed(8)} ${res.balance!.doge.unit}` : prev.doge,
+                }));
+              }
+            });
+          }}
         />
       )}
     </>

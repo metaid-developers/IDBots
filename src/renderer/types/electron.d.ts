@@ -459,6 +459,40 @@ interface IElectronAPI {
         balance?: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } };
         error?: string;
       }>;
+    getTransferFeeSummary: (chain: 'mvc' | 'doge') => Promise<{
+      success: boolean;
+      list?: Array<{ title: string; desc: string; feeRate: number }>;
+      defaultFeeRate?: number;
+      error?: string;
+    }>;
+    buildTransferPreview: (params: {
+      metabotId: number;
+      chain: 'mvc' | 'doge';
+      toAddress: string;
+      amountSpaceOrDoge: string;
+      feeRate: number;
+    }) => Promise<{
+      success: boolean;
+      preview?: {
+        fromAddress: string;
+        toAddress: string;
+        amount: string;
+        amountUnit: string;
+        feeEstimated: string;
+        feeEstimatedUnit: string;
+        total: string;
+        totalUnit: string;
+        feeRateSatPerVb: number;
+      };
+      error?: string;
+    }>;
+    executeTransfer: (params: {
+      metabotId: number;
+      chain: 'mvc' | 'doge';
+      toAddress: string;
+      amountSpaceOrDoge: string;
+      feeRate: number;
+    }) => Promise<{ success: boolean; txId?: string; error?: string }>;
     getMetaBotMnemonic: (metabotId: number) => Promise<{ success: boolean; mnemonic?: string; error?: string }>;
     deleteMetaBot: (metabotId: number) => Promise<{ success: boolean; error?: string }>;
     syncMetaBot: (metabotId: number) => Promise<{

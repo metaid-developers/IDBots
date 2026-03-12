@@ -42,8 +42,8 @@ export interface CreateMetaBotWalletResult {
   chat_public_key_pin_id: string;
 }
 
-/** Parse addressIndex from BIP44 path (e.g. m/44'/10001'/0'/0/0 -> 0) */
-function parseAddressIndexFromPath(path: string): number {
+/** Parse addressIndex from BIP44 path (e.g. m/44'/10001'/0'/0/0 -> 0). Exported for transfer service. */
+export function parseAddressIndexFromPath(path: string): number {
   if (!path || typeof path !== 'string') return 0;
   const m = path.match(/\/0\/(\d+)$/);
   return m ? parseInt(m[1], 10) : 0;
@@ -59,7 +59,8 @@ async function getV3AddressType(chain: 'mvc' | 'btc' | 'doge'): Promise<AddressT
   return AddressType.SameAsMvc;
 }
 
-async function getMvcWallet(mnemonic: string, addressIndex: number): Promise<MvcWallet> {
+/** Get MVC wallet for given mnemonic and address index. Exported for transfer service. */
+export async function getMvcWallet(mnemonic: string, addressIndex: number): Promise<MvcWallet> {
   const network = getNet();
   const addressType = await getV3AddressType('mvc');
   return new MvcWallet({
@@ -84,7 +85,8 @@ async function getBtcWallet(mnemonic: string, addressIndex: number): Promise<Btc
   });
 }
 
-async function getDogeWallet(mnemonic: string, addressIndex: number): Promise<DogeWallet> {
+/** Get DOGE wallet for given mnemonic and address index. Exported for transfer service. */
+export async function getDogeWallet(mnemonic: string, addressIndex: number): Promise<DogeWallet> {
   const network = getNet();
   const addressType = await getV3AddressType('doge');
   return new DogeWallet({
