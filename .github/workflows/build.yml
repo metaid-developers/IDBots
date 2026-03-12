@@ -89,6 +89,30 @@ jobs:
           SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
           SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
+      - name: Prepare macOS signing keychain
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
+            echo "CSC_LINK/CSC_KEY_PASSWORD not configured for macOS signing." >&2
+            exit 1
+          fi
+          KEYCHAIN_PATH="$RUNNER_TEMP/idbots.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          CERT_PATH="$RUNNER_TEMP/idbots-signing.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$CERT_PATH" 2>/dev/null || printf '%s' "$CSC_LINK" | base64 -D > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "CSC_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
       - name: Build Electron app package
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -132,12 +156,19 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MAC_CODESIGN_IDENTITY: ${{ secrets.MAC_CODESIGN_IDENTITY }}
+          CSC_KEYCHAIN: ${{ env.CSC_KEYCHAIN }}
+          CSC_KEYCHAIN_PASSWORD: ${{ env.CSC_KEYCHAIN_PASSWORD }}
         run: |
           if [ -z "$MAC_CODESIGN_IDENTITY" ]; then
             echo "MAC_CODESIGN_IDENTITY is required for DMG signing." >&2
             exit 1
           fi
-          codesign --force --sign "$MAC_CODESIGN_IDENTITY" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+          if [ -n "$CSC_KEYCHAIN" ] && [ -n "$CSC_KEYCHAIN_PASSWORD" ]; then
+            security unlock-keychain -p "$CSC_KEYCHAIN_PASSWORD" "$CSC_KEYCHAIN"
+            codesign --force --sign "$MAC_CODESIGN_IDENTITY" --keychain "$CSC_KEYCHAIN" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+          else
+            codesign --force --sign "$MAC_CODESIGN_IDENTITY" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+          fi
           xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
