@@ -78,7 +78,7 @@ jobs:
       - name: Configure code signing
         shell: bash
         run: |
-          if [ -n "${SECRET_CSC_LINK}" ]; then
+          if [ "$RUNNER_OS" = "macOS" ] && [ -n "${SECRET_CSC_LINK}" ]; then
             echo "CSC_LINK=${SECRET_CSC_LINK}" >> "$GITHUB_ENV"
             echo "CSC_KEY_PASSWORD=${SECRET_CSC_KEY_PASSWORD}" >> "$GITHUB_ENV"
             echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
