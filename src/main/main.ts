@@ -3080,6 +3080,11 @@ if (!gotTheLock) {
     }
 
     store = await initStore();
+
+    // Global fee rate store: must init after store is ready
+    const { initFeeRateStore } = require('./services/feeRateStore') as typeof import('./services/feeRateStore');
+    initFeeRateStore(getStore()).catch((e: unknown) => console.error('[FeeRateStore] init failed:', e));
+
     metaidRpcServer = startMetaidRpcServer(getMetabotStore, getStore);
     // Defensive recovery: app may be force-closed during execution and leave
     // stale running flags in DB. Normalize them on startup.

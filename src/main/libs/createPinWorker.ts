@@ -150,13 +150,25 @@ async function main(): Promise<void> {
   const networkKind = (String(networkParam ?? '').toLowerCase().trim() || 'mvc') as string;
 
   if (networkKind === 'doge') {
+    const log = (msg: string) => {
+      try {
+        process.stderr.write(`[createPinWorker:doge] ${msg}\n`);
+      } catch {
+        /* noop */
+      }
+    };
     const { runDogeCreatePin } = await import('./dogeInscribe');
-    const { fetchDogeFeeRates } = await import('./dogeApi');
+    const { fetchDogeFeeRateFast } = await import('./dogeApi');
+    const DOGE_MIN_FEERATE = 100000;
     let feeRate = payload.feeRate;
-    if (feeRate == null || !Number.isFinite(feeRate) || feeRate <= 0) {
-      const feeRates = await fetchDogeFeeRates();
-      feeRate = feeRates.length > 0 ? feeRates[0].feeRate : 5000000;
+    if (feeRate == null || !Number.isFinite(feeRate) || feeRate < DOGE_MIN_FEERATE) {
+      log(`payload feeRate=${feeRate} too low (min ${DOGE_MIN_FEERATE}), fetching Fast*1.5 from API...`);
+      feeRate = await fetchDogeFeeRateFast();
+      log(`feeRate from API (Fast*1.5) = ${feeRate}`);
+    } else {
+      log(`feeRate from payload = ${feeRate}`);
     }
+    log(`calling runDogeCreatePin with feeRate=${feeRate}`);
     const result = await runDogeCreatePin(
       mnemonic,
       pathStr,
@@ -175,10 +187,29 @@ async function main(): Promise<void> {
   }
 
   if (networkKind === 'btc') {
-    console.error(
-      JSON.stringify({ success: false, error: 'BTC chain not yet supported' })
+    const btcLog = (msg: string) => {
+      try { process.stderr.write(`[createPinWorker:btc] ${msg}\n`); } catch { /* noop */ }
+    };
+    const { runBtcCreatePin } = await import('./btcInscribe');
+    let feeRate = payload.feeRate;
+    const BTC_MIN_FEERATE = 1;
+    if (feeRate == null || !Number.isFinite(feeRate) || feeRate < BTC_MIN_FEERATE) {
+      btcLog(`payload feeRate=${feeRate} invalid, using default 2`);
+      feeRate = 2;
+    } else {
+      btcLog(`feeRate from payload = ${feeRate}`);
+    }
+    btcLog(`calling runBtcCreatePin with feeRate=${feeRate}`);
+    const result = await runBtcCreatePin(mnemonic, pathStr, metaidData, feeRate);
+    console.log(
+      JSON.stringify({
+        success: true,
+        txids: result.txids,
+        pinId: result.pinId,
+        totalCost: result.totalCost,
+      })
     );
-    process.exit(1);
+    return;
   }
 
   const feeRates = buildFeeRatePlan(payload.feeRate ?? 1);

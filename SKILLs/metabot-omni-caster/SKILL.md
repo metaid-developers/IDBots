@@ -29,7 +29,8 @@ node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
   --path "<协议的逻辑路径>" \
   --payload '<JSON 字符串或文本内容>' \
   [--operation "<操作类型>"] \
-  [--content-type "<MIME 类型>"]
+  [--content-type "<MIME 类型>"] \
+  [--network mvc|doge|btc]
 ```
 
 **文件（二进制）上链：**
@@ -37,7 +38,8 @@ node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
 node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
   --path "/file" \
   --payload-file <本地文件路径> \
-  [--content-type "<MIME 类型>"]
+  [--content-type "<MIME 类型>"] \
+  [--network mvc|doge|btc]
 ```
 
 **参数说明：**
@@ -50,6 +52,7 @@ node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
 | `--operation`    | *(可选)* 动作类型：`create`, `modify`, `revoke`。                         | `create`             |
 | `--content-type` | *(可选)* MIME 类型。JSON 多为 `application/json`；文件为 `image/jpeg` 等。        | `application/json`   |
 | `--encoding`     | *(可选)* 当 `--payload` 为 base64 字符串时，传 `base64`。                        | 依 content-type 自动推断   |
+| `--network`      | *(可选)* 目标网络：`mvc`、`doge`、`btc`。用户说"发到 doge 网络"即传 `--network doge`。 | `mvc`                |
 
 
 ## ⚠️ AI 行为底线与转义规范 (Strict Constraints)
@@ -59,3 +62,4 @@ node "$SKILLS_ROOT/metabot-omni-caster/scripts/omni-caster.js" \
 *正确示范*：`--payload '{"isLike": 1, "likeTo": "abc...i0"}'`；文件上链：`--path /file --payload-file ./photo.png --content-type image/png`
 2. **无需询问私钥**：底层 RPC 网关会自动处理你的专属 MetaBot 身份签名，你只需专心构造正确的业务 JSON。
 3. **未卜先知**：如果上下文或用户指令中缺少必填字段（例如让你点赞，但没告诉你目标帖子的 PINID），请直接回复用户询问缺失的信息，**不要**随意捏造虚假的 PINID 上链。
+4. **网络参数**：当用户指定了目标网络（如"发到 doge 网络"），必须加上 `--network doge`。未指定时默认 `mvc`。

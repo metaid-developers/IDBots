@@ -11,6 +11,7 @@ import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { createPin, getPinData, setMetaidCoreStore, type MetaidDataPayload } from './metaidCore';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './assignGroupChatTaskService';
+import { getRate as getGlobalFeeRate } from './feeRateStore';
 
 const RPC_HOST = '127.0.0.1';
 const RPC_PORT = 31200;
@@ -138,8 +139,10 @@ export function startMetaidRpcServer(
 
     try {
       const store = getMetabotStore();
+      const feeRate = getGlobalFeeRate(network);
       const result = await createPin(store, metabot_id, metaidData as MetaidDataPayload, {
         network: network as 'mvc' | 'doge' | 'btc',
+        feeRate,
       });
       res.writeHead(200);
       const txid = result.txids[0];

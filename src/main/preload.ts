@@ -248,6 +248,12 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),
     set: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
   },
+  feeRates: {
+    getTiers: () => ipcRenderer.invoke('feeRates:getTiers') as Promise<Record<string, { title: string; desc: string; feeRate: number }[]>>,
+    getSelected: () => ipcRenderer.invoke('feeRates:getSelected') as Promise<Record<string, string>>,
+    select: (chain: string, tierTitle: string) => ipcRenderer.invoke('feeRates:select', chain, tierTitle) as Promise<{ success: boolean }>,
+    refresh: () => ipcRenderer.invoke('feeRates:refresh') as Promise<Record<string, { title: string; desc: string; feeRate: number }[]>>,
+  },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),

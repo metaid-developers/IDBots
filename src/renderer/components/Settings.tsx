@@ -26,7 +26,7 @@ import IMSettings from './im/IMSettings';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import { defaultConfig, type AppConfig, getVisibleProviders } from '../config';
 
-type TabType = 'general' | 'model' | 'coworkSandbox' | 'coworkMemory' | 'shortcuts' | 'im' | 'email';
+type TabType = 'general' | 'model' | 'coworkSandbox' | 'coworkMemory' | 'shortcuts' | 'im' | 'email' | 'paramsConfig';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
@@ -372,6 +372,41 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     settings: 'Ctrl+,',
   });
 
+  // Fee rate configuration
+  type FeeRateTier = { title: string; desc: string; feeRate: number };
+  const [feeRateTiers, setFeeRateTiers] = useState<Record<string, FeeRateTier[]>>({
+    btc: [{ title: 'Fast', desc: 'About 10 minutes', feeRate: 2 }, { title: 'Avg', desc: 'About 30 minutes', feeRate: 2 }, { title: 'Slow', desc: 'About 1 hours', feeRate: 2 }],
+    mvc: [{ title: 'Fast', desc: 'About 10 minutes', feeRate: 1 }, { title: 'Avg', desc: 'About 30 minutes', feeRate: 1 }, { title: 'Slow', desc: 'About 1 hours', feeRate: 1 }],
+    doge: [{ title: 'Fast', desc: 'About 10 minutes', feeRate: 7500000 }, { title: 'Avg', desc: 'About 30 minutes', feeRate: 5000000 }, { title: 'Slow', desc: 'About 1 hours', feeRate: 5000000 }],
+  });
+  const [selectedFeeTier, setSelectedFeeTier] = useState<Record<string, string>>({
+    btc: 'Fast',
+    mvc: 'Fast',
+    doge: 'Fast',
+  });
+  const [feeRateLoading, setFeeRateLoading] = useState(false);
+
+  const handleSelectFeeTier = useCallback((chain: string, tierTitle: string) => {
+    setSelectedFeeTier((prev) => ({ ...prev, [chain]: tierTitle }));
+    window.electron.feeRates.select(chain, tierTitle).catch(() => {});
+  }, []);
+
+  const loadFeeRates = useCallback(async () => {
+    setFeeRateLoading(true);
+    try {
+      const [tiersData, selectedData] = await Promise.all([
+        window.electron.feeRates.refresh(),
+        window.electron.feeRates.getSelected(),
+      ]);
+      if (tiersData) setFeeRateTiers(tiersData);
+      if (selectedData) setSelectedFeeTier(selectedData);
+    } catch {
+      // silently use defaults
+    } finally {
+      setFeeRateLoading(false);
+    }
+  }, []);
+
   // State for model editing
   const [isAddingModel, setIsAddingModel] = useState(false);
   const [isEditingModel, setIsEditingModel] = useState(false);
@@ -440,6 +475,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   useEffect(() => {
     loadCoworkSandboxStatus();
   }, [loadCoworkSandboxStatus]);
+
+  useEffect(() => {
+    loadFeeRates();
+  }, [loadFeeRates]);
 
   useEffect(() => {
     const unsubscribe = coworkService.onSandboxDownloadProgress((progress) => {
@@ -1073,7 +1112,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
           key: primaryProvider.apiKey,
           baseUrl: primaryProvider.baseUrl,
         },
-        providers: normalizedProviders, // Save all providers configuration
+        providers: normalizedProviders,
         theme,
         language,
         shortcuts,
@@ -1137,6 +1176,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
       setNewModelId('');
       setNewModelSupportsImage(false);
       setModelFormError(null);
+    }
+    if (tab === 'paramsConfig') {
+      loadFeeRates();
     }
     setActiveTab(tab);
   };
@@ -1644,7 +1686,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     { key: 'email',          label: i18nService.t('emailTab'),       icon: <EnvelopeIcon className="h-5 w-5" /> },
     { key: 'coworkMemory',   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
     { key: 'coworkSandbox',  label: i18nService.t('coworkSandbox'),  icon: <ShieldCheckIcon className="h-5 w-5" /> },
-    { key: 'shortcuts',      label: i18nService.t('shortcuts'),      icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><rect x="2" y="4" width="20" height="14" rx="2" /><line x1="6" y1="8" x2="8" y2="8" /><line x1="10" y1="8" x2="12" y2="8" /><line x1="14" y1="8" x2="16" y2="8" /><line x1="6" y1="12" x2="8" y2="12" /><line x1="10" y1="12" x2="14" y2="12" /><line x1="16" y1="12" x2="18" y2="12" /><line x1="8" y1="15.5" x2="16" y2="15.5" /></svg> },
+    { key: 'paramsConfig',    label: i18nService.t('paramsAndConfig'), icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" /></svg> },
   ], [language]);
 
   const activeTabLabel = useMemo(() => {
@@ -2534,6 +2576,91 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
             </div>
           </div>
         );
+
+      case 'paramsConfig': {
+        const chains = [
+          { key: 'btc', label: i18nService.t('feeRateNetwork_btc'), unit: i18nService.t('feeRateUnit_btc'), color: '#F7931A' },
+          { key: 'mvc', label: i18nService.t('feeRateNetwork_mvc'), unit: i18nService.t('feeRateUnit_mvc'), color: '#5C6BC0' },
+          { key: 'doge', label: i18nService.t('feeRateNetwork_doge'), unit: i18nService.t('feeRateUnit_doge'), color: '#C3A634' },
+        ] as const;
+
+        return (
+          <div className="space-y-6">
+            <div>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-1">
+                {i18nService.t('feeRateConfig')}
+              </h4>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mb-4">
+                {i18nService.t('feeRateConfigDesc')}
+              </p>
+
+              <div className="space-y-3">
+                {chains.map(({ key: chain, label, unit, color }) => {
+                  const tiers = feeRateTiers[chain] ?? [];
+                  const activeTier = selectedFeeTier[chain] ?? 'Fast';
+                  return (
+                    <div key={chain} className="rounded-xl dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted px-3 py-2.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style={{ backgroundColor: color }}>
+                          {label[0]}
+                        </div>
+                        <span className="text-xs font-semibold dark:text-claude-darkText text-claude-text">
+                          {label}
+                        </span>
+                        <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary ml-auto">
+                          {chain === 'btc' ? 'Bitcoin' : chain === 'mvc' ? 'MicroVisionChain' : 'Dogecoin'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        {tiers.map((tier) => {
+                          const isSelected = activeTier === tier.title;
+                          return (
+                            <button
+                              key={tier.title}
+                              type="button"
+                              onClick={() => handleSelectFeeTier(chain, tier.title)}
+                              className={`flex flex-col items-center py-1.5 px-1 rounded-md border-2 transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
+                                  : 'dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg hover:border-claude-accent/40'
+                              }`}
+                            >
+                              <span className={`text-[10px] font-medium ${
+                                isSelected
+                                  ? 'text-claude-accent'
+                                  : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'
+                              }`}>
+                                {tier.title}
+                              </span>
+                              <span className={`text-sm font-bold tabular-nums leading-tight ${
+                                isSelected
+                                  ? 'dark:text-claude-darkText text-claude-text'
+                                  : 'dark:text-claude-darkText text-claude-text'
+                              }`}>
+                                {tier.feeRate.toLocaleString()}
+                              </span>
+                              <span className="text-[9px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                                {unit}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {feeRateLoading && (
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-2 text-center">
+                  {i18nService.t('feeRateLoading')}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      }
 
       case 'im':
         return <IMSettings />;

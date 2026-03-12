@@ -168,6 +168,12 @@ export interface AppConfig {
     settings: string;
     [key: string]: string | undefined;
   };
+  // 费率配置 (用户选定的各网络费率)
+  feeRates?: {
+    btc?: number;
+    mvc?: number;
+    doge?: number;
+  };
 }
 
 // 默认配置
@@ -307,7 +313,12 @@ export const defaultConfig: AppConfig = {
     newChat: 'Ctrl+N',
     search: 'Ctrl+F',
     settings: 'Ctrl+,',
-  }
+  },
+  feeRates: {
+    btc: 2,
+    mvc: 1,
+    doge: 7500000,
+  },
 };
 
 // 配置存储键

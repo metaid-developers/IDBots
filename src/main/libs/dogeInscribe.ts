@@ -19,6 +19,14 @@ import {
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 
+function debugLog(msg: string): void {
+  try {
+    process.stderr.write(`[doge-inscribe] ${msg}\n`);
+  } catch {
+    /* noop */
+  }
+}
+
 function parseAddressIndexFromPath(pathStr: string): number {
   if (!pathStr || typeof pathStr !== 'string') return 0;
   const m = pathStr.match(/\/0\/(\d+)$/);
@@ -248,6 +256,11 @@ export class DogeInscribe {
     ]);
   }
 
+  /**
+   * P2SH unlock script: <inscription_data_raw> <signature> <redeem_script>
+   * inscriptionScript is NOT wrapped in pushData — its inner pushData chunks
+   * must each become separate stack elements so the OP_DROPs in lockScript consume them.
+   */
   static signP2SHInput(
     tx: bitcoin.Transaction,
     inputIndex: number,
@@ -262,9 +275,8 @@ export class DogeInscribe {
       bitcoin.Transaction.SIGHASH_ALL
     );
     return Buffer.concat([
+      inscriptionScript,
       this.pushData(signatureDER),
-      this.pushData(tempKeyPair.publicKey),
-      this.pushData(inscriptionScript),
       this.pushData(lockScript),
     ]);
   }
@@ -415,6 +427,10 @@ export class DogeInscribe {
       return { success: false, error: 'No UTXOs available' };
     }
 
+    debugLog(`address=${address} utxoCount=${utxos.length} feeRate=${feeRate} (sat/KB)`);
+    const totalUtxo = utxos.reduce((s, u) => s + u.satoshis, 0);
+    debugLog(`totalUtxoSatoshis=${totalUtxo}`);
+
     let totalCommitCost = 0;
     let totalRevealCost = 0;
     const commitTxs: bitcoin.Transaction[] = [];
@@ -433,6 +449,10 @@ export class DogeInscribe {
           revealOutValue || DEFAULT_OUTPUT_VALUE,
           ECPairInstance
         );
+      const commitSize = commitTx.toHex().length / 2;
+      const revealSize = revealTx.toHex().length / 2;
+      debugLog(`pin#${commitTxs.length} commitTxSize=${commitSize} commitFee=${commitFee} revealTxSize=${revealSize} revealFee=${revealFee}`);
+
       commitTxs.push(commitTx);
       revealTxs.push(revealTx);
       totalCommitCost += commitFee;
@@ -443,13 +463,34 @@ export class DogeInscribe {
       totalCommitCost +
       totalRevealCost +
       (service ? parseInt(service.satoshis, 10) : 0);
+    debugLog(`totalCommitCost=${totalCommitCost} totalRevealCost=${totalRevealCost} totalCost=${totalCost}`);
 
     if (!options.noBroadcast) {
       const revealTxIds: string[] = [];
       for (let i = 0; i < commitTxs.length; i++) {
-        await broadcastDogeTx(commitTxs[i].toHex());
-        const revealTxId = await broadcastDogeTx(revealTxs[i].toHex());
-        revealTxIds.push(revealTxId);
+        const commitHex = commitTxs[i].toHex();
+        const localCommitTxId = commitTxs[i].getId();
+        debugLog(`broadcast commit tx#${i} size=${commitHex.length / 2} localTxId=${localCommitTxId}`);
+        let broadcastCommitTxId: string;
+        try {
+          broadcastCommitTxId = await broadcastDogeTx(commitHex);
+          debugLog(`broadcast commit tx#${i} ok remoteTxId=${broadcastCommitTxId}`);
+        } catch (e) {
+          debugLog(`broadcast commit tx#${i} FAIL: ${e instanceof Error ? e.message : String(e)}`);
+          throw e;
+        }
+        const revealHex = revealTxs[i].toHex();
+        const localRevealTxId = revealTxs[i].getId();
+        debugLog(`broadcast reveal tx#${i} size=${revealHex.length / 2} localTxId=${localRevealTxId}`);
+        debugLog(`reveal tx#${i} hex=${revealHex}`);
+        try {
+          const revealTxId = await broadcastDogeTx(revealHex);
+          revealTxIds.push(revealTxId);
+          debugLog(`broadcast reveal tx#${i} ok remoteTxId=${revealTxId}`);
+        } catch (e) {
+          debugLog(`broadcast reveal tx#${i} FAIL: ${e instanceof Error ? e.message : String(e)}`);
+          throw e;
+        }
       }
       const pinId = revealTxIds[0] ? `${revealTxIds[0]}i0` : undefined;
       return {

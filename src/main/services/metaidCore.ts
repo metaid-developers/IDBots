@@ -108,8 +108,9 @@ export async function createPin(
       ? String(options.network).toLowerCase().trim()
       : 'mvc'
   ) as CreatePinNetwork;
+  const defaultFeeRate = network === 'mvc' ? 1 : undefined;
   const payloadStr = JSON.stringify({
-    feeRate: options?.feeRate ?? 1,
+    feeRate: options?.feeRate ?? defaultFeeRate,
     network,
     metaidData: {
       ...metaidData,

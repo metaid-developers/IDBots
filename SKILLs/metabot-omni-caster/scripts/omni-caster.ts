@@ -27,6 +27,7 @@ interface ParsedArgs {
   operation?: string;
   'content-type'?: string;
   encoding?: string;
+  network?: string;
   help?: boolean;
 }
 
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
       operation: { type: 'string', short: 'o' },
       'content-type': { type: 'string', short: 'c' },
       encoding: { type: 'string', short: 'e' },
+      network: { type: 'string', short: 'n' },
       help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: true,
@@ -69,6 +71,7 @@ async function main(): Promise<void> {
     console.error(
       'Usage: node omni-caster.js --path "<protocol-path>" (--payload \'<json-or-text>\' | --payload-file <file>)'
       + ' [--operation <create|modify|revoke>] [--content-type <mime>] [--encoding <utf-8|base64>]'
+      + ' [--network mvc|doge|btc]'
     );
     process.exit(0);
   }
@@ -161,6 +164,9 @@ async function main(): Promise<void> {
     }
   }
 
+  const networkRaw = args.network?.toLowerCase?.()?.trim() ?? '';
+  const network = networkRaw === 'doge' || networkRaw === 'btc' ? networkRaw : 'mvc';
+
   const metaidData: Record<string, unknown> = {
     operation,
     path: args.path!.trim(),
@@ -175,6 +181,7 @@ async function main(): Promise<void> {
 
   const requestBody = {
     metabot_id: metabotId,
+    network,
     metaidData,
   };
 

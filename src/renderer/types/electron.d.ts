@@ -407,6 +407,12 @@ interface IElectronAPI {
     get: () => Promise<{ enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   };
+  feeRates: {
+    getTiers: () => Promise<Record<string, { title: string; desc: string; feeRate: number }[]>>;
+    getSelected: () => Promise<Record<string, string>>;
+    select: (chain: string, tierTitle: string) => Promise<{ success: boolean }>;
+    refresh: () => Promise<Record<string, { title: string; desc: string; feeRate: number }[]>>;
+  };
   appInfo: {
     getVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
