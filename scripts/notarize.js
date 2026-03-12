@@ -11,6 +11,11 @@ exports.default = async function notarizing(context) {
     return;
   }
 
+  if (process.env.IDBOTS_SKIP_NOTARIZE === '1') {
+    console.warn('⚠️  跳过公证: IDBOTS_SKIP_NOTARIZE=1');
+    return;
+  }
+
   if (!process.env.APPLE_ID || !process.env.APPLE_APP_SPECIFIC_PASSWORD) {
     console.warn('⚠️  跳过公证: 未设置 APPLE_ID 或 APPLE_APP_SPECIFIC_PASSWORD');
     console.warn('   如需启用公证，请创建 .env 文件并配置 Apple Developer 凭据');

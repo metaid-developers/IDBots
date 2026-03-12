@@ -18,8 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            build_args: --linux
+          - os: macos-latest
+            build_args: --mac --arm64 --dir
           - os: windows-latest
             build_args: --win --x64
 
@@ -94,9 +94,56 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IDBOTS_SKIP_NOTARIZE: ${{ runner.os == 'macOS' && '1' || '' }}
         run: >
           npx electron-builder ${{ matrix.build_args }}
           --publish never
+
+      - name: Notarize app (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent "release/mac-arm64/IDBots.app" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.app.zip"
+          xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.app.zip" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "release/mac-arm64/IDBots.app"
+
+      - name: Build DMG from prepackaged app (macOS)
+        if: runner.os == 'macOS'
+        env:
+          IDBOTS_SKIP_NOTARIZE: 1
+          PYTHON_PATH: /usr/bin/python3
+        run: |
+          PATH="$PWD/.tmp-bin:$PATH"
+          mkdir -p .tmp-bin
+          ln -sf /usr/bin/python3 .tmp-bin/python
+          npx electron-builder --mac dmg --arm64 --prepackaged "release/mac-arm64/IDBots.app" --publish never
+
+      - name: Codesign + notarize DMG (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MAC_CODESIGN_IDENTITY: ${{ secrets.MAC_CODESIGN_IDENTITY }}
+        run: |
+          if [ -z "$MAC_CODESIGN_IDENTITY" ]; then
+            echo "MAC_CODESIGN_IDENTITY is required for DMG signing." >&2
+            exit 1
+          fi
+          codesign --force --sign "$MAC_CODESIGN_IDENTITY" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+          xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -124,11 +171,11 @@ jobs:
           name: dist-windows-latest
           path: release-assets/windows
 
-      - name: Download Linux artifacts
+      - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist-ubuntu-latest
-          path: release-assets/linux
+          name: dist-macos-latest
+          path: release-assets/macos
 
       - name: Verify release assets
         run: |
@@ -148,13 +195,15 @@ jobs:
 
             Included packages:
             - Windows NSIS installer (.exe)
-            - Linux AppImage package (.AppImage)
+            - macOS DMG package (.dmg, signed & notarized)
 
             Notes:
-            - macOS DMG is built and notarized locally, then uploaded to the Release assets.
+            - macOS DMG is signed and notarized in GitHub Actions.
           fail_on_unmatched_files: true
           files: |
             release-assets/windows/*.exe
-            release-assets/linux/*.AppImage
+            release-assets/macos/*.dmg
+            release-assets/macos/*.blockmap
+            release-assets/macos/latest-mac.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
