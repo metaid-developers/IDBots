@@ -334,10 +334,11 @@ async function processOne(
       },
     });
 
-    const memoryPolicy = coworkStore.getEffectiveMemoryPolicyForMetabot(metabot.id);
+    const memoryBackend = coworkStore.getMemoryBackend();
+    const memoryPolicy = memoryBackend.getEffectiveMemoryPolicyForMetabot(metabot.id);
     const memoryContext = memoryPolicy.memoryEnabled
       ? buildMemoryContextBlock(
-          coworkStore.listUserMemories({
+          memoryBackend.listUserMemories({
             metabotId: metabot.id,
             status: 'created',
             includeDeleted: false,
@@ -390,7 +391,7 @@ async function processOne(
 
     if (memoryPolicy.memoryEnabled) {
       try {
-        const result = await coworkStore.applyTurnMemoryUpdates({
+        const result = await memoryBackend.applyTurnMemoryUpdates({
           sessionId,
           userText: plaintext,
           assistantText: trimmed,

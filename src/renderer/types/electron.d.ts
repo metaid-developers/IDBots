@@ -480,7 +480,7 @@ interface IElectronAPI {
         balance?: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } };
         error?: string;
       }>;
-    getTransferFeeSummary: (chain: 'mvc' | 'doge') => Promise<{
+    getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => Promise<{
       success: boolean;
       list?: Array<{ title: string; desc: string; feeRate: number }>;
       defaultFeeRate?: number;
@@ -488,7 +488,7 @@ interface IElectronAPI {
     }>;
     buildTransferPreview: (params: {
       metabotId: number;
-      chain: 'mvc' | 'doge';
+      chain: 'mvc' | 'doge' | 'btc';
       toAddress: string;
       amountSpaceOrDoge: string;
       feeRate: number;
@@ -509,7 +509,7 @@ interface IElectronAPI {
     }>;
     executeTransfer: (params: {
       metabotId: number;
-      chain: 'mvc' | 'doge';
+      chain: 'mvc' | 'doge' | 'btc';
       toAddress: string;
       amountSpaceOrDoge: string;
       feeRate: number;

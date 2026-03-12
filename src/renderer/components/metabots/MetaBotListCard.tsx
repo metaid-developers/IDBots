@@ -38,7 +38,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [balance, setBalance] = useState<BalanceState>({ loading: true });
   const [isAddressExpanded, setIsAddressExpanded] = useState(false);
   const [showBackupMnemonicModal, setShowBackupMnemonicModal] = useState(false);
-  const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' } | null>(null);
+  const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' | 'btc' } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -197,12 +197,12 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
         {isAddressExpanded && (
           <div className="space-y-2 mt-2">
             {btcAddr && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-8 shrink-0">BTC</span>
+              <div className="flex items-center gap-1.5 text-xs overflow-hidden">
+                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-10 shrink-0">BTC</span>
                 <code className="truncate flex-1 min-w-0 dark:text-claude-darkText text-claude-text">
                   {formatShort(btcAddr)}
                 </code>
-                <span className="shrink-0 dark:text-claude-darkText text-claude-text">
+                <span className="shrink-0 dark:text-claude-darkText text-claude-text text-[11px] tabular-nums truncate max-w-[100px]">
                   {balance.loading ? i18nService.t('metabotBalanceLoading') : balance.btc ?? '0.00'}
                 </span>
                 <button
@@ -216,15 +216,26 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
                 >
                   <DocumentDuplicateIcon className="h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTransferModal({ chain: 'btc' });
+                  }}
+                  className="shrink-0 px-1.5 py-0.5 rounded text-xs bg-claude-accent/20 dark:bg-claude-accent/30 text-claude-accent hover:bg-claude-accent/30 dark:hover:bg-claude-accent/40"
+                  title={i18nService.t('metabotTransfer')}
+                >
+                  {i18nService.t('metabotTransfer')}
+                </button>
               </div>
             )}
             {mvcAddr && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-8 shrink-0">MVC</span>
+              <div className="flex items-center gap-1.5 text-xs overflow-hidden">
+                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-10 shrink-0">MVC</span>
                 <code className="truncate flex-1 min-w-0 dark:text-claude-darkText text-claude-text">
                   {formatShort(mvcAddr)}
                 </code>
-                <span className="shrink-0 dark:text-claude-darkText text-claude-text">
+                <span className="shrink-0 dark:text-claude-darkText text-claude-text text-[11px] tabular-nums truncate max-w-[100px]">
                   {balance.loading ? i18nService.t('metabotBalanceLoading') : balance.mvc ?? '0.00'}
                 </span>
                 <button
@@ -252,12 +263,12 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
               </div>
             )}
             {dogeAddr && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-8 shrink-0">DOGE</span>
+              <div className="flex items-center gap-1.5 text-xs overflow-hidden">
+                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-10 shrink-0">DOGE</span>
                 <code className="truncate flex-1 min-w-0 dark:text-claude-darkText text-claude-text">
                   {formatShort(dogeAddr)}
                 </code>
-                <span className="shrink-0 dark:text-claude-darkText text-claude-text">
+                <span className="shrink-0 dark:text-claude-darkText text-claude-text text-[11px] tabular-nums truncate max-w-[100px]">
                   {balance.loading ? i18nService.t('metabotBalanceLoading') : balance.doge ?? '0.00'}
                 </span>
                 <button
@@ -309,9 +320,9 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
         <MetaBotTransferModal
           metabot={metabot}
           chain={transferModal.chain}
-          fromAddress={transferModal.chain === 'mvc' ? mvcAddr : dogeAddr}
-          maxBalance={parseBalanceValue(transferModal.chain === 'mvc' ? balance.mvc : balance.doge)}
-          unit={transferModal.chain === 'mvc' ? 'SPACE' : 'DOGE'}
+          fromAddress={transferModal.chain === 'mvc' ? mvcAddr : transferModal.chain === 'btc' ? btcAddr : dogeAddr}
+          maxBalance={parseBalanceValue(transferModal.chain === 'mvc' ? balance.mvc : transferModal.chain === 'btc' ? balance.btc : balance.doge)}
+          unit={transferModal.chain === 'mvc' ? 'SPACE' : transferModal.chain === 'btc' ? 'BTC' : 'DOGE'}
           onClose={() => setTransferModal(null)}
           onSuccess={() => {
             setTransferModal(null);

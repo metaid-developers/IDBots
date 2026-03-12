@@ -11,6 +11,7 @@ import {
   type CoworkMemoryGuardLevel,
 } from './libs/coworkMemoryExtractor';
 import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
+import type { MemoryBackend } from './memory/memoryBackend';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -555,14 +556,23 @@ interface CoworkConversationMappingRow {
   last_active_at: number | string;
 }
 
-export class CoworkStore {
+export class CoworkStore implements MemoryBackend {
   private db: Database;
   private saveDb: () => void;
+  private memoryBackend: MemoryBackend | null = null;
 
   constructor(db: Database, saveDb: () => void) {
     this.db = db;
     this.saveDb = saveDb;
     this.ensureSchemaCompatibility();
+  }
+
+  getMemoryBackend(): MemoryBackend {
+    return this.memoryBackend || this;
+  }
+
+  setMemoryBackend(backend: MemoryBackend | null): void {
+    this.memoryBackend = backend;
   }
 
   private ensureSchemaCompatibility(): void {

@@ -10,6 +10,7 @@ import path from 'path';
 import { app } from 'electron';
 import Decimal from 'decimal.js';
 import { getMvcWallet, getDogeWallet, parseAddressIndexFromPath } from './metabotWalletService';
+import { BtcWallet, AddressType, CoinType, SignType } from '@metalet/utxo-wallet-service';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import type { MetabotStore } from '../metabotStore';
 
@@ -19,7 +20,7 @@ const SATOSHI_PER_UNIT = 100_000_000;
 const SPACE_TO_SATS = new Decimal(10).pow(8);
 const MIN_DOGE_TRANSFER_SATOSHIS = 1_000_000; // 0.01 DOGE
 
-export type TransferChain = 'mvc' | 'doge';
+export type TransferChain = 'mvc' | 'doge' | 'btc';
 
 export interface FeeRateOption {
   title: string;
@@ -62,6 +63,7 @@ export async function getFeeSummary(chain: TransferChain): Promise<FeeSummaryRes
   const path =
     chain === 'mvc'
       ? '/wallet-api/v4/mvc/fee/summary'
+      : chain === 'btc' ? '/wallet-api/v3/btc/fee/summary'
       : '/wallet-api/v4/doge/fee/summary';
   const url = `${METALET_HOST}${path}?net=${NET}`;
   const res = await fetchJson<{ list: FeeRateOption[] }>(url);
@@ -74,6 +76,7 @@ export async function getFeeSummary(chain: TransferChain): Promise<FeeSummaryRes
 export function getDefaultFeeRate(chain: TransferChain, list: FeeRateOption[]): number {
   const avg = list.find((x) => x.title === 'Avg');
   if (chain === 'mvc') return avg?.feeRate ?? 1;
+  if (chain === 'btc') return avg?.feeRate ?? 2;
   return avg?.feeRate ?? 200_000; // DOGE sat/kB
 }
 
@@ -85,12 +88,13 @@ interface BroadcastMvcResponse {
 /** Broadcast MVC transaction. Returns txid. */
 async function broadcastMvcTx(rawTx: string): Promise<string> {
   const url = `${METALET_HOST}/wallet-api/v3/tx/broadcast`;
-  const data = await fetchPost<BroadcastMvcResponse>(url, {
+  const data = await fetchPost<BroadcastMvcResponse | string>(url, {
     chain: 'mvc',
     net: NET,
     rawTx,
   });
-  return data.txid ?? data.txId ?? '';
+  if (typeof data === 'string') return data;
+  return (data as BroadcastMvcResponse).txid ?? (data as BroadcastMvcResponse).txId ?? '';
 }
 
 /** Fetch DOGE UTXOs for address (no auth). */
@@ -106,7 +110,7 @@ interface DogeUtxoItem {
 async function fetchDogeTxHex(txId: string): Promise<string> {
   const url = `${METALET_HOST}/wallet-api/v4/doge/tx/raw?net=${NET}&txId=${encodeURIComponent(txId)}`;
   const res = await fetchJson<{ rawTx: string }>(url);
-  const raw = Array.isArray(res) ? undefined : (res as { rawTx?: string }).rawTx;
+  const raw = Array.isArray(res) ? undefined : ((res as any).hex ?? (res as any).rawTx);
   if (!raw) throw new Error(`Failed to fetch raw tx for ${txId}`);
   return raw;
 }
@@ -115,7 +119,9 @@ async function fetchDogeUtxos(address: string): Promise<DogeUtxoItem[]> {
   const url = `${METALET_HOST}/wallet-api/v4/doge/address/utxo-list?net=${NET}&address=${encodeURIComponent(address)}`;
   const data = (await fetchJson<{ list: DogeUtxoItem[] }>(url)) as { list: DogeUtxoItem[] };
   const list = data?.list ?? [];
-  return list.filter((u) => u.value >= MIN_DOGE_TRANSFER_SATOSHIS);
+  const all = list.filter((u) => u.value >= MIN_DOGE_TRANSFER_SATOSHIS);
+  const confirmed = all.filter((u: any) => u.height > 0);
+  return confirmed.length > 0 ? confirmed : all;
 }
 
 /** Build DOGE UTXO array with rawTx (SDK expects rawTx for correct signing; reference uses needRawTx: true). */
@@ -177,11 +183,14 @@ export async function buildTransferPreview(
   if (!wallet?.mnemonic?.trim()) throw new Error('Wallet not found');
   const addressIndex = parseAddressIndexFromPath(wallet.path ?? "m/44'/10001'/0'/0/0");
 
-  const unit = params.chain === 'mvc' ? 'SPACE' : 'DOGE';
+  const unit = params.chain === 'mvc' ? 'SPACE' : params.chain === 'btc' ? 'BTC' : 'DOGE';
   let amountSats: number;
   if (params.chain === 'mvc') {
     amountSats = new Decimal(params.amountSpaceOrDoge).mul(SPACE_TO_SATS).toNumber();
     if (!Number.isFinite(amountSats) || amountSats < 600) throw new Error('Invalid amount');
+  } else if (params.chain === 'btc') {
+    amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SATOSHI_PER_UNIT).toNumber());
+    if (amountSats < 546) throw new Error('Minimum 546 satoshis');
   } else {
     amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SATOSHI_PER_UNIT).toNumber());
     if (amountSats < MIN_DOGE_TRANSFER_SATOSHIS) throw new Error('Minimum 0.01 DOGE');
@@ -190,9 +199,11 @@ export async function buildTransferPreview(
   const fromAddress =
     params.chain === 'mvc'
       ? (await getMvcWallet(wallet.mnemonic, addressIndex)).getAddress()
+      : params.chain === 'btc'
+      ? getBtcWalletForTransfer(wallet.mnemonic, addressIndex).getAddress()
       : (await getDogeWallet(wallet.mnemonic, addressIndex)).getAddress();
 
-  const feeEstimatedSats = params.chain === 'mvc' ? 200 * params.feeRate : 300 * (params.feeRate / 1000);
+  const feeEstimatedSats = params.chain === 'mvc' ? 200 * params.feeRate : params.chain === 'btc' ? 150 * params.feeRate : 300 * (params.feeRate / 1000);
   const totalSats = amountSats + Math.ceil(feeEstimatedSats);
   const feeValue = feeEstimatedSats / SATOSHI_PER_UNIT;
   const totalValue = totalSats / SATOSHI_PER_UNIT;
@@ -214,6 +225,38 @@ export interface ExecuteTransferResult {
   success: boolean;
   txId?: string;
   error?: string;
+}
+
+function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWallet {
+  return new BtcWallet({
+    coinType: CoinType.MVC,
+    addressType: AddressType.SameAsMvc,
+    addressIndex,
+    network: 'livenet' as 'livenet',
+    mnemonic,
+  });
+}
+
+async function fetchBtcUtxosForTransfer(address: string): Promise<{ txId: string; outputIndex: number; satoshis: number; address: string; rawTx?: string; confirmed?: boolean }[]> {
+  const url = `${METALET_HOST}/wallet-api/v3/address/btc-utxo?net=${NET}&address=${encodeURIComponent(address)}&unconfirmed=1`;
+  const list = await fetchJson<Array<{ txId: string; outputIndex: number; satoshis: number; address?: string; confirmed?: boolean }>>(url);
+  const all = (list ?? []).filter((u) => u.satoshis >= 600).map((u) => ({ txId: u.txId, outputIndex: u.outputIndex, satoshis: u.satoshis, address: u.address || address, confirmed: u.confirmed, rawTx: undefined as string | undefined }));
+  const confirmed = all.filter((u) => u.confirmed !== false);
+  const filtered = confirmed.length > 0 ? confirmed : all;
+  for (const utxo of filtered) {
+    try {
+      const r = await fetchJson<{ rawTx?: string; hex?: string }>(`${METALET_HOST}/wallet-api/v3/tx/raw?net=${NET}&txId=${encodeURIComponent(utxo.txId)}&chain=btc`);
+      utxo.rawTx = (r as any)?.rawTx ?? (r as any)?.hex ?? '';
+    } catch { /* skip */ }
+  }
+  return filtered;
+}
+
+async function broadcastBtcTx(rawTx: string): Promise<string> {
+  const url = `${METALET_HOST}/wallet-api/v3/tx/broadcast`;
+  const data = await fetchPost<string>(url, { chain: 'btc', net: NET, rawTx });
+  if (!data || typeof data !== 'string') throw new Error('BTC broadcast failed');
+  return data;
 }
 
 /** Safe error message extraction without relying on instanceof Error (avoids cross-realm issues). */
@@ -369,6 +412,25 @@ export async function executeTransfer(
       const broadcastTxId = await broadcastDogeTx(rawTx);
       console.log('[Transfer] DOGE success txId:', broadcastTxId ?? txId);
       return { success: true, txId: broadcastTxId ?? txId };
+    }
+
+    if (params.chain === 'btc') {
+      const amountSatoshis = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SATOSHI_PER_UNIT).toNumber());
+      if (amountSatoshis < 546) return { success: false, error: 'Minimum transfer is 546 satoshis' };
+      console.log('[Transfer] BTC: signing', { amountSatoshis, feeRate: params.feeRate });
+      const btcWallet = getBtcWalletForTransfer(wallet.mnemonic, addressIndex);
+      const btcAddress = btcWallet.getAddress();
+      const utxos = await fetchBtcUtxosForTransfer(btcAddress);
+      if (utxos.length === 0) return { success: false, error: 'No BTC UTXOs available' };
+      const { rawTx: btcRawTx } = btcWallet.signTx(SignType.SEND, {
+        utxos: utxos as any,
+        outputs: [{ address: params.toAddress, satoshis: amountSatoshis }],
+        feeRate: params.feeRate,
+        changeAddress: btcAddress,
+      });
+      const broadcastTxId = await broadcastBtcTx(btcRawTx);
+      console.log('[Transfer] BTC success txId:', broadcastTxId);
+      return { success: true, txId: broadcastTxId };
     }
 
     return { success: false, error: 'Unsupported chain' };

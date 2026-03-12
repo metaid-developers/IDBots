@@ -483,6 +483,11 @@ export class CoworkRunner extends EventEmitter {
     this.getMetabotById = options?.getMetabotById;
   }
 
+
+  private getMemoryBackend() {
+    return this.store.getMemoryBackend();
+  }
+
   private isSessionStopRequested(sessionId: string, activeSession?: ActiveSession): boolean {
     return this.stoppedSessions.has(sessionId) || Boolean(activeSession?.abortController.signal.aborted);
   }
@@ -494,7 +499,7 @@ export class CoworkRunner extends EventEmitter {
     memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
     memoryUserMemoriesMaxItems: number;
   } {
-    const effective = this.store.getEffectiveMemoryPolicyForSession(sessionId);
+    const effective = this.getMemoryBackend().getEffectiveMemoryPolicyForSession(sessionId);
     return {
       memoryEnabled: effective.memoryEnabled,
       memoryImplicitUpdateEnabled: effective.memoryImplicitUpdateEnabled,
@@ -589,7 +594,7 @@ export class CoworkRunner extends EventEmitter {
         const job = this.turnMemoryQueue.shift();
         if (!job) continue;
         try {
-          const result = await this.store.applyTurnMemoryUpdates({
+          const result = await this.getMemoryBackend().applyTurnMemoryUpdates({
             sessionId: job.sessionId,
             userText: job.userText,
             assistantText: job.assistantText,
@@ -640,13 +645,13 @@ export class CoworkRunner extends EventEmitter {
       return '<userMemories></userMemories>';
     }
 
-    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
+    const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     if (metabotId == null) {
       return '<userMemories></userMemories>';
     }
 
     console.log('[Memory System] Target MetaBot ID: ' + metabotId + ' (read, sessionId=' + sessionId + ')');
-    const memories = this.store.listUserMemories({
+    const memories = this.getMemoryBackend().listUserMemories({
       metabotId,
       status: 'created',
       includeDeleted: false,
@@ -745,7 +750,7 @@ export class CoworkRunner extends EventEmitter {
     before?: string;
     after?: string;
   }, sessionId: string): string {
-    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
+    const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     const chats = this.store.conversationSearch({
       query: args.query,
       maxResults: args.max_results,
@@ -762,7 +767,7 @@ export class CoworkRunner extends EventEmitter {
     before?: string;
     after?: string;
   }, sessionId: string): string {
-    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
+    const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     const chats = this.store.recentChats({
       n: args.n,
       sortOrder: args.sort_order,
@@ -783,7 +788,7 @@ export class CoworkRunner extends EventEmitter {
     limit?: number;
     query?: string;
   }, sessionId: string): { text: string; isError: boolean } {
-    const metabotId = this.store.resolveMetabotIdForMemory(sessionId);
+    const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     if (metabotId == null) {
       return {
         text: this.formatMemoryUserEditsResult({
@@ -799,7 +804,7 @@ export class CoworkRunner extends EventEmitter {
     console.log('[Memory System] Target MetaBot ID: ' + metabotId + ' (write, sessionId=' + sessionId + ')');
 
     if (args.action === 'list') {
-      const entries = this.store.listUserMemories({
+      const entries = this.getMemoryBackend().listUserMemories({
         metabotId,
         query: args.query,
         status: 'all',
@@ -853,7 +858,7 @@ export class CoworkRunner extends EventEmitter {
       }
       const session = this.store.getSession(sessionId);
       const lastUserMsg = session?.messages ? [...session.messages].reverse().find((m) => m.type === 'user') : null;
-      const entry = this.store.createUserMemory({
+      const entry = this.getMemoryBackend().createUserMemory({
         text: validation.text,
         confidence: args.confidence,
         isExplicit: args.is_explicit ?? true,
@@ -906,7 +911,7 @@ export class CoworkRunner extends EventEmitter {
         }
         args.text = validation.text;
       }
-      const updated = this.store.updateUserMemory({
+      const updated = this.getMemoryBackend().updateUserMemory({
         id: args.id.trim(),
         metabotId,
         text: args.text,
@@ -950,7 +955,7 @@ export class CoworkRunner extends EventEmitter {
       };
     }
 
-    const deleted = this.store.deleteUserMemory(args.id.trim(), metabotId);
+    const deleted = this.getMemoryBackend().deleteUserMemory(args.id.trim(), metabotId);
     return {
       text: this.formatMemoryUserEditsResult({
         action: 'delete',

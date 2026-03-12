@@ -7,6 +7,7 @@ import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
 import { SqliteStore } from './sqliteStore';
 import { CoworkStore } from './coworkStore';
+import type { MemoryBackend } from './memory/memoryBackend';
 import { CoworkRunner } from './libs/coworkRunner';
 import { SkillManager } from './skillManager';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
@@ -36,6 +37,7 @@ import {
   executeTransfer,
   type TransferChain,
 } from './services/transferService';
+import { getRate as getGlobalFeeRate, getAllTiers as getGlobalFeeTiers } from './services/feeRateStore';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/metaidCore';
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
@@ -1538,13 +1540,13 @@ if (!gotTheLock) {
     return getSandboxStatus();
   });
   const resolveMemoryMetabotIdFromInput = (
-    store: CoworkStore,
+    backend: MemoryBackend,
     input?: { sessionId?: string; metabotId?: number }
   ): number | null => {
     if (typeof input?.metabotId === 'number' && Number.isFinite(input.metabotId) && input.metabotId > 0) {
       return Math.floor(input.metabotId);
     }
-    return store.resolveMetabotIdForMemory(input?.sessionId);
+    return backend.resolveMetabotIdForMemory(input?.sessionId);
   };
 
   ipcMain.handle('cowork:memory:listEntries', async (_event, input: {
@@ -1558,11 +1560,12 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const memoryBackend = store.getMemoryBackend();
+      const metabotId = resolveMemoryMetabotIdFromInput(memoryBackend, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const entries = store.listUserMemories({
+      const entries = memoryBackend.listUserMemories({
         metabotId,
         query: input?.query?.trim() || undefined,
         status: input?.status || 'all',
@@ -1587,11 +1590,12 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const memoryBackend = store.getMemoryBackend();
+      const metabotId = resolveMemoryMetabotIdFromInput(memoryBackend, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const entry = store.createUserMemory({
+      const entry = memoryBackend.createUserMemory({
         text: input.text,
         confidence: input.confidence,
         isExplicit: input?.isExplicit,
@@ -1616,11 +1620,12 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const memoryBackend = store.getMemoryBackend();
+      const metabotId = resolveMemoryMetabotIdFromInput(memoryBackend, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const entry = store.updateUserMemory({
+      const entry = memoryBackend.updateUserMemory({
         id: input.id,
         metabotId,
         text: input.text,
@@ -1646,11 +1651,12 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const memoryBackend = store.getMemoryBackend();
+      const metabotId = resolveMemoryMetabotIdFromInput(memoryBackend, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const success = store.deleteUserMemory(input.id, metabotId);
+      const success = memoryBackend.deleteUserMemory(input.id, metabotId);
       return success
         ? { success: true }
         : { success: false, error: 'Memory entry not found' };
@@ -1664,11 +1670,12 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:memory:getStats', async (_event, input?: { sessionId?: string; metabotId?: number }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const memoryBackend = store.getMemoryBackend();
+      const metabotId = resolveMemoryMetabotIdFromInput(memoryBackend, input);
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const stats = store.getUserMemoryStats(metabotId);
+      const stats = memoryBackend.getUserMemoryStats(metabotId);
       return { success: true, stats };
     } catch (error) {
       return {
@@ -1680,10 +1687,11 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:memory:getPolicy', async (_event, input?: { sessionId?: string; metabotId?: number }) => {
     try {
       const store = getCoworkStore();
-      const metabotId = resolveMemoryMetabotIdFromInput(store, input);
+      const memoryBackend = store.getMemoryBackend();
+      const metabotId = resolveMemoryMetabotIdFromInput(memoryBackend, input);
       const policy = metabotId == null
-        ? store.getEffectiveMemoryPolicyForMetabot(null)
-        : store.getEffectiveMemoryPolicyForMetabot(metabotId);
+        ? memoryBackend.getEffectiveMemoryPolicyForMetabot(null)
+        : memoryBackend.getEffectiveMemoryPolicyForMetabot(metabotId);
       return { success: true, policy };
     } catch (error) {
       return {
@@ -1702,13 +1710,14 @@ if (!gotTheLock) {
   }) => {
     try {
       const store = getCoworkStore();
+      const memoryBackend = store.getMemoryBackend();
       const metabotId = typeof input?.metabotId === 'number' && Number.isFinite(input.metabotId) && input.metabotId > 0
         ? Math.floor(input.metabotId)
         : null;
       if (metabotId == null) {
         return { success: false, error: 'Invalid metabotId for memory policy' };
       }
-      const policy = store.setMemoryPolicyForMetabot(metabotId, {
+      const policy = memoryBackend.setMemoryPolicyForMetabot(metabotId, {
         memoryEnabled: typeof input?.memoryEnabled === 'boolean' ? input.memoryEnabled : undefined,
         memoryImplicitUpdateEnabled:
           typeof input?.memoryImplicitUpdateEnabled === 'boolean' ? input.memoryImplicitUpdateEnabled : undefined,
@@ -2296,6 +2305,12 @@ if (!gotTheLock) {
 
   ipcMain.handle('idbots:getTransferFeeSummary', async (_event, chain: TransferChain) => {
     try {
+      // Use global fee rate store (same as Settings > Params & Config) so transfer and Settings show same tiers/rate
+      const globalTiers = getGlobalFeeTiers()[chain];
+      if (Array.isArray(globalTiers) && globalTiers.length > 0) {
+        const defaultRate = getGlobalFeeRate(chain);
+        return { success: true, list: globalTiers, defaultFeeRate: defaultRate };
+      }
       const result = await getFeeSummary(chain);
       const defaultRate = getDefaultFeeRate(chain, result.list);
       return { success: true, list: result.list, defaultFeeRate: defaultRate };
