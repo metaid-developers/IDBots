@@ -29,6 +29,13 @@ import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/meta
 import { fetchMetaidRestoreProfile } from './services/metabotRestoreService';
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
+import {
+  getFeeSummary,
+  getDefaultFeeRate,
+  buildTransferPreview,
+  executeTransfer,
+  type TransferChain,
+} from './services/transferService';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/metaidCore';
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
@@ -2286,6 +2293,52 @@ if (!gotTheLock) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get balance' };
     }
   });
+
+  ipcMain.handle('idbots:getTransferFeeSummary', async (_event, chain: TransferChain) => {
+    try {
+      const result = await getFeeSummary(chain);
+      const defaultRate = getDefaultFeeRate(chain, result.list);
+      return { success: true, list: result.list, defaultFeeRate: defaultRate };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch fee summary' };
+    }
+  });
+
+  ipcMain.handle(
+    'idbots:buildTransferPreview',
+    async (
+      _event,
+      params: { metabotId: number; chain: TransferChain; toAddress: string; amountSpaceOrDoge: string; feeRate: number }
+    ) => {
+      try {
+        const store = getMetabotStore();
+        const preview = await buildTransferPreview(store, params);
+        return { success: true, preview };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to build preview' };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'idbots:executeTransfer',
+    async (
+      _event,
+      params: { metabotId: number; chain: TransferChain; toAddress: string; amountSpaceOrDoge: string; feeRate: number }
+    ) => {
+      try {
+        const store = getMetabotStore();
+        const result = await executeTransfer(store, params);
+        return result;
+      } catch (error) {
+        const msg =
+          error != null && typeof error === 'object' && 'message' in error && typeof (error as Error).message === 'string'
+            ? (error as Error).message
+            : 'Transfer failed';
+        return { success: false, error: msg };
+      }
+    }
+  );
 
   ipcMain.handle('metabot:setEnabled', async (_event, id: number, enabled: boolean) => {
     try {

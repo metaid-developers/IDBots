@@ -353,6 +353,21 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('idbots:restoreMetaBotFromMnemonic', input),
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       ipcRenderer.invoke('idbots:getAddressBalance', options),
+    getTransferFeeSummary: (chain: 'mvc' | 'doge') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
+    buildTransferPreview: (params: {
+      metabotId: number;
+      chain: 'mvc' | 'doge';
+      toAddress: string;
+      amountSpaceOrDoge: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:buildTransferPreview', params),
+    executeTransfer: (params: {
+      metabotId: number;
+      chain: 'mvc' | 'doge';
+      toAddress: string;
+      amountSpaceOrDoge: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:executeTransfer', params),
     getMetaBotMnemonic: (metabotId: number) => ipcRenderer.invoke('idbots:getMetaBotMnemonic', metabotId),
     deleteMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:deleteMetaBot', metabotId),
     syncMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:syncMetaBot', metabotId),
