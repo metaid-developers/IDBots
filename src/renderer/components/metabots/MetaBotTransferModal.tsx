@@ -42,7 +42,7 @@ interface TransferPreview {
 const MetaBotTransferModal: React.FC<MetaBotTransferModalProps> = ({
   metabot,
   chain,
-  fromAddress,
+  fromAddress: _fromAddress,
   maxBalance,
   unit,
   onClose,
