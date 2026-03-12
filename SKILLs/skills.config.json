@@ -25,7 +25,7 @@
     },
     "metabot-omni-caster": {
       "order": 10,
-      "version": "1.0.0",
+      "version": "1.0.1",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true

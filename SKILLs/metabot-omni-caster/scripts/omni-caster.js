@@ -22,6 +22,22 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
     process.exit(1);
 });
+function groupIdToSecretKey(groupId) {
+    const normalized = String(groupId ?? '').trim();
+    if (normalized.length >= 16) {
+        return normalized.slice(0, 16);
+    }
+    return normalized.padEnd(16, '0');
+}
+function encryptSimpleGroupChatContent(message, groupId) {
+    const secretKey = groupIdToSecretKey(groupId);
+    const cipher = (0, crypto_1.createCipheriv)('aes-128-cbc', Buffer.from(secretKey, 'utf8'), Buffer.from('0000000000000000', 'utf8'));
+    const encrypted = Buffer.concat([
+        cipher.update(String(message ?? ''), 'utf8'),
+        cipher.final(),
+    ]);
+    return encrypted.toString('hex');
+}
 /** Infer MIME type from file extension. */
 function inferContentType(filePath) {
     const ext = path_1.default.extname(filePath).toLowerCase();
