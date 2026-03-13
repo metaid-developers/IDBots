@@ -81,7 +81,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   gigSquare: {
     fetchServices: () => ipcRenderer.invoke('gigSquare:fetchServices'),
-    fetchProviderInfo: (params: { providerMetaId: string }) =>
+    fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) =>
       ipcRenderer.invoke('gigSquare:fetchProviderInfo', params),
     sendOrder: (params: {
       metabotId: number;

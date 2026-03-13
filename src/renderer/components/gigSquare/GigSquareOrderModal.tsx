@@ -89,13 +89,15 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
 
       const providerInfo = await window.electron.gigSquare.fetchProviderInfo({
         providerMetaId: service.providerMetaId,
+        providerGlobalMetaId: service.providerGlobalMetaId,
+        providerAddress: service.providerAddress,
       });
 
       if (!providerInfo?.success || !providerInfo.chatPubkey) {
         throw new Error(providerInfo?.error || i18nService.t('gigSquareOrderFailed'));
       }
 
-      const toGlobalMetaId = service.providerGlobalMetaId || service.providerMetaId;
+      const toGlobalMetaId = providerInfo.globalMetaId || service.providerGlobalMetaId || service.providerMetaId;
       if (!toGlobalMetaId) {
         throw new Error(i18nService.t('gigSquareOrderFailed'));
       }

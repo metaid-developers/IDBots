@@ -98,25 +98,27 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
         <div className="mt-3 space-y-1 px-3">
-          <button
-            type="button"
-            onClick={onNewChat}
-            className="btn-idchat-primary w-full inline-flex items-center justify-center gap-2 px-2.5 py-2 text-sm font-medium"
-          >
-            <ComposeIcon className="h-4 w-4" />
-            {i18nService.t('newChat')}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onShowCowork();
-              setIsSearchOpen(true);
-            }}
-            className="w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-base font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
-          >
-            <MagnifyingGlassIcon className="h-4 w-4" />
-            {i18nService.t('search')}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onNewChat}
+              className="btn-idchat-primary flex-1 inline-flex items-center justify-center gap-2 px-2.5 py-2 text-sm font-medium"
+            >
+              <ComposeIcon className="h-4 w-4" />
+              {i18nService.t('newChat')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onShowCowork();
+                setIsSearchOpen(true);
+              }}
+              className="shrink-0 h-[36px] w-[36px] inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+              aria-label={i18nService.t('search')}
+            >
+              <MagnifyingGlassIcon className="h-4 w-4" />
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => {

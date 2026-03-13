@@ -27,7 +27,7 @@ import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
-import { fetchMetaidRestoreProfile } from './services/metabotRestoreService';
+import { fetchMetaidInfoByAddress, fetchMetaidInfoByMetaid, fetchMetaidRestoreProfile, type MetaidAddressInfo } from './services/metabotRestoreService';
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
 import {
@@ -285,7 +285,7 @@ const parseGigSquareService = (item: Record<string, unknown>): GigSquareService 
   const currency = toSafeString(summary.currency || summary.priceUnit).trim();
   const providerMetaId = toSafeString(item.metaid || item.createMetaId).trim();
   const providerGlobalMetaId = toSafeString(item.globalMetaId).trim();
-  const providerAddress = toSafeString(item.address).trim();
+  const providerAddress = toSafeString(item.address || item.addres).trim();
   const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
   if (!serviceName || !providerMetaId || !providerAddress) return null;
   return {
@@ -2376,44 +2376,101 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('gigSquare:fetchProviderInfo', async (_event, params: { providerMetaId: string }) => {
+  ipcMain.handle('gigSquare:fetchProviderInfo', async (_event, params: {
+    providerMetaId?: string;
+    providerGlobalMetaId?: string;
+    providerAddress?: string;
+  }) => {
     try {
       const providerMetaId = typeof params?.providerMetaId === 'string' ? params.providerMetaId.trim() : '';
-      if (!providerMetaId) {
-        return { success: false, error: 'providerMetaId is required' };
+      const providerGlobalMetaId = typeof params?.providerGlobalMetaId === 'string' ? params.providerGlobalMetaId.trim() : '';
+      const providerAddress = typeof params?.providerAddress === 'string' ? params.providerAddress.trim() : '';
+      if (!providerMetaId && !providerGlobalMetaId && !providerAddress) {
+        return { success: false, error: 'provider identity is required' };
       }
-      const buildUrl = (metaid: string | null, size: number) => {
-        const url = new URL('https://manapi.metaid.io/pin/path/list');
-        url.searchParams.set('path', GIG_SQUARE_CHATPUBKEY_PATH);
-        url.searchParams.set('size', String(size));
-        if (metaid) {
-          url.searchParams.set('metaid', metaid);
+
+      let info: MetaidAddressInfo | null = null;
+      const errors: string[] = [];
+
+      const tryFetch = async (label: string, job: Promise<MetaidAddressInfo | null>) => {
+        try {
+          const result = await job;
+          if (result) {
+            info = result;
+            return true;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push(`${label}: ${message}`);
         }
-        return url.toString();
+        return false;
       };
 
-      const fetchList = async (url: string) => {
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch chat pubkey: ${response.status}`);
+      if (providerAddress) {
+        await tryFetch('address', fetchMetaidInfoByAddress(providerAddress));
+      }
+      if (!info && providerGlobalMetaId) {
+        await tryFetch('globalMetaId', fetchMetaidInfoByMetaid(providerGlobalMetaId));
+      }
+      if (!info && providerMetaId) {
+        await tryFetch('metaid', fetchMetaidInfoByMetaid(providerMetaId));
+      }
+
+      let chatPubkey = toSafeString(info?.chatpubkey).trim();
+      if (!chatPubkey) {
+        const buildUrl = (metaid: string | null, size: number) => {
+          const url = new URL('https://manapi.metaid.io/pin/path/list');
+          url.searchParams.set('path', GIG_SQUARE_CHATPUBKEY_PATH);
+          url.searchParams.set('size', String(size));
+          if (metaid) {
+            url.searchParams.set('metaid', metaid);
+          }
+          return url.toString();
+        };
+
+        const fetchList = async (url: string) => {
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch chat pubkey: ${response.status}`);
+          }
+          const json = await response.json();
+          return Array.isArray(json?.data?.list) ? json.data.list : [];
+        };
+
+        const candidates = [providerMetaId, providerGlobalMetaId].filter(Boolean);
+        for (const metaid of candidates) {
+          const list = await fetchList(buildUrl(metaid, 20));
+          chatPubkey = extractChatPubkeyFromList(list, metaid) ?? '';
+          if (chatPubkey) break;
         }
-        const json = await response.json();
-        return Array.isArray(json?.data?.list) ? json.data.list : [];
+
+        if (!chatPubkey) {
+          const list = await fetchList(buildUrl(null, 200));
+          const matchId = providerMetaId || providerGlobalMetaId || '';
+          chatPubkey = extractChatPubkeyFromList(list, matchId) ?? '';
+        }
+      }
+
+      if (!chatPubkey) {
+        const detail = errors.length ? ` (${errors.join('; ')})` : '';
+        return { success: false, error: `Chat pubkey not found for provider${detail}` };
+      }
+
+      const resolvedGlobalMetaId = toSafeString(info?.globalMetaId || providerGlobalMetaId || providerMetaId).trim();
+      const resolvedMetaId = toSafeString(info?.metaid || providerMetaId).trim();
+      const resolvedAddress = toSafeString(info?.address || providerAddress).trim();
+      const resolvedName = toSafeString(info?.name).trim();
+      const resolvedAvatar = toSafeString(info?.avatar).trim();
+
+      return {
+        success: true,
+        chatPubkey,
+        globalMetaId: resolvedGlobalMetaId || undefined,
+        metaid: resolvedMetaId || undefined,
+        address: resolvedAddress || undefined,
+        name: resolvedName || undefined,
+        avatar: resolvedAvatar || undefined,
       };
-
-      let list = await fetchList(buildUrl(providerMetaId, 20));
-      let chatPubkey = extractChatPubkeyFromList(list, providerMetaId);
-
-      if (!chatPubkey) {
-        list = await fetchList(buildUrl(null, 200));
-        chatPubkey = extractChatPubkeyFromList(list, providerMetaId);
-      }
-
-      if (!chatPubkey) {
-        return { success: false, error: 'Chat pubkey not found for provider' };
-      }
-
-      return { success: true, chatPubkey };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch provider info' };
     }

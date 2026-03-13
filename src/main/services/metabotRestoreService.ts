@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer';
 
-const METAID_INFO_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/info/address';
+const METAID_INFO_BY_ADDRESS = 'https://file.metaid.io/metafile-indexer/api/v1/info/address';
+const METAID_INFO_BY_METAID = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
 
 export interface MetaidAddressInfo {
@@ -122,10 +123,7 @@ const resolveAvatarPinId = (avatar?: string | null, avatarId?: string | null): s
   return match ? match[1] : null;
 };
 
-const fetchMetaidInfoByAddress = async (address: string): Promise<MetaidAddressInfo | null> => {
-  const trimmed = address.trim();
-  if (!trimmed) return null;
-  const url = `${METAID_INFO_BASE}/${encodeURIComponent(trimmed)}`;
+const fetchMetaidInfo = async (url: string): Promise<MetaidAddressInfo | null> => {
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`metaid info fetch failed: ${res.status} ${res.statusText}`);
@@ -135,6 +133,20 @@ const fetchMetaidInfoByAddress = async (address: string): Promise<MetaidAddressI
     throw new Error(json?.message || 'metaid info response error');
   }
   return json?.data ?? null;
+};
+
+export const fetchMetaidInfoByAddress = async (address: string): Promise<MetaidAddressInfo | null> => {
+  const trimmed = address.trim();
+  if (!trimmed) return null;
+  const url = `${METAID_INFO_BY_ADDRESS}/${encodeURIComponent(trimmed)}`;
+  return fetchMetaidInfo(url);
+};
+
+export const fetchMetaidInfoByMetaid = async (metaid: string): Promise<MetaidAddressInfo | null> => {
+  const trimmed = metaid.trim();
+  if (!trimmed) return null;
+  const url = `${METAID_INFO_BY_METAID}/${encodeURIComponent(trimmed)}`;
+  return fetchMetaidInfo(url);
 };
 
 const fetchAvatarDataUrl = async (pinId: string): Promise<string | null> => {
