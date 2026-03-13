@@ -52,7 +52,7 @@ import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privat
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin } from './services/metaidCore';
-import { encryptGroupMessageECB } from './services/metaWebCrypto';
+import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, ecdhEncrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 
@@ -198,6 +198,107 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
   return {
     ...request,
     toolInput: sanitizeIpcPayload(request.toolInput ?? {}),
+  };
+};
+
+
+const GIG_SQUARE_SERVICE_PATH = '/protocols/skill-service-public';
+const GIG_SQUARE_CHATPUBKEY_PATH = '/info/chatpubkey';
+const GIG_SQUARE_SERVICE_LIMIT = 10;
+
+type GigSquareService = {
+  id: string;
+  serviceName: string;
+  displayName: string;
+  description: string;
+  price: number;
+  currency: string;
+  providerMetaId: string;
+  providerGlobalMetaId: string;
+  providerAddress: string;
+  avatar?: string | null;
+};
+
+const toSafeString = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  return String(value);
+};
+
+const toSafeNumber = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const parseGigSquareContentSummary = (value: unknown): Record<string, unknown> | null => {
+  if (!value) return null;
+  if (typeof value === 'object') return value as Record<string, unknown>;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const buildPrivateMessagePayload = (to: string, encryptedContent: string, replyPin = ''): string => {
+  const body = {
+    to,
+    timestamp: Math.floor(Date.now() / 1000),
+    content: encryptedContent,
+    contentType: 'text/plain',
+    encrypt: 'ecdh',
+    replyPin: replyPin || '',
+  };
+  return JSON.stringify(body);
+};
+
+const extractChatPubkeyFromList = (list: any[], metaid: string): string | null => {
+  if (!Array.isArray(list)) return null;
+  const normalized = metaid.trim();
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const itemMetaid = toSafeString((item as Record<string, unknown>).metaid || (item as Record<string, unknown>).createMetaId || '');
+    const itemGlobal = toSafeString((item as Record<string, unknown>).globalMetaId || '');
+    if (normalized && normalized !== itemMetaid && normalized !== itemGlobal) continue;
+    const raw = toSafeString(
+      (item as Record<string, unknown>).contentSummary
+      || (item as Record<string, unknown>).content
+      || (item as Record<string, unknown>).contentBody
+      || ''
+    ).trim();
+    if (raw) return raw;
+  }
+  return null;
+};
+
+const parseGigSquareService = (item: Record<string, unknown>): GigSquareService | null => {
+  const summary = parseGigSquareContentSummary(item.contentSummary);
+  if (!summary) return null;
+  const serviceName = toSafeString(summary.serviceName).trim();
+  const displayName = toSafeString(summary.displayName).trim() || serviceName || 'Service';
+  const description = toSafeString(summary.description).trim();
+  const price = toSafeNumber(summary.price);
+  const currency = toSafeString(summary.currency || summary.priceUnit).trim();
+  const providerMetaId = toSafeString(item.metaid || item.createMetaId).trim();
+  const providerGlobalMetaId = toSafeString(item.globalMetaId).trim();
+  const providerAddress = toSafeString(item.address).trim();
+  const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
+  if (!serviceName || !providerMetaId || !providerAddress) return null;
+  return {
+    id: toSafeString(item.id).trim() || serviceName,
+    serviceName,
+    displayName,
+    description,
+    price,
+    currency,
+    providerMetaId,
+    providerGlobalMetaId,
+    providerAddress,
+    avatar,
   };
 };
 
@@ -2251,6 +2352,124 @@ if (!gotTheLock) {
       return { success: ok };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to delete MetaBot' };
+    }
+  });
+
+
+  ipcMain.handle('gigSquare:fetchServices', async () => {
+    try {
+      const url = new URL('https://manapi.metaid.io/pin/path/list');
+      url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
+      url.searchParams.set('size', String(GIG_SQUARE_SERVICE_LIMIT));
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        return { success: false, error: `Failed to fetch services: ${response.status}` };
+      }
+      const json = await response.json();
+      const list = Array.isArray(json?.data?.list) ? json.data.list : [];
+      const services = list
+        .map((item: Record<string, unknown>) => parseGigSquareService(item))
+        .filter((item: GigSquareService | null): item is GigSquareService => Boolean(item));
+      return { success: true, list: services };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch services' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:fetchProviderInfo', async (_event, params: { providerMetaId: string }) => {
+    try {
+      const providerMetaId = typeof params?.providerMetaId === 'string' ? params.providerMetaId.trim() : '';
+      if (!providerMetaId) {
+        return { success: false, error: 'providerMetaId is required' };
+      }
+      const buildUrl = (metaid: string | null, size: number) => {
+        const url = new URL('https://manapi.metaid.io/pin/path/list');
+        url.searchParams.set('path', GIG_SQUARE_CHATPUBKEY_PATH);
+        url.searchParams.set('size', String(size));
+        if (metaid) {
+          url.searchParams.set('metaid', metaid);
+        }
+        return url.toString();
+      };
+
+      const fetchList = async (url: string) => {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch chat pubkey: ${response.status}`);
+        }
+        const json = await response.json();
+        return Array.isArray(json?.data?.list) ? json.data.list : [];
+      };
+
+      let list = await fetchList(buildUrl(providerMetaId, 20));
+      let chatPubkey = extractChatPubkeyFromList(list, providerMetaId);
+
+      if (!chatPubkey) {
+        list = await fetchList(buildUrl(null, 200));
+        chatPubkey = extractChatPubkeyFromList(list, providerMetaId);
+      }
+
+      if (!chatPubkey) {
+        return { success: false, error: 'Chat pubkey not found for provider' };
+      }
+
+      return { success: true, chatPubkey };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch provider info' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
+    metabotId: number;
+    toGlobalMetaId: string;
+    toChatPubkey: string;
+    orderPayload: string;
+  }) => {
+    try {
+      const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
+      const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
+      const toChatPubkey = typeof params?.toChatPubkey === 'string' ? params.toChatPubkey.trim() : '';
+      const orderPayload = typeof params?.orderPayload === 'string' ? params.orderPayload.trim() : '';
+
+      if (!metabotId || metabotId < 0) {
+        return { success: false, error: 'metabotId is required' };
+      }
+      if (!toGlobalMetaId) {
+        return { success: false, error: 'toGlobalMetaId is required' };
+      }
+      if (!toChatPubkey) {
+        return { success: false, error: 'toChatPubkey is required' };
+      }
+      if (!orderPayload) {
+        return { success: false, error: 'orderPayload is required' };
+      }
+
+      const store = getMetabotStore();
+      const wallet = store.getMetabotWalletByMetabotId(metabotId);
+      if (!wallet?.mnemonic?.trim()) {
+        return { success: false, error: 'MetaBot wallet mnemonic is missing' };
+      }
+
+      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+        wallet.mnemonic,
+        wallet.path || "m/44'/10001'/0'/0/0"
+      );
+      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
+      const encrypted = ecdhEncrypt(orderPayload, sharedSecret);
+      const payloadStr = buildPrivateMessagePayload(toGlobalMetaId, encrypted, '');
+
+      const result = await createPin(store, metabotId, {
+        operation: 'create',
+        path: '/protocols/simplemsg',
+        encryption: '0',
+        version: '1.0.0',
+        contentType: 'application/json',
+        payload: payloadStr,
+      });
+
+      return { success: true, txids: result.txids };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to send order' };
     }
   });
 

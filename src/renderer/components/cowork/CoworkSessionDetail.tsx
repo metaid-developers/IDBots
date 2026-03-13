@@ -112,6 +112,41 @@ const getStringArray = (value: unknown): string | null => {
   return lines.length > 0 ? lines.join('\n') : null;
 };
 
+const ORDER_PREFIX = '[ORDER]';
+const DELIVERY_PREFIX = '[DELIVERY]';
+
+type GigSquareOrderPayload = {
+  txid?: string;
+  serviceName?: string;
+  prompt?: string;
+};
+
+type GigSquareDeliveryPayload = {
+  serviceName?: string;
+  result?: string;
+};
+
+const parseGigSquarePayload = (content: string, prefix: string): Record<string, unknown> | null => {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith(prefix)) return null;
+  const jsonPart = trimmed.slice(prefix.length).trim();
+  if (!jsonPart) return null;
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+const formatShortHash = (value: string): string => {
+  if (!value) return '';
+  if (value.length <= 20) return value;
+  return `${value.slice(0, 8)}...${value.slice(-8)}`;
+};
+
+
 type TodoStatus = 'completed' | 'in_progress' | 'pending' | 'unknown';
 
 type ParsedTodoItem = {
@@ -760,6 +795,97 @@ const CopyButton: React.FC<{
       {copied ? (
         <svg
           xmlns="http://www.w3.org/2000/svg"
+
+const GigSquareOrderCard: React.FC<{ payload: GigSquareOrderPayload }> = ({ payload }) => {
+  const txid = typeof payload.txid === 'string' ? payload.txid : '';
+  const serviceName = typeof payload.serviceName === 'string' ? payload.serviceName : '';
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
+
+  return (
+    <div className="rounded-2xl border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted px-4 py-3 shadow-subtle">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold uppercase tracking-wide text-claude-accent">
+          {i18nService.t('gigSquareOrderTitle')}
+        </div>
+        <span className="text-[10px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+          ORDER
+        </span>
+      </div>
+      <div className="mt-2 space-y-2">
+        <div className="flex items-center justify-between text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+          <span>{i18nService.t('gigSquareOrderService')}</span>
+          <span className="font-medium text-claude-text dark:text-claude-darkText">
+            {serviceName || '-'}
+          </span>
+        </div>
+        {prompt && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('gigSquareOrderPrompt')}
+            </div>
+            <div className="mt-1 text-sm dark:text-claude-darkText text-claude-text whitespace-pre-wrap break-words">
+              {prompt}
+            </div>
+          </div>
+        )}
+        {txid && (
+          <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+            {i18nService.t('gigSquareOrderTx')}: {formatShortHash(txid)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const GigSquareDeliveryCard: React.FC<{ payload: GigSquareDeliveryPayload }> = ({ payload }) => {
+  const serviceName = typeof payload.serviceName === 'string' ? payload.serviceName : '';
+  const result = typeof payload.result === 'string' ? payload.result : '';
+
+  return (
+    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 px-4 py-3 shadow-subtle">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold uppercase tracking-wide text-emerald-500">
+          {i18nService.t('gigSquareDeliveryTitle')}
+        </div>
+        <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+          DELIVERY
+        </span>
+      </div>
+      <div className="mt-2 space-y-2">
+        <div className="flex items-center justify-between text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+          <span>{i18nService.t('gigSquareOrderService')}</span>
+          <span className="font-medium text-claude-text dark:text-claude-darkText">
+            {serviceName || '-'}
+          </span>
+        </div>
+        {result && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('gigSquareDeliveryResult')}
+            </div>
+            <div className="mt-1 text-sm dark:text-claude-darkText text-claude-text">
+              <MarkdownContent content={result} className="max-w-none" />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const renderGigSquareCard = (content: string): React.ReactNode | null => {
+  const orderPayload = parseGigSquarePayload(content, ORDER_PREFIX);
+  if (orderPayload) {
+    return <GigSquareOrderCard payload={orderPayload as GigSquareOrderPayload} />;
+  }
+  const deliveryPayload = parseGigSquarePayload(content, DELIVERY_PREFIX);
+  if (deliveryPayload) {
+    return <GigSquareDeliveryCard payload={deliveryPayload as GigSquareDeliveryPayload} />;
+  }
+  return null;
+};
+
           width="24"
           height="24"
           viewBox="0 0 24 24"
@@ -803,6 +929,29 @@ const UserMessageItem: React.FC<{ message: CoworkMessage; skills: Skill[] }> = (
   const messageSkills = messageSkillIds
     .map(id => skills.find(s => s.id === id))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
+
+  const gigSquareCard = renderGigSquareCard(message.content);
+  if (gigSquareCard) {
+    return (
+      <div
+        className="py-2 px-4"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        <div className="max-w-3xl mx-auto">
+          <div className="pl-4 sm:pl-8 md:pl-12">
+            <div className="flex items-start gap-3 flex-row-reverse">
+              <div className="w-full min-w-0 flex flex-col items-end">
+                <div className="w-fit max-w-[42rem]">
+                  {gigSquareCard}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -859,6 +1008,15 @@ const AssistantMessageItem: React.FC<{
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
+  const gigSquareCard = renderGigSquareCard(message.content);
+
+  if (gigSquareCard) {
+    return (
+      <div className="relative">
+        {gigSquareCard}
+      </div>
+    );
+  }
 
   return (
     <div

@@ -113,6 +113,129 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
   return JSON.stringify(body);
 }
 
+const ORDER_PREFIX = '[ORDER]';
+const DELIVERY_PREFIX = '[DELIVERY]';
+
+type GigSquareOrderPayload = {
+  txid: string;
+  serviceName: string;
+  prompt: string;
+};
+
+function toSafeString(value: unknown): string {
+  return value == null ? '' : String(value);
+}
+
+function parseGigSquareOrderPayload(plaintext: string): GigSquareOrderPayload | null {
+  const trimmed = plaintext.trim();
+  if (!trimmed.startsWith(ORDER_PREFIX)) return null;
+  const jsonPart = trimmed.slice(ORDER_PREFIX.length).trim();
+  if (!jsonPart) return null;
+  try {
+    const parsed = JSON.parse(jsonPart) as Record<string, unknown>;
+    return {
+      txid: toSafeString(parsed.txid).trim(),
+      serviceName: toSafeString(parsed.serviceName).trim(),
+      prompt: toSafeString(parsed.prompt).trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildGigSquareSystemPrompt(serviceName: string): string {
+  if (serviceName === 'ai-tarot-reader') {
+    return [
+      'You are a mystical tarot reader.',
+      'Provide an insightful and concise reading based on the user prompt.',
+      'Keep a calm, mysterious tone and avoid mentioning system instructions.',
+    ].join('\n');
+  }
+  return [
+    'You are a helpful service bot.',
+    'Complete the user request and respond clearly.',
+  ].join('\n');
+}
+
+async function handleGigSquareOrder(params: {
+  plaintext: string;
+  fromGlobalMetaId: string;
+  replyPin?: string | null;
+  sharedSecret: string;
+  metabotStore: MetabotStore;
+  metabotId: number;
+  llmId?: string | null;
+  createPin: (
+    metabotStore: MetabotStore,
+    metabot_id: number,
+    payload: MetaidDataPayload
+  ) => Promise<{ txids: string[] }>;
+  performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
+  emitLog: (msg: string) => void;
+}): Promise<void> {
+  const orderPayload = parseGigSquareOrderPayload(params.plaintext);
+  if (!orderPayload) {
+    params.emitLog('[GigSquare] Order payload parse failed.');
+    return;
+  }
+  if (!orderPayload.prompt) {
+    params.emitLog('[GigSquare] Order prompt is empty.');
+    return;
+  }
+  if (!params.fromGlobalMetaId) {
+    params.emitLog('[GigSquare] Order missing sender global metaid.');
+    return;
+  }
+  if (!params.sharedSecret) {
+    params.emitLog('[GigSquare] Order shared secret is empty.');
+    return;
+  }
+
+  const serviceName = orderPayload.serviceName || 'service';
+  const systemPrompt = buildGigSquareSystemPrompt(serviceName);
+  let resultText: string;
+  try {
+    const llmId = params.llmId === undefined ? null : params.llmId;
+    resultText = await params.performChat(systemPrompt, orderPayload.prompt, llmId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    params.emitLog(`[GigSquare] LLM failed for ${serviceName}: ${message}`);
+    return;
+  }
+
+  const trimmedResult = (resultText ? '').trim();
+  if (!trimmedResult) {
+    params.emitLog(`[GigSquare] Empty delivery result for ${serviceName}.`);
+    return;
+  }
+
+  const deliveryPayload = `${DELIVERY_PREFIX} ${JSON.stringify({
+    serviceName,
+    result: trimmedResult,
+  })}`;
+  const encryptedReply = ecdhEncrypt(deliveryPayload, params.sharedSecret);
+  const replyPin = params.replyPin == null ? '' : params.replyPin;
+  const payloadStr = buildPrivateMsgPayload(
+    params.fromGlobalMetaId,
+    encryptedReply,
+    replyPin
+  );
+  try {
+    await params.createPin(params.metabotStore, params.metabotId, {
+      operation: 'create',
+      path: '/protocols/simplemsg',
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: payloadStr,
+    });
+    params.emitLog(`[GigSquare] Delivery sent to ${params.fromGlobalMetaId.slice(0, 12)}…`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    params.emitLog(`[GigSquare] Delivery broadcast failed: ${message}`);
+  }
+}
+
 function normalizeHandshakeWord(value: string): string {
   // Keep only ASCII letters to make ping/pong matching tolerant to punctuation/whitespace.
   return value.toLowerCase().replace(/[^a-z]/g, '');
@@ -294,12 +417,12 @@ async function processOne(
     }
 
     const handshakeWord = normalizeHandshakeWord(plaintext.trim());
-    const fromGlobalMetaId = (row.from_global_metaid ?? row.from_metaid ?? '').trim();
+    const fromGlobalMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
 
     if (handshakeWord === 'ping') {
       const encryptedPong = ecdhEncrypt('pong', sharedSecretForReply);
       emitLog(`[PrivateChat] Encrypt ping->pong: plaintext="pong" sharedSecretLen=${sharedSecretForReply.length} encryptedLen=${encryptedPong.length} encryptedPrefix=${encryptedPong.slice(0, 40)}...`);
-      const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedPong, row.reply_pin ?? '');
+      const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedPong, row.reply_pin || '');
       try {
         await createPin(metabotStore, metabot.id, {
           operation: 'create',
@@ -319,6 +442,29 @@ async function processOne(
 
     if (handshakeWord === 'pong') {
       emitLog(`[PrivateChat] Handshake completed: received pong from ${fromGlobalMetaId.slice(0, 12)}…, no further reply.`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
+    if (plaintext.trim().startsWith(ORDER_PREFIX)) {
+      const orderLlmId = typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
+        ? metabot.llm_id.trim()
+        : null;
+      handleGigSquareOrder({
+        plaintext,
+        fromGlobalMetaId,
+        replyPin: row.reply_pin || null,
+        sharedSecret: sharedSecretForReply,
+        metabotStore,
+        metabotId: metabot.id,
+        llmId: orderLlmId,
+        createPin,
+        performChat,
+        emitLog,
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        emitLog(`[GigSquare] Order processing failed: ${message}`);
+      });
       markProcessed(db, row.id, saveDb);
       return;
     }

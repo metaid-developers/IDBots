@@ -79,6 +79,17 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener(`api:stream:${requestId}:abort`, handler);
     },
   },
+  gigSquare: {
+    fetchServices: () => ipcRenderer.invoke('gigSquare:fetchServices'),
+    fetchProviderInfo: (params: { providerMetaId: string }) =>
+      ipcRenderer.invoke('gigSquare:fetchProviderInfo', params),
+    sendOrder: (params: {
+      metabotId: number;
+      toGlobalMetaId: string;
+      toChatPubkey: string;
+      orderPayload: string;
+    }) => ipcRenderer.invoke('gigSquare:sendOrder', params),
+  },
   appEvents: {
     onOpenSettings: (callback: () => void) => {
       const handler = () => callback();

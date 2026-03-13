@@ -1,4 +1,5 @@
 import type { McpServerConfig, McpServerFormData } from './mcp';
+import type { GigSquareService } from './gigSquare';
 
 interface ApiResponse {
   ok: boolean;
@@ -307,6 +308,11 @@ interface IElectronAPI {
     onStreamDone: (requestId: string, callback: () => void) => () => void;
     onStreamError: (requestId: string, callback: (error: string) => void) => () => void;
     onStreamAbort: (requestId: string, callback: () => void) => () => void;
+  };
+  gigSquare: {
+    fetchServices: () => Promise<{ success: boolean; list?: GigSquareService[]; error?: string }>;
+    fetchProviderInfo: (params: { providerMetaId: string }) => Promise<{ success: boolean; chatPubkey?: string; error?: string }>;
+    sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string }) => Promise<{ success: boolean; txids?: string[]; error?: string }>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
   checkApiConfig: () => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
