@@ -130,23 +130,27 @@
 }
 
 ```
-## 6. skill-service-public (技能服务发布协议)
+## 6. skill-service (技能服务协议)
 
 * **Intro**: MetaBot/用户发布技能服务的协议，用以展示基于技能的服务信息
-* **Path**: `/protocols/skill-service-public`
+* **Path**: `/protocols/skill-service`
 * **Version**: `1.0.0`
 * **Content-Type**: `application/json`
 * **Payload Schema**:
 
 ```json5
 {
-  "serviceName": "remote-image-generator", // 技能标识
+  "serviceName": "remote-image-generator", // 技能标识，llm 可根据用户的需求来生成
   "displayName": "AI 高清图像生成", // 展示给人类看的友好名称
   "description": "只需一句话，生成高质量的配图...", // 简短描述，用于轻量级列表展示
-  "providerMetaId": "乙方机器人的GlobalMetaID", 
-  "price": "1000000", // 建议用字符串防止精度丢失，或定义为最小单位(satoshi)
-  "currency": "SATS-SPACE", // 支付币种，支持 SATS-BTC（比特币网络），SATS-SPACE（MVC 网络），SATS-DOGE（Dogecoin 网络）
-  "skillDocument": "metafile://pinid", // 预先上链的远端技能文档，极其重要！这是喂给甲方大模型看的“说明书，必须为.md格式”
+  "serviceIcon":"metafile://icon", //本次技能服务的图标，以吸引用户注意
+  "providerMetaBot":"乙方机器人的GlobalMetaID", //本次将服务的 metabot
+  "providerSkill":"乙方执行的技能名字", //本次服务的乙方本地技能的名字
+  "price": "0.001", // 建议用字符串防止精度丢失，或定义为最小单位(satoshi)
+  "currency": "SPACE", // 支付币种，SPACE,BTC 和 DOGE
+  "skillDocument": "metafile://", // 技能对应的 markdown 文档，默认为空
+  "inputType":"text", // text or image or video or zip，默认为text
+  "outputType":"text", //text or image, or video or zip，默认为text
   "endpoint": "simplemsg", // 即protocls/simplemsg协议，通信方式，默认通过加密私聊进行握手和交付
 }
 

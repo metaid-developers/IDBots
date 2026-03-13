@@ -13,6 +13,10 @@ import {
   ecdhEncrypt,
 } from './metaWebCrypto';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
+import type { CoworkRunner } from '../libs/coworkRunner';
+import { PrivateChatOrderCowork } from './privateChatOrderCowork';
+import { buildOrderPrompts } from './orderPromptBuilder';
+import { checkOrderPaymentStatus, extractOrderTxid, OrderSource } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
@@ -44,6 +48,7 @@ type SaveDbFn = () => void;
 
 /** In-flight task keys to avoid duplicate processing */
 const thinkingTasks = new Set<string>();
+let orderCowork: PrivateChatOrderCowork | null = null;
 
 function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
   const result = db.exec(
@@ -114,127 +119,21 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
 }
 
 const ORDER_PREFIX = '[ORDER]';
-const DELIVERY_PREFIX = '[DELIVERY]';
 
-type GigSquareOrderPayload = {
-  txid: string;
-  serviceName: string;
-  prompt: string;
-};
-
-function toSafeString(value: unknown): string {
-  return value == null ? '' : String(value);
+function isOrderMessage(plaintext: string): boolean {
+  return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
 }
 
-function parseGigSquareOrderPayload(plaintext: string): GigSquareOrderPayload | null {
-  const trimmed = plaintext.trim();
-  if (!trimmed.startsWith(ORDER_PREFIX)) return null;
-  const jsonPart = trimmed.slice(ORDER_PREFIX.length).trim();
-  if (!jsonPart) return null;
-  try {
-    const parsed = JSON.parse(jsonPart) as Record<string, unknown>;
-    return {
-      txid: toSafeString(parsed.txid).trim(),
-      serviceName: toSafeString(parsed.serviceName).trim(),
-      prompt: toSafeString(parsed.prompt).trim(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildGigSquareSystemPrompt(serviceName: string): string {
-  if (serviceName === 'ai-tarot-reader') {
-    return [
-      'You are a mystical tarot reader.',
-      'Provide an insightful and concise reading based on the user prompt.',
-      'Keep a calm, mysterious tone and avoid mentioning system instructions.',
-    ].join('\n');
-  }
-  return [
-    'You are a helpful service bot.',
-    'Complete the user request and respond clearly.',
-  ].join('\n');
-}
-
-async function handleGigSquareOrder(params: {
-  plaintext: string;
-  fromGlobalMetaId: string;
-  replyPin?: string | null;
-  sharedSecret: string;
-  metabotStore: MetabotStore;
-  metabotId: number;
-  llmId?: string | null;
-  createPin: (
-    metabotStore: MetabotStore,
-    metabot_id: number,
-    payload: MetaidDataPayload
-  ) => Promise<{ txids: string[] }>;
-  performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
-  emitLog: (msg: string) => void;
-}): Promise<void> {
-  const orderPayload = parseGigSquareOrderPayload(params.plaintext);
-  if (!orderPayload) {
-    params.emitLog('[GigSquare] Order payload parse failed.');
-    return;
-  }
-  if (!orderPayload.prompt) {
-    params.emitLog('[GigSquare] Order prompt is empty.');
-    return;
-  }
-  if (!params.fromGlobalMetaId) {
-    params.emitLog('[GigSquare] Order missing sender global metaid.');
-    return;
-  }
-  if (!params.sharedSecret) {
-    params.emitLog('[GigSquare] Order shared secret is empty.');
-    return;
-  }
-
-  const serviceName = orderPayload.serviceName || 'service';
-  const systemPrompt = buildGigSquareSystemPrompt(serviceName);
-  let resultText: string;
-  try {
-    const llmId = params.llmId === undefined ? null : params.llmId;
-    resultText = await params.performChat(systemPrompt, orderPayload.prompt, llmId);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    params.emitLog(`[GigSquare] LLM failed for ${serviceName}: ${message}`);
-    return;
-  }
-
-  const trimmedResult = (resultText || '').trim();
-  if (!trimmedResult) {
-    params.emitLog(`[GigSquare] Empty delivery result for ${serviceName}.`);
-    return;
-  }
-
-
-  const deliveryPayload = `${DELIVERY_PREFIX} ${JSON.stringify({
-    serviceName,
-    result: trimmedResult,
-  })}`;
-  const encryptedReply = ecdhEncrypt(deliveryPayload, params.sharedSecret);
-  const replyPin = params.replyPin == null ? '' : params.replyPin;
-  const payloadStr = buildPrivateMsgPayload(
-    params.fromGlobalMetaId,
-    encryptedReply,
-    replyPin
-  );
-  try {
-    await params.createPin(params.metabotStore, params.metabotId, {
-      operation: 'create',
-      path: '/protocols/simplemsg',
-      encryption: '0',
-      version: '1.0.0',
-      contentType: 'application/json',
-      payload: payloadStr,
-    });
-    params.emitLog(`[GigSquare] Delivery sent to ${params.fromGlobalMetaId.slice(0, 12)}…`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    params.emitLog(`[GigSquare] Delivery broadcast failed: ${message}`);
-  }
+function buildOrderExternalConversationId(
+  row: PrivateChatMessageRow,
+  source: OrderSource,
+  txid: string | null
+): string {
+  const peerId = normalizePrivateConversationPeerId(row);
+  const pinId = (row.pin_id || '').trim();
+  const txidPart = txid ? txid.slice(0, 12) : 'no-txid';
+  const suffix = pinId || String(Date.now());
+  return `${source}:order:${peerId}:${txidPart}:${suffix}`;
 }
 
 function normalizeHandshakeWord(value: string): string {
@@ -328,7 +227,9 @@ async function processOne(
   metabotStore: MetabotStore,
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>,
-  emitLog: (msg: string) => void
+  emitLog: (msg: string) => void,
+  orderCoworkHandler: PrivateChatOrderCowork | null,
+  getSkillsPrompt?: () => Promise<string | null>
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -447,25 +348,79 @@ async function processOne(
       return;
     }
 
-    if (plaintext.trim().startsWith(ORDER_PREFIX)) {
-      const orderLlmId = typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
-        ? metabot.llm_id.trim()
-        : null;
-      handleGigSquareOrder({
+    if (isOrderMessage(plaintext)) {
+      const source: OrderSource = 'metaweb_private';
+      const txid = extractOrderTxid(plaintext);
+      const payment = await checkOrderPaymentStatus({
+        txid,
         plaintext,
-        fromGlobalMetaId,
-        replyPin: row.reply_pin || null,
-        sharedSecret: sharedSecretForReply,
-        metabotStore,
+        source,
         metabotId: metabot.id,
-        llmId: orderLlmId,
-        createPin,
-        performChat,
-        emitLog,
-      }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        emitLog(`[GigSquare] Order processing failed: ${message}`);
       });
+      if (!payment.paid) {
+        emitLog(`[Order] Payment not confirmed for txid=${txid || 'n/a'} (reason=${payment.reason})`);
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+      if (!orderCoworkHandler) {
+        emitLog('[Order] Cowork handler not initialized; skipping order.');
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+
+      const skillsPrompt = getSkillsPrompt ? await getSkillsPrompt() : null;
+      const prompts = buildOrderPrompts({
+        plaintext,
+        source,
+        metabotName: metabot.name,
+        skillsPrompt,
+      });
+      const externalConversationId = buildOrderExternalConversationId(row, source, txid);
+      const titleSuffix = txid ? txid.slice(0, 8) : 'no-txid';
+
+      let replyText: string;
+      try {
+        replyText = await orderCoworkHandler.runOrder({
+          metabotId: metabot.id,
+          source,
+          externalConversationId,
+          prompt: prompts.userPrompt,
+          systemPrompt: prompts.systemPrompt,
+          title: `Order-${metabot.name}-${titleSuffix}-${Date.now()}`,
+        });
+      } catch (error) {
+        emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+
+      const trimmedReply = (replyText || '').trim();
+      if (trimmedReply) {
+        if (source === 'metaweb_private') {
+          const encryptedReply = ecdhEncrypt(trimmedReply, sharedSecretForReply);
+          const payloadStr = buildPrivateMsgPayload(
+            fromGlobalMetaId,
+            encryptedReply,
+            row.reply_pin || ''
+          );
+          try {
+            await createPin(metabotStore, metabot.id, {
+              operation: 'create',
+              path: '/protocols/simplemsg',
+              encryption: '0',
+              version: '1.0.0',
+              contentType: 'application/json',
+              payload: payloadStr,
+            });
+            emitLog(`[Order] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
+          } catch (error) {
+            emitLog(`[Order] Reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        } else {
+          emitLog('[Order] Group order reply not implemented yet.');
+        }
+      }
+
       markProcessed(db, row.id, saveDb);
       return;
     }
@@ -585,15 +540,22 @@ export function startPrivateChatDaemon(
   saveDb: SaveDbFn,
   coworkStore: CoworkStore,
   metabotStore: MetabotStore,
+  coworkRunner: CoworkRunner,
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
-  emitLog: (msg: string) => void
+  emitLog: (msg: string) => void,
+  getSkillsPrompt?: () => Promise<string | null>
 ): void {
   stopPrivateChatDaemon();
+  orderCowork = new PrivateChatOrderCowork({
+    coworkRunner,
+    coworkStore,
+    metabotStore,
+  });
   const performChat = performChatCompletionForOrchestrator;
   const tick = () => {
     const rows = parsePrivateChatRows(db);
     for (const row of rows) {
-      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog).catch((e) => {
+      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, getSkillsPrompt).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
       });
     }
@@ -608,5 +570,6 @@ export function stopPrivateChatDaemon(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  orderCowork = null;
   thinkingTasks.clear();
 }

@@ -5,6 +5,19 @@ import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
 
+const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
+
+/** Resolve metafile://<pinid> to image URL for serviceIcon. */
+const getServiceIconUrl = (serviceIcon: string | null | undefined): string | null => {
+  if (!serviceIcon || typeof serviceIcon !== 'string') return null;
+  const s = serviceIcon.trim();
+  const prefix = 'metafile://';
+  if (!s.toLowerCase().startsWith(prefix)) return null;
+  const pinid = s.slice(prefix.length).trim();
+  if (!pinid) return null;
+  return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(pinid)}`;
+};
+
 const formatMetaId = (value: string): string => {
   if (!value) return '';
   if (value.length <= 16) return value;
@@ -124,6 +137,8 @@ const GigSquareView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {services.map((service) => {
               const price = formatGigSquarePrice(service.price, service.currency);
+              const serviceIconUrl = getServiceIconUrl(service.serviceIcon);
+              const iconSrc = serviceIconUrl || service.avatar || null;
               return (
                 <button
                   type="button"
@@ -140,14 +155,14 @@ const GigSquareView: React.FC = () => {
                         {service.description}
                       </div>
                     </div>
-                    {service.avatar ? (
+                    {iconSrc ? (
                       <img
-                        src={service.avatar}
+                        src={iconSrc}
                         alt={service.displayName}
-                        className="h-10 w-10 rounded-full object-cover border border-claude-border dark:border-claude-darkBorder"
+                        className="h-10 w-10 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder flex-shrink-0"
                       />
                     ) : (
-                      <div className="h-10 w-10 rounded-full bg-claude-accent/20 flex items-center justify-center text-xs font-semibold text-claude-accent">
+                      <div className="h-10 w-10 rounded-lg bg-claude-accent/20 flex items-center justify-center text-xs font-semibold text-claude-accent flex-shrink-0">
                         {service.displayName.slice(0, 1).toUpperCase()}
                       </div>
                     )}

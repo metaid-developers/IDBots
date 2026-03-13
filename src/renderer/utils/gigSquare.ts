@@ -1,24 +1,11 @@
-const SATS_PER_UNIT = 1e8;
-
-const formatAmount = (value: number): string => {
-  if (!Number.isFinite(value)) return '0';
-  return value.toLocaleString('en-US', { maximumFractionDigits: 8 });
+/** skill-service protocol: price and currency are human-readable (e.g. "0.001", "SPACE"). Display as-is. */
+export const formatGigSquarePrice = (price: string, currency: string): { amount: string; unit: string } => {
+  const amount = typeof price === 'string' ? price.trim() || '0' : String(price ?? '0');
+  const unit = typeof currency === 'string' ? currency.trim() || '' : String(currency ?? '');
+  return { amount, unit };
 };
 
-const formatPaymentAmount = (value: number): string => {
-  if (!Number.isFinite(value)) return '0';
-  const fixed = value.toFixed(8);
-  return fixed.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
-};
-
-export const formatGigSquarePrice = (price: number, currency: string): { amount: string; unit: string } => {
-  const normalizedCurrency = (currency || '').toUpperCase();
-  const unit = normalizedCurrency.includes('DOGE') ? 'DOGE' : 'BTC';
-  const amountValue = price / SATS_PER_UNIT;
-  return { amount: formatAmount(amountValue), unit };
-};
-
-export const getGigSquarePaymentAmount = (price: number): string => {
-  const amountValue = price / SATS_PER_UNIT;
-  return formatPaymentAmount(amountValue);
+/** Return price string for transfer API (amountSpaceOrDoge: SPACE/DOGE/BTC in main units). */
+export const getGigSquarePaymentAmount = (price: string): string => {
+  return typeof price === 'string' ? price.trim() || '0' : String(price ?? '0');
 };

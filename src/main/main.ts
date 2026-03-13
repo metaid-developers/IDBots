@@ -202,7 +202,7 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
 };
 
 
-const GIG_SQUARE_SERVICE_PATH = '/protocols/skill-service-public';
+const GIG_SQUARE_SERVICE_PATH = '/protocols/skill-service';
 const GIG_SQUARE_CHATPUBKEY_PATH = '/info/chatpubkey';
 const GIG_SQUARE_SERVICE_LIMIT = 10;
 
@@ -211,12 +211,13 @@ type GigSquareService = {
   serviceName: string;
   displayName: string;
   description: string;
-  price: number;
+  price: string;
   currency: string;
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
   avatar?: string | null;
+  serviceIcon?: string | null;
 };
 
 const toSafeString = (value: unknown): string => {
@@ -281,12 +282,13 @@ const parseGigSquareService = (item: Record<string, unknown>): GigSquareService 
   const serviceName = toSafeString(summary.serviceName).trim();
   const displayName = toSafeString(summary.displayName).trim() || serviceName || 'Service';
   const description = toSafeString(summary.description).trim();
-  const price = toSafeNumber(summary.price);
+  const price = toSafeString(summary.price).trim() || '0';
   const currency = toSafeString(summary.currency || summary.priceUnit).trim();
   const providerMetaId = toSafeString(item.metaid || item.createMetaId).trim();
   const providerGlobalMetaId = toSafeString(item.globalMetaId).trim();
   const providerAddress = toSafeString(item.address || item.addres).trim();
   const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
+  const serviceIcon = typeof summary.serviceIcon === 'string' ? summary.serviceIcon.trim() || null : null;
   if (!serviceName || !providerMetaId || !providerAddress) return null;
   return {
     id: toSafeString(item.id).trim() || serviceName,
@@ -299,6 +301,7 @@ const parseGigSquareService = (item: Record<string, unknown>): GigSquareService 
     providerGlobalMetaId,
     providerAddress,
     avatar,
+    serviceIcon,
   };
 };
 
@@ -725,6 +728,7 @@ const getCoworkRunner = () => {
           normalizedSkillIds.has('metabot-basic') ||
           normalizedSkillIds.has('metabot-post-buzz') ||
           normalizedSkillIds.has('metabot-omni-caster') ||
+          normalizedSkillIds.has('metabot-post-skillservice') ||
           normalizedSkillIds.has('metabot-chat-privatechat');
         if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         const metabotStore = getMetabotStore();
@@ -740,6 +744,9 @@ const getCoworkRunner = () => {
               IDBOTS_METABOT_PATH: wallet.path,
               IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
             });
+            if (metabot.globalmetaid) {
+              overrides.IDBOTS_METABOT_GLOBALMETAID = metabot.globalmetaid;
+            }
             return overrides;
           }
         }
@@ -753,6 +760,10 @@ const getCoworkRunner = () => {
             IDBOTS_METABOT_PATH: twin.path,
             IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
           });
+          const twinMetabot = metabotStore.getMetabotById(twin.id);
+          if (twinMetabot?.globalmetaid) {
+            overrides.IDBOTS_METABOT_GLOBALMETAID = twinMetabot.globalmetaid;
+          }
         }
         return overrides;
       },
@@ -3517,8 +3528,10 @@ if (!gotTheLock) {
       getStore().getSaveFunction(),
       getCoworkStore(),
       getMetabotStore(),
+      getCoworkRunner(),
       createPin,
-      (msg) => console.log(msg)
+      (msg) => console.log(msg),
+      async () => skillMgr.buildAutoRoutingPrompt()
     );
 
     // Auto-reconnect IM bots that were enabled before restart

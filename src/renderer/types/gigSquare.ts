@@ -3,12 +3,13 @@ export type GigSquareService = {
   serviceName: string;
   displayName: string;
   description: string;
-  price: number;
+  price: string;
   currency: string;
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
   avatar?: string | null;
+  serviceIcon?: string | null;
 };
 
 export type GigSquareProviderInfo = {

@@ -1026,7 +1026,7 @@ export class SkillManager {
       try {
         const db = this.getStore().getDatabase();
         const row = db.exec(
-          `SELECT mw.mnemonic AS mnemonic, mw.path AS path, m.name AS name
+          `SELECT mw.mnemonic AS mnemonic, mw.path AS path, m.name AS name, m.globalmetaid AS globalmetaid
            FROM metabots m
            JOIN metabot_wallets mw ON mw.id = m.wallet_id
            WHERE m.id = ?
@@ -1038,9 +1038,11 @@ export class SkillManager {
           const mnemonic = typeof values[0] === 'string' ? values[0].trim() : '';
           const walletPath = typeof values[1] === 'string' ? values[1].trim() : '';
           const metabotName = typeof values[2] === 'string' ? values[2].trim() : '';
+          const globalmetaid = typeof values[3] === 'string' ? values[3].trim() : '';
           if (mnemonic) envOverrides.IDBOTS_METABOT_MNEMONIC = mnemonic;
           if (walletPath) envOverrides.IDBOTS_METABOT_PATH = walletPath;
           if (metabotName) envOverrides.IDBOTS_TWIN_NAME = metabotName;
+          if (globalmetaid) envOverrides.IDBOTS_METABOT_GLOBALMETAID = globalmetaid;
         }
       } catch {
         // Ignore wallet env injection failure; scripts can still use RPC-only mode.
