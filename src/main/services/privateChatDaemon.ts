@@ -203,11 +203,12 @@ async function handleGigSquareOrder(params: {
     return;
   }
 
-  const trimmedResult = (resultText ? '').trim();
+  const trimmedResult = (resultText || '').trim();
   if (!trimmedResult) {
     params.emitLog(`[GigSquare] Empty delivery result for ${serviceName}.`);
     return;
   }
+
 
   const deliveryPayload = `${DELIVERY_PREFIX} ${JSON.stringify({
     serviceName,

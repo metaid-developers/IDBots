@@ -34,7 +34,7 @@ function parseAddressIndexFromPath(pathStr: string): number {
 }
 
 async function getDogeWalletForWorker(mnemonic: string, pathStr: string): Promise<DogeWallet> {
-  const network = 'livenet' as 'livenet';
+  const network = 'livenet' as const;
   const addressIndex = parseAddressIndexFromPath(pathStr || DEFAULT_PATH);
   return new DogeWallet({
     mnemonic,
@@ -335,7 +335,7 @@ export class DogeInscribe {
       revealOutValue
     );
 
-    let availableUtxos = utxos.filter(
+    const availableUtxos = utxos.filter(
       (u) => !commitUtxos.some((c) => c.txId === u.txId && c.outputIndex === u.outputIndex)
     );
     if (commitChange >= DUST_LIMIT) {
@@ -435,7 +435,7 @@ export class DogeInscribe {
     let totalRevealCost = 0;
     const commitTxs: bitcoin.Transaction[] = [];
     const revealTxs: bitcoin.Transaction[] = [];
-    let availableUtxos = [...utxos];
+    const availableUtxos = [...utxos];
 
     for (const metaidData of metaidDataList) {
       const { commitTx, revealTx, commitFee, revealFee } =

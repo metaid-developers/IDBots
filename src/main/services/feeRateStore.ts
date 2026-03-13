@@ -37,8 +37,8 @@ const DEFAULT_TIERS: Record<ChainKey, FeeRateTier[]> = {
 
 const STORAGE_KEY = 'fee_rate_selection';
 
-let tiers: Record<ChainKey, FeeRateTier[]> = { ...DEFAULT_TIERS };
-let selectedTier: Record<ChainKey, string> = { btc: 'Fast', mvc: 'Fast', doge: 'Fast' };
+const tiers: Record<ChainKey, FeeRateTier[]> = { ...DEFAULT_TIERS };
+const selectedTier: Record<ChainKey, string> = { btc: 'Fast', mvc: 'Fast', doge: 'Fast' };
 let kvStoreRef: { get(key: string): unknown; set(key: string, value: unknown): void } | null = null;
 
 function persistSelection(): void {

@@ -232,7 +232,7 @@ function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWal
     coinType: CoinType.MVC,
     addressType: AddressType.SameAsMvc,
     addressIndex,
-    network: 'livenet' as 'livenet',
+    network: 'livenet' as const,
     mnemonic,
   });
 }
