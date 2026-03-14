@@ -356,12 +356,14 @@ async function processOne(
         plaintext,
         source,
         metabotId: metabot.id,
+        metabotStore,
       });
       if (!payment.paid) {
         emitLog(`[Order] Payment not confirmed for txid=${txid || 'n/a'} (reason=${payment.reason})`);
         markProcessed(db, row.id, saveDb);
         return;
       }
+      emitLog(`[Order] Payment verified: txid=${txid} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`);
       if (!orderCoworkHandler) {
         emitLog('[Order] Cowork handler not initialized; skipping order.');
         markProcessed(db, row.id, saveDb);

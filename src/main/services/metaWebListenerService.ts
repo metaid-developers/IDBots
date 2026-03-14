@@ -74,12 +74,9 @@ interface UnifiedChatMessage {
 }
 
 function isPrivateChatMessage(m: UnifiedChatMessage): boolean {
-  return !!(
-    m.fromGlobalMetaId &&
-    m.fromUserInfo &&
-    m.toGlobalMetaId &&
-    m.toUserInfo
-  );
+  const fromId = (m.fromGlobalMetaId ?? (m as { from?: string }).from ?? '').trim();
+  const toId = (m.toGlobalMetaId ?? (m as { to?: string }).to ?? '').trim();
+  return Boolean(fromId && toId);
 }
 
 function isGroupChatMessage(m: UnifiedChatMessage): boolean {
@@ -204,8 +201,12 @@ function handleReceivedMessage(
       routeGroupChat(D, targetGlobalMetaId, targetName, db, emitLog, saveDb);
       return;
     }
-    if (eventType === 'WS_SERVER_NOTIFY_PRIVATE_CHAT' && config.privateChats && isPrivateChatMessage(D)) {
-      routePrivateChat(D, targetGlobalMetaId, targetName, db, emitLog, saveDb);
+    if (eventType === 'WS_SERVER_NOTIFY_PRIVATE_CHAT' && config.privateChats) {
+      if (isPrivateChatMessage(D)) {
+        routePrivateChat(D, targetGlobalMetaId, targetName, db, emitLog, saveDb);
+      } else {
+        emitLog(`[MetaWeb] [Private] Drop message: missing from/to metaid for target ${targetName}`);
+      }
       return;
     }
     if (eventType === 'WS_RESPONSE_SUCCESS' && D && typeof D === 'object') {
@@ -301,8 +302,8 @@ function routePrivateChat(
   const pinId = pinIdFromMessage(D);
   if (!pinId) return;
 
-  const fromInfo = D.fromUserInfo ?? {};
-  const toInfo = D.toUserInfo ?? {};
+  const fromInfo = (D.fromUserInfo || D.userInfo || {}) as UserInfoShape;
+  const toInfo = (D.toUserInfo || {}) as UserInfoShape;
   const rawDataStr = JSON.stringify(D);
 
   const from_metaid = (D as { from?: string }).from ?? D.fromGlobalMetaId ?? '';

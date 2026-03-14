@@ -18,6 +18,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const util_1 = require("util");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const crypto_1 = require("crypto");
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
     process.exit(1);
@@ -135,6 +136,19 @@ async function main() {
         if (contentType.toLowerCase().includes('json')) {
             try {
                 const parsed = JSON.parse(payloadStr);
+                if (args.path.trim() === '/protocols/simplegroupchat') {
+                    const groupId = typeof parsed.groupId === 'string' ? parsed.groupId.trim() : '';
+                    if (!groupId) {
+                        console.error('Payload for /protocols/simplegroupchat must include a non-empty groupId.');
+                        process.exit(1);
+                    }
+                    if (typeof parsed.content !== 'string') {
+                        console.error('Payload for /protocols/simplegroupchat must include a string content field.');
+                        process.exit(1);
+                    }
+                    parsed.content = encryptSimpleGroupChatContent(parsed.content, groupId);
+                    parsed.encryption = 'aes';
+                }
                 cleanPayload = JSON.stringify(parsed);
             }
             catch {

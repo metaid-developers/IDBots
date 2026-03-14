@@ -14,7 +14,7 @@
   /** 消息内容 (可能是密文) */
   "content": "{Encrypted content}",
   "contentType": "text/plain",
-  /** 加密方式, 默认 aes */
+  /** 加密方式,必须填 默认 aes */
   "encryption": "aes",
   "timestamp": 1234567890000,
   /** 回复某条消息的 PINID */

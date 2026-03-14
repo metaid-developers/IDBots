@@ -81,7 +81,7 @@ function main() {
     // metaidData.payload must be a JSON string (same as jq --arg payload "$PAYLOAD_JSON" in the shell)
     const body = {
         metabot_id: metabotId,
-        network: network,
+        network,
         metaidData: {
             operation: 'create',
             path: '/protocols/simplebuzz',

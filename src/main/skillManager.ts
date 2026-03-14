@@ -753,6 +753,10 @@ export class SkillManager {
     if (envOverride) {
       return path.resolve(envOverride);
     }
+    if (!app.isPackaged) {
+      const projectRoot = path.resolve(__dirname, '..');
+      return path.resolve(projectRoot, SKILLS_DIR_NAME);
+    }
     return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
   }
 
