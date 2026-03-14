@@ -2628,9 +2628,11 @@ if (!gotTheLock) {
       _event,
       params: { metabotId: number; chain: TransferChain; toAddress: string; amountSpaceOrDoge: string; feeRate: number }
     ) => {
+      console.log('[IPC] idbots:executeTransfer', JSON.stringify(params));
       try {
         const store = getMetabotStore();
         const result = await executeTransfer(store, params);
+        console.log('[IPC] idbots:executeTransfer result', result?.success ? 'success' : 'failed', result?.txId ?? result?.error);
         return result;
       } catch (error) {
         const msg =

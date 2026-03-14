@@ -2,21 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ShoppingBagIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
-import { formatGigSquarePrice } from '../../utils/gigSquare';
+import { formatGigSquarePrice, getServiceIconUrl } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
-
-const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
-
-/** Resolve metafile://<pinid> to image URL for serviceIcon. */
-const getServiceIconUrl = (serviceIcon: string | null | undefined): string | null => {
-  if (!serviceIcon || typeof serviceIcon !== 'string') return null;
-  const s = serviceIcon.trim();
-  const prefix = 'metafile://';
-  if (!s.toLowerCase().startsWith(prefix)) return null;
-  const pinid = s.slice(prefix.length).trim();
-  if (!pinid) return null;
-  return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(pinid)}`;
-};
 
 const formatMetaId = (value: string): string => {
   if (!value) return '';

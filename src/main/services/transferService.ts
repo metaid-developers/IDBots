@@ -330,6 +330,7 @@ async function runMvcTransferWorker(params: {
     });
     child.on('close', (code) => {
       const output = stdout.trim() || stderr.trim();
+      if (stderr.trim()) console.log('[Transfer] MVC worker stderr:', stderr.trim());
       if (code !== 0) console.error('[Transfer] MVC worker exit code:', code, 'stderr:', stderr || '(none)');
       try {
         const result = JSON.parse(output) as { success: boolean; txHex?: string; error?: string };
@@ -360,7 +361,13 @@ export async function executeTransfer(
     feeRate: number;
   }
 ): Promise<ExecuteTransferResult> {
-  console.log('[Transfer] executeTransfer start', { chain: params.chain, metabotId: params.metabotId, toAddress: params.toAddress });
+  console.log('[Transfer] executeTransfer start', {
+    chain: params.chain,
+    metabotId: params.metabotId,
+    toAddress: params.toAddress,
+    amountSpaceOrDoge: params.amountSpaceOrDoge,
+    feeRate: params.feeRate,
+  });
   const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
   if (!wallet?.mnemonic?.trim()) {
     console.error('[Transfer] Wallet not found for metabot', params.metabotId);
@@ -370,8 +377,8 @@ export async function executeTransfer(
 
   try {
     if (params.chain === 'mvc') {
-      const amountSats = new Decimal(params.amountSpaceOrDoge).mul(SPACE_TO_SATS).toNumber();
-      console.log('[Transfer] MVC: running worker', { amountSats, feeRate: params.feeRate });
+      const amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SPACE_TO_SATS).toNumber());
+      console.log('[Transfer] MVC: running worker', { amountSats, feeRate: params.feeRate, toAddress: params.toAddress });
       const workerResult = await runMvcTransferWorker({
         mnemonic: wallet.mnemonic,
         path: wallet.path ?? "m/44'/10001'/0'/0/0",
@@ -384,10 +391,20 @@ export async function executeTransfer(
         console.error('[Transfer] MVC worker failed:', errMsg);
         return { success: false, error: errMsg };
       }
-      console.log('[Transfer] MVC: broadcasting tx');
-      const txId = await broadcastMvcTx(workerResult.txHex);
-      console.log('[Transfer] MVC success txId:', txId);
-      return { success: true, txId };
+      const txHex = (workerResult as { success: true; txHex: string }).txHex;
+      console.log('[Transfer] MVC: broadcasting tx, txHex length:', txHex?.length ?? 0);
+      try {
+        const txId = await broadcastMvcTx(txHex);
+        console.log('[Transfer] MVC success txId:', txId);
+        return { success: true, txId };
+      } catch (broadcastErr) {
+        const broadcastMsg = broadcastErr != null && typeof broadcastErr === 'object' && 'message' in broadcastErr
+          ? String((broadcastErr as Error).message)
+          : String(broadcastErr);
+        console.error('[Transfer] MVC broadcast failed:', broadcastMsg);
+        console.error('[Transfer] MVC broadcast error (full):', broadcastErr);
+        return { success: false, error: broadcastMsg };
+      }
     }
 
     if (params.chain === 'doge') {

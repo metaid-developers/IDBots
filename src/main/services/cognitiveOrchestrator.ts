@@ -103,6 +103,10 @@ export type RunSkillTurnViaCoworkFn = (params: {
   userMessage: string;
   cwd: string;
   metabotId?: number;
+  groupId?: string | null;
+  triggerReason?: string;
+  supervisorGlobalmetaid?: string | null;
+  latestMessageSenderGlobalmetaid?: string | null;
 }) => Promise<string>;
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -588,6 +592,10 @@ async function runReplyPipeline(
           userMessage,
           cwd: cwdForCowork,
           metabotId: task.metabot_id,
+          groupId: task.group_id,
+          triggerReason,
+          supervisorGlobalmetaid,
+          latestMessageSenderGlobalmetaid,
         });
       } catch (err) {
         console.error('[Orchestrator] runSkillTurnViaCowork failed:', err instanceof Error ? err.message : err);

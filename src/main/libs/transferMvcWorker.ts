@@ -39,13 +39,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  process.stderr?.write?.(`[MVC Worker] payload: toAddress=${toAddress} amountSats=${amountSats} feeRate=${feeRate}\n`);
+
   const addressIndex = parseAddressIndexFromPath(pathStr);
   const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
   const purse = mvcWallet.getPrivateKey();
   const network: API_NET = API_NET.MAIN;
   const w = new Wallet(purse, network, feeRate, API_TARGET.APIMVC);
   const receivers = [{ address: toAddress, amount: amountSats }];
+  process.stderr?.write?.('[MVC Worker] calling sendArray...\n');
   const res = await w.sendArray(receivers, undefined, { noBroadcast: true });
+  process.stderr?.write?.(`[MVC Worker] sendArray ok, txHex length=${res?.txHex?.length ?? 0}\n`);
   console.log(JSON.stringify({ success: true, txHex: res.txHex }));
 }
 

@@ -14,31 +14,54 @@ export interface RunOrchestratorSkillTurnParams {
   cwd: string;
   /** MetaBot id for this group task; session will use its wallet env for skill scripts. */
   metabotId?: number;
+  groupId?: string | null;
+  triggerReason?: string;
+  supervisorGlobalmetaid?: string | null;
+  latestMessageSenderGlobalmetaid?: string | null;
 }
 
 /**
- * Run one skill turn using CoworkRunner: create a temporary session,
+ * Run one skill turn using CoworkRunner: create a new session,
  * startSession with autoApprove, wait for 'complete', extract last assistant
- * content, delete session, return reply text.
+ * content, keep session for UI visibility, return reply text.
  */
 export function runOrchestratorSkillTurn(
   runner: CoworkRunner,
   store: CoworkStore,
   params: RunOrchestratorSkillTurnParams
 ): Promise<string> {
-  const { systemPrompt, userMessage, cwd, metabotId } = params;
+  const {
+    systemPrompt,
+    userMessage,
+    cwd,
+    metabotId,
+    groupId,
+    triggerReason,
+    supervisorGlobalmetaid,
+    latestMessageSenderGlobalmetaid,
+  } = params;
+
+  const now = Date.now();
+  const normalizedGroupId = (groupId ?? '').trim();
+  const sessionTitle = normalizedGroupId
+    ? `Group-${normalizedGroupId.slice(0, 12)}-${now}`
+    : `[Orchestrator] skill-turn-${now}`;
+  const externalConversationId = normalizedGroupId
+    ? `metaweb-group:${normalizedGroupId}:${now}`
+    : `orchestrator:${now}`;
 
   const hasAvailableSkills = systemPrompt.includes('<available_skills>');
   console.log('[Orchestrator] [Bridge] runOrchestratorSkillTurn start:', {
     cwd,
     metabotId,
+    groupId: normalizedGroupId || null,
     systemPromptLength: systemPrompt.length,
     userMessageLength: userMessage.length,
     hasAvailableSkills,
   });
 
   const session = store.createSession(
-    '[Orchestrator] skill-turn',
+    sessionTitle,
     cwd,
     systemPrompt,
     'local',
@@ -46,6 +69,33 @@ export function runOrchestratorSkillTurn(
     metabotId ?? null
   );
   const sessionId = session.id;
+
+  if (normalizedGroupId) {
+    try {
+      store.upsertConversationMapping({
+        channel: 'metaweb_group',
+        externalConversationId,
+        metabotId: metabotId ?? null,
+        coworkSessionId: sessionId,
+      });
+    } catch (error) {
+      console.warn('[Orchestrator] Failed to upsert group conversation mapping:', error);
+    }
+  }
+
+  const userMessageRecord = store.addMessage(sessionId, {
+    type: 'user',
+    content: userMessage,
+    metadata: {
+      sourceChannel: normalizedGroupId ? 'metaweb_group' : 'orchestrator',
+      externalConversationId,
+      groupId: normalizedGroupId || undefined,
+      triggerReason,
+      supervisorGlobalmetaid: supervisorGlobalmetaid ?? undefined,
+      latestMessageSenderGlobalmetaid: latestMessageSenderGlobalmetaid ?? undefined,
+    },
+  });
+  runner.emit('message', sessionId, userMessageRecord);
 
   return new Promise<string>((resolve, reject) => {
     let settled = false;
@@ -59,11 +109,6 @@ export function runOrchestratorSkillTurn(
       if (settled) return;
       settled = true;
       cleanup();
-      try {
-        store.deleteSession(sessionId);
-      } catch (e) {
-        console.warn('[Orchestrator] Failed to delete temp skill-turn session:', e);
-      }
       resolve(result);
     };
 
@@ -72,9 +117,9 @@ export function runOrchestratorSkillTurn(
       settled = true;
       cleanup();
       try {
-        store.deleteSession(sessionId);
+        store.updateSession(sessionId, { status: 'error' });
       } catch (e) {
-        console.warn('[Orchestrator] Failed to delete temp skill-turn session:', e);
+        console.warn('[Orchestrator] Failed to mark session error:', e);
       }
       reject(typeof err === 'string' ? new Error(err) : err);
     };
@@ -120,6 +165,7 @@ export function runOrchestratorSkillTurn(
     console.log('[Orchestrator] [Bridge] Calling runner.startSession sessionId=', sessionId);
     runner
       .startSession(sessionId, userMessage, {
+        skipInitialUserMessage: true,
         systemPrompt,
         autoApprove: true,
         disableMemoryUpdates: true,

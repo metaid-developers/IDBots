@@ -138,6 +138,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     gigSquareOrderService: '服务',
     gigSquareOrderPrompt: '需求',
     gigSquareDeliveryResult: '结果',
+    gigSquareUseMetabot: '使用 MetaBot：',
+    gigSquareConfirmTitle: '确认支付',
+    gigSquareConfirmAmount: '支付金额',
+    gigSquareConfirmBalance: '钱包余额',
+    gigSquareConfirmRequest: '需求描述',
+    gigSquareConfirmProviderAddress: '服务方收款地址',
+    gigSquareConfirmMetabot: '发起需求的 MetaBot',
+    gigSquareConfirm: '确认',
+    gigSquareDescriptionMore: '更多',
+    gigSquareProvider: '服务方',
     
     // 侧边栏
     conversations: '对话',
@@ -975,6 +985,16 @@ const translations: Record<LanguageType, Record<string, string>> = {
     gigSquareOrderService: 'Service',
     gigSquareOrderPrompt: 'Request',
     gigSquareDeliveryResult: 'Result',
+    gigSquareUseMetabot: 'Use MetaBot:',
+    gigSquareConfirmTitle: 'Confirm Payment',
+    gigSquareConfirmAmount: 'Payment amount',
+    gigSquareConfirmBalance: 'Wallet balance',
+    gigSquareConfirmRequest: 'Request',
+    gigSquareConfirmProviderAddress: 'Provider receive address',
+    gigSquareConfirmMetabot: 'MetaBot for this request',
+    gigSquareConfirm: 'Confirm',
+    gigSquareDescriptionMore: 'More',
+    gigSquareProvider: 'Provider',
     
     // Sidebar
     conversations: 'Conversations',
