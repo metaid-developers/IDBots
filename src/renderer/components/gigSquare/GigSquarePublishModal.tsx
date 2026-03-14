@@ -1,0 +1,515 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PhotoIcon } from '@heroicons/react/24/outline';
+import { i18nService } from '../../services/i18n';
+import type { Skill } from '../../types/skill';
+
+type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
+
+interface GigSquarePublishModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onPublished?: () => void;
+}
+
+type PublishStatus = 'idle' | 'submitting' | 'success';
+
+const MAX_ICON_BYTES = 2 * 1024 * 1024;
+const ICON_ACCEPT = 'image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml';
+
+const CURRENCY_OPTIONS = [
+  { label: 'BTC', value: 'BTC' },
+  { label: 'MVC', value: 'SPACE' },
+  { label: 'DOGE', value: 'DOGE' },
+];
+
+const PRICE_LIMITS: Record<string, number> = {
+  BTC: 1,
+  SPACE: 100000,
+  DOGE: 10000,
+};
+
+const OUTPUT_OPTIONS = [
+  { label: 'text', value: 'text' },
+  { label: 'image', value: 'image' },
+  { label: 'video', value: 'video' },
+  { label: 'other', value: 'other' },
+];
+
+const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
+
+const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
+  isOpen,
+  onClose,
+  onPublished,
+}) => {
+  const [metabots, setMetabots] = useState<MetabotOption[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState('');
+  const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(null);
+  const [displayName, setDisplayName] = useState('');
+  const [serviceName, setServiceName] = useState('');
+  const [serviceNameDirty, setServiceNameDirty] = useState(false);
+  const [description, setDescription] = useState('');
+  const [price, setPrice] = useState('');
+  const [currency, setCurrency] = useState<'BTC' | 'SPACE' | 'DOGE'>('BTC');
+  const [outputType, setOutputType] = useState<'text' | 'image' | 'video' | 'other'>('text');
+  const [serviceIconDataUrl, setServiceIconDataUrl] = useState('');
+  const [status, setStatus] = useState<PublishStatus>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const iconInputRef = useRef<HTMLInputElement | null>(null);
+
+  const selectedSkill = useMemo(
+    () => skills.find((skill) => skill.id === selectedSkillId) || null,
+    [skills, selectedSkillId]
+  );
+
+  const currentCurrencyLabel = useMemo(() => {
+    const option = CURRENCY_OPTIONS.find((item) => item.value === currency);
+    return option?.label || currency;
+  }, [currency]);
+
+  const priceLimit = PRICE_LIMITS[currency] || PRICE_LIMITS.BTC;
+
+  const loadMetabots = useCallback(async () => {
+    try {
+      const res = await window.electron.idbots.getMetaBots();
+      if (res?.success && res.list?.length) {
+        setMetabots(res.list);
+        setSelectedMetabotId((prev) => {
+          if (prev && res.list.some((m) => m.id === prev)) return prev;
+          const twin = res.list.find((m) => m.metabot_type === 'twin');
+          return twin?.id || res.list[0].id;
+        });
+      } else {
+        setMetabots([]);
+        setSelectedMetabotId(null);
+      }
+    } catch {
+      setMetabots([]);
+      setSelectedMetabotId(null);
+    }
+  }, []);
+
+  const loadSkills = useCallback(async () => {
+    try {
+      const res = await window.electron.skills.list();
+      if (res?.success && res.skills?.length) {
+        setSkills(res.skills);
+        setSelectedSkillId((prev) => {
+          if (prev && res.skills.some((s) => s.id === prev)) return prev;
+          return res.skills[0].id;
+        });
+      } else {
+        setSkills([]);
+        setSelectedSkillId('');
+      }
+    } catch {
+      setSkills([]);
+      setSelectedSkillId('');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setStatus('idle');
+    setError(null);
+    setWarning(null);
+    setServiceNameDirty(false);
+    setServiceIconDataUrl('');
+    loadMetabots();
+    loadSkills();
+  }, [isOpen, loadMetabots, loadSkills]);
+
+  useEffect(() => {
+    if (!selectedSkill || serviceNameDirty) return;
+    setServiceName(selectedSkill.name + '-service');
+  }, [selectedSkill, serviceNameDirty]);
+
+  if (!isOpen) return null;
+
+  const handleIconChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_ICON_BYTES) {
+      setError(i18nService.t('gigSquarePublishIconTooLarge'));
+      event.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setServiceIconDataUrl(dataUrl);
+      setError(null);
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const validate = (): boolean => {
+    if (!selectedSkill) {
+      setError(i18nService.t('gigSquarePublishSkillRequired'));
+      return false;
+    }
+    if (!selectedMetabotId) {
+      setError(i18nService.t('gigSquarePublishMetabotRequired'));
+      return false;
+    }
+    if (!displayName.trim()) {
+      setError(i18nService.t('gigSquarePublishDisplayNameRequired'));
+      return false;
+    }
+    if (!serviceName.trim()) {
+      setError(i18nService.t('gigSquarePublishServiceNameRequired'));
+      return false;
+    }
+    if (!description.trim()) {
+      setError(i18nService.t('gigSquarePublishDescriptionRequired'));
+      return false;
+    }
+    if (!price.trim()) {
+      setError(i18nService.t('gigSquarePublishPriceRequired'));
+      return false;
+    }
+    if (!NUMBER_PATTERN.test(price.trim())) {
+      setError(i18nService.t('gigSquarePublishPriceInvalid'));
+      return false;
+    }
+    const numericPrice = Number(price);
+    if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+      setError(i18nService.t('gigSquarePublishPriceInvalid'));
+      return false;
+    }
+    if (numericPrice > priceLimit) {
+      setError(i18nService.t('gigSquarePublishPriceExceed'));
+      return false;
+    }
+    if (!outputType) {
+      setError(i18nService.t('gigSquarePublishOutputRequired'));
+      return false;
+    }
+    setError(null);
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (status === 'submitting') return;
+    if (!validate()) return;
+    setStatus('submitting');
+    setWarning(null);
+
+    const result = await window.electron.gigSquare.publishService({
+      metabotId: selectedMetabotId || 0,
+      serviceName: serviceName.trim(),
+      displayName: displayName.trim(),
+      description: description.trim(),
+      providerSkill: selectedSkill?.name || '',
+      price: price.trim(),
+      currency,
+      outputType,
+      serviceIconDataUrl: serviceIconDataUrl || null,
+    });
+
+    if (!result?.success) {
+      setError(result?.error || i18nService.t('gigSquarePublishFailed'));
+      setStatus('idle');
+      return;
+    }
+
+    if (result.warning) {
+      setWarning(result.warning);
+    }
+
+    setStatus('success');
+    onPublished?.();
+  };
+
+  const submitLabel = status === 'submitting'
+    ? i18nService.t('gigSquarePublishSubmitting')
+    : error
+      ? i18nService.t('gigSquarePublishRetry')
+      : i18nService.t('gigSquarePublishSubmit');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/50 dark:bg-black/60"
+        onClick={status === 'submitting' ? undefined : onClose}
+        aria-hidden
+      />
+      <div
+        className="relative w-full max-w-2xl rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
+              {i18nService.t('gigSquarePublishTitle')}
+            </h3>
+            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+              {i18nService.t('gigSquarePublishSubtitle')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+            disabled={status === 'submitting'}
+          >
+            {i18nService.t('close')}
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishSkillLabel')}
+              </label>
+              <select
+                value={selectedSkillId}
+                onChange={(e) => setSelectedSkillId(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              >
+                {skills.map((skill) => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishMetabotLabel')}
+              </label>
+              <select
+                value={selectedMetabotId || ''}
+                onChange={(e) => setSelectedMetabotId(Number(e.target.value) || null)}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              >
+                {metabots.map((bot) => (
+                  <option key={bot.id} value={bot.id}>
+                    {bot.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishDisplayNameLabel')}
+              </label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder={i18nService.t('gigSquarePublishDisplayNamePlaceholder')}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              />
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                {i18nService.t('gigSquarePublishDisplayNameHint')}
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishServiceNameLabel')}
+              </label>
+              <input
+                type="text"
+                value={serviceName}
+                onChange={(e) => {
+                  setServiceName(e.target.value);
+                  setServiceNameDirty(true);
+                }}
+                placeholder={selectedSkill ? selectedSkill.name + '-service' : ''}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              />
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                {i18nService.t('gigSquarePublishServiceNameHint')}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+              {i18nService.t('gigSquarePublishDescriptionLabel')}
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder={i18nService.t('gigSquarePublishDescriptionPlaceholder')}
+              rows={3}
+              className="w-full rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text placeholder-claude-textSecondary dark:placeholder-claude-darkTextSecondary focus:outline-none focus:ring-2 focus:ring-claude-accent"
+              disabled={status === 'submitting'}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishPriceLabel')}
+              </label>
+              <input
+                type="text"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder={i18nService.t('gigSquarePublishPricePlaceholder')}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              />
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                {i18nService.t('gigSquarePublishPriceLimitPrefix')}{priceLimit} {currentCurrencyLabel}
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishCurrencyLabel')}
+              </label>
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value as 'BTC' | 'SPACE' | 'DOGE')}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              >
+                {CURRENCY_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishInputTypeLabel')}
+              </label>
+              <div className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border">
+                text
+              </div>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                {i18nService.t('gigSquarePublishInputTypeNote')}
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                {i18nService.t('gigSquarePublishOutputTypeLabel')}
+              </label>
+              <select
+                value={outputType}
+                onChange={(e) => setOutputType(e.target.value as 'text' | 'image' | 'video' | 'other')}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={status === 'submitting'}
+              >
+                {OUTPUT_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                {i18nService.t('gigSquarePublishOutputTypeNote')}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-2">
+              {i18nService.t('gigSquarePublishIconLabel')}
+            </label>
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex items-center justify-center">
+                {serviceIconDataUrl ? (
+                  <img src={serviceIconDataUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <PhotoIcon className="h-8 w-8 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                )}
+              </div>
+              <div>
+                <input
+                  ref={iconInputRef}
+                  type="file"
+                  accept={ICON_ACCEPT}
+                  className="hidden"
+                  onChange={handleIconChange}
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => iconInputRef.current?.click()}
+                    className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                    disabled={status === 'submitting'}
+                  >
+                    {i18nService.t('gigSquarePublishUploadIcon')}
+                  </button>
+                  {serviceIconDataUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setServiceIconDataUrl('')}
+                      className="text-xs text-red-500 dark:text-red-400 hover:underline"
+                      disabled={status === 'submitting'}
+                    >
+                      {i18nService.t('gigSquarePublishRemoveIcon')}
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                  {i18nService.t('gigSquarePublishIconOptional')}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="text-xs text-red-500">
+              {error}
+            </div>
+          )}
+          {warning && (
+            <div className="text-xs text-amber-500">
+              {warning}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-2 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              disabled={status === 'submitting'}
+            >
+              {i18nService.t('cancel')}
+            </button>
+            {status === 'success' ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-idchat-primary px-4 py-2 text-sm font-medium"
+              >
+                {i18nService.t('gigSquarePublishSuccess')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                className="btn-idchat-primary px-4 py-2 text-sm font-medium"
+                disabled={status === 'submitting'}
+              >
+                {submitLabel}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default GigSquarePublishModal;

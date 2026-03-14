@@ -312,6 +312,17 @@ interface IElectronAPI {
   gigSquare: {
     fetchServices: () => Promise<{ success: boolean; list?: GigSquareService[]; error?: string }>;
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) => Promise<{ success: boolean; error?: string } & GigSquareProviderInfo>;
+    publishService: (params: {
+      metabotId: number;
+      serviceName: string;
+      displayName: string;
+      description: string;
+      providerSkill: string;
+      price: string;
+      currency: string;
+      outputType: string;
+      serviceIconDataUrl?: string | null;
+    }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;
     sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string }) => Promise<{ success: boolean; txids?: string[]; error?: string }>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;

@@ -4,6 +4,7 @@ import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice, getServiceIconUrl } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
+import GigSquarePublishModal from './GigSquarePublishModal';
 
 const formatMetaId = (value: string): string => {
   if (!value) return '';
@@ -17,6 +18,7 @@ const GigSquareView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedService, setSelectedService] = useState<GigSquareService | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [buyerMetabotId, setBuyerMetabotId] = useState<number | null>(null);
 
   const loadServices = useCallback(async () => {
@@ -87,6 +89,13 @@ const GigSquareView: React.FC = () => {
                 {heroStats}
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setIsPublishModalOpen(true)}
+              className="btn-idchat-primary px-3 py-1.5 text-xs font-medium"
+            >
+              {i18nService.t('gigSquarePublishButton')}
+            </button>
             <button
               type="button"
               onClick={loadServices}
@@ -184,6 +193,12 @@ const GigSquareView: React.FC = () => {
           </div>
         )}
       </div>
+
+      <GigSquarePublishModal
+        isOpen={isPublishModalOpen}
+        onClose={() => setIsPublishModalOpen(false)}
+        onPublished={loadServices}
+      />
 
       <GigSquareOrderModal
         service={selectedService}

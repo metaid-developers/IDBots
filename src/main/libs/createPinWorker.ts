@@ -37,7 +37,8 @@ async function broadcastTx(rawTx: string): Promise<string> {
 }
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
-const P2PKH_UNLOCK_SIZE = 1 + 1 + 72 + 1 + 33;
+/** Size in bytes of one signed P2PKH input in the serialized tx. */
+const P2PKH_INPUT_SIZE = 148;
 
 interface RpcPayload {
   feeRate?: number;
@@ -82,26 +83,59 @@ function buildMvcOpReturn(data: RpcPayload['metaidData']): (string | Buffer)[] {
   return result;
 }
 
-function pickUtxo(utxos: SA_utxo[], amount: number, feeb: number): SA_utxo[] {
-  let requiredAmount = amount + 34 * 2 * feeb + 100;
-  if (requiredAmount <= 0) return [];
-  const sum = utxos.reduce((acc, u) => acc + u.satoshis, 0);
-  if (sum < requiredAmount) throw new Error('Not enough balance');
-
-  const confirmed = utxos.filter((u) => u.height > 0).sort(() => Math.random() - 0.5);
-  const unconfirmed = utxos.filter((u) => u.height <= 0).sort(() => Math.random() - 0.5);
-  let current = 0;
-  const candidate: SA_utxo[] = [];
-  for (const u of [...confirmed, ...unconfirmed]) {
-    current += u.satoshis;
-    requiredAmount += feeb * P2PKH_UNLOCK_SIZE;
-    candidate.push(u);
-    if (current > requiredAmount) return candidate;
+/** Size in bytes of the OP_RETURN script (OP_RETURN + pushes for each part). */
+function getOpReturnScriptSize(parts: (string | Buffer)[]): number {
+  let size = 1; // OP_RETURN
+  for (const p of parts) {
+    const len = Buffer.isBuffer(p) ? p.length : Buffer.byteLength(p, 'utf8');
+    if (len < 76) size += 1 + len;
+    else if (len <= 0xff) size += 2 + len;
+    else if (len <= 0xffff) size += 3 + len;
+    else size += 5 + len; // OP_PUSHDATA4
   }
-  return candidate;
+  return size;
 }
 
-function isRetryableBroadcastError(message: string): boolean {
+/**
+ * Total tx size in bytes without inputs: version(4) + vin_count(1) + vout_count(1)
+ * + P2PKH_output(43) + OP_RETURN_output(9+scriptLen) + locktime(4) = 62 + scriptLen.
+ * With n inputs: 62 + scriptLen + n * P2PKH_INPUT_SIZE.
+ */
+function getEstimatedTxSizeWithoutInputs(opReturnScriptSize: number): number {
+  return 4 + 1 + 1 + 43 + (9 + opReturnScriptSize) + 4;
+}
+
+/**
+ * Pick UTXOs so that sum(satoshis) >= totalOutput + fee, where fee = txSize * feeRate.
+ * Tx size depends on number of inputs, so we add UTXOs until sum >= required.
+ */
+function pickUtxo(
+  utxos: SA_utxo[],
+  totalOutput: number,
+  feeRate: number,
+  estimatedTxSizeWithoutInputs: number
+): SA_utxo[] {
+  const confirmed = utxos.filter((u) => u.height > 0).sort(() => Math.random() - 0.5);
+  const unconfirmed = utxos.filter((u) => u.height <= 0).sort(() => Math.random() - 0.5);
+  const ordered = [...confirmed, ...unconfirmed];
+
+  let current = 0;
+  const candidate: SA_utxo[] = [];
+  for (const u of ordered) {
+    current += u.satoshis;
+    candidate.push(u);
+    const numInputs = candidate.length;
+    const estimatedTxSize = estimatedTxSizeWithoutInputs + numInputs * P2PKH_INPUT_SIZE;
+    const requiredAmount = totalOutput + Math.ceil(estimatedTxSize * feeRate);
+    if (current >= requiredAmount) return candidate;
+  }
+
+  throw new Error('Not enough balance');
+}
+
+const FALLBACK_FEE_RATES: Record<string, number> = { mvc: 1, btc: 2, doge: 5000000 };
+
+function isInsufficientFeeError(message: string): boolean {
   const m = message.toLowerCase();
   return (
     m.includes('insufficient priority') ||
@@ -112,25 +146,11 @@ function isRetryableBroadcastError(message: string): boolean {
   );
 }
 
-function buildFeeRatePlan(baseFeeRate: number): number[] {
-  const base = Number.isFinite(baseFeeRate) && baseFeeRate > 0 ? Math.floor(baseFeeRate) : 1;
-  const plan = [
-    base,
-    Math.max(2, base * 2),
-    Math.max(4, base * 4),
-    Math.max(8, base * 8),
-    12,
-    20,
-  ];
-  const dedup: number[] = [];
-  for (const value of plan) {
-    if (!dedup.includes(value)) dedup.push(value);
+function resolveWorkerFeeRate(payload: RpcPayload, networkKind: string): number {
+  if (payload.feeRate != null && Number.isFinite(payload.feeRate) && payload.feeRate > 0) {
+    return Math.floor(payload.feeRate);
   }
-  return dedup;
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+  return FALLBACK_FEE_RATES[networkKind] ?? 1;
 }
 
 async function main(): Promise<void> {
@@ -148,6 +168,7 @@ async function main(): Promise<void> {
   const payload: RpcPayload = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
   const { metaidData, network: networkParam } = payload;
   const networkKind = (String(networkParam ?? '').toLowerCase().trim() || 'mvc') as string;
+  const feeRate = resolveWorkerFeeRate(payload, networkKind);
 
   if (networkKind === 'doge') {
     const log = (msg: string) => {
@@ -158,17 +179,7 @@ async function main(): Promise<void> {
       }
     };
     const { runDogeCreatePin } = await import('./dogeInscribe');
-    const { fetchDogeFeeRateFast } = await import('./dogeApi');
-    const DOGE_MIN_FEERATE = 100000;
-    let feeRate = payload.feeRate;
-    if (feeRate == null || !Number.isFinite(feeRate) || feeRate < DOGE_MIN_FEERATE) {
-      log(`payload feeRate=${feeRate} too low (min ${DOGE_MIN_FEERATE}), fetching Fast*1.5 from API...`);
-      feeRate = await fetchDogeFeeRateFast();
-      log(`feeRate from API (Fast*1.5) = ${feeRate}`);
-    } else {
-      log(`feeRate from payload = ${feeRate}`);
-    }
-    log(`calling runDogeCreatePin with feeRate=${feeRate}`);
+    log(`feeRate=${feeRate} (from ${payload.feeRate != null ? 'global store' : 'fallback'})`);
     const result = await runDogeCreatePin(
       mnemonic,
       pathStr,
@@ -191,15 +202,7 @@ async function main(): Promise<void> {
       try { process.stderr.write(`[createPinWorker:btc] ${msg}\n`); } catch { /* noop */ }
     };
     const { runBtcCreatePin } = await import('./btcInscribe');
-    let feeRate = payload.feeRate;
-    const BTC_MIN_FEERATE = 1;
-    if (feeRate == null || !Number.isFinite(feeRate) || feeRate < BTC_MIN_FEERATE) {
-      btcLog(`payload feeRate=${feeRate} invalid, using default 2`);
-      feeRate = 2;
-    } else {
-      btcLog(`feeRate from payload = ${feeRate}`);
-    }
-    btcLog(`calling runBtcCreatePin with feeRate=${feeRate}`);
+    btcLog(`feeRate=${feeRate} (from ${payload.feeRate != null ? 'global store' : 'fallback'})`);
     const result = await runBtcCreatePin(mnemonic, pathStr, metaidData, feeRate);
     console.log(
       JSON.stringify({
@@ -211,8 +214,6 @@ async function main(): Promise<void> {
     );
     return;
   }
-
-  const feeRates = buildFeeRatePlan(payload.feeRate ?? 1);
   const addressIndex = parseAddressIndexFromPath(pathStr);
 
   const network = mvc.Networks.livenet;
@@ -233,59 +234,53 @@ async function main(): Promise<void> {
   }));
 
   const addressObj = new mvc.Address(address, network as any);
-  let lastError = '';
+  const opReturnParts = buildMvcOpReturn(metaidData);
+  const opReturnScriptSize = getOpReturnScriptSize(opReturnParts);
+  const estimatedTxSizeWithoutInputs = getEstimatedTxSizeWithoutInputs(opReturnScriptSize);
 
-  for (let i = 0; i < feeRates.length; i++) {
-    const feeRate = feeRates[i];
-    try {
-      const txComposer = new TxComposer();
-      txComposer.appendP2PKHOutput({
-        address: addressObj,
-        satoshis: 1,
-      });
-      txComposer.appendOpReturnOutput(buildMvcOpReturn(metaidData));
+  const txComposer = new TxComposer();
+  txComposer.appendP2PKHOutput({
+    address: addressObj,
+    satoshis: 1,
+  });
+  txComposer.appendOpReturnOutput(opReturnParts);
 
-      const tx = txComposer.tx;
-      const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
-      const picked = pickUtxo(usableUtxos, totalOutput, feeRate);
+  const tx = txComposer.tx;
+  const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
+  const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs);
 
-      for (const utxo of picked) {
-        txComposer.appendP2PKHInput({
-          address: addressObj,
-          txId: utxo.txId,
-          outputIndex: utxo.outputIndex,
-          satoshis: utxo.satoshis,
-        });
-      }
-      txComposer.appendChangeOutput(addressObj, feeRate);
+  for (const utxo of picked) {
+    txComposer.appendP2PKHInput({
+      address: addressObj,
+      txId: utxo.txId,
+      outputIndex: utxo.outputIndex,
+      satoshis: utxo.satoshis,
+    });
+  }
+  txComposer.appendChangeOutput(addressObj, feeRate);
 
-      for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex++) {
-        txComposer.unlockP2PKHInput(privateKey, inputIndex);
-      }
-
-      const rawHex = txComposer.getRawHex();
-      const inputTotal = tx.inputs.reduce((s, inp) => s + (inp.output?.satoshis || 0), 0);
-      const outputTotal = tx.outputs.reduce((s, o) => s + o.satoshis, 0);
-      const totalCost = inputTotal - outputTotal;
-
-      const txid = await broadcastTx(rawHex);
-      const pinId = `${txid}i0`;
-      console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost, feeRate }));
-      return;
-    } catch (err) {
-      const message = err && typeof err === 'object' && 'message' in err
-        ? String((err as Error).message)
-        : String(err);
-      lastError = message;
-      const canRetry = isRetryableBroadcastError(message) && i < feeRates.length - 1;
-      if (!canRetry) {
-        throw err;
-      }
-      await sleep(250);
-    }
+  for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex++) {
+    txComposer.unlockP2PKHInput(privateKey, inputIndex);
   }
 
-  throw new Error(lastError || 'broadcast failed');
+  const rawHex = txComposer.getRawHex();
+  const inputTotal = tx.inputs.reduce((s, inp) => s + (inp.output?.satoshis || 0), 0);
+  const outputTotal = tx.outputs.reduce((s, o) => s + o.satoshis, 0);
+  const totalCost = inputTotal - outputTotal;
+
+  try {
+    const txid = await broadcastTx(rawHex);
+    const pinId = `${txid}i0`;
+    console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost, feeRate }));
+  } catch (err) {
+    const message = err && typeof err === 'object' && 'message' in err
+      ? String((err as Error).message)
+      : String(err);
+    if (isInsufficientFeeError(message)) {
+      throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
+    }
+    throw err;
+  }
 }
 
 main().catch((err: unknown) => {

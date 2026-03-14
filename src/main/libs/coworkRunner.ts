@@ -727,7 +727,10 @@ export class CoworkRunner extends EventEmitter {
     return clipped.replace(/[，,；;:\-]+$/, '').trim();
   }
 
-  private validateMemoryToolText(rawText: string): { ok: boolean; text: string; reason?: string } {
+  private validateMemoryToolText(
+    rawText: string,
+    options?: { isExplicit?: boolean }
+  ): { ok: boolean; text: string; reason?: string } {
     const text = this.sanitizeMemoryToolText(rawText);
     if (!text) {
       return { ok: false, text: '', reason: 'text is required' };
@@ -735,10 +738,13 @@ export class CoworkRunner extends EventEmitter {
     if (isQuestionLikeMemoryText(text)) {
       return { ok: false, text: '', reason: 'memory text looks like a question, not a durable fact' };
     }
-    if (MEMORY_ASSISTANT_STYLE_TEXT_RE.test(text)) {
+    // When user explicitly asks to remember (e.g. "remember this error"), allow content that
+    // mentions tools/commands as lessons; only reject literal command snippets when implicit.
+    const allowProceduralIfExplicit = options?.isExplicit === true;
+    if (!allowProceduralIfExplicit && MEMORY_ASSISTANT_STYLE_TEXT_RE.test(text)) {
       return { ok: false, text: '', reason: 'memory text looks like assistant workflow instruction' };
     }
-    if (MEMORY_PROCEDURAL_TEXT_RE.test(text)) {
+    if (!allowProceduralIfExplicit && MEMORY_PROCEDURAL_TEXT_RE.test(text)) {
       return { ok: false, text: '', reason: 'memory text looks like command/procedural content' };
     }
     return { ok: true, text };
@@ -843,7 +849,7 @@ export class CoworkRunner extends EventEmitter {
           isError: true,
         };
       }
-      const validation = this.validateMemoryToolText(text);
+      const validation = this.validateMemoryToolText(text, { isExplicit: args.is_explicit });
       if (!validation.ok) {
         return {
           text: this.formatMemoryUserEditsResult({
@@ -896,7 +902,7 @@ export class CoworkRunner extends EventEmitter {
         };
       }
       if (typeof args.text === 'string') {
-        const validation = this.validateMemoryToolText(args.text);
+        const validation = this.validateMemoryToolText(args.text, { isExplicit: args.is_explicit });
         if (!validation.ok) {
           return {
             text: this.formatMemoryUserEditsResult({

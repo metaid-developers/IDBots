@@ -205,6 +205,22 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
 const GIG_SQUARE_SERVICE_PATH = '/protocols/skill-service';
 const GIG_SQUARE_CHATPUBKEY_PATH = '/info/chatpubkey';
 const GIG_SQUARE_SERVICE_LIMIT = 10;
+const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
+const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
+const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
+  BTC: 1,
+  MVC: 100000,
+  DOGE: 10000,
+  SPACE: 100000,
+};
+const GIG_SQUARE_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+]);
 
 type GigSquareService = {
   id: string;
@@ -305,6 +321,148 @@ const parseGigSquareService = (item: Record<string, unknown>): GigSquareService 
   };
 };
 
+const sanitizeDbParams = (params: unknown[]): (string | number | null)[] => {
+  return params.map((value) => (
+    value == null || (typeof value === 'number' && Number.isNaN(value)) ? null : (value as string | number | null)
+  ));
+};
+
+const normalizeGigSquareCurrency = (currency: string): string => {
+  const normalized = currency.toUpperCase();
+  return normalized === 'MVC' ? 'SPACE' : normalized;
+};
+
+const getGigSquarePriceLimit = (currency: string): number => {
+  const normalized = normalizeGigSquareCurrency(currency);
+  return normalized in GIG_SQUARE_PRICE_LIMITS ? GIG_SQUARE_PRICE_LIMITS[normalized] : GIG_SQUARE_PRICE_LIMITS.MVC;
+};
+
+const parseDataUrlImage = (dataUrl: string): { mime: string; buffer: Buffer } | null => {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) return null;
+  const mime = match[1].trim().toLowerCase();
+  const base64 = match[2];
+  if (!base64) return null;
+  try {
+    const buffer = Buffer.from(base64, 'base64');
+    return { mime, buffer };
+  } catch {
+    return null;
+  }
+};
+
+const ensureGigSquareSchema = (): void => {
+  if (gigSquareSchemaReady) return;
+  const sqliteStore = getStore();
+  const db = sqliteStore.getDatabase();
+  db.run(`
+    CREATE TABLE IF NOT EXISTS gig_square_services (
+      id TEXT PRIMARY KEY,
+      pin_id TEXT NOT NULL,
+      txid TEXT NOT NULL,
+      metabot_id INTEGER NOT NULL,
+      provider_global_metaid TEXT NOT NULL,
+      provider_skill TEXT NOT NULL,
+      service_name TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      service_icon TEXT,
+      price TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      skill_document TEXT,
+      input_type TEXT NOT NULL,
+      output_type TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_gig_square_services_metabot
+    ON gig_square_services(metabot_id, created_at DESC);
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_gig_square_services_service_name
+    ON gig_square_services(service_name);
+  `);
+  sqliteStore.getSaveFunction()();
+  gigSquareSchemaReady = true;
+};
+
+const insertGigSquareServiceRow = (input: {
+  id: string;
+  pinId: string;
+  txid: string;
+  metabotId: number;
+  providerGlobalMetaId: string;
+  providerSkill: string;
+  serviceName: string;
+  displayName: string;
+  description: string;
+  serviceIcon: string | null;
+  price: string;
+  currency: string;
+  skillDocument: string;
+  inputType: string;
+  outputType: string;
+  endpoint: string;
+  payloadJson: string;
+}): void => {
+  ensureGigSquareSchema();
+  const sqliteStore = getStore();
+  const db = sqliteStore.getDatabase();
+  const now = Date.now();
+  db.run(
+    `
+      INSERT INTO gig_square_services (
+        id, pin_id, txid, metabot_id, provider_global_metaid, provider_skill,
+        service_name, display_name, description, service_icon, price, currency,
+        skill_document, input_type, output_type, endpoint, payload_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        pin_id = excluded.pin_id,
+        txid = excluded.txid,
+        metabot_id = excluded.metabot_id,
+        provider_global_metaid = excluded.provider_global_metaid,
+        provider_skill = excluded.provider_skill,
+        service_name = excluded.service_name,
+        display_name = excluded.display_name,
+        description = excluded.description,
+        service_icon = excluded.service_icon,
+        price = excluded.price,
+        currency = excluded.currency,
+        skill_document = excluded.skill_document,
+        input_type = excluded.input_type,
+        output_type = excluded.output_type,
+        endpoint = excluded.endpoint,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `,
+    sanitizeDbParams([
+      input.id,
+      input.pinId,
+      input.txid,
+      input.metabotId,
+      input.providerGlobalMetaId,
+      input.providerSkill,
+      input.serviceName,
+      input.displayName,
+      input.description,
+      input.serviceIcon,
+      input.price,
+      input.currency,
+      input.skillDocument,
+      input.inputType,
+      input.outputType,
+      input.endpoint,
+      input.payloadJson,
+      now,
+      now,
+    ])
+  );
+  sqliteStore.getSaveFunction()();
+};
 type CaptureRect = { x: number; y: number; width: number; height: number };
 
 const normalizeCaptureRect = (rect?: Partial<CaptureRect> | null): CaptureRect | null => {
@@ -672,6 +830,7 @@ let skillManager: SkillManager | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let scheduledTaskStore: ScheduledTaskStore | null = null;
 let metabotStore: MetabotStore | null = null;
+let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
@@ -2487,7 +2646,133 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
+  ipcMain.handle('gigSquare:publishService', async (_event, params: {
+    metabotId: number;
+    serviceName: string;
+    displayName: string;
+    description: string;
+    providerSkill: string;
+    price: string;
+    currency: string;
+    outputType: string;
+    serviceIconDataUrl?: string | null;
+  }) => {
+    try {
+      const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
+      const serviceName = toSafeString(params?.serviceName).trim();
+      const displayName = toSafeString(params?.displayName).trim();
+      const description = toSafeString(params?.description).trim();
+      const providerSkill = toSafeString(params?.providerSkill).trim();
+      const price = toSafeString(params?.price).trim();
+      const currencyRaw = toSafeString(params?.currency).trim().toUpperCase();
+      const outputType = toSafeString(params?.outputType).trim().toLowerCase();
+      const serviceIconDataUrl = toSafeString(params?.serviceIconDataUrl).trim();
+
+      if (!metabotId || metabotId < 0) return { success: false, error: 'metabotId is required' };
+      if (!serviceName) return { success: false, error: 'serviceName is required' };
+      if (!displayName) return { success: false, error: 'displayName is required' };
+      if (!description) return { success: false, error: 'description is required' };
+      if (!providerSkill) return { success: false, error: 'providerSkill is required' };
+      if (!price) return { success: false, error: 'price is required' };
+      if (!GIG_SQUARE_ALLOWED_CURRENCIES.has(currencyRaw)) {
+        return { success: false, error: 'currency is invalid' };
+      }
+      if (!GIG_SQUARE_ALLOWED_OUTPUT_TYPES.has(outputType)) {
+        return { success: false, error: 'outputType is invalid' };
+      }
+      if (!/^\d+(\.\d+)?$/.test(price)) {
+        return { success: false, error: 'price is invalid' };
+      }
+      const priceNumber = Number(price);
+      if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+        return { success: false, error: 'price is invalid' };
+      }
+      const normalizedCurrency = normalizeGigSquareCurrency(currencyRaw);
+      const priceLimit = getGigSquarePriceLimit(normalizedCurrency);
+      if (priceNumber > priceLimit) {
+        return { success: false, error: 'price exceeds limit' };
+      }
+
+      const store = getMetabotStore();
+      const metabot = store.getMetabotById(metabotId);
+      if (!metabot) return { success: false, error: 'MetaBot not found' };
+      if (!metabot.globalmetaid) return { success: false, error: 'MetaBot GlobalMetaID missing' };
+
+      let serviceIconUri = '';
+      if (serviceIconDataUrl) {
+        const parsed = parseDataUrlImage(serviceIconDataUrl);
+        if (!parsed) return { success: false, error: 'serviceIcon data invalid' };
+        if (!GIG_SQUARE_IMAGE_MIME_TYPES.has(parsed.mime)) {
+          return { success: false, error: 'serviceIcon type invalid' };
+        }
+        const fileResult = await createPin(store, metabotId, {
+          operation: 'create',
+          path: '/file',
+          encryption: '0',
+          version: '1.0.0',
+          contentType: parsed.mime,
+          payload: parsed.buffer,
+        });
+        serviceIconUri = `metafile://${fileResult.pinId}`;
+      }
+
+      const payload = {
+        serviceName,
+        displayName,
+        description,
+        serviceIcon: serviceIconUri || '',
+        providerMetaBot: metabot.globalmetaid,
+        providerSkill,
+        price,
+        currency: normalizedCurrency,
+        skillDocument: '',
+        inputType: 'text',
+        outputType,
+        endpoint: 'simplemsg',
+      };
+
+      const payloadJson = JSON.stringify(payload);
+      const result = await createPin(store, metabotId, {
+        operation: 'create',
+        path: GIG_SQUARE_SERVICE_PATH,
+        encryption: '0',
+        version: '1.0.0',
+        contentType: 'application/json',
+        payload: payloadJson,
+      });
+
+      let warning: string | undefined;
+      try {
+        insertGigSquareServiceRow({
+          id: result.pinId,
+          pinId: result.pinId,
+          txid: result.txids?.[0] || '',
+          metabotId,
+          providerGlobalMetaId: metabot.globalmetaid,
+          providerSkill,
+          serviceName,
+          displayName,
+          description,
+          serviceIcon: serviceIconUri || null,
+          price,
+          currency: normalizedCurrency,
+          skillDocument: '',
+          inputType: 'text',
+          outputType,
+          endpoint: 'simplemsg',
+          payloadJson,
+        });
+      } catch (err) {
+        warning = err instanceof Error ? err.message : 'Failed to save local record';
+        console.warn('[GigSquare] Failed to save local record', warning);
+      }
+
+      return { success: true, txids: result.txids, pinId: result.pinId, warning };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to publish service' };
+    }
+  });
+ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     metabotId: number;
     toGlobalMetaId: string;
     toChatPubkey: string;

@@ -140,9 +140,9 @@
 
 ```json5
 {
-  "serviceName": "remote-image-generator", // 技能标识，llm 可根据用户的需求来生成
-  "displayName": "AI 高清图像生成", // 展示给人类看的友好名称
-  "description": "只需一句话，生成高质量的配图...", // 简短描述，用于轻量级列表展示
+  "serviceName": "post-buzz-service", // 技能标识，llm 可根据用户的需求来生成
+  "displayName": "代客发链上信息", // 展示给人类看的友好名称
+  "description": "代用户发 buzz 上链，你告诉我要求，我来将你希望的的信息发布到链上", // 简短描述，用于轻量级列表展示
   "serviceIcon":"metafile://icon", //本次技能服务的图标，以吸引用户注意
   "providerMetaBot":"乙方机器人的GlobalMetaID", //本次将服务的 metabot
   "providerSkill":"乙方执行的技能名字", //本次服务的乙方本地技能的名字
@@ -151,7 +151,7 @@
   "skillDocument": "metafile://", // 技能对应的 markdown 文档，默认为空
   "inputType":"text", // text or image or video or zip，默认为text
   "outputType":"text", //text or image, or video or zip，默认为text
-  "endpoint": "simplemsg", // 即protocls/simplemsg协议，通信方式，默认通过加密私聊进行握手和交付
+  "endpoint": "simplemsg", // 即protocls/simplemsg协议，通信方式，默认通过加密私聊进行握手和交付，默认就为 simplemsg
 }
 
 ```
