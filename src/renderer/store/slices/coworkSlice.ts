@@ -12,6 +12,8 @@ interface CoworkState {
   sessions: CoworkSessionSummary[];
   currentSessionId: string | null;
   currentSession: CoworkSession | null;
+  /** When set (e.g. after restore from mnemonic), CoworkView should select this MetaBot and clear it. */
+  preferredMetabotId: number | null;
   draftPrompt: string;
   unreadSessionIds: string[];
   isCoworkActive: boolean;
@@ -24,6 +26,7 @@ const initialState: CoworkState = {
   sessions: [],
   currentSessionId: null,
   currentSession: null,
+  preferredMetabotId: null,
   draftPrompt: '',
   unreadSessionIds: [],
   isCoworkActive: false,
@@ -247,6 +250,14 @@ const coworkSlice = createSlice({
       state.currentSession = null;
       state.isStreaming = false;
     },
+
+    setPreferredMetabotId(state, action: PayloadAction<number | null>) {
+      state.preferredMetabotId = action.payload;
+    },
+
+    clearPreferredMetabotId(state) {
+      state.preferredMetabotId = null;
+    },
   },
 });
 
@@ -270,6 +281,8 @@ export const {
   setConfig,
   updateConfig,
   clearCurrentSession,
+  setPreferredMetabotId,
+  clearPreferredMetabotId,
 } = coworkSlice.actions;
 
 export default coworkSlice.reducer;

@@ -12,6 +12,7 @@ interface GigSquarePublishModalProps {
 }
 
 type PublishStatus = 'idle' | 'submitting' | 'success';
+type StatusPanelState = 'submitting' | 'success' | 'error' | 'partial';
 
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 const ICON_ACCEPT = 'image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml';
@@ -57,6 +58,8 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const [status, setStatus] = useState<PublishStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
+  const [statusPanelState, setStatusPanelState] = useState<StatusPanelState>('submitting');
   const iconInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedSkill = useMemo(
@@ -70,6 +73,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   }, [currency]);
 
   const priceLimit = PRICE_LIMITS[currency] || PRICE_LIMITS.BTC;
+  const isFormDisabled = status === 'submitting' || statusPanelOpen;
 
   const loadMetabots = useCallback(async () => {
     try {
@@ -115,6 +119,8 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     setStatus('idle');
     setError(null);
     setWarning(null);
+    setStatusPanelOpen(false);
+    setStatusPanelState('submitting');
     setServiceNameDirty(false);
     setServiceIconDataUrl('');
     loadMetabots();
@@ -197,6 +203,9 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     if (!validate()) return;
     setStatus('submitting');
     setWarning(null);
+    setError(null);
+    setStatusPanelOpen(true);
+    setStatusPanelState('submitting');
 
     const result = await window.electron.gigSquare.publishService({
       metabotId: selectedMetabotId || 0,
@@ -213,11 +222,15 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     if (!result?.success) {
       setError(result?.error || i18nService.t('gigSquarePublishFailed'));
       setStatus('idle');
+      setStatusPanelState('error');
       return;
     }
 
     if (result.warning) {
       setWarning(result.warning);
+      setStatusPanelState('partial');
+    } else {
+      setStatusPanelState('success');
     }
 
     setStatus('success');
@@ -230,11 +243,32 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       ? i18nService.t('gigSquarePublishRetry')
       : i18nService.t('gigSquarePublishSubmit');
 
+  const statusPanelMessage = statusPanelState === 'submitting'
+    ? i18nService.t('gigSquarePublishStatusSubmitting')
+    : statusPanelState === 'success'
+      ? i18nService.t('gigSquarePublishStatusSuccess')
+      : statusPanelState === 'partial'
+        ? i18nService.t('gigSquarePublishStatusPartial')
+        : i18nService.t('gigSquarePublishStatusFailed');
+
+  const statusPanelButtonLabel = statusPanelState === 'error'
+    ? i18nService.t('gigSquarePublishStatusClose')
+    : i18nService.t('gigSquarePublishStatusConfirm');
+
+  const handleStatusPanelClose = () => {
+    if (statusPanelState === 'success' || statusPanelState === 'partial') {
+      setStatusPanelOpen(false);
+      onClose();
+      return;
+    }
+    setStatusPanelOpen(false);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-black/50 dark:bg-black/60"
-        onClick={status === 'submitting' ? undefined : onClose}
+        onClick={status === 'submitting' || statusPanelOpen ? undefined : onClose}
         aria-hidden
       />
       <div
@@ -254,7 +288,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
             type="button"
             onClick={onClose}
             className="text-xs px-2 py-1 rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
-            disabled={status === 'submitting'}
+            disabled={isFormDisabled}
           >
             {i18nService.t('close')}
           </button>
@@ -270,7 +304,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 value={selectedSkillId}
                 onChange={(e) => setSelectedSkillId(e.target.value)}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               >
                 {skills.map((skill) => (
                   <option key={skill.id} value={skill.id}>
@@ -287,7 +321,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 value={selectedMetabotId || ''}
                 onChange={(e) => setSelectedMetabotId(Number(e.target.value) || null)}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               >
                 {metabots.map((bot) => (
                   <option key={bot.id} value={bot.id}>
@@ -309,7 +343,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder={i18nService.t('gigSquarePublishDisplayNamePlaceholder')}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               />
               <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
                 {i18nService.t('gigSquarePublishDisplayNameHint')}
@@ -328,7 +362,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 }}
                 placeholder={selectedSkill ? selectedSkill.name + '-service' : ''}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               />
               <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
                 {i18nService.t('gigSquarePublishServiceNameHint')}
@@ -346,7 +380,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               placeholder={i18nService.t('gigSquarePublishDescriptionPlaceholder')}
               rows={3}
               className="w-full rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text placeholder-claude-textSecondary dark:placeholder-claude-darkTextSecondary focus:outline-none focus:ring-2 focus:ring-claude-accent"
-              disabled={status === 'submitting'}
+              disabled={isFormDisabled}
             />
           </div>
 
@@ -361,7 +395,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder={i18nService.t('gigSquarePublishPricePlaceholder')}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               />
               <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
                 {i18nService.t('gigSquarePublishPriceLimitPrefix')}{priceLimit} {currentCurrencyLabel}
@@ -375,7 +409,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value as 'BTC' | 'SPACE' | 'DOGE')}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               >
                 {CURRENCY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
@@ -406,7 +440,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 value={outputType}
                 onChange={(e) => setOutputType(e.target.value as 'text' | 'image' | 'video' | 'other')}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               >
                 {OUTPUT_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
@@ -445,7 +479,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                     type="button"
                     onClick={() => iconInputRef.current?.click()}
                     className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-                    disabled={status === 'submitting'}
+                    disabled={isFormDisabled}
                   >
                     {i18nService.t('gigSquarePublishUploadIcon')}
                   </button>
@@ -454,7 +488,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                       type="button"
                       onClick={() => setServiceIconDataUrl('')}
                       className="text-xs text-red-500 dark:text-red-400 hover:underline"
-                      disabled={status === 'submitting'}
+                      disabled={isFormDisabled}
                     >
                       {i18nService.t('gigSquarePublishRemoveIcon')}
                     </button>
@@ -467,12 +501,12 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
             </div>
           </div>
 
-          {error && (
+          {!statusPanelOpen && error && (
             <div className="text-xs text-red-500">
               {error}
             </div>
           )}
-          {warning && (
+          {!statusPanelOpen && warning && (
             <div className="text-xs text-amber-500">
               {warning}
             </div>
@@ -483,7 +517,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               type="button"
               onClick={onClose}
               className="px-3 py-2 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
-              disabled={status === 'submitting'}
+              disabled={isFormDisabled}
             >
               {i18nService.t('cancel')}
             </button>
@@ -500,13 +534,68 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 type="button"
                 onClick={handleSubmit}
                 className="btn-idchat-primary px-4 py-2 text-sm font-medium"
-                disabled={status === 'submitting'}
+                disabled={isFormDisabled}
               >
                 {submitLabel}
               </button>
             )}
           </div>
         </div>
+
+        {statusPanelOpen && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/40 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-5 shadow-xl">
+              <div className="flex items-center gap-3">
+                {statusPanelState === 'submitting' ? (
+                  <div className="h-8 w-8 rounded-full border-2 border-claude-accent/40 border-t-claude-accent animate-spin" />
+                ) : (
+                  <div
+                    className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      statusPanelState === 'success'
+                        ? 'bg-emerald-500/15 text-emerald-500'
+                        : statusPanelState === 'partial'
+                          ? 'bg-amber-500/15 text-amber-500'
+                          : 'bg-red-500/15 text-red-500'
+                    }`}
+                  >
+                    {statusPanelState === 'success' ? 'OK' : '!'}
+                  </div>
+                )}
+                <div>
+                  <div className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
+                    {statusPanelMessage}
+                  </div>
+                  {statusPanelState === 'error' && (
+                    <div className="text-xs text-red-500 mt-1">
+                      {error || i18nService.t('gigSquarePublishFailed')}
+                    </div>
+                  )}
+                  {statusPanelState === 'error' && (
+                    <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                      {i18nService.t('gigSquarePublishStatusRetryHint')}
+                    </div>
+                  )}
+                  {statusPanelState === 'partial' && (
+                    <div className="text-xs text-amber-500 mt-1">
+                      {warning || i18nService.t('gigSquarePublishStatusPartial')}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {statusPanelState !== 'submitting' && (
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleStatusPanelClose}
+                    className="btn-idchat-primary px-4 py-2 text-sm font-medium"
+                  >
+                    {statusPanelButtonLabel}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

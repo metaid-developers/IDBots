@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { ChevronDownIcon, CpuChipIcon } from '@heroicons/react/24/outline';
-import { RootState } from '../../store';
-import { clearCurrentSession, setCurrentSession, setStreaming } from '../../store/slices/coworkSlice';
+import { RootState, store } from '../../store';
+import { clearCurrentSession, setCurrentSession, setStreaming, clearPreferredMetabotId } from '../../store/slices/coworkSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import { setActions, selectAction, clearSelection } from '../../store/slices/quickActionSlice';
 import { coworkService } from '../../services/cowork';
@@ -130,6 +130,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     currentSession,
     isStreaming,
     config,
+    preferredMetabotId,
   } = useSelector((state: RootState) => state.cowork);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
@@ -157,12 +158,42 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       const result = await window.electron?.idbots?.getMetaBots?.();
       if (result?.success && result.list && result.list.length > 0) {
         setMetabots(result.list);
-        const twin = result.list.find((m) => m.metabot_type === 'twin');
-        setSelectedMetabotId(twin ? twin.id : result.list[0].id);
+        const preferred = store.getState().cowork.preferredMetabotId;
+        if (preferred != null && result.list.some((m) => m.id === preferred)) {
+          setSelectedMetabotId(preferred);
+          dispatch(clearPreferredMetabotId());
+        } else {
+          const twin = result.list.find((m) => m.metabot_type === 'twin');
+          setSelectedMetabotId(twin ? twin.id : result.list[0].id);
+        }
       }
     };
     void loadMetaBots();
-  }, []);
+  }, [dispatch]);
+
+  // When user just restored a MetaBot (preferredMetabotId set), refetch list and select it so the new bot appears and is selected
+  useEffect(() => {
+    if (preferredMetabotId == null) return;
+    let cancelled = false;
+    const refetchAndSelect = async () => {
+      const result = await window.electron?.idbots?.getMetaBots?.();
+      if (cancelled || !result?.success || !result.list?.length) return;
+      setMetabots(result.list);
+      if (result.list.some((m) => m.id === preferredMetabotId)) {
+        setSelectedMetabotId(preferredMetabotId);
+      }
+      dispatch(clearPreferredMetabotId());
+    };
+    void refetchAndSelect();
+    return () => { cancelled = true; };
+  }, [preferredMetabotId, dispatch]);
+
+  // Keep selector in sync when opening a session (so "new chat" uses the same MetaBot as the current session)
+  useEffect(() => {
+    if (currentSession?.metabotId != null && typeof currentSession.metabotId === 'number') {
+      setSelectedMetabotId(currentSession.metabotId);
+    }
+  }, [currentSession?.id, currentSession?.metabotId]);
 
   useEffect(() => {
     const id = selectedMetabotId;

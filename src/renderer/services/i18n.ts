@@ -187,6 +187,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     gigSquarePublishRetry: '重试发布',
     gigSquarePublishFailed: '发布失败',
     gigSquarePublishSuccess: '发布成功',
+    gigSquarePublishStatusSubmitting: '正在发布技能服务到链上....',
+    gigSquarePublishStatusSuccess: '发布成功',
+    gigSquarePublishStatusFailed: '发布失败，可重试',
+    gigSquarePublishStatusPartial: '已上链，但本地保存失败',
+    gigSquarePublishStatusRetryHint: '请关闭面板后在表单中重试',
+    gigSquarePublishStatusConfirm: '确认',
+    gigSquarePublishStatusClose: '知道了',
     
     // 侧边栏
     conversations: '对话',
@@ -1073,6 +1080,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     gigSquarePublishRetry: 'Retry',
     gigSquarePublishFailed: 'Publish failed',
     gigSquarePublishSuccess: 'Published',
+    gigSquarePublishStatusSubmitting: 'Publishing skill service on-chain...',
+    gigSquarePublishStatusSuccess: 'Published successfully',
+    gigSquarePublishStatusFailed: 'Publish failed. You can retry.',
+    gigSquarePublishStatusPartial: 'On-chain success, local save failed',
+    gigSquarePublishStatusRetryHint: 'Close this panel and retry in the form',
+    gigSquarePublishStatusConfirm: 'Confirm',
+    gigSquarePublishStatusClose: 'Got it',
     
     // Sidebar
     conversations: 'Conversations',

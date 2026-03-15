@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDispatch } from 'react-redux';
 import { MagnifyingGlassIcon, PlusCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { setPreferredMetabotId } from '../../store/slices/coworkSlice';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import { ALL_PROVIDER_KEYS } from '../../config';
@@ -23,6 +25,7 @@ const providerRequiresApiKey = (provider: string) => provider !== 'ollama';
 const providerLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
 
 const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ onRequestModelSettings }) => {
+  const dispatch = useDispatch();
   const [list, setList] = useState<Metabot[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -407,6 +410,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
 
   const handleRestoreCompleted = (metabot: Metabot) => {
     setList((prev) => (prev.some((m) => m.id === metabot.id) ? prev : [metabot, ...prev]));
+    dispatch(setPreferredMetabotId(metabot.id));
   };
 
   return (
