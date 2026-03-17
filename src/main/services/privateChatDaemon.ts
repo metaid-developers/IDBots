@@ -16,7 +16,7 @@ import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion'
 import type { CoworkRunner } from '../libs/coworkRunner';
 import { PrivateChatOrderCowork } from './privateChatOrderCowork';
 import { buildOrderPrompts } from './orderPromptBuilder';
-import { checkOrderPaymentStatus, extractOrderTxid, extractOrderSkillId, OrderSource } from './orderPayment';
+import { checkOrderPaymentStatus, extractOrderTxid, extractOrderSkillId, extractOrderSkillName, OrderSource } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
@@ -407,6 +407,7 @@ async function processOne(
         skillsPrompt,
         peerName: (row.from_name as string | null) ?? null,
         skillId: extractOrderSkillId(plaintext),
+        skillName: extractOrderSkillName(plaintext),
       });
       const externalConversationId = buildOrderExternalConversationId(row, source, txid);
       const titleSuffix = txid ? txid.slice(0, 8) : 'no-txid';

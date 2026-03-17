@@ -19,9 +19,16 @@ export interface OrderPaymentCheckResult {
 const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*(SPACE|BTC|DOGE)/i;
 const SKILL_ID_RE = /skill(?:\s+service)?\s+id\s*[:：=]?\s*([^\s,，。]+)/i;
+// Matches "skill name: weather-service" or "技能 weather-service" or "技能名: weather-service"
+const SKILL_NAME_RE = /(?:skill(?:\s+name)?|技能(?:名称?)?)\s*[:：=]?\s*([\w-]+)/i;
 
 export function extractOrderSkillId(plaintext: string): string | null {
   const match = plaintext.match(SKILL_ID_RE);
+  return match ? (match[1] || null) : null;
+}
+
+export function extractOrderSkillName(plaintext: string): string | null {
+  const match = plaintext.match(SKILL_NAME_RE);
   return match ? (match[1] || null) : null;
 }
 

@@ -3,6 +3,7 @@ import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice, getGigSquarePaymentAmount } from '../../utils/gigSquare';
 import { fetchMetaidInfoByGlobalId } from '../../services/metabotInfoService';
+import { apiService } from '../../services/api';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -257,7 +258,44 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         throw new Error(i18nService.t('gigSquareOrderFailed'));
       }
 
-      const orderPayload = `[ORDER] 我已支付金额 ${service.price} ${service.currency}, txid: ${txId}, 请求的技能服务 id: ${service.id}。我的需求是"${trimmedPrompt}"`;
+      // Build order message: let A's LLM express it in A's own voice,
+      // but the message must contain the four required fields.
+      // Fall back to a plain template if LLM is unavailable.
+      let naturalOrderText: string;
+      try {
+        const buyerMetabot = selectedMetabotId
+          ? (await window.electron.metabot.get(selectedMetabotId))?.metabot
+          : null;
+        const personaLines = buyerMetabot ? [
+          buyerMetabot.name ? `Your name is ${buyerMetabot.name}.` : '',
+          buyerMetabot.role ? `Your role: ${buyerMetabot.role}.` : '',
+          buyerMetabot.soul ? `Your personality: ${buyerMetabot.soul}.` : '',
+          buyerMetabot.background ? `Background: ${buyerMetabot.background}.` : '',
+        ].filter(Boolean).join(' ') : '';
+
+        const systemMsg = [
+          personaLines,
+          'You are sending a paid service order to another MetaBot. Write a natural, conversational message in your own voice.',
+          'The message MUST include all four of these facts (you may phrase them naturally):',
+          `1. Payment amount: ${service.price} ${service.currency}`,
+          `2. Transaction ID (txid): ${txId}`,
+          `3. Skill name requested: ${service.serviceName}`,
+          `4. The user's specific request: "${trimmedPrompt}"`,
+          'Keep it concise (2-4 sentences). Do not add greetings like "Hello" unless it fits your persona.',
+        ].filter(Boolean).join('\n');
+
+        const result = await apiService.chat(
+          'Write the order message now.',
+          undefined,
+          [{ role: 'system', content: systemMsg }]
+        );
+        naturalOrderText = result.content.trim();
+      } catch {
+        // LLM unavailable — fall back to plain template
+        naturalOrderText = `已支付 ${service.price} ${service.currency}，txid: ${txId}，请求技能 ${service.serviceName}。需求："${trimmedPrompt}"`;
+      }
+
+      const orderPayload = `[ORDER] ${naturalOrderText}`;
 
       const sendResult = await window.electron.gigSquare.sendOrder({
         metabotId: selectedMetabotId,
