@@ -484,8 +484,8 @@ const IMSettings: React.FC = () => {
           }`}
         >
           <div className="flex flex-1 items-center">
-            <div className="mr-2 flex h-7 w-7 items-center justify-center rounded-md bg-white dark:bg-claude-darkBorder/30">
-              <SignalIcon className="h-4 w-4" />
+            <div className="mr-2 flex h-7 w-7 items-center justify-center rounded-md bg-white border border-claude-border/40 dark:border-claude-darkBorder/50">
+              <SignalIcon className="h-4 w-4 shrink-0 text-gray-900" />
             </div>
             <span className={`text-sm font-medium truncate ${
               activePlatform === 'chainListener'
@@ -523,9 +523,9 @@ const IMSettings: React.FC = () => {
         {/* Header with status */}
         <div className="flex items-center gap-3 pb-3 border-b dark:border-claude-darkBorder/60 border-claude-border/60">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-white dark:bg-claude-darkBorder/30 p-1">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-white border border-claude-border/40 dark:border-claude-darkBorder/50 p-1">
               {activePlatform === 'chainListener' ? (
-                <SignalIcon className="h-4 w-4" />
+                <SignalIcon className="h-4 w-4 shrink-0 text-gray-900" />
               ) : (
                 <img
                   src={platformMeta[activePlatform].logo}

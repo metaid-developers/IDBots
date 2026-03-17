@@ -3,6 +3,7 @@ import {
   setSessions,
   setCurrentSession,
   addSession,
+  registerBackgroundSession,
   updateSessionStatus,
   deleteSession as deleteSessionAction,
   addMessage,
@@ -58,12 +59,35 @@ class CoworkService {
     // Message listener - also check if session exists (for IM-created sessions)
     const messageCleanup = cowork.onStreamMessage(async ({ sessionId, message }) => {
       // Check if session exists in current list
-      const state = store.getState().cowork;
-      const sessionExists = state.sessions.some(s => s.id === sessionId);
+      let state = store.getState().cowork;
+      let sessionExists = state.sessions.some(s => s.id === sessionId);
 
       if (!sessionExists) {
         // Session was created by IM or another source, refresh the session list
         await this.loadSessions();
+        // Re-check after reload
+        state = store.getState().cowork;
+        sessionExists = state.sessions.some(s => s.id === sessionId);
+      }
+
+      // If still not found (e.g. race condition), fetch and register it directly
+      if (!sessionExists) {
+        try {
+          const result = await window.electron?.cowork?.getSession(sessionId);
+          if (result?.success && result.session) {
+            const s = result.session;
+            store.dispatch(registerBackgroundSession({
+              id: s.id,
+              title: s.title,
+              status: s.status,
+              pinned: s.pinned ?? false,
+              createdAt: s.createdAt,
+              updatedAt: s.updatedAt,
+              sessionType: s.sessionType,
+              peerName: s.peerName ?? null,
+            }));
+          }
+        } catch { /* ignore */ }
       }
 
       // A new user turn means this session is actively running again

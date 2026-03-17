@@ -127,6 +127,14 @@ const coworkSlice = createSlice({
       markSessionRead(state, action.payload.id);
     },
 
+    // Register a background session (e.g. IM-created) without switching currentSession
+    registerBackgroundSession(state, action: PayloadAction<CoworkSessionSummary>) {
+      const exists = state.sessions.some(s => s.id === action.payload.id);
+      if (!exists) {
+        state.sessions.unshift(action.payload);
+      }
+    },
+
     updateSessionStatus(state, action: PayloadAction<{ sessionId: string; status: CoworkSessionStatus }>) {
       const { sessionId, status } = action.payload;
 
@@ -272,6 +280,7 @@ export const {
   setCurrentSession,
   setDraftPrompt,
   addSession,
+  registerBackgroundSession,
   updateSessionStatus,
   deleteSession,
   addMessage,
