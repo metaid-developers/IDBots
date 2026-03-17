@@ -52,7 +52,7 @@ import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privat
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin } from './services/metaidCore';
-import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, ecdhEncrypt } from './services/metaWebCrypto';
+import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 
@@ -1452,61 +1452,84 @@ if (!gotTheLock) {
 
   // MetaWebListener IPC (real WebSocket + DB; isolated from IM Gateway)
   const METAWEB_LISTENER_CONFIG_KEY = 'metaweb_listener_config';
+  const normalizeListenerConfig = (stored?: Partial<ListenerConfig>): ListenerConfig => ({
+    enabled: stored?.enabled !== undefined ? stored.enabled : true,
+    groupChats: stored?.groupChats !== undefined ? stored.groupChats : false,
+    privateChats: stored?.privateChats !== undefined ? stored.privateChats : true,
+    serviceRequests: stored?.serviceRequests !== undefined ? stored.serviceRequests : false,
+  });
   const getListenerConfigFromStore = (): ListenerConfig => {
     const stored = getStore().get<ListenerConfig>(METAWEB_LISTENER_CONFIG_KEY);
-    return stored ?? { groupChats: false, privateChats: false, serviceRequests: false };
+    return normalizeListenerConfig(stored);
   };
+  const shouldRunListener = (config: ListenerConfig): boolean =>
+    config.enabled && (config.groupChats || config.privateChats || config.serviceRequests);
+
+  const startListenerWithConfig = async (config: ListenerConfig) => {
+    const sqliteStore = getStore();
+    const db = sqliteStore.getDatabase();
+    const saveDb = sqliteStore.getSaveFunction();
+    const getMetaBots = () =>
+      getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
+    const emitLog = (log: string) => {
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.webContents.isDestroyed()) {
+          win.webContents.send('idbots:listener-log', log);
+        }
+      });
+    };
+    const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
+      const metabotStore = getMetabotStore();
+      const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
+      if (!metabot) return null;
+      const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
+      if (!wallet?.mnemonic?.trim()) return null;
+      return getPrivateKeyBufferForEcdh(
+        wallet.mnemonic,
+        wallet.path || "m/44'/10001'/0'/0/0"
+      );
+    };
+    await startMetaWebListener(
+      db,
+      getMetaBots,
+      config,
+      emitLog,
+      saveDb,
+      resolvePrivateKeyByGlobalMetaId
+    );
+  };
+
   ipcMain.handle('idbots:getListenerConfig', async () => {
     return { success: true, config: getListenerConfigFromStore() };
   });
   ipcMain.handle('idbots:getListenerStatus', async () => {
     return { success: true, running: isListenerRunning() };
   });
-  ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
+  ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
     const config = getListenerConfigFromStore();
-    if (payload.type === 'groupChats' || payload.type === 'privateChats' || payload.type === 'serviceRequests') {
-      const next: ListenerConfig = {
+    if (payload.type === 'enabled' || payload.type === 'groupChats' || payload.type === 'privateChats' || payload.type === 'serviceRequests') {
+      const next = normalizeListenerConfig({
         ...config,
         [payload.type]: payload.enabled,
-      };
+      });
       getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
+      if (shouldRunListener(next)) {
+        await startListenerWithConfig(next);
+      } else {
+        stopMetaWebListener();
+      }
+      return { success: true, config: next };
     }
-    return { success: true };
+    return { success: false, error: 'Invalid listener type' };
   });
   ipcMain.handle('idbots:startMetaWebListener', async () => {
     try {
-      const sqliteStore = getStore();
-      const db = sqliteStore.getDatabase();
-      const saveDb = sqliteStore.getSaveFunction();
       const config = getListenerConfigFromStore();
-      const getMetaBots = () =>
-        getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
-      const emitLog = (log: string) => {
-        BrowserWindow.getAllWindows().forEach((win) => {
-          if (!win.webContents.isDestroyed()) {
-            win.webContents.send('idbots:listener-log', log);
-          }
-        });
-      };
-      const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
-        const metabotStore = getMetabotStore();
-        const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
-        if (!metabot) return null;
-        const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
-        if (!wallet?.mnemonic?.trim()) return null;
-        return getPrivateKeyBufferForEcdh(
-          wallet.mnemonic,
-          wallet.path || "m/44'/10001'/0'/0/0"
-        );
-      };
-      await startMetaWebListener(
-        db,
-        getMetaBots,
-        config,
-        emitLog,
-        saveDb,
-        resolvePrivateKeyByGlobalMetaId
-      );
+      if (!shouldRunListener(config)) {
+        stopMetaWebListener();
+        return { success: true };
+      }
+      await startListenerWithConfig(config);
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to start MetaWeb listener' };
@@ -2382,7 +2405,103 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('idbots:restoreMetaBotFromMnemonic', async (_event, input: { mnemonic: string; path?: string }) => {
+  // Chain-first MetaBot creation: wallet → subsidy → on-chain PINs → DB save.
+  // If chain fails, DB records are rolled back. Returns metabot only on full success.
+  ipcMain.handle('idbots:createMetaBotOnChain', async (_event, input: {
+    name: string;
+    avatar?: string | null;
+    role: string;
+    soul: string;
+    goal?: string | null;
+    background?: string | null;
+    boss_id?: number | null;
+    llm_id?: string | null;
+    metabot_type?: 'twin' | 'worker';
+  }) => {
+    const store = getMetabotStore();
+    let walletId: number | null = null;
+    let metabotId: number | null = null;
+    try {
+      // 1. Generate wallet (in-memory)
+      const walletResult = await createMetaBotWallet({});
+      const metabotType = input.metabot_type === 'twin' ? 'twin' : 'worker';
+
+      // 2. Request gas subsidy (best-effort; don't fail creation if subsidy fails)
+      let subsidyResult: { success: boolean; error?: string } = { success: false };
+      try {
+        subsidyResult = await requestMvcGasSubsidy({
+          mvcAddress: walletResult.mvc_address,
+          mnemonic: walletResult.mnemonic,
+          path: walletResult.path,
+        });
+      } catch (e) {
+        subsidyResult = { success: false, error: e instanceof Error ? e.message : String(e) };
+      }
+
+      // 3. Insert wallet + metabot into DB (needed by syncMetaBotToChain which reads from DB)
+      const wallet = store.insertMetabotWallet({
+        mnemonic: walletResult.mnemonic,
+        path: walletResult.path,
+      });
+      walletId = wallet.id;
+
+      const metabot = store.createMetabot({
+        wallet_id: wallet.id,
+        mvc_address: walletResult.mvc_address,
+        btc_address: walletResult.btc_address,
+        doge_address: walletResult.doge_address,
+        public_key: walletResult.public_key,
+        chat_public_key: walletResult.chat_public_key,
+        chat_public_key_pin_id: null,
+        name: input.name,
+        avatar: input.avatar ?? null,
+        enabled: true,
+        metaid: walletResult.metaid,
+        globalmetaid: walletResult.globalmetaid,
+        metabot_info_pinid: null,
+        metabot_type: metabotType,
+        created_by: '0000',
+        role: input.role,
+        soul: input.soul,
+        goal: input.goal ?? null,
+        background: input.background ?? null,
+        boss_id: null,
+        llm_id: input.llm_id ?? null,
+        tools: [],
+        skills: [],
+      });
+      metabotId = metabot.id;
+
+      // 4. Publish to chain (name + avatar + chatpubkey + bio)
+      const syncResult = await syncMetaBotToChain(store, metabot.id);
+
+      if (!syncResult.success && !syncResult.canSkip) {
+        // Mandatory steps (name) failed — roll back DB records
+        store.deleteMetabot(metabot.id);
+        return { success: false, error: syncResult.error ?? 'Chain publish failed', canSkip: false };
+      }
+
+      // 5. Chain succeeded (or partial with canSkip) — reload metabot with updated pinIds
+      const updatedMetabot = store.getMetabotById(metabot.id) ?? metabot;
+      return {
+        success: true,
+        metabot: updatedMetabot,
+        subsidy: subsidyResult,
+        chainPartial: !syncResult.success && syncResult.canSkip,
+        chainError: syncResult.canSkip ? syncResult.error : undefined,
+      };
+    } catch (error) {
+      // Roll back DB records on unexpected error
+      if (metabotId != null) {
+        try { store.deleteMetabot(metabotId); } catch { /* ignore */ }
+      }
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[MetaBot] idbots:createMetaBotOnChain failed:', errMsg);
+      return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:restoreMetaBotFromMnemonic', async (_event, input: { mnemonic: string; path?: string; boss_global_metaid?: string | null }) => {
     try {
       const mnemonic = (input?.mnemonic ?? '').trim().toLowerCase();
       const pathInput = (input?.path ?? "m/44'/10001'/0'/0/0").trim();
@@ -2445,6 +2564,7 @@ if (!gotTheLock) {
         goal: profile.bio.goal ?? null,
         background: profile.bio.background ?? null,
         boss_id: profile.bio.boss_id ?? null,
+        boss_global_metaid: (input?.boss_global_metaid ?? '').trim() || (profile.bio.boss_global_metaid ?? null),
         llm_id: profile.bio.llm_id ?? null,
         tools: profile.bio.tools ?? [],
         skills: profile.bio.skills ?? [],
@@ -2823,6 +2943,118 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       return { success: true, txids: result.txids };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to send order' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:pingProvider', async (_event, params: {
+    metabotId: number;
+    toGlobalMetaId: string;
+    toChatPubkey: string;
+    timeoutMs?: number;
+  }) => {
+    try {
+      const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
+      const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
+      const toChatPubkey = typeof params?.toChatPubkey === 'string' ? params.toChatPubkey.trim() : '';
+      const timeoutMs = typeof params?.timeoutMs === 'number' ? params.timeoutMs : 15000;
+
+      if (metabotId < 0 || !toGlobalMetaId || !toChatPubkey) {
+        return { success: false, error: 'Missing required params' };
+      }
+
+      // Ensure private chat listener is running
+      const config = getListenerConfigFromStore();
+      if (!config.privateChats || !shouldRunListener(config)) {
+        const next = normalizeListenerConfig({ ...config, enabled: true, privateChats: true });
+        getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
+        await startListenerWithConfig(next);
+      }
+
+      // Send encrypted ping
+      const store = getMetabotStore();
+      const wallet = store.getMetabotWalletByMetabotId(metabotId);
+      if (!wallet?.mnemonic?.trim()) {
+        return { success: false, error: 'MetaBot wallet mnemonic is missing' };
+      }
+      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+        wallet.mnemonic,
+        wallet.path || "m/44'/10001'/0'/0/0"
+      );
+      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
+      const encryptedPing = ecdhEncrypt('ping', sharedSecret);
+      const pingPayload = buildPrivateMessagePayload(toGlobalMetaId, encryptedPing, '');
+      await createPin(store, metabotId, {
+        operation: 'create',
+        path: '/protocols/simplemsg',
+        encryption: '0',
+        version: '1.0.0',
+        contentType: 'application/json',
+        payload: pingPayload,
+      });
+
+      // Poll SQLite for pong reply from provider (max timeoutMs)
+      const db = getStore().getDatabase();
+      const deadline = Date.now() + timeoutMs;
+      const normalizeWord = (v: string) => v.toLowerCase().replace(/[^a-z]/g, '');
+      const myMetabot = store.getMetabotById(metabotId);
+      const myGlobalMetaId = myMetabot?.globalmetaid?.trim() ?? '';
+
+      const waitForPong = (): Promise<boolean> =>
+        new Promise((resolve) => {
+          const check = () => {
+            try {
+              // Look for unprocessed messages from the provider addressed to our metabot
+              const result = db.exec(
+                `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+                 FROM private_chat_messages
+                 WHERE is_processed = 0
+                 ORDER BY id DESC
+                 LIMIT 50`
+              );
+              if (result[0]?.values?.length) {
+                const cols = result[0].columns as string[];
+                for (const row of result[0].values as unknown[][]) {
+                  const r = cols.reduce((acc: Record<string, unknown>, c, i) => { acc[c] = row[i]; return acc; }, {});
+                  const fromGlobal = ((r.from_global_metaid as string) || (r.from_metaid as string) || '').trim();
+                  const toGlobal = ((r.to_global_metaid as string) || '').trim();
+                  // Must be from the provider, to our metabot
+                  if (fromGlobal !== toGlobalMetaId) continue;
+                  if (myGlobalMetaId && toGlobal && toGlobal !== myGlobalMetaId) continue;
+                  // Try to decrypt
+                  const cipherText = (r.content as string) || '';
+                  const peerPubkey = (r.from_chat_pubkey as string) || toChatPubkey;
+                  try {
+                    const peerShared = computeEcdhSharedSecretSha256(privateKeyBuffer, peerPubkey);
+                    const plain = ecdhDecrypt(cipherText, peerShared);
+                    if (plain && normalizeWord(plain.trim()) === 'pong') {
+                      resolve(true);
+                      return;
+                    }
+                  } catch { /* try raw */ }
+                  try {
+                    const peerSharedRaw = computeEcdhSharedSecret(privateKeyBuffer, peerPubkey);
+                    const plain = ecdhDecrypt(cipherText, peerSharedRaw);
+                    if (plain && normalizeWord(plain.trim()) === 'pong') {
+                      resolve(true);
+                      return;
+                    }
+                  } catch { /* ignore */ }
+                }
+              }
+            } catch { /* ignore db errors */ }
+            if (Date.now() >= deadline) {
+              resolve(false);
+            } else {
+              setTimeout(check, 1000);
+            }
+          };
+          check();
+        });
+
+      const pongReceived = await waitForPong();
+      return { success: pongReceived };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Ping failed' };
     }
   });
 
@@ -3722,6 +3954,13 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
 
     store = await initStore();
+
+    const listenerConfig = getListenerConfigFromStore();
+    if (shouldRunListener(listenerConfig)) {
+      startListenerWithConfig(listenerConfig).catch((error) => {
+        console.error('[MetaWebListener] auto-start failed:', error);
+      });
+    }
 
     // Global fee rate store: must init after store is ready
     const { initFeeRateStore } = require('./services/feeRateStore') as typeof import('./services/feeRateStore');

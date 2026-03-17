@@ -225,8 +225,8 @@ export const defaultConfig: AppConfig = {
     deepseek: {
       enabled: false,
       apiKey: '',
-      baseUrl: 'https://api.deepseek.com/anthropic',
-      apiFormat: 'anthropic',
+      baseUrl: 'https://api.deepseek.com',
+      apiFormat: 'openai',
       models: [
         { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', supportsImage: false },
         { id: 'deepseek-chat', name: 'DeepSeek Chat', supportsImage: false }

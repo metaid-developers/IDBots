@@ -5,7 +5,7 @@
  */
 
 const METAFILE_INFO_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
-const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
+const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/thumbnail';
 
 export interface MetaidInfoResult {
   name?: string;

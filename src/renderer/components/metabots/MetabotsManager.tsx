@@ -45,6 +45,10 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   const [syncError, setSyncError] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<Metabot | null>(null);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
+  // Chain-first creation state
+  const [pendingCreateValues, setPendingCreateValues] = useState<MetaBotFormValues | null>(null);
+  const [createChainStatus, setCreateChainStatus] = useState<'idle' | 'publishing' | 'error'>('idle');
+  const [createChainError, setCreateChainError] = useState<string>('');
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -98,10 +102,16 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     setViewMode('list');
     setEditId(null);
     setActionError('');
+    setCreateChainStatus('idle');
+    setCreateChainError('');
+    setPendingCreateValues(null);
   };
 
   const handleSaveNew = async (values: MetaBotFormValues) => {
-    const result = await window.electron.idbots.addMetaBot({
+    setPendingCreateValues(values);
+    setCreateChainStatus('publishing');
+    setCreateChainError('');
+    const result = await window.electron.idbots.createMetaBotOnChain({
       name: values.name.trim(),
       avatar: values.avatar.trim() || null,
       role: values.role.trim(),
@@ -109,14 +119,17 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       goal: values.goal.trim() || null,
       background: values.background.trim() || null,
       boss_id: values.boss_id.trim() ? parseInt(values.boss_id, 10) : 1,
+      boss_global_metaid: values.boss_global_metaid.trim() || null,
       llm_id: values.llm_id.trim() || null,
     });
-    if (!result.success) {
-      throw new Error(result.error || i18nService.t('metabotSaveFailed'));
+    if (!result.success || !result.metabot) {
+      setCreateChainStatus('error');
+      setCreateChainError(result.error || i18nService.t('metabotSaveFailed'));
+      return;
     }
-    if (!result.metabot) {
-      throw new Error(i18nService.t('metabotSaveFailed'));
-    }
+    // Success — clear publishing state, add to list, show success modal
+    setCreateChainStatus('idle');
+    setPendingCreateValues(null);
     setList((prev) => [result.metabot!, ...prev]);
     setCreateSuccessModal({
       metabot: result.metabot,
@@ -125,6 +138,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       mode: 'create',
       showSubsidyStatus: true,
     });
+    setSyncStatus('success');
     setViewMode('list');
   };
 
@@ -145,6 +159,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     const nextGoalRaw = values.goal.trim();
     const nextBackgroundRaw = values.background.trim();
     const nextBossId = values.boss_id.trim() ? parseInt(values.boss_id, 10) : null;
+    const nextBossGlobalMetaId = values.boss_global_metaid.trim() || null;
     const nextLlmRaw = values.llm_id.trim();
 
     const oldName = (current.name || '').trim();
@@ -154,6 +169,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     const oldGoalRaw = (current.goal || '').trim();
     const oldBackgroundRaw = (current.background || '').trim();
     const oldBossId = current.boss_id ?? null;
+    const oldBossGlobalMetaId = current.boss_global_metaid ?? null;
     const oldLlmRaw = (current.llm_id || '').trim();
 
     const syncName = nextName !== oldName;
@@ -164,7 +180,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       nextGoalRaw !== oldGoalRaw ||
       nextBackgroundRaw !== oldBackgroundRaw ||
       nextLlmRaw !== oldLlmRaw ||
-      nextBossId !== oldBossId;
+      nextBossId !== oldBossId ||
+      nextBossGlobalMetaId !== oldBossGlobalMetaId;
 
     const syncStepKeys: SyncStepKey[] = [];
     if (syncName) syncStepKeys.push('name');
@@ -180,6 +197,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       goal: nextGoalRaw || null,
       background: nextBackgroundRaw || null,
       boss_id: nextBossId,
+      boss_global_metaid: nextBossGlobalMetaId,
       llm_id: nextLlmRaw || null,
     });
     if (!result.success) {
@@ -195,6 +213,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
       goal: nextGoalRaw || null,
       background: nextBackgroundRaw || null,
       boss_id: nextBossId,
+      boss_global_metaid: nextBossGlobalMetaId,
       llm_id: nextLlmRaw || null,
     };
     setList((prev) => prev.map((m) => (m.id === editId ? updatedMetabot : m)));
@@ -250,7 +269,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
 
   if (viewMode === 'add') {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 relative">
         <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
           {i18nService.t('metabotAddTitle')}
         </h2>
@@ -264,6 +283,52 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
           onCheckNameExists={handleCheckNameExists}
           excludeIdForNameCheck={null}
         />
+        {/* Chain publishing overlay */}
+        {createChainStatus !== 'idle' && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--bg-main)]/90 dark:bg-claude-darkBg/90 backdrop-blur-sm">
+            <div className="w-full max-w-sm mx-4 rounded-2xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface p-6 shadow-xl text-center space-y-4">
+              {createChainStatus === 'publishing' ? (
+                <>
+                  <div className="flex justify-center">
+                    <ArrowPathIcon className="h-10 w-10 text-claude-accent animate-spin" />
+                  </div>
+                  <p className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                    {i18nService.t('metabotCreatingOnChain')}
+                  </p>
+                  <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('metabotCreatingOnChainHint')}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-red-500">
+                    {i18nService.t('metabotCreateChainFailed')}
+                  </p>
+                  <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary break-words">
+                    {createChainError}
+                  </p>
+                  <div className="flex justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleCancelForm}
+                      className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                    >
+                      {i18nService.t('cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => pendingCreateValues && handleSaveNew(pendingCreateValues)}
+                      className="btn-idchat-primary-filled px-4 py-2 text-sm flex items-center gap-2"
+                    >
+                      <ArrowPathIcon className="h-4 w-4" />
+                      {i18nService.t('metabotRetryCreate')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -284,6 +349,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
             goal: editMetabot.goal || '',
             background: editMetabot.background || '',
             boss_id: editMetabot.boss_id != null ? String(editMetabot.boss_id) : '1',
+            boss_global_metaid: editMetabot.boss_global_metaid || '',
             llm_id: editMetabot.llm_id || '',
           }}
           isEdit={true}

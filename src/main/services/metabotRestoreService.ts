@@ -27,6 +27,7 @@ export interface MetaidBioProfile {
   tools: string[];
   skills: string[];
   boss_id: number | null;
+  boss_global_metaid: string | null;
   created_by: string;
 }
 
@@ -80,6 +81,7 @@ const parseMetaidBio = (bio: unknown): MetaidBioProfile => {
     tools: [],
     skills: [],
     boss_id: null,
+    boss_global_metaid: null,
     created_by: '0000',
   };
 
@@ -110,6 +112,7 @@ const parseMetaidBio = (bio: unknown): MetaidBioProfile => {
     tools: normalizeStringArray(raw.tools),
     skills: normalizeStringArray(raw.skills),
     boss_id: normalizeBossId(raw.boss_id ?? raw.bossId),
+    boss_global_metaid: normalizeOptionalString(raw.boss_global_metaid ?? raw.bossGlobalMetaId),
     created_by: normalizeString(raw.createdBy ?? raw.created_by) || '0000',
   };
 };

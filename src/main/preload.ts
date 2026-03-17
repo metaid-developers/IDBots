@@ -100,6 +100,12 @@ contextBridge.exposeInMainWorld('electron', {
       toChatPubkey: string;
       orderPayload: string;
     }) => ipcRenderer.invoke('gigSquare:sendOrder', params),
+    pingProvider: (params: {
+      metabotId: number;
+      toGlobalMetaId: string;
+      toChatPubkey: string;
+      timeoutMs?: number;
+    }) => ipcRenderer.invoke('gigSquare:pingProvider', params),
   },
   appEvents: {
     onOpenSettings: (callback: () => void) => {
@@ -399,11 +405,22 @@ contextBridge.exposeInMainWorld('electron', {
       syncAvatar?: boolean;
       syncBio?: boolean;
     }) => ipcRenderer.invoke('idbots:syncMetaBotEditChanges', input),
+    createMetaBotOnChain: (input: {
+      name: string;
+      avatar?: string | null;
+      role: string;
+      soul: string;
+      goal?: string | null;
+      background?: string | null;
+      boss_id?: number | null;
+      llm_id?: string | null;
+      metabot_type?: 'twin' | 'worker';
+    }) => ipcRenderer.invoke('idbots:createMetaBotOnChain', input),
   },
   metaWebListener: {
     getListenerConfig: () => ipcRenderer.invoke('idbots:getListenerConfig'),
     getListenerStatus: () => ipcRenderer.invoke('idbots:getListenerStatus'),
-    toggleListener: (payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) =>
+    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) =>
       ipcRenderer.invoke('idbots:toggleListener', payload),
     startMetaWebListener: () => ipcRenderer.invoke('idbots:startMetaWebListener'),
     onListenerLog: (callback: (log: string) => void) => {

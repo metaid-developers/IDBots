@@ -20,6 +20,15 @@ interface IMMetabotOption {
   metabot_type: string;
 }
 
+interface ChainListenerConfig {
+  enabled: boolean;
+  groupChats: boolean;
+  privateChats: boolean;
+  serviceRequests?: boolean;
+}
+
+type SettingsPlatform = IMPlatform | 'chainListener';
+
 // Platform metadata
 const platformMeta: Record<IMPlatform, { label: string; logo: string }> = {
   dingtalk: { label: '钉钉', logo: 'dingding.png' },
@@ -44,7 +53,7 @@ const checkLevelColorClass: Record<IMConnectivityCheck['level'], string> = {
 const IMSettings: React.FC = () => {
   const dispatch = useDispatch();
   const { config, status, isLoading } = useSelector((state: RootState) => state.im);
-  const [activePlatform, setActivePlatform] = useState<IMPlatform>('dingtalk');
+  const [activePlatform, setActivePlatform] = useState<SettingsPlatform>('dingtalk');
   const [testingPlatform, setTestingPlatform] = useState<IMPlatform | null>(null);
   const [connectivityResults, setConnectivityResults] = useState<Partial<Record<IMPlatform, IMConnectivityTestResult>>>({});
   const [connectivityModalPlatform, setConnectivityModalPlatform] = useState<IMPlatform | null>(null);
@@ -52,6 +61,14 @@ const IMSettings: React.FC = () => {
   const [metabotOptions, setMetabotOptions] = useState<IMMetabotOption[]>([]);
   const [metabotLoading, setMetabotLoading] = useState(false);
   const [metabotLoadError, setMetabotLoadError] = useState('');
+  const [chainListenerConfig, setChainListenerConfig] = useState<ChainListenerConfig>({
+    enabled: true,
+    groupChats: false,
+    privateChats: true,
+    serviceRequests: false,
+  });
+  const [chainListenerRunning, setChainListenerRunning] = useState(false);
+  const [chainListenerLoading, setChainListenerLoading] = useState(false);
 
   // Subscribe to language changes
   useEffect(() => {
@@ -89,6 +106,29 @@ const IMSettings: React.FC = () => {
     void loadMetabots();
   }, []);
 
+  useEffect(() => {
+    const loadChainListener = async () => {
+      setChainListenerLoading(true);
+      try {
+        const [configResult, statusResult] = await Promise.all([
+          window.electron.metaWebListener.getListenerConfig(),
+          window.electron.metaWebListener.getListenerStatus(),
+        ]);
+        if (configResult?.config) {
+          setChainListenerConfig(configResult.config as ChainListenerConfig);
+        }
+        if (typeof statusResult?.running === 'boolean') {
+          setChainListenerRunning(statusResult.running);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setChainListenerLoading(false);
+      }
+    };
+    void loadChainListener();
+  }, []);
+
   // Handle DingTalk config change
   const handleDingTalkChange = (field: 'clientId' | 'clientSecret', value: string) => {
     dispatch(setDingTalkConfig({ [field]: value }));
@@ -107,6 +147,27 @@ const IMSettings: React.FC = () => {
   // Handle Discord config change
   const handleDiscordChange = (field: 'botToken', value: string) => {
     dispatch(setDiscordConfig({ [field]: value }));
+  };
+
+  const handleChainListenerToggle = async (type: 'enabled' | 'groupChats' | 'privateChats', enabled: boolean) => {
+    setChainListenerLoading(true);
+    try {
+      await window.electron.metaWebListener.toggleListener({ type, enabled });
+      const configResult = await window.electron.metaWebListener.getListenerConfig();
+      if (configResult?.config) {
+        setChainListenerConfig(configResult.config as ChainListenerConfig);
+      } else {
+        setChainListenerConfig((prev) => ({ ...prev, [type]: enabled }));
+      }
+      const statusResult = await window.electron.metaWebListener.getListenerStatus();
+      if (typeof statusResult?.running === 'boolean') {
+        setChainListenerRunning(statusResult.running);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setChainListenerLoading(false);
+    }
   };
 
   // Save config on blur
@@ -265,6 +326,9 @@ const IMSettings: React.FC = () => {
 
   // Ensure activePlatform is always in visible platforms when language changes
   useEffect(() => {
+    if (activePlatform === 'chainListener') {
+      return;
+    }
     if (platforms.length > 0 && !platforms.includes(activePlatform)) {
       // If current activePlatform is not visible, switch to first visible platform
       setActivePlatform(platforms[0]);
@@ -303,6 +367,9 @@ const IMSettings: React.FC = () => {
     if (platform === 'discord') return status.discord.starting;
     return false;
   };
+
+  const chainListenerActive = chainListenerConfig.enabled
+    && (chainListenerConfig.groupChats || chainListenerConfig.privateChats);
 
   const handleConnectivityTest = async (platform: IMPlatform) => {
     setConnectivityModalPlatform(platform);
@@ -408,6 +475,47 @@ const IMSettings: React.FC = () => {
             </div>
           );
         })}
+        <div
+          onClick={() => setActivePlatform('chainListener')}
+          className={`flex items-center p-2 rounded-xl cursor-pointer transition-colors ${
+            activePlatform === 'chainListener'
+              ? 'bg-claude-accent/10 dark:bg-claude-accent/20 border border-claude-accent/30'
+              : 'bg-claude-surfaceHover/80 dark:bg-claude-darkSurface/55 dark:bg-gradient-to-br dark:from-claude-darkSurface/70 dark:to-claude-darkSurfaceHover/70 hover:bg-claude-surface dark:hover:from-claude-darkSurface/80 dark:hover:to-claude-darkSurfaceHover/80 dark:border-claude-darkBorder/70 border-claude-border/80 border'
+          }`}
+        >
+          <div className="flex flex-1 items-center">
+            <div className="mr-2 flex h-7 w-7 items-center justify-center rounded-md bg-white dark:bg-claude-darkBorder/30">
+              <SignalIcon className="h-4 w-4" />
+            </div>
+            <span className={`text-sm font-medium truncate ${
+              activePlatform === 'chainListener'
+                ? 'text-claude-accent'
+                : 'dark:text-claude-darkText text-claude-text'
+            }`}>
+              {i18nService.t('chainListener')}
+            </span>
+          </div>
+          <div className="flex items-center ml-2">
+            <div
+              className={`w-7 h-4 rounded-full flex items-center transition-colors ${
+                chainListenerConfig.enabled
+                  ? (chainListenerRunning ? 'bg-green-500' : 'bg-yellow-500')
+                  : 'dark:bg-claude-darkBorder bg-claude-border'
+              } ${chainListenerLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (chainListenerLoading) return;
+                void handleChainListenerToggle('enabled', !chainListenerConfig.enabled);
+              }}
+            >
+              <div
+                className={`w-3 h-3 rounded-full bg-white shadow-md transform transition-transform ${
+                  chainListenerConfig.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Platform Settings - Right Side */}
@@ -416,27 +524,50 @@ const IMSettings: React.FC = () => {
         <div className="flex items-center gap-3 pb-3 border-b dark:border-claude-darkBorder/60 border-claude-border/60">
           <div className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-md bg-white dark:bg-claude-darkBorder/30 p-1">
-              <img
-                src={platformMeta[activePlatform].logo}
-                alt={platformMeta[activePlatform].label}
-                className="w-4 h-4 object-contain"
-              />
+              {activePlatform === 'chainListener' ? (
+                <SignalIcon className="h-4 w-4" />
+              ) : (
+                <img
+                  src={platformMeta[activePlatform].logo}
+                  alt={platformMeta[activePlatform].label}
+                  className="w-4 h-4 object-contain"
+                />
+              )}
             </div>
             <h3 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
-              {`${i18nService.t(activePlatform)}${i18nService.t('settings')}`}
+              {activePlatform === 'chainListener'
+                ? i18nService.t('chainListener')
+                : `${i18nService.t(activePlatform)}${i18nService.t('settings')}`}
             </h3>
           </div>
-          <div className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-            getPlatformConnected(activePlatform) || getPlatformStarting(activePlatform)
-              ? 'bg-green-500/15 text-green-600 dark:text-green-400'
-              : 'bg-gray-500/15 text-gray-500 dark:text-gray-400'
-          }`}>
-            {getPlatformConnected(activePlatform)
-              ? i18nService.t('connected')
-              : getPlatformStarting(activePlatform)
-                ? (i18nService.t('starting') || '启动中')
-                : i18nService.t('disconnected')}
-          </div>
+          {activePlatform !== 'chainListener' ? (
+            <div className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+              getPlatformConnected(activePlatform) || getPlatformStarting(activePlatform)
+                ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+                : 'bg-gray-500/15 text-gray-500 dark:text-gray-400'
+            }`}>
+              {getPlatformConnected(activePlatform)
+                ? i18nService.t('connected')
+                : getPlatformStarting(activePlatform)
+                  ? (i18nService.t('starting') || '启动中')
+                  : i18nService.t('disconnected')}
+            </div>
+          ) : chainListenerActive ? (
+            <div
+              className={chainListenerRunning
+                ? 'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : 'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-500/20 text-amber-600 dark:text-amber-400'}
+            >
+              <span
+                className={chainListenerRunning
+                  ? 'h-2 w-2 rounded-full bg-emerald-500'
+                  : 'h-2 w-2 rounded-full bg-amber-500'}
+              />
+              {chainListenerRunning
+                ? i18nService.t('chainListenerStatusConnected')
+                : i18nService.t('chainListenerStatusConnecting')}
+            </div>
+          ) : null}
         </div>
 
         {/* DingTalk Settings */}
@@ -636,6 +767,45 @@ const IMSettings: React.FC = () => {
                 {status.discord.lastError}
               </div>
             )}
+          </div>
+        )}
+
+        {activePlatform === 'chainListener' && (
+          <div className="space-y-3">
+            <label className="flex flex-col gap-1.5 rounded-xl p-4 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('chainListenerToggleGroup')}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={chainListenerConfig.groupChats}
+                  onChange={(e) => { void handleChainListenerToggle('groupChats', e.target.checked); }}
+                  disabled={!chainListenerConfig.enabled || chainListenerLoading}
+                  className="rounded border-claude-border dark:border-claude-darkBorder disabled:opacity-60"
+                />
+              </div>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('chainListenerToggleGroupDesc')}
+              </p>
+            </label>
+            <label className="flex flex-col gap-1.5 rounded-xl p-4 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('chainListenerTogglePrivate')}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={chainListenerConfig.privateChats}
+                  onChange={(e) => { void handleChainListenerToggle('privateChats', e.target.checked); }}
+                  disabled={!chainListenerConfig.enabled || chainListenerLoading}
+                  className="rounded border-claude-border dark:border-claude-darkBorder disabled:opacity-60"
+                />
+              </div>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('chainListenerTogglePrivateDesc')}
+              </p>
+            </label>
           </div>
         )}
 

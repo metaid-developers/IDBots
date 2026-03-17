@@ -324,6 +324,7 @@ interface IElectronAPI {
       serviceIconDataUrl?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;
     sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string }) => Promise<{ success: boolean; txids?: string[]; error?: string }>;
+    pingProvider: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string }>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
   checkApiConfig: () => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
@@ -490,7 +491,7 @@ interface IElectronAPI {
       subsidy?: { success: boolean; error?: string };
       error?: string;
     }>;
-    restoreMetaBotFromMnemonic: (input: { mnemonic: string; path?: string }) => Promise<{ success: boolean; metabot?: Metabot; error?: string }>;
+    restoreMetaBotFromMnemonic: (input: { mnemonic: string; path?: string; boss_global_metaid?: string | null }) => Promise<{ success: boolean; metabot?: Metabot; error?: string }>;
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       Promise<{
         success: boolean;
@@ -553,11 +554,30 @@ interface IElectronAPI {
       txids?: string[];
       syncedSteps?: Array<'name' | 'avatar' | 'bio'>;
     }>;
+    createMetaBotOnChain: (input: {
+      name: string;
+      avatar?: string | null;
+      role: string;
+      soul: string;
+      goal?: string | null;
+      background?: string | null;
+      boss_id?: number | null;
+      llm_id?: string | null;
+      metabot_type?: 'twin' | 'worker';
+    }) => Promise<{
+      success: boolean;
+      error?: string;
+      canSkip?: boolean;
+      metabot?: Metabot;
+      subsidy?: { success: boolean; error?: string };
+      chainPartial?: boolean;
+      chainError?: string;
+    }>;
   };
   metaWebListener: {
-    getListenerConfig: () => Promise<{ success: boolean; config?: { groupChats: boolean; privateChats: boolean; serviceRequests: boolean }; error?: string }>;
+    getListenerConfig: () => Promise<{ success: boolean; config?: { enabled: boolean; groupChats: boolean; privateChats: boolean; serviceRequests: boolean }; error?: string }>;
     getListenerStatus: () => Promise<{ success: boolean; running?: boolean; error?: string }>;
-    toggleListener: (payload: { type: 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
+    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
     startMetaWebListener: () => Promise<{ success: boolean; error?: string }>;
     onListenerLog: (callback: (log: string) => void) => () => void;
     assignGroupChatTask: (params: AssignGroupChatTaskParams) => Promise<AssignGroupChatTaskResult>;

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
-import { formatGigSquarePrice, getGigSquarePaymentAmount, getServiceIconUrl } from '../../utils/gigSquare';
+import { formatGigSquarePrice, getGigSquarePaymentAmount } from '../../utils/gigSquare';
 import { fetchMetaidInfoByGlobalId } from '../../services/metabotInfoService';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
@@ -15,6 +15,7 @@ interface GigSquareOrderModalProps {
 }
 
 type OrderStatus = 'idle' | 'paying' | 'sending' | 'success';
+type HandshakeStatus = 'idle' | 'checking' | 'online' | 'offline';
 
 function currencyToChain(currency: string): 'mvc' | 'btc' | 'doge' {
   const u = (currency || '').toUpperCase();
@@ -56,6 +57,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     doge?: { value: number; unit: string };
   }>({});
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [handshake, setHandshake] = useState<HandshakeStatus>('idle');
 
   const loadMetabots = useCallback(async () => {
     try {
@@ -76,6 +78,21 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     }
   }, [buyerMetabotId]);
 
+  const runHandshake = useCallback(async (metabotId: number, chatpubkey: string, toGlobalMetaId: string) => {
+    setHandshake('checking');
+    try {
+      const res = await window.electron.gigSquare.pingProvider({
+        metabotId,
+        toGlobalMetaId,
+        toChatPubkey: chatpubkey,
+        timeoutMs: 15000,
+      });
+      setHandshake(res.success ? 'online' : 'offline');
+    } catch {
+      setHandshake('offline');
+    }
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
     setPrompt('');
@@ -84,6 +101,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     setShowDescriptionModal(false);
     setShowConfirmModal(false);
     setProviderInfo({});
+    setHandshake('idle');
     loadMetabots();
   }, [isOpen, loadMetabots]);
 
@@ -132,6 +150,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       setSelectedMetabotId(buyerMetabotId ?? twin?.id ?? metabots[0].id);
     }
   }, [isOpen, buyerMetabotId, metabots, selectedMetabotId]);
+
+  // Trigger handshake once we have both chatpubkey and a selected metabot
+  useEffect(() => {
+    if (!isOpen || !service?.providerGlobalMetaId) return;
+    if (!providerInfo.chatpubkey || !selectedMetabotId) return;
+    if (handshake !== 'idle') return;
+    runHandshake(selectedMetabotId, providerInfo.chatpubkey, service.providerGlobalMetaId);
+  }, [isOpen, providerInfo.chatpubkey, selectedMetabotId, service?.providerGlobalMetaId, handshake, runHandshake]);
 
   const priceDisplay = useMemo(() => {
     if (!service) return null;
@@ -333,9 +359,9 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
                 {i18nService.t('gigSquareProvider')}
               </div>
               <div className="flex items-center gap-3">
-                {(providerInfo.avatarUrl || getServiceIconUrl(service.serviceIcon)) ? (
+                {providerInfo.avatarUrl ? (
                   <img
-                    src={providerInfo.avatarUrl || getServiceIconUrl(service.serviceIcon) || ''}
+                    src={providerInfo.avatarUrl}
                     alt=""
                     className="h-10 w-10 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder"
                   />
@@ -376,13 +402,43 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
               </div>
             )}
 
+            {/* Handshake status */}
+            <div className="flex items-center gap-2 rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-2 bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted">
+              <span className={`inline-block h-2.5 w-2.5 rounded-full flex-shrink-0 ${
+                handshake === 'idle' ? 'bg-gray-400' :
+                handshake === 'checking' ? 'bg-blue-500 animate-pulse' :
+                handshake === 'online' ? 'bg-green-500' :
+                'bg-red-500'
+              }`} />
+              <span className={`text-xs flex-1 ${
+                handshake === 'online' ? 'text-green-600 dark:text-green-400' :
+                handshake === 'offline' ? 'text-red-500' :
+                handshake === 'checking' ? 'text-blue-500' :
+                'dark:text-claude-darkTextSecondary text-claude-textSecondary'
+              }`}>
+                {handshake === 'checking' && i18nService.t('gigSquareHandshaking')}
+                {handshake === 'online' && i18nService.t('gigSquareHandshakeOnline')}
+                {handshake === 'offline' && i18nService.t('gigSquareHandshakeOffline')}
+                {handshake === 'idle' && '—'}
+              </span>
+              {handshake === 'offline' && selectedMetabotId && providerInfo.chatpubkey && service?.providerGlobalMetaId && (
+                <button
+                  type="button"
+                  onClick={() => runHandshake(selectedMetabotId, providerInfo.chatpubkey!, service!.providerGlobalMetaId)}
+                  className="text-xs px-2 py-0.5 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover flex-shrink-0"
+                >
+                  {i18nService.t('gigSquareHandshakeRetry')}
+                </button>
+              )}
+            </div>
+
             <div className="flex items-center justify-end gap-3 flex-wrap">
               <span className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {i18nService.t('gigSquareUseMetabot')}
               </span>
               <select
                 value={selectedMetabotId ?? ''}
-                onChange={(e) => setSelectedMetabotId(Number(e.target.value) || null)}
+                onChange={(e) => { setSelectedMetabotId(Number(e.target.value) || null); setHandshake('idle'); }}
                 className="rounded-lg border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 disabled={status !== 'idle'}
               >
@@ -396,7 +452,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
                 type="button"
                 onClick={handleOpenConfirm}
                 className="btn-idchat-primary px-4 py-2 text-sm font-medium"
-                disabled={status !== 'idle'}
+                disabled={status !== 'idle' || handshake !== 'online'}
               >
                 {i18nService.t('gigSquarePayAndRequest')}
               </button>

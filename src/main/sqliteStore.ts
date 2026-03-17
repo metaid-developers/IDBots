@@ -618,6 +618,19 @@ export class SqliteStore {
 
     this.migrateLegacyMemoryFileToUserMemories();
     this.migrateFromElectronStore(basePath);
+
+    // Migration: Add boss_global_metaid column to metabots
+    try {
+      const mbColsResult = this.db.exec('PRAGMA table_info(metabots)');
+      const mbColumns = (mbColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!mbColumns.includes('boss_global_metaid')) {
+        this.db.run('ALTER TABLE metabots ADD COLUMN boss_global_metaid TEXT');
+        this.save();
+      }
+    } catch (error) {
+      console.warn('Failed to migrate metabots boss_global_metaid:', error);
+    }
+
     this.save();
   }
 

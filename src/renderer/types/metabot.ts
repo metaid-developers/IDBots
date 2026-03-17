@@ -16,6 +16,7 @@ export interface Metabot {
   goal: string | null;
   background: string | null;
   boss_id: number | null;
+  boss_global_metaid: string | null;
   llm_id: string | null;
   tools: string[];
   skills: string[];

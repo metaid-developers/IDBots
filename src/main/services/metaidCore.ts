@@ -384,6 +384,7 @@ export async function syncMetaBotToChain(
       tools: metabot.tools ?? [],
       skills: metabot.skills ?? [],
       boss_id: String(metabot.boss_id ?? '0000'),
+      boss_global_metaid: metabot.boss_global_metaid || '',
       createdBy: metabot.created_by || '0000',
     };
     const bioJson = JSON.stringify(bioObject);

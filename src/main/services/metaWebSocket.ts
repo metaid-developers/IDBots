@@ -5,6 +5,11 @@
 
 import { io, Socket } from 'socket.io-client';
 
+export interface MetaWebSocketEndpoint {
+  url: string;
+  path: string;
+}
+
 export interface MetaWebSocketConfig {
   url: string;
   path: string;
@@ -12,6 +17,7 @@ export interface MetaWebSocketConfig {
   type: 'app' | 'pc';
   heartbeatInterval?: number;
   heartbeatTimeout?: number;
+  endpoints?: MetaWebSocketEndpoint[];
 }
 
 export type MessageHandler = (data: unknown) => void;
@@ -23,6 +29,9 @@ export class SocketIOClient {
   private heartbeatTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private isHeartbeatRunning = false;
   private onMessage: MessageHandler;
+  private endpoints: MetaWebSocketEndpoint[];
+  private endpointIndex = 0;
+  private hasConnected = false;
 
   constructor(config: MetaWebSocketConfig, onMessage: MessageHandler) {
     this.config = {
@@ -31,47 +40,84 @@ export class SocketIOClient {
       ...config,
     };
     this.onMessage = onMessage;
+    this.endpoints = this.resolveEndpoints();
   }
 
   connect(): void {
     try {
-      this.socket = io(this.config.url, {
-        path: this.config.path,
-        query: {
-          metaid: this.config.metaid,
-          type: this.config.type,
-        },
-      });
-
-      this.socket.on('connect', () => {
-        this.startHeartbeat();
-      });
-
-      this.socket.on('disconnect', (reason: string) => {
-        this.stopHeartbeat();
-      });
-
-      this.socket.on('connect_error', (error: Error) => {
-        this.stopHeartbeat();
-      });
-
-      this.socket.on('message', (data: unknown) => {
-        this.onMessage(data);
-      });
-
-      this.socket.on('heartbeat_ack', () => {
-        if (this.heartbeatTimeoutId) {
-          clearTimeout(this.heartbeatTimeoutId);
-          this.heartbeatTimeoutId = null;
-        }
-      });
-
-      this.socket.on('reconnect', () => {
-        this.startHeartbeat();
-      });
+      this.hasConnected = false;
+      this.endpointIndex = 0;
+      this.connectToEndpoint(this.endpointIndex);
     } catch (error) {
       console.error('[MetaWebSocket] connect failed:', error);
     }
+  }
+
+  private resolveEndpoints(): MetaWebSocketEndpoint[] {
+    if (Array.isArray(this.config.endpoints) && this.config.endpoints.length > 0) {
+      return this.config.endpoints;
+    }
+    return [{ url: this.config.url, path: this.config.path }];
+  }
+
+  private connectToEndpoint(index: number): void {
+    const endpoint = this.endpoints[index];
+    if (!endpoint) {
+      return;
+    }
+
+    this.cleanupSocket();
+    this.socket = io(endpoint.url, {
+      path: endpoint.path,
+      query: {
+        metaid: this.config.metaid,
+        type: this.config.type,
+      },
+    });
+
+    this.socket.on('connect', () => {
+      this.hasConnected = true;
+      this.endpointIndex = index;
+      this.startHeartbeat();
+    });
+
+    this.socket.on('disconnect', (_reason: string) => {
+      this.stopHeartbeat();
+      if (!this.hasConnected && this.tryFallback(index)) {
+        return;
+      }
+    });
+
+    this.socket.on('connect_error', (_error: Error) => {
+      this.stopHeartbeat();
+      if (!this.hasConnected && this.tryFallback(index)) {
+        return;
+      }
+    });
+
+    this.socket.on('message', (data: unknown) => {
+      this.onMessage(data);
+    });
+
+    this.socket.on('heartbeat_ack', () => {
+      if (this.heartbeatTimeoutId) {
+        clearTimeout(this.heartbeatTimeoutId);
+        this.heartbeatTimeoutId = null;
+      }
+    });
+
+    this.socket.on('reconnect', () => {
+      this.startHeartbeat();
+    });
+  }
+
+  private tryFallback(currentIndex: number): boolean {
+    if (currentIndex >= this.endpoints.length - 1) {
+      return false;
+    }
+    this.endpointIndex = currentIndex + 1;
+    this.connectToEndpoint(this.endpointIndex);
+    return true;
   }
 
   private startHeartbeat(): void {
@@ -108,13 +154,19 @@ export class SocketIOClient {
 
   disconnect(): void {
     this.stopHeartbeat();
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
+    this.cleanupSocket();
+    this.hasConnected = false;
   }
 
   isConnected(): boolean {
-    return this.socket?.connected ?? false;
+    return Boolean(this.socket?.connected);
+  }
+
+  private cleanupSocket(): void {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
+    }
   }
 }

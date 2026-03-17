@@ -12,6 +12,7 @@ export interface MetaBotFormValues {
   soul: string;
   goal: string;
   background: string;
+  boss_global_metaid: string;
   boss_id: string;
   llm_id: string;
 }
@@ -29,6 +30,7 @@ const defaultValues: MetaBotFormValues = {
   soul: '',
   goal: '',
   background: '',
+  boss_global_metaid: '',
   boss_id: '1',
   llm_id: '',
 };
@@ -271,6 +273,32 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
           rows={2}
           className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent resize-y"
         />
+      </div>
+
+      <div>
+        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+          {i18nService.t('metabotBossMetaId')}
+          <span className="ml-1 font-normal opacity-60">{i18nService.t('metabotBossMetaIdOptional')}</span>
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={values.boss_global_metaid}
+            onChange={(e) => handleChange('boss_global_metaid', e.target.value)}
+            placeholder={i18nService.t('metabotBossMetaIdPlaceholder')}
+            className="flex-1 min-w-0 px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent font-mono"
+          />
+          <button
+            type="button"
+            onClick={() => {/* TODO: fetch my MetaID */}}
+            className="shrink-0 px-3 py-2 text-xs rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap"
+          >
+            {i18nService.t('metabotGetMyMetaId')}
+          </button>
+        </div>
+        <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1 opacity-70">
+          {i18nService.t('metabotBossMetaIdHint')}
+        </p>
       </div>
 
       <div>

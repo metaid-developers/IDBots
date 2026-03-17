@@ -31,6 +31,8 @@ export interface Metabot {
   goal: string | null;
   background: string | null;
   boss_id: number | null;
+  /** External BOSS globalmetaid (on-chain identity of the supervisor) */
+  boss_global_metaid: string | null;
   llm_id: string | null;
   /** Allowed tool ids; stored as JSON array in DB */
   tools: string[];
@@ -62,6 +64,7 @@ export interface MetabotInsert {
   goal?: string | null;
   background?: string | null;
   boss_id?: number | null;
+  boss_global_metaid?: string | null;
   llm_id?: string | null;
   tools?: string[];
   skills?: string[];
@@ -89,6 +92,7 @@ export interface MetabotUpdate {
   goal?: string | null;
   background?: string | null;
   boss_id?: number | null;
+  boss_global_metaid?: string | null;
   llm_id?: string | null;
   tools?: string[];
   skills?: string[];

@@ -13,10 +13,13 @@ import {
   ecdhDecrypt,
 } from './metaWebCrypto';
 
-const SOCKET_URL = 'https://api.idchat.io';
-const SOCKET_PATH = '/socket/socket.io';
+const SOCKET_ENDPOINTS = [
+  { url: 'wss://api.idchat.io', path: '/socket/socket.io' },
+  { url: 'wss://www.show.now', path: '/socket/socket.io' },
+];
 
 export interface ListenerConfig {
+  enabled: boolean;
   groupChats: boolean;
   privateChats: boolean;
   serviceRequests: boolean;
@@ -418,8 +421,9 @@ export function startMetaWebListener(
       };
       const client = new SocketIOClient(
         {
-          url: SOCKET_URL,
-          path: SOCKET_PATH,
+          url: SOCKET_ENDPOINTS[0].url,
+          path: SOCKET_ENDPOINTS[0].path,
+          endpoints: SOCKET_ENDPOINTS,
           metaid,
           type: 'pc',
         },
