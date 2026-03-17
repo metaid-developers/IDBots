@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import type { CoworkRunner, PermissionRequest } from '../libs/coworkRunner';
 import type { CoworkStore, CoworkMessage } from '../coworkStore';
@@ -88,9 +89,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   private createOrderSession(request: OrderCoworkRequest): string {
     const config = this.coworkStore.getConfig();
-    const workspaceRoot = (config.workingDirectory || '').trim();
+    let workspaceRoot = (config.workingDirectory || '').trim();
+    // Fall back to the OS temp directory so orders can execute even without a configured workspace.
     if (!workspaceRoot) {
-      throw new Error('IM 工作目录未配置，请先在应用中选择任务目录。');
+      workspaceRoot = os.tmpdir();
     }
     const resolvedRoot = path.resolve(workspaceRoot);
     if (!fs.existsSync(resolvedRoot) || !fs.statSync(resolvedRoot).isDirectory()) {

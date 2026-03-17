@@ -2944,10 +2944,12 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         payload: payloadStr,
       });
 
-      // Create buyer-side observer session so MetaBot A can watch the conversation
+      // Create buyer-side observer session so MetaBot A can watch the conversation.
+      // Each order gets its own session (keyed by txid so retries don't duplicate).
       try {
         const coworkStoreInst = getCoworkStore();
-        const externalConversationId = `metaweb_order:buyer:${metabotId}:${toGlobalMetaId}`;
+        const txidForKey = (result.txids?.[0] || '').slice(0, 16) || String(Date.now());
+        const externalConversationId = `metaweb_order:buyer:${metabotId}:${toGlobalMetaId}:${txidForKey}`;
         const existing = coworkStoreInst.getConversationMapping('metaweb_order', externalConversationId, metabotId);
         if (!existing) {
           const config = coworkStoreInst.getConfig();

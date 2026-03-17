@@ -17,22 +17,26 @@ dependencies: node.js >= 18, alpine.js, unocss
 为避免“生成产物看似可运行但不符合 MetaApp 规范”的问题，必须执行如下两阶段门禁。**任一失败即停止，不得继续生成或交付**。
 
 * **生成前门禁 (pregen，强制)**
-  在仓库根目录执行：
+  执行校验时，若使用**当前 Cowork 工作目录**（与 frontend-design 等技能一致），必须传入 `--workspace-root`；若使用应用默认工作目录则可不传。示例（工作目录为默认 `~/idbots/project` 时）：
   ```
   node metabot-create-metaapp/scripts/validate_metaapp_checklist.js --phase pregen --project ~/idbots/project/<project_name>
   ```
-  通过条件：目标目录位于 `~/idbots/project/` 下、模板/基线文件完整、开发指南文件存在。
+  若 Cowork 会话的工作目录为自定义路径 `<workspace_root>`，则必须传入：
+  ```
+  node metabot-create-metaapp/scripts/validate_metaapp_checklist.js --phase pregen --project <workspace_root>/<project_name> --workspace-root <workspace_root>
+  ```
+  通过条件：目标目录位于允许的工作目录下、模板/基线文件完整、开发指南文件存在。
 
 * **交付前门禁 (predeliver，强制)**
-  在仓库根目录执行：
+  执行（`--project` 为实际生成的项目绝对路径，无需 `--workspace-root`）：
   ```
-  node metabot-create-metaapp/scripts/validate_metaapp_checklist.js --phase predeliver --project ~/idbots/project/<project_name>
+  node metabot-create-metaapp/scripts/validate_metaapp_checklist.js --phase predeliver --project <workspace_root>/<project_name>
   ```
   通过条件：最小可运行文件集齐全、`index.html` 核心脚本与 `id-connect-button` 渲染存在、`app.js` 基础命令注册齐全、登录核心文件与 `idframework/` 基线对齐、无上级运行依赖引用。
 
 * **启动验收门禁 (smoke test，强制)**
   在通过 `predeliver` 后，必须执行”可启动 + 控制台无报错”验收，未通过不得交付：
-  1) 在 `~/idbots/project/` 目录下启动本地服务：
+  1) 在**当前工作目录**（即生成项目所在根目录，与 frontend-design 一致；默认未设置时为 `~/idbots/project`）下启动本地服务：
      `npx http-server . -a 127.0.0.1 -p 5602 -o /<project_name>/index.html -c-1`
   2) 打开页面后执行首屏验证：页面能正常渲染、`id-connect-button` 显示正常、业务主组件可见。
   3) 打开浏览器控制台检查：不得出现会影响运行的错误（如 `No command registered for event: ...`、模块加载失败、脚本 404、未定义对象异常等）。
@@ -44,7 +48,7 @@ dependencies: node.js >= 18, alpine.js, unocss
 
 * **前置阅读 (Critical)**: 开发前**必须**读取并理解 `references/MetaApp-Development-Guide.md`。
 * **脚手架基线 (强制)**: 必须以 `templates/` 作为生成基线，不允许绕过模板从零散文件拼装生成。
-* **项目目录位置 (强制)**: 使用 `metabot-create-metaapp` 生成 MetaApp 时，目标项目目录**必须创建在本机用户根目录的 `idbots/project/` 子目录下**（例如 Windows 系统为 `C:\Users\<用户名>\idbots\project\`，macOS/Linux 系统为 `~/idbots/project/`），路径根据当前用户的 Home 目录动态确定。**禁止**将生成产物放在仓库目录内或 `metabot-create-metaapp/` 目录内。示例：应生成到 `~/idbots/project/Simple-ID-Buzz/`。
+* **项目目录位置 (强制)**: 使用 `metabot-create-metaapp` 生成 MetaApp 时，目标项目目录**必须创建在当前 Cowork 工作目录下**（与 frontend-design 等技能一致）。若用户未设置 Cowork 工作目录，则使用应用默认目录（通常为 `~/idbots/project/`，即 macOS/Linux 下 `$HOME/idbots/project/`，Windows 下 `%USERPROFILE%\idbots\project\`）。**禁止**将生成产物放在仓库目录内或 `metabot-create-metaapp/` 目录内。示例：工作目录为默认时生成到 `~/idbots/project/Simple-ID-Buzz/`；工作目录为 `~/my-apps` 时生成到 `~/my-apps/Simple-ID-Buzz/`。调用 pregen 门禁时，若使用自定义工作目录，必须传入 `--workspace-root <工作目录>`。
 * **`index.html` 基线继承 (强制)**: 目标项目 `index.html` 必须以 `templates/index.html` 为基础生成，默认应完整保留其中与登录态初始化、localStorage 持久化、Metalet 事件监听、App/WebView 兼容处理相关的核心逻辑；仅允许做业务区块插入或必要配置调整，禁止删改导致这些能力失效。
 * **依赖独立化 (强制)**: 基于 `idframework` 生成 MetaApp 时，所有运行依赖文件（`idframework.js`、`idconfig.js`、`idutils.js`、`metaid.js`、`crypto.js`、`socket-client.js`、`commands/`、`idcomponents/`、`stores/` 等）必须放置在目标项目目录内并使用项目内相对路径引用。**禁止**通过 `../` 或其它上级目录路径引用 `metabot-create-metaapp` 下文件作为运行依赖。
 * **多 MetaApp 并存隔离 (强制)**: 当本地同时存在多个 MetaApp 项目时，生成器必须保证每个项目为“完全独立版”。运行时依赖只允许来自当前目标项目目录，**严禁**引用任意其它 MetaApp 目录文件（例如 `../Snake-Score-MetaApp/*`、`../IDChat/*`、`../<other-metaapp>/*`）。若发现跨项目引用，视为生成失败，必须改为将所需文件复制到当前项目内并改为项目内相对路径。
@@ -212,11 +216,11 @@ customElements.define('id-card', IdCard);
 - 登录基础能力模板要求：以下七件套必须以 `idframework/` 同路径文件为基线并保持对齐，生成目标项目时执行“强制代码平移（可增不可减）”：`idframework.js`、`bootstrap-stores.js`、`app-env-compat.js`、`idcomponents/id-connect-button.js`、`commands/FetchUserCommand.js`、`commands/CheckWebViewBridgeCommand.js`、`commands/CheckBtcAddressSameAsMvcCommand.js`。若 `templates/` 与 `idframework/` 存在差异，上述七件套一律以 `idframework/` 为准同步到目标项目，禁止保留任何简化版实现。
 - 当 `templates/` 中暂未覆盖某个 `idframework/` 新能力文件时，允许按业务从 `idframework/` 同步拷贝到目标项目，并保持相对路径与命名一致（`idconfig.js`、`idutils.js` 属基础依赖，若模板缺失应优先从 `idframework/` 补齐）。
 - 模板同步原则：优先保持“可运行最小集 + 常用业务模块”，避免把全部实验性文件强制塞入模板。
-- 目标项目目录位置要求：目标项目必须位于本机用户根目录的 `idbots/project/` 下（即 `~/idbots/project/<project_name>/`），禁止放置在仓库目录或 `metabot-create-metaapp/` 内。
+- 目标项目目录位置要求：目标项目必须位于**当前 Cowork 工作目录**下（与 frontend-design 一致；未设置时默认 `~/idbots/project/<project_name>/`），禁止放置在仓库目录或 `metabot-create-metaapp/` 内。
 - 目标项目产物要求：从模板/框架同步到目标项目后，目标项目应可独立运行；入口脚本与模块 import 仅引用项目内路径（例如 `./idframework.js`、`./commands/*.js`、`./idcomponents/*.js`），不得保留对上级目录的运行时引用。
 - 多项目并存验收要求（强制）：在交付前必须检查目标项目 `index.html`、`app.js`、`idcomponents/*.js`、`commands/*.js` 中所有脚本与模块路径，确保不包含任何 `../<other-metaapp>/` 或其它跨项目目录引用；发现即不合格，必须修复为当前项目内自包含依赖。
 - 生成验收要求：必须检查 `index.html` 是否已引入并渲染 `id-connect-button`，且 `app.css` 文件存在并可被页面成功加载（非 404）。
-- 本地启动验证要求（强制）：生成后必须给出并校验正确启动方式，默认在 `~/idbots/project/` 目录下执行 `npx http-server . -a 127.0.0.1 -p 5602 -o /<project>/index.html -c-1`。其中 `<project>` 为 `~/idbots/project/` 下的项目目录名。若出现 `http://127.0.0.1:5602/<project>/index.html` 404，先排查是否在错误目录启动（例如子目录启动导致路由根不一致），并给出可直接复现的修正命令。除页面可访问外，还必须完成控制台无报错检查（尤其是命令未注册、脚本加载失败、运行时未定义异常），否则不得交付。
+- 本地启动验证要求（强制）：生成后必须给出并校验正确启动方式，在**当前工作目录**（与 frontend-design 一致，默认未设置时为 `~/idbots/project/`）下执行 `npx http-server . -a 127.0.0.1 -p 5602 -o /<project>/index.html -c-1`。其中 `<project>` 为该工作目录下的项目目录名。若出现 `http://127.0.0.1:5602/<project>/index.html` 404，先排查是否在错误目录启动（例如子目录启动导致路由根不一致），并给出可直接复现的修正命令。除页面可访问外，还必须完成控制台无报错检查（尤其是命令未注册、脚本加载失败、运行时未定义异常），否则不得交付。
 
 ## 测试目录约束 (`test/`)
 
@@ -225,8 +229,8 @@ customElements.define('id-card', IdCard);
 - 生产打包时，测试文件不应作为业务入口；仅在开发验证阶段使用。
 
 ## 脚本索引 (Script Index)
-- scripts/package_metaapp.js: 打包工具。用法: `node scripts/package_metaapp.js ~/idbots/project/my-app`
-- scripts/validate_metaapp_checklist.js: 规范硬检查工具。用法: `node scripts/validate_metaapp_checklist.js --phase pregen --project ~/idbots/project/my-app`；`node scripts/validate_metaapp_checklist.js --phase predeliver --project ~/idbots/project/my-app`
+- scripts/package_metaapp.js: 打包工具。用法: `node scripts/package_metaapp.js <workspace_root>/my-app`（其中 `<workspace_root>` 为当前 Cowork 工作目录或默认 `~/idbots/project`）。
+- scripts/validate_metaapp_checklist.js: 规范硬检查工具。用法: `node scripts/validate_metaapp_checklist.js --phase pregen --project <workspace_root>/my-app [--workspace-root <workspace_root>]`（使用自定义工作目录时必传 `--workspace-root`）；`node scripts/validate_metaapp_checklist.js --phase predeliver --project <workspace_root>/my-app`。
 - templates/: 标准项目模板 (Reference ONLY)。
 - test/: 调试与联调用测试页面目录。
 

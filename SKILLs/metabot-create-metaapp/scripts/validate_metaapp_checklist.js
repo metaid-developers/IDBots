@@ -11,6 +11,8 @@
  * Usage:
  *   node scripts/validate_metaapp_checklist.js --phase pregen --project ~/idbots/project/MyMetaApp
  *   node scripts/validate_metaapp_checklist.js --phase predeliver --project ~/idbots/project/MyMetaApp
+ * With custom Cowork workspace (same root as frontend-design):
+ *   node scripts/validate_metaapp_checklist.js --phase pregen --project <workspace_root>/MyMetaApp --workspace-root <workspace_root>
  */
 
 'use strict';
@@ -93,10 +95,10 @@ function getSkillRoot() {
 }
 
 /**
- * Returns the mandatory target root for all generated MetaApp projects.
- * Always: <OS home>/idbots/project
+ * Returns the default target root when no --workspace-root is given.
+ * Same as Cowork default working directory: <OS home>/idbots/project
  */
-function getTargetRoot() {
+function getDefaultTargetRoot() {
   return path.join(os.homedir(), 'idbots', 'project');
 }
 
@@ -109,15 +111,20 @@ function fileEquals(a, b) {
 // Phase: pregen
 // ---------------------------------------------------------------------------
 
-function validatePregen(projectDir, skillRoot) {
+/**
+ * @param {string} projectDir - Absolute path to the generated project directory
+ * @param {string} skillRoot - Absolute path to metabot-create-metaapp skill root
+ * @param {string|null} [workspaceRoot] - Optional. When set, project must be under this dir (Cowork working directory). Otherwise use default ~/idbots/project.
+ */
+function validatePregen(projectDir, skillRoot, workspaceRoot = null) {
   const results = [];
-  const targetRoot = path.resolve(getTargetRoot());
+  const targetRoot = path.resolve(workspaceRoot || getDefaultTargetRoot());
   const parentDir = path.resolve(path.dirname(projectDir));
 
-  // 1) Target project must be inside ~/idbots/project/
+  // 1) Target project must be inside the allowed workspace root (Cowork working dir or default ~/idbots/project)
   checkItem(
     results,
-    '目标目录在 ~/idbots/project/ 下',
+    '目标目录在允许的工作目录下',
     parentDir === targetRoot,
     `expected parent=${targetRoot}, got=${parentDir}`,
   );
@@ -267,9 +274,10 @@ function main() {
 
   const phase = getArg('--phase');
   const projectArg = getArg('--project');
+  const workspaceRootArg = getArg('--workspace-root');
 
   if (!phase || !['pregen', 'predeliver'].includes(phase)) {
-    console.error('Usage: node validate_metaapp_checklist.js --phase <pregen|predeliver> --project <path>');
+    console.error('Usage: node validate_metaapp_checklist.js --phase <pregen|predeliver> --project <path> [--workspace-root <dir>]');
     process.exit(1);
   }
   if (!projectArg) {
@@ -278,14 +286,13 @@ function main() {
   }
 
   const skillRoot = getSkillRoot();
-  // Expand leading ~ to home directory
-  const expandedProject = projectArg.startsWith('~')
-    ? path.join(os.homedir(), projectArg.slice(1))
-    : projectArg;
+  const expandTilde = (p) => (p && p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p);
+  const expandedProject = expandTilde(projectArg);
   const projectDir = path.resolve(expandedProject);
+  const workspaceRoot = workspaceRootArg ? path.resolve(expandTilde(workspaceRootArg)) : null;
 
   if (phase === 'pregen') {
-    const results = validatePregen(projectDir, skillRoot);
+    const results = validatePregen(projectDir, skillRoot, workspaceRoot);
     const ok = printResults(results, 'pregen');
     if (!ok) {
       process.stderr.write('❌ pregen checklist failed. Do NOT generate project until all checks pass.\n');

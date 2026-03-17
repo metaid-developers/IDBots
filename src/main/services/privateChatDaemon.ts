@@ -375,34 +375,8 @@ async function processOne(
       return;
     }
 
-    // Check if this is an order reply arriving on the buyer side.
-    // If we have a metaweb_order session where the sender is the peer (seller), add the
-    // message as an observer entry and skip LLM reply — the human just watches.
-    if (fromGlobalMetaId) {
-      const buyerOrderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
-      if (buyerOrderMapping) {
-        emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
-        const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
-          type: 'assistant',
-          content: plaintext,
-          metadata: {
-            sourceChannel: 'metaweb_order',
-            externalConversationId: buyerOrderMapping.externalConversationId,
-            fromGlobalMetaId,
-            fromName: (row.from_name as string | null) ?? undefined,
-            fromAvatar: (row.from_avatar as string | null) ?? undefined,
-            isLocalSender: false,
-          },
-        });
-        coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
-        if (emitToRenderer) {
-          emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: replyMsg });
-        }
-        markProcessed(db, row.id, saveDb);
-        return;
-      }
-    }
-
+    // Handle incoming orders FIRST — before any buyer-reply routing.
+    // An [ORDER] message is always a new task request, never a reply to our own order.
     if (isOrderMessage(plaintext)) {
       const source: OrderSource = 'metaweb_private';
       const txid = extractOrderTxid(plaintext);
@@ -485,29 +459,35 @@ async function processOne(
       return;
     }
 
-    const { sessionId, externalConversationId } = resolvePrivateConversationSession(coworkStore, metabot.id, row);
-
-    // Check if this message is a reply to an order we sent (buyer-side observer).
-    // If there's an existing metaweb_order session where the peer is the sender, attach the
-    // message to that session as an assistant message and skip LLM reply.
-    const orderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
-    if (orderMapping) {
-      emitLog(`[PrivateChat] Detected order reply from ${fromGlobalMetaId.slice(0, 12)}…, attaching to order session ${orderMapping.coworkSessionId.slice(0, 8)}…`);
-      coworkStore.addMessage(orderMapping.coworkSessionId, {
-        type: 'assistant',
-        content: plaintext,
-        metadata: {
-          sourceChannel: 'metaweb_private',
-          externalConversationId: orderMapping.externalConversationId,
-          fromGlobalMetaId,
-          fromName: (row.from_name as string | null) ?? undefined,
-          fromAvatar: (row.from_avatar as string | null) ?? undefined,
-        },
-      });
-      coworkStore.touchConversationMapping('metaweb_order', orderMapping.externalConversationId, metabot.id);
-      markProcessed(db, row.id, saveDb);
-      return;
+    // Check if this is an order reply arriving on the buyer side.
+    // If we have a metaweb_order session where the sender is the peer (seller), add the
+    // message as an observer entry and skip LLM reply — the human just watches.
+    if (fromGlobalMetaId) {
+      const buyerOrderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
+      if (buyerOrderMapping) {
+        emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
+        const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
+          type: 'assistant',
+          content: plaintext,
+          metadata: {
+            sourceChannel: 'metaweb_order',
+            externalConversationId: buyerOrderMapping.externalConversationId,
+            fromGlobalMetaId,
+            fromName: (row.from_name as string | null) ?? undefined,
+            fromAvatar: (row.from_avatar as string | null) ?? undefined,
+            isLocalSender: false,
+          },
+        });
+        coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
+        if (emitToRenderer) {
+          emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: replyMsg });
+        }
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
     }
+
+    const { sessionId, externalConversationId } = resolvePrivateConversationSession(coworkStore, metabot.id, row);
 
     // Check if we already sent "bye" to this peer — if so, ignore all further messages
     const existingMapping = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id);
