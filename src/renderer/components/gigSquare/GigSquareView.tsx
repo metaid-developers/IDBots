@@ -51,6 +51,17 @@ const GigSquareView: React.FC = () => {
     }
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await window.electron.gigSquare.syncFromRemote();
+    } catch {
+      // Sync failure: still load from DB
+    }
+    await loadServices();
+  }, [loadServices]);
+
   useEffect(() => {
     loadServices();
     loadMetabot();
@@ -98,7 +109,7 @@ const GigSquareView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={loadServices}
+              onClick={handleRefresh}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               <ArrowPathIcon className="h-4 w-4" />
@@ -136,14 +147,21 @@ const GigSquareView: React.FC = () => {
               const serviceIconUrl = getServiceIconUrl(service.serviceIcon);
               const iconSrc = serviceIconUrl || service.avatar || null;
               return (
-                <button
-                  type="button"
+                <div
                   key={service.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleOpenModal(service)}
-                  className="text-left rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-4 py-4 hover:shadow-lg hover:-translate-y-0.5 transition"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleOpenModal(service);
+                    }
+                  }}
+                  className="text-left rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-4 py-4 hover:shadow-lg hover:-translate-y-0.5 transition cursor-pointer"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0 flex-1">
                       <div className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
                         {service.displayName}
                       </div>
@@ -155,10 +173,10 @@ const GigSquareView: React.FC = () => {
                       <img
                         src={iconSrc}
                         alt={service.displayName}
-                        className="h-10 w-10 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder flex-shrink-0"
+                        className="h-16 w-16 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder flex-shrink-0"
                       />
                     ) : (
-                      <div className="h-10 w-10 rounded-lg bg-claude-accent/20 flex items-center justify-center text-xs font-semibold text-claude-accent flex-shrink-0">
+                      <div className="h-16 w-16 rounded-lg bg-claude-accent/20 flex items-center justify-center text-sm font-semibold text-claude-accent flex-shrink-0">
                         {service.displayName.slice(0, 1).toUpperCase()}
                       </div>
                     )}
@@ -181,13 +199,22 @@ const GigSquareView: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-3 flex items-center justify-between text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    <span>{formatMetaId(service.providerGlobalMetaId || service.providerMetaId)}</span>
-                    <span className="text-claude-accent">
-                      {i18nService.t('gigSquarePayAndRequest')}
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {formatMetaId(service.providerGlobalMetaId || service.providerMetaId)}
                     </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenModal(service);
+                      }}
+                      className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium"
+                    >
+                      {i18nService.t('gigSquarePayAndRequest')}
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

@@ -639,6 +639,13 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private buildUserMemoriesXml(sessionId: string, options?: { enabled?: boolean }): string {
+    // A2A order sessions: skip owner memories entirely — they describe the local operator,
+    // not the remote client, and would cause the bot to misidentify the client.
+    const session = this.store.getSession(sessionId);
+    if (session?.sessionType === 'a2a') {
+      return '<userMemories></userMemories>';
+    }
+
     const memoryPolicy = this.getSessionMemoryPolicy(sessionId);
     const memoryEnabled = options?.enabled ?? this.isSessionMemoryEnabled(sessionId);
     if (!memoryEnabled) {

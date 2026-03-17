@@ -16,7 +16,7 @@ import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion'
 import type { CoworkRunner } from '../libs/coworkRunner';
 import { PrivateChatOrderCowork } from './privateChatOrderCowork';
 import { buildOrderPrompts } from './orderPromptBuilder';
-import { checkOrderPaymentStatus, extractOrderTxid, OrderSource } from './orderPayment';
+import { checkOrderPaymentStatus, extractOrderTxid, extractOrderSkillId, OrderSource } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
@@ -220,7 +220,7 @@ function resolvePrivateConversationSession(
     'local',
     [],
     metabotId,
-    'agent_agent',
+    'a2a',
     peerId,
     (row.from_name as string | null) ?? null,
     (row.from_avatar as string | null) ?? null
@@ -405,6 +405,8 @@ async function processOne(
         source,
         metabotName: metabot.name,
         skillsPrompt,
+        peerName: (row.from_name as string | null) ?? null,
+        skillId: extractOrderSkillId(plaintext),
       });
       const externalConversationId = buildOrderExternalConversationId(row, source, txid);
       const titleSuffix = txid ? txid.slice(0, 8) : 'no-txid';
@@ -472,10 +474,10 @@ async function processOne(
           metadata: {
             sourceChannel: 'metaweb_order',
             externalConversationId: buyerOrderMapping.externalConversationId,
-            fromGlobalMetaId,
-            fromName: (row.from_name as string | null) ?? undefined,
-            fromAvatar: (row.from_avatar as string | null) ?? undefined,
-            isLocalSender: false,
+            senderGlobalMetaId: fromGlobalMetaId,
+            senderName: (row.from_name as string | null) ?? undefined,
+            senderAvatar: (row.from_avatar as string | null) ?? undefined,
+            direction: 'incoming',
           },
         });
         coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
@@ -504,9 +506,9 @@ async function processOne(
       metadata: {
         sourceChannel: 'metaweb_private',
         externalConversationId,
-        fromGlobalMetaId,
-        fromName: (row.from_name as string | null) ?? undefined,
-        fromAvatar: (row.from_avatar as string | null) ?? undefined,
+        senderGlobalMetaId: fromGlobalMetaId,
+        senderName: (row.from_name as string | null) ?? undefined,
+        senderAvatar: (row.from_avatar as string | null) ?? undefined,
       },
     });
 

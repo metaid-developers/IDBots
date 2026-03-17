@@ -205,6 +205,7 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
 const GIG_SQUARE_SERVICE_PATH = '/protocols/skill-service';
 const GIG_SQUARE_CHATPUBKEY_PATH = '/info/chatpubkey';
 const GIG_SQUARE_SERVICE_LIMIT = 10;
+const GIG_SQUARE_SYNC_SIZE = 200;
 const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
 const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
 const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
@@ -463,6 +464,118 @@ const insertGigSquareServiceRow = (input: {
   );
   sqliteStore.getSaveFunction()();
 };
+
+let gigSquareSyncInProgress = false;
+
+async function syncRemoteSkillServices(): Promise<void> {
+  if (gigSquareSyncInProgress) return;
+  gigSquareSyncInProgress = true;
+  try {
+    const url = new URL('https://manapi.metaid.io/pin/path/list');
+    url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
+    url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
+    const json = await response.json();
+    const list = Array.isArray(json?.data?.list) ? json.data.list : [];
+    const sqliteStore = getStore();
+    const db = sqliteStore.getDatabase();
+    const now = Date.now();
+    for (const item of list as Record<string, unknown>[]) {
+      const parsed = parseGigSquareService(item);
+      if (!parsed) continue;
+      const summary = parseGigSquareContentSummary(item.contentSummary);
+      const contentSummaryJson = summary ? JSON.stringify(summary) : '';
+      const providerMetaBot = summary ? toSafeString((summary as Record<string, unknown>).providerMetaBot).trim() : '';
+      const providerSkill = summary ? toSafeString((summary as Record<string, unknown>).providerSkill).trim() : '';
+      const skillDocument = summary ? toSafeString((summary as Record<string, unknown>).skillDocument).trim() : '';
+      const inputType = summary ? toSafeString((summary as Record<string, unknown>).inputType).trim() : '';
+      const outputType = summary ? toSafeString((summary as Record<string, unknown>).outputType).trim() : '';
+      const endpoint = summary ? toSafeString((summary as Record<string, unknown>).endpoint).trim() : '';
+      const params = sanitizeDbParams([
+        parsed.id,
+        parsed.providerMetaId,
+        parsed.providerGlobalMetaId,
+        parsed.providerAddress,
+        parsed.serviceName,
+        parsed.displayName,
+        parsed.description,
+        parsed.price,
+        parsed.currency,
+        parsed.avatar,
+        parsed.serviceIcon,
+        providerMetaBot || null,
+        providerSkill || null,
+        skillDocument || null,
+        inputType || null,
+        outputType || null,
+        endpoint || null,
+        contentSummaryJson || null,
+        now,
+      ]);
+      db.run(
+        `INSERT INTO remote_skill_service (
+          id, metaid, global_metaid, address, service_name, display_name, description,
+          price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
+          skill_document, input_type, output_type, endpoint, content_summary_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          metaid = excluded.metaid,
+          global_metaid = excluded.global_metaid,
+          address = excluded.address,
+          service_name = excluded.service_name,
+          display_name = excluded.display_name,
+          description = excluded.description,
+          price = excluded.price,
+          currency = excluded.currency,
+          avatar = excluded.avatar,
+          service_icon = excluded.service_icon,
+          provider_meta_bot = excluded.provider_meta_bot,
+          provider_skill = excluded.provider_skill,
+          skill_document = excluded.skill_document,
+          input_type = excluded.input_type,
+          output_type = excluded.output_type,
+          endpoint = excluded.endpoint,
+          content_summary_json = excluded.content_summary_json,
+          updated_at = excluded.updated_at`,
+        params
+      );
+    }
+    sqliteStore.getSaveFunction()();
+  } finally {
+    gigSquareSyncInProgress = false;
+  }
+}
+
+function listRemoteSkillServicesFromDb(): GigSquareService[] {
+  const db = getStore().getDatabase();
+  const result = db.exec('SELECT id, metaid, global_metaid, address, service_name, display_name, description, price, currency, avatar, service_icon, updated_at FROM remote_skill_service ORDER BY updated_at DESC');
+  if (!result.length || !result[0].values.length) return [];
+  const columns = result[0].columns as string[];
+  const rows = result[0].values as (string | number)[][];
+  return rows.map((row) => {
+    const getVal = (col: string): string => {
+      const i = columns.indexOf(col);
+      if (i < 0) return '';
+      const v = row[i];
+      return v != null ? String(v) : '';
+    };
+    return {
+      id: getVal('id'),
+      serviceName: getVal('service_name'),
+      displayName: getVal('display_name'),
+      description: getVal('description'),
+      price: getVal('price'),
+      currency: getVal('currency'),
+      providerMetaId: getVal('metaid'),
+      providerGlobalMetaId: getVal('global_metaid'),
+      providerAddress: getVal('address'),
+      avatar: getVal('avatar') || undefined,
+      serviceIcon: getVal('service_icon') || undefined,
+    } as GigSquareService;
+  });
+}
+
 type CaptureRect = { x: number; y: number; width: number; height: number };
 
 const normalizeCaptureRect = (rect?: Partial<CaptureRect> | null): CaptureRect | null => {
@@ -2648,21 +2761,19 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:fetchServices', async () => {
     try {
-      const url = new URL('https://manapi.metaid.io/pin/path/list');
-      url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
-      url.searchParams.set('size', String(GIG_SQUARE_SERVICE_LIMIT));
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        return { success: false, error: `Failed to fetch services: ${response.status}` };
-      }
-      const json = await response.json();
-      const list = Array.isArray(json?.data?.list) ? json.data.list : [];
-      const services = list
-        .map((item: Record<string, unknown>) => parseGigSquareService(item))
-        .filter((item: GigSquareService | null): item is GigSquareService => Boolean(item));
-      return { success: true, list: services };
+      const list = listRemoteSkillServicesFromDb();
+      return { success: true, list };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch services' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:syncFromRemote', async () => {
+    try {
+      await syncRemoteSkillServices();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Sync failed' };
     }
   });
 
@@ -2887,6 +2998,11 @@ if (!gotTheLock) {
         console.warn('[GigSquare] Failed to save local record', warning);
       }
 
+      // Sync remote skill services 10s after broadcast so the new pin is indexed
+      setTimeout(() => {
+        void syncRemoteSkillServices().catch(() => {});
+      }, 10000);
+
       return { success: true, txids: result.txids, pinId: result.pinId, warning };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to publish service' };
@@ -2960,7 +3076,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             'local',
             [],
             metabotId,
-            'agent_agent',
+            'a2a',
             toGlobalMetaId,
             peerName,
             peerAvatar
@@ -2972,8 +3088,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             coworkSessionId: session.id,
             metadataJson: JSON.stringify({ peerGlobalMetaId: toGlobalMetaId, peerName, peerAvatar, role: 'buyer' }),
           });
-          // Add the order message as the first message — isLocalSender:true so it shows on the right.
-          // Do NOT set fromName/fromAvatar here: those fields identify the *peer* sender.
+          // Add the order message as the first message — direction:'outgoing' so it shows on the right.
+          // Do NOT set senderName/senderAvatar here: those fields identify the *peer* sender.
           // The local MetaBot's name/avatar come from the session's metabotName/metabotAvatar.
           const initialMessage = coworkStoreInst.addMessage(session.id, {
             type: 'user',
@@ -2981,7 +3097,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             metadata: {
               sourceChannel: 'metaweb_order',
               externalConversationId,
-              isLocalSender: true,
+              direction: 'outgoing',
             },
           });
           // Notify renderer immediately so the session appears without restart
@@ -3479,7 +3595,23 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
-  
+  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+    try {
+      const trimmed = (url || '').trim();
+      if (!trimmed) {
+        return { success: false, error: 'URL is empty' };
+      }
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { success: false, error: 'Only http and https URLs are allowed' };
+      }
+      await shell.openExternal(trimmed);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
   // App update download & install
   ipcMain.handle('appUpdate:download', async (event, url: string) => {
     try {
@@ -4056,6 +4188,12 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
     // 创建窗口
     createWindow();
+
+    // Service Square: sync remote skill services on startup and every 10 minutes
+    void syncRemoteSkillServices().catch((e) => console.warn('[GigSquare] Initial sync failed', e));
+    setInterval(() => {
+      void syncRemoteSkillServices().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
+    }, 10 * 60 * 1000);
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
     // Cowork-style skill list + Read/Bash for allowed_skills

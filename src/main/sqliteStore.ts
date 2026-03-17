@@ -410,6 +410,35 @@ export class SqliteStore {
       );
     `);
 
+    // Service Square: cache of remote skill-service API for offline-first list
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS remote_skill_service (
+        id TEXT PRIMARY KEY,
+        metaid TEXT,
+        global_metaid TEXT,
+        address TEXT,
+        service_name TEXT,
+        display_name TEXT,
+        description TEXT,
+        price TEXT,
+        currency TEXT,
+        avatar TEXT,
+        service_icon TEXT,
+        provider_meta_bot TEXT,
+        provider_skill TEXT,
+        skill_document TEXT,
+        input_type TEXT,
+        output_type TEXT,
+        endpoint TEXT,
+        content_summary_json TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_remote_skill_service_updated_at
+        ON remote_skill_service(updated_at DESC);
+    `);
+
     // MetaBot multi-agent architecture tables
     // Order: metabot_wallets first (wallet exists before metabot), then metabots with wallet_id FK.
     this.db.run(`

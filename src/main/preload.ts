@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   gigSquare: {
     fetchServices: () => ipcRenderer.invoke('gigSquare:fetchServices'),
+    syncFromRemote: () => ipcRenderer.invoke('gigSquare:syncFromRemote'),
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) =>
       ipcRenderer.invoke('gigSquare:fetchProviderInfo', params),
     publishService: (params: {

@@ -110,7 +110,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       'local',
       [],
       request.metabotId,
-      'agent_agent',
+      'a2a',
       request.peerGlobalMetaId ?? null,
       request.peerName ?? null,
       request.peerAvatar ?? null
@@ -129,10 +129,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
       metadata: {
         sourceChannel: request.source,
         externalConversationId: request.externalConversationId,
-        fromGlobalMetaId: request.peerGlobalMetaId ?? undefined,
-        fromName: request.peerName ?? undefined,
-        fromAvatar: request.peerAvatar ?? undefined,
-        isLocalSender: false,
+        senderGlobalMetaId: request.peerGlobalMetaId ?? undefined,
+        senderName: request.peerName ?? undefined,
+        senderAvatar: request.peerAvatar ?? undefined,
+        direction: 'incoming',
       },
     });
 

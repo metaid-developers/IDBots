@@ -21,6 +21,7 @@ import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateDownloadProgress, 
 import { defaultConfig } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
+import { setActiveSkillIds } from './store/slices/skillSlice';
 import type { ApiConfig } from './services/api';
 import type { CoworkPermissionResult } from './types/cowork';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
@@ -294,10 +295,13 @@ const App: React.FC = () => {
     setIsSidebarCollapsed((prev) => !prev);
   }, []);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback((preselectSkillId?: string) => {
     const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
     coworkService.clearSession();
     dispatch(clearSelection());
+    if (preselectSkillId) {
+      dispatch(setActiveSkillIds([preselectSkillId]));
+    }
     setMainView('cowork');
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
@@ -677,6 +681,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
+                onStartTaskWithSkill={(skillId) => handleNewChat(skillId)}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
             ) : mainView === 'scheduledTasks' ? (

@@ -9,10 +9,11 @@ interface SkillsViewProps {
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
+  onStartTaskWithSkill?: (skillId: string) => void;
   updateBadge?: React.ReactNode;
 }
 
-const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSidebar, onNewChat, onStartTaskWithSkill, updateBadge }) => {
   const isMac = window.electron.platform === 'darwin';
   return (
     <div className="flex-1 flex flex-col dark:bg-claude-darkBg bg-claude-bg h-full">
@@ -46,7 +47,7 @@ const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSid
 
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-3xl mx-auto px-4 py-6">
-          <SkillsManager />
+          <SkillsManager onStartTaskWithSkill={onStartTaskWithSkill} />
         </div>
       </div>
     </div>

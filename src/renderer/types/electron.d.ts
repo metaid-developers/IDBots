@@ -39,7 +39,7 @@ interface CoworkSession {
   createdAt: number;
   updatedAt: number;
   metabotId?: number | null;
-  sessionType?: 'standard' | 'agent_agent';
+  sessionType?: 'standard' | 'a2a';
   peerGlobalMetaId?: string | null;
   peerName?: string | null;
   peerAvatar?: string | null;
@@ -53,9 +53,9 @@ interface CoworkMessage {
   content: string;
   timestamp: number;
   metadata?: Record<string, unknown> & {
-    fromGlobalMetaId?: string;
-    fromName?: string;
-    fromAvatar?: string;
+    senderGlobalMetaId?: string;
+    senderName?: string;
+    senderAvatar?: string;
   };
 }
 
@@ -66,7 +66,7 @@ interface CoworkSessionSummary {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
-  sessionType?: 'standard' | 'agent_agent';
+  sessionType?: 'standard' | 'a2a';
   peerName?: string | null;
 }
 
@@ -323,6 +323,7 @@ interface IElectronAPI {
   };
   gigSquare: {
     fetchServices: () => Promise<{ success: boolean; list?: GigSquareService[]; error?: string }>;
+    syncFromRemote: () => Promise<{ success: boolean; error?: string }>;
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) => Promise<{ success: boolean; error?: string } & GigSquareProviderInfo>;
     publishService: (params: {
       metabotId: number;

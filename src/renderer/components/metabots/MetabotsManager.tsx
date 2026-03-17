@@ -45,6 +45,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   const [syncError, setSyncError] = useState<string>('');
   const [deleteTarget, setDeleteTarget] = useState<Metabot | null>(null);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
+  const METABOT_LIMIT = 10;
   // Chain-first creation state
   const [pendingCreateValues, setPendingCreateValues] = useState<MetaBotFormValues | null>(null);
   const [createChainStatus, setCreateChainStatus] = useState<'idle' | 'publishing' | 'error'>('idle');
@@ -87,6 +89,10 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   };
 
   const handleAdd = () => {
+    if (list.length >= METABOT_LIMIT) {
+      setShowLimitModal(true);
+      return;
+    }
     setActionError('');
     setEditId(null);
     setViewMode('add');
@@ -522,7 +528,14 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
         </button>
         <button
           type="button"
-          onClick={() => { setActionError(''); setShowRestoreModal(true); }}
+          onClick={() => {
+            if (list.length >= METABOT_LIMIT) {
+              setShowLimitModal(true);
+              return;
+            }
+            setActionError('');
+            setShowRestoreModal(true);
+          }}
           className="px-3 py-2 text-sm rounded-xl border transition-colors dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover flex items-center gap-2"
         >
           <ArrowPathIcon className="h-4 w-4" />
@@ -579,6 +592,32 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
               onClose={() => setShowRestoreModal(false)}
               onRestored={handleRestoreCompleted}
             />
+          )}
+          {showLimitModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+              onClick={() => setShowLimitModal(false)}
+              role="dialog"
+              aria-modal="true"
+            >
+              <div
+                className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="text-sm dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('metabotLimitReached')}
+                </p>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowLimitModal(false)}
+                    className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium"
+                  >
+                    {i18nService.t('close')}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </>
       )}

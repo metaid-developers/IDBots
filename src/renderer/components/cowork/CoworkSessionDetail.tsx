@@ -1290,7 +1290,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 }) => {
   const isMac = window.electron.platform === 'darwin';
   const { currentSession, isStreaming } = useSelector((state: RootState) => state.cowork);
-  const isA2ASession = currentSession?.sessionType === 'agent_agent';
+  const isA2ASession = currentSession?.sessionType === 'a2a';
   const skills = useSelector((state: RootState) => state.skill.skills);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1855,9 +1855,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               {i18nService.t('coworkSandboxBadge')}
             </span>
           )}
-          {currentSession.executionMode === 'local' && (
+          {currentSession.executionMode === 'local' && !isA2ASession && (
             <span className="inline-flex items-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
               {i18nService.t('coworkLocalBadge')}
+            </span>
+          )}
+          {isA2ASession && (
+            <span className="inline-flex items-center rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+              {i18nService.t('coworkOnChainBadge')}
             </span>
           )}
         </div>

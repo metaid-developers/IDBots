@@ -324,7 +324,7 @@ function shouldAutoDeleteMemoryText(text: string): boolean {
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
 export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
-export type CoworkSessionType = 'standard' | 'agent_agent';
+export type CoworkSessionType = 'standard' | 'a2a';
 
 export interface CoworkMessageMetadata {
   toolName?: string;
@@ -362,7 +362,7 @@ export interface CoworkSession {
   updatedAt: number;
   /** FK to metabots.id; which MetaBot persona this session uses */
   metabotId?: number | null;
-  /** Session type: 'standard' = human↔MetaBot, 'agent_agent' = MetaBot↔MetaBot */
+  /** Session type: 'standard' = human↔MetaBot, 'a2a' = MetaBot↔MetaBot */
   sessionType?: CoworkSessionType;
   /** Remote peer MetaBot's globalmetaid (A2A sessions only) */
   peerGlobalMetaId?: string | null;
@@ -1330,7 +1330,7 @@ export class CoworkStore implements MemoryBackend {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       metabotId: metabotId ?? undefined,
-      sessionType: (row.session_type as CoworkSessionType) || 'standard',
+      sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerGlobalMetaId: row.peer_global_metaid ?? null,
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
@@ -1423,7 +1423,7 @@ export class CoworkStore implements MemoryBackend {
       pinned: Boolean(row.pinned),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      sessionType: (row.session_type as CoworkSessionType) || 'standard',
+      sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerName: row.peer_name ?? null,
     }));
   }

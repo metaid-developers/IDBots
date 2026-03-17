@@ -37,6 +37,7 @@ const Avatar: React.FC<{ src?: string | null; name?: string | null; size?: numbe
   />
 );
 
+/** Collapsible tool-call block — collapsed by default, compact single-line header */
 const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   const [open, setOpen] = useState(false);
   const toolName = (message.metadata?.toolName as string | undefined) || message.content || 'tool';
@@ -44,18 +45,18 @@ const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   const toolResult = message.metadata?.toolResult as string | undefined;
 
   return (
-    <div className="my-1 rounded-lg border dark:border-claude-darkBorder border-claude-border overflow-hidden text-xs">
+    <div className="my-0.5 rounded-md border dark:border-claude-darkBorder border-claude-border overflow-hidden text-xs">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkTextSecondary text-claude-textSecondary hover:opacity-80 transition-opacity text-left"
+        className="w-full flex items-center gap-1.5 px-2.5 py-1 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkTextSecondary text-claude-textSecondary hover:opacity-80 transition-opacity text-left"
       >
         {open ? (
-          <ChevronDownIcon className="h-3.5 w-3.5 flex-shrink-0" />
+          <ChevronDownIcon className="h-3 w-3 flex-shrink-0" />
         ) : (
-          <ChevronRightIcon className="h-3.5 w-3.5 flex-shrink-0" />
+          <ChevronRightIcon className="h-3 w-3 flex-shrink-0" />
         )}
-        <span className="font-mono">{toolName}</span>
+        <span className="font-mono truncate">{toolName}</span>
       </button>
       {open && (
         <div className="px-3 py-2 dark:bg-claude-darkBg bg-claude-bg space-y-1">
@@ -82,7 +83,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   metabotName,
   metabotAvatar,
 }) => {
-  // tool_use / tool_result: collapsible block, shown inline (local MetaBot only)
+  // tool_use / tool_result: compact collapsible block (collapsed by default)
   if (message.type === 'tool_use' || message.type === 'tool_result') {
     return (
       <div className="px-4 py-0.5">
@@ -102,24 +103,37 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     );
   }
 
+  // Thinking messages: internal reasoning, not sent on-chain.
+  // Shown as a subtle indented block (no avatar, no bubble) so observers can
+  // distinguish it from the actual on-chain reply.
+  if (message.metadata?.isThinking) {
+    return (
+      <div className="px-4 py-1">
+        <div className="ml-10 rounded-lg px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words italic dark:text-claude-darkTextSecondary text-claude-textSecondary dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+
   // user = incoming from peer MetaBot (left side)
   // assistant = outgoing from local MetaBot (right side)
-  // isLocalSender in metadata takes priority over type for direction
-  const isLocal = message.metadata?.isLocalSender !== undefined
-    ? Boolean(message.metadata.isLocalSender)
+  // direction in metadata takes priority over type for display direction
+  const isLocal = message.metadata?.direction !== undefined
+    ? message.metadata.direction === 'outgoing'
     : message.type === 'assistant';
 
   // Resolve display name and avatar.
   // For local sender: always use the session-level metabotName/metabotAvatar — never
-  // message.metadata.fromAvatar, which stores the *peer's* avatar for incoming messages.
+  // message.metadata.senderAvatar, which stores the *peer's* avatar for incoming messages.
   // For peer sender: prefer session-level peerAvatar (already resolved to HTTPS) over
-  // message-level fromAvatar (raw MetaWeb value, may be unresolved metafile:// URL).
+  // message-level senderAvatar (raw MetaWeb value, may be unresolved metafile:// URL).
   const fromName = isLocal
     ? (metabotName || 'MetaBot')
-    : ((message.metadata?.fromName as string | undefined) || peerName || 'Peer');
+    : ((message.metadata?.senderName as string | undefined) || peerName || 'Peer');
   const fromAvatar = isLocal
     ? metabotAvatar
-    : (peerAvatar || (message.metadata?.fromAvatar as string | undefined));
+    : (peerAvatar || (message.metadata?.senderAvatar as string | undefined));
 
   return (
     <div className={`flex items-end gap-2 px-4 py-1 ${isLocal ? 'flex-row-reverse' : 'flex-row'}`}>

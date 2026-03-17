@@ -7,6 +7,7 @@ import {
   FolderOpenIcon,
   LinkIcon,
   MagnifyingGlassIcon,
+  PlayIcon,
   PlusCircleIcon,
   PuzzlePieceIcon,
   TrashIcon,
@@ -20,7 +21,11 @@ import { Skill, OfficialSkillItem } from '../../types/skill';
 import ErrorMessage from '../ErrorMessage';
 import Tooltip from '../ui/Tooltip';
 
-const SkillsManager: React.FC = () => {
+interface SkillsManagerProps {
+  onStartTaskWithSkill?: (skillId: string) => void;
+}
+
+const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
 
@@ -481,6 +486,28 @@ const SkillsManager: React.FC = () => {
                 <LinkIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
                 <span>{i18nService.t('importFromGithub')}</span>
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddSkillMenuOpen(false);
+                  window.electron.shell.openExternal('https://clawhub.ai');
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              >
+                <LinkIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <span>{i18nService.t('downloadFromClawhub')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddSkillMenuOpen(false);
+                  window.electron.shell.openExternal('https://skills.sh');
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              >
+                <LinkIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                <span>{i18nService.t('downloadFromSkillsSh')}</span>
+              </button>
             </div>
           )}
         </div>
@@ -543,16 +570,42 @@ const SkillsManager: React.FC = () => {
                 </p>
               </Tooltip>
 
-              <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                {skill.isOfficial && (
-                  <>
-                    <span className="px-1.5 py-0.5 rounded bg-claude-accent/10 text-claude-accent font-medium">
-                      {i18nService.t('official')}
-                    </span>
-                    <span>·</span>
-                  </>
-                )}
-                <span>{formatSkillDate(skill.updatedAt)}</span>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
+                  {skill.isOfficial && (
+                    <>
+                      <span className="px-1.5 py-0.5 rounded bg-claude-accent/10 text-claude-accent font-medium flex-shrink-0">
+                        {i18nService.t('official')}
+                      </span>
+                      <span>·</span>
+                    </>
+                  )}
+                  <span className="truncate">{formatSkillDate(skill.updatedAt)}</span>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {onStartTaskWithSkill && (
+                    <Tooltip content={i18nService.t('skillUse')} position="top">
+                      <button
+                        type="button"
+                        onClick={() => onStartTaskWithSkill(skill.id)}
+                        className="p-1 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors"
+                        title={i18nService.t('skillUse')}
+                      >
+                        <PlayIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                  )}
+                  <Tooltip content={i18nService.t('skillOpen')} position="top">
+                    <button
+                      type="button"
+                      onClick={() => window.electron.shell.showItemInFolder(skill.skillPath)}
+                      className="p-1 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors"
+                      title={i18nService.t('skillOpen')}
+                    >
+                      <FolderOpenIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                </div>
               </div>
             </div>
           ))

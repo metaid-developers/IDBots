@@ -18,6 +18,12 @@ export interface OrderPaymentCheckResult {
 
 const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*(SPACE|BTC|DOGE)/i;
+const SKILL_ID_RE = /skill(?:\s+service)?\s+id\s*[:：=]?\s*([^\s,，。]+)/i;
+
+export function extractOrderSkillId(plaintext: string): string | null {
+  const match = plaintext.match(SKILL_ID_RE);
+  return match ? (match[1] || null) : null;
+}
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';

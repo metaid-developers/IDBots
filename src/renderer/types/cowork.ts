@@ -7,8 +7,8 @@ export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result
 // Cowork execution mode
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 
-// Session type: standard = human↔MetaBot, agent_agent = MetaBot↔MetaBot
-export type CoworkSessionType = 'standard' | 'agent_agent';
+// Session type: standard = human↔MetaBot, a2a = MetaBot↔MetaBot
+export type CoworkSessionType = 'standard' | 'a2a';
 
 // Cowork message metadata
 export interface CoworkMessageMetadata {
@@ -22,14 +22,28 @@ export interface CoworkMessageMetadata {
   isFinal?: boolean;
   isThinking?: boolean;
   skillIds?: string[];
-  /** Sender's globalmetaid (A2A messages) */
-  fromGlobalMetaId?: string;
-  /** Sender's display name (A2A messages) */
-  fromName?: string;
-  /** Sender's avatar data URL (A2A messages) */
-  fromAvatar?: string;
-  /** True if this message was sent by the local MetaBot (right side in A2A view), false if sent by the peer */
-  isLocalSender?: boolean;
+  /**
+   * A2A messages only. Message direction from the local MetaBot's perspective:
+   * - 'outgoing': sent by the local MetaBot (displayed on the right)
+   * - 'incoming': received from the remote peer (displayed on the left)
+   * Only set on A2A sessions; standard sessions use message.type for rendering.
+   */
+  direction?: 'outgoing' | 'incoming';
+  /**
+   * A2A incoming messages only. The remote peer's globalmetaid.
+   * Do NOT set on outgoing messages — use the session's peerGlobalMetaId instead.
+   */
+  senderGlobalMetaId?: string;
+  /**
+   * A2A incoming messages only. The remote peer's display name.
+   * Do NOT set on outgoing messages — use the session's peerName instead.
+   */
+  senderName?: string;
+  /**
+   * A2A incoming messages only. The remote peer's avatar URL.
+   * Do NOT set on outgoing messages — use the session's peerAvatar instead.
+   */
+  senderAvatar?: string;
   [key: string]: unknown;
 }
 
@@ -58,7 +72,7 @@ export interface CoworkSession {
   updatedAt: number;
   /** FK to metabots.id; which MetaBot persona this session uses */
   metabotId?: number | null;
-  /** Session type: 'standard' = human↔MetaBot, 'agent_agent' = MetaBot↔MetaBot */
+  /** Session type: 'standard' = human↔MetaBot, 'a2a' = MetaBot↔MetaBot */
   sessionType?: CoworkSessionType;
   /** Remote peer MetaBot's globalmetaid (A2A sessions only) */
   peerGlobalMetaId?: string | null;
@@ -188,6 +202,10 @@ export interface CoworkSessionSummary {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
+  /** Session type: 'standard' = human↔MetaBot, 'a2a' = MetaBot↔MetaBot */
+  sessionType?: CoworkSessionType;
+  /** Remote peer MetaBot's display name (A2A sessions only) */
+  peerName?: string | null;
 }
 
 // Start session options
