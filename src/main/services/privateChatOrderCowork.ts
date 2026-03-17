@@ -6,12 +6,14 @@ import type { CoworkRunner, PermissionRequest } from '../libs/coworkRunner';
 import type { CoworkStore, CoworkMessage } from '../coworkStore';
 import type { MetabotStore } from '../metabotStore';
 import type { OrderSource } from './orderPayment';
+import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
-  resolve: (text: string) => void;
+  resolve: (result: OrderCoworkResult) => void;
   reject: (error: Error) => void;
   timeoutId?: NodeJS.Timeout;
+  request?: OrderCoworkRequest;
 }
 
 export interface PrivateChatOrderCoworkOptions {
@@ -20,6 +22,11 @@ export interface PrivateChatOrderCoworkOptions {
   metabotStore: MetabotStore;
   timeoutMs?: number;
   emitToRenderer?: (channel: string, data: unknown) => void;
+}
+
+export interface OrderCoworkResult {
+  serviceReply: string;
+  ratingInvite: string;
 }
 
 export interface OrderCoworkRequest {
@@ -64,10 +71,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
     this.coworkRunner.on('error', this.handleError.bind(this));
   }
 
-  async runOrder(request: OrderCoworkRequest): Promise<string> {
+  async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
     const sessionId = this.createOrderSession(request);
     this.sessionIds.add(sessionId);
-    const responsePromise = this.createAccumulatorPromise(sessionId);
+    const responsePromise = this.createAccumulatorPromise(sessionId, request);
 
     const session = this.coworkStore.getSession(sessionId);
     if (!session) {
@@ -144,7 +151,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     return session.id;
   }
 
-  private createAccumulatorPromise(sessionId: string): Promise<string> {
+  private createAccumulatorPromise(sessionId: string, request?: OrderCoworkRequest): Promise<OrderCoworkResult> {
     return new Promise((resolve, reject) => {
       const existing = this.accumulators.get(sessionId);
       if (existing?.timeoutId) clearTimeout(existing.timeoutId);
@@ -166,6 +173,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         resolve,
         reject,
         timeoutId,
+        request,
       });
     });
   }
@@ -174,6 +182,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!this.sessionIds.has(sessionId)) return;
     const accumulator = this.accumulators.get(sessionId);
     if (accumulator) accumulator.messages.push(message);
+    // Forward to renderer so the A2A session updates live in the UI
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:message', { sessionId, message });
+    }
   }
 
   private handleMessageUpdate(sessionId: string, messageId: string, content: string): void {
@@ -182,6 +194,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!accumulator) return;
     const index = accumulator.messages.findIndex((m) => m.id === messageId);
     if (index >= 0) accumulator.messages[index].content = content;
+    // Forward streaming content updates to renderer
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:messageUpdate', { sessionId, messageId, content });
+    }
   }
 
   private handlePermissionRequest(sessionId: string, request: PermissionRequest): void {
@@ -196,9 +212,19 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!this.sessionIds.has(sessionId)) return;
     const accumulator = this.accumulators.get(sessionId);
     if (!accumulator) return;
-    const replyText = this.formatReply(accumulator.messages);
+    const serviceReply = this.formatReply(accumulator.messages);
+    const request = accumulator.request;
     this.cleanupAccumulator(sessionId);
-    accumulator.resolve(replyText);
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:complete', { sessionId });
+    }
+    // Generate [NeedsRating] invite asynchronously, then resolve
+    this.buildRatingInvite(serviceReply, request).then((ratingInvite) => {
+      accumulator.resolve({ serviceReply, ratingInvite });
+    }).catch(() => {
+      // Fallback if LLM fails
+      accumulator.resolve({ serviceReply, ratingInvite: '[NeedsRating] 服务已完成，请给个评价吧！' });
+    });
   }
 
   private handleError(sessionId: string, error: string): void {
@@ -206,6 +232,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const accumulator = this.accumulators.get(sessionId);
     if (!accumulator) return;
     this.cleanupAccumulator(sessionId);
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:error', { sessionId, error });
+    }
     accumulator.reject(new Error(error));
   }
 
@@ -234,5 +263,30 @@ export class PrivateChatOrderCowork extends EventEmitter {
       if (text) return text;
     }
     return '处理完成，但没有生成回复。';
+  }
+
+  private async buildRatingInvite(serviceReply: string, request?: OrderCoworkRequest): Promise<string> {
+    const metabot = request?.metabotId != null
+      ? this.metabotStore.getMetabotById(request.metabotId)
+      : null;
+    const personaLines = metabot ? [
+      metabot.name ? `Your name is ${metabot.name}.` : '',
+      metabot.role ? `Your role: ${metabot.role}.` : '',
+      metabot.soul ? `Your personality: ${metabot.soul}.` : '',
+      metabot.background ? `Background: ${metabot.background}.` : '',
+    ].filter(Boolean).join(' ') : '';
+
+    const systemPrompt = [
+      personaLines,
+      'You just completed a paid service order. Write a short, natural message in your own voice inviting the client to rate your service.',
+      'The message should reflect your personality and reference the service you just delivered.',
+      'Keep it to 1-2 sentences. Be genuine, not robotic.',
+      `The service result you delivered: "${serviceReply.slice(0, 200)}"`,
+    ].filter(Boolean).join('\n');
+
+    const llmId = metabot && typeof metabot.llm_id === 'string' ? metabot.llm_id.trim() || undefined : undefined;
+
+    const text = await performChatCompletionForOrchestrator(systemPrompt, '请生成邀评消息。', llmId);
+    return `[NeedsRating] ${text.trim()}`;
   }
 }

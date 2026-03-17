@@ -235,6 +235,7 @@ type GigSquareService = {
   providerAddress: string;
   avatar?: string | null;
   serviceIcon?: string | null;
+  providerSkill?: string | null;
 };
 
 const toSafeString = (value: unknown): string => {
@@ -549,7 +550,7 @@ async function syncRemoteSkillServices(): Promise<void> {
 
 function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const db = getStore().getDatabase();
-  const result = db.exec('SELECT id, metaid, global_metaid, address, service_name, display_name, description, price, currency, avatar, service_icon, updated_at FROM remote_skill_service ORDER BY updated_at DESC');
+  const result = db.exec('SELECT id, metaid, global_metaid, address, service_name, display_name, description, price, currency, avatar, service_icon, provider_skill, updated_at FROM remote_skill_service ORDER BY updated_at DESC');
   if (!result.length || !result[0].values.length) return [];
   const columns = result[0].columns as string[];
   const rows = result[0].values as (string | number)[][];
@@ -572,6 +573,7 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
       providerAddress: getVal('address'),
       avatar: getVal('avatar') || undefined,
       serviceIcon: getVal('service_icon') || undefined,
+      providerSkill: getVal('provider_skill') || undefined,
     } as GigSquareService;
   });
 }
@@ -3015,6 +3017,11 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     orderPayload: string;
     peerName?: string | null;
     peerAvatar?: string | null;
+    serviceId?: string | null;
+    servicePrice?: string | null;
+    serviceCurrency?: string | null;
+    serviceSkill?: string | null;
+    serverBotGlobalMetaId?: string | null;
   }) => {
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
@@ -3023,6 +3030,11 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const orderPayload = typeof params?.orderPayload === 'string' ? params.orderPayload.trim() : '';
       const peerName = typeof params?.peerName === 'string' ? params.peerName.trim() || null : null;
       const peerAvatar = typeof params?.peerAvatar === 'string' ? params.peerAvatar.trim() || null : null;
+      const serviceId = typeof params?.serviceId === 'string' ? params.serviceId.trim() || null : null;
+      const servicePrice = typeof params?.servicePrice === 'string' ? params.servicePrice.trim() || null : null;
+      const serviceCurrency = typeof params?.serviceCurrency === 'string' ? params.serviceCurrency.trim() || null : null;
+      const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
+      const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
 
       if (!metabotId || metabotId < 0) {
         return { success: false, error: 'metabotId is required' };
@@ -3086,7 +3098,18 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             externalConversationId,
             metabotId,
             coworkSessionId: session.id,
-            metadataJson: JSON.stringify({ peerGlobalMetaId: toGlobalMetaId, peerName, peerAvatar, role: 'buyer' }),
+            metadataJson: JSON.stringify({
+              role: 'buyer',
+              peerGlobalMetaId: toGlobalMetaId,
+              peerName,
+              peerAvatar,
+              serviceId,
+              servicePrice,
+              serviceCurrency,
+              serviceSkill,
+              serverBotGlobalMetaId,
+              servicePaidTx: result.txids?.[0] || null,
+            }),
           });
           // Add the order message as the first message — direction:'outgoing' so it shows on the right.
           // Do NOT set senderName/senderAvatar here: those fields identify the *peer* sender.

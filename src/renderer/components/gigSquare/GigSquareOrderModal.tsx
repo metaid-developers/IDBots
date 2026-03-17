@@ -279,7 +279,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
           'The message MUST include all four of these facts (you may phrase them naturally):',
           `1. Payment amount: ${service.price} ${service.currency}`,
           `2. Transaction ID (txid): ${txId}`,
-          `3. Skill name requested: ${service.serviceName}`,
+          `3. Skill name requested: ${service.providerSkill || service.serviceName}`,
           `4. The user's specific request: "${trimmedPrompt}"`,
           'Keep it concise (2-4 sentences). Do not add greetings like "Hello" unless it fits your persona.',
         ].filter(Boolean).join('\n');
@@ -292,7 +292,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         naturalOrderText = result.content.trim();
       } catch {
         // LLM unavailable — fall back to plain template
-        naturalOrderText = `已支付 ${service.price} ${service.currency}，txid: ${txId}，请求技能 ${service.serviceName}。需求："${trimmedPrompt}"`;
+        naturalOrderText = `已支付 ${service.price} ${service.currency}，txid: ${txId}，请求技能 ${service.providerSkill || service.serviceName}。需求："${trimmedPrompt}"`;
       }
 
       const orderPayload = `[ORDER] ${naturalOrderText}`;
@@ -304,6 +304,11 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         orderPayload,
         peerName: providerInfo.name || null,
         peerAvatar: providerInfo.avatarUrl || null,
+        serviceId: service.id,
+        servicePrice: service.price,
+        serviceCurrency: service.currency,
+        serviceSkill: service.providerSkill || service.serviceName,
+        serverBotGlobalMetaId: service.providerGlobalMetaId || null,
       });
 
       if (!sendResult?.success) {

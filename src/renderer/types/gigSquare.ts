@@ -10,6 +10,7 @@ export type GigSquareService = {
   providerAddress: string;
   avatar?: string | null;
   serviceIcon?: string | null;
+  providerSkill?: string | null;
 };
 
 export type GigSquareProviderInfo = {

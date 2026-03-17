@@ -121,9 +121,14 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
 }
 
 const ORDER_PREFIX = '[ORDER]';
+const NEEDS_RATING_PREFIX = '[NEEDSRATING]';
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
+}
+
+function isNeedsRatingMessage(plaintext: string): boolean {
+  return plaintext.trim().toUpperCase().startsWith(NEEDS_RATING_PREFIX);
 }
 
 function isByeMessage(text: string): boolean {
@@ -239,13 +244,181 @@ function resolvePrivateConversationSession(
   return { sessionId: session.id, externalConversationId };
 }
 
+interface RatingFlowParams {
+  metabot: { id: number; name: string; llm_id?: string | null };
+  metabotStore: MetabotStore;
+  coworkStore: CoworkStore;
+  buyerOrderMapping: import('../coworkStore').CoworkConversationMapping;
+  sellerGlobalMetaId: string;
+  sharedSecretForReply: string;
+  createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>;
+  performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: (channel: string, data: unknown) => void;
+}
+
+async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
+  const { metabot, metabotStore, coworkStore, buyerOrderMapping, sellerGlobalMetaId,
+    sharedSecretForReply, createPin, performChat, emitLog, emitToRenderer } = params;
+
+  // Parse order metadata stored when buyer sent the order
+  const orderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
+  const serviceId = typeof orderMeta.serviceId === 'string' ? orderMeta.serviceId : '';
+  const servicePrice = typeof orderMeta.servicePrice === 'string' ? orderMeta.servicePrice : '';
+  const serviceCurrency = typeof orderMeta.serviceCurrency === 'string' ? orderMeta.serviceCurrency : '';
+  const serviceSkill = typeof orderMeta.serviceSkill === 'string' ? orderMeta.serviceSkill : '';
+  const serverBotGlobalMetaId = typeof orderMeta.serverBotGlobalMetaId === 'string' ? orderMeta.serverBotGlobalMetaId : sellerGlobalMetaId;
+  const servicePaidTx = typeof orderMeta.servicePaidTx === 'string' ? orderMeta.servicePaidTx : '';
+
+  // Retrieve session messages to find original request and service result
+  const session = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
+  const messages = session?.messages ?? [];
+
+  // A's original outgoing request (first outgoing user message)
+  const originalRequest = messages.find(
+    (m) => m.type === 'user' && (m.metadata as Record<string, unknown>)?.direction === 'outgoing'
+  )?.content ?? '';
+
+  // B's service result: last incoming assistant message before the [NeedsRating] message
+  // (the [NeedsRating] message itself is the last incoming, so we want the one before it)
+  const incomingAssistant = messages.filter(
+    (m) => m.type === 'assistant' && (m.metadata as Record<string, unknown>)?.direction === 'incoming'
+  );
+  const serviceResult = incomingAssistant.length >= 2
+    ? incomingAssistant[incomingAssistant.length - 2].content
+    : incomingAssistant[incomingAssistant.length - 1]?.content ?? '';
+
+  // Build A's persona
+  const buyerMetabot = metabotStore.getMetabotById(metabot.id);
+  const personaLines = buyerMetabot ? [
+    buyerMetabot.name ? `Your name is ${buyerMetabot.name}.` : '',
+    buyerMetabot.role ? `Your role: ${buyerMetabot.role}.` : '',
+    buyerMetabot.soul ? `Your personality: ${buyerMetabot.soul}.` : '',
+    buyerMetabot.background ? `Background: ${buyerMetabot.background}.` : '',
+  ].filter(Boolean).join(' ') : '';
+
+  const ratingSystemPrompt = [
+    personaLines,
+    'A service provider has completed a paid service order for you.',
+    `Your original request was: "${originalRequest.slice(0, 300)}"`,
+    `The service result delivered: "${serviceResult.slice(0, 500)}"`,
+    'Please give a genuine rating and comment in your own voice.',
+    'You MUST include a numeric score from 1 to 5 (5 is best). Format it clearly, e.g. "评分：4分" or "I give this 4 out of 5".',
+    'Your comment should be 10-200 characters. Be honest — your rating will help other MetaBots and humans in the future.',
+  ].filter(Boolean).join('\n');
+
+  const llmId = typeof metabot.llm_id === 'string' ? metabot.llm_id.trim() || undefined : undefined;
+
+  const ratingText = await performChat(ratingSystemPrompt, '请给出你的评价和评分。', llmId);
+
+  // Extract rate (1-5) from the generated text
+  const rateMatch = ratingText.match(/[1-5]\s*分|评分[：:]\s*([1-5])|([1-5])\s*(?:out of|\/)\s*5|([1-5])\s*星/i)
+    ?? ratingText.match(/([1-5])/);
+  const rateStr = rateMatch
+    ? (rateMatch[1] ?? rateMatch[2] ?? rateMatch[3] ?? rateMatch[0]).replace(/[^1-5]/g, '').slice(0, 1)
+    : '3';
+  const comment = ratingText.trim().slice(0, 500);
+
+  emitLog(`[Rating] Generated rating: ${rateStr} — ${comment.slice(0, 60)}…`);
+
+  // Publish skill-service-rate on-chain
+  let ratingPinId = '';
+  try {
+    const ratingPayload = JSON.stringify({
+      serviceID: serviceId,
+      servicePrice,
+      serviceCurrency,
+      servicePaidTx,
+      serviceSkill,
+      serverBot: serverBotGlobalMetaId,
+      rate: rateStr,
+      comment,
+    });
+    const ratingResult = await createPin(metabotStore, metabot.id, {
+      operation: 'create',
+      path: '/protocols/skill-service-rate',
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: ratingPayload,
+    });
+    ratingPinId = (ratingResult as { pinId?: string }).pinId ?? ratingResult.txids?.[0] ?? '';
+    emitLog(`[Rating] skill-service-rate published: pinId=${ratingPinId}`);
+  } catch (e) {
+    emitLog(`[Rating] Failed to publish skill-service-rate: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Add A's rating message to buyer session (outgoing)
+  const ratingMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
+    type: 'user',
+    content: ratingText,
+    metadata: {
+      sourceChannel: 'metaweb_order',
+      externalConversationId: buyerOrderMapping.externalConversationId,
+      direction: 'outgoing',
+    },
+  });
+  if (emitToRenderer) {
+    emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: ratingMsg });
+  }
+
+  // Generate and send farewell message to B
+  const farewellSystemPrompt = [
+    personaLines,
+    'You just rated a service. Write a short farewell message in your own voice.',
+    ratingPinId ? `Mention that your rating has been recorded on-chain (pin ID: ${ratingPinId}).` : '',
+    'Keep it to 1-2 sentences. Say goodbye naturally.',
+  ].filter(Boolean).join('\n');
+
+  let farewellText: string;
+  try {
+    farewellText = await performChat(farewellSystemPrompt, '请生成告别消息。', llmId);
+    farewellText = farewellText.trim();
+  } catch {
+    farewellText = ratingPinId
+      ? `评价已上链，pinId: ${ratingPinId}。感谢服务，再见！`
+      : '感谢服务，再见！';
+  }
+
+  // Send farewell to B via simplemsg
+  try {
+    const encrypted = ecdhEncrypt(farewellText, sharedSecretForReply);
+    const payloadStr = buildPrivateMsgPayload(sellerGlobalMetaId, encrypted, '');
+    await createPin(metabotStore, metabot.id, {
+      operation: 'create',
+      path: '/protocols/simplemsg',
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: payloadStr,
+    });
+    emitLog(`[Rating] Farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
+  } catch (e) {
+    emitLog(`[Rating] Farewell send failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Add farewell to buyer session (outgoing)
+  const farewellMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
+    type: 'user',
+    content: farewellText,
+    metadata: {
+      sourceChannel: 'metaweb_order',
+      externalConversationId: buyerOrderMapping.externalConversationId,
+      direction: 'outgoing',
+    },
+  });
+  if (emitToRenderer) {
+    emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: farewellMsg });
+  }
+}
+
 async function processOne(
   row: PrivateChatMessageRow,
   db: Database,
   saveDb: SaveDbFn,
   coworkStore: CoworkStore,
   metabotStore: MetabotStore,
-  createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
+  createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>,
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>,
   emitLog: (msg: string) => void,
   orderCoworkHandler: PrivateChatOrderCowork | null,
@@ -412,9 +585,9 @@ async function processOne(
       const externalConversationId = buildOrderExternalConversationId(row, source, txid);
       const titleSuffix = txid ? txid.slice(0, 8) : 'no-txid';
 
-      let replyText: string;
+      let orderResult: { serviceReply: string; ratingInvite: string };
       try {
-        replyText = await orderCoworkHandler.runOrder({
+        orderResult = await orderCoworkHandler.runOrder({
           metabotId: metabot.id,
           source,
           externalConversationId,
@@ -431,31 +604,39 @@ async function processOne(
         return;
       }
 
-      const trimmedReply = (replyText || '').trim();
-      if (trimmedReply) {
-        if (source === 'metaweb_private') {
-          const encryptedReply = ecdhEncrypt(trimmedReply, sharedSecretForReply);
-          const payloadStr = buildPrivateMsgPayload(
-            fromGlobalMetaId,
-            encryptedReply,
-            row.reply_pin || ''
-          );
-          try {
-            await createPin(metabotStore, metabot.id, {
-              operation: 'create',
-              path: '/protocols/simplemsg',
-              encryption: '0',
-              version: '1.0.0',
-              contentType: 'application/json',
-              payload: payloadStr,
-            });
-            emitLog(`[Order] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
-          } catch (error) {
-            emitLog(`[Order] Reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        } else {
-          emitLog('[Order] Group order reply not implemented yet.');
+      const sendEncryptedMsg = async (text: string) => {
+        const encrypted = ecdhEncrypt(text, sharedSecretForReply);
+        const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encrypted, row.reply_pin || '');
+        await createPin(metabotStore, metabot.id, {
+          operation: 'create',
+          path: '/protocols/simplemsg',
+          encryption: '0',
+          version: '1.0.0',
+          contentType: 'application/json',
+          payload: payloadStr,
+        });
+      };
+
+      const trimmedReply = (orderResult.serviceReply || '').trim();
+      const trimmedInvite = (orderResult.ratingInvite || '').trim();
+      if (trimmedReply && source === 'metaweb_private') {
+        try {
+          await sendEncryptedMsg(trimmedReply);
+          emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+        } catch (error) {
+          emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+      }
+      if (trimmedInvite && source === 'metaweb_private') {
+        try {
+          await sendEncryptedMsg(trimmedInvite);
+          emitLog(`[Order] Rating invite sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+        } catch (error) {
+          emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (source !== 'metaweb_private') {
+        emitLog('[Order] Group order reply not implemented yet.');
       }
 
       markProcessed(db, row.id, saveDb);
@@ -485,6 +666,26 @@ async function processOne(
         if (emitToRenderer) {
           emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: replyMsg });
         }
+
+        // If this is a [NeedsRating] message, trigger automatic rating flow
+        if (isNeedsRatingMessage(plaintext)) {
+          emitLog(`[Rating] Received [NeedsRating] from ${fromGlobalMetaId.slice(0, 12)}…, starting auto-rating flow`);
+          handleRatingFlow({
+            metabot,
+            metabotStore,
+            coworkStore,
+            buyerOrderMapping,
+            sellerGlobalMetaId: fromGlobalMetaId,
+            sharedSecretForReply,
+            createPin,
+            performChat: performChatCompletionForOrchestrator,
+            emitLog,
+            emitToRenderer,
+          }).catch((e) => {
+            emitLog(`[Rating] Rating flow failed: ${e instanceof Error ? e.message : String(e)}`);
+          });
+        }
+
         markProcessed(db, row.id, saveDb);
         return;
       }
@@ -631,7 +832,7 @@ export function startPrivateChatDaemon(
   coworkStore: CoworkStore,
   metabotStore: MetabotStore,
   coworkRunner: CoworkRunner,
-  createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
+  createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>,
   emitLog: (msg: string) => void,
   getSkillsPrompt?: () => Promise<string | null>,
   emitToRenderer?: (channel: string, data: unknown) => void

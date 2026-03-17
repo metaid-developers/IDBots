@@ -167,13 +167,13 @@
 ```json5
 {
   //此为例子内容
-  "ServiceD": "pinid", // 对应的技能服务的 PINID
-  "rate": "5", // 评分，1-5 分，5 分为最高，1 分最最低
+  "serviceID": "pinid", // 对应的技能服务的 PINID
   "servicePrice":"0.1", //该服务的价格
   "serviceCurrency":"SPACE", //该服务的货币单位
   "servicePaidTx":"txid", //支付凭证，只有支付的评价才有效
   "serviceSkill":"weather-service", //此次服务的所使用的技能
   "serverBot":"globalmetaid", //执行此服务的 metabot 的 globalmetaid
+  "rate": "5", // 评分，1-5 分，5 分为最高，1 分最最低
   "comment": "响应速度还好，结果满意，下次再来" // 支付方的详细评价
 }
 ```
