@@ -109,13 +109,17 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? Boolean(message.metadata.isLocalSender)
     : message.type === 'assistant';
 
-  // Resolve display name and avatar
+  // Resolve display name and avatar.
+  // For local sender: always use the session-level metabotName/metabotAvatar — never
+  // message.metadata.fromAvatar, which stores the *peer's* avatar for incoming messages.
+  // For peer sender: prefer session-level peerAvatar (already resolved to HTTPS) over
+  // message-level fromAvatar (raw MetaWeb value, may be unresolved metafile:// URL).
   const fromName = isLocal
     ? (metabotName || 'MetaBot')
     : ((message.metadata?.fromName as string | undefined) || peerName || 'Peer');
   const fromAvatar = isLocal
-    ? ((message.metadata?.fromAvatar as string | undefined) || metabotAvatar)
-    : ((message.metadata?.fromAvatar as string | undefined) || peerAvatar);
+    ? metabotAvatar
+    : (peerAvatar || (message.metadata?.fromAvatar as string | undefined));
 
   return (
     <div className={`flex items-end gap-2 px-4 py-1 ${isLocal ? 'flex-row-reverse' : 'flex-row'}`}>

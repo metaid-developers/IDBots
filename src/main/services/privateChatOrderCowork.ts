@@ -223,11 +223,16 @@ export class PrivateChatOrderCowork extends EventEmitter {
   }
 
   private formatReply(messages: CoworkMessage[]): string {
-    const parts: string[] = [];
-    for (const msg of messages) {
+    // Find the last non-thinking assistant message with content — that's the final answer.
+    // We deliberately skip thinking blocks and intermediate streaming chunks so the buyer
+    // only sees the clean result, not the full execution trace.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
       if (msg.type !== 'assistant') continue;
-      if (msg.content) parts.push(msg.content);
+      if (msg.metadata?.isThinking) continue;
+      const text = (msg.content || '').trim();
+      if (text) return text;
     }
-    return parts.join('\n\n') || '处理完成，但没有生成回复。';
+    return '处理完成，但没有生成回复。';
   }
 }

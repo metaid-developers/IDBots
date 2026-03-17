@@ -2972,16 +2972,15 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             coworkSessionId: session.id,
             metadataJson: JSON.stringify({ peerGlobalMetaId: toGlobalMetaId, peerName, peerAvatar, role: 'buyer' }),
           });
-          // Add the order message as the first message — isLocalSender:true so it shows on the right
+          // Add the order message as the first message — isLocalSender:true so it shows on the right.
+          // Do NOT set fromName/fromAvatar here: those fields identify the *peer* sender.
+          // The local MetaBot's name/avatar come from the session's metabotName/metabotAvatar.
           const initialMessage = coworkStoreInst.addMessage(session.id, {
             type: 'user',
             content: orderPayload,
             metadata: {
               sourceChannel: 'metaweb_order',
               externalConversationId,
-              fromGlobalMetaId: toGlobalMetaId,
-              fromName: peerName ?? undefined,
-              fromAvatar: peerAvatar ?? undefined,
               isLocalSender: true,
             },
           });
