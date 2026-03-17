@@ -39,6 +39,12 @@ interface CoworkSession {
   createdAt: number;
   updatedAt: number;
   metabotId?: number | null;
+  sessionType?: 'standard' | 'agent_agent';
+  peerGlobalMetaId?: string | null;
+  peerName?: string | null;
+  peerAvatar?: string | null;
+  metabotName?: string | null;
+  metabotAvatar?: string | null;
 }
 
 interface CoworkMessage {
@@ -46,7 +52,11 @@ interface CoworkMessage {
   type: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
   content: string;
   timestamp: number;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & {
+    fromGlobalMetaId?: string;
+    fromName?: string;
+    fromAvatar?: string;
+  };
 }
 
 interface CoworkSessionSummary {
@@ -56,6 +66,8 @@ interface CoworkSessionSummary {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
+  sessionType?: 'standard' | 'agent_agent';
+  peerName?: string | null;
 }
 
 interface CoworkConfig {

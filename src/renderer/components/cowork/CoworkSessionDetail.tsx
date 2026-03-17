@@ -5,6 +5,7 @@ import { i18nService } from '../../services/i18n';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import type { Skill } from '../../types/skill';
 import CoworkPromptInput from './CoworkPromptInput';
+import A2AMessageItem from './A2AMessageItem';
 import MarkdownContent from '../MarkdownContent';
 import {
   CheckIcon,
@@ -1289,6 +1290,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 }) => {
   const isMac = window.electron.platform === 'darwin';
   const { currentSession, isStreaming } = useSelector((state: RootState) => state.cowork);
+  const isA2ASession = currentSession?.sessionType === 'agent_agent';
   const skills = useSelector((state: RootState) => state.skill.skills);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1988,7 +1990,20 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         onScroll={handleMessagesScroll}
         className="flex-1 overflow-y-auto min-h-0 pt-3"
       >
-        {renderConversationTurns()}
+        {isA2ASession ? (
+          currentSession.messages.map((msg) => (
+            <A2AMessageItem
+              key={msg.id}
+              message={msg}
+              peerName={currentSession.peerName}
+              peerAvatar={currentSession.peerAvatar}
+              metabotName={currentSession.metabotName}
+              metabotAvatar={currentSession.metabotAvatar}
+            />
+          ))
+        ) : (
+          renderConversationTurns()
+        )}
         <div ref={messagesEndRef} className="h-20" />
       </div>
 
@@ -1996,21 +2011,29 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {isStreaming && <StreamingActivityBar messages={currentSession.messages} />}
 
       {/* Input Area */}
-      <div className="p-4 shrink-0">
-        <div className="max-w-3xl mx-auto">
-          <CoworkPromptInput
-            onSubmit={onContinue}
-            onStop={onStop}
-            isStreaming={isStreaming}
-            placeholder={i18nService.t('coworkContinuePlaceholder')}
-            disabled={false}
-            onManageSkills={onManageSkills}
-            size="large"
-            showModelSelector={true}
-            restrictToLlmId={sessionMetabot?.llm_id ?? undefined}
-          />
+      {isA2ASession ? (
+        <div className="px-4 py-3 shrink-0 border-t dark:border-claude-darkBorder border-claude-border">
+          <p className="text-xs text-center dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('a2aSessionObserverNotice')}
+          </p>
         </div>
-      </div>
+      ) : (
+        <div className="p-4 shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <CoworkPromptInput
+              onSubmit={onContinue}
+              onStop={onStop}
+              isStreaming={isStreaming}
+              placeholder={i18nService.t('coworkContinuePlaceholder')}
+              disabled={false}
+              onManageSkills={onManageSkills}
+              size="large"
+              showModelSelector={true}
+              restrictToLlmId={sessionMetabot?.llm_id ?? undefined}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

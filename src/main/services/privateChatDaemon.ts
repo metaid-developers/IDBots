@@ -28,6 +28,8 @@ export interface PrivateChatMessageRow {
   pin_id: string;
   from_metaid: string;
   from_global_metaid: string | null;
+  from_name: string | null;
+  from_avatar: string | null;
   from_chat_pubkey: string | null;
   to_metaid: string;
   to_global_metaid: string | null;
@@ -52,7 +54,7 @@ let orderCowork: PrivateChatOrderCowork | null = null;
 
 function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
   const result = db.exec(
-    `SELECT id, pin_id, from_metaid, from_global_metaid, from_chat_pubkey, to_metaid, to_global_metaid, content, encryption, reply_pin, raw_data
+    `SELECT id, pin_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey, to_metaid, to_global_metaid, content, encryption, reply_pin, raw_data
      FROM private_chat_messages WHERE is_processed = 0 ORDER BY id ASC`
   );
   if (!result[0]?.values?.length) return [];
@@ -122,6 +124,15 @@ const ORDER_PREFIX = '[ORDER]';
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
+}
+
+function isByeMessage(text: string): boolean {
+  return text.trim().toLowerCase() === 'bye';
+}
+
+function parseConversationMappingMetadata(json: string | null | undefined): Record<string, unknown> {
+  if (!json) return {};
+  try { return JSON.parse(json) as Record<string, unknown>; } catch { return {}; }
 }
 
 function buildOrderExternalConversationId(
@@ -208,13 +219,22 @@ function resolvePrivateConversationSession(
     '',
     'local',
     [],
-    metabotId
+    metabotId,
+    'agent_agent',
+    peerId,
+    (row.from_name as string | null) ?? null,
+    (row.from_avatar as string | null) ?? null
   );
   coworkStore.upsertConversationMapping({
     channel: 'metaweb_private',
     externalConversationId,
     metabotId,
     coworkSessionId: session.id,
+    metadataJson: JSON.stringify({
+      peerGlobalMetaId: peerId,
+      peerName: (row.from_name as string | null) ?? null,
+      peerAvatar: (row.from_avatar as string | null) ?? null,
+    }),
   });
   return { sessionId: session.id, externalConversationId };
 }
@@ -348,6 +368,12 @@ async function processOne(
       return;
     }
 
+    if (isByeMessage(plaintext)) {
+      emitLog(`[PrivateChat] Received "bye" from ${fromGlobalMetaId.slice(0, 12)}…, ending conversation.`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
     if (isOrderMessage(plaintext)) {
       const source: OrderSource = 'metaweb_private';
       const txid = extractOrderTxid(plaintext);
@@ -389,6 +415,9 @@ async function processOne(
           prompt: prompts.userPrompt,
           systemPrompt: prompts.systemPrompt,
           title: `Order-${metabot.name}-${titleSuffix}-${Date.now()}`,
+          peerGlobalMetaId: fromGlobalMetaId || null,
+          peerName: (row.from_name as string | null) ?? null,
+          peerAvatar: (row.from_avatar as string | null) ?? null,
         });
       } catch (error) {
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -428,6 +457,16 @@ async function processOne(
     }
 
     const { sessionId, externalConversationId } = resolvePrivateConversationSession(coworkStore, metabot.id, row);
+
+    // Check if we already sent "bye" to this peer — if so, ignore all further messages
+    const existingMapping = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id);
+    const mappingMeta = parseConversationMappingMetadata(existingMapping?.metadataJson);
+    if (mappingMeta.byeSent === true) {
+      emitLog(`[PrivateChat] byeSent flag set for ${externalConversationId.slice(0, 30)}…, ignoring message.`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
     const userMessage = coworkStore.addMessage(sessionId, {
       type: 'user',
       content: plaintext,
@@ -435,6 +474,8 @@ async function processOne(
         sourceChannel: 'metaweb_private',
         externalConversationId,
         fromGlobalMetaId,
+        fromName: (row.from_name as string | null) ?? undefined,
+        fromAvatar: (row.from_avatar as string | null) ?? undefined,
       },
     });
 
@@ -529,6 +570,19 @@ async function processOne(
     } catch (e) {
       emitLog(`[PrivateChat] Failed to broadcast reply: ${e instanceof Error ? e.message : e}`);
     }
+
+    // If we just said "bye", set the byeSent flag so we ignore future messages from this peer
+    if (isByeMessage(trimmed)) {
+      const currentMeta = parseConversationMappingMetadata(
+        coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id)?.metadataJson
+      );
+      coworkStore.updateConversationMappingMetadata('metaweb_private', externalConversationId, metabot.id, {
+        ...currentMeta,
+        byeSent: true,
+      });
+      emitLog(`[PrivateChat] Sent "bye" to ${fromGlobalMetaId.slice(0, 12)}…, byeSent flag set.`);
+    }
+
     markProcessed(db, row.id, saveDb);
   } finally {
     thinkingTasks.delete(taskKey);

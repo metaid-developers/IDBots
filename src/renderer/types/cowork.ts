@@ -7,6 +7,9 @@ export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result
 // Cowork execution mode
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
 
+// Session type: standard = human↔MetaBot, agent_agent = MetaBot↔MetaBot
+export type CoworkSessionType = 'standard' | 'agent_agent';
+
 // Cowork message metadata
 export interface CoworkMessageMetadata {
   toolName?: string;
@@ -18,7 +21,13 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   isThinking?: boolean;
-  skillIds?: string[];  // Skills used for this message
+  skillIds?: string[];
+  /** Sender's globalmetaid (A2A messages) */
+  fromGlobalMetaId?: string;
+  /** Sender's display name (A2A messages) */
+  fromName?: string;
+  /** Sender's avatar data URL (A2A messages) */
+  fromAvatar?: string;
   [key: string]: unknown;
 }
 
@@ -47,6 +56,18 @@ export interface CoworkSession {
   updatedAt: number;
   /** FK to metabots.id; which MetaBot persona this session uses */
   metabotId?: number | null;
+  /** Session type: 'standard' = human↔MetaBot, 'agent_agent' = MetaBot↔MetaBot */
+  sessionType?: CoworkSessionType;
+  /** Remote peer MetaBot's globalmetaid (A2A sessions only) */
+  peerGlobalMetaId?: string | null;
+  /** Remote peer MetaBot's display name (A2A sessions only) */
+  peerName?: string | null;
+  /** Remote peer MetaBot's avatar data URL (A2A sessions only) */
+  peerAvatar?: string | null;
+  /** Local MetaBot's display name */
+  metabotName?: string | null;
+  /** Local MetaBot's avatar data URL */
+  metabotAvatar?: string | null;
 }
 
 // Cowork configuration

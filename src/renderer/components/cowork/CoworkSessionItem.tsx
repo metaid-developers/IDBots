@@ -242,6 +242,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showRunningIndicator = session.status === 'running';
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
+  const isA2A = session.sessionType === 'agent_agent';
+  const displayTitle = isA2A && session.peerName ? session.peerName : session.title;
   const menuItems = useMemo(() => {
     return [
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
@@ -273,7 +275,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       {/* Content area */}
       <div className="flex items-start leading-tight">
         <div className="flex-1 min-w-0">
-          <div className={`flex items-center mb-0.5 ${showStatusIndicator ? 'gap-2' : 'gap-0'}`}>
+          <div className={`flex items-center mb-0.5 ${showStatusIndicator || isA2A ? 'gap-2' : 'gap-0'}`}>
             {/* Status indicator */}
             {showStatusIndicator && (
               <span
@@ -282,6 +284,10 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 }`}
                 title={showRunningIndicator ? i18nService.t(statusLabels[session.status]) : undefined}
               />
+            )}
+            {/* A2A blue dot (only when not already showing status indicator) */}
+            {isA2A && !showStatusIndicator && (
+              <span className="block w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
             )}
             {isRenaming ? (
               <input
@@ -301,8 +307,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 className="flex-1 min-w-0 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg px-2 py-1 text-sm font-medium dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
               />
             ) : (
-              <h3 className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate leading-tight">
-                {session.title}
+              <h3 className={`text-sm font-medium truncate leading-tight ${isA2A ? 'text-blue-500 dark:text-blue-400' : 'dark:text-claude-darkText text-claude-text'}`}>
+                {displayTitle}
               </h3>
             )}
           </div>

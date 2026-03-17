@@ -27,6 +27,9 @@ export interface OrderCoworkRequest {
   prompt: string;
   systemPrompt: string;
   title?: string;
+  peerGlobalMetaId?: string | null;
+  peerName?: string | null;
+  peerAvatar?: string | null;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -101,7 +104,11 @@ export class PrivateChatOrderCowork extends EventEmitter {
       request.systemPrompt,
       'local',
       [],
-      request.metabotId
+      request.metabotId,
+      'agent_agent',
+      request.peerGlobalMetaId ?? null,
+      request.peerName ?? null,
+      request.peerAvatar ?? null
     );
 
     this.coworkStore.upsertConversationMapping({
@@ -117,6 +124,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
       metadata: {
         sourceChannel: request.source,
         externalConversationId: request.externalConversationId,
+        fromGlobalMetaId: request.peerGlobalMetaId ?? undefined,
+        fromName: request.peerName ?? undefined,
+        fromAvatar: request.peerAvatar ?? undefined,
       },
     });
 

@@ -324,6 +324,7 @@ function shouldAutoDeleteMemoryText(text: string): boolean {
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
 export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
+export type CoworkSessionType = 'standard' | 'agent_agent';
 
 export interface CoworkMessageMetadata {
   toolName?: string;
@@ -361,6 +362,18 @@ export interface CoworkSession {
   updatedAt: number;
   /** FK to metabots.id; which MetaBot persona this session uses */
   metabotId?: number | null;
+  /** Session type: 'standard' = human↔MetaBot, 'agent_agent' = MetaBot↔MetaBot */
+  sessionType?: CoworkSessionType;
+  /** Remote peer MetaBot's globalmetaid (A2A sessions only) */
+  peerGlobalMetaId?: string | null;
+  /** Remote peer MetaBot's display name (A2A sessions only) */
+  peerName?: string | null;
+  /** Remote peer MetaBot's avatar data URL (A2A sessions only) */
+  peerAvatar?: string | null;
+  /** Local MetaBot's display name (populated from metabots table) */
+  metabotName?: string | null;
+  /** Local MetaBot's avatar data URL (populated from metabots table) */
+  metabotAvatar?: string | null;
 }
 
 export interface CoworkSessionSummary {
@@ -370,6 +383,8 @@ export interface CoworkSessionSummary {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
+  sessionType?: CoworkSessionType;
+  peerName?: string | null;
 }
 
 export type CoworkUserMemoryStatus = 'created' | 'stale' | 'deleted';
@@ -590,8 +605,24 @@ export class CoworkStore implements MemoryBackend {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN metabot_id INTEGER NULL;');
         changed = true;
       }
+      if (!sessionColumns.includes('session_type')) {
+        this.db.run("ALTER TABLE cowork_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'standard';");
+        changed = true;
+      }
+      if (!sessionColumns.includes('peer_global_metaid')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN peer_global_metaid TEXT;');
+        changed = true;
+      }
+      if (!sessionColumns.includes('peer_name')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN peer_name TEXT;');
+        changed = true;
+      }
+      if (!sessionColumns.includes('peer_avatar')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN peer_avatar TEXT;');
+        changed = true;
+      }
     } catch (error) {
-      console.warn('[CoworkStore] Failed to verify cowork_sessions metabot_id column:', error);
+      console.warn('[CoworkStore] Failed to verify cowork_sessions columns:', error);
     }
 
     try {
@@ -1057,6 +1088,26 @@ export class CoworkStore implements MemoryBackend {
     return this.mapConversationMappingRow(row);
   }
 
+  updateConversationMappingMetadata(
+    channel: string,
+    externalConversationId: string,
+    metabotId: number | null,
+    metadata: Record<string, unknown>
+  ): void {
+    const normalizedChannel = this.normalizeConversationChannel(channel);
+    const normalizedConversationId = this.normalizeExternalConversationId(externalConversationId);
+    if (!normalizedChannel || !normalizedConversationId) return;
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    this.db.run(`
+      UPDATE cowork_conversation_mappings
+      SET metadata_json = ?
+      WHERE channel = ? AND external_conversation_id = ? AND metabot_id = ?
+    `, [JSON.stringify(metadata), normalizedChannel, normalizedConversationId, normalizedMetabotId]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+  }
+
   touchConversationMapping(channel: string, externalConversationId: string, metabotId?: number | null): void {
     const normalizedChannel = this.normalizeConversationChannel(channel);
     const normalizedConversationId = this.normalizeExternalConversationId(externalConversationId);
@@ -1143,15 +1194,19 @@ export class CoworkStore implements MemoryBackend {
     systemPrompt: string = '',
     executionMode: CoworkExecutionMode = 'local',
     activeSkillIds: string[] = [],
-    metabotId: number | null = null
+    metabotId: number | null = null,
+    sessionType: CoworkSessionType = 'standard',
+    peerGlobalMetaId: string | null = null,
+    peerName: string | null = null,
+    peerAvatar: string | null = null
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
 
     this.db.run(`
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?)
-    `, [id, title, cwd, systemPrompt, executionMode, JSON.stringify(activeSkillIds), metabotId, now, now]);
+      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, created_at, updated_at)
+      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+    `, [id, title, cwd, systemPrompt, executionMode, JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, now, now]);
 
     this.upsertConversationMapping({
       channel: 'cowork_ui',
@@ -1177,6 +1232,10 @@ export class CoworkStore implements MemoryBackend {
       createdAt: now,
       updatedAt: now,
       metabotId: metabotId ?? undefined,
+      sessionType,
+      peerGlobalMetaId,
+      peerName,
+      peerAvatar,
     };
   }
 
@@ -1192,12 +1251,17 @@ export class CoworkStore implements MemoryBackend {
       execution_mode?: string | null;
       active_skill_ids?: string | null;
       metabot_id?: number | string | null;
+      session_type?: string | null;
+      peer_global_metaid?: string | null;
+      peer_name?: string | null;
+      peer_avatar?: string | null;
       created_at: number;
       updated_at: number;
     }
 
     const row = this.getOne<SessionRow>(`
-      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, created_at, updated_at
+      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
+             session_type, peer_global_metaid, peer_name, peer_avatar, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `, [id]);
@@ -1215,6 +1279,24 @@ export class CoworkStore implements MemoryBackend {
       }
     }
 
+    const metabotId = parseIdNumber(row.metabot_id);
+    let metabotName: string | null = null;
+    let metabotAvatar: string | null = null;
+    if (metabotId != null) {
+      interface MetabotNameRow { name: string; avatar: string | null; }
+      const mbRow = this.getOne<MetabotNameRow>('SELECT name, avatar FROM metabots WHERE id = ? LIMIT 1', [metabotId]);
+      if (mbRow) {
+        metabotName = mbRow.name;
+        // avatar may be stored as BLOB; convert to base64 data URL if needed
+        if (mbRow.avatar && typeof mbRow.avatar !== 'string') {
+          const buf = Buffer.from(mbRow.avatar as unknown as Uint8Array);
+          metabotAvatar = `data:image/png;base64,${buf.toString('base64')}`;
+        } else {
+          metabotAvatar = (mbRow.avatar as string | null) ?? null;
+        }
+      }
+    }
+
     return {
       id: row.id,
       title: row.title,
@@ -1228,7 +1310,13 @@ export class CoworkStore implements MemoryBackend {
       messages,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      metabotId: parseIdNumber(row.metabot_id) ?? undefined,
+      metabotId: metabotId ?? undefined,
+      sessionType: (row.session_type as CoworkSessionType) || 'standard',
+      peerGlobalMetaId: row.peer_global_metaid ?? null,
+      peerName: row.peer_name ?? null,
+      peerAvatar: row.peer_avatar ?? null,
+      metabotName,
+      metabotAvatar,
     };
   }
 
@@ -1297,12 +1385,14 @@ export class CoworkStore implements MemoryBackend {
       title: string;
       status: string;
       pinned: number | null;
+      session_type?: string | null;
+      peer_name?: string | null;
       created_at: number;
       updated_at: number;
     }
 
     const rows = this.getAll<SessionSummaryRow>(`
-      SELECT id, title, status, pinned, created_at, updated_at
+      SELECT id, title, status, pinned, session_type, peer_name, created_at, updated_at
       FROM cowork_sessions
       ORDER BY pinned DESC, updated_at DESC
     `);
@@ -1314,6 +1404,8 @@ export class CoworkStore implements MemoryBackend {
       pinned: Boolean(row.pinned),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      sessionType: (row.session_type as CoworkSessionType) || 'standard',
+      peerName: row.peer_name ?? null,
     }));
   }
 

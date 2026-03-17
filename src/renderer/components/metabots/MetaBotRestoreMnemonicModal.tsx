@@ -18,7 +18,6 @@ const DEFAULT_DERIVATION_PATH = "m/44'/10001'/0'/0/0";
 const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = ({ onClose, onRestored }) => {
   const [words, setWords] = useState<string[]>(Array.from({ length: 12 }, () => ''));
   const [path, setPath] = useState(DEFAULT_DERIVATION_PATH);
-  const [bossGlobalMetaId, setBossGlobalMetaId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'importing' | 'success'>('idle');
@@ -79,7 +78,6 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
       const result = await window.electron.idbots.restoreMetaBotFromMnemonic({
         mnemonic: normalizedMnemonic,
         path: path.trim(),
-        boss_global_metaid: bossGlobalMetaId.trim() || null,
       });
       if (!result.success || !result.metabot) {
         setStatus('idle');
@@ -187,23 +185,6 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
                   onChange={(e) => setPath(e.target.value)}
                   className="mt-1 w-full rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-2 text-sm dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 />
-              </div>
-
-              <div className="mt-5">
-                <label className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('metabotBossMetaId')}
-                  <span className="ml-1 opacity-60">{i18nService.t('metabotBossMetaIdOptional')}</span>
-                </label>
-                <input
-                  type="text"
-                  value={bossGlobalMetaId}
-                  onChange={(e) => setBossGlobalMetaId(e.target.value)}
-                  placeholder={i18nService.t('metabotBossMetaIdPlaceholder')}
-                  className="mt-1 w-full rounded-lg border dark:border-claude-darkBorder border-claude-border px-3 py-2 text-sm dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent font-mono"
-                />
-                <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary opacity-70">
-                  {i18nService.t('metabotBossMetaIdHint')}
-                </p>
               </div>
             </>
           )}
