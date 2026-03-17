@@ -18,6 +18,7 @@ export interface PrivateChatOrderCoworkOptions {
   coworkStore: CoworkStore;
   metabotStore: MetabotStore;
   timeoutMs?: number;
+  emitToRenderer?: (channel: string, data: unknown) => void;
 }
 
 export interface OrderCoworkRequest {
@@ -39,6 +40,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
   private coworkStore: CoworkStore;
   private metabotStore: MetabotStore;
   private timeoutMs: number;
+  private emitToRenderer?: (channel: string, data: unknown) => void;
 
   private sessionIds: Set<string> = new Set();
   private accumulators: Map<string, MessageAccumulator> = new Map();
@@ -49,6 +51,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     this.coworkStore = options.coworkStore;
     this.metabotStore = options.metabotStore;
     this.timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
+    this.emitToRenderer = options.emitToRenderer;
     this.setupListeners();
   }
 
@@ -118,7 +121,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       coworkSessionId: session.id,
     });
 
-    this.coworkStore.addMessage(session.id, {
+    const initialMessage = this.coworkStore.addMessage(session.id, {
       type: 'user',
       content: request.prompt,
       metadata: {
@@ -127,8 +130,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
         fromGlobalMetaId: request.peerGlobalMetaId ?? undefined,
         fromName: request.peerName ?? undefined,
         fromAvatar: request.peerAvatar ?? undefined,
+        isLocalSender: false,
       },
     });
+
+    // Notify renderer immediately so the session appears without restart
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:message', { sessionId: session.id, message: initialMessage });
+    }
 
     return session.id;
   }

@@ -2970,11 +2970,25 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             coworkSessionId: session.id,
             metadataJson: JSON.stringify({ peerGlobalMetaId: toGlobalMetaId, peerName, peerAvatar, role: 'buyer' }),
           });
-          // Add the order message as the first user message in the session
-          coworkStoreInst.addMessage(session.id, {
+          // Add the order message as the first message — isLocalSender:true so it shows on the right
+          const initialMessage = coworkStoreInst.addMessage(session.id, {
             type: 'user',
             content: orderPayload,
-            metadata: { sourceChannel: 'metaweb_order', externalConversationId, fromGlobalMetaId: toGlobalMetaId, fromName: peerName ?? undefined, fromAvatar: peerAvatar ?? undefined },
+            metadata: {
+              sourceChannel: 'metaweb_order',
+              externalConversationId,
+              fromGlobalMetaId: toGlobalMetaId,
+              fromName: peerName ?? undefined,
+              fromAvatar: peerAvatar ?? undefined,
+              isLocalSender: true,
+            },
+          });
+          // Notify renderer immediately so the session appears without restart
+          const safeMsg = sanitizeCoworkMessageForIpc(initialMessage);
+          BrowserWindow.getAllWindows().forEach(win => {
+            if (!win.isDestroyed()) {
+              try { win.webContents.send('cowork:stream:message', { sessionId: session.id, message: safeMsg }); } catch { /* ignore */ }
+            }
           });
         }
       } catch (sessionErr) {
@@ -4098,7 +4112,14 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       getCoworkRunner(),
       createPin,
       (msg) => console.log(msg),
-      async () => skillMgr.buildAutoRoutingPrompt()
+      async () => skillMgr.buildAutoRoutingPrompt(),
+      (channel, data) => {
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed()) {
+            try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
+          }
+        });
+      }
     );
 
     // Auto-reconnect IM bots that were enabled before restart

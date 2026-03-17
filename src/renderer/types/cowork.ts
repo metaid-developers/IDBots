@@ -28,6 +28,8 @@ export interface CoworkMessageMetadata {
   fromName?: string;
   /** Sender's avatar data URL (A2A messages) */
   fromAvatar?: string;
+  /** True if this message was sent by the local MetaBot (right side in A2A view), false if sent by the peer */
+  isLocalSender?: boolean;
   [key: string]: unknown;
 }
 

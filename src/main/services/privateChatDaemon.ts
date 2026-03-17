@@ -249,7 +249,8 @@ async function processOne(
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>,
   emitLog: (msg: string) => void,
   orderCoworkHandler: PrivateChatOrderCowork | null,
-  getSkillsPrompt?: () => Promise<string | null>
+  getSkillsPrompt?: () => Promise<string | null>,
+  emitToRenderer?: (channel: string, data: unknown) => void
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -381,7 +382,7 @@ async function processOne(
       const buyerOrderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
       if (buyerOrderMapping) {
         emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
-        coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
+        const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
           type: 'assistant',
           content: plaintext,
           metadata: {
@@ -390,9 +391,13 @@ async function processOne(
             fromGlobalMetaId,
             fromName: (row.from_name as string | null) ?? undefined,
             fromAvatar: (row.from_avatar as string | null) ?? undefined,
+            isLocalSender: false,
           },
         });
         coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
+        if (emitToRenderer) {
+          emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: replyMsg });
+        }
         markProcessed(db, row.id, saveDb);
         return;
       }
@@ -645,19 +650,21 @@ export function startPrivateChatDaemon(
   coworkRunner: CoworkRunner,
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[] }>,
   emitLog: (msg: string) => void,
-  getSkillsPrompt?: () => Promise<string | null>
+  getSkillsPrompt?: () => Promise<string | null>,
+  emitToRenderer?: (channel: string, data: unknown) => void
 ): void {
   stopPrivateChatDaemon();
   orderCowork = new PrivateChatOrderCowork({
     coworkRunner,
     coworkStore,
     metabotStore,
+    emitToRenderer,
   });
   const performChat = performChatCompletionForOrchestrator;
   const tick = () => {
     const rows = parsePrivateChatRows(db);
     for (const row of rows) {
-      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, getSkillsPrompt).catch((e) => {
+      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, getSkillsPrompt, emitToRenderer).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
       });
     }

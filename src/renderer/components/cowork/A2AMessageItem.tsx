@@ -104,7 +104,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
 
   // user = incoming from peer MetaBot (left side)
   // assistant = outgoing from local MetaBot (right side)
-  const isLocal = message.type === 'assistant';
+  // isLocalSender in metadata takes priority over type for direction
+  const isLocal = message.metadata?.isLocalSender !== undefined
+    ? Boolean(message.metadata.isLocalSender)
+    : message.type === 'assistant';
 
   // Resolve display name and avatar
   const fromName = isLocal
