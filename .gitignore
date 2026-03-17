@@ -1,5 +1,5 @@
 # build/ 目录仅忽略编译产物，但图标和签名资源文件必须提交给 CI 打包用
-build/
+build/*
 !build/icons/
 !build/icons/**
 !build/entitlements.mac.plist
