@@ -179,7 +179,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-2.5 pb-4 border-t border-claude-border dark:border-claude-darkBorder pt-2 mt-1">
+      <div className="flex-1 overflow-y-auto px-2.5 pb-4 pt-2 mt-1">
         <div className="px-3 pb-2 text-sm font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
           {i18nService.t('coworkHistory')}
         </div>

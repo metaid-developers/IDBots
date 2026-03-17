@@ -432,7 +432,7 @@ const McpManager: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleInstallFromRegistry(entry)}
-                        className="px-2.5 py-1 text-xs rounded-lg bg-claude-accent text-white hover:bg-claude-accent/90 transition-colors"
+                        className="btn-idchat-primary-filled px-2.5 py-1 text-xs"
                       >
                         {i18nService.t('mcpInstall')}
                       </button>
@@ -602,7 +602,7 @@ const McpManager: React.FC = () => {
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-gray-900 hover:bg-red-600 dark:bg-red-500 dark:hover:bg-red-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {i18nService.t('confirmDelete')}
               </button>

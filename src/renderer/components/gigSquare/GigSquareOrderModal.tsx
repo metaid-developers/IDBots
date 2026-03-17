@@ -264,6 +264,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         toGlobalMetaId,
         toChatPubkey: chatPubkey,
         orderPayload,
+        peerName: providerInfo.name || null,
+        peerAvatar: providerInfo.avatarUrl || null,
       });
 
       if (!sendResult?.success) {

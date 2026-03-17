@@ -21,31 +21,21 @@ const formatTime = (timestamp: number): string => {
   return `${hh}:${mm}`;
 };
 
+const DEFAULT_METABOT_AVATAR = '/default_metabot.png';
+
 const Avatar: React.FC<{ src?: string | null; name?: string | null; size?: number }> = ({
   src,
   name,
   size = 32,
-}) => {
-  const initial = (name || '?').charAt(0).toUpperCase();
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt={name || ''}
-        style={{ width: size, height: size }}
-        className="rounded-full object-cover flex-shrink-0"
-      />
-    );
-  }
-  return (
-    <div
-      style={{ width: size, height: size, fontSize: size * 0.4 }}
-      className="rounded-full bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-semibold flex-shrink-0"
-    >
-      {initial}
-    </div>
-  );
-};
+}) => (
+  <img
+    src={src || DEFAULT_METABOT_AVATAR}
+    alt={name || ''}
+    style={{ width: size, height: size }}
+    className="rounded-full object-cover flex-shrink-0"
+    onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_METABOT_AVATAR; }}
+  />
+);
 
 const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   const [open, setOpen] = useState(false);

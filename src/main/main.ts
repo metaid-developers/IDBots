@@ -2897,12 +2897,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     toGlobalMetaId: string;
     toChatPubkey: string;
     orderPayload: string;
+    peerName?: string | null;
+    peerAvatar?: string | null;
   }) => {
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
       const toChatPubkey = typeof params?.toChatPubkey === 'string' ? params.toChatPubkey.trim() : '';
       const orderPayload = typeof params?.orderPayload === 'string' ? params.orderPayload.trim() : '';
+      const peerName = typeof params?.peerName === 'string' ? params.peerName.trim() || null : null;
+      const peerAvatar = typeof params?.peerAvatar === 'string' ? params.peerAvatar.trim() || null : null;
 
       if (!metabotId || metabotId < 0) {
         return { success: false, error: 'metabotId is required' };
@@ -2939,6 +2943,43 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         contentType: 'application/json',
         payload: payloadStr,
       });
+
+      // Create buyer-side observer session so MetaBot A can watch the conversation
+      try {
+        const coworkStoreInst = getCoworkStore();
+        const externalConversationId = `metaweb_order:buyer:${metabotId}:${toGlobalMetaId}`;
+        const existing = coworkStoreInst.getConversationMapping('metaweb_order', externalConversationId, metabotId);
+        if (!existing) {
+          const config = coworkStoreInst.getConfig();
+          const session = coworkStoreInst.createSession(
+            `Order-${(peerName || toGlobalMetaId).slice(0, 20)}-${Date.now()}`,
+            config.workingDirectory,
+            '',
+            'local',
+            [],
+            metabotId,
+            'agent_agent',
+            toGlobalMetaId,
+            peerName,
+            peerAvatar
+          );
+          coworkStoreInst.upsertConversationMapping({
+            channel: 'metaweb_order',
+            externalConversationId,
+            metabotId,
+            coworkSessionId: session.id,
+            metadataJson: JSON.stringify({ peerGlobalMetaId: toGlobalMetaId, peerName, peerAvatar, role: 'buyer' }),
+          });
+          // Add the order message as the first user message in the session
+          coworkStoreInst.addMessage(session.id, {
+            type: 'user',
+            content: orderPayload,
+            metadata: { sourceChannel: 'metaweb_order', externalConversationId, fromGlobalMetaId: toGlobalMetaId, fromName: peerName ?? undefined, fromAvatar: peerAvatar ?? undefined },
+          });
+        }
+      } catch (sessionErr) {
+        console.warn('[GigSquare] Failed to create buyer observer session:', sessionErr);
+      }
 
       return { success: true, txids: result.txids };
     } catch (error) {

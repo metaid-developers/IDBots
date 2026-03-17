@@ -130,7 +130,7 @@ const MetaBotDeleteConfirmModal: React.FC<MetaBotDeleteConfirmModalProps> = ({
               type="button"
               onClick={handleConfirm}
               disabled={!canConfirm}
-              className="px-4 py-2 text-sm rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium"
+              className="px-4 py-2 text-sm rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium"
             >
               {canConfirm
                 ? i18nService.t('metabotBackedUpConfirmDelete')

@@ -208,7 +208,7 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
                 type="button"
                 onClick={handleSubmit}
                 disabled={!canSubmit}
-                className="px-4 py-2 text-sm rounded-xl bg-claude-accent text-white hover:bg-claude-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-idchat-primary-filled px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? i18nService.t('metabotRestoreImporting') : i18nService.t('metabotRestoreConfirm')}
               </button>
@@ -217,7 +217,7 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
               <button
                 type="button"
                 disabled
-                className="px-4 py-2 text-sm rounded-xl bg-claude-accent text-white opacity-60 cursor-not-allowed"
+                className="btn-idchat-primary-filled px-4 py-2 text-sm opacity-60 cursor-not-allowed"
               >
                 {i18nService.t('metabotRestoreImporting')}
               </button>
@@ -226,7 +226,7 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-sm rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
+                className="btn-idchat-primary-filled px-4 py-2 text-sm"
               >
                 {i18nService.t('metabotRestoreClose')}
               </button>

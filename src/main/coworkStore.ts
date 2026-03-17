@@ -1088,6 +1088,25 @@ export class CoworkStore implements MemoryBackend {
     return this.mapConversationMappingRow(row);
   }
 
+  /**
+   * Find the most recent metaweb_order session for a given (metabotId, peerGlobalMetaId) pair.
+   * Used by the buyer side to detect incoming order replies and attach them to the right session.
+   */
+  findOrderSessionByPeer(metabotId: number, peerGlobalMetaId: string): CoworkConversationMapping | null {
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    const row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT m.channel, m.external_conversation_id, m.metabot_id, m.cowork_session_id, m.metadata_json, m.created_at, m.last_active_at
+      FROM cowork_conversation_mappings m
+      JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      WHERE m.channel = 'metaweb_order'
+        AND m.metabot_id = ?
+        AND s.peer_global_metaid = ?
+      ORDER BY m.last_active_at DESC
+      LIMIT 1
+    `, [normalizedMetabotId, peerGlobalMetaId]);
+    return row ? this.mapConversationMappingRow(row) : null;
+  }
+
   updateConversationMappingMetadata(
     channel: string,
     externalConversationId: string,

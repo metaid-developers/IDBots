@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(npx -p typescript tsc --project /Users/tusm/Documents/MetaID_Projects/IDBots/IDBots-indev/electron-tsconfig.json)",
+      "Bash(grep -r \"任务记录\\\\|Task Record\\\\|task.*record\" /Users/tusm/Documents/MetaID_Projects/IDBots/IDBots-indev/src/renderer --include=*.tsx --include=*.ts)",
+      "Bash(npx -p typescript tsc --project electron-tsconfig.json)"
     ]
   }
 }

@@ -335,7 +335,7 @@ interface IElectronAPI {
       outputType: string;
       serviceIconDataUrl?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;
-    sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string }) => Promise<{ success: boolean; txids?: string[]; error?: string }>;
+    sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string; peerName?: string | null; peerAvatar?: string | null }) => Promise<{ success: boolean; txids?: string[]; error?: string }>;
     pingProvider: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string }>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
