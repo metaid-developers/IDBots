@@ -254,7 +254,7 @@ function buildApiConfigFromMatched(
       apiKey: resolvedApiKey || 'idbots-openai-compat',
       baseURL: proxyBaseURL,
       model: matched.modelId,
-      apiType: 'openai',
+      apiType: 'anthropic', // proxy speaks Anthropic /v1/messages format
     },
   };
 }
