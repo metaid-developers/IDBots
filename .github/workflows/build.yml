@@ -238,12 +238,17 @@ jobs:
           "%SIGNTOOL%" verify /pa /v "${{ steps.find_installer.outputs.path }}"
 
       - name: Upload signed artifact
-        uses: actions/upload-artifact@v4
+        uses: softprops/action-gh-release@v2
         with:
-          name: dist-windows-signed
-          path: release-assets/windows/*.exe
-          if-no-files-found: error
-          retention-days: 7
+          tag_name: ${{ github.ref_name }}
+          name: IDBots ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/windows/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -251,12 +256,6 @@ jobs:
     needs: [build, sign_windows]
 
     steps:
-      - name: Download signed Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-windows-signed
-          path: release-assets/windows
-
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
@@ -287,7 +286,6 @@ jobs:
             - macOS DMG is signed and notarized in GitHub Actions.
           fail_on_unmatched_files: true
           files: |
-            release-assets/windows/*.exe
             release-assets/macos/*.dmg
             release-assets/macos/*.blockmap
             release-assets/macos/latest-mac.yml
