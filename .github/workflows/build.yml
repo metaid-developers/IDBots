@@ -190,16 +190,57 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  release:
+  sign_windows:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
     needs: build
+    runs-on: [self-hosted, windows, win-sign]
 
     steps:
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist-windows-latest
+          path: release-assets/windows
+
+      - name: Locate unsigned installer
+        id: find_installer
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem -Path release-assets/windows -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "No .exe found in release-assets/windows" }
+          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Sign Windows installer (Certum)
+        shell: powershell
+        run: |
+          $signtool = "D:\actions-runner\signtool.exe"
+          if (-not (Test-Path $signtool)) { throw "signtool.exe not found at $signtool" }
+          & $signtool sign /v /fd sha256 /sha1 5dabc63c86ccfea1029185c4b36e33c1bac4c743 /tr http://time.certum.pl /td sha256 "${{ steps.find_installer.outputs.path }}"
+
+      - name: Verify signature
+        shell: powershell
+        run: |
+          $signtool = "D:\actions-runner\signtool.exe"
+          & $signtool verify /pa /v "${{ steps.find_installer.outputs.path }}"
+
+      - name: Upload signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-signed
+          path: release-assets/windows/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [build, sign_windows]
+
+    steps:
+      - name: Download signed Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-windows-signed
           path: release-assets/windows
 
       - name: Download macOS artifacts
@@ -225,7 +266,7 @@ jobs:
             Cross-platform desktop installers for IDBots.
 
             Included packages:
-            - Windows NSIS installer (.exe)
+            - Windows NSIS installer (.exe, code-signed)
             - macOS DMG package (.dmg, signed & notarized)
 
             Notes:
