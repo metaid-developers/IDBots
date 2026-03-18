@@ -1334,10 +1334,24 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return () => { cancelled = true; };
   }, [currentSession?.metabotId]);
 
-  // Fetch peer avatar for A2A sessions when peerAvatar is not stored in the session
+  // Fetch peer avatar for A2A sessions when peerAvatar is not stored in the session.
+  // Falls back to senderGlobalMetaId from the first incoming message if peerGlobalMetaId is missing.
   useEffect(() => {
-    const peerGlobalMetaId = currentSession?.peerGlobalMetaId;
-    if (!peerGlobalMetaId || currentSession?.peerAvatar) {
+    if (currentSession?.sessionType !== 'a2a') {
+      setFetchedPeerAvatar(null);
+      return;
+    }
+    if (currentSession.peerAvatar) {
+      setFetchedPeerAvatar(null);
+      return;
+    }
+    // Resolve peer globalMetaId: prefer session-level, fall back to first incoming message
+    const peerGlobalMetaId = currentSession.peerGlobalMetaId
+      ?? (currentSession.messages.find(
+          (m) => (m.metadata as Record<string, unknown>)?.direction === 'incoming'
+        )?.metadata as Record<string, unknown> | undefined)?.senderGlobalMetaId as string | undefined
+      ?? null;
+    if (!peerGlobalMetaId) {
       setFetchedPeerAvatar(null);
       return;
     }
@@ -1348,7 +1362,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       })
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
-  }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar]);
+  }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar, currentSession?.sessionType, currentSession?.messages]);
 
   // Reset rename value when session changes
   useEffect(() => {

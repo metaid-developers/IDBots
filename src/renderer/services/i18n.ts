@@ -118,6 +118,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     refresh: '刷新',
     gigSquare: '服务广场',
     gigSquareTitle: '服务广场',
+    gigSquareAlphaBadge: 'Alpha',
+    gigSquareAlphaNotice:
+      '服务广场现阶段为测试阶段，暂时只支持 MVC 网络。',
     gigSquareSubtitle: '浏览链上服务并一键下单',
     gigSquareLoading: '正在加载服务...',
     gigSquareLoadFailed: '服务加载失败',
@@ -1039,6 +1042,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     refresh: 'Refresh',
     gigSquare: 'Gig Square',
     gigSquareTitle: 'Gig Square',
+    gigSquareAlphaBadge: 'Alpha',
+    gigSquareAlphaNotice:
+      'Gig Square is in alpha testing. Only the MVC network is supported for now.',
     gigSquareSubtitle: 'Browse on-chain services and order instantly.',
     gigSquareLoading: 'Loading services...',
     gigSquareLoadFailed: 'Failed to load services',

@@ -144,8 +144,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                 : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
             }`}
           >
-            <ShoppingBagIcon className="h-4 w-4" />
-            {i18nService.t('gigSquare')}
+            <ShoppingBagIcon className="h-4 w-4 shrink-0" />
+            <span className="inline-flex items-center gap-1 min-w-0">
+              <span className="truncate">{i18nService.t('gigSquare')}</span>
+              <span
+                className="shrink-0 rounded px-0.5 py-px text-[9px] font-medium leading-none text-claude-textSecondary dark:text-claude-darkTextSecondary border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted"
+                aria-hidden
+              >
+                {i18nService.t('gigSquareAlphaBadge')}
+              </span>
+            </span>
           </button>
           <button
             type="button"

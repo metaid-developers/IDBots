@@ -85,13 +85,27 @@ const GigSquareView: React.FC = () => {
             <div className="h-10 w-10 rounded-xl bg-claude-accent/15 flex items-center justify-center">
               <ShoppingBagIcon className="h-5 w-5 text-claude-accent" />
             </div>
-            <div>
-              <h1 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
-                {i18nService.t('gigSquareTitle')}
-              </h1>
-              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h1 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('gigSquareTitle')}
+                </h1>
+                <span
+                  className="rounded px-0.5 py-px text-[9px] font-medium leading-none text-claude-textSecondary dark:text-claude-darkTextSecondary border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted"
+                  title={i18nService.t('gigSquareAlphaNotice')}
+                >
+                  {i18nService.t('gigSquareAlphaBadge')}
+                </span>
+              </div>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5">
                 {i18nService.t('gigSquareSubtitle')}
               </p>
+              <div
+                className="mt-2 rounded-md border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted px-2 py-1.5 text-[11px] leading-snug text-claude-textSecondary dark:text-claude-darkTextSecondary font-normal"
+                role="status"
+              >
+                {i18nService.t('gigSquareAlphaNotice')}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-3">
