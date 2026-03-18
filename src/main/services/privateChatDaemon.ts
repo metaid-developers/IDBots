@@ -299,17 +299,17 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
 
   const ratingSystemPrompt = [
     personaLines,
-    'A service provider has completed a paid service order for you.',
+    'You are the buyer who paid for this service. Write a genuine rating and farewell message in your own voice as the paying client.',
     `Your original request was: "${originalRequest.slice(0, 300)}"`,
     `The service result delivered: "${serviceResult.slice(0, 500)}"`,
-    'Please give a genuine rating and comment in your own voice.',
     'You MUST include a numeric score from 1 to 5 (5 is best). Format it clearly, e.g. "评分：4分" or "I give this 4 out of 5".',
-    'Your comment should be 10-200 characters. Be honest — your rating will help other MetaBots and humans in the future.',
+    'After the rating comment, add a short farewell (1-2 sentences) as the client saying goodbye to the service provider.',
+    'Your total message should be 10-300 characters.',
   ].filter(Boolean).join('\n');
 
   const llmId = typeof metabot.llm_id === 'string' ? metabot.llm_id.trim() || undefined : undefined;
 
-  const ratingText = await performChat(ratingSystemPrompt, '请给出你的评价和评分。', llmId);
+  const ratingText = await performChat(ratingSystemPrompt, '请给出你的评价、评分和告别语。', llmId);
 
   // Extract rate (1-5) from the generated text
   const rateMatch = ratingText.match(/[1-5]\s*分|评分[：:]\s*([1-5])|([1-5])\s*(?:out of|\/)\s*5|([1-5])\s*星/i)
@@ -348,41 +348,13 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
     emitLog(`[Rating] Failed to publish skill-service-rate: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // Add A's rating message to buyer session (outgoing)
-  const ratingMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
-    type: 'user',
-    content: ratingText,
-    metadata: {
-      sourceChannel: 'metaweb_order',
-      externalConversationId: buyerOrderMapping.externalConversationId,
-      direction: 'outgoing',
-    },
-  });
-  if (emitToRenderer) {
-    emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: ratingMsg });
-  }
+  // Build combined message: rating text + on-chain pin reference
+  const pinLine = ratingPinId ? `\n\n我的评分已记录在链上（pin ID: ${ratingPinId}）。` : '';
+  const combinedMessage = `${ratingText.trim()}${pinLine}`;
 
-  // Generate and send farewell message to B
-  const farewellSystemPrompt = [
-    personaLines,
-    'You just rated a service. Write a short farewell message in your own voice.',
-    ratingPinId ? `Mention that your rating has been recorded on-chain (pin ID: ${ratingPinId}).` : '',
-    'Keep it to 1-2 sentences. Say goodbye naturally.',
-  ].filter(Boolean).join('\n');
-
-  let farewellText: string;
+  // Send combined message to B via simplemsg
   try {
-    farewellText = await performChat(farewellSystemPrompt, '请生成告别消息。', llmId);
-    farewellText = farewellText.trim();
-  } catch {
-    farewellText = ratingPinId
-      ? `评价已上链，pinId: ${ratingPinId}。感谢服务，再见！`
-      : '感谢服务，再见！';
-  }
-
-  // Send farewell to B via simplemsg
-  try {
-    const encrypted = ecdhEncrypt(farewellText, sharedSecretForReply);
+    const encrypted = ecdhEncrypt(combinedMessage, sharedSecretForReply);
     const payloadStr = buildPrivateMsgPayload(sellerGlobalMetaId, encrypted, '');
     await createPin(metabotStore, metabot.id, {
       operation: 'create',
@@ -392,15 +364,15 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
       contentType: 'application/json',
       payload: payloadStr,
     });
-    emitLog(`[Rating] Farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
+    emitLog(`[Rating] Combined rating+farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
   } catch (e) {
-    emitLog(`[Rating] Farewell send failed: ${e instanceof Error ? e.message : String(e)}`);
+    emitLog(`[Rating] Combined message send failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // Add farewell to buyer session (outgoing)
-  const farewellMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
+  // Add combined message to A's buyer session (outgoing) — single entry visible to A
+  const combinedMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
     type: 'user',
-    content: farewellText,
+    content: combinedMessage,
     metadata: {
       sourceChannel: 'metaweb_order',
       externalConversationId: buyerOrderMapping.externalConversationId,
@@ -408,7 +380,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
     },
   });
   if (emitToRenderer) {
-    emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: farewellMsg });
+    emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: combinedMsg });
   }
 }
 

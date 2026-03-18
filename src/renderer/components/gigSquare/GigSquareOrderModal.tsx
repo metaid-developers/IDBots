@@ -312,6 +312,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         serviceCurrency: service.currency,
         serviceSkill: service.providerSkill || service.serviceName,
         serverBotGlobalMetaId: service.providerGlobalMetaId || null,
+        servicePaidTx: txId,
       });
 
       if (!sendResult?.success) {

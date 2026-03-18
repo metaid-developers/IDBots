@@ -3022,6 +3022,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serviceCurrency?: string | null;
     serviceSkill?: string | null;
     serverBotGlobalMetaId?: string | null;
+    servicePaidTx?: string | null;
   }) => {
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
@@ -3035,6 +3036,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const serviceCurrency = typeof params?.serviceCurrency === 'string' ? params.serviceCurrency.trim() || null : null;
       const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
+      const servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
 
       if (!metabotId || metabotId < 0) {
         return { success: false, error: 'metabotId is required' };
@@ -3108,7 +3110,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
               serviceCurrency,
               serviceSkill,
               serverBotGlobalMetaId,
-              servicePaidTx: result.txids?.[0] || null,
+              servicePaidTx: servicePaidTx || null,
             }),
           });
           // Add the order message as the first message — direction:'outgoing' so it shows on the right.
