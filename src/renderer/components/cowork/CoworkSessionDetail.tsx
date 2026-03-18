@@ -20,6 +20,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
+import { fetchMetaidInfoByGlobalId } from '../../services/metabotInfoService';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
@@ -1310,6 +1311,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
   const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; llm_id: string | null } | null>(null);
+  const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
 
   // Fetch MetaBot when session has metabotId (for avatar/name and llm_id for model restriction)
   useEffect(() => {
@@ -1331,6 +1333,22 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     void fetchMetaBot();
     return () => { cancelled = true; };
   }, [currentSession?.metabotId]);
+
+  // Fetch peer avatar for A2A sessions when peerAvatar is not stored in the session
+  useEffect(() => {
+    const peerGlobalMetaId = currentSession?.peerGlobalMetaId;
+    if (!peerGlobalMetaId || currentSession?.peerAvatar) {
+      setFetchedPeerAvatar(null);
+      return;
+    }
+    let cancelled = false;
+    fetchMetaidInfoByGlobalId(peerGlobalMetaId)
+      .then((info) => {
+        if (!cancelled) setFetchedPeerAvatar(info.avatarUrl ?? null);
+      })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar]);
 
   // Reset rename value when session changes
   useEffect(() => {
@@ -2001,7 +2019,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               key={msg.id}
               message={msg}
               peerName={currentSession.peerName}
-              peerAvatar={currentSession.peerAvatar}
+              peerAvatar={currentSession.peerAvatar || fetchedPeerAvatar}
               metabotName={currentSession.metabotName}
               metabotAvatar={currentSession.metabotAvatar}
             />
