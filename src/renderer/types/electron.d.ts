@@ -223,6 +223,7 @@ interface Metabot {
   goal: string | null;
   background: string | null;
   boss_id: number | null;
+  boss_global_metaid: string | null;
   llm_id: string | null;
   tools: string[];
   skills: string[];
@@ -239,6 +240,7 @@ interface MetabotCreateInput {
   goal?: string | null;
   background?: string | null;
   boss_id?: number | null;
+  boss_global_metaid?: string | null;
   llm_id?: string | null;
 }
 
@@ -252,6 +254,7 @@ interface MetabotUpdateInput {
   goal?: string | null;
   background?: string | null;
   boss_id?: number | null;
+  boss_global_metaid?: string | null;
   llm_id?: string | null;
 }
 
@@ -496,6 +499,7 @@ interface IElectronAPI {
       goal?: string | null;
       background?: string | null;
       boss_id?: number | null;
+      boss_global_metaid?: string | null;
       llm_id?: string | null;
       metabot_type?: 'twin' | 'worker';
     }) => Promise<{
@@ -575,6 +579,7 @@ interface IElectronAPI {
       goal?: string | null;
       background?: string | null;
       boss_id?: number | null;
+      boss_global_metaid?: string | null;
       llm_id?: string | null;
       metabot_type?: 'twin' | 'worker';
     }) => Promise<{

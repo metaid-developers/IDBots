@@ -36,9 +36,8 @@ function resolveAvatarUrl(data: Record<string, unknown>): string | null {
     const pinid = avatar.replace(/^\/content\/?/i, '').trim();
     if (pinid) return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(pinid)}`;
   }
-  const contentId = typeof (data as Record<string, unknown>).contentId === 'string'
-    ? (data as Record<string, unknown>).contentId.trim()
-    : '';
+  const rawContentId = (data as Record<string, unknown>).contentId;
+  const contentId = typeof rawContentId === 'string' ? rawContentId.trim() : '';
   if (contentId) return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(contentId)}`;
   return null;
 }
