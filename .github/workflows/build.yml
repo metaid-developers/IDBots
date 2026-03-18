@@ -204,24 +204,38 @@ jobs:
 
       - name: Locate unsigned installer
         id: find_installer
-        shell: powershell
+        shell: cmd
         run: |
-          $exe = Get-ChildItem -Path release-assets/windows -Filter *.exe -Recurse | Select-Object -First 1
-          if (-not $exe) { throw "No .exe found in release-assets/windows" }
-          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          @echo off
+          set "EXE_PATH="
+          for /f "delims=" %%F in ('dir /b /s release-assets\\windows\\*.exe') do (
+            set "EXE_PATH=%%F"
+            goto :done
+          )
+          :done
+          if not defined EXE_PATH (
+            echo No .exe found in release-assets/windows
+            exit /b 1
+          )
+          echo path=%EXE_PATH%>>%GITHUB_OUTPUT%
 
       - name: Sign Windows installer (Certum)
-        shell: powershell
+        shell: cmd
         run: |
-          $signtool = "D:\actions-runner\signtool.exe"
-          if (-not (Test-Path $signtool)) { throw "signtool.exe not found at $signtool" }
-          & $signtool sign /v /fd sha256 /sha1 5dabc63c86ccfea1029185c4b36e33c1bac4c743 /tr http://time.certum.pl /td sha256 "${{ steps.find_installer.outputs.path }}"
+          @echo off
+          set "SIGNTOOL=D:\actions-runner\signtool.exe"
+          if not exist "%SIGNTOOL%" (
+            echo signtool.exe not found at %SIGNTOOL%
+            exit /b 1
+          )
+          "%SIGNTOOL%" sign /v /fd sha256 /sha1 5dabc63c86ccfea1029185c4b36e33c1bac4c743 /tr http://time.certum.pl /td sha256 "${{ steps.find_installer.outputs.path }}"
 
       - name: Verify signature
-        shell: powershell
+        shell: cmd
         run: |
-          $signtool = "D:\actions-runner\signtool.exe"
-          & $signtool verify /pa /v "${{ steps.find_installer.outputs.path }}"
+          @echo off
+          set "SIGNTOOL=D:\actions-runner\signtool.exe"
+          "%SIGNTOOL%" verify /pa /v "${{ steps.find_installer.outputs.path }}"
 
       - name: Upload signed artifact
         uses: actions/upload-artifact@v4
