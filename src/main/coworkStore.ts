@@ -1094,6 +1094,7 @@ export class CoworkStore implements MemoryBackend {
    */
   findOrderSessionByPeer(metabotId: number, peerGlobalMetaId: string): CoworkConversationMapping | null {
     const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    // Primary: match by peer_global_metaid column on the session
     const row = this.getOne<CoworkConversationMappingRow>(`
       SELECT m.channel, m.external_conversation_id, m.metabot_id, m.cowork_session_id, m.metadata_json, m.created_at, m.last_active_at
       FROM cowork_conversation_mappings m
@@ -1104,7 +1105,19 @@ export class CoworkStore implements MemoryBackend {
       ORDER BY m.last_active_at DESC
       LIMIT 1
     `, [normalizedMetabotId, peerGlobalMetaId]);
-    return row ? this.mapConversationMappingRow(row) : null;
+    if (row) return this.mapConversationMappingRow(row);
+
+    // Fallback: match by peerGlobalMetaId stored in metadata_json (handles providerMetaId vs providerGlobalMetaId mismatch)
+    const fallbackRow = this.getOne<CoworkConversationMappingRow>(`
+      SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+      FROM cowork_conversation_mappings
+      WHERE channel = 'metaweb_order'
+        AND metabot_id = ?
+        AND metadata_json LIKE ?
+      ORDER BY last_active_at DESC
+      LIMIT 1
+    `, [normalizedMetabotId, `%"peerGlobalMetaId":"${peerGlobalMetaId}"%`]);
+    return fallbackRow ? this.mapConversationMappingRow(fallbackRow) : null;
   }
 
   updateConversationMappingMetadata(

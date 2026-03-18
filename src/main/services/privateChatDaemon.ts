@@ -631,6 +631,20 @@ async function processOne(
         try {
           await sendEncryptedMsg(trimmedInvite);
           emitLog(`[Order] Rating invite sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+          // Add [NeedsRating] to B's own session so it appears in B's UI
+          const bMapping = coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id);
+          if (bMapping && emitToRenderer) {
+            const inviteMsg = coworkStore.addMessage(bMapping.coworkSessionId, {
+              type: 'assistant',
+              content: trimmedInvite,
+              metadata: {
+                sourceChannel: 'metaweb_order',
+                externalConversationId,
+                direction: 'outgoing',
+              },
+            });
+            emitToRenderer('cowork:stream:message', { sessionId: bMapping.coworkSessionId, message: inviteMsg });
+          }
         } catch (error) {
           emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -689,6 +703,7 @@ async function processOne(
         markProcessed(db, row.id, saveDb);
         return;
       }
+      emitLog(`[PrivateChat] No buyer order session found for peer ${fromGlobalMetaId.slice(0, 12)}…, treating as regular private chat.`);
     }
 
     const { sessionId, externalConversationId } = resolvePrivateConversationSession(coworkStore, metabot.id, row);
