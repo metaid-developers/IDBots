@@ -35,6 +35,9 @@ resources/mingit/
 resources/MinGit-*.zip
 resources/PortableGit-*.7z.exe
 
+# Removed skill — do not re-add to repo (accidental skill)
+SKILLs/maintain-idbots-project/
+
 # SKILLs runtime files
 SKILLs/**/.connection
 SKILLs/**/.server.log
