@@ -20,8 +20,6 @@ jobs:
         include:
           - os: macos-latest
             build_args: --mac --arm64 --dir
-          - os: windows-latest
-            build_args: --win --x64
 
     steps:
       # Windows: 必须在 checkout 之前启用长路径，否则 git 操作可能被截断
@@ -198,21 +196,44 @@ jobs:
       windows_oss_url: ${{ steps.upload_oss.outputs.windows_oss_url }}
 
     steps:
+      - name: Enable Git long paths (Windows)
+        run: git config --global core.longpaths true
+
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Verify tag matches package version
+        run: |
+          node -e "const tag=process.env.GITHUB_REF_NAME||''; const version=require('./package.json').version; const expected='v'+version; if(tag!==expected){console.error('Tag/package version mismatch: tag='+tag+' package='+version+' expected='+expected); process.exit(1);} console.log('Tag/package version aligned: '+tag);"
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
 
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-windows-latest
-          path: release-assets/windows
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build renderer (Vite)
+        run: npm run build
+
+      - name: Compile Electron main process
+        run: npm run compile:electron
+
+      - name: Install web-search skill dependencies
+        working-directory: SKILLs/web-search
+        run: npm install
+
+      - name: Build web-search skill
+        run: npm run build:skill:web-search
+
+      - name: Setup MinGit (Windows)
+        run: node scripts/setup-mingit.js
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --x64 --publish never
 
       - name: Locate unsigned installer
         id: find_installer
@@ -220,13 +241,13 @@ jobs:
         run: |
           @echo off
           set "EXE_PATH="
-          for /f "delims=" %%F in ('dir /b /s release-assets\\windows\\*.exe') do (
+          for /f "delims=" %%F in ('dir /b /s release\\*.exe') do (
             set "EXE_PATH=%%F"
             goto :done
           )
           :done
-          if not defined EXE_PATH (
-            echo No .exe found in release-assets/windows
+          if not defined EXE_PATH (            
+            echo No .exe found in release
             exit /b 1
           )
           echo path=%EXE_PATH%>>%GITHUB_OUTPUT%
@@ -269,6 +290,19 @@ jobs:
           @echo off
           set "NODE_PATH=%CD%\.tmp-oss\node_modules"
           node scripts\upload-to-oss.cjs "${{ steps.find_installer.outputs.path }}"
+
+      - name: Upload signed exe to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: IDBots ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
