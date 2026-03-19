@@ -194,8 +194,20 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: [self-hosted, windows, win-sign]
+    outputs:
+      windows_oss_url: ${{ steps.upload_oss.outputs.windows_oss_url }}
 
     steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
@@ -237,18 +249,26 @@ jobs:
           set "SIGNTOOL=D:\actions-runner\signtool.exe"
           "%SIGNTOOL%" verify /pa /v "${{ steps.find_installer.outputs.path }}"
 
-      - name: Upload signed artifact
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: IDBots ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            release-assets/windows/*.exe
+      - name: Install OSS SDK (temp)
+        shell: cmd
+        run: |
+          @echo off
+          if not exist .tmp-oss mkdir .tmp-oss
+          if not exist .tmp-oss\package.json npm --prefix .tmp-oss init -y >nul
+          npm --prefix .tmp-oss install ali-oss@6 --silent
+
+      - name: Upload signed installer to OSS
+        id: upload_oss
+        shell: cmd
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+        run: |
+          @echo off
+          set "NODE_PATH=%CD%\.tmp-oss\node_modules"
+          node scripts\upload-to-oss.cjs "${{ steps.find_installer.outputs.path }}"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -279,8 +299,8 @@ jobs:
             Cross-platform desktop installers for IDBots.
 
             Included packages:
-            - Windows NSIS installer (.exe, code-signed)
             - macOS DMG package (.dmg, signed & notarized)
+            - Windows NSIS installer (.exe, code-signed, OSS): ${{ needs.sign_windows.outputs.windows_oss_url }}
 
             Notes:
             - macOS DMG is signed and notarized in GitHub Actions.
