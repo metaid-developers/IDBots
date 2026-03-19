@@ -218,27 +218,42 @@ man-p2p 在 `localhost:7281` 暴露以下端点，**响应 envelope 与现有 ma
 |------|------|------------|
 | `GET /pin/{pinId}` | 查询单个 PIN 数据 | `metaidCore.ts` `getPinData()` |
 | `GET /pin/path/list?metaid=&path=&page=&limit=` | 按路径列表查询 PIN | `main.ts` 4 处调用 |
-| `GET /api/v1/users/info/metaid/{metaId}` | 查询用户信息 | `privateChatDaemon.ts` 等 |
-| `GET /api/v1/files/content/{pinId}` | 获取文件内容 | 文件检索场景 |
+| `GET /address/pin/list/{address}?cursor=&size=&path=` | 按地址+路径列表查询 PIN | `skillSyncService.ts` L138 |
+| `GET /api/v1/users/info/metaid/{metaId}` | 查询用户信息（name/avatar/chatpubkey） | `metabotRestoreService.ts` |
+| `GET /api/v1/users/info/address/{address}` | 按地址查询用户信息 | `metabotRestoreService.ts` |
+| `GET /content/{pinId}` | 获取 PIN 原始内容字节 | `skillSyncService.ts` L243、`metabotRestoreService.ts` |
 | `GET /health` | 健康检查 | `p2pIndexerService.ts` |
 | `POST /api/config/reload` | 热重载同步配置 | `p2p:setConfig` IPC |
-| `GET /api/p2p/status` | P2P 节点状态（peer 数、同步进度） | `p2p:getStatus` IPC |
+| `GET /api/p2p/status` | P2P 节点状态 | `p2p:getStatus` IPC |
 | `GET /api/p2p/peers` | 已连接节点列表 | `p2p:getPeers` IPC |
 
-### 5.3 现有代码改动（全量 manapi 调用点）
+**`GET /api/p2p/status` 响应 schema**：
 
-经代码库 grep，所有 `manapi.metaid.io` 调用点如下，全部改为优先走 `localhost:7281`，兜底保留原 URL：
+```json
+{
+  "peerCount": 12,
+  "syncProgress": 0.85,
+  "dataSource": "p2p",
+  "storageLimitReached": false,
+  "storageUsedBytes": 1073741824
+}
+```
+
+`storageUsedBytes` 通过对 PebbleDB 数据目录执行 `filepath.Walk` 累加文件大小获得，每 60s 检查一次。`dataSource` 取值：`"p2p"` / `"local_cache"` / `"centralized_api"`。
+
+### 5.3 现有代码改动（全量外部 API 调用点）
+
+经代码库 grep，所有外部 metaid.io API 调用点如下：
 
 | 文件 | 调用点 | 改动方式 |
 |------|--------|---------|
-| `src/main/services/metaidCore.ts` | `getPinData()` — `GET /pin/{pinId}` | 本地优先，兜底 manapi |
-| `src/main/main.ts` (L485) | `GET /pin/path/list` — MetaBot 技能列表 | 同上 |
-| `src/main/main.ts` (L627) | `GET /pin/path/list` — GigSquare 商品列表 | 同上 |
-| `src/main/main.ts` (L674) | `GET /pin/path/list` — 订单查询 | 同上 |
-| `src/main/main.ts` (L3056) | `GET /pin/path/list` — 其他查询 | 同上 |
-| `src/main/services/skillSyncService.ts` | `MANAPI_BASE` 常量 | 替换为本地端点 |
+| `src/main/services/metaidCore.ts` | `GET /pin/{pinId}` (manapi.metaid.io) | 本地优先，兜底 manapi |
+| `src/main/main.ts` (L485, L627, L674, L3056) | `GET /pin/path/list` (manapi.metaid.io) | 本地优先，兜底 manapi |
+| `src/main/services/skillSyncService.ts` L138 | `GET /address/pin/list/{address}` (manapi.metaid.io) | 本地优先，兜底 manapi |
+| `src/main/services/skillSyncService.ts` L243 | `GET /content/{pinId}` (man.metaid.io) | 本地优先，兜底 man.metaid.io |
+| `src/main/services/metabotRestoreService.ts` L3-5 | `/info/address`、`/info/metaid`、`/content/{pinId}` (file.metaid.io) | 本地优先，兜底 file.metaid.io |
 
-**`metaid_pins` SQLite 缓存的处理**：保留现有 SQLite `metaid_pins` 表作为 L1 缓存（毫秒级本地查询），man-p2p PebbleDB 作为 L2（本地索引器），manapi.metaid.io 作为 L3 兜底。`getPinData()` 查询顺序：SQLite → localhost:7281 → manapi。写入时同步更新 SQLite 缓存，保持现有行为不变。
+**`metaid_pins` SQLite 缓存的处理**：保留现有 SQLite `metaid_pins` 表作为 L1 缓存（毫秒级本地查询），man-p2p PebbleDB 作为 L2（本地索引器），原中心化 API 作为 L3 兜底。`getPinData()` 查询顺序：SQLite → localhost:7281 → 原 API。写入时同步更新 SQLite 缓存，保持现有行为不变。
 
 ### 5.4 新增 IPC 接口
 
