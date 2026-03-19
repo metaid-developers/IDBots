@@ -20,6 +20,8 @@ jobs:
         include:
           - os: macos-latest
             build_args: --mac --arm64 --dir
+          - os: windows-latest
+            build_args: --win --x64
 
     steps:
       # Windows: 必须在 checkout 之前启用长路径，否则 git 操作可能被截断
@@ -111,15 +113,22 @@ jobs:
           echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "CSC_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
 
-      - name: Build Electron app package
+      - name: Build Electron app package (macOS)
+        if: runner.os == 'macOS'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          IDBOTS_SKIP_NOTARIZE: ${{ runner.os == 'macOS' && '1' || '' }}
+          IDBOTS_SKIP_NOTARIZE: 1
         run: >
           npx electron-builder ${{ matrix.build_args }}
           --publish never
+
+      - name: Build Electron app package (Windows unsigned)
+        if: runner.os == 'Windows'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder ${{ matrix.build_args }} --publish never -c.win.signAndEditExecutable=false
 
       - name: Notarize app (macOS)
         if: runner.os == 'macOS'
@@ -188,143 +197,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  sign_windows:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: [self-hosted, windows, win-sign]
-    defaults:
-      run:
-        shell: cmd
-    outputs:
-      windows_oss_url: ${{ steps.upload_oss.outputs.windows_oss_url }}
-
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build renderer (Vite)
-        run: npm run build
-
-      - name: Compile Electron main process
-        run: npm run compile:electron
-
-      - name: Install web-search skill dependencies
-        working-directory: SKILLs/web-search
-        run: npm install
-
-      - name: Build web-search skill
-        run: npm run build:skill:web-search
-
-      - name: Prepare PortableGit archive cache (Windows)
-        run: |
-          @echo off
-          set "PORTABLE_GIT_CACHE_DIR=D:\actions-runner\cache"
-          set "PORTABLE_GIT_CACHE=%PORTABLE_GIT_CACHE_DIR%\PortableGit-2.47.1-64-bit.7z.exe"
-          if not exist "%PORTABLE_GIT_CACHE_DIR%" mkdir "%PORTABLE_GIT_CACHE_DIR%"
-          if exist "%PORTABLE_GIT_CACHE%" (
-            echo Reusing cached PortableGit archive: %PORTABLE_GIT_CACHE%
-          ) else (
-            echo Downloading PortableGit archive from mirror...
-            curl.exe -fL --retry 3 --retry-delay 5 "https://mirrors.huaweicloud.com/git-for-windows/v2.47.1.windows.1/PortableGit-2.47.1-64-bit.7z.exe" -o "%PORTABLE_GIT_CACHE%"
-            if errorlevel 1 (
-              echo Failed to download PortableGit archive
-              exit /b 1
-            )
-          )
-          echo IDBOTS_PORTABLE_GIT_ARCHIVE=%PORTABLE_GIT_CACHE%>>%GITHUB_ENV%
-
-      - name: Setup MinGit (Windows)
-        timeout-minutes: 8
-        run: node scripts/setup-mingit.js
-
-      - name: Build Windows installer
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --win --x64 --publish never -c.win.signAndEditExecutable=false
-
-      - name: Locate unsigned installer
-        id: find_installer
-        shell: cmd
-        run: |
-          @echo off
-          set "EXE_PATH="
-          for /f "delims=" %%F in ('dir /b /s release\\*.exe') do (
-            set "EXE_PATH=%%F"
-            goto :done
-          )
-          :done
-          if not defined EXE_PATH (            
-            echo No .exe found in release
-            exit /b 1
-          )
-          echo path=%EXE_PATH%>>%GITHUB_OUTPUT%
-
-      - name: Sign Windows installer (Certum)
-        shell: cmd
-        run: |
-          @echo off
-          set "SIGNTOOL=D:\actions-runner\signtool.exe"
-          if not exist "%SIGNTOOL%" (
-            echo signtool.exe not found at %SIGNTOOL%
-            exit /b 1
-          )
-          "%SIGNTOOL%" sign /v /fd sha256 /sha1 5dabc63c86ccfea1029185c4b36e33c1bac4c743 /tr http://time.certum.pl /td sha256 "${{ steps.find_installer.outputs.path }}"
-
-      - name: Verify signature
-        shell: cmd
-        run: |
-          @echo off
-          set "SIGNTOOL=D:\actions-runner\signtool.exe"
-          "%SIGNTOOL%" verify /pa /v "${{ steps.find_installer.outputs.path }}"
-
-      - name: Install OSS SDK (temp)
-        shell: cmd
-        run: |
-          @echo off
-          if not exist .tmp-oss mkdir .tmp-oss
-          if not exist .tmp-oss\package.json npm --prefix .tmp-oss init -y >nul
-          npm --prefix .tmp-oss install ali-oss@6 --silent
-
-      - name: Upload signed installer to OSS
-        id: upload_oss
-        shell: cmd
-        env:
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
-          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
-        run: |
-          @echo off
-          set "NODE_PATH=%CD%\.tmp-oss\node_modules"
-          node scripts\upload-to-oss.cjs "${{ steps.find_installer.outputs.path }}"
-
-      - name: Upload signed exe to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: IDBots ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            release/*.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [build, sign_windows]
+    needs: [build]
 
     steps:
       - name: Download macOS artifacts
@@ -332,6 +208,12 @@ jobs:
         with:
           name: dist-macos-latest
           path: release-assets/macos
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-windows-latest
+          path: release-assets/windows
 
       - name: Verify release assets
         run: |
@@ -351,7 +233,7 @@ jobs:
 
             Included packages:
             - macOS DMG package (.dmg, signed & notarized)
-            - Windows NSIS installer (.exe, code-signed, OSS): ${{ needs.sign_windows.outputs.windows_oss_url }}
+            - Windows NSIS installer (.exe)
 
             Notes:
             - macOS DMG is signed and notarized in GitHub Actions.
@@ -360,5 +242,8 @@ jobs:
             release-assets/macos/*.dmg
             release-assets/macos/*.blockmap
             release-assets/macos/latest-mac.yml
+            release-assets/windows/*.exe
+            release-assets/windows/*.blockmap
+            release-assets/windows/latest*.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
