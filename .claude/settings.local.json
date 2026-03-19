@@ -8,7 +8,8 @@
       "Bash(npx tsc:*)",
       "Bash(echo \"EXIT:$?\")",
       "Bash(grep -n \"peerGlobalMetaId: toGlobalMetaId, peerName, peerAvatar, role: ''buyer''\" /Users/tusm/Documents/MetaID_Projects/IDBots/IDBots-indev/src/main/main.ts)",
-      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")"
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")",
+      "Bash(git log:*)"
     ]
   }
 }
