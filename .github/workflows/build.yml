@@ -225,7 +225,26 @@ jobs:
       - name: Build web-search skill
         run: npm run build:skill:web-search
 
+      - name: Prepare PortableGit archive cache (Windows)
+        run: |
+          @echo off
+          set "PORTABLE_GIT_CACHE_DIR=D:\actions-runner\cache"
+          set "PORTABLE_GIT_CACHE=%PORTABLE_GIT_CACHE_DIR%\PortableGit-2.47.1-64-bit.7z.exe"
+          if not exist "%PORTABLE_GIT_CACHE_DIR%" mkdir "%PORTABLE_GIT_CACHE_DIR%"
+          if exist "%PORTABLE_GIT_CACHE%" (
+            echo Reusing cached PortableGit archive: %PORTABLE_GIT_CACHE%
+          ) else (
+            echo Downloading PortableGit archive from mirror...
+            curl.exe -fL --retry 3 --retry-delay 5 "https://mirrors.huaweicloud.com/git-for-windows/v2.47.1.windows.1/PortableGit-2.47.1-64-bit.7z.exe" -o "%PORTABLE_GIT_CACHE%"
+            if errorlevel 1 (
+              echo Failed to download PortableGit archive
+              exit /b 1
+            )
+          )
+          echo IDBOTS_PORTABLE_GIT_ARCHIVE=%PORTABLE_GIT_CACHE%>>%GITHUB_ENV%
+
       - name: Setup MinGit (Windows)
+        timeout-minutes: 8
         run: node scripts/setup-mingit.js
 
       - name: Build Windows installer
