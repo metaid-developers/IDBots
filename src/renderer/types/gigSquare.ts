@@ -11,6 +11,8 @@ export type GigSquareService = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  ratingCount?: number;
+  updatedAt?: number;
 };
 
 export type GigSquareProviderInfo = {

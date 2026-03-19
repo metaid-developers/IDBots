@@ -99,11 +99,24 @@ export const checkForAppUpdate = async (currentVersion: string): Promise<AppUpda
     },
   });
 
-  if (!response.ok || typeof response.data !== 'object' || response.data === null) {
+  if (!response.ok) {
     return null;
   }
 
-  const payload = response.data as UpdateApiResponse;
+  // Parse payload: main process only sets data to object when Content-Type is application/json;
+  // if server omits it, data is a string — try parsing so update still works.
+  let payload: UpdateApiResponse;
+  if (typeof response.data === 'object' && response.data !== null) {
+    payload = response.data as UpdateApiResponse;
+  } else if (typeof response.data === 'string') {
+    try {
+      payload = JSON.parse(response.data) as UpdateApiResponse;
+    } catch {
+      return null;
+    }
+  } else {
+    return null;
+  }
   if (payload.code !== 0) {
     return null;
   }

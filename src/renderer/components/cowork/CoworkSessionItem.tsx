@@ -243,7 +243,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const isA2A = session.sessionType === 'a2a';
-  const displayTitle = isA2A && session.peerName ? session.peerName : session.title;
+  const displayTitle = session.title?.trim()
+    || session.peerName
+    || i18nService.t('coworkNewSession');
   const menuItems = useMemo(() => {
     return [
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },

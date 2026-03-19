@@ -59,6 +59,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
   }>({});
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [handshake, setHandshake] = useState<HandshakeStatus>('idle');
+  const [feeRate, setFeeRate] = useState<number>(1);
 
   const loadMetabots = useCallback(async () => {
     try {
@@ -152,14 +153,6 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     }
   }, [isOpen, buyerMetabotId, metabots, selectedMetabotId]);
 
-  // Trigger handshake once we have both chatpubkey and a selected metabot
-  useEffect(() => {
-    if (!isOpen || !service?.providerGlobalMetaId) return;
-    if (!providerInfo.chatpubkey || !selectedMetabotId) return;
-    if (handshake !== 'idle') return;
-    runHandshake(selectedMetabotId, providerInfo.chatpubkey, service.providerGlobalMetaId);
-  }, [isOpen, providerInfo.chatpubkey, selectedMetabotId, service?.providerGlobalMetaId, handshake, runHandshake]);
-
   const priceDisplay = useMemo(() => {
     if (!service) return null;
     return formatGigSquarePrice(service.price, service.currency);
@@ -174,6 +167,29 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     () => (service ? currencyToChain(service.currency) : 'mvc'),
     [service]
   );
+
+  // Fetch live fee rate for the payment chain
+  useEffect(() => {
+    if (!isOpen) return;
+    if (chain !== 'btc') {
+      setFeeRate(chain === 'doge' ? 200_000 : 1);
+      return;
+    }
+    window.electron.idbots
+      .getTransferFeeSummary('btc')
+      .then((res) => {
+        if (res.success && res.defaultFeeRate != null) setFeeRate(res.defaultFeeRate);
+      })
+      .catch(() => setFeeRate(2));
+  }, [isOpen, chain]);
+
+  // Trigger handshake once we have both chatpubkey and a selected metabot
+  useEffect(() => {
+    if (!isOpen || !service?.providerGlobalMetaId) return;
+    if (!providerInfo.chatpubkey || !selectedMetabotId) return;
+    if (handshake !== 'idle') return;
+    runHandshake(selectedMetabotId, providerInfo.chatpubkey, service.providerGlobalMetaId);
+  }, [isOpen, providerInfo.chatpubkey, selectedMetabotId, service?.providerGlobalMetaId, handshake, runHandshake]);
 
   const balanceForChain = useMemo(() => {
     if (chain === 'btc') return balance.btc;
@@ -222,7 +238,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         chain,
         toAddress: service.providerAddress,
         amountSpaceOrDoge: amount,
-        feeRate: 1,
+        feeRate,
       });
 
       if (!payment?.success) {
@@ -331,6 +347,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     prompt,
     paymentAmount,
     chain,
+    feeRate,
     providerInfo.chatpubkey,
     onClose,
   ]);

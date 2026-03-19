@@ -7,6 +7,7 @@ import type { CoworkStore, CoworkMessage } from '../coworkStore';
 import type { MetabotStore } from '../metabotStore';
 import type { OrderSource } from './orderPayment';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
+import { generateSessionTitle } from '../libs/coworkUtil';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -72,7 +73,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
   }
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
-    const sessionId = this.createOrderSession(request);
+    const sessionId = await this.createOrderSession(request);
     this.sessionIds.add(sessionId);
     const responsePromise = this.createAccumulatorPromise(sessionId, request);
 
@@ -94,7 +95,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     return responsePromise;
   }
 
-  private createOrderSession(request: OrderCoworkRequest): string {
+  private async createOrderSession(request: OrderCoworkRequest): Promise<string> {
     const config = this.coworkStore.getConfig();
     let workspaceRoot = (config.workingDirectory || '').trim();
     // Fall back to the OS temp directory so orders can execute even without a configured workspace.
@@ -106,9 +107,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
       throw new Error(`IM 工作目录不存在或无效: ${resolvedRoot}`);
     }
 
-    const metabot = this.metabotStore.getMetabotById(request.metabotId);
-    const metabotName = metabot?.name || `MetaBot-${request.metabotId}`;
-    const title = request.title || `Order-${metabotName}-${Date.now()}`;
+    const fallbackTitle = request.prompt.split('\n')[0].slice(0, 50) || 'New Session';
+    const generatedTitle = await generateSessionTitle(request.prompt).catch(() => null);
+    const title = generatedTitle?.trim() || request.title?.trim() || fallbackTitle;
 
     const session = this.coworkStore.createSession(
       title,

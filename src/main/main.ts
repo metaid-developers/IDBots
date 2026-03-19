@@ -71,6 +71,15 @@ const IPC_MAX_DEPTH = 5;
 const IPC_MAX_KEYS = 80;
 const IPC_MAX_ITEMS = 40;
 const MAX_INLINE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_LOCAL_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024;
+const LOCAL_IMAGE_PREVIEW_EXTENSION_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
 const MIME_EXTENSION_MAP: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -304,7 +313,8 @@ const parseGigSquareService = (item: Record<string, unknown>): GigSquareService 
   const currency = toSafeString(summary.currency || summary.priceUnit).trim();
   const providerMetaId = toSafeString(item.metaid || item.createMetaId).trim();
   const providerGlobalMetaId = toSafeString(item.globalMetaId).trim();
-  const providerAddress = toSafeString(item.address || item.addres).trim();
+  const paymentAddress = toSafeString(summary.paymentAddress).trim();
+  const providerAddress = paymentAddress || toSafeString(item.address || item.addres).trim();
   const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
   const serviceIcon = typeof summary.serviceIcon === 'string' ? summary.serviceIcon.trim() || null : null;
   if (!serviceName || !providerMetaId || !providerAddress) return null;
@@ -493,6 +503,9 @@ async function syncRemoteSkillServices(): Promise<void> {
       const inputType = summary ? toSafeString((summary as Record<string, unknown>).inputType).trim() : '';
       const outputType = summary ? toSafeString((summary as Record<string, unknown>).outputType).trim() : '';
       const endpoint = summary ? toSafeString((summary as Record<string, unknown>).endpoint).trim() : '';
+      const itemTimestamp = typeof item.timestamp === 'number' && item.timestamp > 0
+        ? item.timestamp
+        : now;
       const params = sanitizeDbParams([
         parsed.id,
         parsed.providerMetaId,
@@ -512,14 +525,15 @@ async function syncRemoteSkillServices(): Promise<void> {
         outputType || null,
         endpoint || null,
         contentSummaryJson || null,
-        now,
+        parsed.providerAddress,
+        itemTimestamp,
       ]);
       db.run(
         `INSERT INTO remote_skill_service (
           id, metaid, global_metaid, address, service_name, display_name, description,
           price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
-          skill_document, input_type, output_type, endpoint, content_summary_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          skill_document, input_type, output_type, endpoint, content_summary_json, payment_address, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           metaid = excluded.metaid,
           global_metaid = excluded.global_metaid,
@@ -538,6 +552,7 @@ async function syncRemoteSkillServices(): Promise<void> {
           output_type = excluded.output_type,
           endpoint = excluded.endpoint,
           content_summary_json = excluded.content_summary_json,
+          payment_address = excluded.payment_address,
           updated_at = excluded.updated_at`,
         params
       );
@@ -548,9 +563,172 @@ async function syncRemoteSkillServices(): Promise<void> {
   }
 }
 
+const GIG_SQUARE_RATING_PATH = '/protocols/skill-service-rate';
+const GIG_SQUARE_RATING_SYNC_SIZE = 200;
+const GIG_SQUARE_RATING_MAX_PAGES = 10;
+const GIG_SQUARE_RATING_LATEST_PIN_KEY = 'gig_square_rating.latest_pin_id';
+const GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY = 'gig_square_rating.backfill_cursor';
+
+async function syncRemoteSkillServiceRatings(): Promise<void> {
+  const sqliteStore = getStore();
+  const db = sqliteStore.getDatabase();
+
+  // Helper: read/write kv
+  const kvGet = (key: string): string | null => {
+    const r = db.exec('SELECT value FROM kv WHERE key = ?', [key]);
+    if (!r.length || !r[0].values.length) return null;
+    return String(r[0].values[0][0]);
+  };
+  const kvSet = (key: string, value: string) => {
+    db.run('INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at', [key, value, Date.now()]);
+  };
+
+  const latestPinId = kvGet(GIG_SQUARE_RATING_LATEST_PIN_KEY);
+
+  // Accumulate deltas: serviceID -> { count, sum }
+  const deltas = new Map<string, { count: number; sum: number }>();
+
+  const now = Date.now();
+  const processItem = (item: Record<string, unknown>) => {
+    const itemId = typeof item.id === 'string' ? item.id.trim() : String(item.id || '').trim();
+    if (!itemId) return;
+    const rawSummary = item.contentSummary;
+    let summary: Record<string, unknown> | null = null;
+    if (typeof rawSummary === 'string') {
+      try { summary = JSON.parse(rawSummary); } catch { return; }
+    } else if (rawSummary && typeof rawSummary === 'object') {
+      summary = rawSummary as Record<string, unknown>;
+    }
+    if (!summary) return;
+    const serviceID = typeof summary.serviceID === 'string' ? summary.serviceID.trim() : '';
+    const rateRaw = summary.rate;
+    const rate = typeof rateRaw === 'string' ? parseFloat(rateRaw) : typeof rateRaw === 'number' ? rateRaw : NaN;
+    if (!serviceID || isNaN(rate) || rate < 1 || rate > 5) return;
+
+    db.run(
+      'INSERT OR IGNORE INTO remote_skill_service_rating_seen (pin_id, service_id, rate, created_at) VALUES (?, ?, ?, ?)',
+      [itemId, serviceID, rate, now]
+    );
+    if ((db.getRowsModified?.() || 0) <= 0) return;
+
+    const d = deltas.get(serviceID) || { count: 0, sum: 0 };
+    d.count += 1;
+    d.sum += rate;
+    deltas.set(serviceID, d);
+  };
+
+  // --- Incremental sync (newest first) ---
+  let newLatestPinId: string | null = null;
+  let cursor: string | undefined;
+  let lastIncrementalNextCursor: string | undefined;
+  let hitLatest = false;
+
+  for (let page = 0; page < GIG_SQUARE_RATING_MAX_PAGES; page++) {
+    const url = new URL('https://manapi.metaid.io/pin/path/list');
+    url.searchParams.set('path', GIG_SQUARE_RATING_PATH);
+    url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
+    if (cursor) url.searchParams.set('cursor', cursor);
+
+    let json: Record<string, unknown>;
+    try {
+      const resp = await fetch(url.toString());
+      if (!resp.ok) { console.warn('[GigSquare Rating] fetch failed', resp.status); break; }
+      json = await resp.json() as Record<string, unknown>;
+    } catch (e) {
+      console.warn('[GigSquare Rating] fetch error', e);
+      break;
+    }
+
+    const data = json?.data as Record<string, unknown> | undefined;
+    const list = Array.isArray(data?.list) ? data!.list as Record<string, unknown>[] : [];
+    const nextCursor = typeof data?.nextCursor === 'string' && data.nextCursor ? data.nextCursor : undefined;
+
+    if (page === 0 && list.length > 0) {
+      newLatestPinId = String(list[0].id ?? '');
+    }
+    lastIncrementalNextCursor = nextCursor;
+
+    for (const item of list) {
+      const itemId = String(item.id ?? '');
+      if (latestPinId && itemId === latestPinId) {
+        hitLatest = true;
+        break;
+      }
+      processItem(item);
+    }
+
+    if (hitLatest || !nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  const processedCount = Array.from(deltas.values()).reduce((s, d) => s + d.count, 0);
+  console.debug(`[GigSquare Rating] incremental: processed ${processedCount} ratings, hitLatest=${hitLatest}`);
+
+  // --- Backfill: 1 extra page of older records per sync ---
+  let backfillCursor = kvGet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY);
+  // Seed backfill cursor from last incremental page's nextCursor if not yet set
+  if (!backfillCursor && lastIncrementalNextCursor) {
+    backfillCursor = lastIncrementalNextCursor;
+  }
+  if (backfillCursor) {
+    const url = new URL('https://manapi.metaid.io/pin/path/list');
+    url.searchParams.set('path', GIG_SQUARE_RATING_PATH);
+    url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
+    url.searchParams.set('cursor', backfillCursor);
+    try {
+      const resp = await fetch(url.toString());
+      if (resp.ok) {
+        const json = await resp.json() as Record<string, unknown>;
+        const data = json?.data as Record<string, unknown> | undefined;
+        const list = Array.isArray(data?.list) ? data!.list as Record<string, unknown>[] : [];
+        const nextCursor = typeof data?.nextCursor === 'string' && data.nextCursor ? data.nextCursor : null;
+        for (const item of list) processItem(item);
+        console.debug(`[GigSquare Rating] backfill: processed ${list.length} items, nextCursor=${nextCursor ?? 'done'}`);
+        if (nextCursor) {
+          kvSet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY, nextCursor);
+        } else {
+          db.run('DELETE FROM kv WHERE key = ?', [GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY]);
+        }
+      }
+    } catch (e) {
+      console.warn('[GigSquare Rating] backfill error', e);
+    }
+  }
+
+  // --- Apply deltas to DB ---
+  const affectedServices = deltas.size;
+  for (const [serviceID, delta] of deltas) {
+    db.run(
+      `UPDATE remote_skill_service
+       SET rating_avg = (rating_avg * rating_count + ?) / (rating_count + ?),
+           rating_count = rating_count + ?
+       WHERE id = ?`,
+      [delta.sum, delta.count, delta.count, serviceID]
+    );
+  }
+  console.debug(`[GigSquare Rating] updated ${affectedServices} services`);
+
+  if (newLatestPinId) {
+    kvSet(GIG_SQUARE_RATING_LATEST_PIN_KEY, newLatestPinId);
+  }
+
+  sqliteStore.getSaveFunction()();
+}
+
 function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const db = getStore().getDatabase();
-  const result = db.exec('SELECT id, metaid, global_metaid, address, service_name, display_name, description, price, currency, avatar, service_icon, provider_skill, updated_at FROM remote_skill_service ORDER BY updated_at DESC');
+  const result = db.exec(`
+    SELECT id, metaid, global_metaid, address, payment_address, service_name, display_name, description,
+           price, currency, avatar, service_icon, provider_skill, updated_at, rating_count
+    FROM remote_skill_service
+    ORDER BY
+      CASE WHEN rating_count > 0
+        THEN (rating_avg * rating_count + 4.0 * 5) / (rating_count + 5)
+        ELSE 0
+      END DESC,
+      rating_count DESC,
+      updated_at DESC
+  `);
   if (!result.length || !result[0].values.length) return [];
   const columns = result[0].columns as string[];
   const rows = result[0].values as (string | number)[][];
@@ -570,10 +748,12 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
       currency: getVal('currency'),
       providerMetaId: getVal('metaid'),
       providerGlobalMetaId: getVal('global_metaid'),
-      providerAddress: getVal('address'),
+      providerAddress: getVal('payment_address') || getVal('address'),
       avatar: getVal('avatar') || undefined,
       serviceIcon: getVal('service_icon') || undefined,
       providerSkill: getVal('provider_skill') || undefined,
+      ratingCount: (() => { const i = columns.indexOf('rating_count'); return i >= 0 && row[i] != null ? Number(row[i]) : 0; })(),
+      updatedAt: (() => { const i = columns.indexOf('updated_at'); return i >= 0 && row[i] != null ? Number(row[i]) : 0; })(),
     } as GigSquareService;
   });
 }
@@ -1837,6 +2017,56 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:readLocalImage', async (_event, options: { path: string; maxBytes?: number }) => {
+    try {
+      const rawPath = typeof options?.path === 'string' ? options.path.trim() : '';
+      if (!rawPath) {
+        return { success: false, error: 'Image path is required' };
+      }
+
+      const resolvedPath = path.resolve(rawPath);
+      const extension = path.extname(resolvedPath).toLowerCase();
+      const mimeType = LOCAL_IMAGE_PREVIEW_EXTENSION_MIME[extension];
+      if (!mimeType) {
+        return { success: false, error: 'Unsupported image file type' };
+      }
+
+      const requestedMaxBytes = Number(options?.maxBytes);
+      const maxBytes = Number.isFinite(requestedMaxBytes) && requestedMaxBytes > 0
+        ? Math.min(Math.floor(requestedMaxBytes), MAX_LOCAL_IMAGE_PREVIEW_BYTES)
+        : MAX_LOCAL_IMAGE_PREVIEW_BYTES;
+
+      const stat = await fs.promises.stat(resolvedPath);
+      if (!stat.isFile()) {
+        return { success: false, error: 'Target path is not a file' };
+      }
+
+      if (stat.size > maxBytes) {
+        return {
+          success: false,
+          error: `Image too large (max ${Math.floor(maxBytes / (1024 * 1024))}MB)`,
+        };
+      }
+
+      const buffer = await fs.promises.readFile(resolvedPath);
+      return {
+        success: true,
+        dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`,
+        mimeType,
+        size: buffer.length,
+      };
+    } catch (error) {
+      const nodeCode = (error as NodeJS.ErrnoException | null)?.code;
+      if (nodeCode === 'ENOENT') {
+        return { success: false, error: 'Image file not found' };
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read local image',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:session:exportResultImage', async (
     event,
     options: {
@@ -2773,6 +3003,7 @@ if (!gotTheLock) {
   ipcMain.handle('gigSquare:syncFromRemote', async () => {
     try {
       await syncRemoteSkillServices();
+      await syncRemoteSkillServiceRatings();
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Sync failed' };
@@ -2949,6 +3180,12 @@ if (!gotTheLock) {
         serviceIconUri = `metafile://${fileResult.pinId}`;
       }
 
+      const paymentAddress = (() => {
+        if (normalizedCurrency === 'BTC') return metabot.btc_address || '';
+        if (normalizedCurrency === 'DOGE') return metabot.doge_address || '';
+        return metabot.mvc_address || '';
+      })();
+
       const payload = {
         serviceName,
         displayName,
@@ -2962,6 +3199,7 @@ if (!gotTheLock) {
         inputType: 'text',
         outputType,
         endpoint: 'simplemsg',
+        paymentAddress,
       };
 
       const payloadJson = JSON.stringify(payload);
@@ -3083,8 +3321,12 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         const existing = coworkStoreInst.getConversationMapping('metaweb_order', externalConversationId, metabotId);
         if (!existing) {
           const config = coworkStoreInst.getConfig();
+          const fallbackTitle = orderPayload.split('\n')[0].slice(0, 50)
+            || `Order-${(peerName || toGlobalMetaId).slice(0, 20)}`;
+          const generatedTitle = await generateSessionTitle(orderPayload).catch(() => null);
+          const sessionTitle = generatedTitle?.trim() || fallbackTitle;
           const session = coworkStoreInst.createSession(
-            `Order-${(peerName || toGlobalMetaId).slice(0, 20)}-${Date.now()}`,
+            sessionTitle,
             config.workingDirectory,
             '',
             'local',
@@ -4216,8 +4458,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
     // Service Square: sync remote skill services on startup and every 10 minutes
     void syncRemoteSkillServices().catch((e) => console.warn('[GigSquare] Initial sync failed', e));
+    void syncRemoteSkillServiceRatings().catch((e) => console.warn('[GigSquare Rating] Initial sync failed', e));
     setInterval(() => {
       void syncRemoteSkillServices().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
+      void syncRemoteSkillServiceRatings().catch((e) => console.warn('[GigSquare Rating] Periodic sync failed', e));
     }, 10 * 60 * 1000);
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
@@ -424,6 +424,115 @@ const toAbsolutePathFromCwd = (filePath: string, cwd: string): string => {
   return `${cwd.replace(/\/$/, '')}/${filePath.replace(/^\.\//, '')}`;
 };
 
+const LOCAL_IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+const LOCAL_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
+const IMAGE_LINK_DESTINATION_PATTERN = /\[[^\]]*]\(([^)\r\n]+)\)/g;
+const IMAGE_CANDIDATE_PATTERN = /(?:^|[\s"'`([{<:：])((?:file:\/\/[^\s"'`)\]}>]+|[A-Za-z]:\\[^\s"'`<>|]+|\/[^\s"'`<>|]+|\.{1,2}[\\/][^\s"'`<>|]+|[^\s"'`<>|]+)\.(?:png|jpe?g|gif|webp|bmp))(?=$|[\s"'`)\]}>，。,；;:：!?])/gi;
+
+type LocalImagePreviewCacheEntry =
+  | { status: 'ready'; dataUrl: string }
+  | { status: 'error' };
+
+const localImagePreviewCache = new Map<string, LocalImagePreviewCacheEntry>();
+
+const trimImageCandidateToken = (value: string): string => {
+  let token = value.trim();
+  if (!token) return token;
+
+  if (token.startsWith('<') && token.endsWith('>')) {
+    token = token.slice(1, -1);
+  }
+
+  token = token.replace(/^[\s"'`([{<]+/, '');
+  token = token.replace(/[\s"'`)\]}>，。,；;:：!?]+$/, '');
+  return token.trim();
+};
+
+const hasSupportedImageExtension = (value: string): boolean => {
+  const base = stripHashAndQuery(value.trim());
+  const match = /\.([A-Za-z0-9]+)$/.exec(base);
+  if (!match) return false;
+  return LOCAL_IMAGE_EXTENSIONS.has(match[1].toLowerCase());
+};
+
+const isLocalImagePathCandidate = (value: string): boolean => {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (!hasSupportedImageExtension(trimmed)) return false;
+
+  const scheme = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
+  if (!scheme) return true;
+  return scheme[1].toLowerCase() === 'file';
+};
+
+const normalizeImageCandidatePath = (value: string): string | null => {
+  const trimmed = trimImageCandidateToken(value);
+  if (!trimmed) return null;
+  if (!isLocalImagePathCandidate(trimmed)) return null;
+  return trimmed;
+};
+
+const getPathBaseName = (value: string): string => {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const lastSlashIndex = normalized.lastIndexOf('/');
+  return lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
+};
+
+const extractImagePaths = (
+  value: string,
+  resolveLocalFilePath?: (href: string, text: string) => string | null
+): string[] => {
+  if (!value) return [];
+
+  const candidates: string[] = [];
+  const pushCandidate = (candidate: string) => {
+    const normalized = normalizeImageCandidatePath(candidate);
+    if (normalized) {
+      candidates.push(normalized);
+    }
+  };
+
+  IMAGE_LINK_DESTINATION_PATTERN.lastIndex = 0;
+  let linkMatch: RegExpExecArray | null = null;
+  while ((linkMatch = IMAGE_LINK_DESTINATION_PATTERN.exec(value)) !== null) {
+    if (typeof linkMatch[1] === 'string') {
+      pushCandidate(linkMatch[1]);
+    }
+  }
+
+  IMAGE_CANDIDATE_PATTERN.lastIndex = 0;
+  let pathMatch: RegExpExecArray | null = null;
+  while ((pathMatch = IMAGE_CANDIDATE_PATTERN.exec(value)) !== null) {
+    if (typeof pathMatch[1] === 'string') {
+      pushCandidate(pathMatch[1]);
+    }
+  }
+
+  const dedupedPaths: string[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const candidate of candidates) {
+    const resolvedPath = resolveLocalFilePath
+      ? resolveLocalFilePath(candidate, candidate)
+      : null;
+    const normalizedCandidatePath = normalizeLocalPath(candidate);
+    const fallbackPath = normalizedCandidatePath?.isAbsolute ? normalizedCandidatePath.path : null;
+    const absolutePath = (resolvedPath ?? fallbackPath)?.trim();
+    if (!absolutePath) continue;
+
+    const normalizedPath = stripFileProtocol(stripHashAndQuery(absolutePath));
+    if (!normalizedPath || !hasSupportedImageExtension(normalizedPath)) {
+      continue;
+    }
+    if (seenPaths.has(normalizedPath)) continue;
+
+    seenPaths.add(normalizedPath);
+    dedupedPaths.push(normalizedPath);
+  }
+
+  return dedupedPaths;
+};
+
 type ToolGroupItem = {
   type: 'tool_group';
   toolUse: CoworkMessage;
@@ -627,14 +736,104 @@ const TodoWriteInputView: React.FC<{ items: ParsedTodoItem[] }> = ({ items }) =>
   );
 };
 
+const ImagePreviewStrip: React.FC<{ imagePaths: string[] }> = ({ imagePaths }) => {
+  const [previewData, setPreviewData] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const cachedPreviews: Record<string, string> = {};
+    for (const imagePath of imagePaths) {
+      const cached = localImagePreviewCache.get(imagePath);
+      if (cached?.status === 'ready') {
+        cachedPreviews[imagePath] = cached.dataUrl;
+      }
+    }
+    setPreviewData(cachedPreviews);
+
+    const pendingPaths = imagePaths.filter((imagePath) => !localImagePreviewCache.has(imagePath));
+    if (pendingPaths.length === 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    pendingPaths.forEach((imagePath) => {
+      void window.electron.cowork.readLocalImage({
+        path: imagePath,
+        maxBytes: LOCAL_IMAGE_PREVIEW_MAX_BYTES,
+      }).then((result) => {
+        if (cancelled) return;
+        if (result?.success && typeof result.dataUrl === 'string' && result.dataUrl) {
+          localImagePreviewCache.set(imagePath, { status: 'ready', dataUrl: result.dataUrl });
+          setPreviewData((prev) => (
+            prev[imagePath]
+              ? prev
+              : { ...prev, [imagePath]: result.dataUrl }
+          ));
+          return;
+        }
+        localImagePreviewCache.set(imagePath, { status: 'error' });
+      }).catch(() => {
+        if (!cancelled) {
+          localImagePreviewCache.set(imagePath, { status: 'error' });
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imagePaths]);
+
+  const visiblePaths = imagePaths.filter((imagePath) => typeof previewData[imagePath] === 'string');
+  if (visiblePaths.length === 0) return null;
+
+  const handleOpenPath = async (imagePath: string) => {
+    try {
+      await window.electron.shell.openPath(imagePath);
+    } catch (error) {
+      console.error('Failed to open image path:', imagePath, error);
+    }
+  };
+
+  return (
+    <div className="ml-4 mt-2 flex flex-wrap gap-2">
+      {visiblePaths.map((imagePath) => (
+        <button
+          key={imagePath}
+          type="button"
+          onClick={() => { void handleOpenPath(imagePath); }}
+          title={imagePath}
+          className="group rounded-lg border dark:border-claude-darkBorder border-claude-border overflow-hidden dark:bg-claude-darkSurface bg-claude-surface hover:border-claude-accent transition-colors"
+        >
+          <img
+            src={previewData[imagePath]}
+            alt={getPathBaseName(imagePath)}
+            className="h-24 w-24 object-cover"
+            loading="lazy"
+          />
+          <div className="px-1.5 py-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary max-w-24 truncate text-left">
+            {getPathBaseName(imagePath)}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+};
+
 const ToolCallGroup: React.FC<{
   group: ToolGroupItem;
   isLastInSequence?: boolean;
   mapDisplayText?: (value: string) => string;
+  resolveLocalFilePath?: (href: string, text: string) => string | null;
+  showImagePreviews?: boolean;
 }> = ({
   group,
   isLastInSequence = true,
   mapDisplayText,
+  resolveLocalFilePath,
+  showImagePreviews = true,
 }) => {
   const { toolUse, toolResult } = group;
   const toolName = typeof toolUse.metadata?.toolName === 'string' ? toolUse.metadata.toolName : 'Tool';
@@ -651,6 +850,12 @@ const ToolCallGroup: React.FC<{
   const isToolError = Boolean(toolResult?.metadata?.isError || toolResult?.metadata?.error);
   const [isExpanded, setIsExpanded] = useState(false);
   const resultLineCount = getToolResultLineCount(toolResultDisplay);
+  const imagePreviewPaths = useMemo(() => {
+    if (!showImagePreviews || !toolResultDisplay) {
+      return [];
+    }
+    return extractImagePaths(toolResultDisplay, resolveLocalFilePath);
+  }, [resolveLocalFilePath, showImagePreviews, toolResultDisplay]);
 
   // Check if this is a Bash-like tool that should show terminal style
   const isBashTool = toolName === 'Bash';
@@ -763,6 +968,9 @@ const ToolCallGroup: React.FC<{
             </div>
           )}
         </div>
+      )}
+      {imagePreviewPaths.length > 0 && (
+        <ImagePreviewStrip imagePaths={imagePreviewPaths} />
       )}
     </div>
   );
@@ -1147,12 +1355,14 @@ const AssistantTurnBlock: React.FC<{
   mapDisplayText?: (value: string) => string;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
+  showImagePreviews?: boolean;
 }> = ({
   turn,
   resolveLocalFilePath,
   mapDisplayText,
   showTypingIndicator = false,
   showCopyButtons = true,
+  showImagePreviews = true,
 }) => {
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
 
@@ -1180,6 +1390,9 @@ const AssistantTurnBlock: React.FC<{
     const toolResultDisplay = mapDisplayText ? mapDisplayText(toolResultDisplayRaw) : toolResultDisplayRaw;
     const isToolError = Boolean(message.metadata?.isError || message.metadata?.error);
     const resultLineCount = getToolResultLineCount(toolResultDisplay);
+    const imagePreviewPaths = showImagePreviews
+      ? extractImagePaths(toolResultDisplay, resolveLocalFilePath)
+      : [];
     return (
       <div className="py-1">
         <div className="flex items-start gap-2">
@@ -1202,6 +1415,9 @@ const AssistantTurnBlock: React.FC<{
                 {toolResultDisplay || i18nService.t('coworkToolRunning')}
               </pre>
             </div>
+            {imagePreviewPaths.length > 0 && (
+              <ImagePreviewStrip imagePaths={imagePreviewPaths} />
+            )}
           </div>
         </div>
       </div>
@@ -1249,6 +1465,8 @@ const AssistantTurnBlock: React.FC<{
                     group={item.group}
                     isLastInSequence={isLastInSequence}
                     mapDisplayText={mapDisplayText}
+                    resolveLocalFilePath={resolveLocalFilePath}
+                    showImagePreviews={showImagePreviews}
                   />
                 );
               }
@@ -1786,6 +2004,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             resolveLocalFilePath={resolveLocalFilePath}
             showTypingIndicator
             showCopyButtons={!isStreaming}
+            showImagePreviews
           />
         </div>
       );
@@ -1811,6 +2030,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 mapDisplayText={mapDisplayText}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming}
+                showImagePreviews
               />
             </div>
           )}

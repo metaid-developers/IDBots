@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ShoppingBagIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice, getServiceIconUrl } from '../../utils/gigSquare';
@@ -20,6 +20,9 @@ const GigSquareView: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [buyerMetabotId, setBuyerMetabotId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currencyFilter, setCurrencyFilter] = useState<'all' | 'BTC' | 'SPACE' | 'DOGE'>('all');
+  const [sortOrder, setSortOrder] = useState<'rating' | 'updated'>('rating');
 
   const loadServices = useCallback(async () => {
     setIsLoading(true);
@@ -77,6 +80,26 @@ const GigSquareView: React.FC = () => {
     return `${services.length} ${services.length === 1 ? 'service' : 'services'}`;
   }, [services.length]);
 
+  const filteredServices = useMemo(() => {
+    let list = services;
+    if (currencyFilter !== 'all') {
+      const match = currencyFilter === 'SPACE'
+        ? (s: GigSquareService) => { const c = s.currency?.toUpperCase(); return c === 'SPACE' || c === 'MVC'; }
+        : (s: GigSquareService) => s.currency?.toUpperCase() === currencyFilter;
+      list = list.filter(match);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter((s) => s.displayName.toLowerCase().includes(q));
+    }
+    if (sortOrder === 'rating') {
+      list = [...list].sort((a, b) => (b.ratingCount ?? 0) - (a.ratingCount ?? 0));
+    } else {
+      list = [...list].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    }
+    return list;
+  }, [services, searchQuery, currencyFilter, sortOrder]);
+
   return (
     <div className="h-full flex flex-col">
       <div className="px-6 py-5 border-b border-claude-border dark:border-claude-darkBorder">
@@ -100,12 +123,6 @@ const GigSquareView: React.FC = () => {
               <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5">
                 {i18nService.t('gigSquareSubtitle')}
               </p>
-              <div
-                className="mt-2 rounded-md border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted px-2 py-1.5 text-[11px] leading-snug text-claude-textSecondary dark:text-claude-darkTextSecondary font-normal"
-                role="status"
-              >
-                {i18nService.t('gigSquareAlphaNotice')}
-              </div>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -136,6 +153,36 @@ const GigSquareView: React.FC = () => {
             {i18nService.t('gigSquareNoTwin')}
           </div>
         )}
+        <div className="mt-3 flex items-center gap-2">
+          <select
+            value={currencyFilter}
+            onChange={(e) => setCurrencyFilter(e.target.value as typeof currencyFilter)}
+            className="shrink-0 pl-2 pr-6 py-1.5 text-xs rounded-lg border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-text dark:text-claude-darkText focus:outline-none focus:ring-1 focus:ring-claude-accent appearance-none cursor-pointer"
+          >
+            <option value="all">{i18nService.t('gigSquareCurrencyAll')}</option>
+            <option value="BTC">BTC</option>
+            <option value="SPACE">SPACE</option>
+            <option value="DOGE">DOGE</option>
+          </select>
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value as typeof sortOrder)}
+            className="shrink-0 pl-2 pr-6 py-1.5 text-xs rounded-lg border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-text dark:text-claude-darkText focus:outline-none focus:ring-1 focus:ring-claude-accent appearance-none cursor-pointer"
+          >
+            <option value="rating">{i18nService.t('gigSquareSortRating')}</option>
+            <option value="updated">{i18nService.t('gigSquareSortUpdated')}</option>
+          </select>
+          <div className="relative flex-1">
+            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-claude-textSecondary dark:text-claude-darkTextSecondary pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={i18nService.t('gigSquareSearchPlaceholder')}
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-text dark:text-claude-darkText placeholder-claude-textSecondary dark:placeholder-claude-darkTextSecondary focus:outline-none focus:ring-1 focus:ring-claude-accent"
+            />
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -154,9 +201,14 @@ const GigSquareView: React.FC = () => {
             {i18nService.t('gigSquareNoServices')}
           </div>
         )}
-        {!isLoading && !error && services.length > 0 && (
+        {!isLoading && !error && services.length > 0 && filteredServices.length === 0 && (
+          <div className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('gigSquareNoSearchResults')}
+          </div>
+        )}
+        {!isLoading && !error && filteredServices.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {services.map((service) => {
+            {filteredServices.map((service) => {
               const price = formatGigSquarePrice(service.price, service.currency);
               const serviceIconUrl = getServiceIconUrl(service.serviceIcon);
               const iconSrc = serviceIconUrl || service.avatar || null;

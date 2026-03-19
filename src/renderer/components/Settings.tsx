@@ -347,6 +347,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(notice ?? null);
+  const [appVersion, setAppVersion] = useState<string>('');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isImportingProviders, setIsImportingProviders] = useState(false);
@@ -445,6 +446,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const [coworkSandboxLoading, setCoworkSandboxLoading] = useState(true);
   const [coworkSandboxProgress, setCoworkSandboxProgress] = useState<CoworkSandboxProgress | null>(null);
   const [coworkSandboxInstalling, setCoworkSandboxInstalling] = useState(false);
+
+  useEffect(() => {
+    window.electron.appInfo
+      .getVersion()
+      .then((v) => setAppVersion(typeof v === 'string' ? v : ''))
+      .catch(() => setAppVersion(''));
+  }, []);
 
   useEffect(() => {
     setCoworkExecutionMode(coworkConfig.executionMode || 'local');
@@ -2680,11 +2688,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
         onClick={handleSettingsClick}
       >
         {/* Left sidebar */}
-        <div className="w-[220px] shrink-0 flex flex-col dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r dark:border-claude-darkBorder border-claude-border rounded-l-2xl overflow-y-auto">
-          <div className="px-5 pt-5 pb-3">
+        <div className="w-[220px] shrink-0 flex flex-col min-h-0 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted border-r dark:border-claude-darkBorder border-claude-border rounded-l-2xl">
+          <div className="px-5 pt-5 pb-3 shrink-0">
             <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">{i18nService.t('settings')}</h2>
           </div>
-          <nav className="flex flex-col gap-0.5 px-3 pb-4">
+          <nav className="flex flex-col gap-0.5 px-3 pb-2 flex-1 min-h-0 overflow-y-auto">
             {sidebarTabs.map((tab) => (
               <button
                 key={tab.key}
@@ -2700,6 +2708,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
               </button>
             ))}
           </nav>
+          <div className="shrink-0 px-3 py-3 pt-2 border-t dark:border-claude-darkBorder border-claude-border">
+            <p className="text-[11px] leading-snug dark:text-claude-darkTextSecondary text-claude-textSecondary select-text tabular-nums">
+              {i18nService.t('settingsCurrentVersion')}
+              {appVersion || '—'}
+            </p>
+          </div>
         </div>
 
         {/* Right content */}

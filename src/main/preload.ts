@@ -158,6 +158,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:get', sessionId),
     listSessions: () =>
       ipcRenderer.invoke('cowork:session:list'),
+    readLocalImage: (options: { path: string; maxBytes?: number }) =>
+      ipcRenderer.invoke('cowork:session:readLocalImage', options),
     exportResultImage: (options: { rect: { x: number; y: number; width: number; height: number }; defaultFileName?: string }) =>
       ipcRenderer.invoke('cowork:session:exportResultImage', options),
     captureImageChunk: (options: { rect: { x: number; y: number; width: number; height: number } }) =>
@@ -382,17 +384,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('idbots:restoreMetaBotFromMnemonic', input),
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       ipcRenderer.invoke('idbots:getAddressBalance', options),
-    getTransferFeeSummary: (chain: 'mvc' | 'doge') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
+    getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
     buildTransferPreview: (params: {
       metabotId: number;
-      chain: 'mvc' | 'doge';
+      chain: 'mvc' | 'doge' | 'btc';
       toAddress: string;
       amountSpaceOrDoge: string;
       feeRate: number;
     }) => ipcRenderer.invoke('idbots:buildTransferPreview', params),
     executeTransfer: (params: {
       metabotId: number;
-      chain: 'mvc' | 'doge';
+      chain: 'mvc' | 'doge' | 'btc';
       toAddress: string;
       amountSpaceOrDoge: string;
       feeRate: number;

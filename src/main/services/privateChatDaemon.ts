@@ -20,6 +20,7 @@ import { checkOrderPaymentStatus, extractOrderTxid, extractOrderSkillId, extract
 import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
+import { generateSessionTitle } from '../libs/coworkUtil';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -201,11 +202,12 @@ function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string 
   return 'unknown-peer';
 }
 
-function resolvePrivateConversationSession(
+async function resolvePrivateConversationSession(
   coworkStore: CoworkStore,
   metabotId: number,
-  row: PrivateChatMessageRow
-): { sessionId: string; externalConversationId: string } {
+  row: PrivateChatMessageRow,
+  firstMessage: string
+): Promise<{ sessionId: string; externalConversationId: string }> {
   const peerId = normalizePrivateConversationPeerId(row);
   const externalConversationId = `metaweb-private:${peerId}`;
   const existing = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabotId);
@@ -218,8 +220,11 @@ function resolvePrivateConversationSession(
   }
 
   const workspace = coworkStore.getConfig().workingDirectory;
+  const fallbackTitle = firstMessage.split('\n')[0].slice(0, 50) || `Private-${peerId.slice(0, 12)}`;
+  const generatedTitle = await generateSessionTitle(firstMessage).catch(() => null);
+  const title = generatedTitle?.trim() || fallbackTitle;
   const session = coworkStore.createSession(
-    `Private-${peerId.slice(0, 12)}`,
+    title,
     workspace,
     '',
     'local',
@@ -438,8 +443,16 @@ async function processOne(
       return;
     }
 
-    const sharedSecretSha256 = computeEcdhSharedSecretSha256(privateKeyBuffer, fromChatPubkey);
-    const sharedSecretRaw = computeEcdhSharedSecret(privateKeyBuffer, fromChatPubkey);
+    let sharedSecretSha256: string;
+    let sharedSecretRaw: string;
+    try {
+      sharedSecretSha256 = computeEcdhSharedSecretSha256(privateKeyBuffer, fromChatPubkey);
+      sharedSecretRaw = computeEcdhSharedSecret(privateKeyBuffer, fromChatPubkey);
+    } catch (e) {
+      emitLog(`[PrivateChat] Skip message ${row.id}: invalid peer public key (${fromChatPubkey.slice(0, 16)}…): ${e instanceof Error ? e.message : e}`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
     emitLog(
       `[PrivateChat] ECDH ready: from_chat_pubkey(first/last16)=${fromChatPubkey.slice(0, 16)}...${fromChatPubkey.slice(-16)} sha256Secret(first/last16)=${sharedSecretSha256.slice(0, 16)}...${sharedSecretSha256.slice(-16)}`
     );
@@ -555,7 +568,6 @@ async function processOne(
         skillName: extractOrderSkillName(plaintext),
       });
       const externalConversationId = buildOrderExternalConversationId(row, source, txid);
-      const titleSuffix = txid ? txid.slice(0, 8) : 'no-txid';
 
       let orderResult: { serviceReply: string; ratingInvite: string };
       try {
@@ -565,7 +577,6 @@ async function processOne(
           externalConversationId,
           prompt: prompts.userPrompt,
           systemPrompt: prompts.systemPrompt,
-          title: `Order-${metabot.name}-${titleSuffix}-${Date.now()}`,
           peerGlobalMetaId: fromGlobalMetaId || null,
           peerName: (row.from_name as string | null) ?? null,
           peerAvatar: (row.from_avatar as string | null) ?? null,
@@ -678,7 +689,12 @@ async function processOne(
       emitLog(`[PrivateChat] No buyer order session found for peer ${fromGlobalMetaId.slice(0, 12)}…, treating as regular private chat.`);
     }
 
-    const { sessionId, externalConversationId } = resolvePrivateConversationSession(coworkStore, metabot.id, row);
+    const { sessionId, externalConversationId } = await resolvePrivateConversationSession(
+      coworkStore,
+      metabot.id,
+      row,
+      plaintext
+    );
 
     // Check if we already sent "bye" to this peer — if so, ignore all further messages
     const existingMapping = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id);

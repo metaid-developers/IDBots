@@ -4,8 +4,8 @@
  * Addresses are collapsed by default; delete button triggers safe-delete flow.
  */
 
-import React, { useEffect, useState } from 'react';
-import { CpuChipIcon, DocumentDuplicateIcon, TrashIcon } from '@heroicons/react/24/outline';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ArrowPathIcon, CpuChipIcon, DocumentDuplicateIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 import MetaBotBackupMnemonicModal from './MetaBotBackupMnemonicModal';
@@ -27,6 +27,18 @@ interface BalanceState {
   loading: boolean;
 }
 
+function balanceStateFromApi(balance: {
+  btc?: { value: number; unit: string };
+  mvc?: { value: number; unit: string };
+  doge?: { value: number; unit: string };
+}): Omit<BalanceState, 'loading'> {
+  return {
+    btc: balance.btc != null ? `${balance.btc.value.toFixed(8)} ${balance.btc.unit}` : undefined,
+    mvc: balance.mvc != null ? `${balance.mvc.value.toFixed(8)} ${balance.mvc.unit}` : undefined,
+    doge: balance.doge != null ? `${balance.doge.value.toFixed(8)} ${balance.doge.unit}` : undefined,
+  };
+}
+
 const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   metabot,
   onEdit,
@@ -40,6 +52,30 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [showBackupMnemonicModal, setShowBackupMnemonicModal] = useState(false);
   const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' | 'btc' } | null>(null);
 
+  const refreshAllBalances = useCallback(() => {
+    setBalance((prev) => ({ ...prev, loading: true }));
+    return window.electron.idbots
+      .getAddressBalance({ metabotId: metabot.id })
+      .then((res) => {
+        if (!res.success || !res.balance) {
+          setBalance((prev) => ({ ...prev, loading: false }));
+          return;
+        }
+        setBalance({
+          loading: false,
+          ...balanceStateFromApi(res.balance),
+        });
+      })
+      .catch(() => {
+        setBalance({
+          loading: false,
+          btc: i18nService.t('metabotBalanceError'),
+          mvc: i18nService.t('metabotBalanceError'),
+          doge: i18nService.t('metabotBalanceError'),
+        });
+      });
+  }, [metabot.id]);
+
   useEffect(() => {
     let cancelled = false;
     setBalance((prev) => ({ ...prev, loading: true }));
@@ -50,9 +86,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
         if (cancelled || !res.success || !res.balance) return;
         setBalance({
           loading: false,
-          btc: res.balance.btc != null ? `${res.balance.btc.value.toFixed(8)} ${res.balance.btc.unit}` : undefined,
-          mvc: res.balance.mvc != null ? `${res.balance.mvc.value.toFixed(8)} ${res.balance.mvc.unit}` : undefined,
-          doge: res.balance.doge != null ? `${res.balance.doge.value.toFixed(8)} ${res.balance.doge.unit}` : undefined,
+          ...balanceStateFromApi(res.balance),
         });
       })
       .catch(() => {
@@ -196,6 +230,21 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
 
         {isAddressExpanded && (
           <div className="space-y-2 mt-2">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void refreshAllBalances();
+                }}
+                className="shrink-0 p-1 rounded-md hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors disabled:opacity-50"
+                title={i18nService.t('metabotRefreshBalances')}
+                aria-label={i18nService.t('metabotRefreshBalances')}
+                disabled={balance.loading}
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${balance.loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
             {btcAddr && (
               <div className="flex items-center gap-1.5 text-xs overflow-hidden">
                 <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary w-10 shrink-0">BTC</span>
@@ -326,15 +375,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           onClose={() => setTransferModal(null)}
           onSuccess={() => {
             setTransferModal(null);
-            window.electron.idbots.getAddressBalance({ metabotId: metabot.id }).then((res) => {
-              if (res.success && res.balance) {
-                setBalance((prev) => ({
-                  ...prev,
-                  mvc: res.balance!.mvc != null ? `${res.balance!.mvc.value.toFixed(8)} ${res.balance!.mvc.unit}` : prev.mvc,
-                  doge: res.balance!.doge != null ? `${res.balance!.doge.value.toFixed(8)} ${res.balance!.doge.unit}` : prev.doge,
-                }));
-              }
-            });
+            void refreshAllBalances();
           }}
         />
       )}

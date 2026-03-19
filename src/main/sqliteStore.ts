@@ -435,6 +435,19 @@ export class SqliteStore {
       );
     `);
     this.db.run(`
+      CREATE TABLE IF NOT EXISTS remote_skill_service_rating_seen (
+        pin_id TEXT PRIMARY KEY,
+        service_id TEXT,
+        rate REAL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_seen_service
+        ON remote_skill_service_rating_seen(service_id);
+    `);
+
+    this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_remote_skill_service_updated_at
         ON remote_skill_service(updated_at DESC);
     `);
@@ -658,6 +671,27 @@ export class SqliteStore {
       }
     } catch (error) {
       console.warn('Failed to migrate metabots boss_global_metaid:', error);
+    }
+
+    // Migration: Add payment_address column to remote_skill_service
+    try {
+      const rssColsResult = this.db.exec('PRAGMA table_info(remote_skill_service)');
+      const rssColumns = (rssColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!rssColumns.includes('payment_address')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN payment_address TEXT');
+        this.save();
+      }
+      // Migration: Add rating columns to remote_skill_service
+      if (!rssColumns.includes('rating_count')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN rating_count INTEGER NOT NULL DEFAULT 0');
+        this.save();
+      }
+      if (!rssColumns.includes('rating_avg')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN rating_avg REAL NOT NULL DEFAULT 0');
+        this.save();
+      }
+    } catch (error) {
+      console.warn('Failed to migrate remote_skill_service payment_address:', error);
     }
 
     this.save();

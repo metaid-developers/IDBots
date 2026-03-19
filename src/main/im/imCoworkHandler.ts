@@ -651,19 +651,16 @@ export class IMCoworkHandler extends EventEmitter {
    * Format accumulated messages into a reply string
    */
   private formatReply(messages: CoworkMessage[]): string {
-    const parts: string[] = [];
-
-    for (const msg of messages) {
-      // Skip user messages (they're the input)
-      if (msg.type === 'user') continue;
-
-      // Only include assistant messages in reply
-      if (msg.type === 'assistant' && msg.content) {
-        parts.push(msg.content);
-      }
+    // Return only the last non-thinking assistant message — skip thinking blocks
+    // and intermediate streaming chunks so IM users only see the final answer.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type !== 'assistant') continue;
+      if (msg.metadata?.isThinking) continue;
+      const text = (msg.content || '').trim();
+      if (text) return text;
     }
-
-    return parts.join('\n\n') || '处理完成，但没有生成回复。';
+    return '处理完成，但没有生成回复。';
   }
 
   /**
