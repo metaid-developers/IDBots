@@ -199,13 +199,10 @@ jobs:
       windows_oss_url: ${{ steps.upload_oss.outputs.windows_oss_url }}
 
     steps:
-      - name: Enable Git long paths (Windows)
-        run: git config --global core.longpaths true
-
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Verify tag matches package version
         run: |
