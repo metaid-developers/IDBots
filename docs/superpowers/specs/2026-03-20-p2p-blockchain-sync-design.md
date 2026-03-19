@@ -181,7 +181,7 @@ GossipSub 收到广播
     "/files/*.zip",
     "/files/*.iso"
   ],
-  "p2p_block_content_size_kb": 512,
+  "p2p_max_content_size_kb": 512,
 
   "p2p_bootstrap_nodes": [
     "/ip4/1.2.3.4/tcp/4001/p2p/QmXxx..."
@@ -191,7 +191,9 @@ GossipSub 收到广播
 }
 ```
 
-**屏蔽规则优先级高于订阅规则**：即使某地址在 `selective_addresses` 中，只要同时在 `block_addresses` 中，就不同步。`block_content_size_kb` 允许只同步 PIN 元数据，不拉取大文件内容。
+**屏蔽规则优先级高于订阅规则**：即使某地址在 `selective_addresses` 中，只要同时在 `block_addresses` 中，就不同步。`p2p_max_content_size_kb` 是内容拉取的硬性截断阈值，超过此大小只同步 PIN 元数据，不拉取内容字节。
+
+**存储上限行为**：当 PebbleDB 占用达到 `p2p_storage_limit_gb` 时，man-p2p 停止接收新的 P2P 同步数据（已有数据继续提供服务），并通过 `p2p:statusUpdate` IPC 事件通知 renderer 显示警告。不自动删除数据，由用户决定清理或扩容。
 
 ---
 
@@ -201,30 +203,50 @@ GossipSub 收到广播
 
 **`src/main/services/p2pIndexerService.ts`**：
 
-- 启动/停止 man-p2p Go 子进程
-- 健康检查（HTTP `/health` 轮询，30s 间隔）
-- 崩溃自动重启（指数退避，最大 5 次）
+- 启动/停止 man-p2p Go 子进程，传入 `--data-dir` 和 `--config` 启动参数
+- 健康检查（HTTP `GET /health` 轮询，30s 间隔）
+- 崩溃自动重启（指数退避，最大 5 次，超限后通知 renderer）
+- 优雅关闭：`app.on('before-quit')` 时发送 `SIGTERM`，等待最多 5s 后 `SIGKILL`，防止 PebbleDB 损坏
+- 配置变更推送：`p2p:setConfig` 触发后，调用 `POST /api/config/reload` 热重载，无需重启子进程
 - 日志转发到 renderer
-- 代理所有 PIN 查询请求
 
-### 5.2 现有代码改动
+### 5.2 man-p2p HTTP API 契约
 
-**`src/main/services/metaidCore.ts`** — `getPinData()`：
+man-p2p 在 `localhost:7281` 暴露以下端点，**响应 envelope 与现有 manapi.metaid.io 保持一致**（`{ code, message, data }`），使 IDBots 侧改动最小：
 
-```
-改动前：先查本地 SQLite metaid_pins 表 → 再调 manapi.metaid.io
-改动后：先查本地 SQLite metaid_pins 表 → 再调 localhost:7281 → 兜底 manapi.metaid.io
-```
+| 端点 | 说明 | 对应现有调用 |
+|------|------|------------|
+| `GET /pin/{pinId}` | 查询单个 PIN 数据 | `metaidCore.ts` `getPinData()` |
+| `GET /pin/path/list?metaid=&path=&page=&limit=` | 按路径列表查询 PIN | `main.ts` 4 处调用 |
+| `GET /api/v1/users/info/metaid/{metaId}` | 查询用户信息 | `privateChatDaemon.ts` 等 |
+| `GET /api/v1/files/content/{pinId}` | 获取文件内容 | 文件检索场景 |
+| `GET /health` | 健康检查 | `p2pIndexerService.ts` |
+| `POST /api/config/reload` | 热重载同步配置 | `p2p:setConfig` IPC |
+| `GET /api/p2p/status` | P2P 节点状态（peer 数、同步进度） | `p2p:getStatus` IPC |
+| `GET /api/p2p/peers` | 已连接节点列表 | `p2p:getPeers` IPC |
 
-**`src/main/services/privateChatDaemon.ts`** 等其他调用 manapi 的地方同理，统一走本地 API。
+### 5.3 现有代码改动（全量 manapi 调用点）
 
-### 5.3 新增 IPC 接口
+经代码库 grep，所有 `manapi.metaid.io` 调用点如下，全部改为优先走 `localhost:7281`，兜底保留原 URL：
+
+| 文件 | 调用点 | 改动方式 |
+|------|--------|---------|
+| `src/main/services/metaidCore.ts` | `getPinData()` — `GET /pin/{pinId}` | 本地优先，兜底 manapi |
+| `src/main/main.ts` (L485) | `GET /pin/path/list` — MetaBot 技能列表 | 同上 |
+| `src/main/main.ts` (L627) | `GET /pin/path/list` — GigSquare 商品列表 | 同上 |
+| `src/main/main.ts` (L674) | `GET /pin/path/list` — 订单查询 | 同上 |
+| `src/main/main.ts` (L3056) | `GET /pin/path/list` — 其他查询 | 同上 |
+| `src/main/services/skillSyncService.ts` | `MANAPI_BASE` 常量 | 替换为本地端点 |
+
+**`metaid_pins` SQLite 缓存的处理**：保留现有 SQLite `metaid_pins` 表作为 L1 缓存（毫秒级本地查询），man-p2p PebbleDB 作为 L2（本地索引器），manapi.metaid.io 作为 L3 兜底。`getPinData()` 查询顺序：SQLite → localhost:7281 → manapi。写入时同步更新 SQLite 缓存，保持现有行为不变。
+
+### 5.4 新增 IPC 接口
 
 ```typescript
 // renderer → main
 'p2p:getStatus'   // 获取节点状态（peer 数、同步进度、数据来源分布）
 'p2p:getConfig'   // 获取同步配置
-'p2p:setConfig'   // 更新同步配置
+'p2p:setConfig'   // 更新同步配置，触发 man-p2p 热重载
 'p2p:getPeers'    // 获取已连接节点列表
 
 // main → renderer（事件推送）
@@ -232,7 +254,7 @@ GossipSub 收到广播
 'p2p:syncProgress'   // 同步进度更新
 ```
 
-### 5.4 Go 二进制分发
+### 5.5 Go 二进制分发
 
 随 IDBots 安装包打包，存放于 Electron `extraResources` 目录：
 
@@ -244,6 +266,10 @@ GossipSub 收到广播
 | Linux x64 | `man-p2p-linux-x64` |
 
 主进程通过 `process.resourcesPath` 定位二进制文件，参考现有 `createPinWorker.js` 的子进程管理模式。
+
+**数据目录**：man-p2p 的 PebbleDB 存储路径通过 `--data-dir` 启动参数传入，固定为 Electron `app.getPath('userData')` 下的 `man-p2p/` 子目录（macOS: `~/Library/Application Support/IDBots/man-p2p/`，Windows: `%APPDATA%\IDBots\man-p2p\`）。该路径在 app 更新时保持不变，确保数据不丢失。
+
+**macOS 代码签名**：electron-builder 配置 `hardenedRuntime: true`，Go 二进制需随 IDBots 主包一起签名（`codesign --deep`），并添加 `com.apple.security.cs.allow-jit` 和 `com.apple.security.cs.disable-library-validation` entitlements，否则 Gatekeeper 会阻止子进程启动。
 
 ---
 
@@ -257,16 +283,22 @@ GossipSub 收到广播
   ├─ 快速验证（同步，毫秒级）
   │   ├── PIN ID 格式合法（txid:vout）
   │   ├── 发布者地址格式合法
-  │   └── 内容大小未超过配置限制
+  │   └── 内容大小未超过 p2p_max_content_size_kb 限制
   │
   ├─ 异步验证（后台，秒级）
   │   ├── 向链上 RPC 确认 txid 存在
   │   └── 验证通过 → 写入 PebbleDB，标记 verified=true
+  │       验证失败 → 丢弃，记录 peer 一次失败
   │
-  └─ 信任加速（已验证节点）
-      └── 来自高信誉 peer 的数据可跳过链上验证
-          （信誉基于历史验证通过率，防止滥用）
+  └─ 信任加速（本地信誉，仅作优化，不降低安全性）
+      ├── 信誉分初始值：0（新 peer）
+      ├── 每次验证通过：+1，验证失败：-5，上限 100，下限 0
+      ├── 信誉 ≥ 50 且连续 20 次验证通过：可跳过链上验证
+      ├── 信誉数据仅存本地，不在网络中共享（防 Sybil 攻击）
+      └── 跳过验证的 PIN 仍标记 verified=false，后台补验
 ```
+
+**`p2p_max_content_size_kb` 字段说明**：这是一个硬性截断阈值。当 PIN 内容大小超过该值时，只同步 PIN 元数据（PIN ID、路径、发布者地址、txid），不拉取内容字节。内容字段在 PebbleDB 中存为空，`verified` 标记为 `metadata_only`。应用层查询时若需要内容，再按需拉取。
 
 ### 6.2 冷启动策略
 
@@ -296,19 +328,19 @@ GossipSub 收到广播
 3. 新增 IPC 接口
 4. 打包配置（extraResources）
 
-### 阶段三：UI 与配置
-
-1. P2P 状态面板（节点数、同步进度、数据来源）
-2. 同步范围配置界面（模式选择、订阅/屏蔽列表）
-3. 存储用量显示
-
-### 阶段四：网络基础设施
+### 阶段三：网络基础设施
 
 1. 部署 bootstrap 节点（至少 3 个，分布不同地区）
 2. 部署 relay 节点（NAT 穿透兜底）
 3. 监控 P2P 网络健康状态
 
----
+### 阶段四：UI 与配置
+
+1. P2P 状态面板（节点数、同步进度、数据来源）
+2. 同步范围配置界面（模式选择、订阅/屏蔽列表）
+3. 存储用量显示与上限警告
+
+
 
 ## 8. 关键风险与缓解
 
@@ -316,9 +348,11 @@ GossipSub 收到广播
 |------|--------|------|---------|
 | NAT 穿透失败率高 | 中 | 中 | relay 节点兜底，确保所有用户可连接 |
 | P2P 网络冷启动期体验差 | 高 | 中 | 中心化 API 兜底，UI 透明展示数据来源 |
-| 恶意节点传播伪造 PIN | 低 | 高 | 链上 txid 验证，信誉系统 |
+| 恶意节点传播伪造 PIN | 低 | 高 | 链上 txid 验证，本地信誉系统 |
 | Go 二进制跨平台兼容问题 | 中 | 中 | CI 多平台交叉编译测试 |
-| PebbleDB 存储膨胀（full 模式） | 中 | 低 | `p2p_storage_limit_gb` 配置上限 |
+| PebbleDB 存储膨胀（full 模式） | 中 | 低 | `p2p_storage_limit_gb` 上限，达限停止同步并告警 |
+| macOS Gatekeeper 阻止 Go 子进程 | 高 | 高 | Go 二进制随主包签名，配置必要 entitlements |
+| PebbleDB 因进程异常终止损坏 | 低 | 高 | 优雅关闭（SIGTERM + 5s 超时），Windows 尤其重要 |
 
 ---
 
