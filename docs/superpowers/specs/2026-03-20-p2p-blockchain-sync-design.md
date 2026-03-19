@@ -255,6 +255,21 @@ man-p2p 在 `localhost:7281` 暴露以下端点，**响应 envelope 与现有 ma
 
 **`metaid_pins` SQLite 缓存的处理**：保留现有 SQLite `metaid_pins` 表作为 L1 缓存（毫秒级本地查询），man-p2p PebbleDB 作为 L2（本地索引器），原中心化 API 作为 L3 兜底。`getPinData()` 查询顺序：SQLite → localhost:7281 → 原 API。写入时同步更新 SQLite 缓存，保持现有行为不变。
 
+**Renderer 侧调用点处理**：
+
+Renderer 进程（`contextIsolation: true`，无 Node 集成）无法直接调用 `localhost:7281`，有两类调用需要单独处理：
+
+| 文件 | 调用类型 | 处理方式 |
+|------|---------|---------|
+| `src/renderer/services/metabotInfoService.ts` | `fetch()` 查询用户信息（name/avatar/chatpubkey） | 新增 `metaid:getUserInfo` IPC channel，renderer 通过 IPC 调用，main 进程代理到 localhost:7281 |
+| `src/renderer/utils/gigSquare.ts` | 构造 `<img src>` 图片 URL（metafile:// → file.metaid.io） | **本阶段保持现有行为**，图片 URL 继续指向 `file.metaid.io`；后续可通过 Electron `protocol.handle()` 拦截 `metafile://` scheme 实现本地化，不在本次范围内 |
+
+新增 IPC channel：
+```typescript
+// renderer → main
+'metaid:getUserInfo'  // { globalMetaId: string } → MetaidInfoResult
+```
+
 ### 5.4 新增 IPC 接口
 
 ```typescript
