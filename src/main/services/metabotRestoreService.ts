@@ -1,4 +1,5 @@
 import { Buffer } from 'buffer';
+import { fetchFromLocalOrFallback, fetchContentWithFallback } from './localIndexerProxy';
 
 const METAID_INFO_BY_ADDRESS = 'https://file.metaid.io/metafile-indexer/api/v1/info/address';
 const METAID_INFO_BY_METAID = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
@@ -126,8 +127,8 @@ const resolveAvatarPinId = (avatar?: string | null, avatarId?: string | null): s
   return match ? match[1] : null;
 };
 
-const fetchMetaidInfo = async (url: string): Promise<MetaidAddressInfo | null> => {
-  const res = await fetch(url);
+const fetchMetaidInfo = async (localPath: string, remoteUrl: string): Promise<MetaidAddressInfo | null> => {
+  const res = await fetchFromLocalOrFallback(localPath, remoteUrl);
   if (!res.ok) {
     throw new Error(`metaid info fetch failed: ${res.status} ${res.statusText}`);
   }
@@ -142,21 +143,23 @@ export const fetchMetaidInfoByAddress = async (address: string): Promise<MetaidA
   const trimmed = address.trim();
   if (!trimmed) return null;
   const url = `${METAID_INFO_BY_ADDRESS}/${encodeURIComponent(trimmed)}`;
-  return fetchMetaidInfo(url);
+  const localPath = `/api/v1/users/info/address/${encodeURIComponent(trimmed)}`;
+  return fetchMetaidInfo(localPath, url);
 };
 
 export const fetchMetaidInfoByMetaid = async (metaid: string): Promise<MetaidAddressInfo | null> => {
   const trimmed = metaid.trim();
   if (!trimmed) return null;
   const url = `${METAID_INFO_BY_METAID}/${encodeURIComponent(trimmed)}`;
-  return fetchMetaidInfo(url);
+  const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(trimmed)}`;
+  return fetchMetaidInfo(localPath, url);
 };
 
 const fetchAvatarDataUrl = async (pinId: string): Promise<string | null> => {
   const trimmed = pinId.trim();
   if (!trimmed) return null;
   const url = `${METAID_CONTENT_BASE}/${encodeURIComponent(trimmed)}`;
-  const res = await fetch(url);
+  const res = await fetchContentWithFallback(trimmed, url);
   if (!res.ok) {
     throw new Error(`avatar fetch failed: ${res.status} ${res.statusText}`);
   }
