@@ -467,4 +467,22 @@ contextBridge.exposeInMainWorld('electron', {
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
   },
+  p2p: {
+    getStatus: () => ipcRenderer.invoke('p2p:getStatus'),
+    getConfig: () => ipcRenderer.invoke('p2p:getConfig'),
+    setConfig: (config: unknown) => ipcRenderer.invoke('p2p:setConfig', config),
+    getPeers: () => ipcRenderer.invoke('p2p:getPeers'),
+    getUserInfo: (params: { globalMetaId: string }) =>
+      ipcRenderer.invoke('metaid:getUserInfo', params),
+    onStatusUpdate: (callback: (status: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
+      ipcRenderer.on('p2p:statusUpdate', handler);
+      return () => ipcRenderer.removeListener('p2p:statusUpdate', handler);
+    },
+    onSyncProgress: (callback: (data: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on('p2p:syncProgress', handler);
+      return () => ipcRenderer.removeListener('p2p:syncProgress', handler);
+    },
+  },
 });
