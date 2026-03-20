@@ -50,6 +50,12 @@
     "gatekeeperAssess": false,
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist",
+    "extraResources": [
+      {
+        "from": "resources/man-p2p/man-p2p-darwin-${arch}",
+        "to": "man-p2p-darwin-${arch}"
+      }
+    ],
     "extendInfo": {
       "CFBundleIconName": "icon",
       "NSCalendarsUsageDescription": "IDBots 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。",
@@ -65,14 +71,26 @@
     "target": [
       "nsis"
     ],
-    "icon": "build/icons/win/icon.ico"
+    "icon": "build/icons/win/icon.ico",
+    "extraResources": [
+      {
+        "from": "resources/man-p2p/man-p2p-win32-x64.exe",
+        "to": "man-p2p-win32-x64.exe"
+      }
+    ]
   },
   "linux": {
     "target": [
       "AppImage"
     ],
     "icon": "build/icons/png",
-    "category": "Utility"
+    "category": "Utility",
+    "extraResources": [
+      {
+        "from": "resources/man-p2p/man-p2p-linux-x64",
+        "to": "man-p2p-linux-x64"
+      }
+    ]
   },
   "nsis": {
     "oneClick": false,
