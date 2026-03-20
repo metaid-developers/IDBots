@@ -54,6 +54,10 @@
       {
         "from": "resources/man-p2p/man-p2p-darwin-${arch}",
         "to": "man-p2p-darwin-${arch}"
+      },
+      {
+        "from": "resources/man-p2p/config.toml",
+        "to": "man-p2p-config.toml"
       }
     ],
     "extendInfo": {

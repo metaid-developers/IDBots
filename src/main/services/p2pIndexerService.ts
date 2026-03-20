@@ -46,7 +46,14 @@ function resolveBinaryPath(): string {
   };
   const key = `${process.platform}-${process.arch}`;
   const name = names[key] ?? `man-p2p-${key}`;
-  return path.join(process.resourcesPath, name);
+
+  if (app.isPackaged) {
+    // Production: electron-builder extraResources puts binaries directly in Resources/
+    return path.join(process.resourcesPath, name);
+  } else {
+    // Dev mode: use project's resources/man-p2p/ directory
+    return path.join(app.getAppPath(), 'resources', 'man-p2p', name);
+  }
 }
 
 function emitStatusToAllWindows(status: P2PStatus): void {
@@ -114,10 +121,25 @@ function scheduleRestart(): void {
   }, delay);
 }
 
+function resolveMainConfigPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'man-p2p-config.toml');
+  } else {
+    return path.join(app.getAppPath(), 'resources', 'man-p2p', 'config.toml');
+  }
+}
+
 function spawnProcess(dataDir: string, configPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const binaryPath = resolveBinaryPath();
-    const args = ['--data-dir', dataDir, '--p2p-config', configPath, '-server=1'];
+    const mainConfig = resolveMainConfigPath();
+    const args = [
+      '-config', mainConfig,
+      '--data-dir', dataDir,
+      '--p2p-config', configPath,
+      '-server=1',
+      `-btc_height=900000`,
+    ];
     console.log(`[p2p] Spawning: ${binaryPath} ${args.join(' ')}`);
 
     const proc = spawn(binaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });

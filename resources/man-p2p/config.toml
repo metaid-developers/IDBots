@@ -1,0 +1,77 @@
+# man-p2p default config for IDBots embedded indexer
+# Uses public BTC/Doge nodes; MVC disabled (no public node available)
+
+protocolID = "6d6574616964"
+module = []
+syncHost = ["*"]
+blockedHost = []
+cacheUrl = ""
+syncDB = ""
+adminToken = ""
+
+[sync]
+syncAllData = false
+syncProtocols = []
+syncBeginTime = ""
+syncEndTime = ""
+reSyncNum = 0
+isFullNode = false
+mrc20Only = false
+
+[btc]
+initialHeight = 900000
+mrc20Height = -1
+rpcHost = "8.217.120.15:8332"
+rpcUser = "dxshow63"
+rpcPass = "sgOEs1pgEao5kL"
+rpcHttpPostMode = true
+rpcDisableTLS = true
+zmqHost = "tcp://8.217.120.15:28333"
+popCutNum = 21
+
+[mvc]
+initialHeight = 86500
+mrc20Height = -1
+rpcHost = ""
+rpcUser = ""
+rpcPass = ""
+zmqHost = ""
+rpcHttpPostMode = true
+rpcDisableTLS = true
+popCutNum = 21
+
+[doge]
+initialHeight = 6100000
+mrc20Height = -1
+rpcHost = "8.217.234.33:23116"
+rpcUser = "dxllzyll"
+rpcPass = "kjgoep61xjg1i5u3"
+rpcHttpPostMode = true
+rpcDisableTLS = true
+zmqHost = "tcp://8.217.234.33:15533"
+popCutNum = 21
+
+[pebble]
+dir = ""
+num = 2
+
+[web]
+port = "0.0.0.0:7281"
+pemFile = ""
+keyFile = ""
+host = "localhost"
+
+[metaSo]
+pubkey = ""
+prikey = ""
+mongoNodeURI = ""
+syncMode = ""
+onlyHost = ""
+feeRateHost = ""
+feeLimit = 0
+notifcationBlackedHost = []
+
+[statistics]
+metaChainHost = ""
+allowHost = []
+allowProtocols = []

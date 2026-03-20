@@ -218,17 +218,19 @@ GossipSub 收到广播
 
 ### 5.2 man-p2p HTTP API 契约
 
-man-p2p 在 `localhost:7281` 暴露以下端点，**响应 envelope 与现有 manapi.metaid.io 保持一致**（`{ code, message, data }`），使 IDBots 侧改动最小：
+man-p2p 在 `localhost:7281` 暴露以下端点，**响应 envelope 与现有 MAN 代码一致**（`{ code: 1, message: "ok", data: {...} }`，成功码为 `1`），使 IDBots 侧改动最小。
+
+**路由前缀规则**：MAN 的 JSON API 路由组在 `/api` 前缀下（`r.Group("/api")`），内容服务路由无前缀。IDBots 调用本地 API 时必须包含 `/api/` 前缀。
 
 | 端点 | 说明 | 对应现有调用 |
 |------|------|------------|
-| `GET /pin/{pinId}` | 查询单个 PIN 数据 | `metaidCore.ts` `getPinData()` |
-| `GET /pin/path/list?metaid=&path=&page=&limit=` | 按路径列表查询 PIN | `main.ts` 4 处调用 |
-| `GET /address/pin/list/{address}?cursor=&size=&path=` | 按地址+路径列表查询 PIN | `skillSyncService.ts` L138 |
-| `GET /api/v1/users/info/metaid/{metaId}` | 查询用户信息（name/avatar/chatpubkey） | `metabotRestoreService.ts` |
-| `GET /api/v1/users/info/address/{address}` | 按地址查询用户信息 | `metabotRestoreService.ts` |
-| `GET /content/{pinId}` | 获取 PIN 原始内容字节 | `skillSyncService.ts` L243、`metabotRestoreService.ts` |
-| `GET /health` | 健康检查 | `p2pIndexerService.ts` |
+| `GET /api/pin/{pinId}` | 查询单个 PIN 数据 | `metaidCore.ts` `getPinData()` |
+| `GET /api/pin/path/list?metaid=&path=&page=&limit=` | 按路径列表查询 PIN | `main.ts` 4 处调用 |
+| `GET /api/address/pin/list/{address}?cursor=&size=&path=` | 按地址+路径列表查询 PIN | `skillSyncService.ts` L138 |
+| `GET /api/v1/users/info/metaid/{metaId}` | 查询用户信息（别名路由，委托到已有 handler） | `metabotRestoreService.ts` |
+| `GET /api/v1/users/info/address/{address}` | 按地址查询用户信息（别名路由） | `metabotRestoreService.ts` |
+| `GET /content/{pinId}` | 获取 PIN 原始内容字节（**无 /api 前缀**） | `skillSyncService.ts` L243、`metabotRestoreService.ts` |
+| `GET /health` | 健康检查（**无 /api 前缀**） | `p2pIndexerService.ts` |
 | `POST /api/config/reload` | 热重载同步配置 | `p2p:setConfig` IPC |
 | `GET /api/p2p/status` | P2P 节点状态 | `p2p:getStatus` IPC |
 | `GET /api/p2p/peers` | 已连接节点列表 | `p2p:getPeers` IPC |

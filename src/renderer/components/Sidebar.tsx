@@ -8,6 +8,7 @@ import CoworkSearchModal from './cowork/CoworkSearchModal';
 import { MagnifyingGlassIcon, PuzzlePieceIcon, ClockIcon, CpuChipIcon, ShoppingBagIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from './icons/ComposeIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
+import { P2PStatusBadge } from './p2p/P2PStatusBadge';
 
 interface SidebarProps {
   onShowSettings: () => void;
@@ -211,6 +212,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         onRenameSession={handleRenameSession}
       />
       <div className="px-3 pb-3 pt-1">
+        <div className="mb-1">
+          <P2PStatusBadge />
+        </div>
         <button
           type="button"
           onClick={() => onShowSettings()}
