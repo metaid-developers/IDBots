@@ -2,7 +2,7 @@
  * Cognitive Orchestrator daemon: goal-oriented multi-agent group chat orchestration.
  * Phase 1: Attention filter (mention + probability/cooldown).
  * Task 12.2: Context assembly, LLM reply, /protocols/simplegroupchat broadcast.
- * Task 12.4: Cowork-style skill list + Read/Bash only (no per-skill OpenAI tools).
+ * Task 12.4: Cowork-style skill list + Read/Bash only (no per-skill OpenAI tools), Boss trigger only.
  */
 
 import type { Database } from 'sql.js';
@@ -70,6 +70,8 @@ export interface MetabotInfo {
   llm_id: string | null;
   globalmetaid: string | null;
   metaid?: string;
+  /** Human owner GlobalMetaID (metabots.boss_global_metaid); privileged for Boss skill path when sender matches. */
+  boss_global_metaid?: string | null;
 }
 
 type GetMetabotByIdFn = (id: number) => MetabotInfo | null;
@@ -163,8 +165,8 @@ function getRecentMessages(
 }
 
 /**
- * Build system prompt per SDD. Task 12.4: inject Boss (supervisor) authority.
- * When supervisorMetaid is set and latest message is from Boss, LLM must prioritize and use tools.
+ * Build system prompt per SDD. Task 12.4: inject Boss (supervisor) and human owner authority.
+ * When latest message is from supervisor or configured owner GlobalMetaID, LLM must prioritize Boss instructions.
  */
 function buildSystemPrompt(
   name: string,
@@ -174,7 +176,8 @@ function buildSystemPrompt(
   participationGoal: string | null,
   contextLines: string[],
   supervisorMetaid: string | null,
-  latestMessageSenderMetaid: string | null
+  latestMessageSenderMetaid: string | null,
+  ownerGlobalMetaid: string | null
 ): string {
   const background = discussionBackground?.trim() || '自由参与，无特定背景';
   const goal = participationGoal?.trim() || '自由参与群聊，根据上下文自然回复或调用技能';
@@ -183,21 +186,39 @@ function buildSystemPrompt(
       ? contextLines.join('\n')
       : '(No recent messages)';
 
-  const bossBlock =
-    supervisorMetaid && supervisorMetaid.trim()
-      ? `[Status]
-当前群聊中，GlobalMetaID 为 ${supervisorMetaid} 的用户是你的最高长官 (Boss)。
-如果当前最新消息是由 Boss (${supervisorMetaid}) 发出的，你必须以最高优先级执行其要求，并优先调用 Tools 来完成任务。
+  const sup = (supervisorMetaid ?? '').trim();
+  const own = (ownerGlobalMetaid ?? '').trim();
+  const ownerDistinct = own !== '' && own !== sup;
 
-`
-      : '';
+  let bossBlock = '';
+  if (sup) {
+    bossBlock += `[Status]
+当前群聊中，GlobalMetaID 为 ${sup} 的用户是你的最高长官 (Boss)。
+如果当前最新消息是由 Boss (${sup}) 发出的，你必须以最高优先级执行其要求，并优先调用 Tools 来完成任务。
 
-  const isLatestFromBoss =
-    !!supervisorMetaid &&
-    !!latestMessageSenderMetaid &&
-    String(supervisorMetaid).trim() === String(latestMessageSenderMetaid).trim();
-  if (process.env.NODE_ENV === 'development' && supervisorMetaid) {
-    console.log('[Orchestrator] Supervisor (Boss) globalmetaid:', supervisorMetaid, '; latest message from:', latestMessageSenderMetaid, '; isLatestFromBoss:', isLatestFromBoss);
+`;
+  }
+  if (ownerDistinct) {
+    bossBlock += `GlobalMetaID 为 ${own} 的用户是你配置的主人 (人类)；如果当前最新消息是由该主人发出的，你必须以与 Boss 相同的最高优先级执行其要求，并优先调用 Tools 来完成任务。
+
+`;
+  }
+
+  const latest = (latestMessageSenderMetaid ?? '').trim();
+  const isLatestFromPrivileged =
+    !!latest &&
+    ((sup !== '' && latest === sup) || (own !== '' && latest === own));
+  if (process.env.NODE_ENV === 'development' && (sup || own)) {
+    console.log(
+      '[Orchestrator] Privileged IDs — supervisor:',
+      sup || '(none)',
+      'owner:',
+      own || '(none)',
+      '; latest sender globalmetaid:',
+      latest || '(none)',
+      '; isLatestFromPrivileged:',
+      isLatestFromPrivileged
+    );
   }
 
   return `[System Role]
@@ -496,7 +517,7 @@ async function executeBash(
 
 /**
  * Run the reply pipeline: context -> prompt -> LLM (with optional tool loop) -> broadcast -> update state.
- * When getSkillsPromptForIds is provided, inject full skill list and run tool loop (all skills allowed).
+ * Local skills (skill list + Read/Bash / Cowork) run only when triggerReason === 'Boss'.
  * Must be wrapped in try/catch and finally(thinkingTasks.delete).
  */
 async function runReplyPipeline(
@@ -537,14 +558,18 @@ async function runReplyPipeline(
       : null;
 
   const supervisorGlobalmetaid = task.supervisor_globalmetaid ?? task.supervisor_metaid ?? null;
-  const isLatestFromBoss = !!(
-    supervisorGlobalmetaid &&
-    latestMessageSenderGlobalmetaid &&
-    String(supervisorGlobalmetaid).trim() === String(latestMessageSenderGlobalmetaid).trim()
+  const ownerGlobalMetaid = (metabot.boss_global_metaid ?? '').trim() || null;
+  const supTrim = (supervisorGlobalmetaid ?? '').trim();
+  const latestTrim = (latestMessageSenderGlobalmetaid ?? '').trim();
+  const isLatestFromPrivileged = !!(
+    latestTrim &&
+    ((supTrim !== '' && latestTrim === supTrim) ||
+      (ownerGlobalMetaid != null && ownerGlobalMetaid !== '' && latestTrim === ownerGlobalMetaid))
   );
   console.log('[Orchestrator] [DEBUG] Boss (supervisor_globalmetaid):', supervisorGlobalmetaid ?? '(none)');
+  console.log('[Orchestrator] [DEBUG] Owner (boss_global_metaid):', ownerGlobalMetaid ?? '(none)');
   console.log('[Orchestrator] [DEBUG] Latest message sender globalmetaid:', latestMessageSenderGlobalmetaid ?? '(none)');
-  console.log('[Orchestrator] [DEBUG] Is latest message from Boss?', isLatestFromBoss);
+  console.log('[Orchestrator] [DEBUG] Is latest message from privileged (supervisor or owner)?', isLatestFromPrivileged);
 
   let systemPrompt = buildSystemPrompt(
     metabot.name,
@@ -554,11 +579,14 @@ async function runReplyPipeline(
     task.participation_goal,
     contextLines,
     supervisorGlobalmetaid,
-    latestMessageSenderGlobalmetaid ?? null
+    latestMessageSenderGlobalmetaid ?? null,
+    ownerGlobalMetaid
   );
 
   const skillsPrompt =
-    getSkillsPromptForIds && allowedRoots.length > 0 ? getSkillsPromptForIds([]) : null;
+    triggerReason === 'Boss' && getSkillsPromptForIds && allowedRoots.length > 0
+      ? getSkillsPromptForIds([])
+      : null;
   const useToolLoop = Boolean(skillsPrompt);
 
   if (useToolLoop) {
@@ -584,7 +612,7 @@ async function runReplyPipeline(
       const cwdForCowork = allowedRoots.length > 1 ? allowedRoots[allowedRoots.length - 1]! : allowedRoots[0]!;
       console.log('[Orchestrator] [DEBUG] Cowork cwd (chosen root):', cwdForCowork, 'all roots:', allowedRoots);
       try {
-        if (isLatestFromBoss) {
+        if (isLatestFromPrivileged) {
           await broadcastGroupChat(task.metabot_id, task.group_id, metabot.name, '响应中…');
         }
         replyText = await runSkillTurnViaCowork({
@@ -716,7 +744,7 @@ async function runReplyPipeline(
  * Run one orchestrator cycle: fetch active tasks, get new messages per task,
  * apply attention filter; on trigger, enqueue async pipeline and update last_processed_msg_id.
  */
-/** Optional: skill-list prompt for allowed_skills, SKILLs root(s), and test override. */
+/** Optional: skill-list prompt and SKILLs root(s); used only when triggerReason === 'Boss'. */
 export interface OrchestratorOptions {
   getSkillsPromptForIds?: GetSkillsPromptForIdsFn;
   skillsRoot?: string;
@@ -835,10 +863,15 @@ async function tick(
     const cooldownMs = (task.cooldown_seconds ?? 15) * 1000;
 
     const supervisorGlobalmetaid = (task.supervisor_globalmetaid ?? task.supervisor_metaid ?? '').trim() || null;
-    const isFromBoss = (senderGlobalMetaId: string | null, senderMetaId: string | null) =>
+    const ownerGlobalMetaid = (metabot?.boss_global_metaid ?? '').trim() || null;
+    const isFromSupervisor = (senderGlobalMetaId: string | null, senderMetaId: string | null) =>
       !!supervisorGlobalmetaid &&
       ((senderGlobalMetaId && senderGlobalMetaId === supervisorGlobalmetaid) ||
         (senderMetaId && senderMetaId === supervisorGlobalmetaid));
+    const isFromMetabotOwner = (senderGlobalMetaId: string | null) =>
+      !!ownerGlobalMetaid && !!senderGlobalMetaId && senderGlobalMetaId === ownerGlobalMetaid;
+    const isPrivilegedBoss = (senderGlobalMetaId: string | null, senderMetaId: string | null) =>
+      isFromSupervisor(senderGlobalMetaId, senderMetaId) || isFromMetabotOwner(senderGlobalMetaId);
 
     for (let msgIndex = 0; msgIndex < msgRows.length; msgIndex++) {
       const msgRow = msgRows[msgIndex];
@@ -868,11 +901,11 @@ async function tick(
 
       if (isMention) {
         shouldReply = true;
-        reason = isFromBoss(senderGlobalMetaId, senderMetaId) ? 'Boss' : 'Mention';
+        reason = isPrivilegedBoss(senderGlobalMetaId, senderMetaId) ? 'Boss' : 'Mention';
       } else if (isLastNewMessage && (task.random_reply_probability ?? 0) > 0 && now - lastRepliedAtMs > cooldownMs) {
         if (Math.random() < (task.random_reply_probability ?? 0)) {
           shouldReply = true;
-          reason = isFromBoss(senderGlobalMetaId, senderMetaId) ? 'Boss' : 'Probability';
+          reason = isPrivilegedBoss(senderGlobalMetaId, senderMetaId) ? 'Boss' : 'Probability';
         }
       }
 
@@ -913,7 +946,7 @@ async function tick(
 /**
  * Start the Cognitive Orchestrator daemon. Runs tick every 10 seconds.
  * performChatCompletion and broadcastGroupChat are injected for LLM and chain send.
- * options.getSkillsPromptForIds and options.skillsRoots enable Cowork-style Read/Bash; all skills are available when present.
+ * options.getSkillsPromptForIds and options.skillsRoots enable Cowork-style Read/Bash only when triggerReason === 'Boss'.
  */
 export function startOrchestrator(
   db: Database,

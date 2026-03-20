@@ -377,6 +377,7 @@ contextBridge.exposeInMainWorld('electron', {
       goal?: string | null;
       background?: string | null;
       boss_id?: number | null;
+      boss_global_metaid?: string | null;
       llm_id?: string | null;
       metabot_type?: 'twin' | 'worker';
     }) => ipcRenderer.invoke('idbots:addMetaBot', input),
@@ -416,6 +417,7 @@ contextBridge.exposeInMainWorld('electron', {
       goal?: string | null;
       background?: string | null;
       boss_id?: number | null;
+      boss_global_metaid?: string | null;
       llm_id?: string | null;
       metabot_type?: 'twin' | 'worker';
     }) => ipcRenderer.invoke('idbots:createMetaBotOnChain', input),
@@ -458,6 +460,7 @@ contextBridge.exposeInMainWorld('electron', {
       goal?: string | null;
       background?: string | null;
       boss_id?: number | null;
+      boss_global_metaid?: string | null;
       llm_id?: string | null;
     }) => ipcRenderer.invoke('metabot:update', id, input),
     setEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('metabot:setEnabled', id, enabled),

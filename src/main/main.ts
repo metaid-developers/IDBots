@@ -2626,6 +2626,7 @@ if (!gotTheLock) {
     goal?: string | null;
     background?: string | null;
     boss_id?: number | null;
+    boss_global_metaid?: string | null;
     llm_id?: string | null;
   }) => {
     try {
@@ -2659,6 +2660,7 @@ if (!gotTheLock) {
         goal: input.goal ?? null,
         background: input.background ?? null,
         boss_id: input.boss_id ?? null,
+        boss_global_metaid: (input.boss_global_metaid ?? '').trim() || null,
         llm_id: input.llm_id ?? null,
         tools: [],
         skills: [],
@@ -2679,12 +2681,19 @@ if (!gotTheLock) {
     goal?: string | null;
     background?: string | null;
     boss_id?: number | null;
+    boss_global_metaid?: string | null;
     llm_id?: string | null;
   }) => {
     try {
       await mockUpdateConfigOnChain();
       const store = getMetabotStore();
-      const metabot = store.updateMetabot(id, input);
+      const metabot = store.updateMetabot(id, {
+        ...input,
+        boss_global_metaid:
+          input.boss_global_metaid === undefined
+            ? undefined
+            : ((input.boss_global_metaid ?? '').trim() || null),
+      });
       return { success: true, metabot };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update metabot' };
@@ -2699,6 +2708,7 @@ if (!gotTheLock) {
     goal?: string | null;
     background?: string | null;
     boss_id?: number | null;
+    boss_global_metaid?: string | null;
     llm_id?: string | null;
     metabot_type?: 'twin' | 'worker';
   }) => {
@@ -2731,6 +2741,7 @@ if (!gotTheLock) {
         goal: input.goal ?? null,
         background: input.background ?? null,
         boss_id: null,
+        boss_global_metaid: (input.boss_global_metaid ?? '').trim() || null,
         llm_id: input.llm_id ?? null,
         tools: [],
         skills: [],
@@ -2760,6 +2771,7 @@ if (!gotTheLock) {
     goal?: string | null;
     background?: string | null;
     boss_id?: number | null;
+    boss_global_metaid?: string | null;
     llm_id?: string | null;
     metabot_type?: 'twin' | 'worker';
   }) => {
@@ -2811,6 +2823,7 @@ if (!gotTheLock) {
         goal: input.goal ?? null,
         background: input.background ?? null,
         boss_id: null,
+        boss_global_metaid: (input.boss_global_metaid ?? '').trim() || null,
         llm_id: input.llm_id ?? null,
         tools: [],
         skills: [],
@@ -4465,7 +4478,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }, 10 * 60 * 1000);
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
-    // Cowork-style skill list + Read/Bash for allowed_skills
+    // Local skills (Cowork / Read-Bash) only when trigger is Boss (supervisor or metabot owner GlobalMetaID).
     const skillMgr = getSkillManager();
     startCognitiveOrchestrator(
       getStore().getDatabase(),
@@ -4481,6 +4494,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
               llm_id: m.llm_id ?? null,
               globalmetaid: m.globalmetaid ?? null,
               metaid: m.metaid,
+              boss_global_metaid: m.boss_global_metaid ?? null,
             }
           : null;
       },
