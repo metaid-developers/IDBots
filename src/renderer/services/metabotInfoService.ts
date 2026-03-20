@@ -4,7 +4,6 @@
  * and other features that need remote MetaBot info.
  */
 
-const METAFILE_INFO_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
 const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/thumbnail';
 
 export interface MetaidInfoResult {
@@ -53,16 +52,8 @@ export async function fetchMetaidInfoByGlobalId(
   if (!id) {
     return {};
   }
-  const url = `${METAFILE_INFO_BASE}/${encodeURIComponent(id)}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Metabot info fetch failed: ${res.status}`);
-  }
-  const json = (await res.json()) as {
-    code?: number;
-    message?: string;
-    data?: Record<string, unknown>;
-  };
+  const result = await window.electron.p2p.getUserInfo({ globalMetaId: id });
+  const json = result as { code?: number; message?: string; data?: Record<string, unknown> };
   if (json.code !== 1 && json.code !== undefined) {
     throw new Error(json.message || 'Metabot info request failed');
   }

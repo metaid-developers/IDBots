@@ -626,6 +626,15 @@ interface IElectronAPI {
     delete: (id: string) => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
     setEnabled: (options: { id: string; enabled: boolean }) => Promise<{ success: boolean; servers?: McpServerConfig[]; error?: string }>;
   };
+  p2p: {
+    getStatus: () => Promise<unknown>;
+    getConfig: () => Promise<unknown>;
+    setConfig: (config: unknown) => Promise<unknown>;
+    getPeers: () => Promise<string[]>;
+    getUserInfo: (params: { globalMetaId: string }) => Promise<unknown>;
+    onStatusUpdate: (callback: (status: unknown) => void) => () => void;
+    onSyncProgress: (callback: (data: unknown) => void) => () => void;
+  };
 }
 
 // IM Gateway types
