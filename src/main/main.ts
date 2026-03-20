@@ -56,6 +56,9 @@ import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhShare
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 import { fetchFromLocalOrFallback } from './services/localIndexerProxy';
+import * as p2pIndexerService from './services/p2pIndexerService';
+import { P2P_LOCAL_BASE } from './services/p2pIndexerService';
+import * as p2pConfigService from './services/p2pConfigService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -4072,6 +4075,35 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     return false;
   });
 
+  // P2P indexer IPC handlers
+  ipcMain.handle('p2p:getStatus', () => p2pIndexerService.getP2PStatus());
+
+  ipcMain.handle('p2p:getConfig', () => p2pConfigService.getConfig(getStore()));
+
+  ipcMain.handle('p2p:setConfig', async (_e: Electron.IpcMainInvokeEvent, config: unknown) => {
+    const updated = p2pConfigService.setConfig(getStore(), config as Partial<import('./services/p2pConfigService').P2PConfig>);
+    const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
+    p2pConfigService.writeConfigFile(updated, configPath);
+    await p2pConfigService.reloadConfig();
+    return updated;
+  });
+
+  ipcMain.handle('p2p:getPeers', async () => {
+    try {
+      const res = await fetch(`${P2P_LOCAL_BASE}/api/p2p/peers`, { signal: AbortSignal.timeout(2000) });
+      return await res.json();
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId: string }) => {
+    const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
+    const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
+    const res = await fetchFromLocalOrFallback(localPath, fallbackUrl);
+    return await res.json();
+  });
+
   // MCP is currently suspended and not exposed to renderer.
 
   // 设置 Content Security Policy
@@ -4412,6 +4444,19 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
 
     store = await initStore();
+
+    // Start man-p2p local indexer (non-fatal if binary not present)
+    try {
+      const p2pConfig = p2pConfigService.getConfig(getStore());
+      const dataDir = path.join(app.getPath('userData'), 'man-p2p');
+      const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
+      fs.mkdirSync(dataDir, { recursive: true });
+      p2pConfigService.writeConfigFile(p2pConfig, configPath);
+      await p2pIndexerService.start(dataDir, configPath);
+      console.log('[p2p] man-p2p started');
+    } catch (err) {
+      console.warn('[p2p] man-p2p failed to start, continuing without local indexer:', err);
+    }
 
     const listenerConfig = getListenerConfigFromStore();
     if (shouldRunListener(listenerConfig)) {
