@@ -13,6 +13,7 @@ import { app } from 'electron';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
+import { fetchFromLocalOrFallback } from './localIndexerProxy';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -718,8 +719,9 @@ export async function getPinData(pinId: string, persist: boolean): Promise<PinDa
     }
   }
 
-  const url = `${MANAPI_BASE}/pin/${encodeURIComponent(pinId)}`;
-  const res = await fetch(url);
+  const localPath = `/api/pin/${encodeURIComponent(pinId)}`;
+  const fallbackUrl = `${MANAPI_BASE}/pin/${encodeURIComponent(pinId)}`;
+  const res = await fetchFromLocalOrFallback(localPath, fallbackUrl);
   if (!res.ok) {
     throw new Error(`manapi fetch failed: ${res.status} ${res.statusText}`);
   }
