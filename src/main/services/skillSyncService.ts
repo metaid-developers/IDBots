@@ -6,6 +6,7 @@
 import { app, session } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { fetchFromLocalOrFallback, fetchContentWithFallback } from './localIndexerProxy';
 
 // Dynamically require AdmZip to avoid crash if not installed
 let AdmZip: typeof import('adm-zip') | null = null;
@@ -136,7 +137,8 @@ export async function getOfficialSkillsStatus(): Promise<{
 }> {
   try {
     const url = `${MANAPI_BASE}/address/pin/list/${OFFICIAL_ADDRESS}?cursor=0&size=200&path=/protocols/metabot-skill`;
-    const response = await session.defaultSession.fetch(url);
+    const localPath = `/api/address/pin/list/${OFFICIAL_ADDRESS}?cursor=0&size=200&path=/protocols/metabot-skill`;
+    const response = await fetchFromLocalOrFallback(localPath, url);
     if (!response.ok) {
       return { success: false, error: `MetaWeb API error: ${response.status} ${response.statusText}` };
     }
@@ -241,7 +243,7 @@ export async function installOfficialSkill(
 
   try {
     const url = `${MAN_CONTENT_BASE}/${pinId}`;
-    const response = await session.defaultSession.fetch(url);
+    const response = await fetchContentWithFallback(pinId, url);
     if (!response.ok) {
       return { success: false, error: `Download failed: ${response.status} ${response.statusText}` };
     }
