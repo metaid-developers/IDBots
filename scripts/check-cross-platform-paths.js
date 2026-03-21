@@ -155,8 +155,27 @@ function runStaticChecks() {
       const resources = Array.isArray(builder.extraResources) ? builder.extraResources : [];
       const hasSkills = resources.some((r) => r && r.from === 'SKILLs');
       const hasMinGit = resources.some((r) => r && r.from === 'resources/mingit');
+      const platformHasP2PConfig = (section) => {
+        const extraResources = Array.isArray(section?.extraResources) ? section.extraResources : [];
+        return extraResources.some((r) => r && r.from === 'resources/man-p2p/config.toml');
+      };
       addCheck('electron-builder bundles SKILLs', hasSkills, hasSkills ? 'ok' : 'missing extraResources.from=SKILLs');
       addCheck('electron-builder bundles mingit', hasMinGit, hasMinGit ? 'ok' : 'missing extraResources.from=resources/mingit');
+      addCheck(
+        'electron-builder bundles man-p2p config on mac',
+        platformHasP2PConfig(builder.mac),
+        platformHasP2PConfig(builder.mac) ? 'ok' : 'missing mac.extraResources.from=resources/man-p2p/config.toml'
+      );
+      addCheck(
+        'electron-builder bundles man-p2p config on win',
+        platformHasP2PConfig(builder.win),
+        platformHasP2PConfig(builder.win) ? 'ok' : 'missing win.extraResources.from=resources/man-p2p/config.toml'
+      );
+      addCheck(
+        'electron-builder bundles man-p2p config on linux',
+        platformHasP2PConfig(builder.linux),
+        platformHasP2PConfig(builder.linux) ? 'ok' : 'missing linux.extraResources.from=resources/man-p2p/config.toml'
+      );
     } catch (error) {
       addCheck('electron-builder resource checks', false, `invalid JSON: ${error.message}`);
     }

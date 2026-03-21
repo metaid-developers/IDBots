@@ -80,6 +80,10 @@
       {
         "from": "resources/man-p2p/man-p2p-win32-x64.exe",
         "to": "man-p2p-win32-x64.exe"
+      },
+      {
+        "from": "resources/man-p2p/config.toml",
+        "to": "man-p2p-config.toml"
       }
     ]
   },
@@ -93,6 +97,10 @@
       {
         "from": "resources/man-p2p/man-p2p-linux-x64",
         "to": "man-p2p-linux-x64"
+      },
+      {
+        "from": "resources/man-p2p/config.toml",
+        "to": "man-p2p-config.toml"
       }
     ]
   },
