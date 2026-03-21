@@ -52,3 +52,5 @@ nul
 .playwright-mcp/
 .cowork-temp/
 .tmp-bin/
+.tmp-oss/
+man_base_data_pebble/

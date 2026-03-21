@@ -12,6 +12,8 @@ export interface P2PConfig {
   p2p_bootstrap_nodes: string[];
   p2p_enable_relay: boolean;
   p2p_storage_limit_gb: number;
+  p2p_enable_chain_source: boolean;
+  p2p_own_addresses: string[];
 }
 
 export const DEFAULT_P2P_CONFIG: P2PConfig = {
@@ -19,7 +21,42 @@ export const DEFAULT_P2P_CONFIG: P2PConfig = {
   p2p_bootstrap_nodes: [],
   p2p_enable_relay: true,
   p2p_storage_limit_gb: 10,
+  p2p_enable_chain_source: false,
+  p2p_own_addresses: [],
 };
+
+type OwnAddressSource = {
+  mvc_address?: string | null;
+  btc_address?: string | null;
+  doge_address?: string | null;
+};
+
+export function collectOwnAddresses(metabots: OwnAddressSource[]): string[] {
+  const seen = new Set<string>();
+  const collected: string[] = [];
+
+  for (const metabot of metabots) {
+    for (const value of [metabot.mvc_address, metabot.btc_address, metabot.doge_address]) {
+      const normalized = typeof value === 'string' ? value.trim() : '';
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      collected.push(normalized);
+    }
+  }
+
+  return collected;
+}
+
+export function buildRuntimeConfig(config: P2PConfig, ownAddresses: string[]): P2PConfig {
+  const merged = [...(config.p2p_own_addresses || []), ...ownAddresses]
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return {
+    ...config,
+    p2p_own_addresses: Array.from(new Set(merged)),
+  };
+}
 
 export function getConfig(store: SqliteStore): P2PConfig {
   const stored = store.getP2PConfig();

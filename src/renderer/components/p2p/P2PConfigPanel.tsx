@@ -10,6 +10,8 @@ interface P2PConfig {
   p2p_bootstrap_nodes: string[];
   p2p_enable_relay: boolean;
   p2p_storage_limit_gb: number;
+  p2p_enable_chain_source: boolean;
+  p2p_own_addresses: string[];
 }
 
 const lines = (text: string) => text.split('\n').map(s => s.trim()).filter(Boolean);
@@ -18,7 +20,7 @@ const SYNC_MODE_OPTIONS: { value: P2PConfig['p2p_sync_mode']; label: string; des
   {
     value: 'self',
     label: 'Self',
-    description: 'Only sync PINs from your own MetaID addresses',
+    description: 'Only sync PINs from your local MetaBot addresses and optional own-address overrides',
   },
   {
     value: 'selective',
@@ -105,6 +107,23 @@ export const P2PConfigPanel: React.FC = () => {
         </div>
       )}
 
+      {/* Own addresses */}
+      <div>
+        <div className={labelClass}>Own addresses</div>
+        <textarea
+          rows={4}
+          placeholder="Optional extra addresses, one per line"
+          value={(config.p2p_own_addresses || []).join('\n')}
+          onChange={e =>
+            setConfig(prev => ({ ...prev, p2p_own_addresses: lines(e.target.value) }))
+          }
+          className={inputClass}
+        />
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+          Self mode always includes local MetaBot wallet addresses. Add extra addresses here only if you want them treated as your own.
+        </p>
+      </div>
+
       {/* Selective paths — shown only when mode = selective */}
       {isSelective && (
         <div>
@@ -190,6 +209,24 @@ export const P2PConfigPanel: React.FC = () => {
           />
           <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Enable circuit relay</span>
         </label>
+      </div>
+
+      {/* Blockchain source */}
+      <div>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={config.p2p_enable_chain_source ?? false}
+            onChange={e =>
+              setConfig(prev => ({ ...prev, p2p_enable_chain_source: e.target.checked }))
+            }
+            className="accent-blue-500 w-4 h-4"
+          />
+          <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Enable blockchain source</span>
+        </label>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+          Off means P2P-only mode. Turn this on only when this device also has usable blockchain RPC/ZMQ access.
+        </p>
       </div>
 
       {/* Storage limit */}

@@ -6,6 +6,10 @@ interface P2PStatus {
   storageLimitReached?: boolean;
   storageUsedBytes?: number;
   dataSource?: string;
+  syncMode?: string;
+  runtimeMode?: string;
+  peerId?: string;
+  listenAddrs?: string[];
   error?: string;
 }
 
@@ -43,10 +47,17 @@ export const P2PStatusBadge: React.FC = () => {
     </span>
   );
 
+  const renderModeBadge = (label: string) => (
+    <span className='text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'>
+      {label}
+    </span>
+  );
+
   if (status.storageLimitReached) {
     return (
       <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
         🔶 Storage full
+        {status.runtimeMode && renderModeBadge(status.runtimeMode)}
       </span>
     );
   }
@@ -56,6 +67,11 @@ export const P2PStatusBadge: React.FC = () => {
       <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
         {renderDot('bg-gray-400')}
         P2P offline
+        {status.error ? (
+          <span className='text-xs text-red-500 dark:text-red-400 max-w-32 truncate' title={status.error}>
+            {status.error}
+          </span>
+        ) : null}
       </span>
     );
   }
@@ -65,6 +81,7 @@ export const P2PStatusBadge: React.FC = () => {
       <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
         {renderDot('bg-yellow-400', true)}
         Connecting...
+        {status.runtimeMode && renderModeBadge(status.runtimeMode)}
         {status.dataSource && renderDataSourceBadge(status.dataSource)}
       </span>
     );
@@ -74,6 +91,7 @@ export const P2PStatusBadge: React.FC = () => {
     <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
       {renderDot('bg-green-400')}
       {status.peerCount} peers
+      {status.runtimeMode && renderModeBadge(status.runtimeMode)}
       {status.dataSource && renderDataSourceBadge(status.dataSource)}
     </span>
   );

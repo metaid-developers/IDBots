@@ -19,6 +19,10 @@ export interface P2PStatus {
   storageLimitReached?: boolean;
   storageUsedBytes?: number;
   dataSource?: string;
+  syncMode?: string;
+  runtimeMode?: string;
+  peerId?: string;
+  listenAddrs?: string[];
   error?: string;
 }
 
@@ -37,6 +41,39 @@ let stopping = false;
 
 let cachedStatus: P2PStatus = { running: false };
 
+function hasElectronAppRuntime(): boolean {
+  return !!app && typeof app.isPackaged === 'boolean' && typeof app.getAppPath === 'function';
+}
+
+export function unwrapApiData(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') return undefined;
+  return (payload as { data?: unknown }).data;
+}
+
+export function normalizeStatusPayload(payload: unknown): P2PStatus {
+  const data = unwrapApiData(payload);
+  const status = (data && typeof data === 'object') ? data as Record<string, unknown> : {};
+  return {
+    running: true,
+    peerCount: typeof status.peerCount === 'number' ? status.peerCount : undefined,
+    storageLimitReached: typeof status.storageLimitReached === 'boolean' ? status.storageLimitReached : undefined,
+    storageUsedBytes: typeof status.storageUsedBytes === 'number' ? status.storageUsedBytes : undefined,
+    dataSource: typeof status.dataSource === 'string' ? status.dataSource : undefined,
+    syncMode: typeof status.syncMode === 'string' ? status.syncMode : undefined,
+    runtimeMode: typeof status.runtimeMode === 'string' ? status.runtimeMode : undefined,
+    peerId: typeof status.peerId === 'string' ? status.peerId : undefined,
+    listenAddrs: Array.isArray(status.listenAddrs)
+      ? status.listenAddrs.filter((item): item is string => typeof item === 'string')
+      : undefined,
+  };
+}
+
+export function unwrapPeersPayload(payload: unknown): string[] {
+  const data = unwrapApiData(payload);
+  if (!Array.isArray(data)) return [];
+  return data.filter((item): item is string => typeof item === 'string');
+}
+
 function resolveBinaryPath(): string {
   const names: Record<string, string> = {
     'darwin-arm64': 'man-p2p-darwin-arm64',
@@ -47,13 +84,15 @@ function resolveBinaryPath(): string {
   const key = `${process.platform}-${process.arch}`;
   const name = names[key] ?? `man-p2p-${key}`;
 
-  if (app.isPackaged) {
+  if (hasElectronAppRuntime() && app.isPackaged) {
     // Production: electron-builder extraResources puts binaries directly in Resources/
     return path.join(process.resourcesPath, name);
-  } else {
+  }
+  if (hasElectronAppRuntime()) {
     // Dev mode: use project's resources/man-p2p/ directory
     return path.join(app.getAppPath(), 'resources', 'man-p2p', name);
   }
+  return path.join(process.resourcesPath || process.cwd(), name);
 }
 
 function emitStatusToAllWindows(status: P2PStatus): void {
@@ -81,14 +120,8 @@ function startStatusPoll(): void {
       });
       clearTimeout(timeout);
       if (res.ok) {
-        const data = await res.json() as Record<string, unknown>;
-        emitStatusToAllWindows({
-          running: true,
-          peerCount: typeof data.peerCount === 'number' ? data.peerCount : undefined,
-          storageLimitReached: typeof data.storageLimitReached === 'boolean' ? data.storageLimitReached : undefined,
-          storageUsedBytes: typeof data.storageUsedBytes === 'number' ? data.storageUsedBytes : undefined,
-          dataSource: typeof data.dataSource === 'string' ? data.dataSource : undefined,
-        });
+        const payload = await res.json() as Record<string, unknown>;
+        emitStatusToAllWindows(normalizeStatusPayload(payload));
       }
     } catch {
       // Silently ignore poll errors; process exit event handles crash detection
@@ -122,11 +155,13 @@ function scheduleRestart(): void {
 }
 
 function resolveMainConfigPath(): string {
-  if (app.isPackaged) {
+  if (hasElectronAppRuntime() && app.isPackaged) {
     return path.join(process.resourcesPath, 'man-p2p-config.toml');
-  } else {
+  }
+  if (hasElectronAppRuntime()) {
     return path.join(app.getAppPath(), 'resources', 'man-p2p', 'config.toml');
   }
+  return path.join(process.resourcesPath || process.cwd(), 'man-p2p-config.toml');
 }
 
 function spawnProcess(dataDir: string, configPath: string): Promise<void> {
@@ -225,6 +260,7 @@ export async function start(dataDir: string, configPath: string): Promise<void> 
   }
 
   await spawnProcess(dataDir, configPath);
+  emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
   startStatusPoll();
 }
 

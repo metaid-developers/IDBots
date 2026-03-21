@@ -1,6 +1,19 @@
 // Keep in sync with P2P_LOCAL_BASE in p2pIndexerService.ts
 const LOCAL_BASE = 'http://localhost:7281';
 
+function isJsonApiPath(localPath: string): boolean {
+  return localPath.startsWith('/api/');
+}
+
+async function isSuccessfulEnvelope(localRes: Response): Promise<boolean> {
+  try {
+    const json = await localRes.clone().json() as { code?: unknown };
+    return json?.code === 1;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Try to fetch from the local P2P indexer first; fall back to a remote URL
  * if the local node is unavailable, returns a non-2xx status, or times out.
@@ -22,13 +35,14 @@ export async function fetchFromLocalOrFallback(
       signal: AbortSignal.timeout(2000),
     });
 
-    if (localRes.ok) {
+    const isEnvelopeHit = !isJsonApiPath(localPath) || await isSuccessfulEnvelope(localRes);
+    if (localRes.ok && isEnvelopeHit) {
       console.log(`[p2p-proxy] local hit: ${localPath}`);
       return localRes;
     }
 
     // Non-2xx response from local node
-    const reason = `status ${localRes.status}`;
+    const reason = !localRes.ok ? `status ${localRes.status}` : 'code != 1';
     console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
   } catch (err: unknown) {
     const name = (err as { name?: string }).name ?? '';
@@ -63,10 +77,22 @@ export async function fetchContentWithFallback(
       signal: AbortSignal.timeout(2000),
     });
 
+    if (localRes.headers.get('x-man-content-status') === 'metadata-only') {
+      console.log(`[p2p-proxy] fallback: ${localPath} → metadata-only`);
+      return fetch(fallbackUrl);
+    }
+
     const contentLength = localRes.headers.get('content-length');
     if (localRes.ok && contentLength && parseInt(contentLength, 10) > 0) {
       console.log(`[p2p-proxy] local hit: ${localPath}`);
       return localRes;
+    }
+    if (localRes.ok && !contentLength) {
+      const bodyBytes = await localRes.clone().arrayBuffer();
+      if (bodyBytes.byteLength > 0) {
+        console.log(`[p2p-proxy] local hit: ${localPath}`);
+        return localRes;
+      }
     }
 
     // Empty body or non-2xx

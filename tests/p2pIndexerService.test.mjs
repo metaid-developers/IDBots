@@ -63,7 +63,58 @@ test('healthCheck() returns false when nothing is listening on port 7281', async
     return;
   }
 
-  // Nothing should be listening on 7281 in a test environment
-  const result = await p2pService.healthCheck();
-  assert.equal(result, false, 'healthCheck() should return false when port 7281 is not open');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('ECONNREFUSED');
+  };
+
+  try {
+    const result = await p2pService.healthCheck();
+    assert.equal(result, false, 'healthCheck() should return false when local health request errors');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('normalizeStatusPayload() unwraps MAN envelope data', async () => {
+  assert.equal(typeof p2pService?.normalizeStatusPayload, 'function', 'normalizeStatusPayload() should be exported');
+
+  const result = p2pService.normalizeStatusPayload({
+    code: 1,
+    message: 'ok',
+    data: {
+      peerCount: 2,
+      storageLimitReached: false,
+      storageUsedBytes: 1024,
+      dataSource: 'p2p',
+      syncMode: 'self',
+      runtimeMode: 'p2p-only',
+      peerId: 'peer-123',
+      listenAddrs: ['/ip4/127.0.0.1/tcp/4001'],
+    },
+  });
+
+  assert.deepEqual(result, {
+    running: true,
+    peerCount: 2,
+    storageLimitReached: false,
+    storageUsedBytes: 1024,
+    dataSource: 'p2p',
+    syncMode: 'self',
+    runtimeMode: 'p2p-only',
+    peerId: 'peer-123',
+    listenAddrs: ['/ip4/127.0.0.1/tcp/4001'],
+  });
+});
+
+test('unwrapPeersPayload() returns peer list from MAN envelope', async () => {
+  assert.equal(typeof p2pService?.unwrapPeersPayload, 'function', 'unwrapPeersPayload() should be exported');
+
+  const result = p2pService.unwrapPeersPayload({
+    code: 1,
+    message: 'ok',
+    data: ['peer-a', 'peer-b'],
+  });
+
+  assert.deepEqual(result, ['peer-a', 'peer-b']);
 });

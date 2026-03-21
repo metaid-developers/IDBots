@@ -4083,7 +4083,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   ipcMain.handle('p2p:setConfig', async (_e: Electron.IpcMainInvokeEvent, config: unknown) => {
     const updated = p2pConfigService.setConfig(getStore(), config as Partial<import('./services/p2pConfigService').P2PConfig>);
     const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
-    p2pConfigService.writeConfigFile(updated, configPath);
+    const ownAddresses = p2pConfigService.collectOwnAddresses(getMetabotStore().listMetabots());
+    const runtimeConfig = p2pConfigService.buildRuntimeConfig(updated, ownAddresses);
+    p2pConfigService.writeConfigFile(runtimeConfig, configPath);
     await p2pConfigService.reloadConfig();
     return updated;
   });
@@ -4091,7 +4093,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   ipcMain.handle('p2p:getPeers', async () => {
     try {
       const res = await fetch(`${P2P_LOCAL_BASE}/api/p2p/peers`, { signal: AbortSignal.timeout(2000) });
-      return await res.json();
+      if (!res.ok) return [];
+      const payload = await res.json();
+      return p2pIndexerService.unwrapPeersPayload(payload);
     } catch {
       return [];
     }
@@ -4450,8 +4454,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const p2pConfig = p2pConfigService.getConfig(getStore());
       const dataDir = path.join(app.getPath('userData'), 'man-p2p');
       const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
+      const ownAddresses = p2pConfigService.collectOwnAddresses(getMetabotStore().listMetabots());
+      const runtimeConfig = p2pConfigService.buildRuntimeConfig(p2pConfig, ownAddresses);
       fs.mkdirSync(dataDir, { recursive: true });
-      p2pConfigService.writeConfigFile(p2pConfig, configPath);
+      p2pConfigService.writeConfigFile(runtimeConfig, configPath);
       await p2pIndexerService.start(dataDir, configPath);
       console.log('[p2p] man-p2p started');
     } catch (err) {
