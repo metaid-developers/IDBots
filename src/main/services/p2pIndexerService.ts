@@ -30,6 +30,8 @@ const RESTART_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 const MAX_RETRIES = 5;
 const HEALTH_TIMEOUT_MS = 2000;
 const STATUS_POLL_INTERVAL_MS = 30_000;
+const STARTUP_HEALTH_ATTEMPTS = 20;
+const STARTUP_HEALTH_DELAY_MS = 250;
 
 let childProcess: ChildProcess | null = null;
 let retryCount = 0;
@@ -41,8 +43,24 @@ let stopping = false;
 
 let cachedStatus: P2PStatus = { running: false };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function hasElectronAppRuntime(): boolean {
   return !!app && typeof app.isPackaged === 'boolean' && typeof app.getAppPath === 'function';
+}
+
+function hasBrowserWindowRuntime(): boolean {
+  return typeof BrowserWindow?.getAllWindows === 'function';
+}
+
+function setOfflineStatus(error?: string): void {
+  emitStatusToAllWindows({
+    ...cachedStatus,
+    running: false,
+    error,
+  });
 }
 
 export function unwrapApiData(payload: unknown): unknown {
@@ -74,6 +92,25 @@ export function unwrapPeersPayload(payload: unknown): string[] {
   return data.filter((item): item is string => typeof item === 'string');
 }
 
+export async function waitForHealthyLocalApi(
+  check: () => Promise<boolean> = healthCheck,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<boolean> {
+  const attempts = options?.attempts ?? STARTUP_HEALTH_ATTEMPTS;
+  const delayMs = options?.delayMs ?? STARTUP_HEALTH_DELAY_MS;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await check()) {
+      return true;
+    }
+    if (attempt < attempts - 1 && delayMs > 0) {
+      await sleep(delayMs);
+    }
+  }
+
+  return false;
+}
+
 function resolveBinaryPath(): string {
   const names: Record<string, string> = {
     'darwin-arm64': 'man-p2p-darwin-arm64',
@@ -97,6 +134,9 @@ function resolveBinaryPath(): string {
 
 function emitStatusToAllWindows(status: P2PStatus): void {
   cachedStatus = status;
+  if (!hasBrowserWindowRuntime()) {
+    return;
+  }
   BrowserWindow.getAllWindows().forEach(win => {
     win.webContents.send('p2p:statusUpdate', status);
   });
@@ -239,7 +279,9 @@ export async function start(dataDir: string, configPath: string): Promise<void> 
   // Validate binary exists before doing anything else
   const binaryPath = resolveBinaryPath();
   if (!fs.existsSync(binaryPath)) {
-    throw new Error(`man-p2p binary not found: ${binaryPath}`);
+    const error = `man-p2p binary not found: ${binaryPath}`;
+    setOfflineStatus(error);
+    throw new Error(error);
   }
 
   // Reset state for explicit start
@@ -261,6 +303,13 @@ export async function start(dataDir: string, configPath: string): Promise<void> 
 
   await spawnProcess(dataDir, configPath);
   emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
+  const healthy = await waitForHealthyLocalApi();
+  if (!healthy) {
+    await stop();
+    const error = 'man-p2p health check did not become ready after startup';
+    setOfflineStatus(error);
+    throw new Error(error);
+  }
   startStatusPoll();
 }
 
@@ -275,7 +324,10 @@ export async function stop(): Promise<void> {
   clearStatusPoll();
 
   const proc = childProcess;
-  if (!proc) return;
+  if (!proc) {
+    setOfflineStatus(undefined);
+    return;
+  }
 
   return new Promise((resolve) => {
     const killTimeout = setTimeout(() => {
@@ -290,6 +342,7 @@ export async function stop(): Promise<void> {
 
     proc.on('exit', () => {
       clearTimeout(killTimeout);
+      setOfflineStatus(undefined);
       resolve();
     });
 
@@ -297,6 +350,7 @@ export async function stop(): Promise<void> {
       proc.kill('SIGTERM');
     } catch {
       clearTimeout(killTimeout);
+      setOfflineStatus(undefined);
       resolve();
     }
   });

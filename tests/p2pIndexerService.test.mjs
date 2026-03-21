@@ -57,6 +57,46 @@ test('start() rejects with a clear error when binary does not exist', async () =
   }
 });
 
+test('start() records startup failure in cached status when binary is missing', async () => {
+  if (!p2pService) {
+    console.log('SKIP: dist-electron not found, run npm run compile:electron first');
+    return;
+  }
+
+  const originalResourcesPath = process.resourcesPath;
+  Object.defineProperty(process, 'resourcesPath', {
+    value: '/tmp/__nonexistent_resources__',
+    writable: true,
+    configurable: true,
+  });
+
+  try {
+    await assert.rejects(() => p2pService.start('/tmp/p2p-data', '/tmp/p2p-config.json'));
+    const status = p2pService.getP2PStatus();
+    assert.equal(status.running, false, 'status should remain offline after startup failure');
+    assert.match(status.error || '', /man-p2p binary not found/i);
+  } finally {
+    Object.defineProperty(process, 'resourcesPath', {
+      value: originalResourcesPath,
+      writable: true,
+      configurable: true,
+    });
+  }
+});
+
+test('waitForHealthyLocalApi() retries until the local health check succeeds', async () => {
+  assert.equal(typeof p2pService?.waitForHealthyLocalApi, 'function', 'waitForHealthyLocalApi() should be exported');
+
+  let attempts = 0;
+  const result = await p2pService.waitForHealthyLocalApi(async () => {
+    attempts += 1;
+    return attempts >= 3;
+  }, { attempts: 5, delayMs: 0 });
+
+  assert.equal(result, true, 'health wait should succeed once the check returns true');
+  assert.equal(attempts, 3, 'health wait should stop retrying after the first healthy result');
+});
+
 test('healthCheck() returns false when nothing is listening on port 7281', async () => {
   if (!p2pService) {
     console.log('SKIP: dist-electron not found, run npm run compile:electron first');
