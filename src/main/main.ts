@@ -61,6 +61,7 @@ import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pin
 import * as p2pIndexerService from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
+import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
 
 // 设置应用程序名称
@@ -1214,7 +1215,7 @@ const getCoworkRunner = () => {
               IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_METABOT_PATH: wallet.path,
-              IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+              IDBOTS_RPC_URL: getMetaidRpcBase(),
             });
             if (metabot.globalmetaid) {
               overrides.IDBOTS_METABOT_GLOBALMETAID = metabot.globalmetaid;
@@ -1230,7 +1231,7 @@ const getCoworkRunner = () => {
             IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
             IDBOTS_TWIN_NAME: twin.name,
             IDBOTS_METABOT_PATH: twin.path,
-            IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+            IDBOTS_RPC_URL: getMetaidRpcBase(),
           });
           const twinMetabot = metabotStore.getMetabotById(twin.id);
           if (twinMetabot?.globalmetaid) {

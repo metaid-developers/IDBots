@@ -246,13 +246,19 @@ export function resolveRuntimeConfigPath(
 ): string {
   const configuredLocalBase = getConfiguredP2PLocalBase(env);
   const listenAddress = resolveP2PLocalListenAddress(configuredLocalBase);
-  if (!listenAddress) {
+  const runtimeConfigPath = path.join(dataDir, 'man-p2p-runtime-config.toml');
+  const baseConfig = fs.readFileSync(mainConfigPath, 'utf8');
+  const pebbleDir = path.join(dataDir, 'man_base_data_pebble');
+  let runtimeConfig = baseConfig;
+  if (listenAddress) {
+    runtimeConfig = applyP2PLocalListenAddressOverride(runtimeConfig, listenAddress);
+  }
+  runtimeConfig = runtimeConfig.replace(/^dir\s*=\s*"[^"]*"\s*$/m, `dir = "${pebbleDir}"`);
+
+  if (runtimeConfig === baseConfig) {
     return mainConfigPath;
   }
 
-  const runtimeConfigPath = path.join(dataDir, 'man-p2p-runtime-config.toml');
-  const baseConfig = fs.readFileSync(mainConfigPath, 'utf8');
-  const runtimeConfig = applyP2PLocalListenAddressOverride(baseConfig, listenAddress);
   fs.mkdirSync(path.dirname(runtimeConfigPath), { recursive: true });
   fs.writeFileSync(runtimeConfigPath, runtimeConfig, 'utf8');
   return runtimeConfigPath;

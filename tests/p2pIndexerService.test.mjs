@@ -214,7 +214,7 @@ test('resolveRuntimeConfigPath() writes a local-base-specific config when IDBOTS
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-p2p-runtime-config-'));
   const mainConfigPath = path.join(tempDir, 'config.toml');
-  fs.writeFileSync(mainConfigPath, 'port = "0.0.0.0:7281"\n', 'utf8');
+  fs.writeFileSync(mainConfigPath, '[pebble]\ndir = ""\n\n[web]\nport = "0.0.0.0:7281"\n', 'utf8');
 
   const originalLocalBase = process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
   process.env.IDBOTS_MAN_P2P_LOCAL_BASE = 'http://127.0.0.1:48999';
@@ -226,7 +226,9 @@ test('resolveRuntimeConfigPath() writes a local-base-specific config when IDBOTS
       mainConfigPath,
       'runtime config path should differ from the bundled base config when override is present',
     );
-    assert.match(fs.readFileSync(resolved, 'utf8'), /port = "127\.0\.0\.1:48999"/);
+    const runtimeConfig = fs.readFileSync(resolved, 'utf8');
+    assert.match(runtimeConfig, /port = "127\.0\.0\.1:48999"/);
+    assert.match(runtimeConfig, /dir = ".*\/data\/man_base_data_pebble"/);
   } finally {
     if (originalLocalBase === undefined) {
       delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;

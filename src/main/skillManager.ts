@@ -6,6 +6,7 @@ import extractZip from 'extract-zip';
 import { SqliteStore } from './sqliteStore';
 import { getEnhancedEnv } from './libs/coworkUtil';
 import { isPathWithin, resolveElectronExecutablePath } from './libs/runtimePaths';
+import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 
 export type SkillRecord = {
   id: string;
@@ -1023,7 +1024,7 @@ export class SkillManager {
     const envOverrides: Record<string, string> = {
       SKILLS_ROOT: skillsRoot,
       IDBOTS_SKILLS_ROOT: skillsRoot,
-      IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+      IDBOTS_RPC_URL: getMetaidRpcBase(),
     };
     if (context?.metabotId != null) {
       envOverrides.IDBOTS_METABOT_ID = String(context.metabotId);

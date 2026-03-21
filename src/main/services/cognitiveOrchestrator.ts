@@ -15,6 +15,7 @@ import {
   type OpenAITool,
   type ToolCallResult,
 } from './cognitiveChatCompletion';
+import { getMetaidRpcBase } from './metaidRpcEndpoint';
 import { getEnhancedEnv } from '../libs/coworkUtil';
 import { isPathWithin } from '../libs/runtimePaths';
 
@@ -418,7 +419,7 @@ function runBashOnce(
       ...baseEnv,
       SKILLS_ROOT: cwd,
       IDBOTS_SKILLS_ROOT: cwd,
-      IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+      IDBOTS_RPC_URL: getMetaidRpcBase(),
     };
     if (metabotId != null) {
       env.IDBOTS_METABOT_ID = String(metabotId);
