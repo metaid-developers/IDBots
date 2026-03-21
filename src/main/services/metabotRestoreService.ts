@@ -1,5 +1,5 @@
 import { Buffer } from 'buffer';
-import { fetchFromLocalOrFallback, fetchContentWithFallback } from './localIndexerProxy';
+import { fetchContentWithFallback, fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
 
 const METAID_INFO_BY_ADDRESS = 'https://file.metaid.io/metafile-indexer/api/v1/info/address';
 const METAID_INFO_BY_METAID = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
@@ -127,8 +127,28 @@ const resolveAvatarPinId = (avatar?: string | null, avatarId?: string | null): s
   return match ? match[1] : null;
 };
 
+export function isSemanticallyEmptyMetaidInfoPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') {
+    return true;
+  }
+  const data = (payload as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') {
+    return true;
+  }
+  const info = data as Record<string, unknown>;
+  const identityKeys = ['metaid', 'globalMetaId', 'name', 'address', 'avatar', 'avatarId', 'chatpubkey', 'pinId', 'nameId'];
+  const hasIdentityValue = identityKeys.some((key) => {
+    const value = info[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+  if (hasIdentityValue) {
+    return false;
+  }
+  return info.isInit !== true;
+}
+
 const fetchMetaidInfo = async (localPath: string, remoteUrl: string): Promise<MetaidAddressInfo | null> => {
-  const res = await fetchFromLocalOrFallback(localPath, remoteUrl);
+  const res = await fetchJsonWithFallbackOnMiss(localPath, remoteUrl, isSemanticallyEmptyMetaidInfoPayload);
   if (!res.ok) {
     throw new Error(`metaid info fetch failed: ${res.status} ${res.statusText}`);
   }

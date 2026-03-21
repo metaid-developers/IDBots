@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { SqliteStore } from '../sqliteStore';
+import { getP2PLocalBase } from './p2pLocalEndpoint';
 
 export interface P2PConfig {
   p2p_sync_mode: 'self' | 'selective' | 'full';
@@ -79,7 +80,7 @@ export async function reloadConfig(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch('http://localhost:7281/api/config/reload', {
+    const res = await fetch(`${getP2PLocalBase()}/api/config/reload`, {
       method: 'POST',
       signal: controller.signal,
     });

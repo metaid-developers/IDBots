@@ -140,6 +140,48 @@ test('refreshStatusFromLocalApi() normalizes status payload and updates cached s
   }
 });
 
+test('refreshStatusFromLocalApi() honors IDBOTS_MAN_P2P_LOCAL_BASE override', async () => {
+  assert.equal(typeof p2pService?.refreshStatusFromLocalApi, 'function', 'refreshStatusFromLocalApi() should be exported');
+
+  const originalFetch = globalThis.fetch;
+  const originalLocalBase = process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+  let requestedUrl = '';
+
+  process.env.IDBOTS_MAN_P2P_LOCAL_BASE = 'http://127.0.0.1:48999';
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return new Response(JSON.stringify({
+      code: 1,
+      message: 'ok',
+      data: {
+        dataSource: 'p2p',
+        peerCount: 0,
+        storageLimitReached: false,
+        storageUsedBytes: 0,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  try {
+    await p2pService.refreshStatusFromLocalApi();
+    assert.equal(
+      requestedUrl,
+      'http://127.0.0.1:48999/api/p2p/status',
+      'status refresh should follow the local base override',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalLocalBase === undefined) {
+      delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+    } else {
+      process.env.IDBOTS_MAN_P2P_LOCAL_BASE = originalLocalBase;
+    }
+  }
+});
+
 test('resolveMainConfigPath() falls back to config.toml in node runtime smoke environments', async () => {
   assert.equal(typeof p2pService?.resolveMainConfigPath, 'function', 'resolveMainConfigPath() should be exported');
 

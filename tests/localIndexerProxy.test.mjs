@@ -13,10 +13,12 @@ const require = createRequire(import.meta.url);
 // Gracefully skip all tests if the compiled module is not yet available.
 let fetchFromLocalOrFallback;
 let fetchContentWithFallback;
+let fetchJsonWithFallbackOnMiss;
 try {
   ({
     fetchFromLocalOrFallback,
     fetchContentWithFallback,
+    fetchJsonWithFallbackOnMiss,
   } = require('../dist-electron/services/localIndexerProxy.js'));
 } catch {
   console.warn('[localIndexerProxy tests] dist-electron not built — skipping');
@@ -123,6 +125,46 @@ test('fetchFromLocalOrFallback: local 200 with code 0 triggers fallback', async 
     const json = await res.json();
     assert.equal(calls.length, 2, 'fallback should be called when local code != 1');
     assert.equal(json.data.id, 'fallback-hit');
+  } finally {
+    restore();
+  }
+});
+
+test('fetchJsonWithFallbackOnMiss: local empty list triggers fallback', async () => {
+  if (!fetchJsonWithFallbackOnMiss) {
+    assert.fail('fetchJsonWithFallbackOnMiss should be exported');
+  }
+
+  const calls = [];
+  const restore = mockFetch(async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('localhost:7281')) {
+      return makeJsonResponse(200, {
+        code: 1,
+        message: 'ok',
+        data: {
+          list: [],
+        },
+      });
+    }
+    return makeJsonResponse(200, {
+      code: 1,
+      message: 'ok',
+      data: {
+        list: [{ id: 'remote-pin' }],
+      },
+    });
+  });
+
+  try {
+    const res = await fetchJsonWithFallbackOnMiss(
+      '/api/pin/path/list?path=%2Finfo%2Fname',
+      'https://example.com/pin/path/list?path=%2Finfo%2Fname',
+      (payload) => Array.isArray(payload?.data?.list) && payload.data.list.length === 0,
+    );
+    const json = await res.json();
+    assert.equal(calls.length, 2, 'semantic local miss should trigger remote fallback');
+    assert.equal(json.data.list[0].id, 'remote-pin');
   } finally {
     restore();
   }

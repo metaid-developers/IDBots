@@ -9,9 +9,10 @@ import type { ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { app, BrowserWindow } from 'electron';
+import { DEFAULT_P2P_LOCAL_BASE, DEFAULT_P2P_LOCAL_PORT, getP2PLocalBase } from './p2pLocalEndpoint';
 
-export const P2P_LOCAL_PORT = 7281;
-export const P2P_LOCAL_BASE = 'http://localhost:7281';
+export const P2P_LOCAL_PORT = DEFAULT_P2P_LOCAL_PORT;
+export const P2P_LOCAL_BASE = DEFAULT_P2P_LOCAL_BASE;
 
 export interface P2PStatus {
   running: boolean;
@@ -42,6 +43,14 @@ let lastStartArgs: { dataDir: string; configPath: string } | null = null;
 let stopping = false;
 
 let cachedStatus: P2PStatus = { running: false };
+
+function getStatusUrl(): string {
+  return `${getP2PLocalBase()}/api/p2p/status`;
+}
+
+function getHealthUrl(): string {
+  return `${getP2PLocalBase()}/health`;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -153,7 +162,7 @@ export async function refreshStatusFromLocalApi(): Promise<P2PStatus | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
   try {
-    const res = await fetch(`${P2P_LOCAL_BASE}/api/p2p/status`, {
+    const res = await fetch(getStatusUrl(), {
       signal: controller.signal,
     });
     if (!res.ok) {
@@ -384,7 +393,7 @@ export async function healthCheck(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    const res = await fetch(`${P2P_LOCAL_BASE}/health`, {
+    const res = await fetch(getHealthUrl(), {
       signal: controller.signal,
     });
     clearTimeout(timeout);

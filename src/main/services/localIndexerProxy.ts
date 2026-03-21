@@ -1,5 +1,4 @@
-// Keep in sync with P2P_LOCAL_BASE in p2pIndexerService.ts
-const LOCAL_BASE = 'http://localhost:7281';
+import { getP2PLocalBase } from './p2pLocalEndpoint';
 
 function isJsonApiPath(localPath: string): boolean {
   return localPath.startsWith('/api/');
@@ -12,6 +11,26 @@ async function isSuccessfulEnvelope(localRes: Response): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function parseJsonClone(localRes: Response): Promise<unknown> {
+  try {
+    return await localRes.clone().json();
+  } catch {
+    return undefined;
+  }
+}
+
+export function isEmptyListDataPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') {
+    return true;
+  }
+  const data = (payload as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') {
+    return true;
+  }
+  const list = (data as { list?: unknown }).list;
+  return Array.isArray(list) && list.length === 0;
 }
 
 /**
@@ -27,7 +46,7 @@ export async function fetchFromLocalOrFallback(
   fallbackUrl: string,
   options?: RequestInit,
 ): Promise<Response> {
-  const localUrl = LOCAL_BASE + localPath;
+  const localUrl = getP2PLocalBase() + localPath;
 
   try {
     const localRes = await fetch(localUrl, {
@@ -54,6 +73,44 @@ export async function fetchFromLocalOrFallback(
   return fetch(fallbackUrl, options);
 }
 
+export async function fetchJsonWithFallbackOnMiss(
+  localPath: string,
+  fallbackUrl: string,
+  isSemanticMiss: (payload: unknown) => boolean,
+  options?: RequestInit,
+): Promise<Response> {
+  const localUrl = getP2PLocalBase() + localPath;
+
+  try {
+    const localRes = await fetch(localUrl, {
+      ...options,
+      signal: AbortSignal.timeout(2000),
+    });
+
+    const payload = await parseJsonClone(localRes);
+    const isEnvelopeHit = !isJsonApiPath(localPath) || (payload as { code?: unknown } | undefined)?.code === 1;
+
+    if (localRes.ok && isEnvelopeHit) {
+      if (isSemanticMiss(payload)) {
+        console.log(`[p2p-proxy] fallback: ${localPath} → semantic miss`);
+      } else {
+        console.log(`[p2p-proxy] local hit: ${localPath}`);
+        return localRes;
+      }
+    } else {
+      const reason = !localRes.ok ? `status ${localRes.status}` : 'code != 1';
+      console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
+    }
+  } catch (err: unknown) {
+    const name = (err as { name?: string }).name ?? '';
+    const reason =
+      name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network error';
+    console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
+  }
+
+  return fetch(fallbackUrl, options);
+}
+
 /**
  * Fetch content for a pin from the local P2P indexer, falling back to a remote
  * URL when the local response is absent, has an empty body, or errors out.
@@ -70,7 +127,7 @@ export async function fetchContentWithFallback(
   fallbackUrl: string,
 ): Promise<Response> {
   const localPath = `/content/${pinId}`;
-  const localUrl = LOCAL_BASE + localPath;
+  const localUrl = getP2PLocalBase() + localPath;
 
   try {
     const localRes = await fetch(localUrl, {

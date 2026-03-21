@@ -55,11 +55,12 @@ import { createPin } from './services/metaidCore';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
-import { fetchFromLocalOrFallback } from './services/localIndexerProxy';
+import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './services/localIndexerProxy';
 import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pinAssetService';
 import * as p2pIndexerService from './services/p2pIndexerService';
-import { P2P_LOCAL_BASE } from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
+import { getP2PLocalBase } from './services/p2pLocalEndpoint';
+import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -491,7 +492,7 @@ async function syncRemoteSkillServices(): Promise<void> {
     url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
     url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
     const localPath = `/api/pin/path/list${url.search}`;
-    const response = await fetchFromLocalOrFallback(localPath, url.toString());
+    const response = await fetchJsonWithFallbackOnMiss(localPath, url.toString(), isEmptyListDataPayload);
     if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
     const json = await response.json();
     const list = Array.isArray(json?.data?.list) ? json.data.list : [];
@@ -637,7 +638,7 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
 
     let json: Record<string, unknown>;
     try {
-      const resp = await fetchFromLocalOrFallback(`/api/pin/path/list${url.search}`, url.toString());
+      const resp = await fetchJsonWithFallbackOnMiss(`/api/pin/path/list${url.search}`, url.toString(), isEmptyListDataPayload);
       if (!resp.ok) { console.warn('[GigSquare Rating] fetch failed', resp.status); break; }
       json = await resp.json() as Record<string, unknown>;
     } catch (e) {
@@ -682,7 +683,7 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
     url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
     url.searchParams.set('cursor', backfillCursor);
     try {
-      const resp = await fetchFromLocalOrFallback(`/api/pin/path/list${url.search}`, url.toString());
+      const resp = await fetchJsonWithFallbackOnMiss(`/api/pin/path/list${url.search}`, url.toString(), isEmptyListDataPayload);
       if (resp.ok) {
         const json = await resp.json() as Record<string, unknown>;
         const data = json?.data as Record<string, unknown> | undefined;
@@ -3076,7 +3077,7 @@ if (!gotTheLock) {
 
         const fetchList = async (url: string) => {
           const localPath = `/api/pin/path/list${new URL(url).search}`;
-          const response = await fetchFromLocalOrFallback(localPath, url);
+          const response = await fetchJsonWithFallbackOnMiss(localPath, url, isEmptyListDataPayload);
           if (!response.ok) {
             throw new Error(`Failed to fetch chat pubkey: ${response.status}`);
           }
@@ -4100,7 +4101,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('p2p:getPeers', async () => {
     try {
-      const res = await fetch(`${P2P_LOCAL_BASE}/api/p2p/peers`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${getP2PLocalBase()}/api/p2p/peers`, { signal: AbortSignal.timeout(2000) });
       if (!res.ok) return [];
       const payload = await res.json();
       return p2pIndexerService.unwrapPeersPayload(payload);
@@ -4112,7 +4113,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   ipcMain.handle('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId: string }) => {
     const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
     const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
-    const res = await fetchFromLocalOrFallback(localPath, fallbackUrl);
+    const res = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isSemanticallyEmptyMetaidInfoPayload);
     const payload = await res.json() as { data?: Record<string, unknown> };
     if (payload?.data && typeof payload.data === 'object') {
       const avatarUrl = await resolveMetaidAvatarSource(payload.data);
