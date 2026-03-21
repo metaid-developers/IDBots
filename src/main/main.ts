@@ -25,6 +25,7 @@ import { ScheduledTaskStore } from './scheduledTaskStore';
 import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
+import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { fetchMetaidInfoByAddress, fetchMetaidInfoByMetaid, fetchMetaidRestoreProfile, type MetaidAddressInfo } from './services/metabotRestoreService';
@@ -832,13 +833,23 @@ const savePngWithDialog = async (
 };
 
 const configureUserDataPath = (): void => {
-  const appDataPath = app.getPath('appData');
-  const preferredUserDataPath = path.join(appDataPath, APP_NAME);
   const currentUserDataPath = app.getPath('userData');
+  const currentAppDataPath = app.getPath('appData');
+  const resolvedPaths = resolveRuntimeDataPaths({
+    appDataPath: currentAppDataPath,
+    currentUserDataPath,
+    appName: APP_NAME,
+  });
 
-  if (currentUserDataPath !== preferredUserDataPath) {
-    app.setPath('userData', preferredUserDataPath);
-    console.log(`[Main] userData path updated: ${currentUserDataPath} -> ${preferredUserDataPath}`);
+  if (resolvedPaths.appDataPath !== currentAppDataPath) {
+    app.setPath('appData', resolvedPaths.appDataPath);
+    console.log(`[Main] appData path updated: ${currentAppDataPath} -> ${resolvedPaths.appDataPath}`);
+  }
+
+  const nextUserDataPath = resolvedPaths.userDataPath;
+  if (currentUserDataPath !== nextUserDataPath) {
+    app.setPath('userData', nextUserDataPath);
+    console.log(`[Main] userData path updated: ${currentUserDataPath} -> ${nextUserDataPath}`);
   }
 };
 

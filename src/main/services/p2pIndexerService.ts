@@ -9,7 +9,14 @@ import type { ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { app, BrowserWindow } from 'electron';
-import { DEFAULT_P2P_LOCAL_BASE, DEFAULT_P2P_LOCAL_PORT, getP2PLocalBase } from './p2pLocalEndpoint';
+import {
+  DEFAULT_P2P_LOCAL_BASE,
+  DEFAULT_P2P_LOCAL_PORT,
+  applyP2PLocalListenAddressOverride,
+  getConfiguredP2PLocalBase,
+  getP2PLocalBase,
+  resolveP2PLocalListenAddress,
+} from './p2pLocalEndpoint';
 
 export const P2P_LOCAL_PORT = DEFAULT_P2P_LOCAL_PORT;
 export const P2P_LOCAL_BASE = DEFAULT_P2P_LOCAL_BASE;
@@ -232,10 +239,29 @@ export function resolveMainConfigPath(): string {
   return preferred;
 }
 
+export function resolveRuntimeConfigPath(
+  mainConfigPath: string,
+  dataDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configuredLocalBase = getConfiguredP2PLocalBase(env);
+  const listenAddress = resolveP2PLocalListenAddress(configuredLocalBase);
+  if (!listenAddress) {
+    return mainConfigPath;
+  }
+
+  const runtimeConfigPath = path.join(dataDir, 'man-p2p-runtime-config.toml');
+  const baseConfig = fs.readFileSync(mainConfigPath, 'utf8');
+  const runtimeConfig = applyP2PLocalListenAddressOverride(baseConfig, listenAddress);
+  fs.mkdirSync(path.dirname(runtimeConfigPath), { recursive: true });
+  fs.writeFileSync(runtimeConfigPath, runtimeConfig, 'utf8');
+  return runtimeConfigPath;
+}
+
 function spawnProcess(dataDir: string, configPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const binaryPath = resolveBinaryPath();
-    const mainConfig = resolveMainConfigPath();
+    const mainConfig = resolveRuntimeConfigPath(resolveMainConfigPath(), dataDir);
     const args = [
       '-config', mainConfig,
       '--data-dir', dataDir,

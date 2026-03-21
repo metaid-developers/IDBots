@@ -209,6 +209,34 @@ test('resolveMainConfigPath() falls back to config.toml in node runtime smoke en
   }
 });
 
+test('resolveRuntimeConfigPath() writes a local-base-specific config when IDBOTS_MAN_P2P_LOCAL_BASE is overridden', () => {
+  assert.equal(typeof p2pService?.resolveRuntimeConfigPath, 'function', 'resolveRuntimeConfigPath() should be exported');
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-p2p-runtime-config-'));
+  const mainConfigPath = path.join(tempDir, 'config.toml');
+  fs.writeFileSync(mainConfigPath, 'port = "0.0.0.0:7281"\n', 'utf8');
+
+  const originalLocalBase = process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+  process.env.IDBOTS_MAN_P2P_LOCAL_BASE = 'http://127.0.0.1:48999';
+
+  try {
+    const resolved = p2pService.resolveRuntimeConfigPath(mainConfigPath, path.join(tempDir, 'data'));
+    assert.notEqual(
+      resolved,
+      mainConfigPath,
+      'runtime config path should differ from the bundled base config when override is present',
+    );
+    assert.match(fs.readFileSync(resolved, 'utf8'), /port = "127\.0\.0\.1:48999"/);
+  } finally {
+    if (originalLocalBase === undefined) {
+      delete process.env.IDBOTS_MAN_P2P_LOCAL_BASE;
+    } else {
+      process.env.IDBOTS_MAN_P2P_LOCAL_BASE = originalLocalBase;
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('healthCheck() returns false when nothing is listening on port 7281', async () => {
   if (!p2pService) {
     console.log('SKIP: dist-electron not found, run npm run compile:electron first');
