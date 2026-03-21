@@ -149,20 +149,30 @@ function clearStatusPoll(): void {
   }
 }
 
+export async function refreshStatusFromLocalApi(): Promise<P2PStatus | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${P2P_LOCAL_BASE}/api/p2p/status`, {
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      return null;
+    }
+    const payload = await res.json() as Record<string, unknown>;
+    const normalized = normalizeStatusPayload(payload);
+    emitStatusToAllWindows(normalized);
+    return normalized;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function startStatusPoll(): void {
   clearStatusPoll();
   statusPollTimer = setInterval(async () => {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-      const res = await fetch(`${P2P_LOCAL_BASE}/api/p2p/status`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const payload = await res.json() as Record<string, unknown>;
-        emitStatusToAllWindows(normalizeStatusPayload(payload));
-      }
+      await refreshStatusFromLocalApi();
     } catch {
       // Silently ignore poll errors; process exit event handles crash detection
     }
@@ -194,14 +204,23 @@ function scheduleRestart(): void {
   }, delay);
 }
 
-function resolveMainConfigPath(): string {
+export function resolveMainConfigPath(): string {
   if (hasElectronAppRuntime() && app.isPackaged) {
     return path.join(process.resourcesPath, 'man-p2p-config.toml');
   }
   if (hasElectronAppRuntime()) {
     return path.join(app.getAppPath(), 'resources', 'man-p2p', 'config.toml');
   }
-  return path.join(process.resourcesPath || process.cwd(), 'man-p2p-config.toml');
+  const base = process.resourcesPath || process.cwd();
+  const preferred = path.join(base, 'man-p2p-config.toml');
+  if (fs.existsSync(preferred)) {
+    return preferred;
+  }
+  const fallback = path.join(base, 'config.toml');
+  if (fs.existsSync(fallback)) {
+    return fallback;
+  }
+  return preferred;
 }
 
 function spawnProcess(dataDir: string, configPath: string): Promise<void> {
@@ -309,6 +328,11 @@ export async function start(dataDir: string, configPath: string): Promise<void> 
     const error = 'man-p2p health check did not become ready after startup';
     setOfflineStatus(error);
     throw new Error(error);
+  }
+  try {
+    await refreshStatusFromLocalApi();
+  } catch {
+    emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
   }
   startStatusPoll();
 }

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 
@@ -95,6 +98,73 @@ test('waitForHealthyLocalApi() retries until the local health check succeeds', a
 
   assert.equal(result, true, 'health wait should succeed once the check returns true');
   assert.equal(attempts, 3, 'health wait should stop retrying after the first healthy result');
+});
+
+test('refreshStatusFromLocalApi() normalizes status payload and updates cached status', async () => {
+  assert.equal(typeof p2pService?.refreshStatusFromLocalApi, 'function', 'refreshStatusFromLocalApi() should be exported');
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /\/api\/p2p\/status$/);
+    return new Response(JSON.stringify({
+      code: 1,
+      message: 'ok',
+      data: {
+        dataSource: 'p2p',
+        peerCount: 0,
+        storageLimitReached: false,
+        storageUsedBytes: 123,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await p2pService.refreshStatusFromLocalApi();
+    assert.equal(result.running, true);
+    assert.equal(result.dataSource, 'p2p');
+    assert.equal(result.peerCount, 0);
+    assert.equal(result.storageLimitReached, false);
+    assert.equal(result.storageUsedBytes, 123);
+
+    const cached = p2pService.getP2PStatus();
+    assert.equal(cached.running, true);
+    assert.equal(cached.dataSource, 'p2p');
+    assert.equal(cached.peerCount, 0);
+    assert.equal(cached.storageLimitReached, false);
+    assert.equal(cached.storageUsedBytes, 123);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('resolveMainConfigPath() falls back to config.toml in node runtime smoke environments', async () => {
+  assert.equal(typeof p2pService?.resolveMainConfigPath, 'function', 'resolveMainConfigPath() should be exported');
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-p2p-config-'));
+  const fallbackConfigPath = path.join(tempDir, 'config.toml');
+  fs.writeFileSync(fallbackConfigPath, '# smoke config\n', 'utf8');
+
+  const originalResourcesPath = process.resourcesPath;
+  Object.defineProperty(process, 'resourcesPath', {
+    value: tempDir,
+    writable: true,
+    configurable: true,
+  });
+
+  try {
+    const resolved = p2pService.resolveMainConfigPath();
+    assert.equal(resolved, fallbackConfigPath);
+  } finally {
+    Object.defineProperty(process, 'resourcesPath', {
+      value: originalResourcesPath,
+      writable: true,
+      configurable: true,
+    });
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('healthCheck() returns false when nothing is listening on port 7281', async () => {
