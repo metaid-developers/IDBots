@@ -56,6 +56,7 @@ import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhShare
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 import { fetchFromLocalOrFallback } from './services/localIndexerProxy';
+import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pinAssetService';
 import * as p2pIndexerService from './services/p2pIndexerService';
 import { P2P_LOCAL_BASE } from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
@@ -2998,7 +2999,13 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:fetchServices', async () => {
     try {
-      const list = listRemoteSkillServicesFromDb();
+      const list = await Promise.all(
+        listRemoteSkillServicesFromDb().map(async (item) => ({
+          ...item,
+          avatar: await resolvePinAssetSource(item.avatar ?? null),
+          serviceIcon: await resolvePinAssetSource(item.serviceIcon ?? null),
+        })),
+      );
       return { success: true, list };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch services' };
@@ -3101,6 +3108,7 @@ if (!gotTheLock) {
       const resolvedAddress = toSafeString(info?.address || providerAddress).trim();
       const resolvedName = toSafeString(info?.name).trim();
       const resolvedAvatar = toSafeString(info?.avatar).trim();
+      const resolvedAvatarSource = await resolvePinAssetSource(resolvedAvatar || null);
 
       return {
         success: true,
@@ -3109,7 +3117,7 @@ if (!gotTheLock) {
         metaid: resolvedMetaId || undefined,
         address: resolvedAddress || undefined,
         name: resolvedName || undefined,
-        avatar: resolvedAvatar || undefined,
+        avatar: resolvedAvatarSource || resolvedAvatar || undefined,
       };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch provider info' };
@@ -4105,7 +4113,14 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
     const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
     const res = await fetchFromLocalOrFallback(localPath, fallbackUrl);
-    return await res.json();
+    const payload = await res.json() as { data?: Record<string, unknown> };
+    if (payload?.data && typeof payload.data === 'object') {
+      const avatarUrl = await resolveMetaidAvatarSource(payload.data);
+      if (avatarUrl) {
+        payload.data.avatarUrl = avatarUrl;
+      }
+    }
+    return payload;
   });
 
   // MCP is currently suspended and not exposed to renderer.
