@@ -182,7 +182,8 @@ Pass:
 
 ### 5.6 Config Reload Smoke
 
-- Edit the local `man-p2p-config.json` through the normal app flow or directly for test purposes
+- Update P2P config through the normal app flow so the setting is persisted in the app store
+- Treat `man-p2p-config.json` as a generated runtime file, not the source of truth across app restarts
 - Trigger `POST /api/config/reload`
 - Confirm `GET /api/p2p/status` reflects the updated filter-related fields honestly
 
@@ -220,6 +221,8 @@ The following are acceptable in the current Alpha:
 - remote packaged app may continue using its default macOS user data directory
 - local storage is partial rather than historically complete
 - the scripted gate proves realtime propagation, while most human smoke steps focus on packaged-app behavior instead of raw protocol internals
+- direct edits to `man-p2p-config.json` may be overwritten on app startup because startup regenerates runtime config from the app store
+- multi-node restart smoke is most reliable when at least one bootstrap peer keeps a stable address for the duration of the test window
 
 These are not acceptable:
 
