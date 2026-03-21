@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -7,9 +8,13 @@ import { spawn, execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const manP2PRoot = '/Users/tusm/Documents/MetaID_Projects/man-p2p';
 const bundledBinaryPath = path.join(projectRoot, 'resources', 'man-p2p', 'man-p2p-darwin-arm64');
 const bundledConfigPath = path.join(projectRoot, 'resources', 'man-p2p', 'config.toml');
+const bundledManifestPath = path.join(projectRoot, 'resources', 'man-p2p', 'bundle-manifest.json');
+
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -63,7 +68,7 @@ async function waitForChildExit(child, timeoutMs = 5000) {
   });
 }
 
-test('bundled man-p2p binary embeds alpha status field names from current source build', async () => {
+test('bundled man-p2p manifest tracks the synced alpha binary source and digest', async () => {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') {
     console.log(`SKIP: bundled binary contract test only runs on darwin arm64, got ${process.platform} ${process.arch}`);
     return;
@@ -72,22 +77,20 @@ test('bundled man-p2p binary embeds alpha status field names from current source
     console.log('SKIP: bundled man-p2p binary is missing');
     return;
   }
+  assert.equal(fs.existsSync(bundledManifestPath), true, `expected bundled manifest at ${bundledManifestPath}`);
+
+  const manifest = JSON.parse(fs.readFileSync(bundledManifestPath, 'utf8'));
+  assert.match(String(manifest?.binary || ''), /^man-p2p-darwin-arm64$/);
+  assert.match(String(manifest?.sourceCommit || ''), /^[0-9a-f]{7,}$/i);
+  assert.match(String(manifest?.binarySha256 || ''), /^[0-9a-f]{64}$/i);
+  assert.equal(manifest.binarySha256, sha256File(bundledBinaryPath));
 
   const binaryText = fs.readFileSync(bundledBinaryPath).toString('latin1');
   assert.match(binaryText, /syncMode/);
   assert.match(binaryText, /runtimeMode/);
   assert.match(binaryText, /peerId/);
   assert.match(binaryText, /listenAddrs/);
-
-  try {
-    const sourceVersion = execFileSync('git', ['-C', manP2PRoot, 'rev-parse', '--short', 'HEAD'], {
-      encoding: 'utf8',
-    }).trim();
-    assert.ok(sourceVersion, 'expected a non-empty source git version');
-    assert.match(binaryText, new RegExp(sourceVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  } catch (error) {
-    console.log(`SKIP: could not resolve man-p2p source version for binary freshness check: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  assert.match(binaryText, new RegExp(String(manifest.sourceCommit).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
 test('bundled man-p2p binary best-effort isolated smoke keeps alpha status fields when healthy', async () => {

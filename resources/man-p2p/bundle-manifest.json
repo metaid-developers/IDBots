@@ -1,0 +1,9 @@
+{
+  "binary": "man-p2p-darwin-arm64",
+  "binarySha256": "0b0d88a688d787d500be10b676c0f46054d2f2ba22286ac6053507454b295d69",
+  "sourcePath": "/Users/tusm/.config/superpowers/worktrees/man-p2p/codex/bootstrap-reload-reconnect",
+  "sourceBranch": "codex/bootstrap-reload-reconnect",
+  "sourceCommit": "f268938",
+  "sourceVersion": "f268938",
+  "syncedAt": "2026-03-21T15:58:29.088Z"
+}
