@@ -30,13 +30,6 @@
       "filter": [
         "**/*"
       ]
-    },
-    {
-      "from": "resources/mingit",
-      "to": "mingit",
-      "filter": [
-        "**/*"
-      ]
     }
   ],
   "mac": {
@@ -77,6 +70,13 @@
     ],
     "icon": "build/icons/win/icon.ico",
     "extraResources": [
+      {
+        "from": "resources/mingit",
+        "to": "mingit",
+        "filter": [
+          "**/*"
+        ]
+      },
       {
         "from": "resources/man-p2p/man-p2p-win32-x64.exe",
         "to": "man-p2p-win32-x64.exe"

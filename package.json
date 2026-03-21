@@ -31,7 +31,7 @@
     "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:5175 electron .",
     "electron:dev": "npx rimraf dist-electron && npm run compile:electron && npm run build:skills && concurrently \"vite --port 5175\" \"wait-on -v -t 120000 -d 10000 http://localhost:5175 && npm run start:electron\"",
     "postinstall": "patch-package && node scripts/patch-claude-sdk-cli.js && electron-builder install-app-deps && npm install --prefix SKILLs/web-search",
-    "pack": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skills && electron-builder --dir",
+    "pack": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skills && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "dist": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skills && electron-builder",
     "dist:mac": "node -r dotenv/config node_modules/.bin/electron-builder --mac --config electron-builder.json",
     "predist:mac": "npm run build && npm run compile:electron && npm run build:skills",
@@ -124,9 +124,5 @@
     "wait-on": "^7.2.0"
   },
   "description": "[中文](README_zh.md)",
-  "directories": {
-    "doc": "docs",
-    "test": "tests"
-  },
   "keywords": []
 }

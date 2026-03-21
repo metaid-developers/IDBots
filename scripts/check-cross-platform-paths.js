@@ -154,13 +154,14 @@ function runStaticChecks() {
       const builder = JSON.parse(builderRaw);
       const resources = Array.isArray(builder.extraResources) ? builder.extraResources : [];
       const hasSkills = resources.some((r) => r && r.from === 'SKILLs');
-      const hasMinGit = resources.some((r) => r && r.from === 'resources/mingit');
+      const winResources = Array.isArray(builder.win?.extraResources) ? builder.win.extraResources : [];
+      const hasMinGit = winResources.some((r) => r && r.from === 'resources/mingit');
       const platformHasP2PConfig = (section) => {
         const extraResources = Array.isArray(section?.extraResources) ? section.extraResources : [];
         return extraResources.some((r) => r && r.from === 'resources/man-p2p/config.toml');
       };
       addCheck('electron-builder bundles SKILLs', hasSkills, hasSkills ? 'ok' : 'missing extraResources.from=SKILLs');
-      addCheck('electron-builder bundles mingit', hasMinGit, hasMinGit ? 'ok' : 'missing extraResources.from=resources/mingit');
+      addCheck('electron-builder bundles mingit for win', hasMinGit, hasMinGit ? 'ok' : 'missing win.extraResources.from=resources/mingit');
       addCheck(
         'electron-builder bundles man-p2p config on mac',
         platformHasP2PConfig(builder.mac),
