@@ -79,12 +79,15 @@ export IDBOTS_REMOTE_PASSWORD=123456
 CGO_ENABLED=0 go run ./tools/alpha_acceptance \
   --local-app /Users/tusm/Documents/MetaID_Projects/IDBots/IDBots-indev/release/mac-arm64/IDBots.app \
   --remote-user showpay \
-  --remote-host 192.168.3.53 \
+  --remote-host 192.168.3.52 \
   --remote-app '~/tmp/idbots-alpha/IDBots.app' \
+  --remote-base-url http://127.0.0.1:62196 \
+  --remote-launch-mode binary \
   --preferred-local-ip 192.168.3.30
 ```
 
 Use `--remote-copy` only when the remote packaged app must be refreshed from the local candidate build.
+Use a dedicated `--remote-base-url` port for scripted runs so the acceptance runtime stays isolated from any normal `IDBots` session already running on the remote machine.
 
 ### 4.3 Pass Conditions
 
@@ -102,7 +105,7 @@ Example summary shape:
 {
   "localBootstrap": "/ip4/192.168.3.30/tcp/55189/p2p/...",
   "localPeerId": "12D3KooW...",
-  "remoteBootstrap": "/ip4/192.168.3.53/tcp/65077/p2p/...",
+  "remoteBootstrap": "/ip4/192.168.3.52/tcp/65077/p2p/...",
   "remotePeerId": "12D3KooW...",
   "fallbackPinId": "d7947500f7668e361bd84d20a45f49bb8e692d3c5ec1dc57310a8d8171f258f8i0",
   "syntheticPinId": "alpha-live-pin-..."

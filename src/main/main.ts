@@ -26,6 +26,7 @@ import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
+import { shouldAcquireSingleInstanceLock } from './libs/singleInstanceLock';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { fetchMetaidInfoByAddress, fetchMetaidInfoByMetaid, fetchMetaidRestoreProfile, type MetaidAddressInfo } from './services/metabotRestoreService';
@@ -60,6 +61,7 @@ import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataP
 import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pinAssetService';
 import * as p2pIndexerService from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
+import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -1547,20 +1549,25 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
 
 
 // 确保应用程序只有一个实例
-const gotTheLock = app.requestSingleInstanceLock();
+const shouldUseSingleInstanceLock = shouldAcquireSingleInstanceLock();
+const gotTheLock = shouldUseSingleInstanceLock ? app.requestSingleInstanceLock() : true;
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', (_event, commandLine, workingDirectory) => {
-    console.log('[Main] second-instance event', { commandLine, workingDirectory });
-    // 如果尝试启动第二个实例，则聚焦到主窗口
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      if (!mainWindow.isVisible()) mainWindow.show();
-      if (!mainWindow.isFocused()) mainWindow.focus();
-    }
-  });
+  if (shouldUseSingleInstanceLock) {
+    app.on('second-instance', (_event, commandLine, workingDirectory) => {
+      console.log('[Main] second-instance event', { commandLine, workingDirectory });
+      // 如果尝试启动第二个实例，则聚焦到主窗口
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (!mainWindow.isFocused()) mainWindow.focus();
+      }
+    });
+  } else {
+    console.log('[Main] Single-instance lock disabled by runtime override');
+  }
 
   // IPC 处理程序
   ipcMain.handle('store:get', (_event, key) => {
@@ -4389,52 +4396,53 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
-    console.log('[Main] App is quitting, starting cleanup...');
-    destroyTray();
-    skillManager?.stopWatching();
-
-    if (metaidRpcServer) {
-      metaidRpcServer.close();
-      metaidRpcServer = null;
-    }
-
-    // Stop Cowork sessions without blocking shutdown.
-    if (coworkRunner) {
-      console.log('[Main] Stopping cowork sessions...');
-      coworkRunner.stopAllSessions();
-    }
-
-    await stopCoworkOpenAICompatProxy().catch((error) => {
-      console.error('Failed to stop OpenAI compatibility proxy:', error);
+    await runSharedAppCleanup({
+      destroyTray,
+      stopSkillWatching: () => {
+        skillManager?.stopWatching();
+      },
+      closeMetaidRpcServer: () => {
+        if (metaidRpcServer) {
+          metaidRpcServer.close();
+          metaidRpcServer = null;
+        }
+      },
+      stopCoworkSessions: () => {
+        if (coworkRunner) {
+          console.log('[Main] Stopping cowork sessions...');
+          coworkRunner.stopAllSessions();
+        }
+      },
+      stopOpenAICompatProxy: () => stopCoworkOpenAICompatProxy(),
+      stopSkillServices: async () => {
+        const skillServices = getSkillServiceManager();
+        await skillServices.stopAll();
+      },
+      stopIMGateways: async () => {
+        if (imGatewayManager) {
+          await imGatewayManager.stopAll();
+        }
+      },
+      stopScheduler: () => {
+        if (scheduler) {
+          scheduler.stop();
+        }
+      },
+      stopCognitiveOrchestrator,
+      stopP2P: () => p2pIndexerService.stop(),
+      deactivateGroupChatTasks: () => {
+        try {
+          const db = getStore().getDatabase();
+          db.run('UPDATE group_chat_tasks SET is_active = 0');
+          getStore().getSaveFunction()();
+          console.log('[Main] Deactivated all group_chat_tasks (is_active = 0)');
+        } catch (err) {
+          console.error('[Main] Failed to deactivate group_chat_tasks:', err);
+        }
+      },
+      log: (message) => console.log(message),
+      error: (message, error) => console.error(message, error),
     });
-
-    // Stop skill services.
-    const skillServices = getSkillServiceManager();
-    await skillServices.stopAll();
-
-    // Stop all IM gateways gracefully.
-    if (imGatewayManager) {
-      await imGatewayManager.stopAll().catch(err => {
-        console.error('[IM Gateway] Error stopping gateways on quit:', err);
-      });
-    }
-
-    // Stop the scheduler
-    if (scheduler) {
-      scheduler.stop();
-    }
-
-    stopCognitiveOrchestrator();
-
-    // Deactivate all group chat tasks so they do not auto-start on next launch
-    try {
-      const db = getStore().getDatabase();
-      db.run('UPDATE group_chat_tasks SET is_active = 0');
-      getStore().getSaveFunction()();
-      console.log('[Main] Deactivated all group_chat_tasks (is_active = 0)');
-    } catch (err) {
-      console.error('[Main] Failed to deactivate group_chat_tasks:', err);
-    }
   };
 
   app.on('before-quit', (e) => {

@@ -60,3 +60,30 @@ test('buildRuntimeConfig() merges derived own addresses into persisted config', 
     p2p_own_addresses: ['manual-addr', 'btc1', 'mvc1'],
   });
 });
+
+test('getConfig() accepts p2p_config persisted as a plain JSON object value in kv', () => {
+  assert.equal(typeof p2pConfigService?.getConfig, 'function', 'getConfig() should be exported');
+
+  const bootstrap = '/ip4/192.168.3.52/tcp/52631/p2p/12D3KooWSHJw5aAST32bs2N4RNg3rX2J4DmC48vS9Ea7aAfvkkX1';
+  const fakeStore = {
+    getP2PConfig() {
+      return undefined;
+    },
+    get(key) {
+      if (key !== 'p2p_config') return undefined;
+      return {
+        p2p_sync_mode: 'selective',
+        p2p_bootstrap_nodes: [bootstrap],
+        p2p_enable_relay: true,
+        p2p_storage_limit_gb: 10,
+        p2p_enable_chain_source: false,
+        p2p_own_addresses: [],
+      };
+    },
+  };
+
+  const result = p2pConfigService.getConfig(fakeStore);
+
+  assert.equal(result.p2p_sync_mode, 'selective');
+  assert.deepEqual(result.p2p_bootstrap_nodes, [bootstrap]);
+});

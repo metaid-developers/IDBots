@@ -56,6 +56,7 @@
     "extendInfo": {
       "CFBundleIconName": "icon",
       "NSCalendarsUsageDescription": "IDBots 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。",
+      "NSLocalNetworkUsageDescription": "IDBots 需要访问本地网络，以便发现并连接局域网中的 MAN-P2P 节点，获取本地优先的 MetaID 数据。",
       "NSRemindersUsageDescription": "IDBots 需要访问您的提醒事项来帮助您管理待办事项。",
       "NSAppleEventsUsageDescription": "IDBots 需要使用 Apple Events 来控制 Calendar 应用执行自动化操作。"
     }

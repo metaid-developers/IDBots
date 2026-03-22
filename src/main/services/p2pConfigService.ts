@@ -59,9 +59,25 @@ export function buildRuntimeConfig(config: P2PConfig, ownAddresses: string[]): P
   };
 }
 
+function normalizeStoredConfig(raw: unknown): Partial<P2PConfig> | undefined {
+  if (!raw) return undefined;
+
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed as Partial<P2PConfig> : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return raw && typeof raw === 'object' ? raw as Partial<P2PConfig> : undefined;
+}
+
 export function getConfig(store: SqliteStore): P2PConfig {
-  const stored = store.getP2PConfig();
-  return { ...DEFAULT_P2P_CONFIG, ...(stored as Partial<P2PConfig> | undefined) };
+  const stored = normalizeStoredConfig(store.getP2PConfig())
+    ?? normalizeStoredConfig(store.get('p2p_config'));
+  return { ...DEFAULT_P2P_CONFIG, ...(stored ?? {}) };
 }
 
 export function setConfig(store: SqliteStore, config: Partial<P2PConfig>): P2PConfig {
