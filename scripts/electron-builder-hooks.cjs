@@ -76,7 +76,25 @@ function applyMacIconFix(appPath) {
   console.log('[electron-builder-hooks] ✓ macOS icon fix applied');
 }
 
+function verifyReleaseInputs() {
+  const checkScriptPath = path.join(__dirname, 'check-cross-platform-paths.js');
+  const result = spawnSync(process.execPath, [
+    checkScriptPath,
+    '--skip-lint',
+    '--skip-compile',
+  ], {
+    encoding: 'utf-8',
+    stdio: 'inherit',
+  });
+
+  if (result.status !== 0) {
+    throw new Error(`release input verification failed with exit code ${result.status}`);
+  }
+}
+
 async function beforePack(context) {
+  verifyReleaseInputs();
+
   if (!isWindowsTarget(context)) {
     return;
   }

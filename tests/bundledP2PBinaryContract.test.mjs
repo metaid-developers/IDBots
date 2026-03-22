@@ -9,6 +9,7 @@ import { test } from 'node:test';
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const bundledBinaryPath = path.join(projectRoot, 'resources', 'man-p2p', 'man-p2p-darwin-arm64');
+const bundledWindowsBinaryPath = path.join(projectRoot, 'resources', 'man-p2p', 'man-p2p-win32-x64.exe');
 const bundledConfigPath = path.join(projectRoot, 'resources', 'man-p2p', 'config.toml');
 const bundledManifestPath = path.join(projectRoot, 'resources', 'man-p2p', 'bundle-manifest.json');
 
@@ -107,6 +108,22 @@ function spawnBundledBinary(port, tmpdir, p2pConfig = {}) {
   return { child, output };
 }
 
+test('release-targeted man-p2p artifacts are bundled and tracked in the manifest', () => {
+  assert.equal(fs.existsSync(bundledManifestPath), true, `expected bundled manifest at ${bundledManifestPath}`);
+
+  const manifest = JSON.parse(fs.readFileSync(bundledManifestPath, 'utf8'));
+  assert.match(String(manifest?.sourceCommit || ''), /^[0-9a-f]{7,}$/i);
+  assert.equal(typeof manifest?.sourceVersion, 'string');
+  assert.equal(typeof manifest?.artifacts, 'object');
+
+  for (const artifactPath of [bundledBinaryPath, bundledWindowsBinaryPath]) {
+    const artifactName = path.basename(artifactPath);
+    assert.equal(fs.existsSync(artifactPath), true, `expected bundled artifact at ${artifactPath}`);
+    assert.match(String(manifest?.artifacts?.[artifactName]?.sha256 || ''), /^[0-9a-f]{64}$/i);
+    assert.equal(manifest.artifacts[artifactName].sha256, sha256File(artifactPath));
+  }
+});
+
 test('bundled man-p2p manifest tracks the synced alpha binary source and digest', async () => {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') {
     console.log(`SKIP: bundled binary contract test only runs on darwin arm64, got ${process.platform} ${process.arch}`);
@@ -123,7 +140,9 @@ test('bundled man-p2p manifest tracks the synced alpha binary source and digest'
   assert.match(String(manifest?.sourceCommit || ''), /^[0-9a-f]{7,}$/i);
   assert.match(String(manifest?.binarySha256 || ''), /^[0-9a-f]{64}$/i);
   assert.equal(typeof manifest?.sourceVersion, 'string');
+  assert.match(String(manifest?.artifacts?.['man-p2p-darwin-arm64']?.sha256 || ''), /^[0-9a-f]{64}$/i);
   assert.equal(manifest.binarySha256, sha256File(bundledBinaryPath));
+  assert.equal(manifest.artifacts['man-p2p-darwin-arm64'].sha256, sha256File(bundledBinaryPath));
 
   const port = await reservePort();
   const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-bundled-p2p-contract-'));

@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const crypto = require('crypto');
 
 const projectRoot = path.resolve(__dirname, '..');
 
@@ -29,6 +30,24 @@ function readFileSafe(relPath) {
     return null;
   }
   return fs.readFileSync(filePath, 'utf8');
+}
+
+function readJsonSafe(relPath) {
+  const raw = readFileSafe(relPath);
+  if (raw == null) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    addCheck(`${relPath} parses as JSON`, false, error.message);
+    return null;
+  }
+}
+
+function sha256File(relPath) {
+  const filePath = resolveInProject(relPath);
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
 function checkFileContains(relPath, snippets, checkName) {
@@ -180,6 +199,31 @@ function runStaticChecks() {
     } catch (error) {
       addCheck('electron-builder resource checks', false, `invalid JSON: ${error.message}`);
     }
+  }
+
+  const manifest = readJsonSafe('resources/man-p2p/bundle-manifest.json');
+  const releaseArtifacts = [
+    'resources/man-p2p/man-p2p-darwin-arm64',
+    'resources/man-p2p/man-p2p-win32-x64.exe',
+  ];
+  for (const relPath of releaseArtifacts) {
+    const artifactName = path.basename(relPath);
+    const filePath = resolveInProject(relPath);
+    addCheck(
+      `release artifact exists: ${artifactName}`,
+      fs.existsSync(filePath),
+      fs.existsSync(filePath) ? relPath : `missing file: ${relPath}`
+    );
+    if (!manifest || !fs.existsSync(filePath)) {
+      continue;
+    }
+    const manifestSha = manifest.artifacts && manifest.artifacts[artifactName] && manifest.artifacts[artifactName].sha256;
+    const actualSha = sha256File(relPath);
+    addCheck(
+      `release artifact manifest matches: ${artifactName}`,
+      manifestSha === actualSha,
+      manifestSha === actualSha ? actualSha : `manifest=${manifestSha || 'missing'} actual=${actualSha}`
+    );
   }
 }
 

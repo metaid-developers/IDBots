@@ -6,9 +6,17 @@ import { execFileSync } from 'node:child_process';
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const defaultSource = '/Users/tusm/Documents/MetaID_Projects/man-p2p';
 const targetDir = path.join(projectRoot, 'resources', 'man-p2p');
-const targetBinaryName = 'man-p2p-darwin-arm64';
-const targetBinaryPath = path.join(targetDir, targetBinaryName);
 const targetManifestPath = path.join(targetDir, 'bundle-manifest.json');
+const bundledArtifacts = [
+  {
+    binary: 'man-p2p-darwin-arm64',
+    makeTarget: 'build-darwin-arm64',
+  },
+  {
+    binary: 'man-p2p-win32-x64.exe',
+    makeTarget: 'build-windows-amd64',
+  },
+];
 
 function parseArgs(argv) {
   const args = { source: process.env.MAN_P2P_SOURCE || defaultSource };
@@ -41,25 +49,35 @@ function syncBinary(sourcePath) {
     throw new Error(`man-p2p source does not contain a Makefile: ${resolvedSource}`);
   }
 
-  console.log(`[sync-man-p2p] building darwin arm64 binary from ${resolvedSource}`);
-  run('make', ['build-darwin-arm64'], resolvedSource);
+  const syncedArtifacts = {};
+  fs.mkdirSync(targetDir, { recursive: true });
 
-  const builtBinaryPath = path.join(resolvedSource, 'dist', targetBinaryName);
-  if (!fs.existsSync(builtBinaryPath)) {
-    throw new Error(`built binary not found at ${builtBinaryPath}`);
+  for (const artifact of bundledArtifacts) {
+    console.log(`[sync-man-p2p] building ${artifact.binary} from ${resolvedSource}`);
+    run('make', [artifact.makeTarget], resolvedSource);
+
+    const builtBinaryPath = path.join(resolvedSource, 'dist', artifact.binary);
+    if (!fs.existsSync(builtBinaryPath)) {
+      throw new Error(`built binary not found at ${builtBinaryPath}`);
+    }
+
+    const targetBinaryPath = path.join(targetDir, artifact.binary);
+    fs.copyFileSync(builtBinaryPath, targetBinaryPath);
+    fs.chmodSync(targetBinaryPath, 0o755);
+    syncedArtifacts[artifact.binary] = {
+      makeTarget: artifact.makeTarget,
+      sha256: sha256File(targetBinaryPath),
+    };
   }
 
   const sourceCommit = run('git', ['rev-parse', '--short', 'HEAD'], resolvedSource);
   const sourceBranch = run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], resolvedSource);
   const sourceVersion = run('git', ['describe', '--tags', '--always', '--dirty'], resolvedSource);
 
-  fs.mkdirSync(targetDir, { recursive: true });
-  fs.copyFileSync(builtBinaryPath, targetBinaryPath);
-  fs.chmodSync(targetBinaryPath, 0o755);
-
   const manifest = {
-    binary: targetBinaryName,
-    binarySha256: sha256File(targetBinaryPath),
+    binary: 'man-p2p-darwin-arm64',
+    binarySha256: syncedArtifacts['man-p2p-darwin-arm64'].sha256,
+    artifacts: syncedArtifacts,
     sourcePath: resolvedSource,
     sourceBranch,
     sourceCommit,
@@ -68,9 +86,11 @@ function syncBinary(sourcePath) {
   };
   fs.writeFileSync(targetManifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 
-  console.log(`[sync-man-p2p] synced ${targetBinaryName}`);
+  console.log(`[sync-man-p2p] synced ${Object.keys(syncedArtifacts).join(', ')}`);
   console.log(`[sync-man-p2p] source ${sourceBranch}@${sourceCommit}`);
-  console.log(`[sync-man-p2p] sha256 ${manifest.binarySha256}`);
+  Object.entries(syncedArtifacts).forEach(([binary, data]) => {
+    console.log(`[sync-man-p2p] sha256 ${binary} ${data.sha256}`);
+  });
 }
 
 try {
