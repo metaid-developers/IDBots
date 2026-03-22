@@ -35,6 +35,8 @@ export interface MetaidBioProfile {
 export interface MetaidRestoreProfile {
   name: string;
   avatarDataUrl: string | null;
+  /** Pin id for /info/bio; same semantics as local metabot_info_pinid (indexer field bioId). */
+  metabotInfoPinId: string | null;
   chatpubkeyPinId: string | null;
   bio: MetaidBioProfile;
   raw: MetaidAddressInfo;
@@ -209,9 +211,11 @@ export const fetchMetaidRestoreProfile = async (address: string): Promise<Metaid
     }
   }
   const chatpubkeyPinId = normalizeOptionalString(info.chatpubkeyId);
+  const metabotInfoPinId = normalizeOptionalString(info.bioId);
   return {
     name,
     avatarDataUrl,
+    metabotInfoPinId,
     chatpubkeyPinId,
     bio,
     raw: info,

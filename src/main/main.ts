@@ -2884,10 +2884,30 @@ if (!gotTheLock) {
         return { success: false, error: 'PATH_INVALID' };
       }
 
-      const walletResult = await createMetaBotWallet({ mnemonic, path });
+      const store = getMetabotStore();
+      const existingWallet = store.getMetabotWalletByMnemonicNormalized(mnemonic);
+      const effectivePath = existingWallet?.path?.trim() || path;
+      if (existingWallet) {
+        const linked = store.getMetabotByWalletId(existingWallet.id);
+        if (linked) {
+          return { success: false, error: 'METABOT_WALLET_IN_USE' };
+        }
+        if (pathInput !== existingWallet.path?.trim()) {
+          console.log('[MetaBot] restore: reusing existing wallet row; using stored derivation path', {
+            storedPath: existingWallet.path,
+            requestedPath: pathInput,
+          });
+        }
+      }
+
+      const walletResult = await createMetaBotWallet({
+        mnemonic: existingWallet?.mnemonic ?? mnemonic,
+        path: effectivePath,
+      });
       console.log('[MetaBot] restore wallet derived', {
         mvc: walletResult.mvc_address,
         globalmetaid: walletResult.globalmetaid,
+        reusedWalletRow: Boolean(existingWallet),
       });
 
       const profile = await fetchMetaidRestoreProfile(walletResult.mvc_address);
@@ -2896,16 +2916,17 @@ if (!gotTheLock) {
         return { success: false, error: 'NAME_EMPTY' };
       }
 
-      const store = getMetabotStore();
       const exists = store.listMetabots().some((m) => m.name.trim().toLowerCase() === name.toLowerCase());
       if (exists) {
         return { success: false, error: 'NAME_DUPLICATE' };
       }
 
-      const wallet = store.insertMetabotWallet({
-        mnemonic: walletResult.mnemonic,
-        path: walletResult.path,
-      });
+      const wallet =
+        existingWallet ??
+        store.insertMetabotWallet({
+          mnemonic: walletResult.mnemonic,
+          path: walletResult.path,
+        });
 
       const metabot = store.createMetabot({
         wallet_id: wallet.id,
@@ -2920,7 +2941,7 @@ if (!gotTheLock) {
         enabled: true,
         metaid: walletResult.metaid,
         globalmetaid: walletResult.globalmetaid,
-        metabot_info_pinid: null,
+        metabot_info_pinid: profile.metabotInfoPinId ?? null,
         metabot_type: 'worker',
         created_by: profile.bio.created_by || '0000',
         role: profile.bio.role || '',

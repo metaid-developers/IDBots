@@ -97,3 +97,98 @@ test('resolvePinAssetSource() falls back when local content is metadata-only', a
     pinAssetService.clearResolvedPinAssetCache?.();
   }
 });
+
+test('resolvePinAssetSource() ignores fallback JSON error envelopes for missing assets', async () => {
+  assert.equal(typeof pinAssetService?.resolvePinAssetSource, 'function', 'resolvePinAssetSource() should be exported');
+
+  pinAssetService.clearResolvedPinAssetCache?.();
+
+  const calls = [];
+  const restore = mockFetch(async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('localhost:7281')) {
+      return new Response('', {
+        status: 404,
+        headers: {
+          'content-length': '0',
+        },
+      });
+    }
+    return new Response(JSON.stringify({
+      code: 40400,
+      message: 'avatar not found',
+      data: null,
+    }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+      },
+    });
+  });
+
+  try {
+    const result = await pinAssetService.resolvePinAssetSource('metafile://pin-json-miss');
+    assert.equal(result, null);
+    assert.equal(calls.length, 3, 'missing local content should probe both remote asset endpoints before returning null');
+    assert.ok(calls[0].includes('/content/pin-json-miss'));
+    assert.ok(calls[1].includes('/content/pin-json-miss') || calls[1].includes('file.metaid.io'));
+    assert.ok(calls[2].includes('/metafile-indexer/api/v1/files/content/pin-json-miss'));
+  } finally {
+    restore();
+    pinAssetService.clearResolvedPinAssetCache?.();
+  }
+});
+
+test('resolvePinAssetSource() retries the file-content endpoint after a legacy content miss', async () => {
+  assert.equal(typeof pinAssetService?.resolvePinAssetSource, 'function', 'resolvePinAssetSource() should be exported');
+
+  pinAssetService.clearResolvedPinAssetCache?.();
+
+  const calls = [];
+  const restore = mockFetch(async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value.includes('localhost:7281')) {
+      return new Response('', {
+        status: 404,
+        headers: {
+          'content-length': '0',
+        },
+      });
+    }
+    if (value.includes('/metafile-indexer/content/')) {
+      return new Response(JSON.stringify({
+        code: 40400,
+        message: 'avatar not found',
+        data: null,
+      }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+        },
+      });
+    }
+    if (value.includes('/metafile-indexer/api/v1/files/content/')) {
+      return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+        status: 200,
+        headers: {
+          'content-type': 'image/png',
+          'content-length': '4',
+        },
+      });
+    }
+    throw new Error(`unexpected fetch: ${value}`);
+  });
+
+  try {
+    const result = await pinAssetService.resolvePinAssetSource('metafile://pin-file-endpoint');
+    assert.match(result, /^data:image\/png;base64,/);
+    assert.equal(calls.length, 3, 'resolver should try local content, legacy remote content, then file-content endpoint');
+    assert.ok(calls[0].includes('/content/pin-file-endpoint'));
+    assert.ok(calls[1].includes('/metafile-indexer/content/pin-file-endpoint'));
+    assert.ok(calls[2].includes('/metafile-indexer/api/v1/files/content/pin-file-endpoint'));
+  } finally {
+    restore();
+    pinAssetService.clearResolvedPinAssetCache?.();
+  }
+});

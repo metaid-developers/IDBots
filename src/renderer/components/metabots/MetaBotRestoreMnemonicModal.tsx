@@ -62,6 +62,8 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
         return i18nService.t('metabotRestoreMnemonicInvalid');
       case 'PATH_INVALID':
         return i18nService.t('metabotRestorePathInvalid');
+      case 'METABOT_WALLET_IN_USE':
+        return i18nService.t('metabotRestoreWalletInUse');
       case 'CHAIN_INFO_EMPTY':
         return i18nService.t('metabotRestoreChainMissing');
       default:

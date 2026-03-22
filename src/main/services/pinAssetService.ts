@@ -2,6 +2,7 @@ import { Buffer } from 'buffer';
 import { fetchContentWithFallback } from './localIndexerProxy';
 
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
+const METAID_FILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const PIN_CONTENT_PATTERNS = [
   /^\/content\/([^/?#]+)/i,
   /^\/metafile-indexer\/content\/([^/?#]+)/i,
@@ -14,6 +15,28 @@ const resolvedPinAssetCache = new Map<string, Promise<string | null>>();
 const normalizeReference = (reference: string | null | undefined): string => (
   typeof reference === 'string' ? reference.trim() : ''
 );
+
+const isJsonMime = (mime: string): boolean => /(?:^application\/json$|[+/]json$)/i.test(mime);
+
+async function responseToDataUrl(response: Response): Promise<string | null> {
+  if (!response.ok) {
+    return null;
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length) {
+    return null;
+  }
+
+  const mime = (response.headers.get('content-type') || 'application/octet-stream')
+    .split(';')[0]
+    .trim();
+  if (isJsonMime(mime)) {
+    return null;
+  }
+
+  return `data:${mime};base64,${buffer.toString('base64')}`;
+}
 
 export function clearResolvedPinAssetCache(): void {
   resolvedPinAssetCache.clear();
@@ -100,19 +123,14 @@ async function resolvePinAssetSourceUncached(reference: string): Promise<string 
     pinId,
     `${METAID_CONTENT_BASE}/${encodeURIComponent(pinId)}`,
   );
-  if (!response.ok) {
-    return null;
+  const primaryResult = await responseToDataUrl(response);
+  if (primaryResult) {
+    return primaryResult;
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (!buffer.length) {
-    return null;
-  }
-
-  const mime = (response.headers.get('content-type') || 'application/octet-stream')
-    .split(';')[0]
-    .trim();
-  return `data:${mime};base64,${buffer.toString('base64')}`;
+  // Remote pin assets currently live behind two different MetaID endpoints.
+  const fileResponse = await fetch(`${METAID_FILE_CONTENT_BASE}/${encodeURIComponent(pinId)}`);
+  return responseToDataUrl(fileResponse);
 }
 
 export async function resolvePinAssetSource(reference: string | null | undefined): Promise<string | null> {
