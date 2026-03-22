@@ -33,10 +33,10 @@ As of 2026-03-22, the current packaged Alpha candidate is:
 - app repo branch/tag: `codex/idbots-alpha-local-first` / `alpha-2026-03-22-local-first`
 - app commit: `d22c480`
 - bundled binary manifest: `resources/man-p2p/bundle-manifest.json`
-- bundled `man-p2p` source commit in the manifest: `b94a1cc`
-- bundled `man-p2p` source version in `/health`: `b94a1cc-dirty`
+- bundled `man-p2p` source commit in the manifest: `fd81303`
+- bundled `man-p2p` source version in `/health`: `alpha-2026-03-22-local-first-1-gfd81303`
 - `man-p2p` repo acceptance tooling branch/tag: `codex/bootstrap-reload-reconnect` / `alpha-2026-03-22-local-first`
-- `man-p2p` acceptance tooling commit: `ab7d689`
+- `man-p2p` acceptance tooling commit: `fd81303`
 
 The dual-machine scripted gate was successfully run between:
 
@@ -52,12 +52,13 @@ Validated outcomes:
 
 Human smoke evidence recorded on 2026-03-22:
 
-- both packaged apps started successfully and `GET /health` returned `{"status":"ok","version":"b94a1cc-dirty"}`
+- both packaged apps started successfully and `GET /health` returned a healthy packaged `man-p2p` version
 - local-first fallback remained healthy in real UI flows on both machines
 - restarting the local packaged app preserved healthy startup and fallback behavior
 - both machines remained at `peerCount: 0` and `GET /api/p2p/peers = []` when left in `syncMode: "self"` with empty bootstrap nodes
 - the current desktop footer text still shows `connecting ... p2p only` in that peerless-but-healthy state
 - `.52` showed an empty service square while other tested product flows still worked
+- after explicitly setting a bootstrap peer, both packaged apps reached `peerCount: 1` and each side reported the other peer ID
 
 ---
 
@@ -81,6 +82,7 @@ The current build is acceptable for Alpha only if all of the following remain tr
 - remote machine is reachable over SSH
 - remote machine has a usable packaged `IDBots.app` at `~/tmp/idbots-alpha/IDBots.app`
 - `IDBOTS_REMOTE_PASSWORD` is exported if password auth is required
+- on macOS, the default acceptance path should use the packaged app's normal `open` launch behavior and its default runtime at `http://127.0.0.1:7281`
 
 ### 4.2 Command
 
@@ -92,17 +94,15 @@ cd /Users/tusm/.config/superpowers/worktrees/man-p2p/codex/bootstrap-reload-reco
 export IDBOTS_REMOTE_PASSWORD=123456
 
 CGO_ENABLED=0 go run ./tools/alpha_acceptance \
-  --local-app /Users/tusm/Documents/MetaID_Projects/IDBots/IDBots-indev/release/mac-arm64/IDBots.app \
+  --local-app /Users/tusm/.config/superpowers/worktrees/IDBots/codex/idbots-alpha-freeze-local-20260322/release/mac-arm64/IDBots.app \
   --remote-user showpay \
   --remote-host 192.168.3.52 \
   --remote-app '~/tmp/idbots-alpha/IDBots.app' \
-  --remote-base-url http://127.0.0.1:62196 \
-  --remote-launch-mode binary \
-  --preferred-local-ip 192.168.3.30
+  --remote-base-url http://127.0.0.1:7281
 ```
 
 Use `--remote-copy` only when the remote packaged app must be refreshed from the local candidate build.
-Use a dedicated `--remote-base-url` port for scripted runs so the acceptance runtime stays isolated from any normal `IDBots` session already running on the remote machine.
+Use `--remote-launch-mode binary` and a dedicated `--remote-base-url` only for targeted debugging. They are not the default macOS Alpha path.
 
 ### 4.3 Pass Conditions
 
@@ -245,6 +245,7 @@ The following are acceptable in the current Alpha:
 - multi-node restart smoke is most reliable when at least one bootstrap peer keeps a stable address for the duration of the test window
 - a healthy node with `syncMode: "self"` and no bootstrap peers currently stays at `peerCount: 0`
 - the footer copy `connecting ... p2p only` is currently misleading in that peerless-but-healthy state
+- direct Mach-O launch of `IDBots.app/Contents/MacOS/IDBots` is not the current accepted macOS Alpha path for remote scripted runs
 
 These are not acceptable:
 

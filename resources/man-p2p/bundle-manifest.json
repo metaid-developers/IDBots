@@ -1,9 +1,9 @@
 {
   "binary": "man-p2p-darwin-arm64",
-  "binarySha256": "e2b96d38666eb1e930268e9363e5c19fb6bde896f2aad0859143bc78b46d4241",
-  "sourcePath": "/Users/tusm/Documents/MetaID_Projects/man-p2p",
-  "sourceBranch": "master",
-  "sourceCommit": "b94a1cc",
-  "sourceVersion": "b94a1cc-dirty",
-  "syncedAt": "2026-03-22T06:58:45.791Z"
+  "binarySha256": "527aa4789fe583ef0c3f3eb9a5eaa019c82b6d32b692e88b642a7ef9ccd09d83",
+  "sourcePath": "/Users/tusm/.config/superpowers/worktrees/man-p2p/codex/bootstrap-reload-reconnect",
+  "sourceBranch": "codex/bootstrap-reload-reconnect",
+  "sourceCommit": "fd81303",
+  "sourceVersion": "alpha-2026-03-22-local-first-1-gfd81303",
+  "syncedAt": "2026-03-22T15:55:03.848Z"
 }

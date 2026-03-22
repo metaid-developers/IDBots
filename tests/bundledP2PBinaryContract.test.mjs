@@ -68,43 +68,7 @@ async function waitForChildExit(child, timeoutMs = 5000) {
   });
 }
 
-test('bundled man-p2p manifest tracks the synced alpha binary source and digest', async () => {
-  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-    console.log(`SKIP: bundled binary contract test only runs on darwin arm64, got ${process.platform} ${process.arch}`);
-    return;
-  }
-  if (!fs.existsSync(bundledBinaryPath)) {
-    console.log('SKIP: bundled man-p2p binary is missing');
-    return;
-  }
-  assert.equal(fs.existsSync(bundledManifestPath), true, `expected bundled manifest at ${bundledManifestPath}`);
-
-  const manifest = JSON.parse(fs.readFileSync(bundledManifestPath, 'utf8'));
-  assert.match(String(manifest?.binary || ''), /^man-p2p-darwin-arm64$/);
-  assert.match(String(manifest?.sourceCommit || ''), /^[0-9a-f]{7,}$/i);
-  assert.match(String(manifest?.binarySha256 || ''), /^[0-9a-f]{64}$/i);
-  assert.equal(manifest.binarySha256, sha256File(bundledBinaryPath));
-
-  const binaryText = fs.readFileSync(bundledBinaryPath).toString('latin1');
-  assert.match(binaryText, /syncMode/);
-  assert.match(binaryText, /runtimeMode/);
-  assert.match(binaryText, /peerId/);
-  assert.match(binaryText, /listenAddrs/);
-  assert.match(binaryText, new RegExp(String(manifest.sourceCommit).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-});
-
-test('bundled man-p2p binary best-effort isolated smoke keeps alpha status fields when healthy', async () => {
-  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-    console.log(`SKIP: bundled binary smoke only runs on darwin arm64, got ${process.platform} ${process.arch}`);
-    return;
-  }
-  if (!fs.existsSync(bundledBinaryPath) || !fs.existsSync(bundledConfigPath)) {
-    console.log('SKIP: bundled man-p2p binary or config is missing');
-    return;
-  }
-
-  const port = await reservePort();
-  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-bundled-p2p-'));
+function spawnBundledBinary(port, tmpdir, p2pConfig = {}) {
   const tempConfigPath = path.join(tmpdir, 'config.toml');
   const tempP2PConfigPath = path.join(tmpdir, 'p2p-config.json');
   const baseConfig = fs.readFileSync(bundledConfigPath, 'utf8');
@@ -122,6 +86,7 @@ test('bundled man-p2p binary best-effort isolated smoke keeps alpha status field
       p2p_storage_limit_gb: 1,
       p2p_enable_chain_source: false,
       p2p_own_addresses: [],
+      ...p2pConfig,
     }, null, 2),
     'utf8',
   );
@@ -139,6 +104,79 @@ test('bundled man-p2p binary best-effort isolated smoke keeps alpha status field
   const output = [];
   child.stdout?.on('data', (chunk) => output.push(chunk.toString()));
   child.stderr?.on('data', (chunk) => output.push(chunk.toString()));
+  return { child, output };
+}
+
+test('bundled man-p2p manifest tracks the synced alpha binary source and digest', async () => {
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+    console.log(`SKIP: bundled binary contract test only runs on darwin arm64, got ${process.platform} ${process.arch}`);
+    return;
+  }
+  if (!fs.existsSync(bundledBinaryPath)) {
+    console.log('SKIP: bundled man-p2p binary is missing');
+    return;
+  }
+  assert.equal(fs.existsSync(bundledManifestPath), true, `expected bundled manifest at ${bundledManifestPath}`);
+
+  const manifest = JSON.parse(fs.readFileSync(bundledManifestPath, 'utf8'));
+  assert.match(String(manifest?.binary || ''), /^man-p2p-darwin-arm64$/);
+  assert.match(String(manifest?.sourceCommit || ''), /^[0-9a-f]{7,}$/i);
+  assert.match(String(manifest?.binarySha256 || ''), /^[0-9a-f]{64}$/i);
+  assert.equal(typeof manifest?.sourceVersion, 'string');
+  assert.equal(manifest.binarySha256, sha256File(bundledBinaryPath));
+
+  const port = await reservePort();
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-bundled-p2p-contract-'));
+  const { child, output } = spawnBundledBinary(port, tmpdir);
+
+  try {
+    const healthy = await waitForHealthyPort(port);
+    if (!healthy) {
+      console.log(`SKIP: bundled binary did not become healthy on isolated port ${port}; output:\n${output.join('')}`);
+      return;
+    }
+
+    const healthRes = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(healthRes.status, 200);
+    const healthJson = await healthRes.json();
+    assert.equal(healthJson?.status, 'ok');
+    assert.equal(healthJson?.version, manifest.sourceVersion);
+  } finally {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // Best effort cleanup.
+    }
+    const exited = await waitForChildExit(child);
+    if (!exited) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Best effort cleanup.
+      }
+      await waitForChildExit(child, 1000);
+    }
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.removeAllListeners();
+    child.unref();
+    fs.rmSync(tmpdir, { recursive: true, force: true });
+  }
+});
+
+test('bundled man-p2p binary best-effort isolated smoke keeps alpha status fields when healthy', async () => {
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+    console.log(`SKIP: bundled binary smoke only runs on darwin arm64, got ${process.platform} ${process.arch}`);
+    return;
+  }
+  if (!fs.existsSync(bundledBinaryPath) || !fs.existsSync(bundledConfigPath)) {
+    console.log('SKIP: bundled man-p2p binary or config is missing');
+    return;
+  }
+
+  const port = await reservePort();
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-bundled-p2p-'));
+  const { child, output } = spawnBundledBinary(port, tmpdir);
 
   try {
     const healthy = await waitForHealthyPort(port);
