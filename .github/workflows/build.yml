@@ -89,6 +89,12 @@ jobs:
           SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
           SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
+      - name: Compute release asset label
+        shell: bash
+        run: |
+          RELEASE_ASSET_LABEL="$(node scripts/release-asset-label.cjs)"
+          echo "RELEASE_ASSET_LABEL=$RELEASE_ASSET_LABEL" >> "$GITHUB_ENV"
+
       - name: Prepare macOS signing keychain
         if: runner.os == 'macOS'
         shell: bash
@@ -137,8 +143,8 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          ditto -c -k --keepParent "release/mac-arm64/IDBots.app" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.app.zip"
-          xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.app.zip" \
+          ditto -c -k --keepParent "release/mac-arm64/IDBots.app" "release/IDBots-${RELEASE_ASSET_LABEL}-arm64.app.zip"
+          xcrun notarytool submit "release/IDBots-${RELEASE_ASSET_LABEL}-arm64.app.zip" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
@@ -172,16 +178,16 @@ jobs:
           fi
           if [ -n "$CSC_KEYCHAIN" ] && [ -n "$CSC_KEYCHAIN_PASSWORD" ]; then
             security unlock-keychain -p "$CSC_KEYCHAIN_PASSWORD" "$CSC_KEYCHAIN"
-            codesign --force --sign "$MAC_CODESIGN_IDENTITY" --keychain "$CSC_KEYCHAIN" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+            codesign --force --sign "$MAC_CODESIGN_IDENTITY" --keychain "$CSC_KEYCHAIN" "release/IDBots-${RELEASE_ASSET_LABEL}-arm64.dmg"
           else
-            codesign --force --sign "$MAC_CODESIGN_IDENTITY" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+            codesign --force --sign "$MAC_CODESIGN_IDENTITY" "release/IDBots-${RELEASE_ASSET_LABEL}-arm64.dmg"
           fi
-          xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg" \
+          xcrun notarytool submit "release/IDBots-${RELEASE_ASSET_LABEL}-arm64.dmg" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --wait
-          xcrun stapler staple "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+          xcrun stapler staple "release/IDBots-${RELEASE_ASSET_LABEL}-arm64.dmg"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
