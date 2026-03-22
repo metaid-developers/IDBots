@@ -30,19 +30,34 @@ It is not a full release checklist.
 As of 2026-03-22, the current packaged Alpha candidate is:
 
 - app: `release/mac-arm64/IDBots.app`
+- app repo branch/tag: `codex/idbots-alpha-local-first` / `alpha-2026-03-22-local-first`
+- app commit: `d22c480`
 - bundled binary manifest: `resources/man-p2p/bundle-manifest.json`
-- bundled `man-p2p` source commit in the manifest: `f268938`
+- bundled `man-p2p` source commit in the manifest: `b94a1cc`
+- bundled `man-p2p` source version in `/health`: `b94a1cc-dirty`
+- `man-p2p` repo acceptance tooling branch/tag: `codex/bootstrap-reload-reconnect` / `alpha-2026-03-22-local-first`
+- `man-p2p` acceptance tooling commit: `ab7d689`
 
 The dual-machine scripted gate was successfully run between:
 
 - local host: `192.168.3.30`
-- remote host: `192.168.3.53`
+- remote host: `192.168.3.52`
 
 Validated outcomes:
 
 - packaged nodes discovered each other over P2P
 - local miss fallback succeeded for `d7947500f7668e361bd84d20a45f49bb8e692d3c5ec1dc57310a8d8171f258f8i0`
 - a synthetic live PIN propagated across the mesh in realtime
+- latest successful synthetic PIN ID: `alpha-live-pin-1774170745`
+
+Human smoke evidence recorded on 2026-03-22:
+
+- both packaged apps started successfully and `GET /health` returned `{"status":"ok","version":"b94a1cc-dirty"}`
+- local-first fallback remained healthy in real UI flows on both machines
+- restarting the local packaged app preserved healthy startup and fallback behavior
+- both machines remained at `peerCount: 0` and `GET /api/p2p/peers = []` when left in `syncMode: "self"` with empty bootstrap nodes
+- the current desktop footer text still shows `connecting ... p2p only` in that peerless-but-healthy state
+- `.52` showed an empty service square while other tested product flows still worked
 
 ---
 
@@ -164,6 +179,8 @@ Pass:
 ### 5.4 Dual-Node Connectivity
 
 - Start the packaged app on both machines
+- Do not expect peer discovery if both nodes remain in `syncMode: "self"` with empty bootstrap nodes
+- For a real packaged-app mesh smoke, seed at least one reachable bootstrap node through the normal config path or use the scripted gate
 - Call `GET /api/p2p/peers` on each node
 - Confirm each side reports at least one peer after the connection settles
 
@@ -226,6 +243,8 @@ The following are acceptable in the current Alpha:
 - the scripted gate proves realtime propagation, while most human smoke steps focus on packaged-app behavior instead of raw protocol internals
 - direct edits to `man-p2p-config.json` may be overwritten on app startup because startup regenerates runtime config from the app store
 - multi-node restart smoke is most reliable when at least one bootstrap peer keeps a stable address for the duration of the test window
+- a healthy node with `syncMode: "self"` and no bootstrap peers currently stays at `peerCount: 0`
+- the footer copy `connecting ... p2p only` is currently misleading in that peerless-but-healthy state
 
 These are not acceptable:
 
