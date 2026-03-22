@@ -30,7 +30,10 @@ export function isEmptyListDataPayload(payload: unknown): boolean {
     return true;
   }
   const list = (data as { list?: unknown }).list;
-  return Array.isArray(list) && list.length === 0;
+  if (!Array.isArray(list)) {
+    return true;
+  }
+  return list.length === 0;
 }
 
 /**

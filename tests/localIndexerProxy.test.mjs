@@ -14,11 +14,13 @@ const require = createRequire(import.meta.url);
 let fetchFromLocalOrFallback;
 let fetchContentWithFallback;
 let fetchJsonWithFallbackOnMiss;
+let isEmptyListDataPayload;
 try {
   ({
     fetchFromLocalOrFallback,
     fetchContentWithFallback,
     fetchJsonWithFallbackOnMiss,
+    isEmptyListDataPayload,
   } = require('../dist-electron/services/localIndexerProxy.js'));
 } catch {
   console.warn('[localIndexerProxy tests] dist-electron not built — skipping');
@@ -164,6 +166,53 @@ test('fetchJsonWithFallbackOnMiss: local empty list triggers fallback', async ()
     );
     const json = await res.json();
     assert.equal(calls.length, 2, 'semantic local miss should trigger remote fallback');
+    assert.equal(json.data.list[0].id, 'remote-pin');
+  } finally {
+    restore();
+  }
+});
+
+test('fetchJsonWithFallbackOnMiss: local null list triggers fallback', async () => {
+  if (!fetchJsonWithFallbackOnMiss || !isEmptyListDataPayload) {
+    assert.fail('localIndexerProxy exports should be available');
+  }
+
+  const calls = [];
+  const restore = mockFetch(async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('localhost:7281')) {
+      return makeJsonResponse(200, {
+        code: 1,
+        message: 'ok',
+        data: {
+          list: null,
+          total: 0,
+          nextCursor: '',
+        },
+      });
+    }
+    return makeJsonResponse(200, {
+      code: 1,
+      message: 'ok',
+      data: {
+        list: [{ id: 'remote-pin' }],
+      },
+    });
+  });
+
+  try {
+    assert.equal(
+      isEmptyListDataPayload({ data: { list: null, total: 0, nextCursor: '' } }),
+      true,
+      'null list should be treated as a semantic miss',
+    );
+    const res = await fetchJsonWithFallbackOnMiss(
+      '/api/pin/path/list?path=%2Fprotocols%2Fskill-service&size=3',
+      'https://example.com/pin/path/list?path=%2Fprotocols%2Fskill-service&size=3',
+      isEmptyListDataPayload,
+    );
+    const json = await res.json();
+    assert.equal(calls.length, 2, 'null list semantic miss should trigger remote fallback');
     assert.equal(json.data.list[0].id, 'remote-pin');
   } finally {
     restore();
