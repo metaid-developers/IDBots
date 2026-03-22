@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getP2PStatusBadgeView } from './p2pStatusBadgeState.js';
 
 interface P2PStatus {
   running?: boolean;
@@ -53,10 +54,13 @@ export const P2PStatusBadge: React.FC = () => {
     </span>
   );
 
+  const view = getP2PStatusBadgeView(status);
+
   if (status.storageLimitReached) {
     return (
       <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
-        🔶 Storage full
+        {renderDot(view.dotColorClass, view.animate)}
+        {view.label}
         {status.runtimeMode && renderModeBadge(status.runtimeMode)}
       </span>
     );
@@ -79,8 +83,8 @@ export const P2PStatusBadge: React.FC = () => {
   if (status.peerCount === 0 || status.peerCount === undefined) {
     return (
       <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
-        {renderDot('bg-yellow-400', true)}
-        Connecting...
+        {renderDot(view.dotColorClass, view.animate)}
+        {view.label}
         {status.runtimeMode && renderModeBadge(status.runtimeMode)}
         {status.dataSource && renderDataSourceBadge(status.dataSource)}
       </span>
@@ -89,8 +93,8 @@ export const P2PStatusBadge: React.FC = () => {
 
   return (
     <span className='inline-flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400'>
-      {renderDot('bg-green-400')}
-      {status.peerCount} peers
+      {renderDot(view.dotColorClass, view.animate)}
+      {view.label}
       {status.runtimeMode && renderModeBadge(status.runtimeMode)}
       {status.dataSource && renderDataSourceBadge(status.dataSource)}
     </span>
