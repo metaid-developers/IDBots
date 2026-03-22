@@ -21,6 +21,14 @@ This document is intentionally narrow. It is only about the current Alpha contra
 - centralized fallback on local miss
 - realtime P2P PIN propagation between desktop nodes
 
+For this Alpha, the accepted product baseline is always the packaged desktop app. `npm run electron:dev` is not an Alpha acceptance target.
+
+Distribution remains out of band from the source repository:
+
+- GitHub Actions builds the packaged artifacts
+- GitHub Releases is the intended installer distribution channel
+- checked-in bundled `man-p2p` assets are packaging inputs, not the end-user release format
+
 It is not a full release checklist.
 
 ---
@@ -56,7 +64,7 @@ Human smoke evidence recorded on 2026-03-22:
 - local-first fallback remained healthy in real UI flows on both machines
 - restarting the local packaged app preserved healthy startup and fallback behavior
 - both machines remained at `peerCount: 0` and `GET /api/p2p/peers = []` when left in `syncMode: "self"` with empty bootstrap nodes
-- the current desktop footer text still shows `connecting ... p2p only` in that peerless-but-healthy state
+- the current desktop status badge reports that peerless-but-healthy state as `0 peers` instead of a false connecting state
 - `.52` showed an empty service square while other tested product flows still worked
 - after explicitly setting a bootstrap peer, both packaged apps reached `peerCount: 1` and each side reported the other peer ID
 
@@ -244,7 +252,7 @@ The following are acceptable in the current Alpha:
 - direct edits to `man-p2p-config.json` may be overwritten on app startup because startup regenerates runtime config from the app store
 - multi-node restart smoke is most reliable when at least one bootstrap peer keeps a stable address for the duration of the test window
 - a healthy node with `syncMode: "self"` and no bootstrap peers currently stays at `peerCount: 0`
-- the footer copy `connecting ... p2p only` is currently misleading in that peerless-but-healthy state
+- the source repository may still contain bundled `man-p2p` packaging assets that are larger than ideal for GitHub warnings, but official tester/user delivery should still happen through packaged release artifacts
 - direct Mach-O launch of `IDBots.app/Contents/MacOS/IDBots` is not the current accepted macOS Alpha path for remote scripted runs
 
 These are not acceptable:
