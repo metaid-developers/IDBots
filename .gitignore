@@ -15,8 +15,8 @@ release/
 
 # Internal / tooling (do not publish)
 Dev-docs/
-AGENTS.md
 CLAUDE.md
+localdocs/
 
 # Local DB (never commit)
 *.sqlite
