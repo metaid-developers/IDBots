@@ -63,6 +63,7 @@ import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pin
 import * as p2pIndexerService from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
+import { stopMetaAppServer } from './services/metaAppLocalServer';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -4448,6 +4449,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
+    await stopMetaAppServer().catch((error) => {
+      console.error('[metaapps] Failed to stop local server during cleanup:', error);
+    });
     await runSharedAppCleanup({
       destroyTray,
       stopSkillWatching: () => {
