@@ -72,7 +72,7 @@ test('ensureMetaAppServerReady() starts a localhost server with a health endpoin
 
     const health = await request({ url: `${baseUrl}/__idbots/metaapps/health` });
     assert.equal(health.statusCode, 200);
-    assert.match(health.body, /ok/i);
+    assert.deepEqual(JSON.parse(health.body), { ok: true, root: metaAppsRoot });
   } finally {
     if (stopMetaAppServer) {
       await stopMetaAppServer();
@@ -118,6 +118,42 @@ test('server rejects traversal outside METAAPPs', async () => {
     // Avoid URL normalization of ".." segments by percent-encoding them.
     const res = await request({ url: `${baseUrl}/buzz/%2e%2e/%2e%2e/secret.txt` });
     assert.equal(res.statusCode, 403);
+    assert.notEqual(res.body, 'secret');
+  } finally {
+    if (stopMetaAppServer) {
+      await stopMetaAppServer();
+    }
+  }
+});
+
+test('server rejects symlink escape outside METAAPPs', async (t) => {
+  assert.equal(typeof ensureMetaAppServerReady, 'function', 'ensureMetaAppServerReady() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  const outsideFilePath = path.join(tempDir, 'secret.txt');
+  const symlinkPath = path.join(metaAppsRoot, 'buzz', 'app', 'linked-secret.txt');
+
+  writeFile(outsideFilePath, 'secret');
+  fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+
+  try {
+    fs.symlinkSync(outsideFilePath, symlinkPath);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = error.code;
+      if (code === 'EPERM' || code === 'ENOSYS' || code === 'UNKNOWN') {
+        t.skip(`symlink creation unsupported in this environment: ${code}`);
+      }
+    }
+    throw error;
+  }
+
+  let baseUrl = null;
+  try {
+    ({ baseUrl } = await ensureMetaAppServerReady(metaAppsRoot));
+    const res = await request({ url: `${baseUrl}/buzz/app/linked-secret.txt` });
+    assert.notEqual(res.statusCode, 200);
     assert.notEqual(res.body, 'secret');
   } finally {
     if (stopMetaAppServer) {
