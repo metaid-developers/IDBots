@@ -129,6 +129,40 @@ test('buildCoworkAutoRoutingPrompt emits <available_metaapps> with location and 
   assert.match(prompt, new RegExp(`<location>${path.join(metaAppsRoot, 'buzz', 'APP.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/location>`));
 });
 
+test('listMetaApps skips traversal-style entry that escapes metaapp root', () => {
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  writeFile(
+    path.join(metaAppsRoot, 'safe', 'APP.md'),
+    [
+      '---',
+      'name: safe-app',
+      'description: valid app',
+      'entry: /safe/app/index.html',
+      '---',
+      '',
+      'safe app',
+    ].join('\n'),
+  );
+
+  writeFile(
+    path.join(metaAppsRoot, 'escape', 'APP.md'),
+    [
+      '---',
+      'name: escape-app',
+      'description: traversal should be rejected',
+      'entry: /escape/../../chat/app/chat.html',
+      '---',
+      '',
+      'escape app',
+    ].join('\n'),
+  );
+
+  const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
+  assert.deepEqual(apps.map((app) => app.id), ['safe']);
+});
+
 test('packaged root prefers userData and sync copies bundled METAAPPs into it', () => {
   const tempDir = createTempDir();
   const resourcesPath = path.join(tempDir, 'resources');

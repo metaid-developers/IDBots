@@ -91,6 +91,18 @@ const isValidEntryForApp = (appId: string, entry: string): boolean => {
   const normalizedPath = normalizeEntryPath(entry);
   if (!normalizedPath) return false;
   if (!normalizedPath.startsWith(`/${appId}/`)) return false;
+
+  const normalizedPosixPath = path.posix.normalize(normalizedPath);
+  const appRoot = `/${appId}`;
+  if (normalizedPosixPath !== appRoot && !normalizedPosixPath.startsWith(`${appRoot}/`)) {
+    return false;
+  }
+
+  const relativePath = path.posix.relative(appRoot, normalizedPosixPath);
+  if (relativePath === '.' || relativePath.startsWith('..') || path.posix.isAbsolute(relativePath)) {
+    return false;
+  }
+
   return true;
 };
 
