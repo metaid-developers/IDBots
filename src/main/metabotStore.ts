@@ -477,15 +477,6 @@ export class MetabotStore {
     return row ? rowToMetabotWallet(row) : null;
   }
 
-  /** Returns a MetaBot that references this wallet, if any. */
-  getMetabotByWalletId(wallet_id: number): Metabot | null {
-    const row = this.getOne<MetabotRow>(
-      'SELECT * FROM metabots WHERE wallet_id = ? LIMIT 1',
-      [wallet_id]
-    );
-    return row ? rowToMetabot(row) : null;
-  }
-
   /** Get wallet for a metabot by metabot id (looks up metabot.wallet_id). */
   getMetabotWalletByMetabotId(metabot_id: number): MetabotWallet | null {
     const metabot = this.getMetabotById(metabot_id);
