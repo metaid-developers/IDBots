@@ -86,24 +86,45 @@ const normalizeEntryPath = (entry: string): string => {
   return trimmed.slice(0, cutIndex);
 };
 
-const isValidEntryForApp = (appId: string, entry: string): boolean => {
-  if (!entry.startsWith('/')) return false;
+const isPathInside = (root: string, target: string): boolean => {
+  const relativePath = path.relative(root, target);
+  if (!relativePath) return false;
+  return !relativePath.startsWith('..') && !path.isAbsolute(relativePath);
+};
+
+const resolveEntryFilePath = (appId: string, appRootDir: string, entry: string): string | null => {
+  if (!entry.startsWith('/')) return null;
   const normalizedPath = normalizeEntryPath(entry);
-  if (!normalizedPath) return false;
-  if (!normalizedPath.startsWith(`/${appId}/`)) return false;
+  if (!normalizedPath) return null;
+  if (!normalizedPath.startsWith(`/${appId}/`)) return null;
 
   const normalizedPosixPath = path.posix.normalize(normalizedPath);
-  const appRoot = `/${appId}`;
-  if (normalizedPosixPath !== appRoot && !normalizedPosixPath.startsWith(`${appRoot}/`)) {
-    return false;
+  const appRootPosixPath = `/${appId}`;
+  if (!normalizedPosixPath.startsWith(`${appRootPosixPath}/`)) {
+    return null;
   }
 
-  const relativePath = path.posix.relative(appRoot, normalizedPosixPath);
-  if (relativePath === '.' || relativePath.startsWith('..') || path.posix.isAbsolute(relativePath)) {
-    return false;
+  const relativePath = path.posix.relative(appRootPosixPath, normalizedPosixPath);
+  if (!relativePath || relativePath === '.' || relativePath.startsWith('..') || path.posix.isAbsolute(relativePath)) {
+    return null;
   }
 
-  return true;
+  const resolvedFilePath = path.resolve(appRootDir, ...relativePath.split('/'));
+  if (!isPathInside(appRootDir, resolvedFilePath)) {
+    return null;
+  }
+  if (!fs.existsSync(resolvedFilePath)) {
+    return null;
+  }
+  try {
+    if (!fs.statSync(resolvedFilePath).isFile()) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return resolvedFilePath;
 };
 
 const listMetaAppDirs = (root: string): string[] => {
@@ -222,7 +243,8 @@ export class MetaAppManager {
         const name = (frontmatter.name || id).trim() || id;
         const description = (frontmatter.description || extractDescription(content) || name).trim();
         const entry = String(frontmatter.entry || '').trim();
-        if (!isValidEntryForApp(id, entry)) {
+        const entryFilePath = resolveEntryFilePath(id, dir, entry);
+        if (!entryFilePath) {
           return;
         }
         result.push({
