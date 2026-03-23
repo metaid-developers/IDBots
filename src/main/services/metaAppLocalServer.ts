@@ -147,7 +147,7 @@ const handleRequest = (req: http.IncomingMessage, res: http.ServerResponse): voi
     writeResponse(
       res,
       200,
-      JSON.stringify({ ok: true }),
+      JSON.stringify({ ok: true, root: activeRoot }),
       method,
       { 'Content-Type': 'application/json; charset=utf-8' },
     );
