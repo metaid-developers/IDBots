@@ -128,7 +128,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder ${{ matrix.build_args }} --publish never --config.win.signAndEditExecutable=false
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
 
       - name: Notarize app (macOS)
         if: runner.os == 'macOS'

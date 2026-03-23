@@ -100,6 +100,19 @@ test('waitForHealthyLocalApi() retries until the local health check succeeds', a
   assert.equal(attempts, 3, 'health wait should stop retrying after the first healthy result');
 });
 
+test('escapeTomlBasicString() escapes Windows paths for TOML basic strings', async () => {
+  assert.equal(
+    typeof p2pService?.escapeTomlBasicString,
+    'function',
+    'escapeTomlBasicString() should be exported',
+  );
+
+  assert.equal(
+    p2pService.escapeTomlBasicString('C:\\Users\\showpay\\AppData\\Roaming\\IDBots\\man-p2p\\man_base_data_pebble'),
+    'C:\\\\Users\\\\showpay\\\\AppData\\\\Roaming\\\\IDBots\\\\man-p2p\\\\man_base_data_pebble',
+  );
+});
+
 test('refreshStatusFromLocalApi() normalizes status payload and updates cached status', async () => {
   assert.equal(typeof p2pService?.refreshStatusFromLocalApi, 'function', 'refreshStatusFromLocalApi() should be exported');
 

@@ -253,7 +253,10 @@ export function resolveRuntimeConfigPath(
   if (listenAddress) {
     runtimeConfig = applyP2PLocalListenAddressOverride(runtimeConfig, listenAddress);
   }
-  runtimeConfig = runtimeConfig.replace(/^dir\s*=\s*"[^"]*"\s*$/m, `dir = "${pebbleDir}"`);
+  runtimeConfig = runtimeConfig.replace(
+    /^dir\s*=\s*"[^"]*"\s*$/m,
+    `dir = "${escapeTomlBasicString(pebbleDir)}"`,
+  );
 
   if (runtimeConfig === baseConfig) {
     return mainConfigPath;
@@ -262,6 +265,10 @@ export function resolveRuntimeConfigPath(
   fs.mkdirSync(path.dirname(runtimeConfigPath), { recursive: true });
   fs.writeFileSync(runtimeConfigPath, runtimeConfig, 'utf8');
   return runtimeConfigPath;
+}
+
+export function escapeTomlBasicString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 function spawnProcess(dataDir: string, configPath: string): Promise<void> {
