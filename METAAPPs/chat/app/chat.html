@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IDFramework - Chat Demo</title>
+
+  <script src="../demo-buzz/utils/bootstrap-stores.js"></script>
+  <script>
+    window.addEventListener('alpine:init', () => {
+      if (!Alpine.store('chat')) {
+        Alpine.store('chat', {
+          conversations: {},
+          conversationOrder: [],
+          currentConversation: null,
+          currentConversationId: null,
+          currentConversationType: null,
+          currentConversationIndex: null,
+          messages: {},
+          groupInfoById: {},
+          groupMembersById: {},
+          isLoading: false,
+          error: null,
+          useCommandMessageFetch: true,
+        });
+      }
+
+      const userStore = Alpine.store('user');
+      if (userStore) {
+        if (!userStore.user || typeof userStore.user !== 'object') userStore.user = {};
+        if (!userStore.users || typeof userStore.users !== 'object') userStore.users = {};
+      }
+    });
+  </script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "@idf/": "../idframework/"
+      }
+    }
+  </script>
+
+  <link rel="stylesheet" href="./app.css?v=20260322-m4i">
+  <link rel="stylesheet" href="./chat.css?v=20260324-mobile-auth1">
+</head>
+<body>
+  <id-userinfo-float-panel></id-userinfo-float-panel>
+
+  <div
+    class="chat-container"
+    x-data="{
+      showChatDrawer: false,
+      showInfoDrawer: false,
+      isMobile: false,
+      syncDrawerByViewport() {
+        const mobile = typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)').matches : false;
+        this.isMobile = mobile;
+        if (!mobile) {
+          this.showChatDrawer = false;
+          return;
+        }
+        if (this.$store.chat.currentConversation) {
+          this.showChatDrawer = true;
+        }
+      },
+      handleConversationSelected() {
+        this.showChatDrawer = true;
+        this.showInfoDrawer = false;
+      },
+      handleDrawerClose() {
+        this.showChatDrawer = false;
+        this.showInfoDrawer = false;
+      },
+      init() {
+        this.syncDrawerByViewport();
+        this.$watch('$store.chat.currentConversation', (nextConversation) => {
+          if (this.isMobile && nextConversation) {
+            this.showChatDrawer = true;
+          }
+        });
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+          window.addEventListener('resize', () => this.syncDrawerByViewport());
+        }
+      }
+    }"
+  >
+    <aside class="chat-sidebar">
+      <div class="chat-sidebar-mobile-auth" x-show="!showChatDrawer">
+        <id-connect-button class="chat-sidebar-mobile-connect-button"></id-connect-button>
+      </div>
+      <id-chat-chatlist-panel
+        :current-conversation="$store.chat.currentConversation || ''"
+        @conversation-selected="handleConversationSelected()"
+      ></id-chat-chatlist-panel>
+    </aside>
+
+    <main class="chat-main" :class="{ 'drawer-open': showChatDrawer }">
+      <button
+        class="chat-drawer-close"
+        x-show="showChatDrawer && $store.chat.currentConversation"
+        @click="handleDrawerClose()"
+        data-i18n="chat.page.back"
+        data-i18n-fallback="← Back"
+      >
+        ← Back
+      </button>
+
+      <id-chat-header @conversation-drawer-toggle="showInfoDrawer = !showInfoDrawer">
+        <id-connect-button slot="leading-action" class="chat-header-connect-button"></id-connect-button>
+      </id-chat-header>
+
+      <template x-if="!$store.chat.currentConversation">
+        <div class="chat-empty">
+          <div class="empty-message">
+            <h2 data-i18n="chat.page.emptyTitle" data-i18n-fallback="Select a chat to start messaging">Select a chat to start messaging</h2>
+            <p data-i18n="chat.page.emptyHint" data-i18n-fallback="Choose a conversation from the sidebar">Choose a conversation from the sidebar</p>
+          </div>
+        </div>
+      </template>
+
+      <div class="chat-messages" id="chat-messages" x-show="$store.chat.currentConversation">
+        <id-chat-groupmsg-list></id-chat-groupmsg-list>
+      </div>
+
+      <div class="chat-input-area" x-show="$store.chat.currentConversation">
+        <id-chat-input-box
+          :mode="$store.chat.currentConversationType === '2' ? 'private' : 'group'"
+          :group-id="$store.chat.currentConversationType === '1' ? ($store.chat.currentConversation || '') : ''"
+          :to-metaid="$store.chat.currentConversationType === '2' ? ($store.chat.currentConversation || '') : ''"
+          :channel-id="$store.chat.currentConversationType === '1'
+            ? ($store.chat.conversations[$store.chat.currentConversation]?.channelId || '')
+            : ''"
+        ></id-chat-input-box>
+      </div>
+
+      <aside
+        class="chat-info-drawer"
+        :class="{ 'open': showInfoDrawer }"
+        x-show="$store.chat.currentConversation && showInfoDrawer"
+        x-cloak
+      >
+        <id-chat-group-info-panel @group-info-close="showInfoDrawer = false"></id-chat-group-info-panel>
+      </aside>
+    </main>
+  </div>
+
+  <script src="../idframework/vendors/metaid.js"></script>
+  <script src="../idframework/vendors/crypto.js"></script>
+  <script type="module" src="../idframework/idframework.js"></script>
+  <script type="module" src="./chat.js?v=20260323-perf3"></script>
+</body>
+</html>

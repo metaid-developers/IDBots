@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IDFramework - Group Chat</title>
+
+  <script src="../demo-buzz/utils/bootstrap-stores.js"></script>
+  <script>
+    window.addEventListener('alpine:init', () => {
+      if (!Alpine.store('chat')) {
+        Alpine.store('chat', {
+          conversations: {},
+          conversationOrder: [],
+          currentConversation: null,
+          currentConversationId: null,
+          currentConversationType: null,
+          currentConversationIndex: null,
+          messages: {},
+          groupInfoById: {},
+          groupMembersById: {},
+          isLoading: false,
+          error: null,
+          useCommandMessageFetch: true,
+        });
+      }
+
+      if (!Alpine.store('groupchat')) {
+        Alpine.store('groupchat', {
+          groupId: '',
+          title: '',
+          error: '',
+          isLoading: true,
+          isReady: false,
+          isReadonly: true,
+        });
+      }
+
+      const userStore = Alpine.store('user');
+      if (userStore) {
+        if (!userStore.user || typeof userStore.user !== 'object') userStore.user = {};
+        if (!userStore.users || typeof userStore.users !== 'object') userStore.users = {};
+      }
+    });
+  </script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "@idf/": "../idframework/"
+      }
+    }
+  </script>
+
+  <link rel="stylesheet" href="./app.css?v=20260322-m4i">
+  <link rel="stylesheet" href="./groupchat.css?v=20260324-g1">
+</head>
+<body>
+  <div class="groupchat-page" x-data="{}">
+    <header class="groupchat-header">
+      <div class="groupchat-header-left">
+        <h1 class="groupchat-title" x-text="$store.groupchat.title || 'Group Chat'">Group Chat</h1>
+        <p class="groupchat-subtitle" x-text="$store.groupchat.groupId || ''"></p>
+      </div>
+      <id-connect-button class="groupchat-connect-button"></id-connect-button>
+    </header>
+
+    <main class="groupchat-main">
+      <div class="groupchat-error" x-show="$store.groupchat.error" x-text="$store.groupchat.error" x-cloak></div>
+
+      <section class="groupchat-messages" x-show="!$store.groupchat.error" x-cloak>
+        <id-chat-groupmsg-list disable-mention-navigation="true"></id-chat-groupmsg-list>
+      </section>
+    </main>
+
+    <div
+      class="groupchat-readonly"
+      x-show="!$store.groupchat.error && (!$store.wallet || !$store.wallet.isConnected)"
+      x-cloak
+    >
+      登录后可发送消息
+    </div>
+
+    <div
+      class="groupchat-input-area"
+      x-show="!$store.groupchat.error && $store.wallet && $store.wallet.isConnected"
+      x-cloak
+    >
+      <id-chat-input-box
+        mode="group"
+        :group-id="$store.groupchat.groupId || ''"
+      ></id-chat-input-box>
+    </div>
+  </div>
+
+  <script src="../idframework/vendors/metaid.js"></script>
+  <script src="../idframework/vendors/crypto.js"></script>
+  <script type="module" src="../idframework/idframework.js"></script>
+  <script type="module" src="./groupchat.js?v=20260324-g1"></script>
+</body>
+</html>

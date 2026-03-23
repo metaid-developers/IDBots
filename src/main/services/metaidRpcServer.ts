@@ -10,7 +10,11 @@ import { app } from 'electron';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { createPin, getPinData, setMetaidCoreStore, type MetaidDataPayload } from './metaidCore';
-import { assignGroupChatTask, type AssignGroupChatTaskParams } from './assignGroupChatTaskService';
+import {
+  assignGroupChatTask,
+  resolveMetabotIdByName,
+  type AssignGroupChatTaskParams,
+} from './assignGroupChatTaskService';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
 import { listenWithRetry } from './httpListenWithRetry';
 import { DEFAULT_METAID_RPC_HOST, getMetaidRpcBase, resolveMetaidRpcPort } from './metaidRpcEndpoint';
@@ -19,6 +23,7 @@ const RPC_HOST = DEFAULT_METAID_RPC_HOST;
 
 const PIN_ROUTE_PREFIX = '/api/metaid/pin/';
 const ASSIGN_GROUP_CHAT_TASK_PATH = '/api/idbots/assign-group-chat-task';
+const RESOLVE_METABOT_ID_PATH = '/api/idbots/resolve-metabot-id';
 
 export function startMetaidRpcServer(
   getMetabotStore: () => MetabotStore,
@@ -44,6 +49,51 @@ export function startMetaidRpcServer(
     const url = req.url ?? '';
     const [pathname, search] = url.split('?');
     const persist = new URLSearchParams(search || '').get('persist') === 'true';
+
+    if (req.method === 'POST' && pathname === RESOLVE_METABOT_ID_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      let parsed: { name?: string };
+      try {
+        parsed = JSON.parse(body) as { name?: string };
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+      const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+      if (!name) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'name is required' }));
+        return;
+      }
+      try {
+        const store = getMetabotStore();
+        const metabotId = resolveMetabotIdByName(store, name);
+        if (metabotId == null) {
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: false, error: 'MetaBot not found' }));
+          return;
+        }
+        const m = store.getMetabotById(metabotId);
+        res.writeHead(200);
+        res.end(
+          JSON.stringify({
+            success: true,
+            metabot_id: metabotId,
+            display_name: m?.name?.trim() ?? name,
+          })
+        );
+      } catch (err) {
+        const message =
+          err && typeof err === 'object' && 'message' in err ? String((err as Error).message) : String(err);
+        res.writeHead(500);
+        res.end(JSON.stringify({ success: false, error: message }));
+      }
+      return;
+    }
 
     if (req.method === 'POST' && pathname === ASSIGN_GROUP_CHAT_TASK_PATH) {
       let body = '';

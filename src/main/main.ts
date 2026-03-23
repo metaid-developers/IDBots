@@ -2511,6 +2511,13 @@ if (!gotTheLock) {
     }
   });
 
+  const normalizeScheduledTaskMetabotId = (value: unknown): number | null => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    return Math.floor(value);
+  };
+
   ipcMain.handle('scheduledTask:create', async (_event, input: any) => {
     try {
       const coworkConfig = getCoworkStore().getConfig();
@@ -2519,6 +2526,7 @@ if (!gotTheLock) {
         ? normalizedInput.workingDirectory
         : coworkConfig.workingDirectory;
       normalizedInput.workingDirectory = resolveExistingTaskWorkingDirectory(candidateWorkingDirectory);
+      normalizedInput.metabotId = normalizeScheduledTaskMetabotId(normalizedInput.metabotId);
 
       const task = getScheduledTaskStore().createTask(normalizedInput);
       getScheduler().reschedule();
@@ -2542,6 +2550,9 @@ if (!gotTheLock) {
         ? (normalizedInput.workingDirectory.trim() || existingTask.workingDirectory || coworkConfig.workingDirectory)
         : (existingTask.workingDirectory || coworkConfig.workingDirectory);
       normalizedInput.workingDirectory = resolveExistingTaskWorkingDirectory(candidateWorkingDirectory);
+      if (Object.prototype.hasOwnProperty.call(normalizedInput, 'metabotId')) {
+        normalizedInput.metabotId = normalizeScheduledTaskMetabotId(normalizedInput.metabotId);
+      }
 
       const task = scheduledTaskStore.updateTask(id, normalizedInput);
       getScheduler().reschedule();

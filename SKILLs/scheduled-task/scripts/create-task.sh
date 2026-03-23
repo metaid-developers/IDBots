@@ -109,6 +109,50 @@ const [url, body] = process.argv.slice(2);
 NODE
 }
 
+inject_metabot_id_into_payload() {
+  local BODY="$1"
+  local METABOT_ID="$2"
+
+  if [ -z "$METABOT_ID" ]; then
+    printf '%s' "$BODY"
+    return 0
+  fi
+
+  if ! resolve_http_node_runtime; then
+    printf '%s' "$BODY"
+    return 0
+  fi
+
+  env "${HTTP_NODE_ENV_PREFIX[@]}" "$HTTP_NODE_CMD" "${HTTP_NODE_ARGS[@]}" - "$BODY" "$METABOT_ID" <<'NODE'
+const [body, metabotIdRaw] = process.argv.slice(2);
+
+let parsed;
+try {
+  parsed = JSON.parse(body);
+} catch {
+  process.stdout.write(body);
+  process.exit(0);
+}
+
+if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  process.stdout.write(body);
+  process.exit(0);
+}
+
+const metabotId = Number(metabotIdRaw);
+if (!Number.isFinite(metabotId) || metabotId <= 0) {
+  process.stdout.write(body);
+  process.exit(0);
+}
+
+if (parsed.metabotId == null) {
+  parsed.metabotId = Math.floor(metabotId);
+}
+
+process.stdout.write(JSON.stringify(parsed));
+NODE
+}
+
 if [ -z "$IDBOTS_API_BASE_URL" ]; then
   echo '{"success":false,"error":"IDBOTS_API_BASE_URL not set. This script must run inside a IDBots cowork session."}'
   exit 1
@@ -132,6 +176,8 @@ if [ "${PAYLOAD#@}" != "$PAYLOAD" ]; then
   fi
   PAYLOAD="$(cat "$PAYLOAD_FILE")"
 fi
+
+PAYLOAD="$(inject_metabot_id_into_payload "$PAYLOAD" "${IDBOTS_METABOT_ID:-}")"
 
 # IDBOTS_API_BASE_URL always points to the local proxy: http://127.0.0.1:PORT
 BASE_URL="${IDBOTS_API_BASE_URL%/}"

@@ -36,6 +36,7 @@ export interface ScheduledTask {
   workingDirectory: string;
   systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
+  metabotId: number | null;
   expiresAt: string | null;
   notifyPlatforms: NotifyPlatform[];
   state: TaskState;
@@ -63,6 +64,7 @@ export interface ScheduledTaskInput {
   workingDirectory: string;
   systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
+  metabotId?: number | null;
   expiresAt: string | null;
   notifyPlatforms: NotifyPlatform[];
   enabled: boolean;
@@ -79,6 +81,7 @@ interface TaskRow {
   working_directory: string;
   system_prompt: string;
   execution_mode: string;
+  metabot_id: number | null;
   expires_at: string | null;
   notify_platforms_json: string;
   next_run_at_ms: number | null;
@@ -194,15 +197,16 @@ export class ScheduledTaskStore {
     this.db.run(`
       INSERT INTO scheduled_tasks
         (id, name, description, enabled, schedule_json, prompt,
-         working_directory, system_prompt, execution_mode, expires_at,
+         working_directory, system_prompt, execution_mode, metabot_id, expires_at,
          notify_platforms_json, next_run_at_ms, consecutive_errors, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `, [
       id, input.name, input.description,
       input.enabled ? 1 : 0,
       JSON.stringify(input.schedule),
       input.prompt,
       input.workingDirectory, input.systemPrompt, input.executionMode,
+      input.metabotId ?? null,
       input.expiresAt ?? null,
       JSON.stringify(input.notifyPlatforms ?? []),
       nextRunAtMs,
@@ -226,6 +230,7 @@ export class ScheduledTaskStore {
     const workingDirectory = input.workingDirectory ?? existing.workingDirectory;
     const systemPrompt = input.systemPrompt ?? existing.systemPrompt;
     const executionMode = input.executionMode ?? existing.executionMode;
+    const metabotId = input.metabotId !== undefined ? input.metabotId : existing.metabotId;
     const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
     const notifyPlatforms = input.notifyPlatforms !== undefined ? input.notifyPlatforms : existing.notifyPlatforms;
 
@@ -241,7 +246,7 @@ export class ScheduledTaskStore {
       UPDATE scheduled_tasks
       SET name = ?, description = ?, enabled = ?, schedule_json = ?,
           prompt = ?, working_directory = ?, system_prompt = ?,
-          execution_mode = ?, expires_at = ?, notify_platforms_json = ?,
+          execution_mode = ?, metabot_id = ?, expires_at = ?, notify_platforms_json = ?,
           next_run_at_ms = ?, updated_at = ?
       WHERE id = ?
     `, [
@@ -250,6 +255,7 @@ export class ScheduledTaskStore {
       JSON.stringify(schedule),
       prompt, workingDirectory,
       systemPrompt, executionMode,
+      metabotId ?? null,
       expiresAt,
       JSON.stringify(notifyPlatforms),
       nextRunAtMs, now, id,
@@ -520,6 +526,7 @@ export class ScheduledTaskStore {
       workingDirectory: row.working_directory,
       systemPrompt: row.system_prompt,
       executionMode: row.execution_mode as 'auto' | 'local' | 'sandbox',
+      metabotId: row.metabot_id ?? null,
       expiresAt: row.expires_at,
       notifyPlatforms,
       state: {

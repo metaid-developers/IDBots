@@ -88,3 +88,57 @@ test('fetchMetaidInfoByMetaid() falls back when local user info is semantically 
     restore();
   }
 });
+
+test('fetchMetaidRestoreProfile() keeps a chain sync marker when bioId is missing', async () => {
+  if (!metabotRestoreService) {
+    console.log('SKIP: dist-electron not found, run npm run compile:electron first');
+    return;
+  }
+
+  const calls = [];
+  const restore = mockFetch(async (url) => {
+    calls.push(String(url));
+
+    if (String(url).includes('/content/avatar-pin-1')) {
+      return new Response(Buffer.from('avatar-bytes'), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      code: 1,
+      message: 'ok',
+      data: {
+        metaid: 'metaid-restore-1',
+        address: '1RestoreAddr',
+        pinId: 'profile-root-pin-1',
+        name: 'Restored Bot',
+        nameId: 'name-pin-1',
+        avatar: '/content/avatar-pin-1',
+        avatarId: 'avatar-pin-1',
+        bio: JSON.stringify({
+          role: 'assistant',
+          soul: 'helpful',
+          createdBy: 'creator-1',
+        }),
+        bioId: '',
+        chatpubkey: '02abcdef',
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+
+  try {
+    const result = await metabotRestoreService.fetchMetaidRestoreProfile('1RestoreAddr');
+    assert.equal(result.name, 'Restored Bot');
+    assert.equal(result.metabotInfoPinId, 'name-pin-1');
+    assert.match(result.avatarDataUrl, /^data:image\/png;base64,/);
+    assert.equal(result.bio.role, 'assistant');
+    assert.equal(calls.length, 2, 'should fetch profile then avatar content');
+  } finally {
+    restore();
+  }
+});

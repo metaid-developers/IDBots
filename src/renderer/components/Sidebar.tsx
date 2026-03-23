@@ -40,8 +40,12 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const sessions = useSelector((state: RootState) => state.cowork.sessions);
   const currentSessionId = useSelector((state: RootState) => state.cowork.currentSessionId);
+  const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const isMac = window.electron.platform === 'darwin';
+  const hasRunningScheduledTask = scheduledTasks.some(
+    (task) => task.enabled && task.state.runningAtMs !== null && task.state.lastStatus === 'running'
+  );
 
   useEffect(() => {
     const handleSearch = () => {
@@ -131,7 +135,15 @@ const Sidebar: React.FC<SidebarProps> = ({
             }`}
           >
             <ClockIcon className="h-4 w-4" />
-            {i18nService.t('scheduledTasks')}
+            <span className="inline-flex min-w-0 items-center gap-2">
+              {hasRunningScheduledTask ? (
+                <span
+                  aria-hidden
+                  className="scheduled-task-running-indicator shrink-0"
+                />
+              ) : null}
+              <span className="truncate">{i18nService.t('scheduledTasks')}</span>
+            </span>
           </button>
           <button
             type="button"

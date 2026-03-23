@@ -485,6 +485,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     noFolderSelected: '未选择文件夹',
     coworkSelectFolderFirst: '请选择任务目录后再提交',
     noRecentFolders: '暂无最近文件夹',
+    coworkOpenCurrentFolder: '打开这个目录',
     coworkOpenFolder: '打开文件夹',
 
     // Skills
@@ -1418,6 +1419,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     noFolderSelected: 'No folder selected',
     coworkSelectFolderFirst: 'Please select a task folder before submitting',
     noRecentFolders: 'No recent folders',
+    coworkOpenCurrentFolder: 'Open this folder',
     coworkOpenFolder: 'Open folder',
 
     // Skills

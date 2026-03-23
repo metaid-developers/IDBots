@@ -34,8 +34,9 @@ export interface AssignGroupChatTaskResult {
 
 /**
  * Resolve MetaBot id by name (case-insensitive trim match).
+ * Exported for RPC and skills that need metabot_id before create-pin.
  */
-function getMetabotIdByName(metabotStore: MetabotStore, name: string): number | null {
+export function resolveMetabotIdByName(metabotStore: MetabotStore, name: string): number | null {
   const list = metabotStore.listMetabots();
   const normalized = name.trim().toLowerCase();
   const found = list.find((m) => m.name.trim().toLowerCase() === normalized);
@@ -51,7 +52,7 @@ export function assignGroupChatTask(
   metabotStore: MetabotStore,
   params: AssignGroupChatTaskParams
 ): AssignGroupChatTaskResult {
-  const metabotId = getMetabotIdByName(metabotStore, params.target_metabot_name);
+  const metabotId = resolveMetabotIdByName(metabotStore, params.target_metabot_name);
   if (metabotId == null) {
     return { success: false, message: '', error: '未找到指定的 MetaBot' };
   }

@@ -65,7 +65,10 @@ function parseScheduleToUI(schedule: Schedule): {
 
 const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) => {
   const coworkConfig = useSelector((state: RootState) => state.cowork.config);
+  const currentSessionMetabotId = useSelector((state: RootState) => state.cowork.currentSession?.metabotId ?? null);
+  const preferredMetabotId = useSelector((state: RootState) => state.cowork.preferredMetabotId);
   const defaultWorkingDirectory = coworkConfig?.workingDirectory ?? '';
+  const defaultMetabotId = task?.metabotId ?? currentSessionMetabotId ?? preferredMetabotId ?? null;
 
   // Parse existing schedule for edit mode
   const parsed = task ? parseScheduleToUI(task.schedule) : null;
@@ -144,6 +147,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         workingDirectory: workingDirectory.trim() || defaultWorkingDirectory,
         systemPrompt: '',
         executionMode: task?.executionMode ?? 'auto',
+        metabotId: defaultMetabotId,
         expiresAt: expiresAt || null,
         notifyPlatforms,
         enabled: task?.enabled ?? true,

@@ -150,6 +150,13 @@ function normalizeScheduledTaskWorkingDirectory(value: unknown): string {
   return raw;
 }
 
+function normalizeScheduledTaskMetabotId(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return Math.floor(value);
+}
+
 function normalizeToolCallExtraContent(toolCallObj: Record<string, unknown>): unknown {
   if (toolCallObj.extra_content !== undefined) {
     return toolCallObj.extra_content;
@@ -2103,6 +2110,7 @@ async function handleCreateScheduledTask(
     workingDirectory: normalizeScheduledTaskWorkingDirectory(input.workingDirectory),
     systemPrompt: input.systemPrompt || '',
     executionMode: input.executionMode || 'auto',
+    metabotId: normalizeScheduledTaskMetabotId(input.metabotId),
     expiresAt: input.expiresAt || null,
     notifyPlatforms: input.notifyPlatforms || [],
     enabled: input.enabled !== false,

@@ -226,6 +226,7 @@ export class SqliteStore {
         working_directory TEXT NOT NULL DEFAULT '',
         system_prompt TEXT NOT NULL DEFAULT '',
         execution_mode TEXT NOT NULL DEFAULT 'auto',
+        metabot_id INTEGER,
         expires_at TEXT,
         notify_platforms_json TEXT NOT NULL DEFAULT '[]',
         next_run_at_ms INTEGER,
@@ -638,7 +639,7 @@ export class SqliteStore {
       console.warn('Failed to migrate user_memory_sources source fields:', error);
     }
 
-    // Migration: Add expires_at and notify_platforms_json columns to scheduled_tasks
+    // Migration: Add expires_at, notify_platforms_json, and metabot_id columns to scheduled_tasks
     try {
       const stColsResult = this.db.exec("PRAGMA table_info(scheduled_tasks);");
       if (stColsResult[0]) {
@@ -651,6 +652,11 @@ export class SqliteStore {
 
         if (!stColumns.includes('notify_platforms_json')) {
           this.db.run("ALTER TABLE scheduled_tasks ADD COLUMN notify_platforms_json TEXT NOT NULL DEFAULT '[]'");
+          this.save();
+        }
+
+        if (!stColumns.includes('metabot_id')) {
+          this.db.run('ALTER TABLE scheduled_tasks ADD COLUMN metabot_id INTEGER');
           this.save();
         }
       }

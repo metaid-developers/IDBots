@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>IDFramework - Buzz Feed Demo</title>
+  <link rel="stylesheet" href="./app.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "@idf/": "../idframework/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="connect-button-wrapper">
+    <div class="locale-switcher" role="group" aria-label="Language">
+      <button type="button" class="locale-btn" data-action="set-locale" data-locale-value="zh">中文</button>
+      <button type="button" class="locale-btn" data-action="set-locale" data-locale-value="en">EN</button>
+    </div>
+    <id-connect-button></id-connect-button>
+  </div>
+
+  <id-userinfo-float-panel></id-userinfo-float-panel>
+
+  <main class="container">
+    <header class="header">
+      <h1 class="title" data-i18n="buzz.page.title" data-i18n-fallback="Buzz Feed">Buzz Feed</h1>
+      <p class="subtitle" data-i18n="buzz.page.subtitle" data-i18n-fallback="Decentralized Social Feed powered by MetaID">Decentralized Social Feed powered by MetaID</p>
+    </header>
+
+    <id-buzz-tabs></id-buzz-tabs>
+    <id-profile-header></id-profile-header>
+    <id-user-list></id-user-list>
+    <id-buzz-list auto-load="true"></id-buzz-list>
+  </main>
+  <script src="../idframework/vendors/metaid.js"></script>
+  <script type="module" src="../idframework/idframework.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

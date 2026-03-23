@@ -7,16 +7,24 @@ const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
 
 export interface MetaidAddressInfo {
   globalMetaId?: string;
+  globalMetaid?: string;
   metaid?: string;
+  metaId?: string;
+  pinId?: string;
   name?: string;
   nameId?: string;
+  namePinId?: string;
   address?: string;
   avatar?: string;
   avatarId?: string;
+  avatarPinId?: string;
   bio?: unknown;
   bioId?: string;
+  bioPinId?: string;
   chatpubkey?: string;
+  chatPublicKey?: string;
   chatpubkeyId?: string;
+  chatPublicKeyPinId?: string;
 }
 
 export interface MetaidBioProfile {
@@ -46,6 +54,14 @@ const normalizeString = (value: unknown): string => (typeof value === 'string' ?
 const normalizeOptionalString = (value: unknown): string | null => {
   const normalized = normalizeString(value);
   return normalized ? normalized : null;
+};
+
+const normalizeFirstNonEmpty = (...values: unknown[]): string | null => {
+  for (const value of values) {
+    const normalized = normalizeOptionalString(value);
+    if (normalized) return normalized;
+  }
+  return null;
 };
 
 const normalizeStringArray = (value: unknown): string[] => {
@@ -129,16 +145,48 @@ const resolveAvatarPinId = (avatar?: string | null, avatarId?: string | null): s
   return match ? match[1] : null;
 };
 
+const unwrapMetaidInfo = (payload: unknown): Record<string, unknown> | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const nested = record.MetaIdInfo ?? record.metaIdInfo ?? record.metaidInfo;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return {
+      ...record,
+      ...(nested as Record<string, unknown>),
+    };
+  }
+
+  return record;
+};
+
 export function isSemanticallyEmptyMetaidInfoPayload(payload: unknown): boolean {
   if (!payload || typeof payload !== 'object') {
     return true;
   }
   const data = (payload as { data?: unknown }).data;
-  if (!data || typeof data !== 'object') {
+  const info = unwrapMetaidInfo(data);
+  if (!info) {
     return true;
   }
-  const info = data as Record<string, unknown>;
-  const identityKeys = ['metaid', 'globalMetaId', 'name', 'address', 'avatar', 'avatarId', 'chatpubkey', 'pinId', 'nameId'];
+  const identityKeys = [
+    'metaid',
+    'metaId',
+    'globalMetaId',
+    'globalMetaid',
+    'name',
+    'address',
+    'avatar',
+    'avatarId',
+    'avatarPinId',
+    'chatpubkey',
+    'chatPublicKey',
+    'pinId',
+    'nameId',
+    'namePinId',
+  ];
   const hasIdentityValue = identityKeys.some((key) => {
     const value = info[key];
     return typeof value === 'string' && value.trim().length > 0;
@@ -158,7 +206,7 @@ const fetchMetaidInfo = async (localPath: string, remoteUrl: string): Promise<Me
   if (json?.code != null && json.code !== 1) {
     throw new Error(json?.message || 'metaid info response error');
   }
-  return json?.data ?? null;
+  return (unwrapMetaidInfo(json?.data) as MetaidAddressInfo | null) ?? null;
 };
 
 export const fetchMetaidInfoByAddress = async (address: string): Promise<MetaidAddressInfo | null> => {
@@ -201,7 +249,10 @@ export const fetchMetaidRestoreProfile = async (address: string): Promise<Metaid
     throw new Error('NAME_EMPTY');
   }
   const bio = parseMetaidBio(info.bio);
-  const avatarPinId = resolveAvatarPinId(info.avatar ?? null, info.avatarId ?? null);
+  const avatarPinId = resolveAvatarPinId(
+    info.avatar ?? null,
+    normalizeFirstNonEmpty(info.avatarId, info.avatarPinId),
+  );
   let avatarDataUrl: string | null = null;
   if (avatarPinId) {
     try {
@@ -210,8 +261,15 @@ export const fetchMetaidRestoreProfile = async (address: string): Promise<Metaid
       console.warn('[MetaBot] restore avatar fetch failed', err instanceof Error ? err.message : String(err));
     }
   }
-  const chatpubkeyPinId = normalizeOptionalString(info.chatpubkeyId);
-  const metabotInfoPinId = normalizeOptionalString(info.bioId);
+  const chatpubkeyPinId = normalizeFirstNonEmpty(info.chatpubkeyId, info.chatPublicKeyPinId);
+  const metabotInfoPinId = normalizeFirstNonEmpty(
+    info.bioId,
+    info.bioPinId,
+    info.nameId,
+    info.namePinId,
+    avatarPinId,
+    info.pinId,
+  );
   return {
     name,
     avatarDataUrl,

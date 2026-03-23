@@ -482,6 +482,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       onClose={() => setShowFolderMenu(false)}
                       onSelectFolder={handleFolderSelect}
                       anchorRef={folderButtonRef as React.RefObject<HTMLElement>}
+                      currentFolder={workingDirectory}
                     />
                   </>
                 )}

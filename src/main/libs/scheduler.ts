@@ -228,7 +228,8 @@ export class Scheduler {
       cwd,
       systemPrompt,
       executionMode,
-      []
+      [],
+      task.metabotId ?? null
     );
 
     // Update session to running

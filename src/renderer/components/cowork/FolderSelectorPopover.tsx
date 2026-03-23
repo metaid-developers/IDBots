@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { FolderPlusIcon, ClockIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { FolderPlusIcon, ClockIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
 import { getCompactFolderName } from '../../utils/path';
@@ -39,6 +39,8 @@ interface FolderSelectorPopoverProps {
   onClose: () => void;
   onSelectFolder: (path: string) => void;
   anchorRef: React.RefObject<HTMLElement>;
+  currentFolder?: string;
+  onOpenCurrentFolder?: (path: string) => Promise<void> | void;
 }
 
 const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
@@ -46,6 +48,8 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
   onClose,
   onSelectFolder,
   anchorRef,
+  currentFolder = '',
+  onOpenCurrentFolder,
 }) => {
   const [recentFolders, setRecentFolders] = useState<string[]>([]);
   const [showRecentSubmenu, setShowRecentSubmenu] = useState(false);
@@ -186,6 +190,24 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
     if (!path) return i18nService.t('noFolderSelected');
     return getCompactFolderName(path, maxLength) || i18nService.t('noFolderSelected');
   };
+  const trimmedCurrentFolder = currentFolder.trim();
+  const showOpenCurrentFolder = trimmedCurrentFolder.length > 0;
+
+  const handleOpenCurrentFolder = async () => {
+    if (!showOpenCurrentFolder) return;
+
+    try {
+      if (onOpenCurrentFolder) {
+        await onOpenCurrentFolder(trimmedCurrentFolder);
+      } else {
+        await window.electron.shell.openPath(trimmedCurrentFolder);
+      }
+    } catch (error) {
+      console.error('Failed to open current folder:', error);
+    } finally {
+      onClose();
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -196,10 +218,22 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
         ref={popoverRef}
         className="absolute bottom-full left-0 mb-2 w-56 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface shadow-lg z-50"
       >
+        {showOpenCurrentFolder && (
+          <button
+            onClick={handleOpenCurrentFolder}
+            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors rounded-t-lg"
+          >
+            <FolderOpenIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+            <span>{i18nService.t('coworkOpenCurrentFolder')}</span>
+          </button>
+        )}
+
         {/* Add Folder option */}
         <button
           onClick={handleAddFolder}
-          className="w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors rounded-t-lg"
+          className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors ${
+            showOpenCurrentFolder ? '' : 'rounded-t-lg'
+          }`}
         >
           <FolderPlusIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
           <span>{i18nService.t('addFolder')}</span>

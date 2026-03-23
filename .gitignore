@@ -17,6 +17,7 @@ release/
 Dev-docs/
 CLAUDE.md
 localdocs/
+docs/
 
 # Local DB (never commit)
 *.sqlite
