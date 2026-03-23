@@ -58,6 +58,7 @@ const SKILL_FILE_NAME = 'SKILL.md';
 const SKILLS_CONFIG_FILE = 'skills.config.json';
 const SKILL_STATE_KEY = 'skills_state';
 const WATCH_DEBOUNCE_MS = 250;
+const SUPERPOWERS_SKILL_PREFIX = 'superpowers-';
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const SKILL_SCRIPT_REFERENCE_RE = /scripts\/[A-Za-z0-9._/-]+\.js/g;
@@ -906,16 +907,26 @@ export class SkillManager {
     return skills;
   }
 
-  buildAutoRoutingPrompt(): string | null {
-    const skills = this.listSkills();
-    const enabled = skills.filter(s => s.enabled && s.prompt);
-    if (enabled.length === 0) return null;
+  private isSuperpowersSkillId(skillId: string): boolean {
+    return String(skillId || '').trim().startsWith(SUPERPOWERS_SKILL_PREFIX);
+  }
 
-    const skillEntries = enabled
-      .map(s => `  <skill><id>${s.id}</id><name>${s.name}</name><description>${s.description}</description><location>${s.skillPath}</location></skill>`)
+  private buildSkillEntries(skills: SkillRecord[]): string {
+    return skills
+      .map((skill) => `  <skill><id>${skill.id}</id><name>${skill.name}</name><description>${skill.description}</description><location>${skill.skillPath}</location></skill>`)
       .join('\n');
+  }
 
-    return [
+  private buildRoutingPromptFromSkills(
+    skills: SkillRecord[],
+    options?: {
+      introBlocks?: string[];
+      extraRules?: string[];
+    }
+  ): string | null {
+    if (skills.length === 0) return null;
+
+    const promptBody = [
       '## Skills (mandatory)',
       'Before replying: scan <available_skills> <description> entries.',
       '- If exactly one skill clearly applies: read its SKILL.md at <location> with the Read tool, then follow it.',
@@ -929,11 +940,67 @@ export class SkillManager {
       '- Resolve relative paths mentioned by that SKILL.md against its directory (dirname(<location>)), not the workspace root.',
       '- Prefer precompiled JavaScript entrypoints (scripts/*.js or scripts/dist/*.js); avoid npx ts-node unless absolutely required.',
       'Constraints: never read more than one skill up front; only read additional skills if the first one explicitly references them.',
+      ...(options?.extraRules ?? []).filter(Boolean),
       '',
       '<available_skills>',
-      skillEntries,
+      this.buildSkillEntries(skills),
       '</available_skills>',
     ].join('\n');
+
+    const introBlocks = (options?.introBlocks ?? []).filter((block): block is string => Boolean(block?.trim()));
+    return [...introBlocks, promptBody].join('\n\n');
+  }
+
+  private buildCoworkSuperpowersBootstrap(skills: SkillRecord[]): string | null {
+    const enabledSuperpowersSkills = skills.filter((skill) => this.isSuperpowersSkillId(skill.id));
+    if (enabledSuperpowersSkills.length === 0) {
+      return null;
+    }
+
+    const availableSkillIds = new Set(enabledSuperpowersSkills.map((skill) => skill.id));
+    const routingHints = [
+      availableSkillIds.has('superpowers-systematic-debugging')
+        ? '- Use `superpowers-systematic-debugging` first for bugs, failing tests, build failures, or unexpected behavior.'
+        : '',
+      availableSkillIds.has('superpowers-brainstorming')
+        ? '- Use `superpowers-brainstorming` before adding features, changing behavior, or making product/design decisions.'
+        : '',
+      availableSkillIds.has('superpowers-writing-plans')
+        ? '- Use `superpowers-writing-plans` after a design is approved or when a multi-step implementation needs an explicit plan.'
+        : '',
+      availableSkillIds.has('superpowers-test-driven-development')
+        ? '- Use `superpowers-test-driven-development` before writing implementation code for a feature or bugfix.'
+        : '',
+      availableSkillIds.has('superpowers-using-git-worktrees')
+        ? '- Use `superpowers-using-git-worktrees` when the user wants isolated branch/worktree setup or the change should be isolated.'
+        : '',
+      availableSkillIds.has('superpowers-verification-before-completion')
+        ? '- Use `superpowers-verification-before-completion` before claiming the work is complete, fixed, or passing.'
+        : '',
+    ].filter(Boolean);
+
+    return [
+      '## Superpowers Workflow (Cowork)',
+      '- Enabled `superpowers-*` skills are an IDBots-native engineering workflow for Cowork sessions.',
+      '- If the user explicitly asks to use superpowers, prefer the matching `superpowers-*` skill when one clearly applies.',
+      '- User instructions, repository instructions, and app policy override skill instructions.',
+      '- In IDBots, use `Read + Bash` to follow skill instructions. Do not call a `Skill` tool.',
+      ...routingHints,
+    ].join('\n');
+  }
+
+  buildAutoRoutingPrompt(): string | null {
+    const skills = this.listSkills();
+    const enabled = skills.filter(s => s.enabled && s.prompt);
+    return this.buildRoutingPromptFromSkills(enabled);
+  }
+
+  buildCoworkAutoRoutingPrompt(): string | null {
+    const skills = this.listSkills();
+    const enabled = skills.filter((skill) => skill.enabled && skill.prompt);
+    return this.buildRoutingPromptFromSkills(enabled, {
+      introBlocks: [this.buildCoworkSuperpowersBootstrap(enabled)].filter(Boolean),
+    });
   }
 
   /**
@@ -948,35 +1015,12 @@ export class SkillManager {
         .filter(Boolean)
     );
     const skills = this.listSkills().filter((s) => set.has(s.id));
-    if (skills.length === 0) return null;
-
-    const skillEntries = skills
-      .map(s => `  <skill><id>${s.id}</id><name>${s.name}</name><description>${s.description}</description><location>${s.skillPath}</location></skill>`)
-      .join('\n');
-
     const omniCasterConstraint = set.has('metabot-omni-caster')
       ? '- For metabot-omni-caster: path and payload must come from SKILL.md and references (e.g. buzz uses /protocols/simplebuzz); do not guess.'
       : '';
-    return [
-      '## Skills (mandatory)',
-      'Before replying: scan <available_skills> <description> entries.',
-      '- If exactly one skill clearly applies: read its SKILL.md at <location> with the Read tool, then follow it.',
-      '- If multiple could apply: choose the most specific one, then read/follow it.',
-      '- If none clearly apply: do not read any SKILL.md.',
-      '- Do not call the "Skill" tool. It is not wired to this SKILLs registry in this environment.',
-      '- Execute selected skills only via Read + Bash as documented in each SKILL.md.',
-      '- If a skill command exits with code 0, treat that execution as successful (do not bypass it with ad-hoc fallback logic).',
-      '- If a skill command fails, diagnose and retry within the same skill workflow before considering alternatives.',
-      '- For the selected skill, treat <location> as the canonical SKILL.md path.',
-      '- Resolve relative paths mentioned by that SKILL.md against its directory (dirname(<location>)), not the workspace root.',
-      '- Prefer precompiled JavaScript entrypoints (scripts/*.js or scripts/dist/*.js); avoid npx ts-node unless absolutely required.',
-      'Constraints: never read more than one skill up front; only read additional skills if the first one explicitly references them.',
-      omniCasterConstraint,
-      '',
-      '<available_skills>',
-      skillEntries,
-      '</available_skills>',
-    ].filter(Boolean).join('\n');
+    return this.buildRoutingPromptFromSkills(skills, {
+      extraRules: [omniCasterConstraint],
+    });
   }
 
   setSkillEnabled(id: string, enabled: boolean): SkillRecord[] {

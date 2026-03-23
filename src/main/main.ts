@@ -1716,7 +1716,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('skills:autoRoutingPrompt', () => {
     try {
-      const prompt = getSkillManager().buildAutoRoutingPrompt();
+      const prompt = getSkillManager().buildCoworkAutoRoutingPrompt();
       return { success: true, prompt };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to build auto-routing prompt' };
