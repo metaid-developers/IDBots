@@ -61,6 +61,8 @@ test('listMetaApps registers valid APP.md entries and skips missing/invalid entr
       'Open chat.',
     ].join('\n'),
   );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+  writeFile(path.join(metaAppsRoot, 'chat', 'app', 'chat.html'), '<html>chat</html>');
 
   writeFile(
     path.join(metaAppsRoot, 'broken', 'APP.md'),
@@ -119,6 +121,7 @@ test('buildCoworkAutoRoutingPrompt emits <available_metaapps> with location and 
       '- /buzz/app/index.html?view=hot',
     ].join('\n'),
   );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
 
   const prompt = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().buildCoworkAutoRoutingPrompt());
   assert.ok(prompt);
@@ -158,9 +161,45 @@ test('listMetaApps skips traversal-style entry that escapes metaapp root', () =>
       'escape app',
     ].join('\n'),
   );
+  writeFile(path.join(metaAppsRoot, 'safe', 'app', 'index.html'), '<html>safe</html>');
 
   const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
   assert.deepEqual(apps.map((app) => app.id), ['safe']);
+});
+
+test('listMetaApps skips entry that collapses to the app root directory', () => {
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  writeFile(
+    path.join(metaAppsRoot, 'safe', 'APP.md'),
+    [
+      '---',
+      'name: safe-app',
+      'description: valid app',
+      'entry: /safe/app/index.html',
+      '---',
+      '',
+      'safe app',
+    ].join('\n'),
+  );
+
+  writeFile(
+    path.join(metaAppsRoot, 'collapse', 'APP.md'),
+    [
+      '---',
+      'name: collapse-app',
+      'description: root-collapse should be rejected',
+      'entry: /collapse/app/..',
+      '---',
+      '',
+      'collapse app',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'safe', 'app', 'index.html'), '<html>safe</html>');
+
+  const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
+  assert.deepEqual(apps.map((app) => app.id).sort(), ['safe']);
 });
 
 test('packaged root prefers userData and sync copies bundled METAAPPs into it', () => {
