@@ -37,6 +37,13 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
+    "metabot-check-payment": {
+      "order": 13,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
     "metabot-omni-reader": {
       "order": 15,
       "version": "1.0.0",

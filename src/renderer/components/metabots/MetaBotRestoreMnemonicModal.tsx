@@ -56,6 +56,8 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
     switch (raw) {
       case 'NAME_DUPLICATE':
         return i18nService.t('metabotRestoreNameDuplicate');
+      case 'WALLET_ALREADY_LINKED':
+        return i18nService.t('metabotRestoreWalletAlreadyLinked');
       case 'NAME_EMPTY':
         return i18nService.t('metabotRestoreNameMissing');
       case 'MNEMONIC_INVALID':

@@ -437,6 +437,35 @@ export class MetabotStore {
     return row ? rowToMetabotWallet(row) : null;
   }
 
+  /**
+   * Find wallet row by mnemonic. Append-only wallets survive MetaBot deletion, so restore must reuse the row
+   * instead of INSERT (UNIQUE on mnemonic). Tries exact match first, then case-insensitive trimmed match.
+   */
+  getMetabotWalletByMnemonic(mnemonic: string): MetabotWallet | null {
+    const trimmed = mnemonic.trim();
+    if (!trimmed) return null;
+    const exact = this.getOne<MetabotWalletRow>(
+      'SELECT * FROM metabot_wallets WHERE mnemonic = ? LIMIT 1',
+      [trimmed]
+    );
+    if (exact) return rowToMetabotWallet(exact);
+    const norm = trimmed.toLowerCase();
+    const row = this.getOne<MetabotWalletRow>(
+      `SELECT * FROM metabot_wallets WHERE LOWER(TRIM(mnemonic)) = ? LIMIT 1`,
+      [norm]
+    );
+    return row ? rowToMetabotWallet(row) : null;
+  }
+
+  /** Returns a MetaBot that references this wallet, if any. */
+  getMetabotByWalletId(wallet_id: number): Metabot | null {
+    const row = this.getOne<MetabotRow>(
+      'SELECT * FROM metabots WHERE wallet_id = ? LIMIT 1',
+      [wallet_id]
+    );
+    return row ? rowToMetabot(row) : null;
+  }
+
   /** Get wallet for a metabot by metabot id (looks up metabot.wallet_id). */
   getMetabotWalletByMetabotId(metabot_id: number): MetabotWallet | null {
     const metabot = this.getMetabotById(metabot_id);

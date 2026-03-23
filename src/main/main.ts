@@ -1183,7 +1183,8 @@ const getCoworkRunner = () => {
           normalizedSkillIds.has('metabot-post-buzz') ||
           normalizedSkillIds.has('metabot-omni-caster') ||
           normalizedSkillIds.has('metabot-post-skillservice') ||
-          normalizedSkillIds.has('metabot-chat-privatechat');
+          normalizedSkillIds.has('metabot-chat-privatechat') ||
+          normalizedSkillIds.has('metabot-check-payment');
         if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         const metabotStore = getMetabotStore();
         const metabotId = session?.metabotId;
@@ -1201,6 +1202,15 @@ const getCoworkRunner = () => {
             if (metabot.globalmetaid) {
               overrides.IDBOTS_METABOT_GLOBALMETAID = metabot.globalmetaid;
             }
+            if (metabot.mvc_address) {
+              overrides.IDBOTS_METABOT_MVC_ADDRESS = metabot.mvc_address;
+            }
+            if (metabot.btc_address) {
+              overrides.IDBOTS_METABOT_BTC_ADDRESS = metabot.btc_address;
+            }
+            if (metabot.doge_address) {
+              overrides.IDBOTS_METABOT_DOGE_ADDRESS = metabot.doge_address;
+            }
             return overrides;
           }
         }
@@ -1217,6 +1227,15 @@ const getCoworkRunner = () => {
           const twinMetabot = metabotStore.getMetabotById(twin.id);
           if (twinMetabot?.globalmetaid) {
             overrides.IDBOTS_METABOT_GLOBALMETAID = twinMetabot.globalmetaid;
+          }
+          if (twinMetabot?.mvc_address) {
+            overrides.IDBOTS_METABOT_MVC_ADDRESS = twinMetabot.mvc_address;
+          }
+          if (twinMetabot?.btc_address) {
+            overrides.IDBOTS_METABOT_BTC_ADDRESS = twinMetabot.btc_address;
+          }
+          if (twinMetabot?.doge_address) {
+            overrides.IDBOTS_METABOT_DOGE_ADDRESS = twinMetabot.doge_address;
           }
         }
         return overrides;
@@ -2896,10 +2915,20 @@ if (!gotTheLock) {
         return { success: false, error: 'NAME_DUPLICATE' };
       }
 
-      const wallet = store.insertMetabotWallet({
-        mnemonic: walletResult.mnemonic,
-        path: walletResult.path,
-      });
+      const existingWallet = store.getMetabotWalletByMnemonic(walletResult.mnemonic);
+      if (existingWallet) {
+        const linked = store.getMetabotByWalletId(existingWallet.id);
+        if (linked) {
+          return { success: false, error: 'WALLET_ALREADY_LINKED' };
+        }
+      }
+
+      const wallet =
+        existingWallet ??
+        store.insertMetabotWallet({
+          mnemonic: walletResult.mnemonic,
+          path: walletResult.path,
+        });
 
       const metabot = store.createMetabot({
         wallet_id: wallet.id,
