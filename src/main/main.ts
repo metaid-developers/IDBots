@@ -10,6 +10,7 @@ import { CoworkStore } from './coworkStore';
 import type { MemoryBackend } from './memory/memoryBackend';
 import { CoworkRunner } from './libs/coworkRunner';
 import { SkillManager } from './skillManager';
+import { MetaAppManager } from './metaAppManager';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { getCurrentApiConfig, resolveCurrentApiConfig, setStoreGetter } from './libs/claudeSettings';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
@@ -1143,6 +1144,7 @@ let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
 let coworkRunner: CoworkRunner | null = null;
 let skillManager: SkillManager | null = null;
+let metaAppManager: MetaAppManager | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let scheduledTaskStore: ScheduledTaskStore | null = null;
 let metabotStore: MetabotStore | null = null;
@@ -1339,6 +1341,13 @@ const getSkillManager = () => {
     skillManager = new SkillManager(getStore);
   }
   return skillManager;
+};
+
+const getMetaAppManager = () => {
+  if (!metaAppManager) {
+    metaAppManager = new MetaAppManager();
+  }
+  return metaAppManager;
 };
 
 const getIMGatewayManager = () => {
@@ -4443,6 +4452,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       destroyTray,
       stopSkillWatching: () => {
         skillManager?.stopWatching();
+        metaAppManager?.stopWatching();
       },
       closeMetaidRpcServer: () => {
         if (metaidRpcServer) {
@@ -4587,6 +4597,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     const manager = getSkillManager();
     manager.syncBundledSkillsToUserData();
     manager.startWatching();
+    const metaAppMgr = getMetaAppManager();
+    metaAppMgr.syncBundledMetaAppsToUserData();
+    metaAppMgr.startWatching();
 
     // Start skill services
     const skillServices = getSkillServiceManager();

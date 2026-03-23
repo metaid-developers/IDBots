@@ -25,6 +25,13 @@
       ]
     },
     {
+      "from": "METAAPPs",
+      "to": "METAAPPs",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
       "from": "resources/tray",
       "to": "tray",
       "filter": [
