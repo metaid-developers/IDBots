@@ -75,9 +75,22 @@ test('listMetaApps registers valid APP.md entries and skips missing/invalid entr
     ].join('\n'),
   );
 
+  writeFile(
+    path.join(metaAppsRoot, 'missing-entry', 'APP.md'),
+    [
+      '---',
+      'name: missing-entry-app',
+      'description: should be skipped when entry is missing',
+      '---',
+      '',
+      'no entry here',
+    ].join('\n'),
+  );
+
   const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
   assert.equal(apps.length, 2);
   assert.deepEqual(apps.map((app) => app.id).sort(), ['buzz', 'chat']);
+  assert.equal(apps.some((app) => app.id === 'missing-entry'), false);
 
   const buzz = apps.find((app) => app.id === 'buzz');
   assert.ok(buzz);
