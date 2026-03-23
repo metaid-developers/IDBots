@@ -12,9 +12,10 @@ import type { MetabotStore } from '../metabotStore';
 import { createPin, getPinData, setMetaidCoreStore, type MetaidDataPayload } from './metaidCore';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './assignGroupChatTaskService';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
+import { listenWithRetry } from './httpListenWithRetry';
+import { DEFAULT_METAID_RPC_HOST, getMetaidRpcBase, resolveMetaidRpcPort } from './metaidRpcEndpoint';
 
-const RPC_HOST = '127.0.0.1';
-const RPC_PORT = 31200;
+const RPC_HOST = DEFAULT_METAID_RPC_HOST;
 
 const PIN_ROUTE_PREFIX = '/api/metaid/pin/';
 const ASSIGN_GROUP_CHAT_TASK_PATH = '/api/idbots/assign-group-chat-task';
@@ -173,8 +174,11 @@ export function startMetaidRpcServer(
     }
   });
 
-  server.listen(RPC_PORT, RPC_HOST, () => {
-    console.log(`[MetaID RPC] Gateway listening on http://${RPC_HOST}:${RPC_PORT}`);
+  const rpcPort = resolveMetaidRpcPort();
+  listenWithRetry(server, rpcPort, RPC_HOST, {
+    onListening: () => {
+      console.log(`[MetaID RPC] Gateway listening on ${getMetaidRpcBase()}`);
+    },
   });
 
   return server;

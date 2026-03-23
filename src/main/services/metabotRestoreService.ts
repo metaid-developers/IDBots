@@ -1,4 +1,5 @@
 import { Buffer } from 'buffer';
+import { fetchContentWithFallback, fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
 
 const METAID_INFO_BY_ADDRESS = 'https://file.metaid.io/metafile-indexer/api/v1/info/address';
 const METAID_INFO_BY_METAID = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
@@ -34,6 +35,8 @@ export interface MetaidBioProfile {
 export interface MetaidRestoreProfile {
   name: string;
   avatarDataUrl: string | null;
+  /** Pin id for /info/bio; same semantics as local metabot_info_pinid (indexer field bioId). */
+  metabotInfoPinId: string | null;
   chatpubkeyPinId: string | null;
   bio: MetaidBioProfile;
   raw: MetaidAddressInfo;
@@ -126,8 +129,28 @@ const resolveAvatarPinId = (avatar?: string | null, avatarId?: string | null): s
   return match ? match[1] : null;
 };
 
-const fetchMetaidInfo = async (url: string): Promise<MetaidAddressInfo | null> => {
-  const res = await fetch(url);
+export function isSemanticallyEmptyMetaidInfoPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') {
+    return true;
+  }
+  const data = (payload as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') {
+    return true;
+  }
+  const info = data as Record<string, unknown>;
+  const identityKeys = ['metaid', 'globalMetaId', 'name', 'address', 'avatar', 'avatarId', 'chatpubkey', 'pinId', 'nameId'];
+  const hasIdentityValue = identityKeys.some((key) => {
+    const value = info[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+  if (hasIdentityValue) {
+    return false;
+  }
+  return info.isInit !== true;
+}
+
+const fetchMetaidInfo = async (localPath: string, remoteUrl: string): Promise<MetaidAddressInfo | null> => {
+  const res = await fetchJsonWithFallbackOnMiss(localPath, remoteUrl, isSemanticallyEmptyMetaidInfoPayload);
   if (!res.ok) {
     throw new Error(`metaid info fetch failed: ${res.status} ${res.statusText}`);
   }
@@ -142,21 +165,23 @@ export const fetchMetaidInfoByAddress = async (address: string): Promise<MetaidA
   const trimmed = address.trim();
   if (!trimmed) return null;
   const url = `${METAID_INFO_BY_ADDRESS}/${encodeURIComponent(trimmed)}`;
-  return fetchMetaidInfo(url);
+  const localPath = `/api/v1/users/info/address/${encodeURIComponent(trimmed)}`;
+  return fetchMetaidInfo(localPath, url);
 };
 
 export const fetchMetaidInfoByMetaid = async (metaid: string): Promise<MetaidAddressInfo | null> => {
   const trimmed = metaid.trim();
   if (!trimmed) return null;
   const url = `${METAID_INFO_BY_METAID}/${encodeURIComponent(trimmed)}`;
-  return fetchMetaidInfo(url);
+  const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(trimmed)}`;
+  return fetchMetaidInfo(localPath, url);
 };
 
 const fetchAvatarDataUrl = async (pinId: string): Promise<string | null> => {
   const trimmed = pinId.trim();
   if (!trimmed) return null;
   const url = `${METAID_CONTENT_BASE}/${encodeURIComponent(trimmed)}`;
-  const res = await fetch(url);
+  const res = await fetchContentWithFallback(trimmed, url);
   if (!res.ok) {
     throw new Error(`avatar fetch failed: ${res.status} ${res.statusText}`);
   }
@@ -186,9 +211,11 @@ export const fetchMetaidRestoreProfile = async (address: string): Promise<Metaid
     }
   }
   const chatpubkeyPinId = normalizeOptionalString(info.chatpubkeyId);
+  const metabotInfoPinId = normalizeOptionalString(info.bioId);
   return {
     name,
     avatarDataUrl,
+    metabotInfoPinId,
     chatpubkeyPinId,
     bio,
     raw: info,

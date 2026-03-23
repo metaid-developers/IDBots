@@ -25,6 +25,8 @@ import { ScheduledTaskStore } from './scheduledTaskStore';
 import { MetabotStore } from './metabotStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
+import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
+import { shouldAcquireSingleInstanceLock } from './libs/singleInstanceLock';
 import { mockCreateWalletAndFund, mockPushConfigToChain, mockUpdateConfigOnChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
 import { fetchMetaidInfoByAddress, fetchMetaidInfoByMetaid, fetchMetaidRestoreProfile, type MetaidAddressInfo } from './services/metabotRestoreService';
@@ -55,6 +57,14 @@ import { createPin } from './services/metaidCore';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
+import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './services/localIndexerProxy';
+import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pinAssetService';
+import * as p2pIndexerService from './services/p2pIndexerService';
+import * as p2pConfigService from './services/p2pConfigService';
+import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
+import { getP2PLocalBase } from './services/p2pLocalEndpoint';
+import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
+import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -485,7 +495,8 @@ async function syncRemoteSkillServices(): Promise<void> {
     const url = new URL('https://manapi.metaid.io/pin/path/list');
     url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
     url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
-    const response = await fetch(url.toString());
+    const localPath = `/api/pin/path/list${url.search}`;
+    const response = await fetchJsonWithFallbackOnMiss(localPath, url.toString(), isEmptyListDataPayload);
     if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
     const json = await response.json();
     const list = Array.isArray(json?.data?.list) ? json.data.list : [];
@@ -631,7 +642,7 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
 
     let json: Record<string, unknown>;
     try {
-      const resp = await fetch(url.toString());
+      const resp = await fetchJsonWithFallbackOnMiss(`/api/pin/path/list${url.search}`, url.toString(), isEmptyListDataPayload);
       if (!resp.ok) { console.warn('[GigSquare Rating] fetch failed', resp.status); break; }
       json = await resp.json() as Record<string, unknown>;
     } catch (e) {
@@ -676,7 +687,7 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
     url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
     url.searchParams.set('cursor', backfillCursor);
     try {
-      const resp = await fetch(url.toString());
+      const resp = await fetchJsonWithFallbackOnMiss(`/api/pin/path/list${url.search}`, url.toString(), isEmptyListDataPayload);
       if (resp.ok) {
         const json = await resp.json() as Record<string, unknown>;
         const data = json?.data as Record<string, unknown> | undefined;
@@ -825,13 +836,23 @@ const savePngWithDialog = async (
 };
 
 const configureUserDataPath = (): void => {
-  const appDataPath = app.getPath('appData');
-  const preferredUserDataPath = path.join(appDataPath, APP_NAME);
   const currentUserDataPath = app.getPath('userData');
+  const currentAppDataPath = app.getPath('appData');
+  const resolvedPaths = resolveRuntimeDataPaths({
+    appDataPath: currentAppDataPath,
+    currentUserDataPath,
+    appName: APP_NAME,
+  });
 
-  if (currentUserDataPath !== preferredUserDataPath) {
-    app.setPath('userData', preferredUserDataPath);
-    console.log(`[Main] userData path updated: ${currentUserDataPath} -> ${preferredUserDataPath}`);
+  if (resolvedPaths.appDataPath !== currentAppDataPath) {
+    app.setPath('appData', resolvedPaths.appDataPath);
+    console.log(`[Main] appData path updated: ${currentAppDataPath} -> ${resolvedPaths.appDataPath}`);
+  }
+
+  const nextUserDataPath = resolvedPaths.userDataPath;
+  if (currentUserDataPath !== nextUserDataPath) {
+    app.setPath('userData', nextUserDataPath);
+    console.log(`[Main] userData path updated: ${currentUserDataPath} -> ${nextUserDataPath}`);
   }
 };
 
@@ -1197,7 +1218,7 @@ const getCoworkRunner = () => {
               IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
               IDBOTS_TWIN_NAME: metabot.name,
               IDBOTS_METABOT_PATH: wallet.path,
-              IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+              IDBOTS_RPC_URL: getMetaidRpcBase(),
             });
             if (metabot.globalmetaid) {
               overrides.IDBOTS_METABOT_GLOBALMETAID = metabot.globalmetaid;
@@ -1222,7 +1243,7 @@ const getCoworkRunner = () => {
             IDBOTS_METABOT_MNEMONIC: twin.mnemonic,
             IDBOTS_TWIN_NAME: twin.name,
             IDBOTS_METABOT_PATH: twin.path,
-            IDBOTS_RPC_URL: 'http://127.0.0.1:31200',
+            IDBOTS_RPC_URL: getMetaidRpcBase(),
           });
           const twinMetabot = metabotStore.getMetabotById(twin.id);
           if (twinMetabot?.globalmetaid) {
@@ -1547,20 +1568,25 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
 
 
 // 确保应用程序只有一个实例
-const gotTheLock = app.requestSingleInstanceLock();
+const shouldUseSingleInstanceLock = shouldAcquireSingleInstanceLock();
+const gotTheLock = shouldUseSingleInstanceLock ? app.requestSingleInstanceLock() : true;
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', (_event, commandLine, workingDirectory) => {
-    console.log('[Main] second-instance event', { commandLine, workingDirectory });
-    // 如果尝试启动第二个实例，则聚焦到主窗口
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      if (!mainWindow.isVisible()) mainWindow.show();
-      if (!mainWindow.isFocused()) mainWindow.focus();
-    }
-  });
+  if (shouldUseSingleInstanceLock) {
+    app.on('second-instance', (_event, commandLine, workingDirectory) => {
+      console.log('[Main] second-instance event', { commandLine, workingDirectory });
+      // 如果尝试启动第二个实例，则聚焦到主窗口
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (!mainWindow.isFocused()) mainWindow.focus();
+      }
+    });
+  } else {
+    console.log('[Main] Single-instance lock disabled by runtime override');
+  }
 
   // IPC 处理程序
   ipcMain.handle('store:get', (_event, key) => {
@@ -2897,10 +2923,30 @@ if (!gotTheLock) {
         return { success: false, error: 'PATH_INVALID' };
       }
 
-      const walletResult = await createMetaBotWallet({ mnemonic, path });
+      const store = getMetabotStore();
+      const existingWallet = store.getMetabotWalletByMnemonicNormalized(mnemonic);
+      const effectivePath = existingWallet?.path?.trim() || path;
+      if (existingWallet) {
+        const linked = store.getMetabotByWalletId(existingWallet.id);
+        if (linked) {
+          return { success: false, error: 'METABOT_WALLET_IN_USE' };
+        }
+        if (pathInput !== existingWallet.path?.trim()) {
+          console.log('[MetaBot] restore: reusing existing wallet row; using stored derivation path', {
+            storedPath: existingWallet.path,
+            requestedPath: pathInput,
+          });
+        }
+      }
+
+      const walletResult = await createMetaBotWallet({
+        mnemonic: existingWallet?.mnemonic ?? mnemonic,
+        path: effectivePath,
+      });
       console.log('[MetaBot] restore wallet derived', {
         mvc: walletResult.mvc_address,
         globalmetaid: walletResult.globalmetaid,
+        reusedWalletRow: Boolean(existingWallet),
       });
 
       const profile = await fetchMetaidRestoreProfile(walletResult.mvc_address);
@@ -2909,18 +2955,9 @@ if (!gotTheLock) {
         return { success: false, error: 'NAME_EMPTY' };
       }
 
-      const store = getMetabotStore();
       const exists = store.listMetabots().some((m) => m.name.trim().toLowerCase() === name.toLowerCase());
       if (exists) {
         return { success: false, error: 'NAME_DUPLICATE' };
-      }
-
-      const existingWallet = store.getMetabotWalletByMnemonic(walletResult.mnemonic);
-      if (existingWallet) {
-        const linked = store.getMetabotByWalletId(existingWallet.id);
-        if (linked) {
-          return { success: false, error: 'WALLET_ALREADY_LINKED' };
-        }
       }
 
       const wallet =
@@ -2943,7 +2980,7 @@ if (!gotTheLock) {
         enabled: true,
         metaid: walletResult.metaid,
         globalmetaid: walletResult.globalmetaid,
-        metabot_info_pinid: null,
+        metabot_info_pinid: profile.metabotInfoPinId ?? null,
         metabot_type: 'worker',
         created_by: profile.bio.created_by || '0000',
         role: profile.bio.role || '',
@@ -3035,7 +3072,13 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:fetchServices', async () => {
     try {
-      const list = listRemoteSkillServicesFromDb();
+      const list = await Promise.all(
+        listRemoteSkillServicesFromDb().map(async (item) => ({
+          ...item,
+          avatar: await resolvePinAssetSource(item.avatar ?? null),
+          serviceIcon: await resolvePinAssetSource(item.serviceIcon ?? null),
+        })),
+      );
       return { success: true, list };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch services' };
@@ -3105,7 +3148,8 @@ if (!gotTheLock) {
         };
 
         const fetchList = async (url: string) => {
-          const response = await fetch(url);
+          const localPath = `/api/pin/path/list${new URL(url).search}`;
+          const response = await fetchJsonWithFallbackOnMiss(localPath, url, isEmptyListDataPayload);
           if (!response.ok) {
             throw new Error(`Failed to fetch chat pubkey: ${response.status}`);
           }
@@ -3137,6 +3181,7 @@ if (!gotTheLock) {
       const resolvedAddress = toSafeString(info?.address || providerAddress).trim();
       const resolvedName = toSafeString(info?.name).trim();
       const resolvedAvatar = toSafeString(info?.avatar).trim();
+      const resolvedAvatarSource = await resolvePinAssetSource(resolvedAvatar || null);
 
       return {
         success: true,
@@ -3145,7 +3190,7 @@ if (!gotTheLock) {
         metaid: resolvedMetaId || undefined,
         address: resolvedAddress || undefined,
         name: resolvedName || undefined,
-        avatar: resolvedAvatar || undefined,
+        avatar: resolvedAvatarSource || resolvedAvatar || undefined,
       };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch provider info' };
@@ -4111,6 +4156,46 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     return false;
   });
 
+  // P2P indexer IPC handlers
+  ipcMain.handle('p2p:getStatus', () => p2pIndexerService.getP2PStatus());
+
+  ipcMain.handle('p2p:getConfig', () => p2pConfigService.getConfig(getStore()));
+
+  ipcMain.handle('p2p:setConfig', async (_e: Electron.IpcMainInvokeEvent, config: unknown) => {
+    const updated = p2pConfigService.setConfig(getStore(), config as Partial<import('./services/p2pConfigService').P2PConfig>);
+    const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
+    const ownAddresses = p2pConfigService.collectOwnAddresses(getMetabotStore().listMetabots());
+    const runtimeConfig = p2pConfigService.buildRuntimeConfig(updated, ownAddresses);
+    p2pConfigService.writeConfigFile(runtimeConfig, configPath);
+    await p2pConfigService.reloadConfig();
+    return updated;
+  });
+
+  ipcMain.handle('p2p:getPeers', async () => {
+    try {
+      const res = await fetch(`${getP2PLocalBase()}/api/p2p/peers`, { signal: AbortSignal.timeout(2000) });
+      if (!res.ok) return [];
+      const payload = await res.json();
+      return p2pIndexerService.unwrapPeersPayload(payload);
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId: string }) => {
+    const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
+    const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
+    const res = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isSemanticallyEmptyMetaidInfoPayload);
+    const payload = await res.json() as { data?: Record<string, unknown> };
+    if (payload?.data && typeof payload.data === 'object') {
+      const avatarUrl = await resolveMetaidAvatarSource(payload.data);
+      if (avatarUrl) {
+        payload.data.avatarUrl = avatarUrl;
+      }
+    }
+    return payload;
+  });
+
   // MCP is currently suspended and not exposed to renderer.
 
   // 设置 Content Security Policy
@@ -4343,52 +4428,53 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
-    console.log('[Main] App is quitting, starting cleanup...');
-    destroyTray();
-    skillManager?.stopWatching();
-
-    if (metaidRpcServer) {
-      metaidRpcServer.close();
-      metaidRpcServer = null;
-    }
-
-    // Stop Cowork sessions without blocking shutdown.
-    if (coworkRunner) {
-      console.log('[Main] Stopping cowork sessions...');
-      coworkRunner.stopAllSessions();
-    }
-
-    await stopCoworkOpenAICompatProxy().catch((error) => {
-      console.error('Failed to stop OpenAI compatibility proxy:', error);
+    await runSharedAppCleanup({
+      destroyTray,
+      stopSkillWatching: () => {
+        skillManager?.stopWatching();
+      },
+      closeMetaidRpcServer: () => {
+        if (metaidRpcServer) {
+          metaidRpcServer.close();
+          metaidRpcServer = null;
+        }
+      },
+      stopCoworkSessions: () => {
+        if (coworkRunner) {
+          console.log('[Main] Stopping cowork sessions...');
+          coworkRunner.stopAllSessions();
+        }
+      },
+      stopOpenAICompatProxy: () => stopCoworkOpenAICompatProxy(),
+      stopSkillServices: async () => {
+        const skillServices = getSkillServiceManager();
+        await skillServices.stopAll();
+      },
+      stopIMGateways: async () => {
+        if (imGatewayManager) {
+          await imGatewayManager.stopAll();
+        }
+      },
+      stopScheduler: () => {
+        if (scheduler) {
+          scheduler.stop();
+        }
+      },
+      stopCognitiveOrchestrator,
+      stopP2P: () => p2pIndexerService.stop(),
+      deactivateGroupChatTasks: () => {
+        try {
+          const db = getStore().getDatabase();
+          db.run('UPDATE group_chat_tasks SET is_active = 0');
+          getStore().getSaveFunction()();
+          console.log('[Main] Deactivated all group_chat_tasks (is_active = 0)');
+        } catch (err) {
+          console.error('[Main] Failed to deactivate group_chat_tasks:', err);
+        }
+      },
+      log: (message) => console.log(message),
+      error: (message, error) => console.error(message, error),
     });
-
-    // Stop skill services.
-    const skillServices = getSkillServiceManager();
-    await skillServices.stopAll();
-
-    // Stop all IM gateways gracefully.
-    if (imGatewayManager) {
-      await imGatewayManager.stopAll().catch(err => {
-        console.error('[IM Gateway] Error stopping gateways on quit:', err);
-      });
-    }
-
-    // Stop the scheduler
-    if (scheduler) {
-      scheduler.stop();
-    }
-
-    stopCognitiveOrchestrator();
-
-    // Deactivate all group chat tasks so they do not auto-start on next launch
-    try {
-      const db = getStore().getDatabase();
-      db.run('UPDATE group_chat_tasks SET is_active = 0');
-      getStore().getSaveFunction()();
-      console.log('[Main] Deactivated all group_chat_tasks (is_active = 0)');
-    } catch (err) {
-      console.error('[Main] Failed to deactivate group_chat_tasks:', err);
-    }
   };
 
   app.on('before-quit', (e) => {
@@ -4451,6 +4537,21 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
 
     store = await initStore();
+
+    // Start man-p2p local indexer (non-fatal if binary not present)
+    try {
+      const p2pConfig = p2pConfigService.getConfig(getStore());
+      const dataDir = path.join(app.getPath('userData'), 'man-p2p');
+      const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
+      const ownAddresses = p2pConfigService.collectOwnAddresses(getMetabotStore().listMetabots());
+      const runtimeConfig = p2pConfigService.buildRuntimeConfig(p2pConfig, ownAddresses);
+      fs.mkdirSync(dataDir, { recursive: true });
+      p2pConfigService.writeConfigFile(runtimeConfig, configPath);
+      await p2pIndexerService.start(dataDir, configPath);
+      console.log('[p2p] man-p2p started');
+    } catch (err) {
+      console.warn('[p2p] man-p2p failed to start, continuing without local indexer:', err);
+    }
 
     const listenerConfig = getListenerConfigFromStore();
     if (shouldRunListener(listenerConfig)) {

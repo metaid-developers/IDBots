@@ -1,11 +1,7 @@
 /**
- * Fetch MetaBot / MetaID user info (name, avatar, chatpubkey) by globalMetaId
- * from file.metaid.io metafile-indexer API. Reusable for Gig Square provider display
- * and other features that need remote MetaBot info.
+ * Fetch MetaBot / MetaID user info by globalMetaId. Avatar resolution is
+ * performed in the main process so renderer consumers stay local-first.
  */
-
-const METAFILE_INFO_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/info/metaid';
-const METAFILE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/thumbnail';
 
 export interface MetaidInfoResult {
   name?: string;
@@ -16,36 +12,6 @@ export interface MetaidInfoResult {
   address?: string;
 }
 
-/**
- * Resolve avatar to image URL. Same pattern as serviceIcon in GigSquareView:
- * https://file.metaid.io/metafile-indexer/api/v1/files/content/<pinid>
- * API may return: avatarId (pinid), avatar ("/content/" or "/content/<pinid>"), or metafile://<pinid>.
- */
-function resolveAvatarUrl(data: Record<string, unknown>): string | null {
-  const avatarId = typeof data.avatarId === 'string' ? data.avatarId.trim() : '';
-  if (avatarId) {
-    return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(avatarId)}`;
-  }
-  const avatar = typeof data.avatar === 'string' ? data.avatar.trim() : '';
-  if (avatar && avatar.toLowerCase().startsWith('http')) return avatar;
-  if (avatar && avatar.toLowerCase().startsWith('metafile://')) {
-    const pinid = avatar.slice('metafile://'.length).trim();
-    if (pinid) return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(pinid)}`;
-  }
-  if (avatar && !avatar.startsWith('http')) {
-    const pinid = avatar.replace(/^\/content\/?/i, '').trim();
-    if (pinid) return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(pinid)}`;
-  }
-  const rawContentId = (data as Record<string, unknown>).contentId;
-  const contentId = typeof rawContentId === 'string' ? rawContentId.trim() : '';
-  if (contentId) return `${METAFILE_CONTENT_BASE}/${encodeURIComponent(contentId)}`;
-  return null;
-}
-
-/**
- * Fetch MetaBot / user info by globalMetaId from file.metaid.io.
- * Returns name, avatarUrl (for display, same as serviceIcon), and optional chatpubkey.
- */
 export async function fetchMetaidInfoByGlobalId(
   globalMetaId: string
 ): Promise<MetaidInfoResult> {
@@ -53,23 +19,15 @@ export async function fetchMetaidInfoByGlobalId(
   if (!id) {
     return {};
   }
-  const url = `${METAFILE_INFO_BASE}/${encodeURIComponent(id)}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Metabot info fetch failed: ${res.status}`);
-  }
-  const json = (await res.json()) as {
-    code?: number;
-    message?: string;
-    data?: Record<string, unknown>;
-  };
+  const result = await window.electron.p2p.getUserInfo({ globalMetaId: id });
+  const json = result as { code?: number; message?: string; data?: Record<string, unknown> };
   if (json.code !== 1 && json.code !== undefined) {
     throw new Error(json.message || 'Metabot info request failed');
   }
   const data = json.data || {};
   const name = typeof data.name === 'string' ? data.name.trim() || undefined : undefined;
   const chatpubkey = typeof data.chatpubkey === 'string' ? data.chatpubkey.trim() || null : null;
-  const avatarUrl = resolveAvatarUrl(data);
+  const avatarUrl = typeof data.avatarUrl === 'string' ? data.avatarUrl.trim() || null : null;
   return {
     name,
     avatarUrl: avatarUrl || undefined,

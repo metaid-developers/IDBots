@@ -205,6 +205,26 @@ export class MetabotStore {
     return row ? rowToMetabot(row) : null;
   }
 
+  /** MetaBot row linked to a wallet (at most one expected per wallet_id). */
+  getMetabotByWalletId(walletId: number): Metabot | null {
+    const row = this.getOne<MetabotRow>('SELECT * FROM metabots WHERE wallet_id = ? LIMIT 1', [walletId]);
+    return row ? rowToMetabot(row) : null;
+  }
+
+  /**
+   * Find an append-only wallet row by mnemonic phrase (case/outer whitespace insensitive).
+   * Used when restoring after metabot delete: the wallet row may still exist.
+   */
+  getMetabotWalletByMnemonicNormalized(normalizedMnemonic: string): MetabotWallet | null {
+    const phrase = normalizedMnemonic.trim().toLowerCase();
+    if (!phrase) return null;
+    const row = this.getOne<MetabotWalletRow>(
+      'SELECT * FROM metabot_wallets WHERE lower(trim(mnemonic)) = ? LIMIT 1',
+      [phrase]
+    );
+    return row ? rowToMetabotWallet(row) : null;
+  }
+
   /** Get MetaBot by globalmetaid (e.g. for private chat daemon: message to_global_metaid). */
   getMetabotByGlobalMetaId(globalmetaid: string | null): Metabot | null {
     if (!globalmetaid || typeof globalmetaid !== 'string' || !globalmetaid.trim()) return null;

@@ -82,7 +82,9 @@ You use IDBots to communicate with and authorize MetaBots; MetaBots keep identit
 
 ## Downloads
 
-Prebuilt installers are available on [GitHub Releases](https://github.com/metaid-developers/IDBots/releases): **Windows** (.exe) and **macOS** (.dmg).
+Official installers are published from GitHub Actions to [GitHub Releases](https://github.com/metaid-developers/IDBots/releases): **Windows** (.exe) and **macOS** (.dmg).
+
+The repository is the source and packaging input for IDBots. It is not the end-user app distribution channel, even when platform-specific runtime assets are checked in for packaging.
 
 ---
 
@@ -94,6 +96,8 @@ Prebuilt installers are available on [GitHub Releases](https://github.com/metaid
 - **Build:** `npm run build`
 
 See repo docs for full build and packaging details.
+
+`npm run electron:dev` is a development runtime only. Alpha acceptance and public release validation should use packaged app builds, not the dev runtime.
 
 **First run (after clone):** complete the onboarding flow and configure at least one LLM (API Key, and Base URL if required by the provider). Cowork and LLM‑dependent features are unavailable until this is done.
 

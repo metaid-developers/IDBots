@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
-import { formatGigSquarePrice, getServiceIconUrl } from '../../utils/gigSquare';
+import { formatGigSquarePrice } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
 import GigSquarePublishModal from './GigSquarePublishModal';
 
@@ -210,8 +210,7 @@ const GigSquareView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filteredServices.map((service) => {
               const price = formatGigSquarePrice(service.price, service.currency);
-              const serviceIconUrl = getServiceIconUrl(service.serviceIcon);
-              const iconSrc = serviceIconUrl || service.avatar || null;
+              const iconSrc = service.serviceIcon || service.avatar || null;
               return (
                 <div
                   key={service.id}

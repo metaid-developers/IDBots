@@ -82,7 +82,9 @@ IDBots 由两部分组成：
 
 ## 下载
 
-预构建安装包发布在 [GitHub Releases](https://github.com/metaid-developers/IDBots/releases)：**Windows**（.exe）与 **macOS**（.dmg）。
+官方安装包通过 GitHub Actions 构建，并发布到 [GitHub Releases](https://github.com/metaid-developers/IDBots/releases)：**Windows**（.exe）与 **macOS**（.dmg）。
+
+源码仓库承担的是源代码与打包输入的角色。即使仓库里包含了平台相关的运行时资源，也不应把 Git 仓库本身当作面向最终用户的应用分发渠道。
 
 ---
 
@@ -94,6 +96,8 @@ IDBots 由两部分组成：
 - **构建：** `npm run build`
 
 完整构建与打包说明请见仓库内文档。
+
+`npm run electron:dev` 仅用于开发态运行。Alpha 验收与正式发布验证应以打包后的应用构建为准，而不是 dev runtime。
 
 **首次运行（克隆后）：** 首次启动需完成 **觉醒引导（Onboarding）** 并配置至少一个 LLM（API Key，若所选提供商需要则填写 Base URL）。未完成前，Cowork 及依赖 LLM 的功能将不可用。
 

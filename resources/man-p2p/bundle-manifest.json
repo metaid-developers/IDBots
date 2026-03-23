@@ -1,0 +1,19 @@
+{
+  "binary": "man-p2p-darwin-arm64",
+  "binarySha256": "527aa4789fe583ef0c3f3eb9a5eaa019c82b6d32b692e88b642a7ef9ccd09d83",
+  "artifacts": {
+    "man-p2p-darwin-arm64": {
+      "makeTarget": "build-darwin-arm64",
+      "sha256": "527aa4789fe583ef0c3f3eb9a5eaa019c82b6d32b692e88b642a7ef9ccd09d83"
+    },
+    "man-p2p-win32-x64.exe": {
+      "makeTarget": "build-windows-amd64",
+      "sha256": "dad941aa267bd0eb3e825ec44b11675241f44d4839c9e3f9979707fcb11e3f24"
+    }
+  },
+  "sourcePath": "/Users/tusm/.config/superpowers/worktrees/man-p2p/codex/bootstrap-reload-reconnect",
+  "sourceBranch": "codex/bootstrap-reload-reconnect",
+  "sourceCommit": "fd81303",
+  "sourceVersion": "alpha-2026-03-22-local-first-1-gfd81303",
+  "syncedAt": "2026-03-22T16:53:29.068Z"
+}

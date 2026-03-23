@@ -128,7 +128,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder ${{ matrix.build_args }} --publish never --config.win.signAndEditExecutable=false
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
 
       - name: Notarize app (macOS)
         if: runner.os == 'macOS'
@@ -137,8 +137,10 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          ditto -c -k --keepParent "release/mac-arm64/IDBots.app" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.app.zip"
-          xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.app.zip" \
+          APP_ZIP_PATH="$(node scripts/release-artifact-paths.cjs zip)"
+          echo "Using APP_ZIP_PATH=$APP_ZIP_PATH"
+          ditto -c -k --keepParent "release/mac-arm64/IDBots.app" "$APP_ZIP_PATH"
+          xcrun notarytool submit "$APP_ZIP_PATH" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
@@ -170,18 +172,20 @@ jobs:
             echo "MAC_CODESIGN_IDENTITY is required for DMG signing." >&2
             exit 1
           fi
+          DMG_PATH="$(node scripts/release-artifact-paths.cjs dmg)"
+          echo "Using DMG_PATH=$DMG_PATH"
           if [ -n "$CSC_KEYCHAIN" ] && [ -n "$CSC_KEYCHAIN_PASSWORD" ]; then
             security unlock-keychain -p "$CSC_KEYCHAIN_PASSWORD" "$CSC_KEYCHAIN"
-            codesign --force --sign "$MAC_CODESIGN_IDENTITY" --keychain "$CSC_KEYCHAIN" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+            codesign --force --sign "$MAC_CODESIGN_IDENTITY" --keychain "$CSC_KEYCHAIN" "$DMG_PATH"
           else
-            codesign --force --sign "$MAC_CODESIGN_IDENTITY" "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+            codesign --force --sign "$MAC_CODESIGN_IDENTITY" "$DMG_PATH"
           fi
-          xcrun notarytool submit "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg" \
+          xcrun notarytool submit "$DMG_PATH" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --wait
-          xcrun stapler staple "release/IDBots-${GITHUB_REF_NAME#v}-arm64.dmg"
+          xcrun stapler staple "$DMG_PATH"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

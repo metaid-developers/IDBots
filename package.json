@@ -3,7 +3,7 @@
   "private": true,
   "license": "MIT",
   "author": "Sunny Fung",
-  "version": "0.1.98",
+  "version": "0.1.100",
   "main": "dist-electron/main.js",
   "engines": {
     "node": ">=24 <25"
@@ -26,12 +26,13 @@
     "test:read-pin": "npx ts-node -P electron-tsconfig.json test_read_pin.ts",
     "preview": "vite preview",
     "compile:electron": "npx -p typescript tsc --project electron-tsconfig.json",
+    "sync:man-p2p": "node scripts/sync-man-p2p-binary.mjs",
     "build:skills": "node scripts/build-skills.js && npx tsc -p SKILLs/web-search/tsconfig.json",
     "build:skill:web-search": "npx tsc -p SKILLs/web-search/tsconfig.json",
     "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:5175 electron .",
     "electron:dev": "npx rimraf dist-electron && npm run compile:electron && npm run build:skills && concurrently \"vite --port 5175\" \"wait-on -v -t 120000 -d 10000 http://localhost:5175 && npm run start:electron\"",
     "postinstall": "patch-package && node scripts/patch-claude-sdk-cli.js && electron-builder install-app-deps && npm install --prefix SKILLs/web-search",
-    "pack": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skills && electron-builder --dir",
+    "pack": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skills && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "dist": "npm run setup:mingit && npm run build && npm run compile:electron && npm run build:skills && electron-builder",
     "dist:mac": "node -r dotenv/config node_modules/.bin/electron-builder --mac --config electron-builder.json",
     "predist:mac": "npm run build && npm run compile:electron && npm run build:skills",
@@ -122,5 +123,7 @@
     "vite-plugin-electron": "^0.28.0",
     "vite-plugin-electron-renderer": "^0.14.5",
     "wait-on": "^7.2.0"
-  }
+  },
+  "description": "[中文](README_zh.md)",
+  "keywords": []
 }
