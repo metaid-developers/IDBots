@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 type MetaAppRecordLike = {
@@ -27,11 +28,103 @@ const splitPathSuffix = (raw: string): { pathPart: string; suffix: string } => {
   return { pathPart: trimmed.slice(0, cutIndex), suffix: trimmed.slice(cutIndex) };
 };
 
-const isValidTargetPathForApp = (appId: string, targetPath: string): boolean => {
-  if (!appId) return false;
-  if (!targetPath) return false;
-  if (!targetPath.startsWith('/')) return false;
-  return targetPath.startsWith(`/${appId}/`);
+const decodePathSegments = (pathname: string): string[] | null => {
+  if (!pathname.startsWith('/')) return null;
+  const rawSegments = pathname.split('/');
+  const decodedSegments: string[] = [];
+  for (const rawSegment of rawSegments) {
+    if (!rawSegment) continue;
+    let decodedSegment: string;
+    try {
+      decodedSegment = decodeURIComponent(rawSegment);
+    } catch {
+      return null;
+    }
+    if (!decodedSegment || decodedSegment.includes('/') || decodedSegment.includes('\\')) {
+      return null;
+    }
+    decodedSegments.push(decodedSegment);
+  }
+  return decodedSegments;
+};
+
+const resolveMetaAppFileTarget = (
+  record: MetaAppRecordLike,
+  pathname: string,
+): { urlPathname: string; filePath: string } | { error: string } => {
+  const segments = decodePathSegments(pathname);
+  if (!segments || segments.length < 2) {
+    return { error: 'targetPath must include an app id and a file path' };
+  }
+
+  const [appId, ...relativeSegments] = segments;
+  if (!appId || appId !== record.id) {
+    return { error: 'targetPath does not match the selected app id' };
+  }
+  if (relativeSegments.some((segment) => segment === '.' || segment === '..')) {
+    return { error: 'targetPath contains dot-segment traversal' };
+  }
+
+  const urlPathname = `/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
+
+  let appRootRealPath: string;
+  try {
+    appRootRealPath = fs.realpathSync.native(path.resolve(record.appRoot));
+  } catch {
+    return { error: 'MetaApp root is missing' };
+  }
+
+  const candidatePath = path.resolve(appRootRealPath, ...relativeSegments);
+
+  let candidateRealPath: string;
+  try {
+    candidateRealPath = fs.realpathSync.native(candidatePath);
+  } catch {
+    return { error: 'targetPath does not resolve to an existing file' };
+  }
+
+  const relativeToRoot = path.relative(appRootRealPath, candidateRealPath);
+  if (!relativeToRoot || relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
+    return { error: 'targetPath escapes the selected app root' };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(candidateRealPath);
+  } catch {
+    return { error: 'targetPath does not resolve to an existing file' };
+  }
+
+  if (!stat.isFile()) {
+    return { error: 'targetPath does not resolve to a file' };
+  }
+
+  return { urlPathname, filePath: candidateRealPath };
+};
+
+const normalizeLocalBaseUrl = (baseUrl: string): string | null => {
+  const trimmed = String(baseUrl ?? '').trim();
+  if (!trimmed) return null;
+  const withoutTrailingSlash = trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(withoutTrailingSlash);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'http:') return null;
+  if (parsed.hostname !== '127.0.0.1') return null;
+  if (!parsed.port) return null;
+  if (parsed.username || parsed.password) return null;
+  if (parsed.pathname !== '/') return null;
+  if (parsed.search || parsed.hash) return null;
+
+  const port = Number(parsed.port);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+
+  return `http://127.0.0.1:${port}`;
 };
 
 export async function openMetaApp(input: {
@@ -60,19 +153,19 @@ export async function openMetaApp(input: {
     }
 
     const { pathPart, suffix } = splitPathSuffix(requested);
-    if (!isValidTargetPathForApp(appId, pathPart)) {
-      return { success: false, error: `Invalid targetPath for app ${appId}` };
+    const resolved = resolveMetaAppFileTarget(record, pathPart);
+    if ('error' in resolved) {
+      return { success: false, error: resolved.error };
     }
 
     const metaAppsRoot = path.dirname(path.resolve(record.appRoot));
     const ready = await input.ensureServerReady(metaAppsRoot);
-    const baseUrl = String(ready?.baseUrl ?? '').trim();
+    const baseUrl = normalizeLocalBaseUrl(String(ready?.baseUrl ?? ''));
     if (!baseUrl) {
-      return { success: false, error: 'MetaApp server baseUrl is empty' };
+      return { success: false, error: 'MetaApp server baseUrl is invalid' };
     }
 
-    const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const finalUrl = `${normalizedBaseUrl}${pathPart}${suffix}`;
+    const finalUrl = `${baseUrl}${resolved.urlPathname}${suffix}`;
 
     await input.shellOpenExternal(finalUrl);
     return { success: true, appId: record.id, name: record.name, url: finalUrl };
@@ -80,4 +173,3 @@ export async function openMetaApp(input: {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
-
