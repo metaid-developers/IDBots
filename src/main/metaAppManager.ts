@@ -286,10 +286,11 @@ export class MetaAppManager {
     return [
       '## MetaApps (Cowork)',
       'Before replying: scan <available_metaapps> entries.',
-      '- If exactly one metaapp clearly applies to an app-opening request: read its APP.md at <location> and choose one path to open.',
+      '- If the user asks to open/use/start a local app or MetaApp, evaluate <available_metaapps> before any SKILL routing.',
+      '- If one metaapp clearly matches, read its APP.md at <location> and use `open_metaapp`; do not route that request to a SKILL first.',
+      '- If multiple metaapps could match, choose the most specific one and open at most one unless the user explicitly asks for more.',
       '- If user asks for explanation/analysis only, do not open a metaapp.',
       '- Never invent external URLs; only use local metaapp entry/paths from APP.md.',
-      '- Open at most one metaapp per turn unless user explicitly asks for more.',
       '',
       '<available_metaapps>',
       entries,

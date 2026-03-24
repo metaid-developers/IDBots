@@ -928,7 +928,8 @@ export class SkillManager {
 
     const promptBody = [
       '## Skills (mandatory)',
-      'Before replying: scan <available_skills> <description> entries.',
+      'Before replying: scan <available_skills> <description> entries, but only after applying any higher-priority MetaApp routing rules already present in the system prompt.',
+      '- If the request is to open/use/start a local MetaApp or application, evaluate MetaApps first and do not select a SKILL unless the user is asking for a workflow beyond opening the app.',
       '- If exactly one skill clearly applies: read its SKILL.md at <location> with the Read tool, then follow it.',
       '- If multiple could apply: choose the most specific one, then read/follow it.',
       '- If none clearly apply: do not read any SKILL.md.',

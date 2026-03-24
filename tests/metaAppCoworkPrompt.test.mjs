@@ -74,6 +74,38 @@ test('buildCoworkAutoRoutingPrompt emits the MetaApps section with available_met
   assert.match(prompt, /<\/available_metaapps>/);
 });
 
+test('buildCoworkAutoRoutingPrompt prioritizes MetaApps for local app-opening requests', () => {
+  const { MetaAppManager } = require('../dist-electron/metaAppManager.js');
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  writeFile(
+    path.join(metaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: buzz-app',
+      'description: Browse buzz timelines',
+      'entry: /buzz/app/index.html',
+      '---',
+      '',
+      'Open the local buzz timeline.',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const prompt = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().buildCoworkAutoRoutingPrompt());
+
+  assert.ok(prompt);
+  assert.match(
+    prompt,
+    /If the user asks to open\/use\/start a local app or MetaApp, evaluate <available_metaapps> before any SKILL routing\./,
+  );
+  assert.match(
+    prompt,
+    /If one metaapp clearly matches, read its APP\.md at <location> and use `open_metaapp`; do not route that request to a SKILL first\./,
+  );
+});
+
 test('preload exposes metaapps.autoRoutingPrompt through window.electron', async () => {
   const electronModuleId = require.resolve('electron');
   const preloadModuleId = require.resolve('../dist-electron/preload.js');
