@@ -566,3 +566,86 @@ test('packaged sync preserves existing user metaapps.config.json and does not ov
   const actual = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
   assert.deepEqual(actual, userConfig);
 });
+
+test('packaged sync seeds managed defaults for pre-existing legacy bundled app with official frontmatter', () => {
+  const tempDir = createTempDir();
+  const resourcesPath = path.join(tempDir, 'resources');
+  const bundledMetaAppsRoot = path.join(resourcesPath, 'METAAPPs');
+  const userDataPath = path.join(tempDir, 'userData');
+  const userMetaAppsRoot = path.join(userDataPath, 'METAAPPs');
+  const userConfigPath = path.join(userMetaAppsRoot, 'metaapps.config.json');
+
+  writeFile(
+    path.join(userMetaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: legacy-buzz',
+      'description: older bundled buzz without managed metadata',
+      'official: true',
+      'entry: /buzz/app/index.html',
+      '---',
+      '',
+      'legacy bundled buzz',
+    ].join('\n'),
+  );
+  writeFile(path.join(userMetaAppsRoot, 'buzz', 'app', 'index.html'), '<html>legacy-buzz</html>');
+
+  const bundledConfig = {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+      },
+    },
+  };
+  writeFile(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), JSON.stringify(bundledConfig, null, 2));
+  writeFile(
+    path.join(bundledMetaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: bundled-buzz',
+      'description: bundled buzz app',
+      'entry: /buzz/app/index.html',
+      'version: 1.0.0',
+      'creator-metaid: idbots',
+      'source-type: bundled-idbots',
+      '---',
+      '',
+      'bundled buzz',
+    ].join('\n'),
+  );
+  writeFile(path.join(bundledMetaAppsRoot, 'buzz', 'app', 'index.html'), '<html>bundled-buzz</html>');
+
+  const manager = new MetaAppManager({
+    app: {
+      isPackaged: true,
+      getPath(name) {
+        if (name === 'userData') return userDataPath;
+        throw new Error(`unexpected app path key: ${name}`);
+      },
+      getAppPath() {
+        return path.join(tempDir, 'app.asar');
+      },
+    },
+    resourcesPath,
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  assert.equal(fs.existsSync(userConfigPath), true);
+  const userConfig = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
+  assert.equal(userConfig.defaults?.buzz?.version, '1.0.0');
+  assert.equal(userConfig.defaults?.buzz?.['creator-metaid'], 'idbots');
+  assert.equal(userConfig.defaults?.buzz?.['source-type'], 'bundled-idbots');
+
+  const apps = manager.listMetaApps();
+  assert.equal(apps.length, 1);
+  const buzz = apps[0];
+  assert.equal(buzz.version, '1.0.0');
+  assert.equal(buzz.creatorMetaId, 'idbots');
+  assert.equal(buzz.sourceType, 'bundled-idbots');
+  assert.equal(buzz.managedByIdbots, true);
+});
