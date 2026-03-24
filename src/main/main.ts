@@ -63,7 +63,8 @@ import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pin
 import * as p2pIndexerService from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
-import { stopMetaAppServer } from './services/metaAppLocalServer';
+import { ensureMetaAppServerReady, stopMetaAppServer } from './services/metaAppLocalServer';
+import { openMetaApp } from './services/metaAppOpenService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -1268,6 +1269,15 @@ const getCoworkRunner = () => {
         const m = getMetabotStore().getMetabotById(id);
         return m ? { name: m.name, role: m.role, soul: m.soul, background: m.background ?? null, goal: m.goal ?? null } : null;
       },
+      openMetaApp: async (input) => {
+        return openMetaApp({
+          appId: input.appId,
+          targetPath: input.targetPath,
+          manager: getMetaAppManager(),
+          ensureServerReady: ensureMetaAppServerReady,
+          shellOpenExternal: shell.openExternal,
+        });
+      },
     });
 
     // Set up event listeners to forward to renderer
@@ -1730,6 +1740,15 @@ if (!gotTheLock) {
       return { success: true, prompt };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to build auto-routing prompt' };
+    }
+  });
+
+  ipcMain.handle('metaapps:autoRoutingPrompt', () => {
+    try {
+      const prompt = getMetaAppManager().buildCoworkAutoRoutingPrompt();
+      return { success: true, prompt };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to build MetaApp auto-routing prompt' };
     }
   });
 

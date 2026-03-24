@@ -331,6 +331,9 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
     onChanged: (callback: () => void) => () => void;
   };
+  metaapps: {
+    autoRoutingPrompt: () => Promise<{ success: boolean; prompt?: string | null; error?: string }>;
+  };
   api: {
     fetch: (options: {
       url: string;

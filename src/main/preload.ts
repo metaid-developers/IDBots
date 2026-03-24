@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('skills:changed', handler);
     },
   },
+  metaapps: {
+    autoRoutingPrompt: () => ipcRenderer.invoke('metaapps:autoRoutingPrompt'),
+  },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),

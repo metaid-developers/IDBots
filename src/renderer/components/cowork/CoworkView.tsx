@@ -6,6 +6,7 @@ import { clearCurrentSession, setCurrentSession, setStreaming, clearPreferredMet
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import { setActions, selectAction, clearSelection } from '../../store/slices/quickActionSlice';
 import { coworkService } from '../../services/cowork';
+import { metaAppService } from '../../services/metaApp';
 import { skillService } from '../../services/skill';
 import { quickActionService } from '../../services/quickAction';
 import { i18nService } from '../../services/i18n';
@@ -252,6 +253,16 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     };
   }, [dispatch]);
 
+  const buildCombinedSystemPrompt = async (skillPrompt?: string) => {
+    const [metaAppPrompt, effectiveSkillPrompt] = await Promise.all([
+      metaAppService.getAutoRoutingPrompt(),
+      skillPrompt ? Promise.resolve(skillPrompt) : skillService.getAutoRoutingPrompt(),
+    ]);
+    return [metaAppPrompt, effectiveSkillPrompt, config.systemPrompt]
+      .filter(p => p?.trim())
+      .join('\n\n') || undefined;
+  };
+
   const handleStartSession = async (prompt: string, skillPrompt?: string) => {
     // Prevent duplicate submissions
     if (isStartingRef.current) return;
@@ -318,15 +329,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       dispatch(clearActiveSkills());
       dispatch(clearSelection());
 
-      // Combine skill prompt with system prompt
-      // If no manual skill selected, use auto-routing prompt
-      let effectiveSkillPrompt = skillPrompt;
-      if (!skillPrompt) {
-        effectiveSkillPrompt = await skillService.getAutoRoutingPrompt() || undefined;
-      }
-      const combinedSystemPrompt = [effectiveSkillPrompt, config.systemPrompt]
-        .filter(p => p?.trim())
-        .join('\n\n') || undefined;
+      const combinedSystemPrompt = await buildCombinedSystemPrompt(skillPrompt);
 
       // Generate title in background while starting session
       const [generatedTitle] = await Promise.all([
@@ -377,15 +380,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       dispatch(clearActiveSkills());
     }
 
-    // Combine skill prompt with system prompt for continuation
-    // If no manual skill selected, use auto-routing prompt
-    let effectiveSkillPrompt = skillPrompt;
-    if (!skillPrompt) {
-      effectiveSkillPrompt = await skillService.getAutoRoutingPrompt() || undefined;
-    }
-    const combinedSystemPrompt = [effectiveSkillPrompt, config.systemPrompt]
-      .filter(p => p?.trim())
-      .join('\n\n') || undefined;
+    const combinedSystemPrompt = await buildCombinedSystemPrompt(skillPrompt);
 
     await coworkService.continueSession({
       sessionId: currentSession.id,
