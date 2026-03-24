@@ -453,6 +453,45 @@ export class SqliteStore {
         ON remote_skill_service(updated_at DESC);
     `);
 
+    // Service order ledger (buyer/seller local runtime truth)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS service_orders (
+        id TEXT PRIMARY KEY,
+        role TEXT NOT NULL,
+        local_metabot_id INTEGER NOT NULL,
+        counterparty_global_metaid TEXT NOT NULL,
+        service_pin_id TEXT,
+        service_name TEXT NOT NULL,
+        payment_txid TEXT NOT NULL,
+        payment_chain TEXT NOT NULL,
+        payment_amount TEXT NOT NULL,
+        payment_currency TEXT NOT NULL,
+        order_message_pin_id TEXT,
+        cowork_session_id TEXT,
+        status TEXT NOT NULL,
+        first_response_deadline_at INTEGER NOT NULL,
+        delivery_deadline_at INTEGER NOT NULL,
+        first_response_at INTEGER,
+        delivery_message_pin_id TEXT,
+        delivered_at INTEGER,
+        failed_at INTEGER,
+        failure_reason TEXT,
+        refund_request_pin_id TEXT,
+        refund_finalize_pin_id TEXT,
+        refund_txid TEXT,
+        refund_requested_at INTEGER,
+        refund_completed_at INTEGER,
+        refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
+        next_retry_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
+      ON service_orders(status, updated_at DESC);
+    `);
+
     // MetaBot multi-agent architecture tables
     // Order: metabot_wallets first (wallet exists before metabot), then metabots with wallet_id FK.
     this.db.run(`
