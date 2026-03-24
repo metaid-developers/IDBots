@@ -104,6 +104,38 @@ test('listMetaApps registers valid APP.md entries and skips missing/invalid entr
   assert.match(buzz.prompt, /When To Use/);
 });
 
+test('listMetaApps exposes version, creator-metaid, and source-type from APP.md', () => {
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  writeFile(
+    path.join(metaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: buzz-app',
+      'description: buzz app',
+      'entry: /buzz/app/index.html',
+      'version: 1.2.0',
+      'creator-metaid: idbots',
+      'source-type: bundled-idbots',
+      '---',
+      '',
+      '## When To Use',
+      'Open buzz timeline.',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
+  assert.equal(apps.length, 1);
+
+  const buzz = apps[0];
+  assert.equal(buzz.version, '1.2.0');
+  assert.equal(buzz.creatorMetaId, 'idbots');
+  assert.equal(buzz.sourceType, 'bundled-idbots');
+  assert.equal(buzz.managedByIdbots, true);
+});
+
 test('buildCoworkAutoRoutingPrompt emits <available_metaapps> with location and entry', () => {
   const tempDir = createTempDir();
   const metaAppsRoot = path.join(tempDir, 'METAAPPs');
@@ -243,4 +275,63 @@ test('packaged root prefers userData and sync copies bundled METAAPPs into it', 
   const copiedEntry = path.join(userDataPath, 'METAAPPs', 'buzz', 'app', 'index.html');
   assert.equal(fs.existsSync(copiedAppMd), true);
   assert.equal(fs.existsSync(copiedEntry), true);
+});
+
+test('packaged sync seeds metaapps.config defaults for bundled-idbots apps', () => {
+  const tempDir = createTempDir();
+  const resourcesPath = path.join(tempDir, 'resources');
+  const bundledMetaAppsRoot = path.join(resourcesPath, 'METAAPPs');
+  const userDataPath = path.join(tempDir, 'userData');
+
+  const defaultsConfig = {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 1774224000000,
+        updatedAt: 1774224000000,
+      },
+    },
+  };
+
+  writeFile(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), JSON.stringify(defaultsConfig, null, 2));
+  writeFile(
+    path.join(bundledMetaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: buzz-app',
+      'description: bundled buzz app',
+      'entry: /buzz/app/index.html',
+      '---',
+      '',
+      'bundled prompt',
+    ].join('\n'),
+  );
+  writeFile(path.join(bundledMetaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const manager = new MetaAppManager({
+    app: {
+      isPackaged: true,
+      getPath(name) {
+        if (name === 'userData') return userDataPath;
+        throw new Error(`unexpected app path key: ${name}`);
+      },
+      getAppPath() {
+        return path.join(tempDir, 'app.asar');
+      },
+    },
+    resourcesPath,
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const userConfigPath = path.join(userDataPath, 'METAAPPs', 'metaapps.config.json');
+  assert.equal(fs.existsSync(userConfigPath), true);
+  const userConfig = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
+  assert.equal(userConfig.defaults?.buzz?.version, '1.0.0');
+  assert.equal(userConfig.defaults?.buzz?.['creator-metaid'], 'idbots');
+  assert.equal(userConfig.defaults?.buzz?.['source-type'], 'bundled-idbots');
 });

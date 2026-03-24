@@ -4,6 +4,7 @@ import path from 'path';
 
 const METAAPPS_DIR_NAME = 'METAAPPs';
 const METAAPP_FILE_NAME = 'APP.md';
+const METAAPPS_CONFIG_FILE_NAME = 'metaapps.config.json';
 const WATCH_DEBOUNCE_MS = 250;
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
@@ -24,6 +25,22 @@ type FrontmatterParseResult = {
   content: string;
 };
 
+type MetaAppSourceType = 'bundled-idbots' | 'chain-idbots' | 'chain-community' | 'manual';
+
+type MetaAppDefaultConfig = {
+  version?: string;
+  'creator-metaid'?: string;
+  'source-type'?: string;
+  installedAt?: number;
+  updatedAt?: number;
+};
+
+type MetaAppsConfig = {
+  version?: number;
+  description?: string;
+  defaults: Record<string, MetaAppDefaultConfig>;
+};
+
 export type MetaAppRecord = {
   id: string;
   name: string;
@@ -34,6 +51,10 @@ export type MetaAppRecord = {
   appPath: string;
   appRoot: string;
   prompt: string;
+  version: string;
+  creatorMetaId: string;
+  sourceType: MetaAppSourceType;
+  managedByIdbots: boolean;
 };
 
 const parseFrontmatter = (raw: string): FrontmatterParseResult => {
@@ -63,6 +84,46 @@ const isTruthy = (value?: string): boolean => {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
   return normalized === 'true' || normalized === 'yes' || normalized === '1';
+};
+
+const resolveMetaAppsConfigPath = (root: string): string => path.join(root, METAAPPS_CONFIG_FILE_NAME);
+
+const normalizeSourceType = (sourceType?: string): MetaAppSourceType => {
+  const value = String(sourceType || '').trim();
+  if (value === 'bundled-idbots' || value === 'chain-idbots' || value === 'chain-community' || value === 'manual') {
+    return value;
+  }
+  return 'manual';
+};
+
+const isIdbotsManagedSource = (sourceType: MetaAppSourceType): boolean =>
+  sourceType === 'bundled-idbots' || sourceType === 'chain-idbots';
+
+const loadMetaAppsConfigFromRoot = (root: string): MetaAppsConfig | null => {
+  const configPath = resolveMetaAppsConfigPath(root);
+  if (!fs.existsSync(configPath)) {
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw) as MetaAppsConfig;
+    const defaults = parsed && typeof parsed === 'object' && parsed.defaults && typeof parsed.defaults === 'object'
+      ? parsed.defaults
+      : {};
+    return {
+      version: parsed?.version,
+      description: parsed?.description,
+      defaults,
+    };
+  } catch (error) {
+    console.warn('[metaapps] Failed to read metaapps.config.json:', configPath, error);
+    return null;
+  }
+};
+
+const loadMetaAppDefaultsFromRoot = (root: string): Record<string, MetaAppDefaultConfig> => {
+  const config = loadMetaAppsConfigFromRoot(root);
+  return config?.defaults ?? {};
 };
 
 const extractDescription = (content: string): string => {
@@ -209,6 +270,8 @@ export class MetaAppManager {
     }
 
     try {
+      const bundledConfigPath = resolveMetaAppsConfigPath(bundledRoot);
+      const userConfigPath = resolveMetaAppsConfigPath(userRoot);
       const bundledDirs = listMetaAppDirs(bundledRoot);
       bundledDirs.forEach((dir) => {
         const appId = path.basename(dir);
@@ -223,6 +286,10 @@ export class MetaAppManager {
           errorOnExist: false,
         });
       });
+
+      if (fs.existsSync(bundledConfigPath) && !fs.existsSync(userConfigPath)) {
+        fs.cpSync(bundledConfigPath, userConfigPath, { force: false, errorOnExist: false });
+      }
     } catch (error) {
       console.warn('[metaapps] Failed to sync bundled METAAPPs:', error);
     }
@@ -230,6 +297,7 @@ export class MetaAppManager {
 
   listMetaApps(): MetaAppRecord[] {
     const root = this.ensureMetaAppsRoot();
+    const defaults = loadMetaAppDefaultsFromRoot(root);
     const dirs = listMetaAppDirs(root);
     const result: MetaAppRecord[] = [];
 
@@ -243,6 +311,10 @@ export class MetaAppManager {
         const name = (frontmatter.name || id).trim() || id;
         const description = (frontmatter.description || extractDescription(content) || name).trim();
         const entry = String(frontmatter.entry || '').trim();
+        const appDefaults = defaults[id] ?? {};
+        const version = String(frontmatter.version || appDefaults.version || '0').trim() || '0';
+        const creatorMetaId = String(frontmatter['creator-metaid'] || appDefaults['creator-metaid'] || '').trim();
+        const sourceType = normalizeSourceType(frontmatter['source-type'] || appDefaults['source-type'] || 'manual');
         const entryFilePath = resolveEntryFilePath(id, dir, entry);
         if (!entryFilePath) {
           return;
@@ -257,6 +329,10 @@ export class MetaAppManager {
           appPath: appFile,
           appRoot: dir,
           prompt: content.trim(),
+          version,
+          creatorMetaId,
+          sourceType,
+          managedByIdbots: isIdbotsManagedSource(sourceType),
         });
       } catch (error) {
         console.warn('[metaapps] Failed to parse APP.md:', dir, error);
