@@ -15,6 +15,64 @@ const writeFile = (filePath, content) => {
   fs.writeFileSync(filePath, content, 'utf8');
 };
 
+const writeJson = (filePath, value) => {
+  writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+};
+
+const writeMetaApp = (root, appId, options = {}) => {
+  const entryFile = options.entryFile ?? 'app/index.html';
+  const entry = options.entry ?? `/${appId}/${entryFile.replace(/\\/g, '/')}`;
+  const frontmatter = {
+    name: options.name ?? `${appId}-app`,
+    description: options.description ?? `${appId} app`,
+    entry,
+    ...(options.frontmatter ?? {}),
+  };
+
+  const appMdLines = ['---'];
+  for (const [key, value] of Object.entries(frontmatter)) {
+    appMdLines.push(`${key}: ${value}`);
+  }
+  appMdLines.push('---', '', options.prompt ?? `${appId} prompt`);
+
+  writeFile(path.join(root, appId, 'APP.md'), appMdLines.join('\n'));
+  writeFile(path.join(root, appId, ...entryFile.split('/')), options.entryContent ?? `<html>${appId}</html>`);
+
+  for (const extraFile of options.extraFiles ?? []) {
+    writeFile(path.join(root, appId, extraFile.relativePath), extraFile.content);
+  }
+};
+
+const createPackagedManager = () => {
+  const tempDir = createTempDir();
+  const resourcesPath = path.join(tempDir, 'resources');
+  const bundledMetaAppsRoot = path.join(resourcesPath, 'METAAPPs');
+  const userDataPath = path.join(tempDir, 'userData');
+
+  const manager = new MetaAppManager({
+    app: {
+      isPackaged: true,
+      getPath(name) {
+        if (name === 'userData') return userDataPath;
+        throw new Error(`unexpected app path key: ${name}`);
+      },
+      getAppPath() {
+        return path.join(tempDir, 'app.asar');
+      },
+    },
+    resourcesPath,
+  });
+
+  return {
+    tempDir,
+    resourcesPath,
+    bundledMetaAppsRoot,
+    userDataPath,
+    userMetaAppsRoot: path.join(userDataPath, 'METAAPPs'),
+    manager,
+  };
+};
+
 const withMetaAppsRoot = (root, run) => {
   const previous = process.env.IDBOTS_METAAPPS_ROOT;
   process.env.IDBOTS_METAAPPS_ROOT = root;
@@ -327,6 +385,9 @@ test('packaged root prefers userData and sync copies bundled METAAPPs into it', 
       'name: buzz-app',
       'description: bundled buzz app',
       'entry: /buzz/app/index.html',
+      'version: 1.0.0',
+      'creator-metaid: idbots',
+      'source-type: bundled-idbots',
       '---',
       '',
       'bundled prompt',
@@ -570,6 +631,383 @@ test('packaged sync preserves existing user metaapps.config.json and does not ov
   assert.equal(actual.defaults?.chat?.version, '1.0.0');
   assert.equal(actual.defaults?.chat?.['creator-metaid'], 'idbots');
   assert.equal(actual.defaults?.chat?.['source-type'], 'bundled-idbots');
+});
+
+test('packaged sync installs missing bundled-idbots apps into userData', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+  const startedAt = Date.now();
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v1',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  assert.equal(fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8').includes('bundled buzz v1'), true);
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.0.0');
+  assert.equal(config.defaults?.buzz?.['creator-metaid'], 'idbots');
+  assert.equal(config.defaults?.buzz?.['source-type'], 'bundled-idbots');
+  assert.equal(typeof config.defaults?.buzz?.installedAt, 'number');
+  assert.equal(typeof config.defaults?.buzz?.updatedAt, 'number');
+  assert.notEqual(config.defaults?.buzz?.installedAt, 111);
+  assert.notEqual(config.defaults?.buzz?.updatedAt, 111);
+  assert.equal(config.defaults?.buzz?.installedAt >= startedAt, true);
+  assert.equal(config.defaults?.buzz?.updatedAt >= config.defaults?.buzz?.installedAt, true);
+});
+
+test('packaged sync upgrades bundled-idbots app when bundled version is higher', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+
+  writeJson(path.join(userMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'User defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+    },
+  });
+  writeMetaApp(userMetaAppsRoot, 'buzz', {
+    description: 'local buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'local buzz v1',
+    extraFiles: [
+      { relativePath: 'stale.txt', content: 'stale local file' },
+    ],
+  });
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '1.1.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '1.1.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v1.1',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const appMd = fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8');
+  assert.equal(appMd.includes('bundled buzz v1.1'), true);
+  assert.equal(fs.existsSync(path.join(userMetaAppsRoot, 'buzz', 'stale.txt')), false);
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.1.0');
+  assert.equal(config.defaults?.buzz?.installedAt, 111);
+  assert.equal(typeof config.defaults?.buzz?.updatedAt, 'number');
+  assert.notEqual(config.defaults?.buzz?.updatedAt, 111);
+});
+
+test('packaged sync does not overwrite same-version local app', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+
+  writeJson(path.join(userMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'User defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+    },
+  });
+  writeMetaApp(userMetaAppsRoot, 'buzz', {
+    description: 'local buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'user customized buzz',
+  });
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v1',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const appMd = fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8');
+  assert.equal(appMd.includes('user customized buzz'), true);
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.0.0');
+  assert.equal(config.defaults?.buzz?.installedAt, 111);
+  assert.equal(config.defaults?.buzz?.updatedAt, 111);
+});
+
+test('packaged sync does not downgrade when bundled version is lower', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+
+  writeJson(path.join(userMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'User defaults',
+    defaults: {
+      buzz: {
+        version: '1.2.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+    },
+  });
+  writeMetaApp(userMetaAppsRoot, 'buzz', {
+    description: 'local buzz app',
+    frontmatter: {
+      version: '1.2.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'local buzz v1.2',
+  });
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '1.1.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '1.1.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v1.1',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const appMd = fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8');
+  assert.equal(appMd.includes('local buzz v1.2'), true);
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.2.0');
+  assert.equal(config.defaults?.buzz?.updatedAt, 111);
+});
+
+test('packaged sync does not overwrite when creator-metaid differs', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+
+  writeJson(path.join(userMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'User defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'alice',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+    },
+  });
+  writeMetaApp(userMetaAppsRoot, 'buzz', {
+    description: 'alice buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'alice',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'alice buzz',
+  });
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '2.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '2.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v2',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const appMd = fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8');
+  assert.equal(appMd.includes('alice buzz'), true);
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.0.0');
+  assert.equal(config.defaults?.buzz?.['creator-metaid'], 'alice');
+  assert.equal(config.defaults?.buzz?.updatedAt, 111);
+});
+
+test('packaged sync does not overwrite chain-community or manual local apps', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+
+  writeJson(path.join(userMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'User defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'community',
+        'source-type': 'chain-community',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+      chat: {
+        version: '1.0.0',
+        'creator-metaid': 'user',
+        'source-type': 'manual',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(userMetaAppsRoot, 'buzz', {
+    description: 'community buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'community',
+      'source-type': 'chain-community',
+    },
+    prompt: 'community buzz',
+  });
+  writeMetaApp(userMetaAppsRoot, 'chat', {
+    description: 'manual chat app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'user',
+      'source-type': 'manual',
+    },
+    prompt: 'manual chat',
+  });
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '2.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 333,
+        updatedAt: 333,
+      },
+      chat: {
+        version: '2.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 444,
+        updatedAt: 444,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '2.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v2',
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'chat', {
+    description: 'bundled chat app',
+    frontmatter: {
+      version: '2.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled chat v2',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const buzzAppMd = fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8');
+  const chatAppMd = fs.readFileSync(path.join(userMetaAppsRoot, 'chat', 'APP.md'), 'utf8');
+  assert.equal(buzzAppMd.includes('community buzz'), true);
+  assert.equal(chatAppMd.includes('manual chat'), true);
+
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.0.0');
+  assert.equal(config.defaults?.buzz?.['source-type'], 'chain-community');
+  assert.equal(config.defaults?.chat?.version, '1.0.0');
+  assert.equal(config.defaults?.chat?.['source-type'], 'manual');
 });
 
 test('listMetaApps keeps managed metadata from registry even after APP.md frontmatter edits', () => {

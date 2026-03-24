@@ -99,6 +99,26 @@ const normalizeSourceType = (sourceType?: string): MetaAppSourceType => {
 const isIdbotsManagedSource = (sourceType: MetaAppSourceType): boolean =>
   sourceType === 'bundled-idbots' || sourceType === 'chain-idbots';
 
+const compareVersions = (a?: string, b?: string): number => {
+  const left = String(a ?? '').trim();
+  const right = String(b ?? '').trim();
+  const leftParts = left.split('.');
+  const rightParts = right.split('.');
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = Number.parseInt(leftParts[index] ?? '0', 10);
+    const rightPart = Number.parseInt(rightParts[index] ?? '0', 10);
+    const normalizedLeft = Number.isNaN(leftPart) ? 0 : leftPart;
+    const normalizedRight = Number.isNaN(rightPart) ? 0 : rightPart;
+    if (normalizedLeft !== normalizedRight) {
+      return normalizedLeft > normalizedRight ? 1 : -1;
+    }
+  }
+
+  return 0;
+};
+
 const loadMetaAppsConfigFromRoot = (root: string): MetaAppsConfig | null => {
   const configPath = resolveMetaAppsConfigPath(root);
   if (!fs.existsSync(configPath)) {
@@ -132,42 +152,28 @@ const writeMetaAppsConfigToRoot = (root: string, config: MetaAppsConfig): void =
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 };
 
-const seedBundledDefaultsForSyncedApps = (userRoot: string, bundledRoot: string, syncedAppIds: Set<string>): void => {
-  if (syncedAppIds.size === 0) {
-    return;
+const readMetaAppFile = (appFilePath: string): FrontmatterParseResult | null => {
+  if (!fs.existsSync(appFilePath)) {
+    return null;
   }
 
-  const bundledConfig = loadMetaAppsConfigFromRoot(bundledRoot);
-  if (!bundledConfig) {
-    return;
+  try {
+    const raw = fs.readFileSync(appFilePath, 'utf8');
+    return parseFrontmatter(raw);
+  } catch (error) {
+    console.warn('[metaapps] Failed to read APP.md:', appFilePath, error);
+    return null;
   }
+};
 
-  const userConfig = loadMetaAppsConfigFromRoot(userRoot);
-  const defaults: Record<string, MetaAppDefaultConfig> = {
-    ...(userConfig?.defaults ?? {}),
+const loadMetaAppDefaultFromDir = (appDir: string): MetaAppDefaultConfig => {
+  const parsed = readMetaAppFile(path.join(appDir, METAAPP_FILE_NAME));
+  const frontmatter = parsed?.frontmatter ?? {};
+  return {
+    version: String(frontmatter.version ?? '0').trim() || '0',
+    'creator-metaid': String(frontmatter['creator-metaid'] ?? '').trim(),
+    'source-type': normalizeSourceType(frontmatter['source-type'] ?? 'manual'),
   };
-  let addedDefaults = 0;
-
-  syncedAppIds.forEach((appId) => {
-    if (Object.prototype.hasOwnProperty.call(defaults, appId)) {
-      return;
-    }
-    const bundledDefault = bundledConfig.defaults?.[appId];
-    if (bundledDefault && typeof bundledDefault === 'object') {
-      defaults[appId] = { ...bundledDefault };
-      addedDefaults += 1;
-    }
-  });
-
-  if (addedDefaults === 0) {
-    return;
-  }
-
-  writeMetaAppsConfigToRoot(userRoot, {
-    version: userConfig?.version ?? bundledConfig.version,
-    description: userConfig?.description ?? bundledConfig.description,
-    defaults,
-  });
 };
 
 const extractDescription = (content: string): string => {
@@ -314,23 +320,62 @@ export class MetaAppManager {
     }
 
     try {
+      const bundledDefaults = loadMetaAppDefaultsFromRoot(bundledRoot);
+      const userDefaults = loadMetaAppDefaultsFromRoot(userRoot);
       const syncedAppIds = new Set<string>();
       const bundledDirs = listMetaAppDirs(bundledRoot);
       bundledDirs.forEach((dir) => {
         const appId = path.basename(dir);
         const targetDir = path.join(userRoot, appId);
-        if (fs.existsSync(targetDir)) {
+        const bundledDefault = bundledDefaults[appId] ?? loadMetaAppDefaultFromDir(dir);
+        const bundledVersion = String(bundledDefault.version ?? '0').trim() || '0';
+        const bundledCreatorMetaId = String(bundledDefault['creator-metaid'] ?? '').trim();
+        const bundledSourceType = normalizeSourceType(bundledDefault['source-type'] ?? 'manual');
+        if (!isIdbotsManagedSource(bundledSourceType)) {
           return;
         }
+
+        if (!fs.existsSync(targetDir)) {
+          fs.cpSync(dir, targetDir, {
+            recursive: true,
+            dereference: true,
+            force: false,
+            errorOnExist: false,
+          });
+          syncedAppIds.add(appId);
+          return;
+        }
+
+        const localDefault = userDefaults[appId];
+        if (!localDefault) {
+          return;
+        }
+
+        const localCreatorMetaId = String(localDefault['creator-metaid'] ?? '').trim();
+        if (localCreatorMetaId !== bundledCreatorMetaId) {
+          return;
+        }
+
+        const localSourceType = normalizeSourceType(localDefault['source-type'] ?? 'manual');
+        if (!isIdbotsManagedSource(localSourceType)) {
+          return;
+        }
+
+        const localVersion = String(localDefault.version ?? '0').trim() || '0';
+        if (compareVersions(bundledVersion, localVersion) <= 0) {
+          return;
+        }
+
+        fs.rmSync(targetDir, { recursive: true, force: true });
         fs.cpSync(dir, targetDir, {
           recursive: true,
           dereference: true,
-          force: false,
+          force: true,
           errorOnExist: false,
         });
         syncedAppIds.add(appId);
       });
-      seedBundledDefaultsForSyncedApps(userRoot, bundledRoot, syncedAppIds);
+      this.mergeBundledMetaAppDefaults(userRoot, bundledRoot, syncedAppIds);
     } catch (error) {
       console.warn('[metaapps] Failed to sync bundled METAAPPs:', error);
     }
@@ -451,6 +496,49 @@ export class MetaAppManager {
       clearTimeout(this.notifyTimer);
       this.notifyTimer = null;
     }
+  }
+
+  private writeMetaAppsConfig(root: string, config: MetaAppsConfig): void {
+    writeMetaAppsConfigToRoot(root, config);
+  }
+
+  private mergeBundledMetaAppDefaults(
+    userRoot: string,
+    bundledRoot: string,
+    syncedAppIds: Set<string>
+  ): void {
+    if (syncedAppIds.size === 0) {
+      return;
+    }
+
+    const bundledConfig = loadMetaAppsConfigFromRoot(bundledRoot);
+    const userConfig = loadMetaAppsConfigFromRoot(userRoot);
+    const bundledDefaults = bundledConfig?.defaults ?? {};
+    const defaults: Record<string, MetaAppDefaultConfig> = {
+      ...(userConfig?.defaults ?? {}),
+    };
+    const now = Date.now();
+
+    syncedAppIds.forEach((appId) => {
+      const bundledDefault = bundledDefaults[appId] ?? loadMetaAppDefaultFromDir(path.join(bundledRoot, appId));
+      const existing = defaults[appId] ?? {};
+      defaults[appId] = {
+        ...existing,
+        version: String(bundledDefault.version ?? existing.version ?? '0').trim() || '0',
+        'creator-metaid': String(
+          bundledDefault['creator-metaid'] ?? existing['creator-metaid'] ?? ''
+        ).trim(),
+        'source-type': normalizeSourceType(bundledDefault['source-type'] ?? existing['source-type'] ?? 'manual'),
+        installedAt: typeof existing.installedAt === 'number' ? existing.installedAt : now,
+        updatedAt: now,
+      };
+    });
+
+    this.writeMetaAppsConfig(userRoot, {
+      version: userConfig?.version ?? bundledConfig?.version,
+      description: userConfig?.description ?? bundledConfig?.description,
+      defaults,
+    });
   }
 
   private scheduleNotify(): void {
