@@ -457,7 +457,7 @@ export class SqliteStore {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS service_orders (
         id TEXT PRIMARY KEY,
-        role TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('buyer', 'seller')),
         local_metabot_id INTEGER NOT NULL,
         counterparty_global_metaid TEXT NOT NULL,
         service_pin_id TEXT,
@@ -468,7 +468,7 @@ export class SqliteStore {
         payment_currency TEXT NOT NULL,
         order_message_pin_id TEXT,
         cowork_session_id TEXT,
-        status TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
         first_response_deadline_at INTEGER NOT NULL,
         delivery_deadline_at INTEGER NOT NULL,
         first_response_at INTEGER,
@@ -490,6 +490,46 @@ export class SqliteStore {
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
+    `);
+    try {
+      this.db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
+        ON service_orders(local_metabot_id, role, payment_txid);
+      `);
+    } catch (error) {
+      console.warn('Failed to create service_orders unique dedupe index:', error);
+    }
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_insert
+      BEFORE INSERT ON service_orders
+      WHEN NEW.role NOT IN ('buyer', 'seller')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.role');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_update
+      BEFORE UPDATE OF role ON service_orders
+      WHEN NEW.role NOT IN ('buyer', 'seller')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.role');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_insert
+      BEFORE INSERT ON service_orders
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.status');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_update
+      BEFORE UPDATE OF status ON service_orders
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.status');
+      END;
     `);
 
     // MetaBot multi-agent architecture tables

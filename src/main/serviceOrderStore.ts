@@ -90,7 +90,7 @@ export interface ServiceOrderCreateInput {
 const SERVICE_ORDER_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS service_orders (
     id TEXT PRIMARY KEY,
-    role TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('buyer', 'seller')),
     local_metabot_id INTEGER NOT NULL,
     counterparty_global_metaid TEXT NOT NULL,
     service_pin_id TEXT,
@@ -101,7 +101,7 @@ const SERVICE_ORDER_TABLE_SQL = `
     payment_currency TEXT NOT NULL,
     order_message_pin_id TEXT,
     cowork_session_id TEXT,
-    status TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
     first_response_deadline_at INTEGER NOT NULL,
     delivery_deadline_at INTEGER NOT NULL,
     first_response_at INTEGER,
@@ -137,6 +137,46 @@ export class ServiceOrderStore {
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
     `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_insert
+      BEFORE INSERT ON service_orders
+      WHEN NEW.role NOT IN ('buyer', 'seller')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.role');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_update
+      BEFORE UPDATE OF role ON service_orders
+      WHEN NEW.role NOT IN ('buyer', 'seller')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.role');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_insert
+      BEFORE INSERT ON service_orders
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.status');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_update
+      BEFORE UPDATE OF status ON service_orders
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.status');
+      END;
+    `);
+    try {
+      this.db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
+        ON service_orders(local_metabot_id, role, payment_txid);
+      `);
+    } catch (error) {
+      console.warn('Failed to create service_orders unique dedupe index:', error);
+    }
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
@@ -201,37 +241,51 @@ export class ServiceOrderStore {
   createOrder(input: ServiceOrderCreateInput): ServiceOrderRecord {
     const now = input.now ?? Date.now();
     const deadlines = computeOrderDeadlines(now);
+    const existing = this.getOne<ServiceOrderRow>(
+      `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
+      [input.localMetabotId, input.role, input.paymentTxid]
+    );
+    if (existing) return this.mapRow(existing);
     const id = uuidv4();
 
-    this.db.run(`
-      INSERT INTO service_orders (
-        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
-        payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id, cowork_session_id,
-        status, first_response_deadline_at, delivery_deadline_at, first_response_at, delivery_message_pin_id,
-        delivered_at, failed_at, failure_reason, refund_request_pin_id, refund_finalize_pin_id, refund_txid,
-        refund_requested_at, refund_completed_at, refund_apply_retry_count, next_retry_at, created_at, updated_at
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
+    try {
+      this.db.run(`
+        INSERT INTO service_orders (
+          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+          payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id, cowork_session_id,
+          status, first_response_deadline_at, delivery_deadline_at, first_response_at, delivery_message_pin_id,
+          delivered_at, failed_at, failure_reason, refund_request_pin_id, refund_finalize_pin_id, refund_txid,
+          refund_requested_at, refund_completed_at, refund_apply_retry_count, next_retry_at, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
+        );
+      `, [
+        id,
+        input.role,
+        input.localMetabotId,
+        input.counterpartyGlobalMetaid,
+        input.servicePinId ?? null,
+        input.serviceName,
+        input.paymentTxid,
+        input.paymentChain ?? 'mvc',
+        input.paymentAmount,
+        input.paymentCurrency ?? 'MVC',
+        input.orderMessagePinId ?? null,
+        input.coworkSessionId ?? null,
+        input.status ?? 'awaiting_first_response',
+        deadlines.firstResponseDeadlineAt,
+        deadlines.deliveryDeadlineAt,
+        now,
+        now,
+      ]);
+    } catch (error) {
+      const raced = this.getOne<ServiceOrderRow>(
+        `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
+        [input.localMetabotId, input.role, input.paymentTxid]
       );
-    `, [
-      id,
-      input.role,
-      input.localMetabotId,
-      input.counterpartyGlobalMetaid,
-      input.servicePinId ?? null,
-      input.serviceName,
-      input.paymentTxid,
-      input.paymentChain ?? 'mvc',
-      input.paymentAmount,
-      input.paymentCurrency ?? 'MVC',
-      input.orderMessagePinId ?? null,
-      input.coworkSessionId ?? null,
-      input.status ?? 'awaiting_first_response',
-      deadlines.firstResponseDeadlineAt,
-      deadlines.deliveryDeadlineAt,
-      now,
-      now,
-    ]);
+      if (raced) return this.mapRow(raced);
+      throw error;
+    }
 
     this.saveDb();
     return this.getOrderById(id)!;

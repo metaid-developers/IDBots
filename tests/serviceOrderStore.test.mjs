@@ -98,3 +98,95 @@ test('store createOrder defaults to SLA deadlines based on current time', async 
   assert.equal(order.firstResponseDeadlineAt, now + 5 * 60_000);
   assert.equal(order.deliveryDeadlineAt, now + 15 * 60_000);
 });
+
+test('store createOrder is idempotent for localMetabotId + role + paymentTxid', async () => {
+  const { db, store } = await createServiceOrderStoreForTest();
+  const baseInput = {
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: 'c'.repeat(64),
+    paymentAmount: '2.34',
+  };
+
+  const first = store.createOrder(baseInput);
+  const second = store.createOrder(baseInput);
+
+  assert.equal(second.id, first.id);
+  const rowCount = db.exec(
+    'SELECT COUNT(*) FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ?',
+    [1, 'buyer', 'c'.repeat(64)]
+  )[0].values[0][0];
+  assert.equal(rowCount, 1);
+});
+
+test('service_orders schema rejects invalid role values', async () => {
+  const { db, store } = await createServiceOrderStoreForTest();
+  const now = Date.now();
+  const deadlines = {
+    first: now + 5 * 60_000,
+    second: now + 15 * 60_000,
+  };
+
+  assert.throws(() => {
+    db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'invalid-role-order',
+      'provider',
+      1,
+      'counterparty-global-metaid',
+      'service-name',
+      'd'.repeat(64),
+      'mvc',
+      '1.00',
+      'MVC',
+      'awaiting_first_response',
+      deadlines.first,
+      deadlines.second,
+      now,
+      now,
+    ]);
+  });
+
+  void store;
+});
+
+test('service_orders schema rejects invalid status values', async () => {
+  const { db } = await createServiceOrderStoreForTest();
+  const now = Date.now();
+  const deadlines = {
+    first: now + 5 * 60_000,
+    second: now + 15 * 60_000,
+  };
+
+  assert.throws(() => {
+    db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'invalid-status-order',
+      'buyer',
+      1,
+      'counterparty-global-metaid',
+      'service-name',
+      'e'.repeat(64),
+      'mvc',
+      '1.00',
+      'MVC',
+      'delivered',
+      deadlines.first,
+      deadlines.second,
+      now,
+      now,
+    ]);
+  });
+});
