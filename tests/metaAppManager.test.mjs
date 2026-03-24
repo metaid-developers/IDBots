@@ -415,3 +415,154 @@ test('packaged sync seeds metaapps.config defaults for bundled-idbots apps', () 
   assert.equal(userConfig.defaults?.buzz?.['creator-metaid'], 'idbots');
   assert.equal(userConfig.defaults?.buzz?.['source-type'], 'bundled-idbots');
 });
+
+test('packaged sync does not classify pre-existing same-id user app as bundled-idbots via seeded config', () => {
+  const tempDir = createTempDir();
+  const resourcesPath = path.join(tempDir, 'resources');
+  const bundledMetaAppsRoot = path.join(resourcesPath, 'METAAPPs');
+  const userDataPath = path.join(tempDir, 'userData');
+  const userMetaAppsRoot = path.join(userDataPath, 'METAAPPs');
+
+  writeFile(
+    path.join(userMetaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: my-local-buzz',
+      'description: user-owned local app with same id',
+      'entry: /buzz/app/index.html',
+      '---',
+      '',
+      'user local buzz',
+    ].join('\n'),
+  );
+  writeFile(path.join(userMetaAppsRoot, 'buzz', 'app', 'index.html'), '<html>local-buzz</html>');
+
+  const bundledConfig = {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+      },
+    },
+  };
+  writeFile(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), JSON.stringify(bundledConfig, null, 2));
+  writeFile(
+    path.join(bundledMetaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: bundled-buzz',
+      'description: bundled buzz app',
+      'entry: /buzz/app/index.html',
+      'version: 1.0.0',
+      'creator-metaid: idbots',
+      'source-type: bundled-idbots',
+      '---',
+      '',
+      'bundled buzz',
+    ].join('\n'),
+  );
+  writeFile(path.join(bundledMetaAppsRoot, 'buzz', 'app', 'index.html'), '<html>bundled-buzz</html>');
+
+  const manager = new MetaAppManager({
+    app: {
+      isPackaged: true,
+      getPath(name) {
+        if (name === 'userData') return userDataPath;
+        throw new Error(`unexpected app path key: ${name}`);
+      },
+      getAppPath() {
+        return path.join(tempDir, 'app.asar');
+      },
+    },
+    resourcesPath,
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const apps = manager.listMetaApps();
+  assert.equal(apps.length, 1);
+  const buzz = apps[0];
+  assert.equal(buzz.id, 'buzz');
+  assert.equal(buzz.version, '0');
+  assert.equal(buzz.creatorMetaId, '');
+  assert.equal(buzz.sourceType, 'manual');
+  assert.equal(buzz.managedByIdbots, false);
+});
+
+test('packaged sync preserves existing user metaapps.config.json and does not overwrite it', () => {
+  const tempDir = createTempDir();
+  const resourcesPath = path.join(tempDir, 'resources');
+  const bundledMetaAppsRoot = path.join(resourcesPath, 'METAAPPs');
+  const userDataPath = path.join(tempDir, 'userData');
+  const userMetaAppsRoot = path.join(userDataPath, 'METAAPPs');
+  const userConfigPath = path.join(userMetaAppsRoot, 'metaapps.config.json');
+
+  const userConfig = {
+    version: 1,
+    description: 'user config should be preserved',
+    defaults: {
+      buzz: {
+        version: '9.9.9',
+        'creator-metaid': 'alice',
+        'source-type': 'manual',
+      },
+    },
+  };
+  writeFile(userConfigPath, JSON.stringify(userConfig, null, 2));
+
+  const bundledConfig = {
+    version: 1,
+    description: 'bundled config should not overwrite user config',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+      },
+      chat: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+      },
+    },
+  };
+  writeFile(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), JSON.stringify(bundledConfig, null, 2));
+  writeFile(
+    path.join(bundledMetaAppsRoot, 'chat', 'APP.md'),
+    [
+      '---',
+      'name: chat-app',
+      'description: bundled chat app',
+      'entry: /chat/app/chat.html',
+      'version: 1.0.0',
+      'creator-metaid: idbots',
+      'source-type: bundled-idbots',
+      '---',
+      '',
+      'bundled chat',
+    ].join('\n'),
+  );
+  writeFile(path.join(bundledMetaAppsRoot, 'chat', 'app', 'chat.html'), '<html>chat</html>');
+
+  const manager = new MetaAppManager({
+    app: {
+      isPackaged: true,
+      getPath(name) {
+        if (name === 'userData') return userDataPath;
+        throw new Error(`unexpected app path key: ${name}`);
+      },
+      getAppPath() {
+        return path.join(tempDir, 'app.asar');
+      },
+    },
+    resourcesPath,
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const actual = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
+  assert.deepEqual(actual, userConfig);
+});

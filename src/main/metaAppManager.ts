@@ -126,6 +126,46 @@ const loadMetaAppDefaultsFromRoot = (root: string): Record<string, MetaAppDefaul
   return config?.defaults ?? {};
 };
 
+const writeMetaAppsConfigToRoot = (root: string, config: MetaAppsConfig): void => {
+  const configPath = resolveMetaAppsConfigPath(root);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+};
+
+const seedBundledDefaultsForSyncedApps = (userRoot: string, bundledRoot: string, syncedAppIds: Set<string>): void => {
+  if (syncedAppIds.size === 0) {
+    return;
+  }
+
+  const userConfigPath = resolveMetaAppsConfigPath(userRoot);
+  if (fs.existsSync(userConfigPath)) {
+    return;
+  }
+
+  const bundledConfig = loadMetaAppsConfigFromRoot(bundledRoot);
+  if (!bundledConfig) {
+    return;
+  }
+
+  const defaults: Record<string, MetaAppDefaultConfig> = {};
+  syncedAppIds.forEach((appId) => {
+    const bundledDefault = bundledConfig.defaults?.[appId];
+    if (bundledDefault && typeof bundledDefault === 'object') {
+      defaults[appId] = { ...bundledDefault };
+    }
+  });
+
+  if (Object.keys(defaults).length === 0) {
+    return;
+  }
+
+  writeMetaAppsConfigToRoot(userRoot, {
+    version: bundledConfig.version,
+    description: bundledConfig.description,
+    defaults,
+  });
+};
+
 const extractDescription = (content: string): string => {
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
@@ -270,8 +310,7 @@ export class MetaAppManager {
     }
 
     try {
-      const bundledConfigPath = resolveMetaAppsConfigPath(bundledRoot);
-      const userConfigPath = resolveMetaAppsConfigPath(userRoot);
+      const syncedAppIds = new Set<string>();
       const bundledDirs = listMetaAppDirs(bundledRoot);
       bundledDirs.forEach((dir) => {
         const appId = path.basename(dir);
@@ -285,11 +324,9 @@ export class MetaAppManager {
           force: false,
           errorOnExist: false,
         });
+        syncedAppIds.add(appId);
       });
-
-      if (fs.existsSync(bundledConfigPath) && !fs.existsSync(userConfigPath)) {
-        fs.cpSync(bundledConfigPath, userConfigPath, { force: false, errorOnExist: false });
-      }
+      seedBundledDefaultsForSyncedApps(userRoot, bundledRoot, syncedAppIds);
     } catch (error) {
       console.warn('[metaapps] Failed to sync bundled METAAPPs:', error);
     }
