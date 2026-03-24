@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { ChevronDownIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import { RootState, store } from '../../store';
@@ -139,6 +139,25 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const quickActions = useSelector((state: RootState) => state.quickAction.actions);
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
 
+  const loadSelectableMetaBots = useCallback(async (): Promise<MetaBotForSelector[]> => {
+    const [selectorResult, fullListResult] = await Promise.all([
+      window.electron?.idbots?.getMetaBots?.(),
+      window.electron?.metabot?.list?.(),
+    ]);
+    if (!selectorResult?.success || !selectorResult.list) {
+      return [];
+    }
+    if (!fullListResult?.success || !fullListResult.list) {
+      return selectorResult.list;
+    }
+    const llmConfiguredIds = new Set(
+      fullListResult.list
+        .filter((metabot) => metabot.enabled && typeof metabot.llm_id === 'string' && metabot.llm_id.trim())
+        .map((metabot) => metabot.id)
+    );
+    return selectorResult.list.filter((metabot) => llmConfiguredIds.has(metabot.id));
+  }, []);
+
   const buildApiConfigNotice = (error?: string) => {
     const baseNotice = i18nService.t('coworkModelSettingsRequired');
     if (!error) {
@@ -156,38 +175,47 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   useEffect(() => {
     const loadMetaBots = async () => {
-      const result = await window.electron?.idbots?.getMetaBots?.();
-      if (result?.success && result.list && result.list.length > 0) {
-        setMetabots(result.list);
+      const list = await loadSelectableMetaBots();
+      setMetabots(list);
+      if (list.length > 0) {
         const preferred = store.getState().cowork.preferredMetabotId;
-        if (preferred != null && result.list.some((m) => m.id === preferred)) {
+        if (preferred != null && list.some((m) => m.id === preferred)) {
           setSelectedMetabotId(preferred);
           dispatch(clearPreferredMetabotId());
-        } else {
-          const twin = result.list.find((m) => m.metabot_type === 'twin');
-          setSelectedMetabotId(twin ? twin.id : result.list[0].id);
         }
       }
     };
     void loadMetaBots();
-  }, [dispatch]);
+  }, [dispatch, loadSelectableMetaBots]);
 
   // When user just restored a MetaBot (preferredMetabotId set), refetch list and select it so the new bot appears and is selected
   useEffect(() => {
     if (preferredMetabotId == null) return;
     let cancelled = false;
     const refetchAndSelect = async () => {
-      const result = await window.electron?.idbots?.getMetaBots?.();
-      if (cancelled || !result?.success || !result.list?.length) return;
-      setMetabots(result.list);
-      if (result.list.some((m) => m.id === preferredMetabotId)) {
+      const list = await loadSelectableMetaBots();
+      if (cancelled) return;
+      setMetabots(list);
+      if (list.some((m) => m.id === preferredMetabotId)) {
         setSelectedMetabotId(preferredMetabotId);
       }
       dispatch(clearPreferredMetabotId());
     };
     void refetchAndSelect();
     return () => { cancelled = true; };
-  }, [preferredMetabotId, dispatch]);
+  }, [preferredMetabotId, dispatch, loadSelectableMetaBots]);
+
+  useEffect(() => {
+    if (metabots.length === 0) {
+      setSelectedMetabotId(null);
+      return;
+    }
+    if (selectedMetabotId != null && metabots.some((metabot) => metabot.id === selectedMetabotId)) {
+      return;
+    }
+    const twin = metabots.find((metabot) => metabot.metabot_type === 'twin');
+    setSelectedMetabotId(twin ? twin.id : metabots[0].id);
+  }, [metabots, selectedMetabotId]);
 
   // Keep selector in sync when opening a session (so "new chat" uses the same MetaBot as the current session)
   useEffect(() => {

@@ -11,6 +11,10 @@ source-type: bundled-idbots
 ## When To Use
 适合查看链上 buzz 流、热门内容和关注动态。
 
-## Examples
+## 栏目
+### 首页
 - `/buzz/app/index.html`
-- `/buzz/app/index.html?view=hot`
+### 最新
+- `/buzz/app/index.html#/home/new`
+### 热门
+- `/buzz/app/index.html#/home/hot`

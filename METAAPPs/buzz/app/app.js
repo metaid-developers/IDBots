@@ -6,6 +6,13 @@
  * - route/app-store sync
  * - component lazy loading
  */
+import {
+  buildBuzzRouteUrl,
+  getBuzzRoutePathFromLocation,
+  getCurrentBuzzRouteUrl,
+  normalizeBuzzRoutePath,
+  resolveBuzzRouteMode,
+} from '../idframework/utils/buzz-route.js';
 
 window.ServiceLocator = {
   metaid_man: 'https://www.show.now/man',
@@ -16,6 +23,7 @@ window.ServiceLocator = {
 
 window.IDFrameworkConfig = {
   ...(window.IDFrameworkConfig || {}),
+  buzzRouteMode: 'hash',
   routeComponentBasePath: '@idf/components/',
 };
 
@@ -468,37 +476,21 @@ function parseProfileMetaid(pathname) {
 }
 
 function isDemoDocumentPath() {
-  var pathname = String(window.location.pathname || '');
-  return /\/demo-buzz\/index\.html$/.test(pathname);
+  return resolveBuzzRouteMode(window.location, window) === 'hash';
 }
 
 function normalizeRoutePath(pathname) {
-  var path = String(pathname || '').trim();
-  if (!path) return '/home/new';
-  if (path[0] !== '/') path = '/' + path;
-  return path;
+  return normalizeBuzzRoutePath(pathname);
 }
 
 function getRoutePathFromLocation() {
-  if (isDemoDocumentPath()) {
-    var hash = String(window.location.hash || '').replace(/^#/, '').trim();
-    if (!hash) return '/home/new';
-    return normalizeRoutePath(hash);
-  }
-  return normalizeRoutePath(window.location.pathname || '/home/new');
+  return getBuzzRoutePathFromLocation(window.location, window);
 }
 
 function replaceRouteInLocation(nextPath) {
-  var routePath = normalizeRoutePath(nextPath);
-  if (isDemoDocumentPath()) {
-    var targetHash = '#' + routePath;
-    if (window.location.hash === targetHash) return;
-    var base = String(window.location.pathname || '/demo-buzz/index.html') + String(window.location.search || '');
-    window.history.replaceState({}, '', base + targetHash);
-    return;
-  }
-  if (window.location.pathname === routePath) return;
-  window.history.replaceState({}, '', routePath);
+  var targetUrl = buildBuzzRouteUrl(window.location, nextPath, window);
+  if (getCurrentBuzzRouteUrl(window.location, window) === targetUrl) return;
+  window.history.replaceState({}, '', targetUrl);
 }
 
 function normalizeRoute(pathname) {

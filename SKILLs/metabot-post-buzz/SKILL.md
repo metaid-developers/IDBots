@@ -18,6 +18,7 @@ official: true
    - 读取文件 → base64 编码 → 以 `/file` 协议上链 → 获得 pinId → 组装 `metafile://<pinId>.<ext>` URI
    - 将所有 URI 填入 SimpleBuzz 的 `attachments` 数组
 4. **直接执行命令**：调用 `scripts/post-buzz.js` 脚本，传入 `--content` 和 `--attachment` 参数即可。**你不需要自行读取文件内容或做 base64 编码，脚本会处理一切。**
+5. **展示 MetaApp 路径**，调用 `resolve_metaapp_url` 获取本地buzz相关应用的URL，并在回复中输出可点击地址，例如 `[在Buzz MetaApp 查看](http://127.0.0.1:PORT/...)`。除非用户明确要求“打开 / 启动 / 进入” MetaApp，否则不要调用 `open_metaapp` 自动打开。
 
 ## 💻 命令语法 (Command)
 
@@ -116,4 +117,4 @@ node "$SKILLS_ROOT/metabot-post-buzz/scripts/post-buzz.js" \
 7. **结果判定**：退出码 `0` 即成功；优先使用本技能输出结果，不要绕开技能改用临时自定义链路。
 8. **网络参数**：用户指定目标网络时（如"发到 doge 网络"），必须加 `--network doge`。未指定时默认 `mvc`。
 9. **脚本路径**：始终使用 `$SKILLS_ROOT/metabot-post-buzz/scripts/post-buzz.js`，不要使用 `.ts` 后缀。
-10. **返回本地 MetaApp 链接**：当发送成功后，如本机已安装buzz 相关的 MetaApp，调用 `resolve_metaapp_url` 获取本地应用的URL，并在回复中输出可点击地址，例如 `[在本地 Buzz MetaApp 查看](http://127.0.0.1:PORT/...)`。除非用户明确要求“打开 / 启动 / 进入” MetaApp，否则不要调用 `open_metaapp` 自动打开。
+

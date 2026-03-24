@@ -80,6 +80,13 @@ node --test tests/*.test.mjs
 - Do not remove checked-in `resources/man-p2p/*` assets unless the packaging strategy is intentionally changed.
 - The team preference is `main` as the only long-lived shared branch. Temporary branches should be short-lived and deleted after merge.
 
+## Database Upgrade Safety
+
+- Treat user-directory SQLite databases as persistent upgrade state. Auto-update does not replace or reset them.
+- Any database schema change must include a safe, idempotent first-run migration path so upgraded users get required tables, columns, indexes, and defaults before new code depends on them.
+- Any change to field meaning, data shape, or storage semantics must include an explicit migration or compatibility strategy for existing user data on first launch after upgrade.
+- Do not delete, reset, or casually discard user data. Maintain old-user database continuity across releases unless a deliberate, well-documented migration plan says otherwise.
+
 ## Known Useful Files
 
 - `src/main/services/p2pIndexerService.ts` — bundled subprocess lifecycle, health checks, status polling

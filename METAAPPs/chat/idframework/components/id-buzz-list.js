@@ -3,6 +3,13 @@ import './id-post-buzz.js';
 import './id-image-viewer.js';
 import './id-buzz-actions.js';
 import './id-avatar.js';
+import {
+  buildBuzzRouteUrl,
+  getBuzzRoutePathFromLocation,
+  getCurrentBuzzRouteUrl,
+  normalizeBuzzRoutePath,
+  resolveBuzzRouteMode,
+} from '../utils/buzz-route.js';
 
 /**
  * id-buzz-list - Web Component for buzz feed rendering
@@ -166,45 +173,24 @@ class IdBuzzList extends HTMLElement {
   }
 
   _isDemoDocumentPath() {
-    var pathname = String(window.location.pathname || '');
-    return /\/demo-buzz\/index\.html$/.test(pathname);
+    return resolveBuzzRouteMode(window.location, window) === 'hash';
   }
 
   _normalizeRoutePath(pathname) {
-    var path = String(pathname || '').trim();
-    if (!path) return '/home/new';
-    if (path[0] !== '/') path = '/' + path;
-    return path;
+    return normalizeBuzzRoutePath(pathname);
   }
 
   _getRoutePathFromLocation() {
-    if (this._isDemoDocumentPath()) {
-      var hash = String(window.location.hash || '').replace(/^#/, '').trim();
-      if (!hash) return '/home/new';
-      return this._normalizeRoutePath(hash);
-    }
-    return this._normalizeRoutePath(window.location.pathname || '/home/new');
+    return getBuzzRoutePathFromLocation(window.location, window);
   }
 
   _setBrowserRoutePath(nextPath, useReplace) {
-    var normalized = this._normalizeRoutePath(nextPath);
-    if (this._isDemoDocumentPath()) {
-      var targetHash = '#' + normalized;
-      if (window.location.hash === targetHash) return;
-      var base = String(window.location.pathname || '/demo-buzz/index.html') + String(window.location.search || '');
-      var full = base + targetHash;
-      if (useReplace) {
-        window.history.replaceState({}, '', full);
-      } else {
-        window.history.pushState({}, '', full);
-      }
-      return;
-    }
-    if (window.location.pathname === normalized) return;
+    var targetUrl = buildBuzzRouteUrl(window.location, nextPath, window);
+    if (getCurrentBuzzRouteUrl(window.location, window) === targetUrl) return;
     if (useReplace) {
-      window.history.replaceState({}, '', normalized);
+      window.history.replaceState({}, '', targetUrl);
     } else {
-      window.history.pushState({}, '', normalized);
+      window.history.pushState({}, '', targetUrl);
     }
   }
 

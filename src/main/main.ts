@@ -2723,6 +2723,14 @@ if (!gotTheLock) {
     }
   });
 
+  const requireMetabotLlmIdForCreate = (value: unknown): string => {
+    const llmId = typeof value === 'string' ? value.trim() : '';
+    if (!llmId) {
+      throw new Error('LLM Brain is required when creating a MetaBot');
+    }
+    return llmId;
+  };
+
   ipcMain.handle('metabot:create', async (_event, input: {
     name: string;
     avatar?: string | null;
@@ -2736,6 +2744,7 @@ if (!gotTheLock) {
     llm_id?: string | null;
   }) => {
     try {
+      const llmId = requireMetabotLlmIdForCreate(input.llm_id);
       const walletResult = await mockCreateWalletAndFund();
       const pushResult = await mockPushConfigToChain();
       if (!pushResult.success) {
@@ -2767,7 +2776,7 @@ if (!gotTheLock) {
         background: input.background ?? null,
         boss_id: input.boss_id ?? null,
         boss_global_metaid: (input.boss_global_metaid ?? '').trim() || null,
-        llm_id: input.llm_id ?? null,
+        llm_id: llmId,
         tools: [],
         skills: [],
       });
@@ -2819,6 +2828,7 @@ if (!gotTheLock) {
     metabot_type?: 'twin' | 'worker';
   }) => {
     try {
+      const llmId = requireMetabotLlmIdForCreate(input.llm_id);
       const walletResult = await createMetaBotWallet({});
       const store = getMetabotStore();
       const wallet = store.insertMetabotWallet({
@@ -2848,7 +2858,7 @@ if (!gotTheLock) {
         background: input.background ?? null,
         boss_id: null,
         boss_global_metaid: (input.boss_global_metaid ?? '').trim() || null,
-        llm_id: input.llm_id ?? null,
+        llm_id: llmId,
         tools: [],
         skills: [],
       });
@@ -2885,6 +2895,7 @@ if (!gotTheLock) {
     let walletId: number | null = null;
     let metabotId: number | null = null;
     try {
+      const llmId = requireMetabotLlmIdForCreate(input.llm_id);
       // 1. Generate wallet (in-memory)
       const walletResult = await createMetaBotWallet({});
       const metabotType = input.metabot_type === 'twin' ? 'twin' : 'worker';
@@ -2930,7 +2941,7 @@ if (!gotTheLock) {
         background: input.background ?? null,
         boss_id: null,
         boss_global_metaid: (input.boss_global_metaid ?? '').trim() || null,
-        llm_id: input.llm_id ?? null,
+        llm_id: llmId,
         tools: [],
         skills: [],
       });

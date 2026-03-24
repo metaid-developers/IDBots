@@ -1,3 +1,11 @@
+import {
+  buildBuzzRouteUrl,
+  getBuzzRoutePathFromLocation,
+  getCurrentBuzzRouteUrl,
+  normalizeBuzzRoutePath,
+  resolveBuzzRouteMode,
+} from '../utils/buzz-route.js';
+
 class IdBuzzTabs extends HTMLElement {
   constructor() {
     super();
@@ -87,50 +95,27 @@ class IdBuzzTabs extends HTMLElement {
   }
 
   _isDemoDocumentPath() {
-    var pathname = String(window.location.pathname || '');
-    return /\/demo-buzz\/index\.html$/.test(pathname);
+    return resolveBuzzRouteMode(window.location, window) === 'hash';
   }
 
   _normalizeRoutePath(pathname) {
-    var path = String(pathname || '').trim();
-    if (!path) return '/home/new';
-    if (path[0] !== '/') path = '/' + path;
-    return path;
+    return normalizeBuzzRoutePath(pathname);
   }
 
   _getRoutePathFromLocation() {
-    if (this._isDemoDocumentPath()) {
-      var hash = String(window.location.hash || '').replace(/^#/, '').trim();
-      if (!hash) return '/home/new';
-      return this._normalizeRoutePath(hash);
-    }
-    return this._normalizeRoutePath(window.location.pathname || '/home/new');
+    return getBuzzRoutePathFromLocation(window.location, window);
   }
 
   _replaceUrl(pathname) {
-    var normalized = this._normalizeRoutePath(pathname);
-    if (this._isDemoDocumentPath()) {
-      var targetHash = '#' + normalized;
-      if (window.location.hash === targetHash) return;
-      var base = String(window.location.pathname || '/demo-buzz/index.html') + String(window.location.search || '');
-      window.history.replaceState({}, '', base + targetHash);
-      return;
-    }
-    if (window.location.pathname === normalized) return;
-    window.history.replaceState({}, '', normalized);
+    var targetUrl = buildBuzzRouteUrl(window.location, pathname, window);
+    if (getCurrentBuzzRouteUrl(window.location, window) === targetUrl) return;
+    window.history.replaceState({}, '', targetUrl);
   }
 
   _pushUrl(pathname) {
-    var normalized = this._normalizeRoutePath(pathname);
-    if (this._isDemoDocumentPath()) {
-      var targetHash = '#' + normalized;
-      if (window.location.hash === targetHash) return;
-      var base = String(window.location.pathname || '/demo-buzz/index.html') + String(window.location.search || '');
-      window.history.pushState({}, '', base + targetHash);
-      return;
-    }
-    if (window.location.pathname === normalized) return;
-    window.history.pushState({}, '', normalized);
+    var targetUrl = buildBuzzRouteUrl(window.location, pathname, window);
+    if (getCurrentBuzzRouteUrl(window.location, window) === targetUrl) return;
+    window.history.pushState({}, '', targetUrl);
   }
 
   _syncStoreFromLocation(rewriteDefaultHome) {

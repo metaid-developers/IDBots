@@ -5,6 +5,11 @@
  * Data source: Alpine.store('buzz').profileHeader.byMetaid + commands.
  */
 import './id-avatar.js';
+import {
+  getBuzzRoutePathFromLocation,
+  normalizeBuzzRoutePath,
+  resolveBuzzRouteMode,
+} from '../utils/buzz-route.js';
 
 class IdProfileHeader extends HTMLElement {
   constructor() {
@@ -59,24 +64,15 @@ class IdProfileHeader extends HTMLElement {
   }
 
   _isDemoDocumentPath() {
-    var pathname = String(window.location.pathname || '');
-    return /\/demo-buzz\/index\.html$/.test(pathname);
+    return resolveBuzzRouteMode(window.location, window) === 'hash';
   }
 
   _normalizeRoutePath(pathname) {
-    var path = String(pathname || '').trim();
-    if (!path) return '/home/new';
-    if (path[0] !== '/') path = '/' + path;
-    return path;
+    return normalizeBuzzRoutePath(pathname);
   }
 
   _getRoutePathFromLocation() {
-    if (this._isDemoDocumentPath()) {
-      var hash = String(window.location.hash || '').replace(/^#/, '').trim();
-      if (!hash) return '/home/new';
-      return this._normalizeRoutePath(hash);
-    }
-    return this._normalizeRoutePath(window.location.pathname || '/home/new');
+    return getBuzzRoutePathFromLocation(window.location, window);
   }
 
   _getCurrentRoutePath() {

@@ -65,13 +65,26 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
 
   const loadMetabots = useCallback(async () => {
     try {
-      const res = await window.electron.idbots.getMetaBots();
-      if (res?.success && res.list?.length) {
-        setMetabots(res.list);
+      const [selectorResult, fullListResult] = await Promise.all([
+        window.electron.idbots.getMetaBots(),
+        window.electron.metabot.list(),
+      ]);
+      if (selectorResult?.success && selectorResult.list?.length) {
+        const llmConfiguredIds = fullListResult?.success && fullListResult.list
+          ? new Set(
+              fullListResult.list
+                .filter((metabot) => metabot.enabled && typeof metabot.llm_id === 'string' && metabot.llm_id.trim())
+                .map((metabot) => metabot.id)
+            )
+          : null;
+        const filteredList = llmConfiguredIds
+          ? selectorResult.list.filter((metabot) => llmConfiguredIds.has(metabot.id))
+          : selectorResult.list;
+        setMetabots(filteredList);
         setSelectedMetabotId((prev) => {
-          if (prev && res.list.some((m) => m.id === prev)) return prev;
-          const twin = res.list.find((m) => m.metabot_type === 'twin');
-          return twin?.id || res.list[0].id;
+          if (prev && filteredList.some((m) => m.id === prev)) return prev;
+          const twin = filteredList.find((m) => m.metabot_type === 'twin');
+          return twin?.id || filteredList[0]?.id || null;
         });
       } else {
         setMetabots([]);

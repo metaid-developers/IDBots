@@ -11,6 +11,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createMetaBotWallet } = require('../dist-electron/services/metabotWalletService.js');
 
+const LEGACY_BASE58_ADDRESS_RE = /^[13][1-9A-HJ-NP-Za-km-z]{25,34}$/;
+const DOGE_BASE58_ADDRESS_RE = /^D[1-9A-HJ-NP-Za-km-z]{25,34}$/;
+
 const TEST_MNEMONIC = 'polar end mule shine canoe cake scout puzzle pigeon abstract sock gospel';
 const TEST_PATH = "m/44'/10001'/0'/0/0";
 
@@ -56,7 +59,9 @@ test('createMetaBotWallet: no args generates random mnemonic and non-mock values
   assert.ok(!result.metaid.startsWith('mock_'), 'metaid should not be mock');
   assert.ok(result.globalmetaid.startsWith('idq'), 'globalmetaid should start with idq');
 
-  assert.equal(result.mvc_address.length, 34, 'mvc_address length');
+  assert.match(result.mvc_address, LEGACY_BASE58_ADDRESS_RE, 'mvc_address should be a valid legacy base58 address');
+  assert.match(result.btc_address, LEGACY_BASE58_ADDRESS_RE, 'btc_address should be a valid legacy base58 address');
+  assert.match(result.doge_address, DOGE_BASE58_ADDRESS_RE, 'doge_address should be a valid Doge base58 address');
   assert.equal(result.public_key.length, 66, 'public_key hex length (compressed)');
   assert.equal(result.chat_public_key.length, 130, 'chat_public_key hex length (uncompressed)');
   assert.equal(result.metaid.length, 64, 'metaid hex length');

@@ -1,5 +1,6 @@
 import './id-post-buzz.js';
 import './id-avatar.js';
+import { getBuzzRoutePathFromLocation } from '../utils/buzz-route.js';
 
 /**
  * id-buzz-actions - Buzz interaction bar (comment/like/repost/quote)
@@ -130,18 +131,7 @@ class IdBuzzActions extends HTMLElement {
     var fromStore = app && app.route && app.route.path ? String(app.route.path) : '';
     if (fromStore) return fromStore;
 
-    var pathname = String(window.location.pathname || '').trim();
-    var isDemo = /\/demo-buzz\/index\.html$/.test(pathname);
-    if (isDemo) {
-      var hash = String(window.location.hash || '').replace(/^#/, '').trim();
-      if (hash) {
-        if (hash[0] !== '/') hash = '/' + hash;
-        return hash;
-      }
-      return '/home/new';
-    }
-    if (!pathname) return '/home/new';
-    return pathname[0] === '/' ? pathname : '/' + pathname;
+    return getBuzzRoutePathFromLocation(window.location, window);
   }
 
   _findItemInList(list, pinId) {

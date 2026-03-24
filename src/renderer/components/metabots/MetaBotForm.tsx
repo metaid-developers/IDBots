@@ -135,8 +135,8 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
       setError(i18nService.t('metabotSoulRequired'));
       return;
     }
-    if (llmOptions.length > 0 && !values.llm_id.trim()) {
-      setError(i18nService.t('metabotLlmIdPlaceholder'));
+    if (!isEdit && !values.llm_id.trim()) {
+      setError(i18nService.t('metabotLlmRequired'));
       return;
     }
     setSaving(true);
@@ -152,37 +152,47 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
 
   const saveButtonLabel = saveLabel ?? (isEdit ? i18nService.t('save') : i18nService.t('metabotCreate'));
   const hasNoAvailableLlm = llmOptions.length === 0;
-  const canSave = !hasNoAvailableLlm;
+  const canSave = isEdit || !hasNoAvailableLlm;
+  const rowClass = 'grid grid-cols-1 md:grid-cols-[132px_minmax(0,1fr)] gap-2 md:gap-4 items-start';
+  const labelClass = 'pt-2 text-sm font-medium dark:text-claude-darkText text-claude-text';
+  const hintClass = 'text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1';
+  const inputClass = 'w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent';
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-3">
       {error && (
         <div className="text-sm text-red-500 dark:text-red-400 bg-red-500/10 dark:bg-red-500/10 rounded-lg px-3 py-2">
           {error}
         </div>
       )}
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label htmlFor="metabot-name" className={labelClass}>
           {i18nService.t('metabotName')}
         </label>
-        <input
-          type="text"
-          value={values.name}
-          onChange={(e) => handleChange('name', e.target.value)}
-          onBlur={handleNameBlur}
-          placeholder={i18nService.t('metabotNamePlaceholder')}
-          className={`w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent ${
-            nameDuplicate ? 'border-red-500 dark:border-red-500' : ''
-          }`}
-        />
+        <div className="min-w-0">
+          <input
+            id="metabot-name"
+            type="text"
+            value={values.name}
+            onChange={(e) => handleChange('name', e.target.value)}
+            onBlur={handleNameBlur}
+            placeholder={i18nService.t('metabotNamePlaceholder')}
+            className={`${inputClass} ${nameDuplicate ? 'border-red-500 dark:border-red-500' : ''}`}
+          />
+          {nameDuplicate && (
+            <p className="text-xs text-red-500 mt-1">
+              {i18nService.t('metabotNameDuplicate')}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label className={labelClass}>
           {i18nService.t('metabotAvatar')}
         </label>
-        <div className="flex items-center gap-3">
+        <div className="min-w-0 flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="w-16 h-16 rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex-shrink-0 flex items-center justify-center">
             {values.avatar && (values.avatar.startsWith('data:') || values.avatar.startsWith('http')) ? (
               <img src={values.avatar} alt="" className="w-full h-full object-cover" />
@@ -205,7 +215,7 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
             >
               {i18nService.t('metabotAvatarUpload')}
             </button>
-            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+            <p className={hintClass}>
               {i18nService.t('metabotAvatarPlaceholder')}
             </p>
             {values.avatar && (
@@ -223,135 +233,164 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
 
       {/* Hidden: Type, Parent MetaBot ID, Tools, Skills - default values injected silently */}
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label htmlFor="metabot-role" className={labelClass}>
           {i18nService.t('metabotRole')}
         </label>
-        <input
-          type="text"
-          value={values.role}
-          onChange={(e) => handleChange('role', e.target.value)}
-          placeholder={i18nService.t('metabotRolePlaceholder')}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-        />
+        <div className="min-w-0">
+          <input
+            id="metabot-role"
+            type="text"
+            value={values.role}
+            onChange={(e) => handleChange('role', e.target.value)}
+            placeholder={i18nService.t('metabotRolePlaceholder')}
+            className={inputClass}
+          />
+        </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label htmlFor="metabot-soul" className={labelClass}>
           {i18nService.t('metabotSoul')}
         </label>
-        <textarea
-          value={values.soul}
-          onChange={(e) => handleChange('soul', e.target.value)}
-          placeholder={i18nService.t('metabotSoulPlaceholder')}
-          rows={4}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent resize-y"
-        />
+        <div className="min-w-0">
+          <textarea
+            id="metabot-soul"
+            value={values.soul}
+            onChange={(e) => handleChange('soul', e.target.value)}
+            placeholder={i18nService.t('metabotSoulPlaceholder')}
+            rows={4}
+            className={`${inputClass} resize-y`}
+          />
+        </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label htmlFor="metabot-goal" className={labelClass}>
           {i18nService.t('metabotGoal')}
         </label>
-        <textarea
-          value={values.goal}
-          onChange={(e) => handleChange('goal', e.target.value)}
-          placeholder={i18nService.t('metabotGoalPlaceholder')}
-          rows={2}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent resize-y"
-        />
+        <div className="min-w-0">
+          <textarea
+            id="metabot-goal"
+            value={values.goal}
+            onChange={(e) => handleChange('goal', e.target.value)}
+            placeholder={i18nService.t('metabotGoalPlaceholder')}
+            rows={2}
+            className={`${inputClass} resize-y`}
+          />
+        </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label htmlFor="metabot-background" className={labelClass}>
           {i18nService.t('metabotBackground')}
         </label>
-        <textarea
-          value={values.background}
-          onChange={(e) => handleChange('background', e.target.value)}
-          placeholder={i18nService.t('metabotBackgroundPlaceholder')}
-          rows={2}
-          className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent resize-y"
-        />
+        <div className="min-w-0">
+          <textarea
+            id="metabot-background"
+            value={values.background}
+            onChange={(e) => handleChange('background', e.target.value)}
+            placeholder={i18nService.t('metabotBackgroundPlaceholder')}
+            rows={2}
+            className={`${inputClass} resize-y`}
+          />
+        </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+      <div className={rowClass}>
+        <label htmlFor="metabot-boss-metaid" className={labelClass}>
           {i18nService.t('metabotBossMetaId')}
           <span className="ml-1 font-normal opacity-60">{i18nService.t('metabotBossMetaIdOptional')}</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={values.boss_global_metaid}
-            onChange={(e) => handleChange('boss_global_metaid', e.target.value)}
-            placeholder={i18nService.t('metabotBossMetaIdPlaceholder')}
-            className="flex-1 min-w-0 px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent font-mono"
-          />
+        <div className="min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <input
+              id="metabot-boss-metaid"
+              type="text"
+              value={values.boss_global_metaid}
+              onChange={(e) => handleChange('boss_global_metaid', e.target.value)}
+              placeholder={i18nService.t('metabotBossMetaIdPlaceholder')}
+              className={`${inputClass} flex-1 min-w-0 font-mono`}
+            />
+            <button
+              type="button"
+              onClick={() => {/* TODO: fetch my MetaID */}}
+              className="shrink-0 px-3 py-2 text-xs rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap"
+            >
+              {i18nService.t('metabotGetMyMetaId')}
+            </button>
+          </div>
+          <p className={`${hintClass} opacity-70`}>
+            {i18nService.t('metabotBossMetaIdHint')}
+          </p>
+        </div>
+      </div>
+
+      <div className={rowClass}>
+        <label htmlFor="metabot-llm" className={labelClass}>
+          {i18nService.t('metabotLlmProvider')}
+          {!isEdit && <span className="ml-1 text-red-500">*</span>}
+        </label>
+        <div className="min-w-0">
+          {hasNoAvailableLlm ? (
+            <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-3 dark:bg-claude-darkSurface/50 bg-claude-surface/50">
+              <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('metabotNoAvailableLlm')}
+              </p>
+              {onRequestModelSettings && (
+                <button
+                  type="button"
+                  onClick={onRequestModelSettings}
+                  className="mt-2 text-sm text-claude-accent hover:underline"
+                >
+                  {i18nService.t('metabotGoToModelSettings')}
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <select
+                id="metabot-llm"
+                value={values.llm_id}
+                onChange={(e) => handleChange('llm_id', e.target.value)}
+                className={inputClass}
+              >
+                <option value="">{i18nService.t('metabotLlmIdPlaceholder')}</option>
+                {llmOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              {!isEdit && (
+                <p className={hintClass}>
+                  {i18nService.t('metabotLlmRequired')}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className={rowClass}>
+        <div className="hidden md:block" />
+        <div className="flex items-center justify-end gap-2 pt-2">
           <button
             type="button"
-            onClick={() => {/* TODO: fetch my MetaID */}}
-            className="shrink-0 px-3 py-2 text-xs rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors whitespace-nowrap"
+            onClick={onCancel}
+            disabled={saving}
+            className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
           >
-            {i18nService.t('metabotGetMyMetaId')}
+            {i18nService.t('cancel')}
+          </button>
+          <button
+            type="submit"
+            disabled={saving || !canSave}
+            className="btn-idchat-primary-filled px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? i18nService.t('saving') : saveButtonLabel}
           </button>
         </div>
-        <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1 opacity-70">
-          {i18nService.t('metabotBossMetaIdHint')}
-        </p>
-      </div>
-
-      <div>
-        <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-          {i18nService.t('metabotLlmProvider')}
-        </label>
-        {hasNoAvailableLlm ? (
-          <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-3 py-3 dark:bg-claude-darkSurface/50 bg-claude-surface/50">
-            <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('metabotNoAvailableLlm')}
-            </p>
-            {onRequestModelSettings && (
-              <button
-                type="button"
-                onClick={onRequestModelSettings}
-                className="mt-2 text-sm text-claude-accent hover:underline"
-              >
-                {i18nService.t('metabotGoToModelSettings')}
-              </button>
-            )}
-          </div>
-        ) : (
-          <select
-            value={values.llm_id}
-            onChange={(e) => handleChange('llm_id', e.target.value)}
-            className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-          >
-            <option value="">{i18nService.t('metabotLlmIdPlaceholder')}</option>
-            {llmOptions.map((opt) => (
-              <option key={opt.id} value={opt.id}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-
-      <div className="flex items-center justify-end gap-2 pt-4">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={saving}
-          className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50"
-        >
-          {i18nService.t('cancel')}
-        </button>
-        <button
-          type="submit"
-          disabled={saving || !canSave}
-          className="btn-idchat-primary-filled px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {saving ? i18nService.t('saving') : saveButtonLabel}
-        </button>
       </div>
     </form>
   );

@@ -23,6 +23,8 @@ interface EditSyncPlan {
 
 const providerRequiresApiKey = (provider: string) => provider !== 'ollama';
 const providerLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
+const sortMetabotsByCreatedAtAsc = (metabots: Metabot[]) =>
+  [...metabots].sort((a, b) => a.created_at - b.created_at || a.id - b.id);
 
 const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ onRequestModelSettings }) => {
   const dispatch = useDispatch();
@@ -57,7 +59,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     const result = await window.electron.metabot.list();
     setLoading(false);
     if (result.success && result.list) {
-      setList(result.list);
+      setList(sortMetabotsByCreatedAtAsc(result.list));
     } else {
       setActionError(result.error || i18nService.t('metabotLoadFailed'));
     }
@@ -136,7 +138,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
     // Success — clear publishing state, add to list, show success modal
     setCreateChainStatus('idle');
     setPendingCreateValues(null);
-    setList((prev) => [result.metabot!, ...prev]);
+    setList((prev) => sortMetabotsByCreatedAtAsc([...prev, result.metabot!]));
     setCreateSuccessModal({
       metabot: result.metabot,
       subsidySuccess: result.subsidy?.success ?? false,
@@ -481,7 +483,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   };
 
   const handleRestoreCompleted = (metabot: Metabot) => {
-    setList((prev) => (prev.some((m) => m.id === metabot.id) ? prev : [metabot, ...prev]));
+    setList((prev) => (prev.some((m) => m.id === metabot.id) ? prev : sortMetabotsByCreatedAtAsc([...prev, metabot])));
     dispatch(setPreferredMetabotId(metabot.id));
   };
 
