@@ -74,6 +74,59 @@ test('buildCoworkAutoRoutingPrompt emits the MetaApps section with available_met
   assert.match(prompt, /<\/available_metaapps>/);
 });
 
+test('preload exposes metaapps.autoRoutingPrompt through window.electron', async () => {
+  const electronModuleId = require.resolve('electron');
+  const preloadModuleId = require.resolve('../dist-electron/preload.js');
+  const originalElectronExports = require.cache[electronModuleId]?.exports ?? require('electron');
+  const originalPreloadModule = require.cache[preloadModuleId];
+
+  const invokeCalls = [];
+  let exposedApi = null;
+
+  require.cache[electronModuleId] = {
+    ...require.cache[electronModuleId],
+    exports: {
+      contextBridge: {
+        exposeInMainWorld: (name, value) => {
+          if (name === 'electron') {
+            exposedApi = value;
+          }
+        },
+      },
+      ipcRenderer: {
+        invoke: async (channel) => {
+          invokeCalls.push(channel);
+          return { success: true, prompt: 'metaapp prompt' };
+        },
+        on: () => {},
+        removeListener: () => {},
+      },
+    },
+  };
+  delete require.cache[preloadModuleId];
+
+  try {
+    require('../dist-electron/preload.js');
+  } finally {
+    require.cache[electronModuleId] = {
+      ...require.cache[electronModuleId],
+      exports: originalElectronExports,
+    };
+    if (originalPreloadModule) {
+      require.cache[preloadModuleId] = originalPreloadModule;
+    } else {
+      delete require.cache[preloadModuleId];
+    }
+  }
+
+  assert.ok(exposedApi, 'Expected preload to expose window.electron');
+  assert.equal(typeof exposedApi.metaapps?.autoRoutingPrompt, 'function');
+
+  const result = await exposedApi.metaapps.autoRoutingPrompt();
+  assert.deepEqual(result, { success: true, prompt: 'metaapp prompt' });
+  assert.deepEqual(invokeCalls, ['metaapps:autoRoutingPrompt']);
+});
+
 test('CoworkRunner registers the open_metaapp tool when starting a local Claude session', async () => {
   const electronModuleId = require.resolve('electron');
   const originalElectronExports = require.cache[electronModuleId]?.exports ?? require('electron');
@@ -153,7 +206,7 @@ test('CoworkRunner registers the open_metaapp tool when starting a local Claude 
       openMetaAppCalls.push(input);
       return {
         success: true,
-        name: 'buzz-app',
+        name: 'Buzz App',
         url: 'http://127.0.0.1:38421/buzz/app/index.html?view=hot',
       };
     },
@@ -214,12 +267,11 @@ test('CoworkRunner registers the open_metaapp tool when starting a local Claude 
       targetPath: '/buzz/app/index.html?view=hot',
     },
   ]);
-  assert.deepEqual(toolResult, {
-    content: [
-      {
-        type: 'text',
-        text: 'Opened metaapp "buzz-app" at http://127.0.0.1:38421/buzz/app/index.html?view=hot',
-      },
-    ],
-  });
+  assert.equal(toolResult?.isError, undefined);
+  assert.deepEqual(toolResult?.content, [
+    {
+      type: 'text',
+      text: 'Opened metaapp "Buzz App" at http://127.0.0.1:38421/buzz/app/index.html?view=hot',
+    },
+  ]);
 });
