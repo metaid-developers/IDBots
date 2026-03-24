@@ -463,9 +463,9 @@ export class SqliteStore {
         service_pin_id TEXT,
         service_name TEXT NOT NULL,
         payment_txid TEXT NOT NULL,
-        payment_chain TEXT NOT NULL,
+        payment_chain TEXT NOT NULL CHECK (payment_chain IN ('mvc', 'btc', 'doge')),
         payment_amount TEXT NOT NULL,
-        payment_currency TEXT NOT NULL,
+        payment_currency TEXT NOT NULL CHECK (payment_currency IN ('SPACE', 'BTC', 'DOGE')),
         order_message_pin_id TEXT,
         cowork_session_id TEXT,
         status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
@@ -490,6 +490,31 @@ export class SqliteStore {
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET payment_chain = lower(trim(payment_chain))
+      WHERE payment_chain IS NOT NULL;
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET payment_chain = 'mvc'
+      WHERE payment_chain NOT IN ('mvc', 'btc', 'doge');
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET payment_currency = upper(trim(payment_currency))
+      WHERE payment_currency IS NOT NULL;
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET payment_currency = CASE
+        WHEN payment_chain = 'btc' THEN 'BTC'
+        WHEN payment_chain = 'doge' THEN 'DOGE'
+        ELSE 'SPACE'
+      END
+      WHERE payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+         OR (payment_chain = 'mvc' AND payment_currency = 'MVC');
     `);
     this.db.run(`
       WITH ranked AS (
@@ -532,6 +557,38 @@ export class SqliteStore {
       WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.status');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_chain_insert
+      BEFORE INSERT ON service_orders
+      WHEN NEW.payment_chain NOT IN ('mvc', 'btc', 'doge')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.payment_chain');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_chain_update
+      BEFORE UPDATE OF payment_chain ON service_orders
+      WHEN NEW.payment_chain NOT IN ('mvc', 'btc', 'doge')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.payment_chain');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_currency_insert
+      BEFORE INSERT ON service_orders
+      WHEN NEW.payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.payment_currency');
+      END;
+    `);
+    this.db.run(`
+      CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_currency_update
+      BEFORE UPDATE OF payment_currency ON service_orders
+      WHEN NEW.payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+      BEGIN
+        SELECT RAISE(ABORT, 'Invalid service_orders.payment_currency');
       END;
     `);
     this.db.run(`

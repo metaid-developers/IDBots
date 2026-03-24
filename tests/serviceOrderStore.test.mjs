@@ -303,6 +303,87 @@ test('SqliteStore.create() remediates legacy duplicate payment rows and enforces
   }
 });
 
+test('SqliteStore.create() remediates legacy MVC currency alias to SPACE for mvc chain', async () => {
+  const legacyDb = await createSqlDatabase();
+  legacyDb.run(`
+    CREATE TABLE service_orders (
+      id TEXT PRIMARY KEY,
+      role TEXT NOT NULL,
+      local_metabot_id INTEGER NOT NULL,
+      counterparty_global_metaid TEXT NOT NULL,
+      service_pin_id TEXT,
+      service_name TEXT NOT NULL,
+      payment_txid TEXT NOT NULL,
+      payment_chain TEXT NOT NULL,
+      payment_amount TEXT NOT NULL,
+      payment_currency TEXT NOT NULL,
+      order_message_pin_id TEXT,
+      cowork_session_id TEXT,
+      status TEXT NOT NULL,
+      first_response_deadline_at INTEGER NOT NULL,
+      delivery_deadline_at INTEGER NOT NULL,
+      first_response_at INTEGER,
+      delivery_message_pin_id TEXT,
+      delivered_at INTEGER,
+      failed_at INTEGER,
+      failure_reason TEXT,
+      refund_request_pin_id TEXT,
+      refund_finalize_pin_id TEXT,
+      refund_txid TEXT,
+      refund_requested_at INTEGER,
+      refund_completed_at INTEGER,
+      refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  legacyDb.run(
+    `INSERT INTO service_orders (
+      id, role, local_metabot_id, counterparty_global_metaid, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, status,
+      first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['legacy-mvc-currency', 'buyer', 10, 'counterparty-global-metaid', 'service-name', '7'.repeat(64), 'mvc', '1.00', 'MVC', 'awaiting_first_response', 1000, 2000, 100, 100]
+  );
+
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-sqlitestore-service-orders-'));
+  const dbPath = path.join(userDataPath, DB_FILENAME);
+  fs.writeFileSync(dbPath, Buffer.from(legacyDb.export()));
+
+  const originalLoad = Module._load;
+  Module._load = function patchedModuleLoad(request, parent, isMain) {
+    if (request === 'electron') {
+      return {
+        app: {
+          isPackaged: false,
+          getAppPath: () => projectRoot,
+          getPath: (name) => {
+            if (name === 'userData') return userDataPath;
+            return userDataPath;
+          },
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+
+  try {
+    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const sqliteStore = await SqliteStore.create(userDataPath);
+    const db = sqliteStore.getDatabase();
+    const rows = db.exec(
+      'SELECT payment_chain, payment_currency FROM service_orders WHERE id = ?',
+      ['legacy-mvc-currency']
+    )[0].values;
+    assert.deepEqual(rows, [['mvc', 'SPACE']]);
+  } finally {
+    Module._load = originalLoad;
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
 test('service_orders schema rejects invalid role values', async () => {
   const { db, store } = await createServiceOrderStoreForTest();
   const now = Date.now();
@@ -373,6 +454,74 @@ test('service_orders schema rejects invalid status values', async () => {
   });
 });
 
+test('service_orders schema rejects invalid payment_chain values', async () => {
+  const { db } = await createServiceOrderStoreForTest();
+  const now = Date.now();
+  const deadlines = {
+    first: now + 5 * 60_000,
+    second: now + 15 * 60_000,
+  };
+
+  assert.throws(() => {
+    db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'invalid-chain-order',
+      'buyer',
+      1,
+      'counterparty-global-metaid',
+      'service-name',
+      '3'.repeat(64),
+      'eth',
+      '1.00',
+      'SPACE',
+      'awaiting_first_response',
+      deadlines.first,
+      deadlines.second,
+      now,
+      now,
+    ]);
+  });
+});
+
+test('service_orders schema rejects invalid payment_currency values', async () => {
+  const { db } = await createServiceOrderStoreForTest();
+  const now = Date.now();
+  const deadlines = {
+    first: now + 5 * 60_000,
+    second: now + 15 * 60_000,
+  };
+
+  assert.throws(() => {
+    db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'invalid-currency-order',
+      'buyer',
+      1,
+      'counterparty-global-metaid',
+      'service-name',
+      '4'.repeat(64),
+      'mvc',
+      '1.00',
+      'USD',
+      'awaiting_first_response',
+      deadlines.first,
+      deadlines.second,
+      now,
+      now,
+    ]);
+  });
+});
+
 test('store createOrder derives default paymentCurrency from paymentChain semantics', async () => {
   const { store } = await createServiceOrderStoreForTest();
 
@@ -407,4 +556,38 @@ test('store createOrder derives default paymentCurrency from paymentChain semant
   assert.equal(mvcOrder.paymentCurrency, 'SPACE');
   assert.equal(btcOrder.paymentCurrency, 'BTC');
   assert.equal(dogeOrder.paymentCurrency, 'DOGE');
+});
+
+test('store createOrder does not persist arbitrary invalid chain/currency input', async () => {
+  const { store } = await createServiceOrderStoreForTest();
+  const order = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: '5'.repeat(64),
+    paymentAmount: '1.00',
+    paymentChain: 'evm',
+    paymentCurrency: 'USDT',
+  });
+
+  assert.equal(order.paymentChain, 'mvc');
+  assert.equal(order.paymentCurrency, 'SPACE');
+});
+
+test('store createOrder normalizes legacy MVC alias to SPACE for mvc chain', async () => {
+  const { store } = await createServiceOrderStoreForTest();
+  const order = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: '6'.repeat(64),
+    paymentAmount: '1.00',
+    paymentChain: 'mvc',
+    paymentCurrency: 'MVC',
+  });
+
+  assert.equal(order.paymentChain, 'mvc');
+  assert.equal(order.paymentCurrency, 'SPACE');
 });
