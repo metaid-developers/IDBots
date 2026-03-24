@@ -85,6 +85,55 @@ test('reserveBuyerOrderCreation refuses concurrent in-flight creation for the sa
   nextRelease();
 });
 
+test('createSellerOrder persists a seller-side ledger row keyed by payment txid', async () => {
+  const { service } = await createLifecycleServiceForTest();
+
+  const order = service.createSellerOrder(baseOrderInput());
+
+  assert.equal(order.role, 'seller');
+  assert.equal(order.status, 'awaiting_first_response');
+  assert.equal(order.paymentTxid, 'a'.repeat(64));
+});
+
+test('markBuyerOrderFirstResponseReceived moves awaiting orders into in_progress', async () => {
+  const now = 1_770_000_111_000;
+  const { service } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const order = service.createBuyerOrder(baseOrderInput());
+
+  const updated = service.markBuyerOrderFirstResponseReceived({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    receivedAt: now,
+  });
+
+  assert.equal(updated?.status, 'in_progress');
+  assert.equal(updated?.firstResponseAt, now);
+});
+
+test('markBuyerOrderDelivered completes the buyer order and stores the delivery message pin', async () => {
+  const now = 1_770_000_222_000;
+  const { service } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const order = service.createBuyerOrder(baseOrderInput());
+
+  const updated = service.markBuyerOrderDelivered({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    deliveryMessagePinId: 'delivery-pin-id',
+    deliveredAt: now,
+  });
+
+  assert.equal(updated?.status, 'completed');
+  assert.equal(updated?.deliveryMessagePinId, 'delivery-pin-id');
+  assert.equal(updated?.deliveredAt, now);
+  assert.equal(updated?.firstResponseAt, now);
+});
+
 test('createBuyerOrder allows a new order after the previous one is completed', async () => {
   const { db, service } = await createLifecycleServiceForTest();
 

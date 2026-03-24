@@ -87,6 +87,13 @@ export interface ServiceOrderCreateInput {
   now?: number;
 }
 
+export interface ServiceOrderLookupByPaymentInput {
+  role: ServiceOrderRole;
+  localMetabotId: number;
+  counterpartyGlobalMetaid: string;
+  paymentTxid: string;
+}
+
 function normalizePaymentChain(chain: string | undefined): string {
   const normalized = (chain || 'mvc').trim().toLowerCase();
   if (normalized === 'btc' || normalized === 'doge' || normalized === 'mvc') return normalized;
@@ -393,6 +400,24 @@ export class ServiceOrderStore {
     ).map((row) => this.mapRow(row));
   }
 
+  findOrderByPayment(input: ServiceOrderLookupByPaymentInput): ServiceOrderRecord | null {
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND local_metabot_id = ?
+        AND counterparty_global_metaid = ?
+        AND payment_txid = ?
+      LIMIT 1
+    `, [
+      input.role,
+      input.localMetabotId,
+      input.counterpartyGlobalMetaid,
+      input.paymentTxid,
+    ]);
+    return row ? this.mapRow(row) : null;
+  }
+
   findLatestOpenOrderForPair(
     role: ServiceOrderRole,
     localMetabotId: number,
@@ -409,5 +434,60 @@ export class ServiceOrderStore {
       LIMIT 1
     `, [role, localMetabotId, counterpartyGlobalMetaid]);
     return row ? this.mapRow(row) : null;
+  }
+
+  markFirstResponseReceived(orderId: string, receivedAt: number): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status !== 'awaiting_first_response' && order.status !== 'in_progress') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = CASE
+          WHEN status = 'awaiting_first_response' THEN 'in_progress'
+          ELSE status
+        END,
+        first_response_at = COALESCE(first_response_at, ?),
+        updated_at = ?
+      WHERE id = ?
+    `, [receivedAt, receivedAt, orderId]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  markDelivered(
+    orderId: string,
+    input: {
+      deliveryMessagePinId: string | null;
+      deliveredAt: number;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'failed' || order.status === 'refund_pending' || order.status === 'refunded') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = 'completed',
+        first_response_at = COALESCE(first_response_at, ?),
+        delivery_message_pin_id = COALESCE(?, delivery_message_pin_id),
+        delivered_at = ?,
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      input.deliveredAt,
+      input.deliveryMessagePinId,
+      input.deliveredAt,
+      input.deliveredAt,
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
   }
 }

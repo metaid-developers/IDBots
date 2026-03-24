@@ -21,6 +21,11 @@ import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import type { ServiceOrderLifecycleService } from './serviceOrderLifecycleService';
+import {
+  buildDeliveryMessage,
+  parseDeliveryMessage,
+} from './serviceOrderProtocols.js';
 import {
   isNeedsRatingMessage,
   shouldCompleteBuyerOrderObserverSession,
@@ -126,9 +131,22 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
 }
 
 const ORDER_PREFIX = '[ORDER]';
+const CHAIN_UNIT = 100_000_000;
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
+}
+
+function getCurrencyFromChain(chain?: string): string {
+  if (chain === 'btc') return 'BTC';
+  if (chain === 'doge') return 'DOGE';
+  return 'SPACE';
+}
+
+function formatPaymentAmountFromSats(amountSats?: number): string {
+  if (!Number.isFinite(amountSats)) return '0';
+  const amount = Number(amountSats) / CHAIN_UNIT;
+  return amount.toFixed(8).replace(/\.?0+$/, '') || '0';
 }
 
 function isByeMessage(text: string): boolean {
@@ -299,9 +317,14 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const incomingAssistant = messages.filter(
     (m) => m.type === 'assistant' && (m.metadata as Record<string, unknown>)?.direction === 'incoming'
   );
-  const serviceResult = incomingAssistant.length >= 2
+  const serviceResultCandidate = incomingAssistant.length >= 2
     ? incomingAssistant[incomingAssistant.length - 2].content
     : incomingAssistant[incomingAssistant.length - 1]?.content ?? '';
+  const parsedDelivery = parseDeliveryMessage(serviceResultCandidate);
+  const serviceResult =
+    parsedDelivery && typeof parsedDelivery.result === 'string'
+      ? parsedDelivery.result
+      : serviceResultCandidate;
 
   // Build A's persona
   const buyerMetabot = metabotStore.getMetabotById(metabot.id);
@@ -410,6 +433,7 @@ async function processOne(
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>,
   emitLog: (msg: string) => void,
   orderCoworkHandler: PrivateChatOrderCowork | null,
+  serviceOrderLifecycle: ServiceOrderLifecycleService | null,
   getSkillsPrompt?: () => Promise<string | null>,
   emitToRenderer?: (channel: string, data: unknown) => void
 ): Promise<void> {
@@ -562,6 +586,23 @@ async function processOne(
         return;
       }
       emitLog(`[Order] Payment verified: txid=${txid} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`);
+      if (serviceOrderLifecycle && txid) {
+        try {
+          serviceOrderLifecycle.createSellerOrder({
+            localMetabotId: metabot.id,
+            counterpartyGlobalMetaId: fromGlobalMetaId,
+            servicePinId: extractOrderSkillId(plaintext),
+            serviceName: extractOrderSkillName(plaintext) || 'Service Order',
+            paymentTxid: txid,
+            paymentChain: payment.chain || 'mvc',
+            paymentAmount: formatPaymentAmountFromSats(payment.amountSats),
+            paymentCurrency: getCurrencyFromChain(payment.chain),
+            orderMessagePinId: row.pin_id,
+          });
+        } catch (error) {
+          emitLog(`[Order] Failed to create seller order row: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       if (!orderCoworkHandler) {
         emitLog('[Order] Cowork handler not initialized; skipping order.');
         markProcessed(db, row.id, saveDb);
@@ -601,7 +642,7 @@ async function processOne(
       const sendEncryptedMsg = async (text: string) => {
         const encrypted = ecdhEncrypt(text, sharedSecretForReply);
         const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encrypted, row.reply_pin || '');
-        await createPin(metabotStore, metabot.id, {
+        return await createPin(metabotStore, metabot.id, {
           operation: 'create',
           path: '/protocols/simplemsg',
           encryption: '0',
@@ -615,7 +656,24 @@ async function processOne(
       const trimmedInvite = (orderResult.ratingInvite || '').trim();
       if (trimmedReply && source === 'metaweb_private') {
         try {
-          await sendEncryptedMsg(trimmedReply);
+          const deliverySentAtSec = Math.floor(Date.now() / 1000);
+          const deliveryText = buildDeliveryMessage({
+            paymentTxid: txid,
+            servicePinId: extractOrderSkillId(plaintext),
+            serviceName: extractOrderSkillName(plaintext) || 'Service Order',
+            result: trimmedReply,
+            deliveredAt: deliverySentAtSec,
+          });
+          const deliveryResult = await sendEncryptedMsg(deliveryText);
+          if (serviceOrderLifecycle && txid) {
+            serviceOrderLifecycle.markSellerOrderDelivered({
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid: txid,
+              deliveryMessagePinId: deliveryResult.pinId ?? null,
+              deliveredAt: deliverySentAtSec * 1000,
+            });
+          }
           emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
         } catch (error) {
           emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -658,6 +716,12 @@ async function processOne(
       const buyerOrderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
       if (buyerOrderMapping) {
         emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
+        const buyerOrderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
+        const paymentTxid =
+          typeof buyerOrderMeta.servicePaidTx === 'string'
+            ? buyerOrderMeta.servicePaidTx.trim()
+            : '';
+        const delivery = parseDeliveryMessage(plaintext);
         const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
           type: 'assistant',
           content: plaintext,
@@ -673,6 +737,28 @@ async function processOne(
         coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
         if (emitToRenderer) {
           emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: replyMsg });
+        }
+
+        if (serviceOrderLifecycle && paymentTxid) {
+          if (delivery && typeof delivery.paymentTxid === 'string') {
+            serviceOrderLifecycle.markBuyerOrderDelivered({
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid: delivery.paymentTxid,
+              deliveryMessagePinId: row.pin_id,
+              deliveredAt:
+                typeof delivery.deliveredAt === 'number'
+                  ? delivery.deliveredAt * 1000
+                  : Date.now(),
+            });
+          } else if (!isNeedsRatingMessage(plaintext)) {
+            serviceOrderLifecycle.markBuyerOrderFirstResponseReceived({
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid,
+              receivedAt: Date.now(),
+            });
+          }
         }
 
         if (shouldCompleteBuyerOrderObserverSession(plaintext)) {
@@ -852,6 +938,7 @@ export function startPrivateChatDaemon(
   coworkRunner: CoworkRunner,
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>,
   emitLog: (msg: string) => void,
+  serviceOrderLifecycle: ServiceOrderLifecycleService | null,
   getSkillsPrompt?: () => Promise<string | null>,
   emitToRenderer?: (channel: string, data: unknown) => void
 ): void {
@@ -866,7 +953,7 @@ export function startPrivateChatDaemon(
   const tick = () => {
     const rows = parsePrivateChatRows(db);
     for (const row of rows) {
-      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, getSkillsPrompt, emitToRenderer).catch((e) => {
+      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
       });
     }

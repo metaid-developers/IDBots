@@ -4826,6 +4826,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       getCoworkRunner(),
       createPin,
       (msg) => console.log(msg),
+      getServiceOrderLifecycleService(),
       async () => skillMgr.buildAutoRoutingPrompt(),
       (channel, data) => {
         BrowserWindow.getAllWindows().forEach(win => {
