@@ -3067,11 +3067,12 @@ export class CoworkRunner extends EventEmitter {
                   appId: args.appId,
                   targetPath: args.targetPath,
                 });
+                const displayName = String(result?.name || args.appId).trim() || args.appId;
                 const text = result?.success
                   ? (result.url
-                    ? `Opened metaapp "${args.appId}" at ${result.url}`
-                    : `Opened metaapp "${args.appId}"`)
-                  : `Failed to open metaapp "${args.appId}": ${result?.error || 'Unknown error'}`;
+                    ? `Opened metaapp "${displayName}" at ${result.url}`
+                    : `Opened metaapp "${displayName}"`)
+                  : `Failed to open metaapp "${displayName}": ${result?.error || 'Unknown error'}`;
                 const response: any = {
                   content: [{ type: 'text', text }],
                 };
