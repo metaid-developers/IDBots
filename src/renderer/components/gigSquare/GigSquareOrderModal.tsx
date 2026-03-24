@@ -347,7 +347,11 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       });
 
       if (!sendResult?.success) {
-        throw new Error(sendResult?.error || i18nService.t('gigSquareOrderFailed'));
+        throw new Error(
+          sendResult?.errorCode === 'open_order_exists'
+            ? (sendResult.error || 'Open order already exists for this buyer and provider.')
+            : (sendResult?.error || i18nService.t('gigSquareOrderFailed'))
+        );
       }
 
       setStatus('success');

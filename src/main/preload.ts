@@ -103,6 +103,14 @@ contextBridge.exposeInMainWorld('electron', {
       toGlobalMetaId: string;
       toChatPubkey: string;
       orderPayload: string;
+      peerName?: string | null;
+      peerAvatar?: string | null;
+      serviceId?: string | null;
+      servicePrice?: string | null;
+      serviceCurrency?: string | null;
+      serviceSkill?: string | null;
+      serverBotGlobalMetaId?: string | null;
+      servicePaidTx?: string | null;
     }) => ipcRenderer.invoke('gigSquare:sendOrder', params),
     pingProvider: (params: {
       metabotId: number;

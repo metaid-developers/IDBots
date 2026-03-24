@@ -25,6 +25,7 @@ import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
 import { ScheduledTaskStore } from './scheduledTaskStore';
 import { MetabotStore } from './metabotStore';
+import { ServiceOrderStore } from './serviceOrderStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
@@ -69,6 +70,10 @@ import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
+import {
+  ServiceOrderLifecycleService,
+  ServiceOrderOpenOrderExistsError,
+} from './services/serviceOrderLifecycleService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -132,6 +137,13 @@ const inferAttachmentExtension = (fileName: string, mimeType?: string): string =
     return MIME_EXTENSION_MAP[normalized] ?? '';
   }
   return '';
+};
+
+const normalizeServiceOrderPaymentChain = (currency?: string | null): 'mvc' | 'btc' | 'doge' => {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'BTC') return 'btc';
+  if (normalized === 'DOGE') return 'doge';
+  return 'mvc';
 };
 
 const resolveInlineAttachmentDir = (cwd?: string): string => {
@@ -1151,6 +1163,8 @@ let metaAppManager: MetaAppManager | null = null;
 let imGatewayManager: IMGatewayManager | null = null;
 let scheduledTaskStore: ScheduledTaskStore | null = null;
 let metabotStore: MetabotStore | null = null;
+let serviceOrderStore: ServiceOrderStore | null = null;
+let serviceOrderLifecycleService: ServiceOrderLifecycleService | null = null;
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
@@ -1475,6 +1489,26 @@ const getMetabotStore = () => {
     metabotStore = new MetabotStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
   }
   return metabotStore;
+};
+
+const getServiceOrderStore = () => {
+  if (!serviceOrderStore) {
+    const sqliteStore = getStore();
+    serviceOrderStore = new ServiceOrderStore(
+      sqliteStore.getDatabase(),
+      sqliteStore.getSaveFunction()
+    );
+  }
+  return serviceOrderStore;
+};
+
+const getServiceOrderLifecycleService = () => {
+  if (!serviceOrderLifecycleService) {
+    serviceOrderLifecycleService = new ServiceOrderLifecycleService(
+      getServiceOrderStore()
+    );
+  }
+  return serviceOrderLifecycleService;
 };
 
 const getScheduler = () => {
@@ -3280,6 +3314,7 @@ if (!gotTheLock) {
     outputType: string;
     serviceIconDataUrl?: string | null;
   }) => {
+    let releaseBuyerOrderCreation: (() => void) | null = null;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const serviceName = toSafeString(params?.serviceName).trim();
@@ -3421,6 +3456,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serverBotGlobalMetaId?: string | null;
     servicePaidTx?: string | null;
   }) => {
+    let releaseBuyerOrderCreation: (() => void) | null = null;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
@@ -3448,6 +3484,23 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         return { success: false, error: 'orderPayload is required' };
       }
 
+      const serviceOrderLifecycle = getServiceOrderLifecycleService();
+      try {
+        releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
+          metabotId,
+          toGlobalMetaId
+        );
+      } catch (error) {
+        if (error instanceof ServiceOrderOpenOrderExistsError) {
+          return {
+            success: false,
+            errorCode: error.code,
+            error: error.message,
+          };
+        }
+        throw error;
+      }
+
       const store = getMetabotStore();
       const wallet = store.getMetabotWalletByMetabotId(metabotId);
       if (!wallet?.mnemonic?.trim()) {
@@ -3473,6 +3526,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
       // Create buyer-side observer session so MetaBot A can watch the conversation.
       // Each order gets its own session (keyed by txid so retries don't duplicate).
+      let coworkSessionId: string | null = null;
       try {
         const coworkStoreInst = getCoworkStore();
         const txidForKey = (result.txids?.[0] || '').slice(0, 16) || String(Date.now());
@@ -3533,14 +3587,43 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
               try { win.webContents.send('cowork:stream:message', { sessionId: session.id, message: safeMsg }); } catch { /* ignore */ }
             }
           });
+          coworkSessionId = session.id;
+        } else {
+          coworkSessionId = existing.coworkSessionId;
         }
       } catch (sessionErr) {
         console.warn('[GigSquare] Failed to create buyer observer session:', sessionErr);
       }
 
+      try {
+        serviceOrderLifecycle.createBuyerOrder({
+          localMetabotId: metabotId,
+          counterpartyGlobalMetaId: toGlobalMetaId,
+          servicePinId: serviceId,
+          serviceName: serviceSkill || serviceId || 'Service Order',
+          paymentTxid: servicePaidTx || result.txids?.[0] || result.pinId,
+          paymentChain: normalizeServiceOrderPaymentChain(serviceCurrency),
+          paymentAmount: servicePrice || '0',
+          paymentCurrency: serviceCurrency || 'SPACE',
+          coworkSessionId,
+          orderMessagePinId: result.pinId ?? null,
+        });
+      } catch (error) {
+        if (error instanceof ServiceOrderOpenOrderExistsError) {
+          return {
+            success: false,
+            errorCode: error.code,
+            error: error.message,
+          };
+        }
+        throw error;
+      }
+
       return { success: true, txids: result.txids };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to send order' };
+    } finally {
+      releaseBuyerOrderCreation?.();
     }
   });
 

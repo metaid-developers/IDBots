@@ -392,4 +392,22 @@ export class ServiceOrderStore {
       [role]
     ).map((row) => this.mapRow(row));
   }
+
+  findLatestOpenOrderForPair(
+    role: ServiceOrderRole,
+    localMetabotId: number,
+    counterpartyGlobalMetaid: string
+  ): ServiceOrderRecord | null {
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND local_metabot_id = ?
+        AND counterparty_global_metaid = ?
+        AND status NOT IN ('completed', 'refunded')
+      ORDER BY updated_at DESC, created_at DESC, id DESC
+      LIMIT 1
+    `, [role, localMetabotId, counterpartyGlobalMetaid]);
+    return row ? this.mapRow(row) : null;
+  }
 }
