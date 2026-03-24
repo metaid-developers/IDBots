@@ -461,12 +461,15 @@ export interface CoworkRunnerOptions {
   getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   /** When set, fetches MetaBot by id for persona injection into system prompt. */
   getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
+  /** When set, opens a local MetaApp and returns the resolved local URL. */
+  openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
 }
 
 export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
+  private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private activeSessions: Map<string, ActiveSession> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
@@ -481,6 +484,7 @@ export class CoworkRunner extends EventEmitter {
     this.store = store;
     this.getSkillSessionEnvOverrides = options?.getSkillSessionEnvOverrides;
     this.getMetabotById = options?.getMetabotById;
+    this.openMetaApp = options?.openMetaApp;
   }
 
 
@@ -3040,6 +3044,46 @@ export class CoworkRunner extends EventEmitter {
                       changedIds: [],
                       reason: error instanceof Error ? error.message : String(error),
                     }),
+                  }],
+                  isError: true,
+                } as any;
+              }
+            }
+          )
+        );
+      }
+      if (this.openMetaApp) {
+        memoryTools.push(
+          tool(
+            'open_metaapp',
+            'Open a local MetaApp by app id and optional target path.',
+            {
+              appId: z.string().min(1),
+              targetPath: z.string().optional(),
+            },
+            async (args: { appId: string; targetPath?: string }) => {
+              try {
+                const result = await this.openMetaApp?.({
+                  appId: args.appId,
+                  targetPath: args.targetPath,
+                });
+                const text = result?.success
+                  ? (result.url
+                    ? `Opened metaapp "${args.appId}" at ${result.url}`
+                    : `Opened metaapp "${args.appId}"`)
+                  : `Failed to open metaapp "${args.appId}": ${result?.error || 'Unknown error'}`;
+                const response: any = {
+                  content: [{ type: 'text', text }],
+                };
+                if (!result?.success) {
+                  response.isError = true;
+                }
+                return response;
+              } catch (error) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: `Failed to open metaapp "${args.appId}": ${error instanceof Error ? error.message : String(error)}`,
                   }],
                   isError: true,
                 } as any;
