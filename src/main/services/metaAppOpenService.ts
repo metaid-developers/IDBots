@@ -50,6 +50,7 @@ const decodePathSegments = (pathname: string): string[] | null => {
 
 const resolveMetaAppFileTarget = (
   record: MetaAppRecordLike,
+  metaAppsRoot: string,
   pathname: string,
 ): { urlPathname: string; filePath: string } | { error: string } => {
   const segments = decodePathSegments(pathname);
@@ -67,14 +68,14 @@ const resolveMetaAppFileTarget = (
 
   const urlPathname = `/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
 
-  let appRootRealPath: string;
+  let servedRootRealPath: string;
   try {
-    appRootRealPath = fs.realpathSync.native(path.resolve(record.appRoot));
+    servedRootRealPath = fs.realpathSync.native(path.resolve(metaAppsRoot));
   } catch {
-    return { error: 'MetaApp root is missing' };
+    return { error: 'METAAPPs root is missing' };
   }
 
-  const candidatePath = path.resolve(appRootRealPath, ...relativeSegments);
+  const candidatePath = path.resolve(servedRootRealPath, appId, ...relativeSegments);
 
   let candidateRealPath: string;
   try {
@@ -83,9 +84,9 @@ const resolveMetaAppFileTarget = (
     return { error: 'targetPath does not resolve to an existing file' };
   }
 
-  const relativeToRoot = path.relative(appRootRealPath, candidateRealPath);
+  const relativeToRoot = path.relative(servedRootRealPath, candidateRealPath);
   if (!relativeToRoot || relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
-    return { error: 'targetPath escapes the selected app root' };
+    return { error: 'targetPath escapes the served METAAPPs root' };
   }
 
   let stat: fs.Stats;
@@ -152,13 +153,13 @@ export async function openMetaApp(input: {
       return { success: false, error: 'Target path is empty' };
     }
 
+    const metaAppsRoot = path.dirname(path.resolve(record.appRoot));
     const { pathPart, suffix } = splitPathSuffix(requested);
-    const resolved = resolveMetaAppFileTarget(record, pathPart);
+    const resolved = resolveMetaAppFileTarget(record, metaAppsRoot, pathPart);
     if ('error' in resolved) {
       return { success: false, error: resolved.error };
     }
 
-    const metaAppsRoot = path.dirname(path.resolve(record.appRoot));
     const ready = await input.ensureServerReady(metaAppsRoot);
     const baseUrl = normalizeLocalBaseUrl(String(ready?.baseUrl ?? ''));
     if (!baseUrl) {
