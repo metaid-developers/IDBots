@@ -14,6 +14,19 @@ type MetaAppManagerLike = {
 
 type EnsureServerReady = (root: string) => Promise<{ baseUrl: string }>;
 type ShellOpenExternal = (url: string) => Promise<void>;
+type ResolveMetaAppUrlInput = {
+  appId: string;
+  targetPath?: string;
+  manager: Pick<MetaAppManagerLike, 'listMetaApps'>;
+  ensureServerReady: EnsureServerReady;
+};
+type ResolveMetaAppUrlResult = {
+  success: boolean;
+  appId?: string;
+  name?: string;
+  url?: string;
+  error?: string;
+};
 
 const splitPathSuffix = (raw: string): { pathPart: string; suffix: string } => {
   const trimmed = String(raw ?? '').trim();
@@ -128,13 +141,7 @@ const normalizeLocalBaseUrl = (baseUrl: string): string | null => {
   return `http://127.0.0.1:${port}`;
 };
 
-export async function openMetaApp(input: {
-  appId: string;
-  targetPath?: string;
-  manager: Pick<MetaAppManagerLike, 'listMetaApps'>;
-  ensureServerReady: EnsureServerReady;
-  shellOpenExternal: ShellOpenExternal;
-}): Promise<{ success: boolean; appId?: string; name?: string; url?: string; error?: string }> {
+export async function resolveMetaAppUrl(input: ResolveMetaAppUrlInput): Promise<ResolveMetaAppUrlResult> {
   try {
     const appId = String(input?.appId ?? '').trim();
     if (!appId) {
@@ -167,10 +174,20 @@ export async function openMetaApp(input: {
     }
 
     const finalUrl = `${baseUrl}${resolved.urlPathname}${suffix}`;
-
-    await input.shellOpenExternal(finalUrl);
     return { success: true, appId: record.id, name: record.name, url: finalUrl };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
+}
+
+export async function openMetaApp(
+  input: ResolveMetaAppUrlInput & { shellOpenExternal: ShellOpenExternal },
+): Promise<ResolveMetaAppUrlResult> {
+  const result = await resolveMetaAppUrl(input);
+  if (!result.success || !result.url) {
+    return result;
+  }
+
+  await input.shellOpenExternal(result.url);
+  return result;
 }

@@ -71,6 +71,35 @@ export function resolveSocketConfig() {
   };
 }
 
+export function resolveSocketTransports() {
+  const cfg = (typeof window !== 'undefined' && window.IDConfig) ? window.IDConfig : {};
+  const locator = (typeof window !== 'undefined' && window.ServiceLocator)
+    ? window.ServiceLocator
+    : {};
+  const configured = cfg.CHAT_WS_TRANSPORTS !== undefined
+    ? cfg.CHAT_WS_TRANSPORTS
+    : locator.chat_ws_transports;
+
+  const normalize = (value) => {
+    const text = String(value || '').trim().toLowerCase();
+    if (text !== 'websocket' && text !== 'polling') return '';
+    return text;
+  };
+
+  let list = [];
+  if (Array.isArray(configured)) {
+    list = configured.map(normalize).filter(Boolean);
+  } else if (typeof configured === 'string' && configured.trim()) {
+    list = configured
+      .split(',')
+      .map(normalize)
+      .filter(Boolean);
+  }
+
+  if (!list.length) return ['websocket'];
+  return Array.from(new Set(list));
+}
+
 export function resolveSocketPath(pathPrefix) {
   const prefix = String(pathPrefix || '').trim().replace(/\/$/, '');
   return prefix ? `${prefix}/socket.io` : '/socket.io';
@@ -107,6 +136,7 @@ export class WsNewStore {
 
     const socketConfig = resolveSocketConfig();
     const socketPath = resolveSocketPath(socketConfig.pathPrefix);
+    const transports = resolveSocketTransports();
     this.socket = io(socketConfig.url, {
       path: socketPath,
       query: {
@@ -117,7 +147,9 @@ export class WsNewStore {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      transports: ['websocket', 'polling'],
+      transports,
+      upgrade: transports.includes('polling'),
+      rememberUpgrade: true,
     });
 
     this.socket.on('connect', () => {

@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PhotoIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Skill } from '../../types/skill';
+import {
+  GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
+  getGigSquarePublishPriceLimit,
+  getGigSquarePublishPriceLimitText,
+} from './gigSquarePublishPresentation.js';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -16,18 +21,6 @@ type StatusPanelState = 'submitting' | 'success' | 'error' | 'partial';
 
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 const ICON_ACCEPT = 'image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml';
-
-const CURRENCY_OPTIONS = [
-  { label: 'BTC', value: 'BTC' },
-  { label: 'MVC', value: 'SPACE' },
-  { label: 'DOGE', value: 'DOGE' },
-];
-
-const PRICE_LIMITS: Record<string, number> = {
-  BTC: 1,
-  SPACE: 100000,
-  DOGE: 10000,
-};
 
 const OUTPUT_OPTIONS = [
   { label: 'text', value: 'text' },
@@ -67,12 +60,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     [skills, selectedSkillId]
   );
 
-  const currentCurrencyLabel = useMemo(() => {
-    const option = CURRENCY_OPTIONS.find((item) => item.value === currency);
-    return option?.label || currency;
-  }, [currency]);
-
-  const priceLimit = PRICE_LIMITS[currency] || PRICE_LIMITS.BTC;
+  const priceLimit = getGigSquarePublishPriceLimit(currency);
   const isFormDisabled = status === 'submitting' || statusPanelOpen;
 
   const loadMetabots = useCallback(async () => {
@@ -398,7 +386,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 disabled={isFormDisabled}
               />
               <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
-                {i18nService.t('gigSquarePublishPriceLimitPrefix')}{priceLimit} {currentCurrencyLabel}
+                {i18nService.t('gigSquarePublishPriceLimitPrefix')}{getGigSquarePublishPriceLimitText(currency)}
               </p>
             </div>
             <div>
@@ -411,7 +399,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 disabled={isFormDisabled}
               >
-                {CURRENCY_OPTIONS.map((item) => (
+                {GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>

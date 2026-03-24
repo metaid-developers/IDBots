@@ -163,3 +163,4 @@ node "$SKILLS_ROOT/metabot-chat-groupchat/scripts/index.js" \
 4. **编排去重**：同一 MetaBot 同群已有活跃任务时，编排接口会 UPDATE 配置（与原先一致）。
 5. **脚本路径**：使用 `$SKILLS_ROOT/metabot-chat-groupchat/scripts/index.js`。
 6. **主进程 RPC**：需本机 IDBots 运行且 MetaID RPC 可用（默认 `http://127.0.0.1:31200`，可用环境变量 `IDBOTS_RPC_URL` 覆盖）。
+7. **返回本地 MetaApp 链接**：当发送成功后，如本机已安装聊天相关的 MetaApp，调用 `resolve_metaapp_url` 获取本地应用的URL，并在回复中输出最匹配的聊天相关MetaApp的可点击地址，例如 `[在本地 Chat MetaApp 查看](http://127.0.0.1:PORT/...)`。除非用户明确要求“打开 / 启动 / 进入” MetaApp，否则不要调用 `open_metaapp` 自动打开。

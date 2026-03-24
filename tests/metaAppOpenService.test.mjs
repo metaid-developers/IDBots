@@ -8,10 +8,12 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 let openMetaApp;
+let resolveMetaAppUrl;
 try {
-  ({ openMetaApp } = require('../dist-electron/services/metaAppOpenService.js'));
+  ({ openMetaApp, resolveMetaAppUrl } = require('../dist-electron/services/metaAppOpenService.js'));
 } catch {
   openMetaApp = null;
+  resolveMetaAppUrl = null;
 }
 
 const createTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-metaapps-open-service-'));
@@ -58,6 +60,40 @@ test('openMetaApp resolves a valid targetPath, ensures the server, and opens the
   });
   assert.equal(ensuredRoot, metaAppsRoot);
   assert.equal(openedUrl, 'http://127.0.0.1:43210/buzz/app/index.html?view=hot#top');
+});
+
+test('resolveMetaAppUrl resolves a valid targetPath and returns the local URL without opening it', async () => {
+  assert.equal(typeof resolveMetaAppUrl, 'function', 'resolveMetaAppUrl() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
+  };
+
+  let ensuredRoot = null;
+
+  const result = await resolveMetaAppUrl({
+    appId: 'buzz',
+    targetPath: '/buzz/app/index.html?view=hot#top',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async (root) => {
+      ensuredRoot = root;
+      return { baseUrl: 'http://127.0.0.1:43210' };
+    },
+  });
+
+  assert.deepEqual(result, {
+    success: true,
+    appId: 'buzz',
+    name: 'Buzz',
+    url: 'http://127.0.0.1:43210/buzz/app/index.html?view=hot#top',
+  });
+  assert.equal(ensuredRoot, metaAppsRoot);
 });
 
 test('openMetaApp falls back to record.entry when targetPath is empty', async () => {

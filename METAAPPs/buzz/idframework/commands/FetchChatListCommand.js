@@ -1,5 +1,7 @@
 const CHAT_LIST_RUN_BY_STORE = new WeakMap();
 let CHAT_LIST_RUN_SEQ = 0;
+const CHAT_LIST_USER_PREFETCH_AT = new Map();
+const CHAT_LIST_USER_PREFETCH_COOLDOWN_MS = 120000;
 
 /**
  * FetchChatListCommand
@@ -86,6 +88,29 @@ export default class FetchChatListCommand {
     if (!senderLabel) return message;
     if (message.startsWith(senderLabel + ':')) return message;
     return `${senderLabel}: ${message}`;
+  }
+
+  _escapeRegExp(text) {
+    return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  _stripSenderPrefix(sender, previewText) {
+    const message = this._toSingleLine(previewText);
+    if (!message) return '';
+    const senderLabel = this._formatSenderLabel(sender);
+    if (!senderLabel) return message;
+    const pattern = new RegExp(`^${this._escapeRegExp(senderLabel)}\\s*[:：]\\s*`);
+    const stripped = message.replace(pattern, '').trim();
+    return stripped || message;
+  }
+
+  _formatConversationPreview(chatType, previewText, sender) {
+    if (previewText == null) return previewText;
+    const message = this._toSingleLine(previewText);
+    if (!message) return message;
+    return String(chatType || '') === '1'
+      ? (this._prefixWithSender(sender, message) || message)
+      : this._stripSenderPrefix(sender, message);
   }
 
   _extractPreviewSender(chat) {
@@ -385,20 +410,24 @@ export default class FetchChatListCommand {
   async _resolveRuntimePreviewForConversation(conversation, walletStore, userStore) {
     if (!conversation || typeof conversation !== 'object') return '';
     const row = conversation._raw && typeof conversation._raw === 'object' ? conversation._raw : {};
+    const conversationType = String(conversation.type || '');
     const payload = this._extractRuntimePayload(row);
+    const previewSender = (conversationType === '1' || conversationType === '2')
+      ? (this._resolveSenderLabel(row, conversation, walletStore, userStore) || this._extractPreviewSender(row))
+      : '';
     if (payload.fileLike) {
-      return '[File]';
+      return this._formatConversationPreview(conversationType, '[File]', previewSender);
     }
 
     let preview = this._toSingleLine(payload.content);
     if (!preview) return '';
 
-    if (String(conversation.type || '') === '1') {
+    if (conversationType === '1') {
       if (this._isHashLikeContent(preview)) {
         const groupId = this._toText(conversation.groupId || row.groupId || conversation.metaid);
         preview = await this._decryptGroupText(preview, groupId);
       }
-    } else if (String(conversation.type || '') === '2') {
+    } else if (conversationType === '2') {
       if (this._isHashLikeContent(preview)) {
         const peerGlobalMetaId = this._toText(
           row.globalMetaId ||
@@ -414,7 +443,7 @@ export default class FetchChatListCommand {
     preview = this._toSingleLine(preview);
     if (!preview) return '';
     if (this._isHashLikeContent(preview)) return '';
-    return preview;
+    return this._formatConversationPreview(conversationType, preview, previewSender);
   }
 
   _sortedPreviewKeys(conversations, limit = 120) {
@@ -442,11 +471,13 @@ export default class FetchChatListCommand {
         const key = keys[position];
         const conversation = conversations[key];
         if (!conversation || typeof conversation !== 'object') continue;
+        const currentPreview = this._toSingleLine(conversation.lastMessage || '');
+        if (conversation._skipRuntimePreviewHydration && currentPreview) continue;
         try {
           const preview = await this._resolveRuntimePreviewForConversation(conversation, walletStore, userStore);
           if (!preview) continue;
-          const currentPreview = this._toSingleLine(conversation.lastMessage || '');
-          if (preview === currentPreview) continue;
+          const livePreview = this._toSingleLine(conversation.lastMessage || '');
+          if (preview === livePreview) continue;
           conversation.lastMessage = preview;
           updatedCount += 1;
         } catch (_) {}
@@ -559,11 +590,66 @@ export default class FetchChatListCommand {
     Object.keys(next).forEach((key) => {
       const row = next[key];
       if (!row || typeof row !== 'object') return;
+      const prevRow = prev[key] && typeof prev[key] === 'object' ? prev[key] : null;
       const apiIndex = this._normalizeConversationIndex(row.index);
-      const prevIndex = this._normalizeConversationIndex(prev[key] && prev[key].index);
+      const prevIndex = this._normalizeConversationIndex(prevRow && prevRow.index);
       const localMax = this._maxMessageIndexFromRows(prevMessages[key]);
       const resolved = Math.max(apiIndex, prevIndex, localMax);
       row.index = resolved;
+
+      const apiPreview = this._toSingleLine(row.lastMessage || '');
+      const prevPreview = this._toSingleLine(prevRow && prevRow.lastMessage ? prevRow.lastMessage : '');
+      const apiTimeRaw = Number(row.lastMessageTime || 0);
+      const prevTimeRaw = Number(prevRow && prevRow.lastMessageTime ? prevRow.lastMessageTime : 0);
+      const apiTime = Number.isFinite(apiTimeRaw) && apiTimeRaw > 0 ? Math.floor(apiTimeRaw) : 0;
+      const prevTime = Number.isFinite(prevTimeRaw) && prevTimeRaw > 0 ? Math.floor(prevTimeRaw) : 0;
+      const hasLocalMessageAtResolvedIndex = resolved > 0 && localMax >= resolved;
+
+      // If local state is newer than API row, keep local preview/time to avoid stale "previous message" in sidebar.
+      if (prevRow && resolved > apiIndex) {
+        if (prevPreview) {
+          row.lastMessage = prevRow.lastMessage;
+          row._skipRuntimePreviewHydration = true;
+        }
+        if (prevTime > apiTime) row.lastMessageTime = prevTime;
+        return;
+      }
+
+      // Some latest-chat-info responses catch index/time up first but still ship the previous preview text.
+      // When local messages already contain that same index, prefer the local preview and keep the freshest time.
+      const shouldKeepLocalPreviewForSameIndex =
+        !!prevRow &&
+        hasLocalMessageAtResolvedIndex &&
+        resolved === apiIndex &&
+        !!prevPreview &&
+        !!apiPreview &&
+        prevPreview !== apiPreview;
+      if (shouldKeepLocalPreviewForSameIndex) {
+        row.lastMessage = prevRow.lastMessage;
+        row.lastMessageTime = Math.max(prevTime, apiTime) || row.lastMessageTime;
+        row._skipRuntimePreviewHydration = true;
+        return;
+      }
+
+      // Edge case: API index catches up but preview payload is still stale for that same index.
+      // If local row has at least same index and a newer timestamp, trust local preview/time.
+      const shouldKeepLocalForSameOrNewerIndex =
+        !!prevRow &&
+        prevIndex >= apiIndex &&
+        prevPreview &&
+        prevTime > apiTime;
+      if (shouldKeepLocalForSameOrNewerIndex) {
+        row.lastMessage = prevRow.lastMessage;
+        row.lastMessageTime = prevTime;
+        row._skipRuntimePreviewHydration = true;
+        return;
+      }
+
+      // If API preview is temporarily empty/noisy, prefer previous non-empty preview.
+      if (prevRow && !apiPreview && prevPreview) {
+        row.lastMessage = prevRow.lastMessage;
+        if (prevTime > apiTime) row.lastMessageTime = prevTime;
+      }
     });
   }
 
@@ -758,6 +844,7 @@ export default class FetchChatListCommand {
 
       // Fetch user info for each conversation participant
       if (userStore) {
+        const now = Date.now();
         // Extract unique metaids from conversations
         const metaids = new Set();
         Object.values(conversations).forEach(conv => {
@@ -778,7 +865,22 @@ export default class FetchChatListCommand {
 
         // Fetch user info for each metaid
         for (const metaid of metaids) {
-          if (!userStore.users[metaid]) {
+          const cachedUser = userStore.users && typeof userStore.users === 'object'
+            ? (userStore.users[metaid] || null)
+            : null;
+          const hasEnoughProfile = !!(
+            cachedUser &&
+            typeof cachedUser === 'object' &&
+            (
+              this._toText(cachedUser.name) ||
+              this._toText(cachedUser.metaid || cachedUser.metaId) ||
+              this._toText(cachedUser.globalMetaId || cachedUser.globalmetaid)
+            )
+          );
+          const lastPrefetchAt = Number(CHAT_LIST_USER_PREFETCH_AT.get(metaid) || 0);
+          const isInCooldown = lastPrefetchAt > 0 && (now - lastPrefetchAt) < CHAT_LIST_USER_PREFETCH_COOLDOWN_MS;
+          if (!hasEnoughProfile && !isInCooldown) {
+            CHAT_LIST_USER_PREFETCH_AT.set(metaid, now);
             if (window.IDFramework) {
               window.IDFramework.dispatch('fetchUser', { metaid }).catch(err => {
                 console.warn(`Failed to fetch user info for ${metaid}:`, err);
@@ -901,17 +1003,6 @@ export default class FetchChatListCommand {
             chat.userInfo.avatarImage || chat.userInfo.avatarUrl || chat.userInfo.avatar || null,
             'avatar'
           );
-          
-          // If we have userInfo, dispatch fetchUser to ensure user data is in store
-          const fetchKey = privateGlobalMetaId || participantMetaId;
-          if (fetchKey) {
-            setTimeout(() => {
-              IDFramework.dispatch('fetchUser', {
-                ...(privateGlobalMetaId ? { globalMetaId: privateGlobalMetaId } : {}),
-                ...(participantMetaId ? { metaid: participantMetaId } : {}),
-              });
-            }, 0);
-          }
         }
       } else {
         // Fallback: use generic ID
@@ -920,7 +1011,11 @@ export default class FetchChatListCommand {
         conversationName = chat.name || chat.title || null;
       }
       
-      const lastMessage = this._extractMessagePreview(chat);
+      const lastMessage = this._formatConversationPreview(
+        chatType,
+        this._extractMessagePreview(chat),
+        this._extractPreviewSender(chat)
+      );
       
       // Last message time - use timestamp field
       let lastMessageTime = null;

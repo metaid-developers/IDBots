@@ -207,18 +207,44 @@ class IdChatGroupmsgList extends HTMLElement {
     if (this._pendingScrollRestore && this._pendingScrollRestore.conversation === snapshot.currentConversation) {
       const pending = this._pendingScrollRestore;
       const currentOldestIndex = this._getOldestIndex(snapshot.messages);
+      const currentMaxIndex = this._getMaxIndex(snapshot.messages);
       const hasOlderLoaded =
         !!currentOldestIndex &&
         currentOldestIndex > 0 &&
         currentOldestIndex < Number(pending.oldestIndex || 0);
       const listShapeChanged = Number(snapshot.messages.length || 0) !== Number(pending.messageCount || 0);
+      const staleRestoreWithoutOlderProgress =
+        !!listShapeChanged &&
+        (!currentOldestIndex || currentOldestIndex >= Number(pending.oldestIndex || 0));
 
       if (hasOlderLoaded || listShapeChanged) {
-        this._restoreScrollPosition(container, pending);
-        this._pendingScrollRestore = null;
+        if (hasOlderLoaded) {
+          this._restoreScrollPosition(container, pending);
+          this._pendingScrollRestore = null;
+          this._syncScrollToBottomButton(container, snapshot);
+          return;
+        }
+        if (staleRestoreWithoutOlderProgress) {
+          this._debugTrace('scroll-drop-stale-pending-restore', {
+            pendingOldestIndex: Number(pending.oldestIndex || 0),
+            currentOldestIndex: Number(currentOldestIndex || 0),
+            currentMaxIndex: Number(currentMaxIndex || 0),
+            previousMaxIndex: Number(previousMaxIndex || 0),
+            pendingMessageCount: Number(pending.messageCount || 0),
+            currentMessageCount: Number(snapshot.messages.length || 0),
+          });
+          this._pendingScrollRestore = null;
+        } else {
+          this._restoreScrollPosition(container, pending);
+          this._pendingScrollRestore = null;
+          this._syncScrollToBottomButton(container, snapshot);
+          return;
+        }
       }
-      this._syncScrollToBottomButton(container, snapshot);
-      return;
+      if (this._pendingScrollRestore) {
+        this._syncScrollToBottomButton(container, snapshot);
+        return;
+      }
     }
     this._pendingScrollRestore = null;
 
@@ -971,6 +997,7 @@ class IdChatGroupmsgList extends HTMLElement {
 
       if (!nextOldestIndex || nextOldestIndex <= 1) {
         this._noMoreOlderByConversation[conversationId] = true;
+        this._pendingScrollRestore = null;
         this._debugTrace('load-no-more', {
           conversationId: conversationId,
           nextOldestIndex: Number(nextOldestIndex || 0),
@@ -979,10 +1006,14 @@ class IdChatGroupmsgList extends HTMLElement {
       }
       if (!madeProgress && startIndex <= 1) {
         this._noMoreOlderByConversation[conversationId] = true;
+        this._pendingScrollRestore = null;
         return;
       }
       if (!madeProgress && Number(this._stalledOlderLoadsByConversation[conversationId] || 0) >= 2) {
         this._noMoreOlderByConversation[conversationId] = true;
+      }
+      if (!madeProgress) {
+        this._pendingScrollRestore = null;
       }
       this._debugTrace('load-finish', {
         conversationId: conversationId,

@@ -307,3 +307,152 @@ test('CoworkRunner registers the open_metaapp tool when starting a local Claude 
     },
   ]);
 });
+
+test('CoworkRunner registers the resolve_metaapp_url tool when starting a local Claude session', async () => {
+  const electronModuleId = require.resolve('electron');
+  const originalElectronExports = require.cache[electronModuleId]?.exports ?? require('electron');
+  require.cache[electronModuleId] = {
+    ...require.cache[electronModuleId],
+    exports: {
+      app: {
+        isPackaged: false,
+        getPath: () => os.tmpdir(),
+        getAppPath: () => process.cwd(),
+      },
+    },
+  };
+
+  const claudeSdk = require('../dist-electron/libs/claudeSdk.js');
+  const claudeSettings = require('../dist-electron/libs/claudeSettings.js');
+  const coworkUtil = require('../dist-electron/libs/coworkUtil.js');
+  const { CoworkRunner } = require('../dist-electron/libs/coworkRunner.js');
+
+  const originalLoadClaudeSdk = claudeSdk.loadClaudeSdk;
+  const originalGetCurrentApiConfig = claudeSettings.getCurrentApiConfig;
+  const originalGetClaudeCodePath = claudeSettings.getClaudeCodePath;
+  const originalGetEnhancedEnvWithTmpdir = coworkUtil.getEnhancedEnvWithTmpdir;
+
+  const toolCalls = [];
+  const resolveMetaAppUrlCalls = [];
+
+  claudeSdk.loadClaudeSdk = async () => ({
+    query: async () => (async function* emptyEvents() {})(),
+    createSdkMcpServer: (config) => config,
+    tool: (name, description, schema, handler) => {
+      const record = { name, description, schema, handler };
+      toolCalls.push(record);
+      return record;
+    },
+  });
+  claudeSettings.getCurrentApiConfig = () => ({ apiKey: 'test', model: 'claude-test' });
+  claudeSettings.getClaudeCodePath = () => '/tmp/fake-claude-code';
+  coworkUtil.getEnhancedEnvWithTmpdir = async () => ({});
+
+  const sessionId = 'session-metaapp-resolve-tool';
+  const store = {
+    session: {
+      id: sessionId,
+      status: 'running',
+      claudeSessionId: null,
+    },
+    updates: [],
+    getConfig() {
+      return { executionMode: 'local' };
+    },
+    getSession(id) {
+      return id === this.session.id ? this.session : null;
+    },
+    updateSession(id, patch) {
+      assert.equal(id, this.session.id);
+      this.updates.push(patch);
+      Object.assign(this.session, patch);
+    },
+    getMemoryBackend() {
+      return {
+        getEffectiveMemoryPolicyForSession() {
+          return {
+            memoryEnabled: false,
+            memoryImplicitUpdateEnabled: false,
+            memoryLlmJudgeEnabled: false,
+            memoryGuardLevel: 'strict',
+            memoryUserMemoriesMaxItems: 12,
+          };
+        },
+      };
+    },
+  };
+
+  const runner = new CoworkRunner(store, {
+    resolveMetaAppUrl: async (input) => {
+      resolveMetaAppUrlCalls.push(input);
+      return {
+        success: true,
+        name: 'Buzz App',
+        url: 'http://127.0.0.1:38421/buzz/app/index.html?view=hot',
+      };
+    },
+  });
+
+  const activeSession = {
+    sessionId,
+    claudeSessionId: null,
+    workspaceRoot: process.cwd(),
+    confirmationMode: 'modal',
+    pendingPermission: null,
+    abortController: new AbortController(),
+    currentStreamingMessageId: null,
+    currentStreamingContent: '',
+    currentStreamingThinkingMessageId: null,
+    currentStreamingThinking: '',
+    currentStreamingBlockType: null,
+    currentStreamingTextTruncated: false,
+    currentStreamingThinkingTruncated: false,
+    lastStreamingTextUpdateAt: 0,
+    lastStreamingThinkingUpdateAt: 0,
+    hasAssistantTextOutput: false,
+    hasAssistantThinkingOutput: false,
+    staleResumeDetected: false,
+    staleResumeRetryAllowed: true,
+    executionMode: 'local',
+  };
+
+  try {
+    await runner.runClaudeCodeLocal(activeSession, 'get the buzz app URL', process.cwd(), 'metaapp prompt');
+  } finally {
+    require.cache[electronModuleId] = {
+      ...require.cache[electronModuleId],
+      exports: originalElectronExports,
+    };
+    claudeSdk.loadClaudeSdk = originalLoadClaudeSdk;
+    claudeSettings.getCurrentApiConfig = originalGetCurrentApiConfig;
+    claudeSettings.getClaudeCodePath = originalGetClaudeCodePath;
+    coworkUtil.getEnhancedEnvWithTmpdir = originalGetEnhancedEnvWithTmpdir;
+  }
+
+  const resolveMetaAppUrlTool = toolCalls.find((entry) => entry.name === 'resolve_metaapp_url');
+  assert.ok(resolveMetaAppUrlTool, 'Expected resolve_metaapp_url to be registered');
+  assert.equal(resolveMetaAppUrlTool.description, 'Resolve a local MetaApp URL by app id and optional target path without opening it.');
+  assert.equal(resolveMetaAppUrlTool.schema.appId.safeParse('buzz-app').success, true);
+  assert.equal(resolveMetaAppUrlTool.schema.appId.safeParse('').success, false);
+  assert.equal(resolveMetaAppUrlTool.schema.targetPath.safeParse(undefined).success, true);
+  assert.equal(resolveMetaAppUrlTool.schema.targetPath.safeParse('/buzz/app/index.html?view=hot').success, true);
+
+  const toolResult = await resolveMetaAppUrlTool.handler({
+    appId: 'buzz-app',
+    targetPath: '/buzz/app/index.html?view=hot',
+  });
+
+  assert.deepEqual(resolveMetaAppUrlCalls, [
+    {
+      appId: 'buzz-app',
+      targetPath: '/buzz/app/index.html?view=hot',
+    },
+  ]);
+  assert.equal(toolResult?.isError, undefined);
+  assert.deepEqual(toolResult?.content, [
+    {
+      type: 'text',
+      text: 'Resolved metaapp "Buzz App" to http://127.0.0.1:38421/buzz/app/index.html?view=hot',
+    },
+  ]);
+});

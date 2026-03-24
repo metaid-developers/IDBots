@@ -64,7 +64,7 @@ import * as p2pIndexerService from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
 import { ensureMetaAppServerReady, stopMetaAppServer } from './services/metaAppLocalServer';
-import { openMetaApp } from './services/metaAppOpenService';
+import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -1208,8 +1208,7 @@ const getCoworkRunner = () => {
           normalizedSkillIds.has('metabot-post-buzz') ||
           normalizedSkillIds.has('metabot-omni-caster') ||
           normalizedSkillIds.has('metabot-post-skillservice') ||
-          normalizedSkillIds.has('metabot-chat-privatechat') ||
-          normalizedSkillIds.has('metabot-check-payment');
+          normalizedSkillIds.has('metabot-chat-privatechat');
         if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         const metabotStore = getMetabotStore();
         const metabotId = session?.metabotId;
@@ -1276,6 +1275,14 @@ const getCoworkRunner = () => {
           manager: getMetaAppManager(),
           ensureServerReady: ensureMetaAppServerReady,
           shellOpenExternal: shell.openExternal,
+        });
+      },
+      resolveMetaAppUrl: async (input) => {
+        return resolveMetaAppUrl({
+          appId: input.appId,
+          targetPath: input.targetPath,
+          manager: getMetaAppManager(),
+          ensureServerReady: ensureMetaAppServerReady,
         });
       },
     });

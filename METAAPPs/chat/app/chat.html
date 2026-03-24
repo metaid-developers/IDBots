@@ -86,9 +86,11 @@
     }"
   >
     <aside class="chat-sidebar">
-      <div class="chat-sidebar-mobile-auth" x-show="!showChatDrawer">
-        <id-connect-button class="chat-sidebar-mobile-connect-button"></id-connect-button>
-      </div>
+      <template x-if="isMobile && !showChatDrawer">
+        <div class="chat-sidebar-mobile-auth">
+          <id-connect-button class="chat-sidebar-mobile-connect-button"></id-connect-button>
+        </div>
+      </template>
       <id-chat-chatlist-panel
         :current-conversation="$store.chat.currentConversation || ''"
         @conversation-selected="handleConversationSelected()"
@@ -107,7 +109,9 @@
       </button>
 
       <id-chat-header @conversation-drawer-toggle="showInfoDrawer = !showInfoDrawer">
-        <id-connect-button slot="leading-action" class="chat-header-connect-button"></id-connect-button>
+        <template x-if="!isMobile || showChatDrawer">
+          <id-connect-button slot="leading-action" class="chat-header-connect-button"></id-connect-button>
+        </template>
       </id-chat-header>
 
       <template x-if="!$store.chat.currentConversation">

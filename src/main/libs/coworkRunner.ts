@@ -463,6 +463,8 @@ export interface CoworkRunnerOptions {
   getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
   /** When set, opens a local MetaApp and returns the resolved local URL. */
   openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
+  /** When set, resolves a local MetaApp URL without opening it. */
+  resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
 }
 
 export class CoworkRunner extends EventEmitter {
@@ -470,6 +472,7 @@ export class CoworkRunner extends EventEmitter {
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
   private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
+  private resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private activeSessions: Map<string, ActiveSession> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
@@ -485,6 +488,7 @@ export class CoworkRunner extends EventEmitter {
     this.getSkillSessionEnvOverrides = options?.getSkillSessionEnvOverrides;
     this.getMetabotById = options?.getMetabotById;
     this.openMetaApp = options?.openMetaApp;
+    this.resolveMetaAppUrl = options?.resolveMetaAppUrl;
   }
 
 
@@ -3085,6 +3089,47 @@ export class CoworkRunner extends EventEmitter {
                   content: [{
                     type: 'text',
                     text: `Failed to open metaapp "${args.appId}": ${error instanceof Error ? error.message : String(error)}`,
+                  }],
+                  isError: true,
+                } as any;
+              }
+            }
+          )
+        );
+      }
+      if (this.resolveMetaAppUrl) {
+        memoryTools.push(
+          tool(
+            'resolve_metaapp_url',
+            'Resolve a local MetaApp URL by app id and optional target path without opening it.',
+            {
+              appId: z.string().min(1),
+              targetPath: z.string().optional(),
+            },
+            async (args: { appId: string; targetPath?: string }) => {
+              try {
+                const result = await this.resolveMetaAppUrl?.({
+                  appId: args.appId,
+                  targetPath: args.targetPath,
+                });
+                const displayName = String(result?.name || args.appId).trim() || args.appId;
+                const text = result?.success
+                  ? (result.url
+                    ? `Resolved metaapp "${displayName}" to ${result.url}`
+                    : `Resolved metaapp "${displayName}"`)
+                  : `Failed to resolve metaapp "${displayName}": ${result?.error || 'Unknown error'}`;
+                const response: any = {
+                  content: [{ type: 'text', text }],
+                };
+                if (!result?.success) {
+                  response.isError = true;
+                }
+                return response;
+              } catch (error) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: `Failed to resolve metaapp "${args.appId}": ${error instanceof Error ? error.message : String(error)}`,
                   }],
                   isError: true,
                 } as any;

@@ -22,7 +22,7 @@ const CHAT_COMPONENTS = [
   '@idf/components/id-avatar.js?v=20260322-m4i',
   '@idf/components/id-chat-header.js?v=20260322-m4i',
   '@idf/components/id-chat-chatlist-panel.js?v=20260323-perf2',
-  '@idf/components/id-chat-groupmsg-list.js?v=20260322-m4i',
+  '@idf/components/id-chat-groupmsg-list.js?v=20260324-scrollfix1',
   '@idf/components/id-chat-bubble.js?v=20260323-opt1',
   '@idf/components/id-chat-msg-bubble.js?v=20260322-m4i',
   '@idf/components/id-chain-fee-selector.js?v=20260322-m4i',
@@ -31,7 +31,7 @@ const CHAT_COMPONENTS = [
 const DEFERRED_CHAT_COMPONENTS = [
   '@idf/components/id-chat-group-info-panel.js?v=20260322-m4i',
 ];
-const CHAT_COMMAND_VERSION = '20260323-perf3';
+const CHAT_COMMAND_VERSION = '20260324-previewformat1';
 const GROUP_TEXT_PROTOCOL = '/protocols/simplegroupchat';
 const PRIVATE_TEXT_PROTOCOL = '/protocols/simplemsg';
 const GROUP_FILE_PROTOCOL = '/protocols/simplefilegroupchat';
@@ -329,6 +329,8 @@ let currentSocketMetaId = '';
 let previewChatStore = null;
 let previewChatStorePromise = null;
 let chatListRefreshTimer = null;
+let chatListRefreshQueuedAt = 0;
+let chatListRefreshInFlight = false;
 let socketHealthTimer = null;
 let socketReconnectTimer = null;
 let lastSocketBindAt = 0;
@@ -343,11 +345,12 @@ const pendingSendContextByTempId = new Map();
 const pendingTempIdByTxId = new Map();
 
 const CHAT_PAGE_SIZE = 50;
-const CHAT_LIST_IDLE_REFRESH_MS = 45000;
+const CHAT_LIST_IDLE_REFRESH_MS = 120000;
+const CHAT_LIST_REFRESH_MIN_INTERVAL_MS = 3000;
 const SOCKET_STALE_RECONNECT_MS = 120000;
 const SOCKET_HARD_REBIND_IDLE_MS = 300000;
 const SOCKET_HARD_REBIND_COOLDOWN_MS = 180000;
-const SOCKET_HEALTH_TICK_MS = 12000;
+const SOCKET_HEALTH_TICK_MS = 15000;
 const SOCKET_RECONNECT_DELAY_MS = 1500;
 const PENDING_ACK_REPAIR_AFTER_MS = 12000;
 const PENDING_ACK_REPAIR_INTERVAL_MS = 15000;
@@ -473,15 +476,36 @@ function pushSocketTrace(eventName, payload) {
 }
 
 function scheduleChatListRefresh(delay = 900, options = {}) {
+  const refreshOptions = options && typeof options === 'object' ? options : {};
+  const force = !!refreshOptions.force;
+  const minIntervalMs = Number(refreshOptions.minIntervalMs || CHAT_LIST_REFRESH_MIN_INTERVAL_MS);
+  const now = Date.now();
+  const latestRefreshSignalAt = Math.max(
+    Number(lastChatListRefreshAt || 0),
+    Number(chatListRefreshQueuedAt || 0)
+  );
+  if (!force && minIntervalMs > 0 && latestRefreshSignalAt > 0 && (now - latestRefreshSignalAt) < minIntervalMs) {
+    return;
+  }
+
   if (chatListRefreshTimer) {
     clearTimeout(chatListRefreshTimer);
     chatListRefreshTimer = null;
   }
-  const refreshOptions = options && typeof options === 'object' ? options : {};
-  chatListRefreshTimer = setTimeout(() => {
-    refreshChatList(refreshOptions).catch(() => {});
+  const normalizedDelay = Number.isFinite(Number(delay)) ? Math.max(0, Number(delay)) : 0;
+  chatListRefreshQueuedAt = now + normalizedDelay;
+  chatListRefreshTimer = setTimeout(async () => {
     chatListRefreshTimer = null;
-  }, delay);
+    if (chatListRefreshInFlight) return;
+    chatListRefreshInFlight = true;
+    try {
+      await refreshChatList(refreshOptions);
+    } catch (_) {
+    } finally {
+      chatListRefreshInFlight = false;
+      chatListRefreshQueuedAt = 0;
+    }
+  }, normalizedDelay);
 }
 
 function clearSocketReconnectTimer() {
@@ -585,7 +609,10 @@ async function dispatchConversationRecentFetch(conversationKey, conversationType
     } catch (_) {}
   }
 
+  // Never backfill "recent messages" from index 0; that path can jump UI to earliest page.
+  if (!Number.isFinite(latestHint) || Number(latestHint) <= 0) return;
   const startIndex = computeRecentWindowStart(latestHint, CHAT_PAGE_SIZE);
+  if (!Number.isFinite(startIndex) || Number(startIndex) <= 0) return;
   if (type === '1') {
     const groupId = String((row && row.groupId) || key).trim();
     if (!groupId) return;
@@ -739,12 +766,12 @@ function runSocketHealthCheck(reason = 'health') {
       sinceDisconnect: Number(lastSocketDisconnectAt ? (now - lastSocketDisconnectAt) : 0),
     });
     bindSocketForCurrentWallet({ force: true, reason: `health-${String(reason || 'unknown')}` });
-    scheduleChatListRefresh(260, { background: true });
+    scheduleChatListRefresh(260, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
     return;
   }
 
   if (idleMs > CHAT_LIST_IDLE_REFRESH_MS && (now - Number(lastChatListRefreshAt || 0) > CHAT_LIST_IDLE_REFRESH_MS)) {
-    scheduleChatListRefresh(240, { background: true });
+    scheduleChatListRefresh(240, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
   }
 
   const hasPendingAck = (() => {
@@ -773,7 +800,7 @@ function runSocketHealthCheck(reason = 'health') {
       sinceMessage: Number(lastSocketMessageAt ? (now - lastSocketMessageAt) : 0),
     });
     bindSocketForCurrentWallet({ force: true, reason: `stale-${String(reason || 'unknown')}` });
-    scheduleChatListRefresh(220, { background: true });
+    scheduleChatListRefresh(220, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
     return;
   }
 
@@ -793,7 +820,7 @@ function runSocketHealthCheck(reason = 'health') {
       sinceLastHardRebind: Number(prevHardRebindAt ? (now - prevHardRebindAt) : 0),
     });
     bindSocketForCurrentWallet({ force: true, reason: `hard-stale-${String(reason || 'unknown')}` });
-    scheduleChatListRefresh(220, { background: true });
+    scheduleChatListRefresh(220, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
     return;
   }
 
@@ -1708,7 +1735,8 @@ async function handleSocketMessage(raw) {
     }
   }
   notifyChatUpdated();
-  scheduleChatListRefresh(1200, { background: true });
+  // Keep left list metadata timely without forcing active-thread backfill each packet.
+  scheduleChatListRefresh(420, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
 }
 
 function pickFirstConversation(chatStore) {
@@ -1738,7 +1766,9 @@ async function refreshChatList(options = {}) {
   await IDFramework.dispatch('fetchChatList', refreshOptions);
   lastChatListRefreshAt = Date.now();
   notifyChatUpdated();
-  await maybeSyncCurrentConversationAfterListRefresh(refreshOptions.background ? 'background' : 'foreground');
+  if (!refreshOptions.skipConversationSync) {
+    await maybeSyncCurrentConversationAfterListRefresh(refreshOptions.background ? 'background' : 'foreground');
+  }
 
   if (!chatStore.currentConversation) {
     const first = pickFirstConversation(chatStore);
@@ -1782,7 +1812,7 @@ function bindSocketForCurrentWallet(options = {}) {
         metaid: targetMetaId,
         reason: String(bindOptions.reason || ''),
       });
-      scheduleChatListRefresh(240, { background: true });
+      scheduleChatListRefresh(240, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
     },
     onDisconnect: () => {
       lastSocketDisconnectAt = Date.now();
@@ -1938,7 +1968,7 @@ async function onChatSendSuccess(event) {
     });
   }
   notifyChatUpdated();
-  scheduleChatListRefresh(400, { background: true });
+  scheduleChatListRefresh(400, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
   setTimeout(() => {
     reconcilePendingAckMessages('post-send-success').catch(() => {});
     runSocketHealthCheck('post-send-success');
@@ -2085,10 +2115,7 @@ async function onChatSentLegacy(event) {
 
   await appendMessageToStore(chatStore, route, localMessage, String(walletStore.globalMetaId || ''));
   notifyChatUpdated();
-
-  setTimeout(() => {
-    refreshChatList({ background: true }).catch(() => {});
-  }, 500);
+  scheduleChatListRefresh(700, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
 }
 
 async function waitForReady() {
@@ -2187,14 +2214,14 @@ async function bootstrap() {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       runSocketHealthCheck('visibility');
-      scheduleChatListRefresh(260, { background: true });
+      scheduleChatListRefresh(260, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
     });
   }
 
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     window.addEventListener('focus', () => {
       runSocketHealthCheck('focus');
-      scheduleChatListRefresh(220, { background: true });
+      scheduleChatListRefresh(220, { background: true, skipConversationSync: true, minIntervalMs: 2500 });
     });
   }
 
