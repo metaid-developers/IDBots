@@ -328,3 +328,53 @@ test('openMetaApp rejects malformed baseUrl from ensureServerReady()', async () 
   assert.ok(result.error && /baseurl|url/i.test(result.error), `unexpected error: ${result.error}`);
   assert.equal(openCalled, false);
 });
+
+test('openMetaApp rejects symlinked METAAPPs/<id> directory that escapes the served root', async (t) => {
+  assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  const outsideRoot = path.join(tempDir, 'outside');
+
+  writeFile(path.join(outsideRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+  fs.mkdirSync(metaAppsRoot, { recursive: true });
+
+  const symlinkPath = path.join(metaAppsRoot, 'buzz');
+  try {
+    fs.symlinkSync(path.join(outsideRoot, 'buzz'), symlinkPath);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = error.code;
+      if (code === 'EPERM' || code === 'ENOSYS' || code === 'UNKNOWN') {
+        t.skip(`symlink creation unsupported in this environment: ${code}`);
+      }
+    }
+    throw error;
+  }
+
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: symlinkPath,
+  };
+
+  let ensureCalled = false;
+  let openCalled = false;
+
+  const result = await openMetaApp({
+    appId: 'buzz',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async () => {
+      ensureCalled = true;
+      return { baseUrl: 'http://127.0.0.1:12345' };
+    },
+    shellOpenExternal: async () => {
+      openCalled = true;
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(ensureCalled, false);
+  assert.equal(openCalled, false);
+});
