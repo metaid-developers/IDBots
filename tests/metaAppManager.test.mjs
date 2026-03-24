@@ -136,6 +136,86 @@ test('listMetaApps exposes version, creator-metaid, and source-type from APP.md'
   assert.equal(buzz.managedByIdbots, true);
 });
 
+test('listMetaApps falls back to metaapps.config defaults when APP.md omits managed metadata', () => {
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  const defaultsConfig = {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {
+        version: '3.4.5',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+      },
+    },
+  };
+
+  writeFile(path.join(metaAppsRoot, 'metaapps.config.json'), JSON.stringify(defaultsConfig, null, 2));
+  writeFile(
+    path.join(metaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: buzz-app',
+      'description: buzz app',
+      'entry: /buzz/app/index.html',
+      '---',
+      '',
+      '## When To Use',
+      'Open buzz timeline.',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
+  assert.equal(apps.length, 1);
+
+  const buzz = apps[0];
+  assert.equal(buzz.version, '3.4.5');
+  assert.equal(buzz.creatorMetaId, 'idbots');
+  assert.equal(buzz.sourceType, 'bundled-idbots');
+  assert.equal(buzz.managedByIdbots, true);
+});
+
+test('listMetaApps uses hard defaults when APP.md and config both omit managed metadata', () => {
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  const defaultsConfig = {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {},
+    },
+  };
+
+  writeFile(path.join(metaAppsRoot, 'metaapps.config.json'), JSON.stringify(defaultsConfig, null, 2));
+  writeFile(
+    path.join(metaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: buzz-app',
+      'description: buzz app',
+      'entry: /buzz/app/index.html',
+      '---',
+      '',
+      '## When To Use',
+      'Open buzz timeline.',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
+  assert.equal(apps.length, 1);
+
+  const buzz = apps[0];
+  assert.equal(buzz.version, '0');
+  assert.equal(buzz.creatorMetaId, '');
+  assert.equal(buzz.sourceType, 'manual');
+  assert.equal(buzz.managedByIdbots, false);
+});
+
 test('buildCoworkAutoRoutingPrompt emits <available_metaapps> with location and entry', () => {
   const tempDir = createTempDir();
   const metaAppsRoot = path.join(tempDir, 'METAAPPs');
