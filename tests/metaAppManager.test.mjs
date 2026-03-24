@@ -675,6 +675,78 @@ test('packaged sync installs missing bundled-idbots apps into userData', () => {
   assert.equal(config.defaults?.buzz?.updatedAt >= config.defaults?.buzz?.installedAt, true);
 });
 
+test('packaged sync keeps other bundled installs moving when one staged install fails', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+  const originalCpSync = fs.cpSync;
+  const originalWarn = console.warn;
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+      chat: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled buzz v1',
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'chat', {
+    description: 'bundled chat app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled chat v1',
+  });
+
+  fs.cpSync = (sourcePath, destinationPath, options) => {
+    const destinationName = path.basename(destinationPath);
+    if (
+      String(sourcePath).endsWith(path.join('METAAPPs', 'buzz')) &&
+      destinationName.startsWith('.buzz.stage-')
+    ) {
+      throw new Error('simulated staged install failure');
+    }
+    return originalCpSync(sourcePath, destinationPath, options);
+  };
+  console.warn = () => {};
+
+  try {
+    manager.syncBundledMetaAppsToUserData();
+  } finally {
+    fs.cpSync = originalCpSync;
+    console.warn = originalWarn;
+  }
+
+  assert.equal(fs.existsSync(path.join(userMetaAppsRoot, 'buzz')), false);
+  assert.equal(fs.existsSync(path.join(userMetaAppsRoot, 'chat', 'APP.md')), true);
+
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz, undefined);
+  assert.equal(config.defaults?.chat?.version, '1.0.0');
+  assert.equal(config.defaults?.chat?.['source-type'], 'bundled-idbots');
+});
+
 test('packaged sync upgrades bundled-idbots app when bundled version is higher', () => {
   const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
 
@@ -796,6 +868,64 @@ test('packaged sync upgrades bundled-idbots app when bundled version is v-prefix
   assert.equal(config.defaults?.buzz?.version, 'v1.1.0');
   assert.equal(config.defaults?.buzz?.installedAt, 111);
   assert.notEqual(config.defaults?.buzz?.updatedAt, 111);
+});
+
+test('packaged sync does not upgrade stable app to prerelease version', () => {
+  const { bundledMetaAppsRoot, userMetaAppsRoot, manager } = createPackagedManager();
+
+  writeJson(path.join(userMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'User defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 111,
+        updatedAt: 111,
+      },
+    },
+  });
+  writeMetaApp(userMetaAppsRoot, 'buzz', {
+    description: 'local buzz app',
+    frontmatter: {
+      version: '1.0.0',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'local stable buzz',
+  });
+
+  writeJson(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Bundled defaults',
+    defaults: {
+      buzz: {
+        version: '1.0.0-rc.1',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+        installedAt: 222,
+        updatedAt: 222,
+      },
+    },
+  });
+  writeMetaApp(bundledMetaAppsRoot, 'buzz', {
+    description: 'bundled prerelease buzz app',
+    frontmatter: {
+      version: '1.0.0-rc.1',
+      'creator-metaid': 'idbots',
+      'source-type': 'bundled-idbots',
+    },
+    prompt: 'bundled prerelease buzz',
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  const appMd = fs.readFileSync(path.join(userMetaAppsRoot, 'buzz', 'APP.md'), 'utf8');
+  assert.equal(appMd.includes('local stable buzz'), true);
+  const config = JSON.parse(fs.readFileSync(path.join(userMetaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.buzz?.version, '1.0.0');
+  assert.equal(config.defaults?.buzz?.updatedAt, 111);
 });
 
 test('packaged sync keeps existing app when transactional upgrade copy fails', () => {

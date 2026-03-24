@@ -99,23 +99,64 @@ const normalizeSourceType = (sourceType?: string): MetaAppSourceType => {
 const isIdbotsManagedSource = (sourceType: MetaAppSourceType): boolean =>
   sourceType === 'bundled-idbots' || sourceType === 'chain-idbots';
 
+type ParsedVersionIdentifier = number | string;
+
 const compareVersions = (a?: string, b?: string): number => {
-  const parse = (value: string | undefined): number[] => {
-    return String(value || '0')
-      .replace(/^v/i, '')
-      .split(/[.-]/)
+  const parse = (value: string | undefined): { core: number[]; prerelease: ParsedVersionIdentifier[] } => {
+    const normalized = String(value || '0').trim().replace(/^v/i, '');
+    const [mainPart, buildlessPrerelease = ''] = normalized.split('+', 1)[0].split('-', 2);
+    const core = (mainPart || '0')
+      .split('.')
       .map((part) => parseInt(part, 10) || 0);
+    const prerelease = buildlessPrerelease
+      ? buildlessPrerelease.split('.').map((part) => {
+          if (/^\d+$/.test(part)) {
+            return parseInt(part, 10);
+          }
+          return part;
+        })
+      : [];
+    return { core, prerelease };
   };
 
   const aa = parse(a);
   const bb = parse(b);
-  const len = Math.max(aa.length, bb.length);
-  for (let i = 0; i < len; i += 1) {
-    const va = aa[i] ?? 0;
-    const vb = bb[i] ?? 0;
+  const coreLength = Math.max(aa.core.length, bb.core.length);
+  for (let i = 0; i < coreLength; i += 1) {
+    const va = aa.core[i] ?? 0;
+    const vb = bb.core[i] ?? 0;
     if (va < vb) return -1;
     if (va > vb) return 1;
   }
+
+  if (aa.prerelease.length === 0 && bb.prerelease.length === 0) {
+    return 0;
+  }
+  if (aa.prerelease.length === 0) {
+    return 1;
+  }
+  if (bb.prerelease.length === 0) {
+    return -1;
+  }
+
+  const prereleaseLength = Math.max(aa.prerelease.length, bb.prerelease.length);
+  for (let i = 0; i < prereleaseLength; i += 1) {
+    const va = aa.prerelease[i];
+    const vb = bb.prerelease[i];
+    if (va === undefined) return -1;
+    if (vb === undefined) return 1;
+    if (va === vb) continue;
+
+    const vaIsNumber = typeof va === 'number';
+    const vbIsNumber = typeof vb === 'number';
+    if (vaIsNumber && vbIsNumber) {
+      return va < vb ? -1 : 1;
+    }
+    if (vaIsNumber) return -1;
+    if (vbIsNumber) return 1;
+    return String(va).localeCompare(String(vb));
+  }
+
   return 0;
 };
 
@@ -127,6 +168,7 @@ const buildMetaAppTempDirPath = (targetDir: string, suffix: 'stage' | 'backup'):
 const replaceMetaAppDirSafely = (sourceDir: string, targetDir: string): void => {
   const stageDir = buildMetaAppTempDirPath(targetDir, 'stage');
   const backupDir = buildMetaAppTempDirPath(targetDir, 'backup');
+  const targetExists = fs.existsSync(targetDir);
 
   try {
     fs.cpSync(sourceDir, stageDir, {
@@ -138,6 +180,16 @@ const replaceMetaAppDirSafely = (sourceDir: string, targetDir: string): void => 
   } catch (error) {
     fs.rmSync(stageDir, { recursive: true, force: true });
     throw error;
+  }
+
+  if (!targetExists) {
+    try {
+      fs.renameSync(stageDir, targetDir);
+    } catch (error) {
+      fs.rmSync(stageDir, { recursive: true, force: true });
+      throw error;
+    }
+    return;
   }
 
   try {
@@ -366,49 +418,48 @@ export class MetaAppManager {
       const syncedAppIds = new Set<string>();
       const bundledDirs = listMetaAppDirs(bundledRoot);
       bundledDirs.forEach((dir) => {
-        const appId = path.basename(dir);
-        const targetDir = path.join(userRoot, appId);
-        const bundledDefault = bundledDefaults[appId] ?? loadMetaAppDefaultFromDir(dir);
-        const bundledVersion = String(bundledDefault.version ?? '0').trim() || '0';
-        const bundledCreatorMetaId = String(bundledDefault['creator-metaid'] ?? '').trim();
-        const bundledSourceType = normalizeSourceType(bundledDefault['source-type'] ?? 'manual');
-        if (!isIdbotsManagedSource(bundledSourceType)) {
-          return;
-        }
+        try {
+          const appId = path.basename(dir);
+          const targetDir = path.join(userRoot, appId);
+          const bundledDefault = bundledDefaults[appId] ?? loadMetaAppDefaultFromDir(dir);
+          const bundledVersion = String(bundledDefault.version ?? '0').trim() || '0';
+          const bundledCreatorMetaId = String(bundledDefault['creator-metaid'] ?? '').trim();
+          const bundledSourceType = normalizeSourceType(bundledDefault['source-type'] ?? 'manual');
+          if (!isIdbotsManagedSource(bundledSourceType)) {
+            return;
+          }
 
-        if (!fs.existsSync(targetDir)) {
-          fs.cpSync(dir, targetDir, {
-            recursive: true,
-            dereference: true,
-            force: false,
-            errorOnExist: false,
-          });
+          if (!fs.existsSync(targetDir)) {
+            replaceMetaAppDirSafely(dir, targetDir);
+            syncedAppIds.add(appId);
+            return;
+          }
+
+          const localDefault = userDefaults[appId];
+          if (!localDefault) {
+            return;
+          }
+
+          const localCreatorMetaId = String(localDefault['creator-metaid'] ?? '').trim();
+          if (localCreatorMetaId !== bundledCreatorMetaId) {
+            return;
+          }
+
+          const localSourceType = normalizeSourceType(localDefault['source-type'] ?? 'manual');
+          if (!isIdbotsManagedSource(localSourceType)) {
+            return;
+          }
+
+          const localVersion = String(localDefault.version ?? '0').trim() || '0';
+          if (compareVersions(bundledVersion, localVersion) <= 0) {
+            return;
+          }
+
+          replaceMetaAppDirSafely(dir, targetDir);
           syncedAppIds.add(appId);
-          return;
+        } catch (error) {
+          console.warn('[metaapps] Failed to sync bundled MetaApp:', dir, error);
         }
-
-        const localDefault = userDefaults[appId];
-        if (!localDefault) {
-          return;
-        }
-
-        const localCreatorMetaId = String(localDefault['creator-metaid'] ?? '').trim();
-        if (localCreatorMetaId !== bundledCreatorMetaId) {
-          return;
-        }
-
-        const localSourceType = normalizeSourceType(localDefault['source-type'] ?? 'manual');
-        if (!isIdbotsManagedSource(localSourceType)) {
-          return;
-        }
-
-        const localVersion = String(localDefault.version ?? '0').trim() || '0';
-        if (compareVersions(bundledVersion, localVersion) <= 0) {
-          return;
-        }
-
-        replaceMetaAppDirSafely(dir, targetDir);
-        syncedAppIds.add(appId);
       });
       this.mergeBundledMetaAppDefaults(userRoot, bundledRoot, syncedAppIds);
     } catch (error) {
