@@ -65,3 +65,14 @@ test('buildCoworkAutoRoutingPrompt skips superpowers bootstrap when all superpow
   assert.doesNotMatch(prompt, /## Superpowers Workflow \(Cowork\)/);
   assert.match(prompt, /<available_skills>/);
 });
+
+test('buildCoworkAutoRoutingPrompt excludes local MetaApp opening intents from skill routing', () => {
+  const { manager } = createManager();
+  const prompt = manager.buildCoworkAutoRoutingPrompt();
+
+  assert.ok(prompt);
+  assert.match(
+    prompt,
+    /If the request is to open\/use\/start a local MetaApp or application, evaluate MetaApps first and do not select a SKILL unless the user is asking for a workflow beyond opening the app\./,
+  );
+});
