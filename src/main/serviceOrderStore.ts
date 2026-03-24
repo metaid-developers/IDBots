@@ -87,6 +87,18 @@ export interface ServiceOrderCreateInput {
   now?: number;
 }
 
+function normalizePaymentChain(chain: string | undefined): string {
+  const normalized = (chain || 'mvc').trim().toLowerCase();
+  if (normalized === 'btc' || normalized === 'doge' || normalized === 'mvc') return normalized;
+  return 'mvc';
+}
+
+function derivePaymentCurrency(chain: string): string {
+  if (chain === 'btc') return 'BTC';
+  if (chain === 'doge') return 'DOGE';
+  return 'SPACE';
+}
+
 const SERVICE_ORDER_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS service_orders (
     id TEXT PRIMARY KEY,
@@ -169,14 +181,29 @@ export class ServiceOrderStore {
         SELECT RAISE(ABORT, 'Invalid service_orders.status');
       END;
     `);
-    try {
-      this.db.run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
-        ON service_orders(local_metabot_id, role, payment_txid);
-      `);
-    } catch (error) {
-      console.warn('Failed to create service_orders unique dedupe index:', error);
-    }
+    this.remediateDuplicatePaymentRows();
+    this.db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
+      ON service_orders(local_metabot_id, role, payment_txid);
+    `);
+  }
+
+  private remediateDuplicatePaymentRows(): void {
+    this.db.run(`
+      WITH ranked AS (
+        SELECT
+          rowid,
+          ROW_NUMBER() OVER (
+            PARTITION BY local_metabot_id, role, payment_txid
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+          ) AS rank_in_group
+        FROM service_orders
+      )
+      DELETE FROM service_orders
+      WHERE rowid IN (
+        SELECT rowid FROM ranked WHERE rank_in_group > 1
+      );
+    `);
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
@@ -241,6 +268,8 @@ export class ServiceOrderStore {
   createOrder(input: ServiceOrderCreateInput): ServiceOrderRecord {
     const now = input.now ?? Date.now();
     const deadlines = computeOrderDeadlines(now);
+    const paymentChain = normalizePaymentChain(input.paymentChain);
+    const paymentCurrency = input.paymentCurrency ?? derivePaymentCurrency(paymentChain);
     const existing = this.getOne<ServiceOrderRow>(
       `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
       [input.localMetabotId, input.role, input.paymentTxid]
@@ -267,9 +296,9 @@ export class ServiceOrderStore {
         input.servicePinId ?? null,
         input.serviceName,
         input.paymentTxid,
-        input.paymentChain ?? 'mvc',
+        paymentChain,
         input.paymentAmount,
-        input.paymentCurrency ?? 'MVC',
+        paymentCurrency,
         input.orderMessagePinId ?? null,
         input.coworkSessionId ?? null,
         input.status ?? 'awaiting_first_response',

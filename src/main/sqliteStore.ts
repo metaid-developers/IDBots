@@ -491,14 +491,25 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
     `);
-    try {
-      this.db.run(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
-        ON service_orders(local_metabot_id, role, payment_txid);
-      `);
-    } catch (error) {
-      console.warn('Failed to create service_orders unique dedupe index:', error);
-    }
+    this.db.run(`
+      WITH ranked AS (
+        SELECT
+          rowid,
+          ROW_NUMBER() OVER (
+            PARTITION BY local_metabot_id, role, payment_txid
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+          ) AS rank_in_group
+        FROM service_orders
+      )
+      DELETE FROM service_orders
+      WHERE rowid IN (
+        SELECT rowid FROM ranked WHERE rank_in_group > 1
+      );
+    `);
+    this.db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
+      ON service_orders(local_metabot_id, role, payment_txid);
+    `);
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_insert
       BEFORE INSERT ON service_orders

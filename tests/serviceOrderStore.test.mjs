@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const initSqlJs = require('sql.js');
+const Module = require('node:module');
 const { ServiceOrderStore } = require('../dist-electron/serviceOrderStore.js');
+const { DB_FILENAME } = require('../dist-electron/appConstants.js');
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const sqlWasmPath = path.join(projectRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
@@ -121,6 +125,184 @@ test('store createOrder is idempotent for localMetabotId + role + paymentTxid', 
   assert.equal(rowCount, 1);
 });
 
+test('store bootstrap remediates legacy duplicate payment rows before creating unique dedupe index', async () => {
+  const db = await createSqlDatabase();
+  db.run(`
+    CREATE TABLE service_orders (
+      id TEXT PRIMARY KEY,
+      role TEXT NOT NULL,
+      local_metabot_id INTEGER NOT NULL,
+      counterparty_global_metaid TEXT NOT NULL,
+      service_pin_id TEXT,
+      service_name TEXT NOT NULL,
+      payment_txid TEXT NOT NULL,
+      payment_chain TEXT NOT NULL,
+      payment_amount TEXT NOT NULL,
+      payment_currency TEXT NOT NULL,
+      order_message_pin_id TEXT,
+      cowork_session_id TEXT,
+      status TEXT NOT NULL,
+      first_response_deadline_at INTEGER NOT NULL,
+      delivery_deadline_at INTEGER NOT NULL,
+      first_response_at INTEGER,
+      delivery_message_pin_id TEXT,
+      delivered_at INTEGER,
+      failed_at INTEGER,
+      failure_reason TEXT,
+      refund_request_pin_id TEXT,
+      refund_finalize_pin_id TEXT,
+      refund_txid TEXT,
+      refund_requested_at INTEGER,
+      refund_completed_at INTEGER,
+      refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  const txid = '9'.repeat(64);
+  const base = [
+    7,
+    'buyer',
+    'counterparty-global-metaid',
+    'service-name',
+    txid,
+    'mvc',
+    '1.00',
+    'SPACE',
+    'awaiting_first_response',
+    1000,
+    2000,
+  ];
+
+  db.run(
+    `INSERT INTO service_orders (
+      id, local_metabot_id, role, counterparty_global_metaid, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, status,
+      first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['dup-old', ...base, 100, 100]
+  );
+  db.run(
+    `INSERT INTO service_orders (
+      id, local_metabot_id, role, counterparty_global_metaid, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, status,
+      first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['dup-keep', ...base, 200, 300]
+  );
+
+  const store = new ServiceOrderStore(db, () => {});
+  void store;
+
+  const rows = db.exec(
+    'SELECT id FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? ORDER BY id ASC',
+    [7, 'buyer', txid]
+  )[0].values;
+  assert.deepEqual(rows, [['dup-keep']]);
+
+  const uniqueIndexRows = db.exec(
+    "SELECT name FROM pragma_index_list('service_orders') WHERE name = 'idx_service_orders_dedupe_payment' AND \"unique\" = 1"
+  );
+  assert.equal(uniqueIndexRows[0]?.values?.length ?? 0, 1);
+});
+
+test('SqliteStore.create() remediates legacy duplicate payment rows and enforces unique dedupe index on startup', async () => {
+  const legacyDb = await createSqlDatabase();
+  legacyDb.run(`
+    CREATE TABLE service_orders (
+      id TEXT PRIMARY KEY,
+      role TEXT NOT NULL,
+      local_metabot_id INTEGER NOT NULL,
+      counterparty_global_metaid TEXT NOT NULL,
+      service_pin_id TEXT,
+      service_name TEXT NOT NULL,
+      payment_txid TEXT NOT NULL,
+      payment_chain TEXT NOT NULL,
+      payment_amount TEXT NOT NULL,
+      payment_currency TEXT NOT NULL,
+      order_message_pin_id TEXT,
+      cowork_session_id TEXT,
+      status TEXT NOT NULL,
+      first_response_deadline_at INTEGER NOT NULL,
+      delivery_deadline_at INTEGER NOT NULL,
+      first_response_at INTEGER,
+      delivery_message_pin_id TEXT,
+      delivered_at INTEGER,
+      failed_at INTEGER,
+      failure_reason TEXT,
+      refund_request_pin_id TEXT,
+      refund_finalize_pin_id TEXT,
+      refund_txid TEXT,
+      refund_requested_at INTEGER,
+      refund_completed_at INTEGER,
+      refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  const txid = '8'.repeat(64);
+  legacyDb.run(
+    `INSERT INTO service_orders (
+      id, role, local_metabot_id, counterparty_global_metaid, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, status,
+      first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['legacy-old', 'buyer', 9, 'counterparty-global-metaid', 'service-name', txid, 'mvc', '1.00', 'SPACE', 'awaiting_first_response', 1000, 2000, 100, 100]
+  );
+  legacyDb.run(
+    `INSERT INTO service_orders (
+      id, role, local_metabot_id, counterparty_global_metaid, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, status,
+      first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['legacy-keep', 'buyer', 9, 'counterparty-global-metaid', 'service-name', txid, 'mvc', '1.00', 'SPACE', 'awaiting_first_response', 1000, 2000, 200, 300]
+  );
+
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-sqlitestore-service-orders-'));
+  const dbPath = path.join(userDataPath, DB_FILENAME);
+  fs.writeFileSync(dbPath, Buffer.from(legacyDb.export()));
+
+  const originalLoad = Module._load;
+  Module._load = function patchedModuleLoad(request, parent, isMain) {
+    if (request === 'electron') {
+      return {
+        app: {
+          isPackaged: false,
+          getAppPath: () => projectRoot,
+          getPath: (name) => {
+            if (name === 'userData') return userDataPath;
+            return userDataPath;
+          },
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+
+  try {
+    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const sqliteStore = await SqliteStore.create(userDataPath);
+    const db = sqliteStore.getDatabase();
+    const rows = db.exec(
+      'SELECT id FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? ORDER BY id ASC',
+      [9, 'buyer', txid]
+    )[0].values;
+    assert.deepEqual(rows, [['legacy-keep']]);
+
+    const uniqueIndexRows = db.exec(
+      "SELECT name FROM pragma_index_list('service_orders') WHERE name = 'idx_service_orders_dedupe_payment' AND \"unique\" = 1"
+    );
+    assert.equal(uniqueIndexRows[0]?.values?.length ?? 0, 1);
+  } finally {
+    Module._load = originalLoad;
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
 test('service_orders schema rejects invalid role values', async () => {
   const { db, store } = await createServiceOrderStoreForTest();
   const now = Date.now();
@@ -189,4 +371,40 @@ test('service_orders schema rejects invalid status values', async () => {
       now,
     ]);
   });
+});
+
+test('store createOrder derives default paymentCurrency from paymentChain semantics', async () => {
+  const { store } = await createServiceOrderStoreForTest();
+
+  const mvcOrder = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: 'f'.repeat(64),
+    paymentAmount: '1.00',
+    paymentChain: 'mvc',
+  });
+  const btcOrder = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: '1'.repeat(64),
+    paymentAmount: '1.00',
+    paymentChain: 'btc',
+  });
+  const dogeOrder = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: '2'.repeat(64),
+    paymentAmount: '1.00',
+    paymentChain: 'doge',
+  });
+
+  assert.equal(mvcOrder.paymentCurrency, 'SPACE');
+  assert.equal(btcOrder.paymentCurrency, 'BTC');
+  assert.equal(dogeOrder.paymentCurrency, 'DOGE');
 });
