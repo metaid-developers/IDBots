@@ -100,23 +100,64 @@ const isIdbotsManagedSource = (sourceType: MetaAppSourceType): boolean =>
   sourceType === 'bundled-idbots' || sourceType === 'chain-idbots';
 
 const compareVersions = (a?: string, b?: string): number => {
-  const left = String(a ?? '').trim();
-  const right = String(b ?? '').trim();
-  const leftParts = left.split('.');
-  const rightParts = right.split('.');
-  const length = Math.max(leftParts.length, rightParts.length);
+  const parse = (value: string | undefined): number[] => {
+    return String(value || '0')
+      .replace(/^v/i, '')
+      .split(/[.-]/)
+      .map((part) => parseInt(part, 10) || 0);
+  };
 
-  for (let index = 0; index < length; index += 1) {
-    const leftPart = Number.parseInt(leftParts[index] ?? '0', 10);
-    const rightPart = Number.parseInt(rightParts[index] ?? '0', 10);
-    const normalizedLeft = Number.isNaN(leftPart) ? 0 : leftPart;
-    const normalizedRight = Number.isNaN(rightPart) ? 0 : rightPart;
-    if (normalizedLeft !== normalizedRight) {
-      return normalizedLeft > normalizedRight ? 1 : -1;
-    }
+  const aa = parse(a);
+  const bb = parse(b);
+  const len = Math.max(aa.length, bb.length);
+  for (let i = 0; i < len; i += 1) {
+    const va = aa[i] ?? 0;
+    const vb = bb[i] ?? 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+  }
+  return 0;
+};
+
+const buildMetaAppTempDirPath = (targetDir: string, suffix: 'stage' | 'backup'): string => {
+  const uniqueSuffix = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  return path.join(path.dirname(targetDir), `.${path.basename(targetDir)}.${suffix}-${uniqueSuffix}`);
+};
+
+const replaceMetaAppDirSafely = (sourceDir: string, targetDir: string): void => {
+  const stageDir = buildMetaAppTempDirPath(targetDir, 'stage');
+  const backupDir = buildMetaAppTempDirPath(targetDir, 'backup');
+
+  try {
+    fs.cpSync(sourceDir, stageDir, {
+      recursive: true,
+      dereference: true,
+      force: false,
+      errorOnExist: false,
+    });
+  } catch (error) {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    throw error;
   }
 
-  return 0;
+  try {
+    fs.renameSync(targetDir, backupDir);
+  } catch (error) {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  try {
+    fs.renameSync(stageDir, targetDir);
+  } catch (error) {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    if (!fs.existsSync(targetDir) && fs.existsSync(backupDir)) {
+      fs.renameSync(backupDir, targetDir);
+    }
+    throw error;
+  }
+
+  fs.rmSync(backupDir, { recursive: true, force: true });
 };
 
 const loadMetaAppsConfigFromRoot = (root: string): MetaAppsConfig | null => {
@@ -366,13 +407,7 @@ export class MetaAppManager {
           return;
         }
 
-        fs.rmSync(targetDir, { recursive: true, force: true });
-        fs.cpSync(dir, targetDir, {
-          recursive: true,
-          dereference: true,
-          force: true,
-          errorOnExist: false,
-        });
+        replaceMetaAppDirSafely(dir, targetDir);
         syncedAppIds.add(appId);
       });
       this.mergeBundledMetaAppDefaults(userRoot, bundledRoot, syncedAppIds);
