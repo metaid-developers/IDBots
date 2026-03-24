@@ -149,6 +149,13 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
+    "baoyu-image-studio": {
+      "order": 175,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1774310400000,
+      "enabled": true
+    },
     "local-tools": {
       "order": 200,
       "version": "1.0.0",

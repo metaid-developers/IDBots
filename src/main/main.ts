@@ -17,6 +17,7 @@ import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { generateSessionTitle } from './libs/coworkUtil';
 import { ensureSandboxReady, getSandboxStatus, onSandboxProgress } from './libs/coworkSandboxRuntime';
 import { startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy, setScheduledTaskDeps } from './libs/coworkOpenAICompatProxy';
+import { buildImageSkillEnvOverrides } from './libs/skillImageProviderEnv';
 import { IMGatewayManager, IMPlatform, IMGatewayConfig } from './im';
 import { APP_NAME } from './appConstants';
 import { getSkillServiceManager } from './skillServices';
@@ -1210,11 +1211,23 @@ const getCoworkRunner = () => {
           normalizedSkillIds.has('metabot-post-skillservice') ||
           normalizedSkillIds.has('metabot-chat-privatechat') ||
           normalizedSkillIds.has('metabot-check-payment');
-        if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         const metabotStore = getMetabotStore();
         const metabotId = session?.metabotId;
+        const metabot =
+          metabotId != null && typeof metabotId === 'number'
+            ? metabotStore.getMetabotById(metabotId)
+            : null;
+        Object.assign(
+          overrides,
+          buildImageSkillEnvOverrides({
+            activeSkillIds: skillIds,
+            metabotLlmId: metabot?.llm_id ?? null,
+            appConfig: getStore().get('app_config'),
+            processEnv: process.env,
+          })
+        );
+        if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         if (metabotId != null && typeof metabotId === 'number') {
-          const metabot = metabotStore.getMetabotById(metabotId);
           const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
           if (metabot && wallet) {
             Object.assign(overrides, {
