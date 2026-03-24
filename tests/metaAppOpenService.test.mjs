@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createRequire } from 'node:module';
@@ -12,10 +14,19 @@ try {
   openMetaApp = null;
 }
 
+const createTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-metaapps-open-service-'));
+
+const writeFile = (filePath, content) => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, 'utf8');
+};
+
 test('openMetaApp resolves a valid targetPath, ensures the server, and opens the final URL', async () => {
   assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
 
-  const metaAppsRoot = path.join('/tmp', 'idbots-metaapps-open-service');
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
   const record = {
     id: 'buzz',
     name: 'Buzz',
@@ -52,7 +63,9 @@ test('openMetaApp resolves a valid targetPath, ensures the server, and opens the
 test('openMetaApp falls back to record.entry when targetPath is empty', async () => {
   assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
 
-  const metaAppsRoot = path.join('/tmp', 'idbots-metaapps-open-service');
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
   const record = {
     id: 'buzz',
     name: 'Buzz',
@@ -82,6 +95,10 @@ test('openMetaApp rejects invalid app ids', async () => {
   let ensureCalled = false;
   let openCalled = false;
 
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
   const result = await openMetaApp({
     appId: 'missing',
     targetPath: '/missing/app/index.html',
@@ -91,7 +108,7 @@ test('openMetaApp rejects invalid app ids', async () => {
           id: 'buzz',
           name: 'Buzz',
           entry: '/buzz/app/index.html',
-          appRoot: '/tmp/idbots-metaapps-open-service/buzz',
+          appRoot: path.join(metaAppsRoot, 'buzz'),
         },
       ],
     },
@@ -113,11 +130,15 @@ test('openMetaApp rejects invalid app ids', async () => {
 test('openMetaApp rejects cross-app target paths', async () => {
   assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
 
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
   const record = {
     id: 'buzz',
     name: 'Buzz',
     entry: '/buzz/app/index.html',
-    appRoot: '/tmp/idbots-metaapps-open-service/buzz',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
   };
 
   let ensureCalled = false;
@@ -142,3 +163,168 @@ test('openMetaApp rejects cross-app target paths', async () => {
   assert.equal(openCalled, false);
 });
 
+test('openMetaApp rejects dot-segment traversal in targetPath (decoded)', async () => {
+  assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+  writeFile(path.join(metaAppsRoot, 'chat', 'app', 'index.html'), '<html>chat</html>');
+
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
+  };
+
+  let ensureCalled = false;
+  let openCalled = false;
+
+  const result = await openMetaApp({
+    appId: 'buzz',
+    targetPath: '/buzz/../chat/app/index.html',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async () => {
+      ensureCalled = true;
+      return { baseUrl: 'http://127.0.0.1:12345' };
+    },
+    shellOpenExternal: async () => {
+      openCalled = true;
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(ensureCalled, false);
+  assert.equal(openCalled, false);
+});
+
+test('openMetaApp rejects dot-segment traversal in targetPath (percent-encoded)', async () => {
+  assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+  writeFile(path.join(metaAppsRoot, 'chat', 'app', 'index.html'), '<html>chat</html>');
+
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
+  };
+
+  let ensureCalled = false;
+  let openCalled = false;
+
+  const result = await openMetaApp({
+    appId: 'buzz',
+    targetPath: '/buzz/%2e%2e/chat/app/index.html',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async () => {
+      ensureCalled = true;
+      return { baseUrl: 'http://127.0.0.1:12345' };
+    },
+    shellOpenExternal: async () => {
+      openCalled = true;
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(ensureCalled, false);
+  assert.equal(openCalled, false);
+});
+
+test('openMetaApp rejects missing files', async () => {
+  assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
+  };
+
+  let ensureCalled = false;
+  let openCalled = false;
+
+  const result = await openMetaApp({
+    appId: 'buzz',
+    targetPath: '/buzz/app/missing.html',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async () => {
+      ensureCalled = true;
+      return { baseUrl: 'http://127.0.0.1:12345' };
+    },
+    shellOpenExternal: async () => {
+      openCalled = true;
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.error && /not found|missing|existing file/i.test(result.error), `unexpected error: ${result.error}`);
+  assert.equal(ensureCalled, false);
+  assert.equal(openCalled, false);
+});
+
+test('openMetaApp rejects non-local baseUrl from ensureServerReady()', async () => {
+  assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
+  };
+
+  let openCalled = false;
+  const result = await openMetaApp({
+    appId: 'buzz',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async () => ({ baseUrl: 'http://localhost:12345' }),
+    shellOpenExternal: async () => {
+      openCalled = true;
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.error && /baseurl|localhost|127\.0\.0\.1/i.test(result.error), `unexpected error: ${result.error}`);
+  assert.equal(openCalled, false);
+});
+
+test('openMetaApp rejects malformed baseUrl from ensureServerReady()', async () => {
+  assert.equal(typeof openMetaApp, 'function', 'openMetaApp() should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  const record = {
+    id: 'buzz',
+    name: 'Buzz',
+    entry: '/buzz/app/index.html',
+    appRoot: path.join(metaAppsRoot, 'buzz'),
+  };
+
+  let openCalled = false;
+  const result = await openMetaApp({
+    appId: 'buzz',
+    manager: { listMetaApps: () => [record] },
+    ensureServerReady: async () => ({ baseUrl: 'not-a-url' }),
+    shellOpenExternal: async () => {
+      openCalled = true;
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.ok(result.error && /baseurl|url/i.test(result.error), `unexpected error: ${result.error}`);
+  assert.equal(openCalled, false);
+});
