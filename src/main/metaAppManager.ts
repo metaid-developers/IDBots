@@ -166,36 +166,6 @@ const seedBundledDefaultsForSyncedApps = (userRoot: string, bundledRoot: string,
   });
 };
 
-const collectLegacyBundledAppIds = (userRoot: string, bundledAppIds: Set<string>): Set<string> => {
-  const legacyIds = new Set<string>();
-  if (bundledAppIds.size === 0) {
-    return legacyIds;
-  }
-
-  const userDirs = listMetaAppDirs(userRoot);
-  userDirs.forEach((dir) => {
-    const appId = path.basename(dir);
-    if (!bundledAppIds.has(appId)) {
-      return;
-    }
-    const appFile = path.join(dir, METAAPP_FILE_NAME);
-    if (!fs.existsSync(appFile)) {
-      return;
-    }
-    try {
-      const raw = fs.readFileSync(appFile, 'utf8');
-      const { frontmatter } = parseFrontmatter(raw);
-      if (isTruthy(frontmatter.official)) {
-        legacyIds.add(appId);
-      }
-    } catch {
-      return;
-    }
-  });
-
-  return legacyIds;
-};
-
 const extractDescription = (content: string): string => {
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
@@ -342,10 +312,8 @@ export class MetaAppManager {
     try {
       const syncedAppIds = new Set<string>();
       const bundledDirs = listMetaAppDirs(bundledRoot);
-      const bundledAppIds = new Set<string>();
       bundledDirs.forEach((dir) => {
         const appId = path.basename(dir);
-        bundledAppIds.add(appId);
         const targetDir = path.join(userRoot, appId);
         if (fs.existsSync(targetDir)) {
           return;
@@ -358,10 +326,7 @@ export class MetaAppManager {
         });
         syncedAppIds.add(appId);
       });
-      const configSeedAppIds = new Set<string>(syncedAppIds);
-      const legacyAppIds = collectLegacyBundledAppIds(userRoot, bundledAppIds);
-      legacyAppIds.forEach((appId) => configSeedAppIds.add(appId));
-      seedBundledDefaultsForSyncedApps(userRoot, bundledRoot, configSeedAppIds);
+      seedBundledDefaultsForSyncedApps(userRoot, bundledRoot, syncedAppIds);
     } catch (error) {
       console.warn('[metaapps] Failed to sync bundled METAAPPs:', error);
     }
