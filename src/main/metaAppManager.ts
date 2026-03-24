@@ -137,31 +137,35 @@ const seedBundledDefaultsForSyncedApps = (userRoot: string, bundledRoot: string,
     return;
   }
 
-  const userConfigPath = resolveMetaAppsConfigPath(userRoot);
-  if (fs.existsSync(userConfigPath)) {
-    return;
-  }
-
   const bundledConfig = loadMetaAppsConfigFromRoot(bundledRoot);
   if (!bundledConfig) {
     return;
   }
 
-  const defaults: Record<string, MetaAppDefaultConfig> = {};
+  const userConfig = loadMetaAppsConfigFromRoot(userRoot);
+  const defaults: Record<string, MetaAppDefaultConfig> = {
+    ...(userConfig?.defaults ?? {}),
+  };
+  let addedDefaults = 0;
+
   syncedAppIds.forEach((appId) => {
+    if (Object.prototype.hasOwnProperty.call(defaults, appId)) {
+      return;
+    }
     const bundledDefault = bundledConfig.defaults?.[appId];
     if (bundledDefault && typeof bundledDefault === 'object') {
       defaults[appId] = { ...bundledDefault };
+      addedDefaults += 1;
     }
   });
 
-  if (Object.keys(defaults).length === 0) {
+  if (addedDefaults === 0) {
     return;
   }
 
   writeMetaAppsConfigToRoot(userRoot, {
-    version: bundledConfig.version,
-    description: bundledConfig.description,
+    version: userConfig?.version ?? bundledConfig.version,
+    description: userConfig?.description ?? bundledConfig.description,
     defaults,
   });
 };
@@ -348,10 +352,17 @@ export class MetaAppManager {
         const name = (frontmatter.name || id).trim() || id;
         const description = (frontmatter.description || extractDescription(content) || name).trim();
         const entry = String(frontmatter.entry || '').trim();
+        const hasRegistryEntry = Object.prototype.hasOwnProperty.call(defaults, id);
         const appDefaults = defaults[id] ?? {};
-        const version = String(frontmatter.version || appDefaults.version || '0').trim() || '0';
-        const creatorMetaId = String(frontmatter['creator-metaid'] || appDefaults['creator-metaid'] || '').trim();
-        const sourceType = normalizeSourceType(frontmatter['source-type'] || appDefaults['source-type'] || 'manual');
+        const version = hasRegistryEntry
+          ? String(appDefaults.version ?? '0').trim() || '0'
+          : String(frontmatter.version || '0').trim() || '0';
+        const creatorMetaId = hasRegistryEntry
+          ? String(appDefaults['creator-metaid'] ?? '').trim()
+          : String(frontmatter['creator-metaid'] || '').trim();
+        const sourceType = hasRegistryEntry
+          ? normalizeSourceType(appDefaults['source-type'] ?? 'manual')
+          : normalizeSourceType(frontmatter['source-type'] || 'manual');
         const entryFilePath = resolveEntryFilePath(id, dir, entry);
         if (!entryFilePath) {
           return;

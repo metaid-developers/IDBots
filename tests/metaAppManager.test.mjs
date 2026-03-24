@@ -564,5 +564,87 @@ test('packaged sync preserves existing user metaapps.config.json and does not ov
   manager.syncBundledMetaAppsToUserData();
 
   const actual = JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
-  assert.deepEqual(actual, userConfig);
+  assert.equal(actual.defaults?.buzz?.version, '9.9.9');
+  assert.equal(actual.defaults?.buzz?.['creator-metaid'], 'alice');
+  assert.equal(actual.defaults?.buzz?.['source-type'], 'manual');
+  assert.equal(actual.defaults?.chat?.version, '1.0.0');
+  assert.equal(actual.defaults?.chat?.['creator-metaid'], 'idbots');
+  assert.equal(actual.defaults?.chat?.['source-type'], 'bundled-idbots');
+});
+
+test('listMetaApps keeps managed metadata from registry even after APP.md frontmatter edits', () => {
+  const tempDir = createTempDir();
+  const resourcesPath = path.join(tempDir, 'resources');
+  const bundledMetaAppsRoot = path.join(resourcesPath, 'METAAPPs');
+  const userDataPath = path.join(tempDir, 'userData');
+
+  const bundledConfig = {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'bundled-idbots',
+      },
+    },
+  };
+  writeFile(path.join(bundledMetaAppsRoot, 'metaapps.config.json'), JSON.stringify(bundledConfig, null, 2));
+  writeFile(
+    path.join(bundledMetaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: bundled-buzz',
+      'description: bundled buzz app',
+      'entry: /buzz/app/index.html',
+      'version: 1.0.0',
+      'creator-metaid: idbots',
+      'source-type: bundled-idbots',
+      '---',
+      '',
+      'bundled buzz',
+    ].join('\n'),
+  );
+  writeFile(path.join(bundledMetaAppsRoot, 'buzz', 'app', 'index.html'), '<html>bundled-buzz</html>');
+
+  const manager = new MetaAppManager({
+    app: {
+      isPackaged: true,
+      getPath(name) {
+        if (name === 'userData') return userDataPath;
+        throw new Error(`unexpected app path key: ${name}`);
+      },
+      getAppPath() {
+        return path.join(tempDir, 'app.asar');
+      },
+    },
+    resourcesPath,
+  });
+
+  manager.syncBundledMetaAppsToUserData();
+
+  writeFile(
+    path.join(userDataPath, 'METAAPPs', 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: edited-buzz',
+      'description: edited app should not flip managed ownership',
+      'entry: /buzz/app/index.html',
+      'version: 9.9.9',
+      'creator-metaid: alice',
+      'source-type: manual',
+      '---',
+      '',
+      'edited buzz',
+    ].join('\n'),
+  );
+
+  const apps = manager.listMetaApps();
+  assert.equal(apps.length, 1);
+  const buzz = apps[0];
+  assert.equal(buzz.name, 'edited-buzz');
+  assert.equal(buzz.version, '1.0.0');
+  assert.equal(buzz.creatorMetaId, 'idbots');
+  assert.equal(buzz.sourceType, 'bundled-idbots');
+  assert.equal(buzz.managedByIdbots, true);
 });
