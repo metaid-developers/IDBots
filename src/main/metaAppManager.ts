@@ -104,12 +104,15 @@ type ParsedVersionIdentifier = number | string;
 const compareVersions = (a?: string, b?: string): number => {
   const parse = (value: string | undefined): { core: number[]; prerelease: ParsedVersionIdentifier[] } => {
     const normalized = String(value || '0').trim().replace(/^v/i, '');
-    const [mainPart, buildlessPrerelease = ''] = normalized.split('+', 1)[0].split('-', 2);
+    const withoutBuild = normalized.split('+', 1)[0];
+    const dashIndex = withoutBuild.indexOf('-');
+    const mainPart = dashIndex >= 0 ? withoutBuild.slice(0, dashIndex) : withoutBuild;
+    const prereleasePart = dashIndex >= 0 ? withoutBuild.slice(dashIndex + 1) : '';
     const core = (mainPart || '0')
       .split('.')
       .map((part) => parseInt(part, 10) || 0);
-    const prerelease = buildlessPrerelease
-      ? buildlessPrerelease.split('.').map((part) => {
+    const prerelease = prereleasePart
+      ? prereleasePart.split('.').map((part) => {
           if (/^\d+$/.test(part)) {
             return parseInt(part, 10);
           }
@@ -420,11 +423,11 @@ export class MetaAppManager {
       bundledDirs.forEach((dir) => {
         try {
           const appId = path.basename(dir);
-          const targetDir = path.join(userRoot, appId);
-          const bundledDefault = bundledDefaults[appId] ?? loadMetaAppDefaultFromDir(dir);
-          const bundledVersion = String(bundledDefault.version ?? '0').trim() || '0';
-          const bundledCreatorMetaId = String(bundledDefault['creator-metaid'] ?? '').trim();
-          const bundledSourceType = normalizeSourceType(bundledDefault['source-type'] ?? 'manual');
+        const targetDir = path.join(userRoot, appId);
+        const bundledDefault = bundledDefaults[appId] ?? loadMetaAppDefaultFromDir(dir);
+        const bundledVersion = String(bundledDefault.version ?? '0').trim() || '0';
+        const bundledCreatorMetaId = String(bundledDefault['creator-metaid'] ?? '').trim();
+        const bundledSourceType = normalizeSourceType(bundledDefault['source-type'] ?? 'manual');
           if (!isIdbotsManagedSource(bundledSourceType)) {
             return;
           }
@@ -435,10 +438,24 @@ export class MetaAppManager {
             return;
           }
 
-          const localDefault = userDefaults[appId];
-          if (!localDefault) {
-            return;
+        const localDefault = userDefaults[appId];
+        if (!localDefault) {
+          const currentDefault = loadMetaAppDefaultFromDir(targetDir);
+          const currentCreatorMetaId = String(currentDefault['creator-metaid'] ?? '').trim();
+          const currentSourceType = normalizeSourceType(currentDefault['source-type'] ?? 'manual');
+          if (
+            currentCreatorMetaId === bundledCreatorMetaId
+            && currentSourceType === bundledSourceType
+            && isIdbotsManagedSource(currentSourceType)
+          ) {
+            const currentVersion = String(currentDefault.version ?? '0').trim() || '0';
+            if (compareVersions(bundledVersion, currentVersion) > 0) {
+              replaceMetaAppDirSafely(dir, targetDir);
+            }
+            syncedAppIds.add(appId);
           }
+          return;
+        }
 
           const localCreatorMetaId = String(localDefault['creator-metaid'] ?? '').trim();
           if (localCreatorMetaId !== bundledCreatorMetaId) {
