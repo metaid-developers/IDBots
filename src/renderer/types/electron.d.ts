@@ -83,6 +83,7 @@ interface CoworkMessage {
     senderGlobalMetaId?: string;
     senderName?: string;
     senderAvatar?: string;
+    suppressRunningStatus?: boolean;
   };
 }
 

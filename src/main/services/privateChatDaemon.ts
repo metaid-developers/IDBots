@@ -21,6 +21,10 @@ import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MetaidDataPayload } from './metaidCore';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import {
+  isNeedsRatingMessage,
+  shouldCompleteBuyerOrderObserverSession,
+} from './privateChatOrderObserverState';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -122,14 +126,9 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
 }
 
 const ORDER_PREFIX = '[ORDER]';
-const NEEDS_RATING_PREFIX = '[NEEDSRATING]';
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
-}
-
-function isNeedsRatingMessage(plaintext: string): boolean {
-  return plaintext.trim().toUpperCase().startsWith(NEEDS_RATING_PREFIX);
 }
 
 function isByeMessage(text: string): boolean {
@@ -200,6 +199,17 @@ function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string 
   const fallbackMetaId = (row.from_metaid ?? '').trim();
   if (fallbackMetaId) return fallbackMetaId;
   return 'unknown-peer';
+}
+
+function completeBuyerOrderObserverSession(
+  coworkStore: CoworkStore,
+  sessionId: string,
+  emitToRenderer?: (channel: string, data: unknown) => void
+): void {
+  coworkStore.updateSession(sessionId, { status: 'completed' });
+  if (emitToRenderer) {
+    emitToRenderer('cowork:stream:complete', { sessionId });
+  }
 }
 
 async function resolvePrivateConversationSession(
@@ -382,6 +392,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
       sourceChannel: 'metaweb_order',
       externalConversationId: buyerOrderMapping.externalConversationId,
       direction: 'outgoing',
+      suppressRunningStatus: true,
     },
   });
   if (emitToRenderer) {
@@ -662,6 +673,10 @@ async function processOne(
         coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
         if (emitToRenderer) {
           emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: replyMsg });
+        }
+
+        if (shouldCompleteBuyerOrderObserverSession(plaintext)) {
+          completeBuyerOrderObserverSession(coworkStore, buyerOrderMapping.coworkSessionId, emitToRenderer);
         }
 
         // If this is a [NeedsRating] message, trigger automatic rating flow

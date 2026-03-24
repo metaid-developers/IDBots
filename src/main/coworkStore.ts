@@ -336,6 +336,7 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   skillIds?: string[];
+  suppressRunningStatus?: boolean;
   [key: string]: unknown;
 }
 

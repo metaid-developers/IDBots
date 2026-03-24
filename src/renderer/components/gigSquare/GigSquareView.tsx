@@ -2,15 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
+import { fetchMetaidInfoByGlobalId, type MetaidInfoResult } from '../../services/metabotInfoService';
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
 import GigSquarePublishModal from './GigSquarePublishModal';
-
-const formatMetaId = (value: string): string => {
-  if (!value) return '';
-  if (value.length <= 16) return value;
-  return `${value.slice(0, 8)}...${value.slice(-6)}`;
-};
+import {
+  DEFAULT_GIG_SQUARE_PROVIDER_AVATAR,
+  getGigSquareProviderAvatarSrc,
+  getGigSquareProviderDisplayName,
+} from './gigSquareProviderPresentation.js';
 
 const GigSquareView: React.FC = () => {
   const [services, setServices] = useState<GigSquareService[]>([]);
@@ -23,6 +23,7 @@ const GigSquareView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currencyFilter, setCurrencyFilter] = useState<'all' | 'BTC' | 'SPACE' | 'DOGE'>('all');
   const [sortOrder, setSortOrder] = useState<'rating' | 'updated'>('rating');
+  const [providerInfoMap, setProviderInfoMap] = useState<Record<string, MetaidInfoResult>>({});
 
   const loadServices = useCallback(async () => {
     setIsLoading(true);
@@ -69,6 +70,44 @@ const GigSquareView: React.FC = () => {
     loadServices();
     loadMetabot();
   }, [loadServices, loadMetabot]);
+
+  useEffect(() => {
+    const providerIds = Array.from(new Set(
+      services
+        .map((service) => (service.providerGlobalMetaId || '').trim())
+        .filter(Boolean)
+    ));
+    const missingIds = providerIds.filter((id) => !(id in providerInfoMap));
+    if (!missingIds.length) return;
+
+    let cancelled = false;
+    Promise.all(
+      missingIds.map(async (id) => {
+        try {
+          const info = await fetchMetaidInfoByGlobalId(id);
+          return [id, info] as const;
+        } catch {
+          return [id, {}] as const;
+        }
+      })
+    ).then((entries) => {
+      if (cancelled) return;
+      setProviderInfoMap((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [id, info] of entries) {
+          if (id in next) continue;
+          next[id] = info;
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [services, providerInfoMap]);
 
   const handleOpenModal = (service: GigSquareService) => {
     setSelectedService(service);
@@ -211,6 +250,10 @@ const GigSquareView: React.FC = () => {
             {filteredServices.map((service) => {
               const price = formatGigSquarePrice(service.price, service.currency);
               const iconSrc = service.serviceIcon || service.avatar || null;
+              const providerLookupId = service.providerGlobalMetaId || service.providerMetaId;
+              const providerInfo = providerInfoMap[service.providerGlobalMetaId] || {};
+              const providerName = getGigSquareProviderDisplayName(providerInfo, providerLookupId);
+              const providerAvatarSrc = getGigSquareProviderAvatarSrc(providerInfo);
               return (
                 <div
                   key={service.id}
@@ -265,9 +308,17 @@ const GigSquareView: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between">
-                    <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                      {formatMetaId(service.providerGlobalMetaId || service.providerMetaId)}
-                    </span>
+                    <div className="min-w-0 flex items-center gap-2">
+                      <img
+                        src={providerAvatarSrc}
+                        alt={providerName}
+                        className="h-6 w-6 rounded-full object-cover border border-claude-border dark:border-claude-darkBorder flex-shrink-0"
+                        onError={(e) => { e.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
+                      />
+                      <span className="min-w-0 truncate text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                        {providerName}
+                      </span>
+                    </div>
                     <button
                       type="button"
                       onClick={(e) => {

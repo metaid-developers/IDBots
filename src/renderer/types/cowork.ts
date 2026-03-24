@@ -23,6 +23,12 @@ export interface CoworkMessageMetadata {
   isThinking?: boolean;
   skillIds?: string[];
   /**
+   * Prevent renderer stream listeners from treating this message as a new active run.
+   * Used for passive A2A follow-up messages that should appear after completion without
+   * restarting the session progress state.
+   */
+  suppressRunningStatus?: boolean;
+  /**
    * A2A messages only. Message direction from the local MetaBot's perspective:
    * - 'outgoing': sent by the local MetaBot (displayed on the right)
    * - 'incoming': received from the remote peer (displayed on the left)

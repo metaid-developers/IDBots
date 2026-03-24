@@ -29,6 +29,7 @@ import type {
   CoworkStartOptions,
   CoworkContinueOptions,
 } from '../types/cowork';
+import { shouldMarkSessionRunningFromStreamMessage } from './coworkStreamPresentation';
 
 class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
@@ -92,7 +93,7 @@ class CoworkService {
 
       // A new user turn means this session is actively running again
       // (especially important for IM-triggered turns that do not call continueSession from renderer).
-      if (message.type === 'user') {
+      if (shouldMarkSessionRunningFromStreamMessage(message)) {
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
       }
 

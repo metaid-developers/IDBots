@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CoworkSessionSummary, CoworkSessionStatus } from '../../types/cowork';
 import { EllipsisHorizontalIcon, ExclamationTriangleIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import { getCoworkSessionTitleClassName, shouldShowCoworkA2ADot } from './coworkSessionPresentation.js';
 
 interface CoworkSessionItemProps {
   session: CoworkSessionSummary;
@@ -243,6 +244,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
   const isA2A = session.sessionType === 'a2a';
+  const showA2ADot = shouldShowCoworkA2ADot({ sessionType: session.sessionType, showStatusIndicator });
   const displayTitle = session.title?.trim()
     || session.peerName
     || i18nService.t('coworkNewSession');
@@ -288,7 +290,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               />
             )}
             {/* A2A blue dot (only when not already showing status indicator) */}
-            {isA2A && !showStatusIndicator && (
+            {showA2ADot && (
               <span className="block w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
             )}
             {isRenaming ? (
@@ -309,7 +311,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 className="flex-1 min-w-0 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg px-2 py-1 text-sm font-medium dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
               />
             ) : (
-              <h3 className={`text-sm font-medium truncate leading-tight ${isA2A ? 'text-blue-500 dark:text-blue-400' : 'dark:text-claude-darkText text-claude-text'}`}>
+              <h3 className={getCoworkSessionTitleClassName(session.sessionType)}>
                 {displayTitle}
               </h3>
             )}

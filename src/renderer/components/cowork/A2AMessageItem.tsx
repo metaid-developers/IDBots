@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 
 interface A2AMessageItemProps {
   message: CoworkMessage;
@@ -21,7 +22,7 @@ const formatTime = (timestamp: number): string => {
   return `${hh}:${mm}`;
 };
 
-const DEFAULT_METABOT_AVATAR = '/default_metabot.png';
+const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
 
 const Avatar: React.FC<{ src?: string | null; name?: string | null; size?: number }> = ({
   src,

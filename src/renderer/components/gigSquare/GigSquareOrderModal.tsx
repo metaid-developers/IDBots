@@ -4,6 +4,16 @@ import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice, getGigSquarePaymentAmount } from '../../utils/gigSquare';
 import { fetchMetaidInfoByGlobalId } from '../../services/metabotInfoService';
 import { apiService } from '../../services/api';
+import {
+  DEFAULT_GIG_SQUARE_PROVIDER_AVATAR,
+  getGigSquareProviderAvatarSrc,
+  getGigSquareProviderDisplayName,
+} from './gigSquareProviderPresentation.js';
+import {
+  getGigSquarePayActionBlockedMessageKey,
+  getGigSquarePayActionClassName,
+  isGigSquarePayActionEnabled,
+} from './gigSquareOrderPresentation.js';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -207,6 +217,11 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
           : '';
 
   const handleOpenConfirm = () => {
+    if (!isGigSquarePayActionEnabled(status, handshake)) {
+      const blockedMessageKey = getGigSquarePayActionBlockedMessageKey(handshake);
+      setError(blockedMessageKey ? i18nService.t(blockedMessageKey) : i18nService.t('gigSquareOrderFailed'));
+      return;
+    }
     if (!selectedMetabotId) {
       setError(i18nService.t('gigSquareNoTwin'));
       return;
@@ -425,19 +440,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
                 {i18nService.t('gigSquareProvider')}
               </div>
               <div className="flex items-center gap-3">
-                {providerInfo.avatarUrl ? (
-                  <img
-                    src={providerInfo.avatarUrl}
-                    alt=""
-                    className="h-10 w-10 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder"
-                  />
-                ) : (
-                  <div className="h-10 w-10 rounded-lg bg-claude-accent/20 flex items-center justify-center text-xs font-semibold text-claude-accent">
-                    {(providerInfo.name || service.providerGlobalMetaId || '?').slice(0, 1).toUpperCase()}
-                  </div>
-                )}
+                <img
+                  src={getGigSquareProviderAvatarSrc(providerInfo)}
+                  alt={getGigSquareProviderDisplayName(providerInfo, service.providerGlobalMetaId || service.providerMetaId)}
+                  className="h-10 w-10 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder"
+                  onError={(e) => { e.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
+                />
                 <span className="text-sm dark:text-claude-darkText text-claude-text">
-                  {providerInfo.name || service.providerGlobalMetaId || '—'}
+                  {getGigSquareProviderDisplayName(providerInfo, service.providerGlobalMetaId || service.providerMetaId)}
                 </span>
               </div>
             </div>
@@ -517,8 +527,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
               <button
                 type="button"
                 onClick={handleOpenConfirm}
-                className="btn-idchat-primary px-4 py-2 text-sm font-medium"
-                disabled={status !== 'idle' || handshake !== 'online'}
+                className={getGigSquarePayActionClassName(status, handshake)}
+                disabled={!isGigSquarePayActionEnabled(status, handshake)}
               >
                 {i18nService.t('gigSquarePayAndRequest')}
               </button>
