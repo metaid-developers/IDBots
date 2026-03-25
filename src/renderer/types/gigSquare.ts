@@ -1,3 +1,9 @@
+export type GigSquareRefundRisk = {
+  hasUnresolvedRefund: boolean;
+  unresolvedRefundAgeHours: number;
+  hidden?: boolean;
+};
+
 export type GigSquareService = {
   id: string;
   serviceName: string;
@@ -13,6 +19,7 @@ export type GigSquareService = {
   providerSkill?: string | null;
   ratingCount?: number;
   updatedAt?: number;
+  refundRisk?: GigSquareRefundRisk | null;
 };
 
 export type GigSquareProviderInfo = {

@@ -342,6 +342,11 @@ type GigSquareService = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  refundRisk?: {
+    hasUnresolvedRefund: boolean;
+    unresolvedRefundAgeHours: number;
+    hidden?: boolean;
+  } | null;
 };
 
 const toSafeString = (value: unknown): string => {
@@ -3383,11 +3388,17 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:fetchServices', async () => {
     try {
+      const refundRiskByProvider = new Map(
+        getServiceRefundSyncService()
+          .listProviderRefundRiskSummaries()
+          .map((summary) => [summary.providerGlobalMetaId, summary] as const)
+      );
       const list = await Promise.all(
         listRemoteSkillServicesFromDb().map(async (item) => ({
           ...item,
           avatar: await resolvePinAssetSource(item.avatar ?? null),
           serviceIcon: await resolvePinAssetSource(item.serviceIcon ?? null),
+          refundRisk: refundRiskByProvider.get(item.providerGlobalMetaId) ?? null,
         })),
       );
       return { success: true, list };

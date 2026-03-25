@@ -11,6 +11,10 @@ import {
   getGigSquareProviderAvatarSrc,
   getGigSquareProviderDisplayName,
 } from './gigSquareProviderPresentation.js';
+import {
+  getGigSquareRefundRiskBadge,
+  shouldHideRiskyGigSquareService,
+} from './gigSquareRefundRiskPresentation.js';
 
 const GigSquareView: React.FC = () => {
   const [services, setServices] = useState<GigSquareService[]>([]);
@@ -114,13 +118,18 @@ const GigSquareView: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  const visibleServices = useMemo(
+    () => services.filter((service) => !shouldHideRiskyGigSquareService(service.refundRisk)),
+    [services]
+  );
+
   const heroStats = useMemo(() => {
-    if (!services.length) return null;
-    return `${services.length} ${services.length === 1 ? 'service' : 'services'}`;
-  }, [services.length]);
+    if (!visibleServices.length) return null;
+    return `${visibleServices.length} ${visibleServices.length === 1 ? 'service' : 'services'}`;
+  }, [visibleServices.length]);
 
   const filteredServices = useMemo(() => {
-    let list = services;
+    let list = visibleServices;
     if (currencyFilter !== 'all') {
       const match = currencyFilter === 'SPACE'
         ? (s: GigSquareService) => { const c = s.currency?.toUpperCase(); return c === 'SPACE' || c === 'MVC'; }
@@ -137,7 +146,7 @@ const GigSquareView: React.FC = () => {
       list = [...list].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     }
     return list;
-  }, [services, searchQuery, currencyFilter, sortOrder]);
+  }, [visibleServices, searchQuery, currencyFilter, sortOrder]);
 
   return (
     <div className="h-full flex flex-col">
@@ -235,12 +244,12 @@ const GigSquareView: React.FC = () => {
             {error}
           </div>
         )}
-        {!isLoading && !error && services.length === 0 && (
+        {!isLoading && !error && visibleServices.length === 0 && (
           <div className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
             {i18nService.t('gigSquareNoServices')}
           </div>
         )}
-        {!isLoading && !error && services.length > 0 && filteredServices.length === 0 && (
+        {!isLoading && !error && visibleServices.length > 0 && filteredServices.length === 0 && (
           <div className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
             {i18nService.t('gigSquareNoSearchResults')}
           </div>
@@ -254,6 +263,8 @@ const GigSquareView: React.FC = () => {
               const providerInfo = providerInfoMap[service.providerGlobalMetaId] || {};
               const providerName = getGigSquareProviderDisplayName(providerInfo, providerLookupId);
               const providerAvatarSrc = getGigSquareProviderAvatarSrc(providerInfo);
+              const refundRiskBadge = getGigSquareRefundRiskBadge(service.refundRisk);
+              const hasRefundRisk = Boolean(refundRiskBadge);
               return (
                 <div
                   key={service.id}
@@ -266,12 +277,23 @@ const GigSquareView: React.FC = () => {
                       handleOpenModal(service);
                     }
                   }}
-                  className="text-left rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-4 py-4 hover:shadow-lg hover:-translate-y-0.5 transition cursor-pointer"
+                  className={`text-left rounded-2xl border px-4 py-4 hover:shadow-lg hover:-translate-y-0.5 transition cursor-pointer ${
+                    hasRefundRisk
+                      ? 'border-red-500/40 bg-red-500/[0.06] dark:bg-red-500/[0.08]'
+                      : 'dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1 min-w-0 flex-1">
-                      <div className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
-                        {service.displayName}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
+                          {service.displayName}
+                        </div>
+                        {refundRiskBadge && (
+                          <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
+                            {i18nService.t('gigSquareRefundRiskBadge')}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary ">
                         {service.description}

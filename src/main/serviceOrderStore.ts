@@ -79,6 +79,12 @@ export interface ServiceOrderSessionSummary {
   refundTxid: string | null;
 }
 
+export interface ServiceOrderProviderRefundRiskRecord {
+  providerGlobalMetaId: string;
+  oldestRefundRequestedAt: number;
+  unresolvedRefundCount: number;
+}
+
 export interface ServiceOrderCreateInput {
   role: ServiceOrderRole;
   localMetabotId: number;
@@ -524,6 +530,29 @@ export class ServiceOrderStore {
       WHERE refund_request_pin_id = ?
       ORDER BY updated_at DESC, created_at DESC
     `, [refundRequestPinId]).map((row) => this.mapRow(row));
+  }
+
+  listProviderRefundRisks(): ServiceOrderProviderRefundRiskRecord[] {
+    return this.getAll<{
+      provider_global_metaid: string;
+      oldest_refund_requested_at: number;
+      unresolved_refund_count: number;
+    }>(`
+      SELECT
+        counterparty_global_metaid AS provider_global_metaid,
+        MIN(refund_requested_at) AS oldest_refund_requested_at,
+        COUNT(*) AS unresolved_refund_count
+      FROM service_orders
+      WHERE role = 'buyer'
+        AND refund_request_pin_id IS NOT NULL
+        AND refund_completed_at IS NULL
+      GROUP BY counterparty_global_metaid
+      ORDER BY oldest_refund_requested_at ASC
+    `).map((row) => ({
+      providerGlobalMetaId: row.provider_global_metaid,
+      oldestRefundRequestedAt: Number(row.oldest_refund_requested_at),
+      unresolvedRefundCount: Number(row.unresolved_refund_count),
+    }));
   }
 
   markFirstResponseReceived(orderId: string, receivedAt: number): ServiceOrderRecord | null {

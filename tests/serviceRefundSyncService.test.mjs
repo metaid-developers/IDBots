@@ -97,6 +97,43 @@ function insertRefundPendingSellerOrder(db) {
   );
 }
 
+function insertProviderRiskBuyerOrder(db, {
+  id,
+  providerGlobalMetaId,
+  refundRequestedAt,
+}) {
+  db.run(
+    `INSERT INTO service_orders (
+      id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id,
+      status, first_response_deadline_at, delivery_deadline_at, failed_at, failure_reason,
+      refund_request_pin_id, refund_requested_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      'buyer',
+      7,
+      providerGlobalMetaId,
+      'service-pin-id',
+      'Weather Pro',
+      `${id}`.padEnd(64, 'a').slice(0, 64),
+      'mvc',
+      '12.34',
+      'SPACE',
+      'order-pin-id',
+      'refund_pending',
+      refundRequestedAt - 5 * 60_000,
+      refundRequestedAt - 1,
+      refundRequestedAt - 60_000,
+      'delivery_timeout',
+      `${id}-refund-pin`,
+      refundRequestedAt,
+      refundRequestedAt - 60_000,
+      refundRequestedAt,
+    ]
+  );
+}
+
 test('syncFinalizePins marks refund-pending orders refunded when finalize protocol and tx verification match', async () => {
   const now = 1_770_000_123_000;
   const { db, store, service } = await createRefundSyncServiceForTest({
@@ -250,5 +287,48 @@ test('syncFinalizePins emits refunded events for every mirrored session order', 
   assert.deepEqual(
     seenEvents.map((event) => `${event.type}:${event.role}`).sort(),
     ['refunded:buyer', 'refunded:seller']
+  );
+});
+
+test('listProviderRefundRiskSummaries reports red-vs-hidden refund risk by provider age', async () => {
+  const now = 1_770_300_000_000;
+  const { db, service } = await createRefundSyncServiceForTest({
+    now: () => now,
+  });
+
+  insertProviderRiskBuyerOrder(db, {
+    id: 'provider-risk-visible',
+    providerGlobalMetaId: 'seller-visible',
+    refundRequestedAt: now - 24 * 60 * 60_000,
+  });
+  insertProviderRiskBuyerOrder(db, {
+    id: 'provider-risk-hidden',
+    providerGlobalMetaId: 'seller-hidden',
+    refundRequestedAt: now - 73 * 60 * 60_000,
+  });
+
+  const summaries = service.listProviderRefundRiskSummaries();
+
+  assert.deepEqual(
+    summaries.map((summary) => ({
+      providerGlobalMetaId: summary.providerGlobalMetaId,
+      hasUnresolvedRefund: summary.hasUnresolvedRefund,
+      unresolvedRefundAgeHours: summary.unresolvedRefundAgeHours,
+      hidden: summary.hidden,
+    })).sort((a, b) => a.providerGlobalMetaId.localeCompare(b.providerGlobalMetaId)),
+    [
+      {
+        providerGlobalMetaId: 'seller-hidden',
+        hasUnresolvedRefund: true,
+        unresolvedRefundAgeHours: 73,
+        hidden: true,
+      },
+      {
+        providerGlobalMetaId: 'seller-visible',
+        hasUnresolvedRefund: true,
+        unresolvedRefundAgeHours: 24,
+        hidden: false,
+      },
+    ]
   );
 });

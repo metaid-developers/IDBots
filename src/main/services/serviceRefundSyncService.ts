@@ -11,10 +11,18 @@ import {
   type VerifyTransferInput,
   type VerifyTransferResult,
 } from './txTransferVerification';
+import { shouldHideProviderForUnresolvedRefund } from './serviceOrderState';
 
 export interface RefundFinalizePinRecord {
   pinId: string;
   content: unknown;
+}
+
+export interface ProviderRefundRiskSummary {
+  providerGlobalMetaId: string;
+  hasUnresolvedRefund: true;
+  unresolvedRefundAgeHours: number;
+  hidden: boolean;
 }
 
 interface ServiceRefundSyncServiceOptions {
@@ -112,6 +120,22 @@ export class ServiceRefundSyncService {
         }
       }
     }
+  }
+
+  listProviderRefundRiskSummaries(): ProviderRefundRiskSummary[] {
+    const now = this.now();
+    return this.store.listProviderRefundRisks().map((risk) => ({
+      providerGlobalMetaId: risk.providerGlobalMetaId,
+      hasUnresolvedRefund: true,
+      unresolvedRefundAgeHours: Math.max(
+        0,
+        Math.floor((now - risk.oldestRefundRequestedAt) / (60 * 60_000))
+      ),
+      hidden: shouldHideProviderForUnresolvedRefund({
+        refundRequestedAt: risk.oldestRefundRequestedAt,
+        refundCompletedAt: null,
+      }, now),
+    }));
   }
 
   private buildDefaultVerificationInput(
