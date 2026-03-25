@@ -62,6 +62,10 @@ interface ServiceOrderLifecycleServiceOptions {
     payload: Record<string, unknown>;
   }) => Promise<{ pinId?: string | null; txid?: string | null }>;
   refundRequestRetryDelayMs?: number;
+  onOrderEvent?: (event: {
+    type: 'refund_requested';
+    order: ServiceOrderRecord;
+  }) => void | Promise<void>;
 }
 
 export class ServiceOrderOpenOrderExistsError extends Error {
@@ -86,6 +90,10 @@ export class ServiceOrderLifecycleService {
     payload: Record<string, unknown>;
   }) => Promise<{ pinId?: string | null; txid?: string | null }>;
   private refundRequestRetryDelayMs: number;
+  private onOrderEvent?: (event: {
+    type: 'refund_requested';
+    order: ServiceOrderRecord;
+  }) => void | Promise<void>;
 
   constructor(
     store: ServiceOrderStore,
@@ -98,6 +106,7 @@ export class ServiceOrderLifecycleService {
     this.createRefundRequestPin = options.createRefundRequestPin;
     this.refundRequestRetryDelayMs =
       options.refundRequestRetryDelayMs ?? DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS;
+    this.onOrderEvent = options.onOrderEvent;
   }
 
   assertNoOpenBuyerOrderForPair(
@@ -265,11 +274,21 @@ export class ServiceOrderLifecycleService {
       }
       const payload = this.buildRefundRequestPayload(order);
       const result = await this.createRefundRequestPin({ order, payload });
-      return this.store.markRefundPending(
+      const updatedOrder = this.store.markRefundPending(
         order.id,
         result.pinId ?? result.txid ?? null,
         attemptedAt
       );
+      const mirroredOrders = this.mirrorRefundPendingToCounterparts(
+        order,
+        result.pinId ?? result.txid ?? null,
+        attemptedAt
+      );
+      await this.emitRefundRequestedEvents([
+        ...mirroredOrders,
+        ...(updatedOrder ? [updatedOrder] : []),
+      ]);
+      return updatedOrder;
     } catch {
       return this.store.markRefundRequestRetry(order.id, {
         attemptedAt,
@@ -301,5 +320,38 @@ export class ServiceOrderLifecycleService {
     counterpartyGlobalMetaId: string
   ): string {
     return `${localMetabotId}:${counterpartyGlobalMetaId}`;
+  }
+
+  private mirrorRefundPendingToCounterparts(
+    order: ServiceOrderRecord,
+    refundRequestPinId: string | null,
+    requestedAt: number
+  ): ServiceOrderRecord[] {
+    const counterparts = this.store
+      .listOrdersByPaymentTxid(order.paymentTxid)
+      .filter((candidate) => candidate.id !== order.id && candidate.role !== order.role);
+
+    const mirroredOrders: ServiceOrderRecord[] = [];
+    for (const counterpart of counterparts) {
+      const updated = this.store.markRefundPending(
+        counterpart.id,
+        refundRequestPinId,
+        requestedAt
+      );
+      if (updated) {
+        mirroredOrders.push(updated);
+      }
+    }
+    return mirroredOrders;
+  }
+
+  private async emitRefundRequestedEvents(orders: ServiceOrderRecord[]): Promise<void> {
+    if (!this.onOrderEvent) return;
+    for (const order of orders) {
+      await this.onOrderEvent({
+        type: 'refund_requested',
+        order,
+      });
+    }
   }
 }

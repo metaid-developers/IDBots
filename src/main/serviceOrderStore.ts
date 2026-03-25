@@ -413,6 +413,15 @@ export class ServiceOrderStore {
     ).map((row) => this.mapRow(row));
   }
 
+  listOrdersByPaymentTxid(paymentTxid: string): ServiceOrderRecord[] {
+    return this.getAll<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE payment_txid = ?
+      ORDER BY updated_at DESC, created_at DESC
+    `, [paymentTxid]).map((row) => this.mapRow(row));
+  }
+
   getSessionSummary(coworkSessionId: string): ServiceOrderSessionSummary | null {
     const row = this.getOne<ServiceOrderRow>(`
       SELECT *
@@ -506,6 +515,15 @@ export class ServiceOrderStore {
       LIMIT 1
     `, [refundRequestPinId]);
     return row ? this.mapRow(row) : null;
+  }
+
+  listByRefundRequestPinId(refundRequestPinId: string): ServiceOrderRecord[] {
+    return this.getAll<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE refund_request_pin_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+    `, [refundRequestPinId]).map((row) => this.mapRow(row));
   }
 
   markFirstResponseReceived(orderId: string, receivedAt: number): ServiceOrderRecord | null {

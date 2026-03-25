@@ -27,6 +27,10 @@ interface ServiceRefundSyncServiceOptions {
   verifyTransferToRecipient?: (
     input: VerifyTransferInput
   ) => Promise<VerifyTransferResult>;
+  onOrderEvent?: (event: {
+    type: 'refunded';
+    order: ServiceOrderRecord;
+  }) => void | Promise<void>;
 }
 
 export class ServiceRefundSyncService {
@@ -40,6 +44,10 @@ export class ServiceRefundSyncService {
   private verifyTransferToRecipient: (
     input: VerifyTransferInput
   ) => Promise<VerifyTransferResult>;
+  private onOrderEvent?: (event: {
+    type: 'refunded';
+    order: ServiceOrderRecord;
+  }) => void | Promise<void>;
 
   constructor(
     store: ServiceOrderStore,
@@ -52,6 +60,7 @@ export class ServiceRefundSyncService {
       options.buildRefundVerificationInput ?? ((order, payload) => this.buildDefaultVerificationInput(order, payload));
     this.verifyTransferToRecipient =
       options.verifyTransferToRecipient ?? verifyTransferToRecipient;
+    this.onOrderEvent = options.onOrderEvent;
   }
 
   async syncFinalizePins(): Promise<void> {
@@ -60,22 +69,48 @@ export class ServiceRefundSyncService {
       const payload = parseRefundFinalizePayload(pin.content);
       if (!payload) continue;
 
-      const order = this.store.findByRefundRequestPinId(payload.refundRequestPinId);
-      if (!order) continue;
-      if (order.status === 'refunded' || order.refundFinalizePinId === pin.pinId) continue;
-      if (payload.paymentTxid !== order.paymentTxid) continue;
-      if (order.servicePinId && payload.servicePinId && payload.servicePinId !== order.servicePinId) continue;
+      const matchingOrders = this.store.listByRefundRequestPinId(payload.refundRequestPinId);
+      if (matchingOrders.length === 0) continue;
+
+      const verificationOrder = matchingOrders.find((order) => order.role === 'buyer') ?? matchingOrders[0];
+      if (verificationOrder.status === 'refunded' || verificationOrder.refundFinalizePinId === pin.pinId) {
+        continue;
+      }
+      if (payload.paymentTxid !== verificationOrder.paymentTxid) continue;
+      if (
+        verificationOrder.servicePinId
+        && payload.servicePinId
+        && payload.servicePinId !== verificationOrder.servicePinId
+      ) {
+        continue;
+      }
 
       const verification = await this.verifyTransferToRecipient(
-        this.buildRefundVerificationInput(order, payload)
+        this.buildRefundVerificationInput(verificationOrder, payload)
       );
       if (!verification.valid) continue;
 
-      this.store.markRefunded(order.id, {
-        refundTxid: payload.refundTxid,
-        refundFinalizePinId: pin.pinId,
-        refundCompletedAt: this.now(),
-      });
+      const refundCompletedAt = this.now();
+      const updatedOrders: ServiceOrderRecord[] = [];
+      for (const order of matchingOrders) {
+        const updated = this.store.markRefunded(order.id, {
+          refundTxid: payload.refundTxid,
+          refundFinalizePinId: pin.pinId,
+          refundCompletedAt,
+        });
+        if (updated) {
+          updatedOrders.push(updated);
+        }
+      }
+
+      if (this.onOrderEvent) {
+        for (const order of updatedOrders) {
+          await this.onOrderEvent({
+            type: 'refunded',
+            order,
+          });
+        }
+      }
     }
   }
 

@@ -43,6 +43,7 @@ async function createLifecycleServiceForTest(options = {}) {
   const service = new ServiceOrderLifecycleService(store, {
     now: options.now || (() => 1_770_000_000_000),
     createRefundRequestPin: options.createRefundRequestPin,
+    onOrderEvent: options.onOrderEvent,
   });
   return { db, store, service };
 }
@@ -159,6 +160,55 @@ test('scanTimedOutOrders marks first-response timeout orders failed and moves th
   assert.equal(updated?.refundRequestPinId, 'refund-request-pin-id');
   assert.equal(updated?.refundRequestedAt, currentNow);
   assert.equal(refundRequestInput?.payload.paymentTxid, order.paymentTxid);
+});
+
+test('scanTimedOutOrders mirrors refund_pending onto the seller ledger row for the same order', async () => {
+  let currentNow = 1_770_000_000_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async () => ({ pinId: 'refund-request-pin-id' }),
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    coworkSessionId: 'buyer-session-id',
+  }));
+  const sellerOrder = service.createSellerOrder(baseOrderInput({
+    coworkSessionId: 'seller-session-id',
+  }));
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'refund_pending');
+  assert.equal(store.getOrderById(sellerOrder.id)?.status, 'refund_pending');
+  assert.equal(store.getOrderById(sellerOrder.id)?.refundRequestPinId, 'refund-request-pin-id');
+});
+
+test('scanTimedOutOrders emits refund_requested events for every mirrored session order', async () => {
+  let currentNow = 1_770_000_000_000;
+  const seenEvents = [];
+  const { service } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async () => ({ pinId: 'refund-request-pin-id' }),
+    onOrderEvent: (event) => {
+      seenEvents.push({ type: event.type, orderId: event.order.id, role: event.order.role });
+    },
+  });
+
+  service.createBuyerOrder(baseOrderInput({
+    coworkSessionId: 'buyer-session-id',
+  }));
+  service.createSellerOrder(baseOrderInput({
+    coworkSessionId: 'seller-session-id',
+  }));
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  assert.deepEqual(
+    seenEvents.map((event) => `${event.type}:${event.role}`).sort(),
+    ['refund_requested:buyer', 'refund_requested:seller']
+  );
 });
 
 test('scanTimedOutOrders records retry metadata when refund request broadcast fails', async () => {

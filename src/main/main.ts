@@ -25,7 +25,7 @@ import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
 import { ScheduledTaskStore } from './scheduledTaskStore';
 import { MetabotStore } from './metabotStore';
-import { ServiceOrderStore } from './serviceOrderStore';
+import { ServiceOrderStore, type ServiceOrderRecord } from './serviceOrderStore';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
 import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
@@ -254,6 +254,57 @@ const sanitizePermissionRequestForIpc = (request: any): any => {
     ...request,
     toolInput: sanitizeIpcPayload(request.toolInput ?? {}),
   };
+};
+
+const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
+  const safeMessage = sanitizeCoworkMessageForIpc(message);
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win) => {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send('cowork:stream:message', { sessionId, message: safeMessage });
+      } catch (error) {
+        console.error('Failed to forward cowork message:', error);
+      }
+    }
+  });
+};
+
+const buildServiceOrderEventMessage = (
+  type: 'refund_requested' | 'refunded',
+  order: ServiceOrderRecord
+): string => {
+  if (type === 'refund_requested') {
+    if (order.role === 'seller') {
+      const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
+      return `系统提示：买家已发起全额退款申请，请人工处理。${pinId}`.trim();
+    }
+    const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
+    return `系统提示：服务订单已超时，已自动发起全额退款申请。${pinId}`.trim();
+  }
+
+  const refundTxid = order.refundTxid ? ` 退款 txid：${order.refundTxid}` : '';
+  return `系统提示：退款已处理完成。${refundTxid}`.trim();
+};
+
+const publishServiceOrderEventToCowork = (
+  type: 'refund_requested' | 'refunded',
+  order: ServiceOrderRecord
+): void => {
+  if (!order.coworkSessionId) return;
+  const message = getCoworkStore().addMessage(order.coworkSessionId, {
+    type: 'system',
+    content: buildServiceOrderEventMessage(type, order),
+    metadata: {
+      sourceChannel: 'metaweb_order',
+      refreshSessionSummary: true,
+      serviceOrderEvent: type,
+      paymentTxid: order.paymentTxid,
+      refundRequestPinId: order.refundRequestPinId,
+      refundTxid: order.refundTxid,
+    },
+  });
+  emitCoworkStreamMessage(order.coworkSessionId, message);
 };
 
 
@@ -1571,6 +1622,9 @@ const getServiceOrderLifecycleService = () => {
             txid: result.txids?.[0] ?? null,
           };
         },
+        onOrderEvent: ({ type, order }) => {
+          publishServiceOrderEventToCowork(type, order);
+        },
       }
     );
   }
@@ -1634,6 +1688,9 @@ const getServiceRefundSyncService = () => {
             recipientAddress,
             expectedAmountSats: Math.floor(Number(order.paymentAmount) * 100_000_000),
           };
+        },
+        onOrderEvent: ({ type, order }) => {
+          publishServiceOrderEventToCowork(type, order);
         },
       }
     );

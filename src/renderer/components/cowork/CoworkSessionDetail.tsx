@@ -2,7 +2,11 @@ import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
-import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
+import type {
+  CoworkMessage,
+  CoworkMessageMetadata,
+  CoworkServiceOrderSummary,
+} from '../../types/cowork';
 import type { Skill } from '../../types/skill';
 import CoworkPromptInput from './CoworkPromptInput';
 import A2AMessageItem from './A2AMessageItem';
@@ -25,6 +29,11 @@ import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
+import { getCoworkSessionTitleClassName } from './coworkSessionPresentation.js';
+import {
+  getRefundCardVariant,
+  shouldShowRefundStatusCard,
+} from './coworkServiceOrderPresentation.js';
 
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
@@ -146,6 +155,82 @@ const formatShortHash = (value: string): string => {
   if (!value) return '';
   if (value.length <= 20) return value;
   return `${value.slice(0, 8)}...${value.slice(-8)}`;
+};
+
+const getRefundFailureReasonLabel = (failureReason?: string | null): string | null => {
+  if (failureReason === 'first_response_timeout') {
+    return i18nService.t('coworkRefundReasonFirstResponseTimeout');
+  }
+  if (failureReason === 'delivery_timeout') {
+    return i18nService.t('coworkRefundReasonDeliveryTimeout');
+  }
+  return null;
+};
+
+const RefundStatusCard: React.FC<{ summary: CoworkServiceOrderSummary }> = ({ summary }) => {
+  const variant = getRefundCardVariant(summary);
+  if (!variant) return null;
+
+  const isSuccess = variant === 'refunded';
+  const title = isSuccess
+    ? i18nService.t('coworkRefundCardRefundedTitle')
+    : variant === 'seller-action'
+      ? i18nService.t('coworkRefundCardSellerPendingTitle')
+      : i18nService.t('coworkRefundCardBuyerPendingTitle');
+  const body = isSuccess
+    ? i18nService.t('coworkRefundCardRefundedBody')
+    : variant === 'seller-action'
+      ? i18nService.t('coworkRefundCardSellerPendingBody')
+      : i18nService.t('coworkRefundCardBuyerPendingBody');
+  const failureReasonLabel = getRefundFailureReasonLabel(summary.failureReason);
+  const Icon = isSuccess ? CheckIcon : ExclamationTriangleIcon;
+
+  return (
+    <div className="px-4 pb-3 shrink-0">
+      <div
+        className={`max-w-3xl mx-auto rounded-2xl border px-4 py-3 ${
+          isSuccess
+            ? 'border-emerald-500/30 bg-emerald-500/10'
+            : 'border-orange-500/30 bg-orange-500/10'
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className={`mt-0.5 rounded-full p-1.5 ${
+              isSuccess ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+              {title}
+            </div>
+            <div className="mt-1 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {body}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {failureReasonLabel && (
+                <span>
+                  {i18nService.t('coworkRefundCardFailureReason')}: {failureReasonLabel}
+                </span>
+              )}
+              {summary.refundRequestPinId && (
+                <span>
+                  {i18nService.t('coworkRefundCardRequestPin')}: {formatShortHash(summary.refundRequestPinId)}
+                </span>
+              )}
+              {summary.refundTxid && (
+                <span>
+                  {i18nService.t('coworkRefundCardRefundTx')}: {formatShortHash(summary.refundTxid)}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 
@@ -2098,7 +2183,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               className="non-draggable min-w-0 max-w-[300px] rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg px-2 py-1 text-sm font-medium dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
             />
           ) : (
-            <h1 className="text-sm leading-none font-medium dark:text-claude-darkText text-claude-text truncate max-w-[360px]">
+            <h1
+              className={`${getCoworkSessionTitleClassName({
+                sessionType: currentSession.sessionType,
+                serviceOrderStatus: currentSession.serviceOrderSummary?.status,
+              })} max-w-[360px]`}
+            >
               {currentSession.title || i18nService.t('coworkNewSession')}
             </h1>
           )}
@@ -2263,6 +2353,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         )}
         <div ref={messagesEndRef} className="h-20" />
       </div>
+
+      {currentSession.serviceOrderSummary && shouldShowRefundStatusCard(currentSession.serviceOrderSummary) && (
+        <RefundStatusCard summary={currentSession.serviceOrderSummary} />
+      )}
 
       {/* Streaming Activity Bar */}
       {isStreaming && <StreamingActivityBar messages={currentSession.messages} />}
