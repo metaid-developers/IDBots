@@ -56,7 +56,7 @@ import { startOrchestrator as startCognitiveOrchestrator, stopOrchestrator as st
 import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privateChatDaemon';
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
-import { createPin } from './services/metaidCore';
+import { createPin, getPinData } from './services/metaidCore';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -75,6 +75,7 @@ import {
   ServiceOrderOpenOrderExistsError,
 } from './services/serviceOrderLifecycleService';
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
+import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 
 // 设置应用程序名称
@@ -117,6 +118,7 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
 const RESTORE_MNEMONIC_WORDS = 12;
 const SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS = 60_000;
 const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 60_000;
+const SERVICE_REFUND_REQUEST_PATH = '/protocols/service-refund-request';
 const SERVICE_REFUND_FINALIZE_PATH = '/protocols/service-refund-finalize';
 const SERVICE_REFUND_SYNC_SIZE = 200;
 const SERVICE_REFUND_SYNC_MAX_PAGES = 10;
@@ -1242,6 +1244,7 @@ let metabotStore: MetabotStore | null = null;
 let serviceOrderStore: ServiceOrderStore | null = null;
 let serviceOrderLifecycleService: ServiceOrderLifecycleService | null = null;
 let serviceRefundSyncService: ServiceRefundSyncService | null = null;
+let serviceRefundSettlementService: ServiceRefundSettlementService | null = null;
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
@@ -1636,13 +1639,15 @@ const getServiceOrderLifecycleService = () => {
   return serviceOrderLifecycleService;
 };
 
-async function fetchRefundFinalizePinsFromIndexer(): Promise<Array<{ pinId: string; content: unknown }>> {
-  const pins: Array<{ pinId: string; content: unknown }> = [];
+async function fetchProtocolPinsFromIndexer(
+  protocolPath: string
+): Promise<Array<{ pinId: string; content: unknown; timestampMs?: number | null }>> {
+  const pins: Array<{ pinId: string; content: unknown; timestampMs?: number | null }> = [];
   let cursor: string | undefined;
 
   for (let page = 0; page < SERVICE_REFUND_SYNC_MAX_PAGES; page++) {
     const url = new URL('https://manapi.metaid.io/pin/path/list');
-    url.searchParams.set('path', SERVICE_REFUND_FINALIZE_PATH);
+    url.searchParams.set('path', protocolPath);
     url.searchParams.set('size', String(SERVICE_REFUND_SYNC_SIZE));
     if (cursor) url.searchParams.set('cursor', cursor);
 
@@ -1659,8 +1664,12 @@ async function fetchRefundFinalizePinsFromIndexer(): Promise<Array<{ pinId: stri
     for (const item of list) {
       const pinId = typeof item.id === 'string' ? item.id.trim() : String(item.id || '').trim();
       if (!pinId) continue;
-      const content = item.contentSummary ?? item.content ?? null;
-      pins.push({ pinId, content });
+      const content = item.content ?? item.contentSummary ?? null;
+      const timestampRaw = item.timestamp;
+      const timestampMs = typeof timestampRaw === 'number' && Number.isFinite(timestampRaw)
+        ? Math.floor(timestampRaw * 1000)
+        : null;
+      pins.push({ pinId, content, timestampMs });
     }
 
     const nextCursor =
@@ -1672,12 +1681,25 @@ async function fetchRefundFinalizePinsFromIndexer(): Promise<Array<{ pinId: stri
   return pins;
 }
 
+async function fetchRefundRequestPinsFromIndexer(): Promise<Array<{ pinId: string; content: unknown; timestampMs?: number | null }>> {
+  return fetchProtocolPinsFromIndexer(SERVICE_REFUND_REQUEST_PATH);
+}
+
+async function fetchRefundFinalizePinsFromIndexer(): Promise<Array<{ pinId: string; content: unknown; timestampMs?: number | null }>> {
+  return fetchProtocolPinsFromIndexer(SERVICE_REFUND_FINALIZE_PATH);
+}
+
 const getServiceRefundSyncService = () => {
   if (!serviceRefundSyncService) {
     serviceRefundSyncService = new ServiceRefundSyncService(
       getServiceOrderStore(),
       {
+        fetchRefundRequestPins: fetchRefundRequestPinsFromIndexer,
         fetchRefundFinalizePins: fetchRefundFinalizePinsFromIndexer,
+        resolveLocalMetabotGlobalMetaId: (localMetabotId) => {
+          const metabot = getMetabotStore().getMetabotById(localMetabotId);
+          return metabot?.globalmetaid ?? null;
+        },
         buildRefundVerificationInput: (order, payload) => {
           const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
           if (!metabot) {
@@ -1701,6 +1723,80 @@ const getServiceRefundSyncService = () => {
     );
   }
   return serviceRefundSyncService;
+};
+
+const resolveTransferFeeRate = async (chain: TransferChain): Promise<number> => {
+  const globalTiers = getGlobalFeeTiers()[chain];
+  if (Array.isArray(globalTiers) && globalTiers.length > 0) {
+    return getGlobalFeeRate(chain);
+  }
+  const result = await getFeeSummary(chain);
+  return getDefaultFeeRate(chain, result.list);
+};
+
+const getServiceRefundSettlementService = () => {
+  if (!serviceRefundSettlementService) {
+    serviceRefundSettlementService = new ServiceRefundSettlementService(
+      getServiceOrderStore(),
+      {
+        fetchRefundRequestPin: async (pinId) => {
+          const data = await getPinData(pinId, true);
+          return {
+            pinId,
+            content: data.content ?? data.contentBody ?? data.contentSummary ?? null,
+          };
+        },
+        executeRefundTransfer: async (input) => {
+          const feeRate = await resolveTransferFeeRate(input.order.paymentChain as TransferChain);
+          return executeTransfer(getMetabotStore(), {
+            metabotId: input.order.localMetabotId,
+            chain: input.order.paymentChain as TransferChain,
+            toAddress: input.refundToAddress,
+            amountSpaceOrDoge: input.refundAmount,
+            feeRate,
+          });
+        },
+        createRefundFinalizePin: async ({ order, payload }) => {
+          const result = await createPin(getMetabotStore(), order.localMetabotId, {
+            operation: 'create',
+            path: SERVICE_REFUND_FINALIZE_PATH,
+            encryption: '0',
+            version: '1.0.0',
+            contentType: 'application/json',
+            payload: JSON.stringify(payload),
+          });
+          return {
+            pinId: result.pinId ?? result.txids?.[0] ?? null,
+            txid: result.txids?.[0] ?? null,
+          };
+        },
+        resolveLocalMetabotGlobalMetaId: (localMetabotId) => {
+          const metabot = getMetabotStore().getMetabotById(localMetabotId);
+          return metabot?.globalmetaid ?? null;
+        },
+        onOrderEvent: ({ type, order }) => {
+          publishServiceOrderEventToCowork(type, order);
+        },
+      }
+    );
+  }
+  return serviceRefundSettlementService;
+};
+
+const syncServiceRefundProtocols = async (): Promise<void> => {
+  const service = getServiceRefundSyncService();
+
+  try {
+    await service.syncRequestPins();
+  } catch (error) {
+    console.warn('[ServiceOrder] Refund request sync failed', error);
+  }
+
+  try {
+    await service.syncFinalizePins();
+  } catch (error) {
+    console.warn('[ServiceOrder] Refund finalize sync failed', error);
+  }
 };
 
 const enrichCoworkSessionWithServiceOrderSummary = <T extends { id: string }>(
@@ -2352,6 +2448,26 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list sessions',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:processServiceRefund', async (_event, sessionId: string) => {
+    try {
+      const result = await getServiceRefundSettlementService().processSellerRefundForSession(sessionId);
+      const session = enrichCoworkSessionWithServiceOrderSummary(
+        getCoworkStore().getSession(sessionId)
+      );
+      return {
+        success: true,
+        refundTxid: result.refundTxid,
+        refundFinalizePinId: result.refundFinalizePinId,
+        session,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to process service refund',
       };
     }
   });
@@ -5097,13 +5213,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         console.warn('[ServiceOrder] Periodic timeout scan failed', error);
       });
     }, SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS);
-    void getServiceRefundSyncService().syncFinalizePins().catch((error) => {
-      console.warn('[ServiceOrder] Initial refund finalize sync failed', error);
-    });
+    void syncServiceRefundProtocols();
     setInterval(() => {
-      void getServiceRefundSyncService().syncFinalizePins().catch((error) => {
-        console.warn('[ServiceOrder] Periodic refund finalize sync failed', error);
-      });
+      void syncServiceRefundProtocols();
     }, SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS);
 
     // Auto-reconnect IM bots that were enabled before restart

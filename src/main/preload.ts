@@ -171,6 +171,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:get', sessionId),
     listSessions: () =>
       ipcRenderer.invoke('cowork:session:list'),
+    processServiceRefund: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:processServiceRefund', sessionId),
     readLocalImage: (options: { path: string; maxBytes?: number }) =>
       ipcRenderer.invoke('cowork:session:readLocalImage', options),
     exportResultImage: (options: { rect: { x: number; y: number; width: number; height: number }; defaultFileName?: string }) =>

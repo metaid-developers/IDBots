@@ -447,6 +447,17 @@ export class ServiceOrderStore {
     };
   }
 
+  findLatestOrderBySessionId(coworkSessionId: string): ServiceOrderRecord | null {
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE cowork_session_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `, [coworkSessionId]);
+    return row ? this.mapRow(row) : null;
+  }
+
   listOrdersByStatuses(
     role: ServiceOrderRole,
     statuses: ServiceOrderStatus[]
@@ -706,6 +717,37 @@ export class ServiceOrderStore {
       input.refundFinalizePinId,
       input.refundCompletedAt,
       input.refundCompletedAt,
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  recordRefundTransfer(
+    orderId: string,
+    input: {
+      refundTxid: string;
+      recordedAt: number;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refunded') {
+      return order;
+    }
+    if (order.refundTxid) {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        refund_txid = ?,
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      input.refundTxid,
+      input.recordedAt,
       orderId,
     ]);
     this.saveDb();

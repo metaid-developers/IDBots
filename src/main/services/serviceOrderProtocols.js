@@ -23,6 +23,43 @@ export function buildRefundRequestPayload(input) {
   };
 }
 
+export function buildRefundFinalizePayload(input) {
+  return {
+    version: '1.0.0',
+    refundRequestPinId: input.refundRequestPinId,
+    paymentTxid: input.paymentTxid,
+    servicePinId: input.servicePinId ?? null,
+    refundTxid: input.refundTxid,
+    refundAmount: input.refundAmount,
+    refundCurrency: input.refundCurrency,
+    buyerGlobalMetaId: input.buyerGlobalMetaId,
+    sellerGlobalMetaId: input.sellerGlobalMetaId,
+    comment: input.comment ?? '',
+  };
+}
+
+export function parseRefundRequestPayload(content) {
+  let parsed = content;
+  if (typeof content === 'string') {
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const payload = parsed;
+  if (typeof payload.paymentTxid !== 'string') {
+    return null;
+  }
+
+  return payload;
+}
+
 export function parseRefundFinalizePayload(content) {
   let parsed = content;
   if (typeof content === 'string') {

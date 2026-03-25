@@ -272,6 +272,41 @@ class CoworkService {
     return false;
   }
 
+  async processServiceRefund(sessionId: string): Promise<{
+    success: boolean;
+    refundTxid?: string;
+    refundFinalizePinId?: string;
+    error?: string;
+  }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.processServiceRefund) {
+      return { success: false, error: 'Cowork refund API not available' };
+    }
+
+    try {
+      const result = await cowork.processServiceRefund(sessionId);
+      if (result?.success) {
+        if (result.session) {
+          store.dispatch(setCurrentSession(result.session));
+        } else {
+          await this.loadSession(sessionId);
+        }
+        await this.loadSessions();
+        return {
+          success: true,
+          refundTxid: result.refundTxid,
+          refundFinalizePinId: result.refundFinalizePinId,
+        };
+      }
+      return { success: false, error: result?.error || 'Failed to process service refund' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to process service refund',
+      };
+    }
+  }
+
   async exportSessionResultImage(options: {
     rect: { x: number; y: number; width: number; height: number };
     defaultFileName?: string;

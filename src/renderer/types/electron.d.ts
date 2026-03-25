@@ -410,6 +410,13 @@ interface IElectronAPI {
     renameSession: (options: { sessionId: string; title: string }) => Promise<{ success: boolean; error?: string }>;
     getSession: (sessionId: string) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     listSessions: () => Promise<{ success: boolean; sessions?: CoworkSessionSummary[]; error?: string }>;
+    processServiceRefund: (sessionId: string) => Promise<{
+      success: boolean;
+      refundTxid?: string;
+      refundFinalizePinId?: string;
+      session?: CoworkSession | null;
+      error?: string;
+    }>;
     readLocalImage: (options: {
       path: string;
       maxBytes?: number;

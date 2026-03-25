@@ -167,11 +167,22 @@ const getRefundFailureReasonLabel = (failureReason?: string | null): string | nu
   return null;
 };
 
-const RefundStatusCard: React.FC<{ summary: CoworkServiceOrderSummary }> = ({ summary }) => {
+const RefundStatusCard: React.FC<{
+  summary: CoworkServiceOrderSummary;
+  onProcessRefund?: () => void;
+  isProcessingRefund?: boolean;
+  refundActionError?: string | null;
+}> = ({
+  summary,
+  onProcessRefund,
+  isProcessingRefund = false,
+  refundActionError = null,
+}) => {
   const variant = getRefundCardVariant(summary);
   if (!variant) return null;
 
   const isSuccess = variant === 'refunded';
+  const canProcessRefund = variant === 'seller-action' && Boolean(onProcessRefund);
   const title = isSuccess
     ? i18nService.t('coworkRefundCardRefundedTitle')
     : variant === 'seller-action'
@@ -226,6 +237,25 @@ const RefundStatusCard: React.FC<{ summary: CoworkServiceOrderSummary }> = ({ su
                 </span>
               )}
             </div>
+            {canProcessRefund && (
+              <div className="mt-3 flex flex-col items-start gap-2">
+                <button
+                  type="button"
+                  onClick={onProcessRefund}
+                  disabled={isProcessingRefund}
+                  className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isProcessingRefund
+                    ? i18nService.t('coworkRefundCardProcessingAction')
+                    : i18nService.t('coworkRefundCardProcessAction')}
+                </button>
+                {refundActionError && (
+                  <div className="text-[11px] text-red-600 dark:text-red-400">
+                    {refundActionError}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1615,6 +1645,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const ignoreNextBlurRef = useRef(false);
   const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; llm_id: string | null } | null>(null);
   const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
+  const [isProcessingRefund, setIsProcessingRefund] = useState(false);
+  const [refundActionError, setRefundActionError] = useState<string | null>(null);
 
   // Fetch MetaBot when session has metabotId (for avatar/name and llm_id for model restriction)
   useEffect(() => {
@@ -1666,6 +1698,29 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
   }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar, currentSession?.sessionType, currentSession?.messages]);
+
+  useEffect(() => {
+    setIsProcessingRefund(false);
+    setRefundActionError(null);
+  }, [
+    currentSession?.id,
+    currentSession?.serviceOrderSummary?.status,
+    currentSession?.serviceOrderSummary?.refundRequestPinId,
+    currentSession?.serviceOrderSummary?.refundTxid,
+  ]);
+
+  const handleProcessServiceRefund = useCallback(async () => {
+    if (!currentSession?.id || isProcessingRefund) return;
+    setIsProcessingRefund(true);
+    setRefundActionError(null);
+    const result = await coworkService.processServiceRefund(currentSession.id);
+    if (!result.success) {
+      setRefundActionError(result.error || i18nService.t('coworkRefundProcessFailed'));
+      setIsProcessingRefund(false);
+      return;
+    }
+    setIsProcessingRefund(false);
+  }, [currentSession?.id, isProcessingRefund]);
 
   // Reset rename value when session changes
   useEffect(() => {
@@ -2355,7 +2410,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       </div>
 
       {currentSession.serviceOrderSummary && shouldShowRefundStatusCard(currentSession.serviceOrderSummary) && (
-        <RefundStatusCard summary={currentSession.serviceOrderSummary} />
+        <RefundStatusCard
+          summary={currentSession.serviceOrderSummary}
+          onProcessRefund={handleProcessServiceRefund}
+          isProcessingRefund={isProcessingRefund}
+          refundActionError={refundActionError}
+        />
       )}
 
       {/* Streaming Activity Bar */}

@@ -23,12 +23,62 @@ async function createRefundSyncServiceForTest(options = {}) {
   const store = new ServiceOrderStore(db, () => {});
   const service = new ServiceRefundSyncService(store, {
     now: options.now || (() => 1_770_000_000_000),
+    fetchRefundRequestPins: options.fetchRefundRequestPins || (async () => []),
     fetchRefundFinalizePins: options.fetchRefundFinalizePins || (async () => []),
+    resolveLocalMetabotGlobalMetaId: options.resolveLocalMetabotGlobalMetaId,
     buildRefundVerificationInput: options.buildRefundVerificationInput,
     verifyTransferToRecipient: options.verifyTransferToRecipient,
     onOrderEvent: options.onOrderEvent,
   });
   return { db, store, service };
+}
+
+function insertSellerOrder(
+  db,
+  {
+    id = 'seller-order',
+    localMetabotId = 8,
+    counterpartyGlobalMetaId = 'buyer-global-metaid',
+    paymentTxid = 'a'.repeat(64),
+    servicePinId = 'service-pin-id',
+    status = 'awaiting_first_response',
+    failureReason = null,
+    refundRequestPinId = null,
+    refundRequestedAt = null,
+    refundCompletedAt = null,
+  } = {}
+) {
+  db.run(
+    `INSERT INTO service_orders (
+      id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id,
+      status, first_response_deadline_at, delivery_deadline_at, failed_at, failure_reason,
+      refund_request_pin_id, refund_requested_at, refund_completed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      'seller',
+      localMetabotId,
+      counterpartyGlobalMetaId,
+      servicePinId,
+      'Weather Pro',
+      paymentTxid,
+      'mvc',
+      '12.34',
+      'SPACE',
+      'order-pin-id',
+      status,
+      1_770_000_000_000 + 5 * 60_000,
+      1_770_000_000_000 + 15 * 60_000,
+      failureReason ? 1_770_000_000_000 : null,
+      failureReason,
+      refundRequestPinId,
+      refundRequestedAt,
+      refundCompletedAt,
+      1_770_000_000_000,
+      1_770_000_000_000,
+    ]
+  );
 }
 
 function insertRefundPendingBuyerOrder(db) {
@@ -290,10 +340,58 @@ test('syncFinalizePins emits refunded events for every mirrored session order', 
   );
 });
 
+test('syncRequestPins marks matching seller orders refund_pending and emits a seller refund-requested event once', async () => {
+  const now = 1_770_000_456_000;
+  const seenEvents = [];
+  const { db, store, service } = await createRefundSyncServiceForTest({
+    now: () => now,
+    fetchRefundRequestPins: async () => [{
+      pinId: 'refund-request-pin-id',
+      content: JSON.stringify({
+        paymentTxid: 'a'.repeat(64),
+        servicePinId: 'service-pin-id',
+        serviceName: 'Weather Pro',
+        refundAmount: '12.34',
+        refundCurrency: 'SPACE',
+        refundToAddress: 'seller-refund-address',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+        failureReason: 'first_response_timeout',
+        failureDetectedAt: Math.floor(now / 1000),
+      }),
+    }],
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 8 ? 'seller-global-metaid' : null
+    ),
+    onOrderEvent: (event) => {
+      seenEvents.push({ type: event.type, role: event.order.role });
+    },
+  });
+  insertSellerOrder(db);
+
+  assert.equal(typeof service.syncRequestPins, 'function');
+  await service.syncRequestPins();
+
+  const updated = store.getOrderById('seller-order');
+  assert.equal(updated?.status, 'refund_pending');
+  assert.equal(updated?.failureReason, 'first_response_timeout');
+  assert.equal(updated?.refundRequestPinId, 'refund-request-pin-id');
+  assert.equal(updated?.refundRequestedAt, now);
+  assert.deepEqual(seenEvents, [{ type: 'refund_requested', role: 'seller' }]);
+
+  seenEvents.length = 0;
+  await service.syncRequestPins();
+  assert.deepEqual(seenEvents, []);
+});
+
 test('listProviderRefundRiskSummaries reports red-vs-hidden refund risk by provider age', async () => {
   const now = 1_770_300_000_000;
   const { db, service } = await createRefundSyncServiceForTest({
     now: () => now,
+    resolveLocalMetabotGlobalMetaId: (metabotId) => {
+      if (metabotId === 8) return 'seller-local';
+      return null;
+    },
   });
 
   insertProviderRiskBuyerOrder(db, {
@@ -305,6 +403,15 @@ test('listProviderRefundRiskSummaries reports red-vs-hidden refund risk by provi
     id: 'provider-risk-hidden',
     providerGlobalMetaId: 'seller-hidden',
     refundRequestedAt: now - 73 * 60 * 60_000,
+  });
+  insertSellerOrder(db, {
+    id: 'provider-risk-seller-local',
+    localMetabotId: 8,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    status: 'refund_pending',
+    failureReason: 'delivery_timeout',
+    refundRequestPinId: 'seller-local-refund-pin',
+    refundRequestedAt: now - 12 * 60 * 60_000,
   });
 
   const summaries = service.listProviderRefundRiskSummaries();
@@ -322,6 +429,12 @@ test('listProviderRefundRiskSummaries reports red-vs-hidden refund risk by provi
         hasUnresolvedRefund: true,
         unresolvedRefundAgeHours: 73,
         hidden: true,
+      },
+      {
+        providerGlobalMetaId: 'seller-local',
+        hasUnresolvedRefund: true,
+        unresolvedRefundAgeHours: 12,
+        hidden: false,
       },
       {
         providerGlobalMetaId: 'seller-visible',
