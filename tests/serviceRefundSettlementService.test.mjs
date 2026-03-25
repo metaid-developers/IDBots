@@ -48,6 +48,9 @@ function insertRefundPendingOrder(
     counterpartyGlobalMetaId,
     coworkSessionId,
     paymentTxid = 'a'.repeat(64),
+    paymentChain = 'mvc',
+    paymentCurrency = 'SPACE',
+    paymentAmount = '12.34',
     refundRequestPinId = 'refund-request-pin-id',
     refundTxid = null,
   }
@@ -67,9 +70,9 @@ function insertRefundPendingOrder(
       'service-pin-id',
       'Weather Pro',
       paymentTxid,
-      'mvc',
-      '12.34',
-      'SPACE',
+      paymentChain,
+      paymentAmount,
+      paymentCurrency,
       'order-pin-id',
       coworkSessionId,
       'refund_pending',
@@ -196,4 +199,96 @@ test('processSellerRefundForSession reuses a previously recorded refund txid ins
   assert.equal(finalizeInputs.length, 1);
   assert.equal(finalizeInputs[0].payload.refundTxid, 'c'.repeat(64));
   assert.equal(store.getOrderById('seller-order')?.status, 'refunded');
+});
+
+test('processSellerRefundForSession preserves BTC refund chain and currency semantics', async () => {
+  const transferInputs = [];
+  const { db, service } = await createRefundSettlementServiceForTest({
+    fetchRefundRequestPin: async () => ({
+      pinId: 'refund-request-pin-id',
+      content: JSON.stringify({
+        paymentTxid: 'f'.repeat(64),
+        servicePinId: 'service-pin-id',
+        serviceName: 'Weather Pro',
+        refundAmount: '0.00120000',
+        refundCurrency: 'BTC',
+        refundToAddress: '1MFi1WM2NXnV3kjdLKaUw7Ad23LSvSD9fY',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }),
+    executeRefundTransfer: async (input) => {
+      transferInputs.push(input);
+      return { txId: '1'.repeat(64) };
+    },
+    createRefundFinalizePin: async () => ({ pinId: 'refund-finalize-pin-id' }),
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 8 ? 'seller-global-metaid' : null
+    ),
+  });
+  insertRefundPendingOrder(db, {
+    id: 'seller-btc-order',
+    role: 'seller',
+    localMetabotId: 8,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: 'f'.repeat(64),
+    paymentChain: 'btc',
+    paymentCurrency: 'BTC',
+    paymentAmount: '0.00120000',
+  });
+
+  await service.processSellerRefundForSession('seller-session-id');
+
+  assert.equal(transferInputs.length, 1);
+  assert.equal(transferInputs[0].order.paymentChain, 'btc');
+  assert.equal(transferInputs[0].order.paymentCurrency, 'BTC');
+  assert.equal(transferInputs[0].refundCurrency, 'BTC');
+  assert.equal(transferInputs[0].refundAmount, '0.00120000');
+});
+
+test('processSellerRefundForSession preserves DOGE refund chain and currency semantics', async () => {
+  const transferInputs = [];
+  const { db, service } = await createRefundSettlementServiceForTest({
+    fetchRefundRequestPin: async () => ({
+      pinId: 'refund-request-pin-id',
+      content: JSON.stringify({
+        paymentTxid: 'e'.repeat(64),
+        servicePinId: 'service-pin-id',
+        serviceName: 'Weather Pro',
+        refundAmount: '25.50000000',
+        refundCurrency: 'DOGE',
+        refundToAddress: 'DRPoYmHffwgmakvE4ua3UsLDuB4kEBYukq',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }),
+    executeRefundTransfer: async (input) => {
+      transferInputs.push(input);
+      return { txId: '2'.repeat(64) };
+    },
+    createRefundFinalizePin: async () => ({ pinId: 'refund-finalize-pin-id' }),
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 8 ? 'seller-global-metaid' : null
+    ),
+  });
+  insertRefundPendingOrder(db, {
+    id: 'seller-doge-order',
+    role: 'seller',
+    localMetabotId: 8,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: 'e'.repeat(64),
+    paymentChain: 'doge',
+    paymentCurrency: 'DOGE',
+    paymentAmount: '25.50000000',
+  });
+
+  await service.processSellerRefundForSession('seller-session-id');
+
+  assert.equal(transferInputs.length, 1);
+  assert.equal(transferInputs[0].order.paymentChain, 'doge');
+  assert.equal(transferInputs[0].order.paymentCurrency, 'DOGE');
+  assert.equal(transferInputs[0].refundCurrency, 'DOGE');
+  assert.equal(transferInputs[0].refundAmount, '25.50000000');
 });

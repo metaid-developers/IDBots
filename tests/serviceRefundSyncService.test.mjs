@@ -41,6 +41,9 @@ function insertSellerOrder(
     counterpartyGlobalMetaId = 'buyer-global-metaid',
     paymentTxid = 'a'.repeat(64),
     servicePinId = 'service-pin-id',
+    paymentChain = 'mvc',
+    paymentAmount = '12.34',
+    paymentCurrency = 'SPACE',
     status = 'awaiting_first_response',
     failureReason = null,
     refundRequestPinId = null,
@@ -63,9 +66,9 @@ function insertSellerOrder(
       servicePinId,
       'Weather Pro',
       paymentTxid,
-      'mvc',
-      '12.34',
-      'SPACE',
+      paymentChain,
+      paymentAmount,
+      paymentCurrency,
       'order-pin-id',
       status,
       1_770_000_000_000 + 5 * 60_000,
@@ -82,6 +85,23 @@ function insertSellerOrder(
 }
 
 function insertRefundPendingBuyerOrder(db) {
+  insertRefundPendingBuyerOrderWithPayment(db, {
+    paymentTxid: 'a'.repeat(64),
+    paymentChain: 'mvc',
+    paymentAmount: '12.34',
+    paymentCurrency: 'SPACE',
+  });
+}
+
+function insertRefundPendingBuyerOrderWithPayment(
+  db,
+  {
+    paymentTxid,
+    paymentChain,
+    paymentAmount,
+    paymentCurrency,
+  }
+) {
   db.run(
     `INSERT INTO service_orders (
       id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
@@ -96,10 +116,10 @@ function insertRefundPendingBuyerOrder(db) {
       'seller-global-metaid',
       'service-pin-id',
       'Weather Pro',
-      'a'.repeat(64),
-      'mvc',
-      '12.34',
-      'SPACE',
+      paymentTxid,
+      paymentChain,
+      paymentAmount,
+      paymentCurrency,
       'order-pin-id',
       'refund_pending',
       1_770_000_000_000 + 5 * 60_000,
@@ -221,6 +241,112 @@ test('syncFinalizePins marks refund-pending orders refunded when finalize protoc
   assert.equal(updated?.refundFinalizePinId, 'refund-finalize-pin-id');
   assert.equal(updated?.refundTxid, 'b'.repeat(64));
   assert.equal(updated?.refundCompletedAt, now);
+});
+
+test('syncFinalizePins builds BTC verification input from the buyer ledger row', async () => {
+  const seenInputs = [];
+  const { db, store, service } = await createRefundSyncServiceForTest({
+    fetchRefundFinalizePins: async () => [{
+      pinId: 'refund-finalize-pin-id',
+      content: JSON.stringify({
+        refundRequestPinId: 'refund-request-pin-id',
+        paymentTxid: 'c'.repeat(64),
+        servicePinId: 'service-pin-id',
+        refundTxid: 'd'.repeat(64),
+        refundAmount: '0.00120000',
+        refundCurrency: 'BTC',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }],
+    buildRefundVerificationInput: (order, payload) => {
+      seenInputs.push({
+        chain: order.paymentChain,
+        paymentCurrency: order.paymentCurrency,
+        paymentAmount: order.paymentAmount,
+        refundCurrency: payload.refundCurrency,
+      });
+      return {
+        chain: 'btc',
+        txid: payload.refundTxid,
+        recipientAddress: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kg3g4ty',
+        expectedAmountSats: 120000,
+      };
+    },
+    verifyTransferToRecipient: async () => ({
+      valid: true,
+      reason: 'ok',
+    }),
+  });
+  insertRefundPendingBuyerOrderWithPayment(db, {
+    paymentTxid: 'c'.repeat(64),
+    paymentChain: 'btc',
+    paymentAmount: '0.00120000',
+    paymentCurrency: 'BTC',
+  });
+
+  await service.syncFinalizePins();
+
+  assert.deepEqual(seenInputs, [{
+    chain: 'btc',
+    paymentCurrency: 'BTC',
+    paymentAmount: '0.00120000',
+    refundCurrency: 'BTC',
+  }]);
+  assert.equal(store.getOrderById('refund-pending-order')?.status, 'refunded');
+});
+
+test('syncFinalizePins builds DOGE verification input from the buyer ledger row', async () => {
+  const seenInputs = [];
+  const { db, store, service } = await createRefundSyncServiceForTest({
+    fetchRefundFinalizePins: async () => [{
+      pinId: 'refund-finalize-pin-id',
+      content: JSON.stringify({
+        refundRequestPinId: 'refund-request-pin-id',
+        paymentTxid: 'e'.repeat(64),
+        servicePinId: 'service-pin-id',
+        refundTxid: 'f'.repeat(64),
+        refundAmount: '25.50000000',
+        refundCurrency: 'DOGE',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }],
+    buildRefundVerificationInput: (order, payload) => {
+      seenInputs.push({
+        chain: order.paymentChain,
+        paymentCurrency: order.paymentCurrency,
+        paymentAmount: order.paymentAmount,
+        refundCurrency: payload.refundCurrency,
+      });
+      return {
+        chain: 'doge',
+        txid: payload.refundTxid,
+        recipientAddress: 'DRPoYmHffwgmakvE4ua3UsLDuB4kEBYukq',
+        expectedAmountSats: 2550000000,
+      };
+    },
+    verifyTransferToRecipient: async () => ({
+      valid: true,
+      reason: 'ok',
+    }),
+  });
+  insertRefundPendingBuyerOrderWithPayment(db, {
+    paymentTxid: 'e'.repeat(64),
+    paymentChain: 'doge',
+    paymentAmount: '25.50000000',
+    paymentCurrency: 'DOGE',
+  });
+
+  await service.syncFinalizePins();
+
+  assert.deepEqual(seenInputs, [{
+    chain: 'doge',
+    paymentCurrency: 'DOGE',
+    paymentAmount: '25.50000000',
+    refundCurrency: 'DOGE',
+  }]);
+  assert.equal(store.getOrderById('refund-pending-order')?.status, 'refunded');
 });
 
 test('syncFinalizePins leaves refund-pending orders unchanged when tx verification fails', async () => {
