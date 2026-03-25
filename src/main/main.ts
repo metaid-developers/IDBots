@@ -3753,7 +3753,6 @@ if (!gotTheLock) {
     outputType: string;
     serviceIconDataUrl?: string | null;
   }) => {
-    let releaseBuyerOrderCreation: (() => void) | null = null;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const serviceName = toSafeString(params?.serviceName).trim();

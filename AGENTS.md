@@ -69,6 +69,7 @@ node --test tests/*.test.mjs
 - Use `npm run electron:dev` for fast integration iteration.
 - Use packaged app builds for alpha acceptance and release validation. Do not treat dev runtime behavior as sufficient release evidence.
 - `electron:dev` assumes Vite owns port `5175`. If another repo already has that port open, Electron may load the wrong frontend.
+- Before any commit intended to be kept or pushed, run `npm run lint` and do not submit changes while lint is failing.
 
 ## Important Runtime Rules
 
