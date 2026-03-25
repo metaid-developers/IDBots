@@ -26,7 +26,7 @@
       }
     },
     "read-chain": {
-      "label": "读取链上信息",
+      "label": "查看链上信息",
       "prompts": {
         "latest-20-buzz": {
           "label": "获取最新 20 条 buzz",
@@ -43,20 +43,20 @@
           "description": "按 metaID 查看某用户最新动态",
           "prompt": "请帮我查看指定用户（metaID）的最新动向，包括其近期 buzz 或链上活动。"
         },
-        "group-messages": {
-          "label": "查看指定公开群聊信息",
-          "description": "查看某公开群聊的消息列表",
-          "prompt": "请帮我查看指定公开群聊的最近消息或群信息。"
+        "open-buzz-metaapp": {
+          "label": "打开本地元应用 Buzz",
+          "description": "打开本地安装的 Buzz 元应用，不使用技能",
+          "prompt": "请帮我打开本地元应用 Buzz，不需要使用任何技能。"
         }
       }
     },
     "chat": {
-      "label": "群聊和私聊",
+      "label": "私聊和群聊",
       "prompts": {
-        "start-im-listener": {
-          "label": "开启群聊和私聊的监听",
-          "description": "启动 IM 监听，接收群聊与私聊消息",
-          "prompt": "请帮我开启群聊和私聊的监听，让我能接收并处理来自群组与私信的消息。"
+        "open-chat-metaapp": {
+          "label": "打开元应用 Chat",
+          "description": "打开本地安装的 Chat 元应用，不使用技能",
+          "prompt": "请帮我打开本地元应用 Chat，不需要使用任何技能。"
         },
         "join-group": {
           "label": "加入某个群聊",
@@ -64,7 +64,7 @@
           "prompt": "请帮我加入某个群聊，我会提供群组 ID 或邀请信息。"
         },
         "send-dm": {
-          "label": "给某个 metaID 发私信",
+          "label": "给某个 MetaID 发送私信",
           "description": "向指定用户发送私信",
           "prompt": "请帮我给指定的 metaID 发送一条私信，内容由我提供。"
         },
@@ -78,25 +78,25 @@
     "more-skills": {
       "label": "更多技能组合",
       "prompts": {
-        "weather-to-chain": {
-          "label": "获取天气并记录在链上",
-          "description": "查询天气并将结果上链保存",
-          "prompt": "请帮我获取当前（或指定城市）的天气信息，并将结果记录到链上。"
+        "weather-to-buzz": {
+          "label": "获取天气并发送 buzz",
+          "description": "查询天气并发送一条 buzz",
+          "prompt": "请帮我获取当前或指定城市的天气信息，并将结果整理后发送一条 buzz。"
         },
         "develop-game-metaapp": {
           "label": "开发一个游戏 MetaApp",
           "description": "从零开发可在 MetaID 生态使用的游戏应用",
           "prompt": "请帮我开发一个游戏 MetaApp，包括玩法设计、前端交互与链上交互（如需要）。"
         },
-        "tech-news-to-group": {
-          "label": "将最新科技新闻发送到群里",
-          "description": "抓取科技资讯并推送到指定群聊",
-          "prompt": "请帮我获取最新科技新闻，并发送到指定群聊中。"
+        "tech-news-to-buzz": {
+          "label": "将最新科技新闻发送 buzz",
+          "description": "抓取科技资讯并整理成 buzz",
+          "prompt": "请帮我获取最新科技新闻，并整理后发送一条 buzz。"
         },
-        "video-to-chain": {
-          "label": "制作一个视频并上链分享",
-          "description": "制作短视频并上链分享",
-          "prompt": "请帮我制作一个短视频（脚本/剪辑/生成由你协助），并将成片上链分享。"
+        "video-to-buzz": {
+          "label": "制作一个视频并发送 buzz",
+          "description": "制作视频并整理为 buzz 发布",
+          "prompt": "请帮我制作一个视频，并将视频内容整理后发送一条 buzz。"
         }
       }
     }
@@ -128,7 +128,7 @@
       }
     },
     "read-chain": {
-      "label": "Read from Chain",
+      "label": "View Chain Info",
       "prompts": {
         "latest-20-buzz": {
           "label": "Get latest 20 buzz",
@@ -145,20 +145,20 @@
           "description": "View latest activity by metaID",
           "prompt": "Please help me view the latest activity of a specified user (metaID), including recent buzz or on-chain activity."
         },
-        "group-messages": {
-          "label": "View public group chat messages",
-          "description": "View message list of a public group",
-          "prompt": "Please help me view the recent messages or group info of a specified public group chat."
+        "open-buzz-metaapp": {
+          "label": "Open Local MetaApp Buzz",
+          "description": "Open the local Buzz MetaApp without using a skill",
+          "prompt": "Please open the local MetaApp Buzz without using any skill."
         }
       }
     },
     "chat": {
-      "label": "Groups & DMs",
+      "label": "DMs & Group Chats",
       "prompts": {
-        "start-im-listener": {
-          "label": "Start group and DM listener",
-          "description": "Start IM listener for group and private messages",
-          "prompt": "Please help me start the group and DM listener so I can receive and handle messages from groups and DMs."
+        "open-chat-metaapp": {
+          "label": "Open MetaApp Chat",
+          "description": "Open the local Chat MetaApp without using a skill",
+          "prompt": "Please open the local MetaApp Chat without using any skill."
         },
         "join-group": {
           "label": "Join a group",
@@ -166,7 +166,7 @@
           "prompt": "Please help me join a group; I will provide the group ID or invite details."
         },
         "send-dm": {
-          "label": "Send DM to a metaID",
+          "label": "Send DM to a MetaID",
           "description": "Send a private message to a user",
           "prompt": "Please help me send a DM to the specified metaID; I will provide the content."
         },
@@ -180,25 +180,25 @@
     "more-skills": {
       "label": "More skill combos",
       "prompts": {
-        "weather-to-chain": {
-          "label": "Get weather and record on chain",
-          "description": "Query weather and save result on chain",
-          "prompt": "Please help me get the current (or specified city) weather and record the result on chain."
+        "weather-to-buzz": {
+          "label": "Get weather and send buzz",
+          "description": "Query weather and turn it into a buzz post",
+          "prompt": "Please help me get the current or specified city weather, then turn the result into a buzz post."
         },
         "develop-game-metaapp": {
           "label": "Develop a game MetaApp",
           "description": "Build a game app for the MetaID ecosystem",
           "prompt": "Please help me develop a game MetaApp, including gameplay design, front-end interaction and on-chain interaction if needed."
         },
-        "tech-news-to-group": {
-          "label": "Send latest tech news to group",
-          "description": "Fetch tech news and post to a group",
-          "prompt": "Please help me fetch the latest tech news and send it to the specified group."
+        "tech-news-to-buzz": {
+          "label": "Send latest tech news as buzz",
+          "description": "Fetch tech news and turn it into a buzz post",
+          "prompt": "Please help me fetch the latest tech news and turn it into a buzz post."
         },
-        "video-to-chain": {
-          "label": "Make a video and share on chain",
-          "description": "Create a short video and share on chain",
-          "prompt": "Please help me create a short video (script/edit/generation with your help) and share the result on chain."
+        "video-to-buzz": {
+          "label": "Make a video and send buzz",
+          "description": "Create a video and package it for a buzz post",
+          "prompt": "Please help me make a video and package the result into a buzz post."
         }
       }
     }

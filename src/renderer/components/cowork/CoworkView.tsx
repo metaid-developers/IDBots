@@ -19,6 +19,8 @@ import WindowTitleBar from '../window/WindowTitleBar';
 import { QuickActionBar, PromptPanel } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import type { CoworkSession } from '../../types/cowork';
+import type { LocalizedPrompt } from '../../types/quickAction';
+import { resolveQuickActionPromptSkillMapping } from '../quick-actions/quickActionPresentation.js';
 
 type MetaBotForSelector = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -138,6 +140,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const skills = useSelector((state: RootState) => state.skill.skills);
   const quickActions = useSelector((state: RootState) => state.quickAction.actions);
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
+  const selectedPromptId = useSelector((state: RootState) => state.quickAction.selectedPromptId);
 
   const loadSelectableMetaBots = useCallback(async (): Promise<MetaBotForSelector[]> => {
     const [selectorResult, fullListResult] = await Promise.all([
@@ -431,35 +434,46 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     return quickActions.find(action => action.id === selectedActionId);
   }, [quickActions, selectedActionId]);
 
-  // Handle quick action button click: select action + activate skill in one batch
+  // Handle quick action button click: open the second-level prompt list and clear any previous quick-action skill selection.
   const handleActionSelect = (actionId: string) => {
     dispatch(selectAction(actionId));
-    const action = quickActions.find(a => a.id === actionId);
-    if (action) {
-      const targetSkill = skills.find(s => s.id === action.skillMapping);
-      if (targetSkill) {
-        dispatch(setActiveSkillIds([targetSkill.id]));
-      }
-    }
+    dispatch(clearActiveSkills());
   };
 
-  // When the mapped skill is deactivated from input area, restore the QuickActionBar
+  // When the prompt-mapped skill is deactivated from input area, restore the QuickActionBar.
   useEffect(() => {
-    if (!selectedActionId) return;
+    if (!selectedActionId || !selectedPromptId) return;
     const action = quickActions.find(a => a.id === selectedActionId);
-    if (action) {
-      const skillStillActive = activeSkillIds.includes(action.skillMapping);
-      if (!skillStillActive) {
-        dispatch(clearSelection());
-      }
+    const resolvedSkillMapping = resolveQuickActionPromptSkillMapping(action, selectedPromptId);
+    if (!resolvedSkillMapping) return;
+    const skillStillActive = activeSkillIds.includes(resolvedSkillMapping);
+    if (!skillStillActive) {
+      dispatch(clearSelection());
     }
-  }, [activeSkillIds]);
+  }, [activeSkillIds, dispatch, quickActions, selectedActionId, selectedPromptId]);
 
   // Handle prompt selection from QuickAction
-  const handleQuickActionPromptSelect = (prompt: string) => {
+  const handleQuickActionPromptSelect = (prompt: LocalizedPrompt) => {
+    const resolvedSkillMapping = resolveQuickActionPromptSkillMapping(selectedAction, prompt.id);
+    if (resolvedSkillMapping) {
+      const targetSkill = skills.find(skill => skill.id === resolvedSkillMapping);
+      if (targetSkill) {
+        dispatch(setActiveSkillIds([targetSkill.id]));
+      } else {
+        dispatch(clearActiveSkills());
+      }
+    } else {
+      dispatch(clearActiveSkills());
+    }
+
     // Fill the prompt into input
-    promptInputRef.current?.setValue(prompt);
+    promptInputRef.current?.setValue(prompt.prompt);
     promptInputRef.current?.focus();
+  };
+
+  const handleQuickActionBack = () => {
+    dispatch(clearSelection());
+    dispatch(clearActiveSkills());
   };
 
   useEffect(() => {
@@ -574,6 +588,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               <PromptPanel
                 action={selectedAction}
                 onPromptSelect={handleQuickActionPromptSelect}
+                onBack={handleQuickActionBack}
               />
             ) : (
               <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />

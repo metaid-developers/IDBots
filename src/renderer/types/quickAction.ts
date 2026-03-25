@@ -9,6 +9,8 @@
 export interface Prompt {
   /** 唯一标识 */
   id: string;
+  /** 映射到 Skill ID；null 表示显式不绑定技能 */
+  skillMapping?: string | null;
 }
 
 /**
@@ -23,6 +25,8 @@ export interface LocalizedPrompt {
   description?: string;
   /** 完整提示词内容 */
   prompt: string;
+  /** 映射到 Skill ID；null 表示显式不绑定技能 */
+  skillMapping?: string | null;
 }
 
 /**
@@ -36,7 +40,7 @@ export interface QuickAction {
   /** 主题色（hex） */
   color: string;
   /** 映射到 Skill ID */
-  skillMapping: string;
+  skillMapping?: string | null;
   /** 预制提示词列表 */
   prompts: Prompt[];
 }
@@ -54,7 +58,7 @@ export interface LocalizedQuickAction {
   /** 主题色（hex） */
   color: string;
   /** 映射到 Skill ID */
-  skillMapping: string;
+  skillMapping?: string | null;
   /** 预制提示词列表（已本地化） */
   prompts: LocalizedPrompt[];
 }

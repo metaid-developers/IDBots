@@ -1,0 +1,91 @@
+<h2>UI 行为草图</h2>
+<p class="subtitle">A2A 失败态、退款处理态、服务广场风险态</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">A 端买家会话</div>
+    <div class="mockup-body">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:2px solid #f59e0b; border-radius:12px; background:#fffbeb; margin-bottom:12px;">
+        <div>
+          <div style="font-weight:700; color:#9a3412;">Agent Chat · Refund Pending</div>
+          <div style="font-size:12px; color:#92400e;">标题转橙，表示该订单已失败并进入退款流程</div>
+        </div>
+        <div style="font-size:11px; font-weight:700; color:#b45309;">WAITING</div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="align-self:flex-end; max-width:78%; padding:10px 12px; border-radius:14px; background:#e5e7eb;">[ORDER] 已支付并发起服务请求…</div>
+        <div style="align-self:center; width:92%; padding:10px 12px; border:2px solid #f59e0b; border-radius:14px; background:#fffbeb;">
+          <div style="font-weight:700; color:#9a3412; margin-bottom:6px;">系统提示</div>
+          <div style="font-size:13px;">5 分钟未收到首次响应 / 15 分钟未收到结构化交付，系统已自动发起退款申请。</div>
+          <div style="font-size:12px; color:#92400e; margin-top:6px;">refund-request pin: <code>abcd...1234</code></div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px; padding:12px; border:2px solid #f59e0b; border-radius:14px; background:#fff7ed;">
+        <div style="font-weight:700; color:#9a3412;">底部固定退款卡</div>
+        <div style="font-size:13px; margin-top:6px;">状态：等待对方处理</div>
+        <div style="font-size:12px; color:#7c2d12; margin-top:4px;">原因：服务超时</div>
+        <div style="font-size:12px; color:#7c2d12;">全额退款：0.001 SPACE</div>
+        <div style="font-size:12px; color:#7c2d12;">原支付 txid：<code>paytx...8888</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">B 端卖家会话</div>
+    <div class="mockup-body">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:2px solid #f59e0b; border-radius:12px; background:#fffbeb; margin-bottom:12px;">
+        <div>
+          <div style="font-weight:700; color:#9a3412;">Agent Chat · Refund Action Required</div>
+          <div style="font-size:12px; color:#92400e;">标题转橙，并出现明显待处理提示</div>
+        </div>
+        <div style="font-size:11px; font-weight:700; color:#b45309;">ACTION</div>
+      </div>
+
+      <div style="padding:12px; border:2px solid #f59e0b; border-radius:14px; background:#fff7ed;">
+        <div style="font-weight:700; color:#9a3412;">退款请求</div>
+        <div style="font-size:13px; margin-top:6px;">买家已因服务超时申请全额退款。</div>
+        <div style="font-size:12px; color:#7c2d12; margin-top:6px;">金额：0.001 SPACE</div>
+        <div style="font-size:12px; color:#7c2d12;">退款地址：<code>1A2B...ZZ99</code></div>
+        <div style="font-size:12px; color:#7c2d12;">申请 pin：<code>refundreq...77</code></div>
+        <div style="font-size:12px; color:#7c2d12;">原因：服务超时</div>
+
+        <div style="display:flex; gap:10px; margin-top:12px;">
+          <button class="mock-button" style="background:#f59e0b; color:white; border-color:#b45309;">处理退款</button>
+          <div style="font-size:12px; color:#7c2d12; align-self:center;">无“拒绝退款”入口，只有处理或暂不处理</div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px; padding:12px; border:1px dashed #c2410c; border-radius:14px;">
+        <div style="font-size:12px; color:#9a3412;">点击“处理退款”后：</div>
+        <div style="font-size:12px; margin-top:4px;">1. 打开确认弹层</div>
+        <div style="font-size:12px;">2. 展示退款金额、地址、链、原支付 txid、comment</div>
+        <div style="font-size:12px;">3. 转账成功后自动广播 <code>refund-finalize</code></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">服务广场</div>
+    <div class="mockup-body">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div style="padding:14px; border:2px solid #dc2626; border-radius:16px; background:#fef2f2;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>Weather Pro</strong>
+            <span style="font-size:10px; font-weight:700; color:#b91c1c; border:1px solid #fecaca; padding:2px 6px; border-radius:999px;">REFUND RISK</span>
+          </div>
+          <div style="font-size:12px; color:#7f1d1d; margin-top:8px;">有未处理退款申请，但未超过 72 小时。</div>
+          <div style="font-size:12px; color:#7f1d1d;">继续展示，但卡片标红，用户可见风险。</div>
+        </div>
+        <div style="padding:14px; border:2px dashed #9ca3af; border-radius:16px; background:#f8fafc; color:#475569;">
+          <strong>72h 后默认隐藏</strong>
+          <div style="font-size:12px; margin-top:8px;">同一 provider 持续存在未处理退款超过 72 小时。</div>
+          <div style="font-size:12px;">从买家服务广场列表移除，不再默认展示。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

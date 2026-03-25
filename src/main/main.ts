@@ -14,6 +14,7 @@ import { MetaAppManager } from './metaAppManager';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { getCurrentApiConfig, resolveCurrentApiConfig, setStoreGetter } from './libs/claudeSettings';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
+import { resolveContinueSystemPrompt } from './libs/coworkPromptStrategy';
 import { generateSessionTitle } from './libs/coworkUtil';
 import { ensureSandboxReady, getSandboxStatus, onSandboxProgress } from './libs/coworkSandboxRuntime';
 import { startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy, setScheduledTaskDeps } from './libs/coworkOpenAICompatProxy';
@@ -2415,11 +2416,16 @@ if (!gotTheLock) {
   }) => {
     try {
       const runner = getCoworkRunner();
-      runner.continueSession(options.sessionId, options.prompt, { systemPrompt: options.systemPrompt, skillIds: options.activeSkillIds }).catch(error => {
+      const session = getCoworkStore().getSession(options.sessionId);
+      const systemPrompt = resolveContinueSystemPrompt({
+        persistedSystemPrompt: session?.systemPrompt,
+        requestedSystemPrompt: options.systemPrompt,
+        activeSkillIds: options.activeSkillIds,
+      });
+      runner.continueSession(options.sessionId, options.prompt, { systemPrompt, skillIds: options.activeSkillIds }).catch(error => {
         console.error('Cowork continue error:', error);
       });
 
-      const session = getCoworkStore().getSession(options.sessionId);
       return { success: true, session };
     } catch (error) {
       return {

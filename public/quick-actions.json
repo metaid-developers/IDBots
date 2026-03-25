@@ -22,7 +22,7 @@
         { "id": "latest-20-buzz" },
         { "id": "buzz-hot" },
         { "id": "user-latest" },
-        { "id": "group-messages" }
+        { "id": "open-buzz-metaapp", "skillMapping": null }
       ]
     },
     {
@@ -31,10 +31,10 @@
       "color": "#10B981",
       "skillMapping": "metabot-chat",
       "prompts": [
-        { "id": "start-im-listener" },
-        { "id": "join-group" },
-        { "id": "send-dm" },
-        { "id": "group-reply-strategy" }
+        { "id": "open-chat-metaapp", "skillMapping": null },
+        { "id": "join-group", "skillMapping": "metabot-chat-groupchat" },
+        { "id": "send-dm", "skillMapping": "metabot-chat-privatechat" },
+        { "id": "group-reply-strategy", "skillMapping": "metabot-chat-groupchat" }
       ]
     },
     {
@@ -43,10 +43,10 @@
       "color": "#F59E0B",
       "skillMapping": "create-plan",
       "prompts": [
-        { "id": "weather-to-chain" },
-        { "id": "develop-game-metaapp" },
-        { "id": "tech-news-to-group" },
-        { "id": "video-to-chain" }
+        { "id": "weather-to-buzz", "skillMapping": "weather" },
+        { "id": "develop-game-metaapp", "skillMapping": "metabot-create-metaapp" },
+        { "id": "tech-news-to-buzz", "skillMapping": "technology-news-search" },
+        { "id": "video-to-buzz", "skillMapping": "seedance" }
       ]
     }
   ]
