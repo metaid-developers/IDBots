@@ -10,15 +10,27 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function looksLikeContentUrl(value) {
+  return /^https?:\/\/[^/\s]+\/content\//i.test(String(value || '').trim());
+}
+
+function decodeBase64Utf8(value) {
+  try {
+    return Buffer.from(String(value || '').trim(), 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 export function selectProtocolPinContent(item) {
   if (!item || typeof item !== 'object') {
     return null;
   }
 
   const candidates = [
-    item.content,
     item.contentSummary,
     item.contentBody,
+    item.content,
     item.originalContentBody,
     item.originalContentSummary,
   ];
@@ -28,6 +40,15 @@ export function selectProtocolPinContent(item) {
       return candidate;
     }
     if (isNonEmptyString(candidate)) {
+      if (looksLikeContentUrl(candidate)) {
+        continue;
+      }
+      if (candidate === item.contentBody || candidate === item.originalContentBody) {
+        const decoded = decodeBase64Utf8(candidate);
+        if (isNonEmptyString(decoded)) {
+          return decoded;
+        }
+      }
       return candidate;
     }
   }
