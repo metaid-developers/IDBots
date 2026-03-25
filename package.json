@@ -3,7 +3,7 @@
   "private": true,
   "license": "MIT",
   "author": "Sunny Fung",
-  "version": "0.2.01",
+  "version": "0.2.02",
   "main": "dist-electron/main.js",
   "engines": {
     "node": ">=24 <25"
