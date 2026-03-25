@@ -86,6 +86,7 @@ class CoworkService {
               updatedAt: s.updatedAt,
               sessionType: s.sessionType,
               peerName: s.peerName ?? null,
+              serviceOrderSummary: s.serviceOrderSummary ?? null,
             }));
           }
         } catch { /* ignore */ }
@@ -100,6 +101,18 @@ class CoworkService {
       // Do not force status back to "running" on arbitrary messages.
       // Late stream chunks can arrive after an error/complete event.
       store.dispatch(addMessage({ sessionId, message }));
+
+      if (message.metadata?.refreshSessionSummary) {
+        await this.loadSessions();
+        if (store.getState().cowork.currentSessionId === sessionId) {
+          try {
+            const refreshed = await window.electron?.cowork?.getSession(sessionId);
+            if (refreshed?.success && refreshed.session) {
+              store.dispatch(setCurrentSession(refreshed.session));
+            }
+          } catch { /* ignore */ }
+        }
+      }
     });
     this.streamListenerCleanups.push(messageCleanup);
 

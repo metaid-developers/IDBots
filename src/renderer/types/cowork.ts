@@ -62,6 +62,20 @@ export interface CoworkMessage {
   metadata?: CoworkMessageMetadata;
 }
 
+export interface CoworkServiceOrderSummary {
+  role?: 'buyer' | 'seller';
+  status:
+    | 'awaiting_first_response'
+    | 'in_progress'
+    | 'completed'
+    | 'failed'
+    | 'refund_pending'
+    | 'refunded';
+  failureReason?: string | null;
+  refundRequestPinId?: string | null;
+  refundTxid?: string | null;
+}
+
 // Cowork session
 export interface CoworkSession {
   id: string;
@@ -90,6 +104,7 @@ export interface CoworkSession {
   metabotName?: string | null;
   /** Local MetaBot's avatar data URL */
   metabotAvatar?: string | null;
+  serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
 // Cowork configuration
@@ -212,6 +227,7 @@ export interface CoworkSessionSummary {
   sessionType?: CoworkSessionType;
   /** Remote peer MetaBot's display name (A2A sessions only) */
   peerName?: string | null;
+  serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
 // Start session options

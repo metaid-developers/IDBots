@@ -72,6 +72,7 @@ interface CoworkSession {
   peerAvatar?: string | null;
   metabotName?: string | null;
   metabotAvatar?: string | null;
+  serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
 interface CoworkMessage {
@@ -87,6 +88,14 @@ interface CoworkMessage {
   };
 }
 
+interface CoworkServiceOrderSummary {
+  role?: 'buyer' | 'seller';
+  status: 'awaiting_first_response' | 'in_progress' | 'completed' | 'failed' | 'refund_pending' | 'refunded';
+  failureReason?: string | null;
+  refundRequestPinId?: string | null;
+  refundTxid?: string | null;
+}
+
 interface CoworkSessionSummary {
   id: string;
   title: string;
@@ -96,6 +105,7 @@ interface CoworkSessionSummary {
   updatedAt: number;
   sessionType?: 'standard' | 'a2a';
   peerName?: string | null;
+  serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
 interface CoworkConfig {

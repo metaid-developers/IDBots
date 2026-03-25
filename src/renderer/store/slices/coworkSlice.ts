@@ -81,7 +81,17 @@ const coworkSlice = createSlice({
       if (action.payload) {
         state.currentSessionId = action.payload.id;
         if (!action.payload.id.startsWith('temp-')) {
-          const { id, title, status, pinned, createdAt, updatedAt, sessionType, peerName } = action.payload;
+          const {
+            id,
+            title,
+            status,
+            pinned,
+            createdAt,
+            updatedAt,
+            sessionType,
+            peerName,
+            serviceOrderSummary,
+          } = action.payload;
           const summary: CoworkSessionSummary = {
             id,
             title,
@@ -91,6 +101,7 @@ const coworkSlice = createSlice({
             updatedAt,
             sessionType,
             peerName,
+            serviceOrderSummary: serviceOrderSummary ?? null,
           };
           const sessionIndex = state.sessions.findIndex((session) => session.id === id);
           if (sessionIndex !== -1) {
@@ -120,6 +131,7 @@ const coworkSlice = createSlice({
         updatedAt: action.payload.updatedAt,
         sessionType: action.payload.sessionType,
         peerName: action.payload.peerName,
+        serviceOrderSummary: action.payload.serviceOrderSummary ?? null,
       };
       state.sessions.unshift(summary);
       state.currentSession = action.payload;

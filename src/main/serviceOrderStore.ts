@@ -71,6 +71,14 @@ export interface ServiceOrderRecord {
   updatedAt: number;
 }
 
+export interface ServiceOrderSessionSummary {
+  role: ServiceOrderRole;
+  status: ServiceOrderStatus;
+  failureReason: string | null;
+  refundRequestPinId: string | null;
+  refundTxid: string | null;
+}
+
 export interface ServiceOrderCreateInput {
   role: ServiceOrderRole;
   localMetabotId: number;
@@ -403,6 +411,25 @@ export class ServiceOrderStore {
       'SELECT * FROM service_orders WHERE role = ? ORDER BY created_at DESC',
       [role]
     ).map((row) => this.mapRow(row));
+  }
+
+  getSessionSummary(coworkSessionId: string): ServiceOrderSessionSummary | null {
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE cowork_session_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `, [coworkSessionId]);
+    if (!row) return null;
+
+    return {
+      role: row.role as ServiceOrderRole,
+      status: row.status as ServiceOrderStatus,
+      failureReason: row.failure_reason,
+      refundRequestPinId: row.refund_request_pin_id,
+      refundTxid: row.refund_txid,
+    };
   }
 
   listOrdersByStatuses(

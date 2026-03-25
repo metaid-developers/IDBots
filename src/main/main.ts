@@ -1641,6 +1641,20 @@ const getServiceRefundSyncService = () => {
   return serviceRefundSyncService;
 };
 
+const enrichCoworkSessionWithServiceOrderSummary = <T extends { id: string }>(
+  session: T | null
+): (T & { serviceOrderSummary?: ReturnType<ServiceOrderStore['getSessionSummary']> }) | null => {
+  if (!session) return null;
+  const serviceOrderSummary = getServiceOrderStore().getSessionSummary(session.id);
+  if (!serviceOrderSummary) {
+    return session;
+  }
+  return {
+    ...session,
+    serviceOrderSummary,
+  };
+};
+
 const getScheduler = () => {
   if (!scheduler) {
     scheduler = new Scheduler({
@@ -2254,7 +2268,9 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
     try {
-      const session = getCoworkStore().getSession(sessionId);
+      const session = enrichCoworkSessionWithServiceOrderSummary(
+        getCoworkStore().getSession(sessionId)
+      );
       return { success: true, session };
     } catch (error) {
       return {
@@ -2266,7 +2282,9 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:list', async () => {
     try {
-      const sessions = getCoworkStore().listSessions();
+      const sessions = getCoworkStore().listSessions().map((session) =>
+        enrichCoworkSessionWithServiceOrderSummary(session)
+      );
       return { success: true, sessions };
     } catch (error) {
       return {
