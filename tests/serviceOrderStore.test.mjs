@@ -125,6 +125,25 @@ test('store createOrder is idempotent for localMetabotId + role + paymentTxid', 
   assert.equal(rowCount, 1);
 });
 
+test('store can backfill a missing cowork session id onto an existing order row', async () => {
+  const { store } = await createServiceOrderStoreForTest();
+  const order = store.createOrder({
+    role: 'seller',
+    localMetabotId: 2,
+    counterpartyGlobalMetaid: 'buyer-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: 'd'.repeat(64),
+    paymentAmount: '2.34',
+  });
+
+  assert.equal(order.coworkSessionId, null);
+
+  const updated = store.setCoworkSessionId(order.id, 'session-1');
+
+  assert.equal(updated?.coworkSessionId, 'session-1');
+  assert.equal(store.getSessionSummary('session-1')?.status, 'awaiting_first_response');
+});
+
 test('store bootstrap remediates legacy duplicate payment rows before creating unique dedupe index', async () => {
   const db = await createSqlDatabase();
   db.run(`

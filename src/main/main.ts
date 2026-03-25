@@ -77,6 +77,10 @@ import {
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
+import {
+  extractSessionOrderTxid,
+  selectProtocolPinContent,
+} from './services/serviceOrderSessionResolution.js';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -1664,7 +1668,7 @@ async function fetchProtocolPinsFromIndexer(
     for (const item of list) {
       const pinId = typeof item.id === 'string' ? item.id.trim() : String(item.id || '').trim();
       if (!pinId) continue;
-      const content = item.content ?? item.contentSummary ?? null;
+      const content = selectProtocolPinContent(item);
       const timestampRaw = item.timestamp;
       const timestampMs = typeof timestampRaw === 'number' && Number.isFinite(timestampRaw)
         ? Math.floor(timestampRaw * 1000)
@@ -1743,7 +1747,7 @@ const getServiceRefundSettlementService = () => {
           const data = await getPinData(pinId, true);
           return {
             pinId,
-            content: data.content ?? data.contentBody ?? data.contentSummary ?? null,
+            content: selectProtocolPinContent(data),
           };
         },
         executeRefundTransfer: async (input) => {
@@ -1803,7 +1807,7 @@ const enrichCoworkSessionWithServiceOrderSummary = <T extends { id: string }>(
   session: T | null
 ): (T & { serviceOrderSummary?: ReturnType<ServiceOrderStore['getSessionSummary']> }) | null => {
   if (!session) return null;
-  const serviceOrderSummary = getServiceOrderStore().getSessionSummary(session.id);
+  const serviceOrderSummary = getServiceOrderSummaryForSession(session.id);
   if (!serviceOrderSummary) {
     return session;
   }
@@ -1811,6 +1815,63 @@ const enrichCoworkSessionWithServiceOrderSummary = <T extends { id: string }>(
     ...session,
     serviceOrderSummary,
   };
+};
+
+const buildServiceOrderSummaryFromRecord = (
+  order: ServiceOrderRecord
+): ReturnType<ServiceOrderStore['getSessionSummary']> => ({
+  role: order.role,
+  status: order.status,
+  failureReason: order.failureReason,
+  refundRequestPinId: order.refundRequestPinId,
+  refundTxid: order.refundTxid,
+});
+
+const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | null => {
+  const orderStore = getServiceOrderStore();
+  const directMatch = orderStore.findLatestOrderBySessionId(sessionId);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const session = getCoworkStore().getSession(sessionId);
+  if (!session || session.metabotId == null) {
+    return null;
+  }
+
+  const paymentTxid = extractSessionOrderTxid(session.messages);
+  if (!paymentTxid) {
+    return null;
+  }
+
+  const matched = orderStore
+    .listOrdersByPaymentTxid(paymentTxid)
+    .find((candidate) => (
+      candidate.localMetabotId === session.metabotId
+      && (
+        !session.peerGlobalMetaId
+        || candidate.counterpartyGlobalMetaid === session.peerGlobalMetaId
+      )
+    ));
+  if (!matched) {
+    return null;
+  }
+
+  if (!matched.coworkSessionId) {
+    return orderStore.setCoworkSessionId(matched.id, sessionId);
+  }
+  return matched;
+};
+
+const getServiceOrderSummaryForSession = (
+  sessionId: string
+): ReturnType<ServiceOrderStore['getSessionSummary']> | null => {
+  const directSummary = getServiceOrderStore().getSessionSummary(sessionId);
+  if (directSummary) {
+    return directSummary;
+  }
+  const resolvedOrder = resolveServiceOrderForSession(sessionId);
+  return resolvedOrder ? buildServiceOrderSummaryFromRecord(resolvedOrder) : null;
 };
 
 const getScheduler = () => {
@@ -2454,7 +2515,11 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:processServiceRefund', async (_event, sessionId: string) => {
     try {
-      const result = await getServiceRefundSettlementService().processSellerRefundForSession(sessionId);
+      const order = resolveServiceOrderForSession(sessionId);
+      if (!order) {
+        throw new Error('Refund order not found for this session');
+      }
+      const result = await getServiceRefundSettlementService().processSellerRefundForOrderId(order.id);
       const session = enrichCoworkSessionWithServiceOrderSummary(
         getCoworkStore().getSession(sessionId)
       );

@@ -723,6 +723,32 @@ export class ServiceOrderStore {
     return this.getOrderById(orderId);
   }
 
+  setCoworkSessionId(orderId: string, coworkSessionId: string): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    const normalizedSessionId = String(coworkSessionId || '').trim();
+    if (!normalizedSessionId) {
+      return order;
+    }
+    if (order.coworkSessionId === normalizedSessionId) {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        cowork_session_id = ?,
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      normalizedSessionId,
+      Date.now(),
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
   recordRefundTransfer(
     orderId: string,
     input: {

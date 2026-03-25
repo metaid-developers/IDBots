@@ -82,6 +82,20 @@ export class ServiceRefundSettlementService {
     if (!order) {
       throw new Error('Refund order not found for this session');
     }
+    return this.processSellerRefundForOrderId(order.id);
+  }
+
+  async processSellerRefundForOrderId(
+    orderId: string
+  ): Promise<{
+    order: ServiceOrderRecord;
+    refundTxid: string;
+    refundFinalizePinId: string;
+  }> {
+    const order = this.store.getOrderById(orderId);
+    if (!order) {
+      throw new Error('Refund order not found');
+    }
     if (order.role !== 'seller') {
       throw new Error('Only seller sessions can process manual refunds');
     }
