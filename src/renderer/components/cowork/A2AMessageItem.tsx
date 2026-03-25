@@ -23,6 +23,33 @@ const formatTime = (timestamp: number): string => {
 };
 
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
+const DELIVERY_PREFIX = '[DELIVERY]';
+
+type DeliveryPayload = {
+  result?: string;
+};
+
+const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
+  const trimmed = String(content || '').trim();
+  if (!trimmed.startsWith(DELIVERY_PREFIX)) {
+    return null;
+  }
+
+  const jsonPart = trimmed.slice(DELIVERY_PREFIX.length).trim();
+  if (!jsonPart) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as DeliveryPayload;
+  } catch {
+    return null;
+  }
+};
 
 const Avatar: React.FC<{ src?: string | null; name?: string | null; size?: number }> = ({
   src,
@@ -135,6 +162,11 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const fromAvatar = isLocal
     ? metabotAvatar
     : (peerAvatar || (message.metadata?.senderAvatar as string | undefined));
+  const deliveryPayload = parseDeliveryPayload(message.content);
+  const deliveryResult = typeof deliveryPayload?.result === 'string'
+    ? deliveryPayload.result.trim()
+    : '';
+  const shouldRenderDeliveryResult = deliveryResult.length > 0;
 
   return (
     <div className={`flex items-end gap-2 px-4 py-1 ${isLocal ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -150,7 +182,11 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
               : 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text rounded-bl-sm'
           }`}
         >
-          {message.content}
+          {shouldRenderDeliveryResult ? (
+            deliveryResult
+          ) : (
+            message.content
+          )}
         </div>
         <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5 px-1">
           {formatTime(message.timestamp)}
