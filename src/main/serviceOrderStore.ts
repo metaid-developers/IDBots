@@ -94,6 +94,11 @@ export interface ServiceOrderLookupByPaymentInput {
   paymentTxid: string;
 }
 
+interface MarkRefundRequestRetryInput {
+  attemptedAt: number;
+  nextRetryAt: number;
+}
+
 function normalizePaymentChain(chain: string | undefined): string {
   const normalized = (chain || 'mvc').trim().toLowerCase();
   if (normalized === 'btc' || normalized === 'doge' || normalized === 'mvc') return normalized;
@@ -400,6 +405,36 @@ export class ServiceOrderStore {
     ).map((row) => this.mapRow(row));
   }
 
+  listOrdersByStatuses(
+    role: ServiceOrderRole,
+    statuses: ServiceOrderStatus[]
+  ): ServiceOrderRecord[] {
+    if (statuses.length === 0) return [];
+    const placeholders = statuses.map(() => '?').join(', ');
+    return this.getAll<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND status IN (${placeholders})
+      ORDER BY updated_at DESC, created_at DESC
+    `, [role, ...statuses]).map((row) => this.mapRow(row));
+  }
+
+  listRefundRequestRetryCandidates(
+    role: ServiceOrderRole,
+    now: number
+  ): ServiceOrderRecord[] {
+    return this.getAll<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND status = 'failed'
+        AND refund_request_pin_id IS NULL
+        AND (next_retry_at IS NULL OR next_retry_at <= ?)
+      ORDER BY updated_at DESC, created_at DESC
+    `, [role, now]).map((row) => this.mapRow(row));
+  }
+
   findOrderByPayment(input: ServiceOrderLookupByPaymentInput): ServiceOrderRecord | null {
     const row = this.getOne<ServiceOrderRow>(`
       SELECT *
@@ -487,6 +522,73 @@ export class ServiceOrderStore {
       input.deliveredAt,
       orderId,
     ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  markFailed(orderId: string, failureReason: string, failedAt: number): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refund_pending' || order.status === 'refunded') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = 'failed',
+        failed_at = COALESCE(failed_at, ?),
+        failure_reason = COALESCE(failure_reason, ?),
+        updated_at = ?
+      WHERE id = ?
+    `, [failedAt, failureReason, failedAt, orderId]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  markRefundPending(
+    orderId: string,
+    refundRequestPinId: string | null,
+    requestedAt: number
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refunded') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = 'refund_pending',
+        refund_request_pin_id = COALESCE(?, refund_request_pin_id),
+        refund_requested_at = COALESCE(refund_requested_at, ?),
+        next_retry_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `, [refundRequestPinId, requestedAt, requestedAt, orderId]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  markRefundRequestRetry(
+    orderId: string,
+    input: MarkRefundRequestRetryInput
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refund_pending' || order.status === 'refunded') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        refund_apply_retry_count = refund_apply_retry_count + 1,
+        next_retry_at = ?,
+        updated_at = ?
+      WHERE id = ?
+    `, [input.nextRetryAt, input.attemptedAt, orderId]);
     this.saveDb();
     return this.getOrderById(orderId);
   }

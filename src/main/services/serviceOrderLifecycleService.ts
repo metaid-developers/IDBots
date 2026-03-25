@@ -2,8 +2,11 @@ import {
   ServiceOrderStore,
   type ServiceOrderRecord,
 } from '../serviceOrderStore';
+import { getTimedOutOrderTransition } from './serviceOrderState';
+import { buildRefundRequestPayload } from './serviceOrderProtocols.js';
 
 export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
+export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = 60_000;
 
 export interface CreateBuyerOrderInput {
   localMetabotId: number;
@@ -53,6 +56,12 @@ export interface MarkBuyerOrderFirstResponseReceivedInput extends ServiceOrderPa
 
 interface ServiceOrderLifecycleServiceOptions {
   now?: () => number;
+  buildRefundRequestPayload?: (order: ServiceOrderRecord) => Record<string, unknown>;
+  createRefundRequestPin?: (input: {
+    order: ServiceOrderRecord;
+    payload: Record<string, unknown>;
+  }) => Promise<{ pinId?: string | null; txid?: string | null }>;
+  refundRequestRetryDelayMs?: number;
 }
 
 export class ServiceOrderOpenOrderExistsError extends Error {
@@ -71,6 +80,12 @@ export class ServiceOrderLifecycleService {
   private store: ServiceOrderStore;
   private now: () => number;
   private pendingBuyerOrderPairs = new Set<string>();
+  private buildRefundRequestPayload: (order: ServiceOrderRecord) => Record<string, unknown>;
+  private createRefundRequestPin?: (input: {
+    order: ServiceOrderRecord;
+    payload: Record<string, unknown>;
+  }) => Promise<{ pinId?: string | null; txid?: string | null }>;
+  private refundRequestRetryDelayMs: number;
 
   constructor(
     store: ServiceOrderStore,
@@ -78,6 +93,11 @@ export class ServiceOrderLifecycleService {
   ) {
     this.store = store;
     this.now = options.now ?? (() => Date.now());
+    this.buildRefundRequestPayload =
+      options.buildRefundRequestPayload ?? ((order) => this.buildDefaultRefundRequestPayload(order));
+    this.createRefundRequestPin = options.createRefundRequestPin;
+    this.refundRequestRetryDelayMs =
+      options.refundRequestRetryDelayMs ?? DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS;
   }
 
   assertNoOpenBuyerOrderForPair(
@@ -205,6 +225,74 @@ export class ServiceOrderLifecycleService {
     return this.store.markDelivered(order.id, {
       deliveryMessagePinId: input.deliveryMessagePinId ?? null,
       deliveredAt: input.deliveredAt ?? this.now(),
+    });
+  }
+
+  async scanTimedOutOrders(): Promise<void> {
+    const now = this.now();
+    const openBuyerOrders = this.store.listOrdersByStatuses('buyer', [
+      'awaiting_first_response',
+      'in_progress',
+    ]);
+
+    for (const order of openBuyerOrders) {
+      const transition = getTimedOutOrderTransition(order, now);
+      if (!transition) continue;
+      const failedOrder = this.store.markFailed(order.id, transition, now);
+      if (!failedOrder) continue;
+      await this.tryCreateRefundRequest(failedOrder.id, now);
+    }
+
+    const retryCandidates = this.store.listRefundRequestRetryCandidates('buyer', now);
+    for (const order of retryCandidates) {
+      await this.tryCreateRefundRequest(order.id, now);
+    }
+  }
+
+  async tryCreateRefundRequest(
+    orderId: string,
+    attemptedAt: number = this.now()
+  ): Promise<ServiceOrderRecord | null> {
+    const order = this.store.getOrderById(orderId);
+    if (!order || order.role !== 'buyer') return order;
+    if (order.status === 'refund_pending' || order.status === 'refunded' || order.refundRequestPinId) {
+      return order;
+    }
+
+    try {
+      if (!this.createRefundRequestPin) {
+        throw new Error('Refund request broadcaster is not configured');
+      }
+      const payload = this.buildRefundRequestPayload(order);
+      const result = await this.createRefundRequestPin({ order, payload });
+      return this.store.markRefundPending(
+        order.id,
+        result.pinId ?? result.txid ?? null,
+        attemptedAt
+      );
+    } catch {
+      return this.store.markRefundRequestRetry(order.id, {
+        attemptedAt,
+        nextRetryAt: attemptedAt + this.refundRequestRetryDelayMs,
+      });
+    }
+  }
+
+  private buildDefaultRefundRequestPayload(order: ServiceOrderRecord): Record<string, unknown> {
+    return buildRefundRequestPayload({
+      paymentTxid: order.paymentTxid,
+      servicePinId: order.servicePinId,
+      serviceName: order.serviceName,
+      refundAmount: order.paymentAmount,
+      refundCurrency: order.paymentCurrency,
+      refundToAddress: '',
+      buyerGlobalMetaId: '',
+      sellerGlobalMetaId: order.counterpartyGlobalMetaid,
+      orderMessagePinId: order.orderMessagePinId,
+      failureReason: order.failureReason ?? 'delivery_timeout',
+      failureDetectedAt: Math.floor((order.failedAt ?? this.now()) / 1000),
+      reasonComment: '服务超时',
+      evidencePinIds: [order.orderMessagePinId].filter(Boolean),
     });
   }
 

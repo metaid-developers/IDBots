@@ -6,7 +6,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const initSqlJs = require('sql.js');
 const { ServiceOrderStore } = require('../dist-electron/serviceOrderStore.js');
-const { ServiceOrderLifecycleService } = require('../dist-electron/services/serviceOrderLifecycleService.js');
+const {
+  DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS,
+  ServiceOrderLifecycleService,
+} = require('../dist-electron/services/serviceOrderLifecycleService.js');
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const sqlWasmPath = path.join(projectRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
@@ -39,6 +42,7 @@ async function createLifecycleServiceForTest(options = {}) {
   const store = new ServiceOrderStore(db, () => {});
   const service = new ServiceOrderLifecycleService(store, {
     now: options.now || (() => 1_770_000_000_000),
+    createRefundRequestPin: options.createRefundRequestPin,
   });
   return { db, store, service };
 }
@@ -132,6 +136,100 @@ test('markBuyerOrderDelivered completes the buyer order and stores the delivery 
   assert.equal(updated?.deliveryMessagePinId, 'delivery-pin-id');
   assert.equal(updated?.deliveredAt, now);
   assert.equal(updated?.firstResponseAt, now);
+});
+
+test('scanTimedOutOrders marks first-response timeout orders failed and moves them into refund_pending on successful refund request broadcast', async () => {
+  let currentNow = 1_770_000_000_000;
+  let refundRequestInput = null;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async (input) => {
+      refundRequestInput = input;
+      return { pinId: 'refund-request-pin-id' };
+    },
+  });
+  const order = service.createBuyerOrder(baseOrderInput());
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  const updated = store.getOrderById(order.id);
+  assert.equal(updated?.status, 'refund_pending');
+  assert.equal(updated?.failureReason, 'first_response_timeout');
+  assert.equal(updated?.refundRequestPinId, 'refund-request-pin-id');
+  assert.equal(updated?.refundRequestedAt, currentNow);
+  assert.equal(refundRequestInput?.payload.paymentTxid, order.paymentTxid);
+});
+
+test('scanTimedOutOrders records retry metadata when refund request broadcast fails', async () => {
+  let currentNow = 1_770_000_000_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async () => {
+      throw new Error('offline');
+    },
+  });
+  const order = service.createBuyerOrder(baseOrderInput());
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  const updated = store.getOrderById(order.id);
+  assert.equal(updated?.status, 'failed');
+  assert.equal(updated?.failureReason, 'first_response_timeout');
+  assert.equal(updated?.refundApplyRetryCount, 1);
+  assert.equal(updated?.nextRetryAt, currentNow + DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS);
+  assert.equal(updated?.refundRequestPinId, null);
+});
+
+test('scanTimedOutOrders retries failed refund requests once nextRetryAt is due', async () => {
+  let currentNow = 1_770_000_000_000;
+  let attempts = 0;
+  const { db, service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async () => {
+      attempts += 1;
+      return { pinId: `refund-pin-${attempts}` };
+    },
+  });
+
+  db.run(
+    `INSERT INTO service_orders (
+      id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+      payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id,
+      status, first_response_deadline_at, delivery_deadline_at, failed_at, failure_reason,
+      refund_apply_retry_count, next_retry_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      'failed-order',
+      'buyer',
+      7,
+      'seller-global-metaid',
+      'service-pin-id',
+      'Weather Pro',
+      'f'.repeat(64),
+      'mvc',
+      '12.34',
+      'SPACE',
+      'order-pin-id',
+      'failed',
+      currentNow + 5 * 60_000,
+      currentNow + 15 * 60_000,
+      currentNow,
+      'first_response_timeout',
+      1,
+      currentNow - 1,
+      currentNow - 60_000,
+      currentNow - 60_000,
+    ]
+  );
+
+  await service.scanTimedOutOrders();
+
+  const updated = store.getOrderById('failed-order');
+  assert.equal(updated?.status, 'refund_pending');
+  assert.equal(updated?.refundRequestPinId, 'refund-pin-1');
+  assert.equal(updated?.refundApplyRetryCount, 1);
 });
 
 test('createBuyerOrder allows a new order after the previous one is completed', async () => {

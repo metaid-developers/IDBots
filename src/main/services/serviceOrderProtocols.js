@@ -4,6 +4,25 @@ export function buildDeliveryMessage(payload) {
   return `${DELIVERY_PREFIX} ${JSON.stringify(payload ?? {})}`;
 }
 
+export function buildRefundRequestPayload(input) {
+  return {
+    version: '1.0.0',
+    paymentTxid: input.paymentTxid,
+    servicePinId: input.servicePinId ?? null,
+    serviceName: input.serviceName,
+    refundAmount: input.refundAmount,
+    refundCurrency: input.refundCurrency,
+    refundToAddress: input.refundToAddress,
+    buyerGlobalMetaId: input.buyerGlobalMetaId,
+    sellerGlobalMetaId: input.sellerGlobalMetaId,
+    orderMessagePinId: input.orderMessagePinId ?? null,
+    failureReason: input.failureReason,
+    failureDetectedAt: input.failureDetectedAt,
+    reasonComment: input.reasonComment ?? '服务超时',
+    evidencePinIds: Array.isArray(input.evidencePinIds) ? input.evidencePinIds : [],
+  };
+}
+
 export function parseDeliveryMessage(content) {
   const trimmed = String(content || '').trim();
   if (!trimmed.toUpperCase().startsWith(DELIVERY_PREFIX)) {

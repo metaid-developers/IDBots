@@ -74,6 +74,7 @@ import {
   ServiceOrderLifecycleService,
   ServiceOrderOpenOrderExistsError,
 } from './services/serviceOrderLifecycleService';
+import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -113,6 +114,7 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'text/csv': '.csv',
 };
 const RESTORE_MNEMONIC_WORDS = 12;
+const SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS = 60_000;
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -144,6 +146,19 @@ const normalizeServiceOrderPaymentChain = (currency?: string | null): 'mvc' | 'b
   if (normalized === 'BTC') return 'btc';
   if (normalized === 'DOGE') return 'doge';
   return 'mvc';
+};
+
+const getRefundAddressForOrder = (
+  metabot: { mvc_address?: string | null; btc_address?: string | null; doge_address?: string | null },
+  paymentChain: string
+): string => {
+  if (paymentChain === 'btc') {
+    return String(metabot.btc_address || '').trim();
+  }
+  if (paymentChain === 'doge') {
+    return String(metabot.doge_address || '').trim();
+  }
+  return String(metabot.mvc_address || '').trim();
 };
 
 const resolveInlineAttachmentDir = (cwd?: string): string => {
@@ -1505,7 +1520,52 @@ const getServiceOrderStore = () => {
 const getServiceOrderLifecycleService = () => {
   if (!serviceOrderLifecycleService) {
     serviceOrderLifecycleService = new ServiceOrderLifecycleService(
-      getServiceOrderStore()
+      getServiceOrderStore(),
+      {
+        buildRefundRequestPayload: (order) => {
+          const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
+          if (!metabot?.globalmetaid?.trim()) {
+            throw new Error(`Missing buyer globalmetaid for refund request order=${order.id}`);
+          }
+          const refundToAddress = getRefundAddressForOrder(metabot, order.paymentChain);
+          if (!refundToAddress) {
+            throw new Error(`Missing refund address for order=${order.id} chain=${order.paymentChain}`);
+          }
+
+          return buildRefundRequestPayload({
+            paymentTxid: order.paymentTxid,
+            servicePinId: order.servicePinId,
+            serviceName: order.serviceName,
+            refundAmount: order.paymentAmount,
+            refundCurrency: order.paymentCurrency,
+            refundToAddress,
+            buyerGlobalMetaId: metabot.globalmetaid,
+            sellerGlobalMetaId: order.counterpartyGlobalMetaid,
+            orderMessagePinId: order.orderMessagePinId,
+            failureReason: order.failureReason ?? 'delivery_timeout',
+            failureDetectedAt: Math.floor((order.failedAt ?? Date.now()) / 1000),
+            reasonComment: '服务超时',
+            evidencePinIds: [
+              order.orderMessagePinId,
+              order.deliveryMessagePinId,
+            ].filter(Boolean),
+          });
+        },
+        createRefundRequestPin: async ({ order, payload }) => {
+          const result = await createPin(getMetabotStore(), order.localMetabotId, {
+            operation: 'create',
+            path: '/protocols/service-refund-request',
+            encryption: '0',
+            version: '1.0.0',
+            contentType: 'application/json',
+            payload: JSON.stringify(payload),
+          });
+          return {
+            pinId: result.pinId ?? result.txids?.[0] ?? null,
+            txid: result.txids?.[0] ?? null,
+          };
+        },
+      }
     );
   }
   return serviceOrderLifecycleService;
@@ -4836,6 +4896,15 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         });
       }
     );
+
+    void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {
+      console.warn('[ServiceOrder] Initial timeout scan failed', error);
+    });
+    setInterval(() => {
+      void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {
+        console.warn('[ServiceOrder] Periodic timeout scan failed', error);
+      });
+    }, SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS);
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager().startAllEnabled().catch((error) => {
