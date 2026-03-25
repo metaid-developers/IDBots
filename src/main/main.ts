@@ -74,6 +74,7 @@ import {
   ServiceOrderLifecycleService,
   ServiceOrderOpenOrderExistsError,
 } from './services/serviceOrderLifecycleService';
+import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 
 // 设置应用程序名称
@@ -115,6 +116,10 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
 };
 const RESTORE_MNEMONIC_WORDS = 12;
 const SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS = 60_000;
+const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 60_000;
+const SERVICE_REFUND_FINALIZE_PATH = '/protocols/service-refund-finalize';
+const SERVICE_REFUND_SYNC_SIZE = 200;
+const SERVICE_REFUND_SYNC_MAX_PAGES = 10;
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -1180,6 +1185,7 @@ let scheduledTaskStore: ScheduledTaskStore | null = null;
 let metabotStore: MetabotStore | null = null;
 let serviceOrderStore: ServiceOrderStore | null = null;
 let serviceOrderLifecycleService: ServiceOrderLifecycleService | null = null;
+let serviceRefundSyncService: ServiceRefundSyncService | null = null;
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
@@ -1569,6 +1575,70 @@ const getServiceOrderLifecycleService = () => {
     );
   }
   return serviceOrderLifecycleService;
+};
+
+async function fetchRefundFinalizePinsFromIndexer(): Promise<Array<{ pinId: string; content: unknown }>> {
+  const pins: Array<{ pinId: string; content: unknown }> = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < SERVICE_REFUND_SYNC_MAX_PAGES; page++) {
+    const url = new URL('https://manapi.metaid.io/pin/path/list');
+    url.searchParams.set('path', SERVICE_REFUND_FINALIZE_PATH);
+    url.searchParams.set('size', String(SERVICE_REFUND_SYNC_SIZE));
+    if (cursor) url.searchParams.set('cursor', cursor);
+
+    const resp = await fetchJsonWithFallbackOnMiss(
+      `/api/pin/path/list${url.search}`,
+      url.toString(),
+      isEmptyListDataPayload
+    );
+    if (!resp.ok) break;
+
+    const json = await resp.json() as Record<string, unknown>;
+    const data = json?.data as Record<string, unknown> | undefined;
+    const list = Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : [];
+    for (const item of list) {
+      const pinId = typeof item.id === 'string' ? item.id.trim() : String(item.id || '').trim();
+      if (!pinId) continue;
+      const content = item.contentSummary ?? item.content ?? null;
+      pins.push({ pinId, content });
+    }
+
+    const nextCursor =
+      typeof data?.nextCursor === 'string' && data.nextCursor ? data.nextCursor : undefined;
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  return pins;
+}
+
+const getServiceRefundSyncService = () => {
+  if (!serviceRefundSyncService) {
+    serviceRefundSyncService = new ServiceRefundSyncService(
+      getServiceOrderStore(),
+      {
+        fetchRefundFinalizePins: fetchRefundFinalizePinsFromIndexer,
+        buildRefundVerificationInput: (order, payload) => {
+          const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
+          if (!metabot) {
+            throw new Error(`Missing buyer metabot for refund verification order=${order.id}`);
+          }
+          const recipientAddress = getRefundAddressForOrder(metabot, order.paymentChain);
+          if (!recipientAddress) {
+            throw new Error(`Missing refund recipient address for order=${order.id}`);
+          }
+          return {
+            chain: order.paymentChain as 'mvc' | 'btc' | 'doge',
+            txid: String(payload.refundTxid || ''),
+            recipientAddress,
+            expectedAmountSats: Math.floor(Number(order.paymentAmount) * 100_000_000),
+          };
+        },
+      }
+    );
+  }
+  return serviceRefundSyncService;
 };
 
 const getScheduler = () => {
@@ -4905,6 +4975,14 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         console.warn('[ServiceOrder] Periodic timeout scan failed', error);
       });
     }, SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS);
+    void getServiceRefundSyncService().syncFinalizePins().catch((error) => {
+      console.warn('[ServiceOrder] Initial refund finalize sync failed', error);
+    });
+    setInterval(() => {
+      void getServiceRefundSyncService().syncFinalizePins().catch((error) => {
+        console.warn('[ServiceOrder] Periodic refund finalize sync failed', error);
+      });
+    }, SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS);
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager().startAllEnabled().catch((error) => {

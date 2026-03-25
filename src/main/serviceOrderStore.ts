@@ -471,6 +471,16 @@ export class ServiceOrderStore {
     return row ? this.mapRow(row) : null;
   }
 
+  findByRefundRequestPinId(refundRequestPinId: string): ServiceOrderRecord | null {
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE refund_request_pin_id = ?
+      LIMIT 1
+    `, [refundRequestPinId]);
+    return row ? this.mapRow(row) : null;
+  }
+
   markFirstResponseReceived(orderId: string, receivedAt: number): ServiceOrderRecord | null {
     const order = this.getOrderById(orderId);
     if (!order) return null;
@@ -589,6 +599,41 @@ export class ServiceOrderStore {
         updated_at = ?
       WHERE id = ?
     `, [input.nextRetryAt, input.attemptedAt, orderId]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  markRefunded(
+    orderId: string,
+    input: {
+      refundTxid: string;
+      refundFinalizePinId: string;
+      refundCompletedAt: number;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refunded') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = 'refunded',
+        refund_txid = ?,
+        refund_finalize_pin_id = ?,
+        refund_completed_at = ?,
+        next_retry_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      input.refundTxid,
+      input.refundFinalizePinId,
+      input.refundCompletedAt,
+      input.refundCompletedAt,
+      orderId,
+    ]);
     this.saveDb();
     return this.getOrderById(orderId);
   }

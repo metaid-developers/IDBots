@@ -23,6 +23,32 @@ export function buildRefundRequestPayload(input) {
   };
 }
 
+export function parseRefundFinalizePayload(content) {
+  let parsed = content;
+  if (typeof content === 'string') {
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const payload = parsed;
+  if (
+    typeof payload.refundRequestPinId !== 'string' ||
+    typeof payload.refundTxid !== 'string' ||
+    typeof payload.paymentTxid !== 'string'
+  ) {
+    return null;
+  }
+
+  return payload;
+}
+
 export function parseDeliveryMessage(content) {
   const trimmed = String(content || '').trim();
   if (!trimmed.toUpperCase().startsWith(DELIVERY_PREFIX)) {
