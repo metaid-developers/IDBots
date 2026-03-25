@@ -3519,6 +3519,42 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('gigSquare:preflightOrder', async (_event, params: {
+    metabotId: number;
+    toGlobalMetaId: string;
+  }) => {
+    try {
+      const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
+      const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
+
+      if (!metabotId || metabotId < 0) {
+        return { success: false, error: 'metabotId is required' };
+      }
+      if (!toGlobalMetaId) {
+        return { success: false, error: 'toGlobalMetaId is required' };
+      }
+
+      const availability = getServiceOrderLifecycleService().getBuyerOrderAvailability(
+        metabotId,
+        toGlobalMetaId
+      );
+      if (availability.allowed === false) {
+        return {
+          success: false,
+          errorCode: availability.errorCode,
+          error: availability.error,
+        };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to preflight order',
+      };
+    }
+  });
+
   ipcMain.handle('gigSquare:publishService', async (_event, params: {
     metabotId: number;
     serviceName: string;

@@ -17,3 +17,10 @@ export function getGigSquarePayActionBlockedMessageKey(handshake) {
   if (handshake === 'offline') return 'gigSquareHandshakeOffline';
   return 'gigSquareHandshaking';
 }
+
+export function getGigSquareOrderErrorMessageKey(errorCode) {
+  if (errorCode === 'open_order_exists') {
+    return 'gigSquareOpenOrderExists';
+  }
+  return null;
+}

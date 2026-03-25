@@ -122,6 +122,25 @@ export class ServiceOrderLifecycleService {
     );
   }
 
+  getBuyerOrderAvailability(
+    localMetabotId: number,
+    counterpartyGlobalMetaId: string
+  ): { allowed: true } | { allowed: false; errorCode: string; error: string } {
+    try {
+      this.assertNoOpenBuyerOrderForPair(localMetabotId, counterpartyGlobalMetaId);
+      return { allowed: true };
+    } catch (error) {
+      if (error instanceof ServiceOrderOpenOrderExistsError) {
+        return {
+          allowed: false,
+          errorCode: error.code,
+          error: error.message,
+        };
+      }
+      throw error;
+    }
+  }
+
   private assertNoPersistedOpenBuyerOrderForPair(
     localMetabotId: number,
     counterpartyGlobalMetaId: string

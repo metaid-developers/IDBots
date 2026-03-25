@@ -10,6 +10,7 @@ import {
   getGigSquareProviderDisplayName,
 } from './gigSquareProviderPresentation.js';
 import {
+  getGigSquareOrderErrorMessageKey,
   getGigSquarePayActionBlockedMessageKey,
   getGigSquarePayActionClassName,
   isGigSquarePayActionEnabled,
@@ -216,7 +217,47 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
           ? i18nService.t('gigSquareOrderSent')
           : '';
 
-  const handleOpenConfirm = () => {
+  const getOrderErrorMessage = useCallback((errorCode?: string, fallback?: string | null) => {
+    const messageKey = getGigSquareOrderErrorMessageKey(errorCode);
+    if (messageKey) {
+      return i18nService.t(messageKey);
+    }
+    return fallback || i18nService.t('gigSquareOrderFailed');
+  }, []);
+
+  const runOrderPreflight = useCallback(async () => {
+    if (!selectedMetabotId || !service) {
+      return {
+        success: false,
+        error: selectedMetabotId ? i18nService.t('gigSquareOrderFailed') : i18nService.t('gigSquareNoTwin'),
+      };
+    }
+
+    const toGlobalMetaId = service.providerGlobalMetaId || service.providerMetaId;
+    if (!toGlobalMetaId) {
+      return {
+        success: false,
+        error: i18nService.t('gigSquareOrderFailed'),
+      };
+    }
+
+    const result = await window.electron.gigSquare.preflightOrder({
+      metabotId: selectedMetabotId,
+      toGlobalMetaId,
+    });
+
+    if (result?.success) {
+      return { success: true, toGlobalMetaId };
+    }
+
+    return {
+      success: false,
+      error: getOrderErrorMessage(result?.errorCode, result?.error || null),
+      errorCode: result?.errorCode,
+    };
+  }, [getOrderErrorMessage, selectedMetabotId, service]);
+
+  const handleOpenConfirm = async () => {
     if (!isGigSquarePayActionEnabled(status, handshake)) {
       const blockedMessageKey = getGigSquarePayActionBlockedMessageKey(handshake);
       setError(blockedMessageKey ? i18nService.t(blockedMessageKey) : i18nService.t('gigSquareOrderFailed'));
@@ -235,15 +276,29 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       setError(i18nService.t('gigSquareOrderFailed'));
       return;
     }
+
+    const preflight = await runOrderPreflight();
+    if (!preflight.success) {
+      setError(preflight.error);
+      return;
+    }
+
     setError(null);
     setShowConfirmModal(true);
   };
 
   const handleConfirmPayment = useCallback(async () => {
     if (!service || !selectedMetabotId) return;
+    setError(null);
+    const preflight = await runOrderPreflight();
+    if (!preflight.success) {
+      setShowConfirmModal(false);
+      setError(preflight.error);
+      return;
+    }
+
     setShowConfirmModal(false);
     setStatus('paying');
-    setError(null);
     const trimmedPrompt = prompt.trim();
     const amount = paymentAmount;
 
@@ -283,8 +338,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         throw new Error(i18nService.t('gigSquareOrderFailed'));
       }
 
-      const toGlobalMetaId =
-        service.providerGlobalMetaId || service.providerMetaId;
+      const toGlobalMetaId = preflight.toGlobalMetaId;
       if (!toGlobalMetaId) {
         throw new Error(i18nService.t('gigSquareOrderFailed'));
       }
@@ -348,9 +402,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
 
       if (!sendResult?.success) {
         throw new Error(
-          sendResult?.errorCode === 'open_order_exists'
-            ? (sendResult.error || 'Open order already exists for this buyer and provider.')
-            : (sendResult?.error || i18nService.t('gigSquareOrderFailed'))
+          getOrderErrorMessage(sendResult?.errorCode, sendResult?.error || null)
         );
       }
 
@@ -369,6 +421,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     feeRate,
     providerInfo.chatpubkey,
     onClose,
+    runOrderPreflight,
+    getOrderErrorMessage,
   ]);
 
   if (!isOpen || !service) return null;

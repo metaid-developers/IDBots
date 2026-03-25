@@ -59,6 +59,32 @@ test('createBuyerOrder refuses a second unresolved order for the same buyer/sell
   );
 });
 
+test('getBuyerOrderAvailability reports blocked before payment when the pair already has an unresolved order', async () => {
+  const { service } = await createLifecycleServiceForTest();
+
+  service.createBuyerOrder(baseOrderInput());
+
+  assert.deepEqual(
+    service.getBuyerOrderAvailability(7, 'seller-global-metaid'),
+    {
+      allowed: false,
+      errorCode: 'open_order_exists',
+      error: 'Open order already exists for this buyer and provider.',
+    }
+  );
+});
+
+test('getBuyerOrderAvailability reports allowed when the pair has no unresolved order', async () => {
+  const { service } = await createLifecycleServiceForTest();
+
+  assert.deepEqual(
+    service.getBuyerOrderAvailability(7, 'seller-global-metaid'),
+    {
+      allowed: true,
+    }
+  );
+});
+
 test('createBuyerOrder persists SLA deadlines and links the cowork session', async () => {
   const now = 1_770_000_000_000;
   const { service } = await createLifecycleServiceForTest({

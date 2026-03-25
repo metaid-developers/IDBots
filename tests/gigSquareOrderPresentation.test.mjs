@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  getGigSquareOrderErrorMessageKey,
   getGigSquarePayActionBlockedMessageKey,
   getGigSquarePayActionClassName,
   isGigSquarePayActionEnabled,
@@ -26,4 +27,10 @@ test('Gig Square pay action blocked message follows handshake status', () => {
   assert.equal(getGigSquarePayActionBlockedMessageKey('idle'), 'gigSquareHandshaking');
   assert.equal(getGigSquarePayActionBlockedMessageKey('offline'), 'gigSquareHandshakeOffline');
   assert.equal(getGigSquarePayActionBlockedMessageKey('online'), null);
+});
+
+test('Gig Square order error message maps duplicate-order preflight failures to a stable i18n key', () => {
+  assert.equal(getGigSquareOrderErrorMessageKey('open_order_exists'), 'gigSquareOpenOrderExists');
+  assert.equal(getGigSquareOrderErrorMessageKey('network_error'), null);
+  assert.equal(getGigSquareOrderErrorMessageKey(undefined), null);
 });

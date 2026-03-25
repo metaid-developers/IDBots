@@ -87,6 +87,8 @@ contextBridge.exposeInMainWorld('electron', {
     syncFromRemote: () => ipcRenderer.invoke('gigSquare:syncFromRemote'),
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) =>
       ipcRenderer.invoke('gigSquare:fetchProviderInfo', params),
+    preflightOrder: (params: { metabotId: number; toGlobalMetaId: string }) =>
+      ipcRenderer.invoke('gigSquare:preflightOrder', params),
     publishService: (params: {
       metabotId: number;
       serviceName: string;

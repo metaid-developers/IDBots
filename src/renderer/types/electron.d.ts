@@ -369,6 +369,7 @@ interface IElectronAPI {
     fetchServices: () => Promise<{ success: boolean; list?: GigSquareService[]; error?: string }>;
     syncFromRemote: () => Promise<{ success: boolean; error?: string }>;
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) => Promise<{ success: boolean; error?: string } & GigSquareProviderInfo>;
+    preflightOrder: (params: { metabotId: number; toGlobalMetaId: string }) => Promise<{ success: boolean; error?: string; errorCode?: 'open_order_exists' | string }>;
     publishService: (params: {
       metabotId: number;
       serviceName: string;
