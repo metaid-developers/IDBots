@@ -56,6 +56,9 @@ jobs:
       - name: Compile Electron main process
         run: npm run compile:electron
 
+      - name: Validate runtime dependency contracts
+        run: node --test tests/runtimeDependencyContract.test.mjs
+
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search
         run: npm install
