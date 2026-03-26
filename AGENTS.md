@@ -71,6 +71,15 @@ node --test tests/*.test.mjs
 - `electron:dev` assumes Vite owns port `5175`. If another repo already has that port open, Electron may load the wrong frontend.
 - Before any commit intended to be kept or pushed, run `npm run lint` and do not submit changes while lint is failing.
 
+## Commit and Merge Rules
+
+- If you notice unfamiliar or unrelated file changes, continue working and stay focused on your own scoped edits unless the user asks you to inspect them.
+- When the user says "commit", stage and commit only the files you changed and understand.
+- Prefer small, frequent commits. Commit each independent, verifiable unit of work as soon as it is complete.
+- Use commit messages in the format `<type>: <short description>`, where `<type>` is one of `feat`, `fix`, `refactor`, `docs`, or `chore`.
+- Before committing, make sure the relevant local tests or verification steps pass for your changes.
+- When merging completed work into `main`, use `git merge --no-ff` to preserve the feature merge point.
+
 ## Important Runtime Rules
 
 - Preserve local-first fallback behavior: local P2P/API hit first, remote/metaid fallback only when local semantics miss.
