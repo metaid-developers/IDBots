@@ -1,16 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const initSqlJs = require('sql.js');
+const Module = require('node:module');
 
 const {
   applyRatingDelta,
   parseRatingPin,
   syncGigSquareRatings,
 } = require('../dist-electron/services/gigSquareRatingSyncService.js');
+const { DB_FILENAME } = require('../dist-electron/appConstants.js');
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const sqlWasmPath = path.join(projectRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
@@ -260,4 +264,58 @@ test('syncGigSquareRatings keeps scanning the first page after latestPinId to en
   assert.deepEqual(aggregateRow, [11 / 3, 3]);
 
   assert.deepEqual(fetchCalls, [undefined, 'cursor-2']);
+});
+
+test('SqliteStore.create() upgrades legacy rating detail cache schema before creating paid-tx index', async () => {
+  const legacyDb = await createSqlDatabase();
+  legacyDb.run(`
+    CREATE TABLE remote_skill_service_rating_seen (
+      pin_id TEXT PRIMARY KEY,
+      service_id TEXT,
+      rate REAL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+  legacyDb.run(
+    'INSERT INTO remote_skill_service_rating_seen (pin_id, service_id, rate, created_at) VALUES (?, ?, ?, ?)',
+    ['legacy-pin', 'svc-1', 5, 1_710_000_000_000]
+  );
+
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-sqlitestore-rating-cache-'));
+  const dbPath = path.join(userDataPath, DB_FILENAME);
+  fs.writeFileSync(dbPath, Buffer.from(legacyDb.export()));
+
+  const originalLoad = Module._load;
+  Module._load = function patchedModuleLoad(request, parent, isMain) {
+    if (request === 'electron') {
+      return {
+        app: {
+          isPackaged: false,
+          getAppPath: () => projectRoot,
+          getPath: () => userDataPath,
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+
+  try {
+    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const sqliteStore = await SqliteStore.create(userDataPath);
+    const db = sqliteStore.getDatabase();
+
+    const columns = db.exec('PRAGMA table_info(remote_skill_service_rating_seen)')[0].values.map((row) => row[1]);
+    assert.ok(columns.includes('service_paid_tx'));
+    assert.ok(columns.includes('comment'));
+    assert.ok(columns.includes('rater_global_metaid'));
+    assert.ok(columns.includes('rater_metaid'));
+
+    const indexRows = db.exec(
+      "SELECT name FROM pragma_index_list('remote_skill_service_rating_seen') WHERE name = 'idx_remote_skill_service_rating_paid_tx'"
+    );
+    assert.equal(indexRows[0]?.values?.length ?? 0, 1);
+  } finally {
+    Module._load = originalLoad;
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
 });

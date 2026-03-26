@@ -451,10 +451,6 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_seen_service
       ON remote_skill_service_rating_seen(service_id);
     `);
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_paid_tx
-        ON remote_skill_service_rating_seen(service_paid_tx);
-    `);
 
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_remote_skill_service_updated_at
