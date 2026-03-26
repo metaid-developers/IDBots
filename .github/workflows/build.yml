@@ -95,7 +95,7 @@ jobs:
 
       - name: Configure code signing (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: powershell
         env:
           SECRET_WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
         run: |
