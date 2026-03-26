@@ -5,6 +5,7 @@ import type { GigSquareService } from '../../types/gigSquare';
 import { fetchMetaidInfoByGlobalId, type MetaidInfoResult } from '../../services/metabotInfoService';
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
+import GigSquareMyServicesModal from './GigSquareMyServicesModal';
 import GigSquarePublishModal from './GigSquarePublishModal';
 import {
   DEFAULT_GIG_SQUARE_PROVIDER_AVATAR,
@@ -23,6 +24,7 @@ const GigSquareView: React.FC = () => {
   const [selectedService, setSelectedService] = useState<GigSquareService | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
+  const [isMyServicesModalOpen, setIsMyServicesModalOpen] = useState(false);
   const [buyerMetabotId, setBuyerMetabotId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [currencyFilter, setCurrencyFilter] = useState<'all' | 'BTC' | 'SPACE' | 'DOGE'>('all');
@@ -179,6 +181,13 @@ const GigSquareView: React.FC = () => {
                 {heroStats}
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setIsMyServicesModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+            >
+              {i18nService.t('gigSquareMyServicesButton')}
+            </button>
             <button
               type="button"
               onClick={() => setIsPublishModalOpen(true)}
@@ -363,6 +372,15 @@ const GigSquareView: React.FC = () => {
         isOpen={isPublishModalOpen}
         onClose={() => setIsPublishModalOpen(false)}
         onPublished={loadServices}
+      />
+
+      <GigSquareMyServicesModal
+        isOpen={isMyServicesModalOpen}
+        onClose={() => setIsMyServicesModalOpen(false)}
+        onOpenPublish={() => {
+          setIsMyServicesModalOpen(false);
+          setIsPublishModalOpen(true);
+        }}
       />
 
       <GigSquareOrderModal
