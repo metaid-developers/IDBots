@@ -86,7 +86,10 @@ import {
   parseRemoteSkillServiceRow,
   syncRemoteSkillServicesWithCursor,
 } from './services/gigSquareRemoteServiceSync';
-import { syncGigSquareRatings } from './services/gigSquareRatingSyncService';
+import {
+  repairServiceRatingAggregate,
+  syncGigSquareRatings,
+} from './services/gigSquareRatingSyncService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -622,6 +625,7 @@ async function syncRemoteSkillServices(): Promise<void> {
             updated_at = excluded.updated_at`,
           params
         );
+        repairServiceRatingAggregate(db, parsed.id);
       },
     });
     sqliteStore.getSaveFunction()();
@@ -691,6 +695,11 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
   });
 
   sqliteStore.getSaveFunction()();
+}
+
+async function syncGigSquareRemoteData(): Promise<void> {
+  await syncRemoteSkillServices();
+  await syncRemoteSkillServiceRatings();
 }
 
 function listRemoteSkillServicesFromDb(): GigSquareService[] {
@@ -3447,8 +3456,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:syncFromRemote', async () => {
     try {
-      await syncRemoteSkillServices();
-      await syncRemoteSkillServiceRatings();
+      await syncGigSquareRemoteData();
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Sync failed' };
@@ -5051,11 +5059,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     createWindow();
 
     // Service Square: sync remote skill services on startup and every 10 minutes
-    void syncRemoteSkillServices().catch((e) => console.warn('[GigSquare] Initial sync failed', e));
-    void syncRemoteSkillServiceRatings().catch((e) => console.warn('[GigSquare Rating] Initial sync failed', e));
+    void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Initial sync failed', e));
     setInterval(() => {
-      void syncRemoteSkillServices().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
-      void syncRemoteSkillServiceRatings().catch((e) => console.warn('[GigSquare Rating] Periodic sync failed', e));
+      void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
     }, 10 * 60 * 1000);
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)

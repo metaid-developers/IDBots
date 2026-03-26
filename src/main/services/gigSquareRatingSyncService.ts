@@ -144,6 +144,41 @@ export const applyRatingDelta = (
   };
 };
 
+export const repairServiceRatingAggregate = (
+  db: Database,
+  serviceId: string
+): RatingAggregate => {
+  const trimmedServiceId = toSafeString(serviceId).trim();
+  if (!trimmedServiceId) {
+    return { ratingAvg: 0, ratingCount: 0 };
+  }
+
+  const aggregateResult = db.exec(
+    `SELECT
+       COUNT(*) AS rating_count,
+       COALESCE(SUM(rate), 0) AS rating_sum
+     FROM remote_skill_service_rating_seen
+     WHERE service_id = ?`,
+    [trimmedServiceId]
+  );
+  const aggregateRow = aggregateResult[0]?.values?.[0] ?? [0, 0];
+  const ratingCount = Number(aggregateRow[0] ?? 0);
+  const ratingSum = Number(aggregateRow[1] ?? 0);
+  const repaired = {
+    ratingAvg: ratingCount > 0 ? ratingSum / ratingCount : 0,
+    ratingCount,
+  };
+
+  db.run(
+    `UPDATE remote_skill_service
+     SET rating_avg = ?, rating_count = ?
+     WHERE id = ?`,
+    [repaired.ratingAvg, repaired.ratingCount, trimmedServiceId]
+  );
+
+  return repaired;
+};
+
 export async function syncGigSquareRatings(
   input: SyncGigSquareRatingsInput
 ): Promise<void> {

@@ -12,6 +12,7 @@ const Module = require('node:module');
 const {
   applyRatingDelta,
   parseRatingPin,
+  repairServiceRatingAggregate,
   syncGigSquareRatings,
 } = require('../dist-electron/services/gigSquareRatingSyncService.js');
 const { DB_FILENAME } = require('../dist-electron/appConstants.js');
@@ -264,6 +265,55 @@ test('syncGigSquareRatings keeps scanning the first page after latestPinId to en
   assert.deepEqual(aggregateRow, [11 / 3, 3]);
 
   assert.deepEqual(fetchCalls, [undefined, 'cursor-2']);
+});
+
+test('repairServiceRatingAggregate recovers aggregates when rating details arrive before the service row', async () => {
+  const db = await createSqlDatabase();
+  createRatingTables(db);
+
+  await syncGigSquareRatings({
+    db,
+    latestPinId: null,
+    backfillCursor: null,
+    maxPages: 1,
+    fetchPage: async () => ({
+      list: [{
+        id: 'pin-before-service',
+        metaid: 'buyer-meta',
+        globalMetaId: 'buyer-global',
+        timestamp: 1_710_000_000,
+        contentSummary: JSON.stringify({
+          serviceID: 'svc-late',
+          servicePaidTx: 'c'.repeat(64),
+          rate: '5',
+          comment: 'Before service row',
+        }),
+      }],
+      nextCursor: null,
+    }),
+    setLatestPinId: () => {},
+    setBackfillCursor: () => {},
+    clearBackfillCursor: () => {},
+  });
+
+  const cachedBeforeService = db.exec(
+    'SELECT service_id, rate FROM remote_skill_service_rating_seen WHERE pin_id = ?',
+    ['pin-before-service']
+  )[0].values[0];
+  assert.deepEqual(cachedBeforeService, ['svc-late', 5]);
+
+  db.run(
+    'INSERT INTO remote_skill_service (id, rating_avg, rating_count) VALUES (?, ?, ?)',
+    ['svc-late', 0, 0]
+  );
+
+  repairServiceRatingAggregate(db, 'svc-late');
+
+  const aggregateRow = db.exec(
+    'SELECT rating_avg, rating_count FROM remote_skill_service WHERE id = ?',
+    ['svc-late']
+  )[0].values[0];
+  assert.deepEqual(aggregateRow, [5, 1]);
 });
 
 test('SqliteStore.create() upgrades legacy rating detail cache schema before creating paid-tx index', async () => {
