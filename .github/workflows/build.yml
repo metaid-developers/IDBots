@@ -51,17 +51,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
         shell: powershell
         run: |
-          $script = @"
-          const tag = process.env.GITHUB_REF_NAME || '';
-          const version = require('./package.json').version;
-          const expected = 'v' + version;
-          if (tag !== expected) {
-            console.error(`Tag/package version mismatch: tag=${tag} package=${version} expected=${expected}`);
-            process.exit(1);
+          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "" }
+          $packageJson = Get-Content -Raw -Path "package.json" | ConvertFrom-Json
+          $version = $packageJson.version
+          $expected = "v$version"
+          if ($tag -ne $expected) {
+            Write-Error ("Tag/package version mismatch: tag={0} package={1} expected={2}" -f $tag, $version, $expected)
+            exit 1
           }
-          console.log(`Tag/package version aligned: ${tag}`);
-          "@
-          node -e $script
+          Write-Host ("Tag/package version aligned: {0}" -f $tag)
 
       - name: Install dependencies
         run: npm install
