@@ -439,13 +439,21 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS remote_skill_service_rating_seen (
         pin_id TEXT PRIMARY KEY,
         service_id TEXT,
+        service_paid_tx TEXT,
         rate REAL,
+        comment TEXT,
+        rater_global_metaid TEXT,
+        rater_metaid TEXT,
         created_at INTEGER NOT NULL
       );
     `);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_seen_service
-        ON remote_skill_service_rating_seen(service_id);
+      ON remote_skill_service_rating_seen(service_id);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_paid_tx
+        ON remote_skill_service_rating_seen(service_paid_tx);
     `);
 
     this.db.run(`
@@ -845,6 +853,34 @@ export class SqliteStore {
       }
     } catch (error) {
       console.warn('Failed to migrate remote_skill_service payment_address:', error);
+    }
+
+    try {
+      const ratingSeenColsResult = this.db.exec('PRAGMA table_info(remote_skill_service_rating_seen)');
+      const ratingSeenColumns = (ratingSeenColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!ratingSeenColumns.includes('service_paid_tx')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN service_paid_tx TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('comment')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN comment TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('rater_global_metaid')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN rater_global_metaid TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('rater_metaid')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN rater_metaid TEXT');
+        this.save();
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_paid_tx
+          ON remote_skill_service_rating_seen(service_paid_tx)
+      `);
+      this.save();
+    } catch (error) {
+      console.warn('Failed to migrate remote_skill_service_rating_seen detail columns:', error);
     }
 
     this.save();

@@ -86,6 +86,7 @@ import {
   parseRemoteSkillServiceRow,
   syncRemoteSkillServicesWithCursor,
 } from './services/gigSquareRemoteServiceSync';
+import { syncGigSquareRatings } from './services/gigSquareRatingSyncService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -639,144 +640,55 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
   const sqliteStore = getStore();
   const db = sqliteStore.getDatabase();
 
-  // Helper: read/write kv
   const kvGet = (key: string): string | null => {
     const r = db.exec('SELECT value FROM kv WHERE key = ?', [key]);
     if (!r.length || !r[0].values.length) return null;
     return String(r[0].values[0][0]);
   };
   const kvSet = (key: string, value: string) => {
-    db.run('INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at', [key, value, Date.now()]);
-  };
-
-  const latestPinId = kvGet(GIG_SQUARE_RATING_LATEST_PIN_KEY);
-
-  // Accumulate deltas: serviceID -> { count, sum }
-  const deltas = new Map<string, { count: number; sum: number }>();
-
-  const now = Date.now();
-  const processItem = (item: Record<string, unknown>) => {
-    const itemId = typeof item.id === 'string' ? item.id.trim() : String(item.id || '').trim();
-    if (!itemId) return;
-    const rawSummary = item.contentSummary;
-    let summary: Record<string, unknown> | null = null;
-    if (typeof rawSummary === 'string') {
-      try { summary = JSON.parse(rawSummary); } catch { return; }
-    } else if (rawSummary && typeof rawSummary === 'object') {
-      summary = rawSummary as Record<string, unknown>;
-    }
-    if (!summary) return;
-    const serviceID = typeof summary.serviceID === 'string' ? summary.serviceID.trim() : '';
-    const rateRaw = summary.rate;
-    const rate = typeof rateRaw === 'string' ? parseFloat(rateRaw) : typeof rateRaw === 'number' ? rateRaw : NaN;
-    if (!serviceID || isNaN(rate) || rate < 1 || rate > 5) return;
-
     db.run(
-      'INSERT OR IGNORE INTO remote_skill_service_rating_seen (pin_id, service_id, rate, created_at) VALUES (?, ?, ?, ?)',
-      [itemId, serviceID, rate, now]
+      `INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [key, value, Date.now()]
     );
-    if ((db.getRowsModified?.() || 0) <= 0) return;
-
-    const d = deltas.get(serviceID) || { count: 0, sum: 0 };
-    d.count += 1;
-    d.sum += rate;
-    deltas.set(serviceID, d);
   };
+  await syncGigSquareRatings({
+    db,
+    latestPinId: kvGet(GIG_SQUARE_RATING_LATEST_PIN_KEY),
+    backfillCursor: kvGet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY),
+    maxPages: GIG_SQUARE_RATING_MAX_PAGES,
+    fetchPage: async (cursor?: string) => {
+      const url = new URL('https://manapi.metaid.io/pin/path/list');
+      url.searchParams.set('path', GIG_SQUARE_RATING_PATH);
+      url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
+      if (cursor) url.searchParams.set('cursor', cursor);
 
-  // --- Incremental sync (newest first) ---
-  let newLatestPinId: string | null = null;
-  let cursor: string | undefined;
-  let lastIncrementalNextCursor: string | undefined;
-  let hitLatest = false;
-
-  for (let page = 0; page < GIG_SQUARE_RATING_MAX_PAGES; page++) {
-    const url = new URL('https://manapi.metaid.io/pin/path/list');
-    url.searchParams.set('path', GIG_SQUARE_RATING_PATH);
-    url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
-    if (cursor) url.searchParams.set('cursor', cursor);
-
-    let json: Record<string, unknown>;
-    try {
-      const resp = await fetchJsonWithFallbackOnMiss(`/api/pin/path/list${url.search}`, url.toString(), isEmptyListDataPayload);
-      if (!resp.ok) { console.warn('[GigSquare Rating] fetch failed', resp.status); break; }
-      json = await resp.json() as Record<string, unknown>;
-    } catch (e) {
-      console.warn('[GigSquare Rating] fetch error', e);
-      break;
-    }
-
-    const data = json?.data as Record<string, unknown> | undefined;
-    const list = Array.isArray(data?.list) ? data!.list as Record<string, unknown>[] : [];
-    const nextCursor = typeof data?.nextCursor === 'string' && data.nextCursor ? data.nextCursor : undefined;
-
-    if (page === 0 && list.length > 0) {
-      newLatestPinId = String(list[0].id ?? '');
-    }
-    lastIncrementalNextCursor = nextCursor;
-
-    for (const item of list) {
-      const itemId = String(item.id ?? '');
-      if (latestPinId && itemId === latestPinId) {
-        hitLatest = true;
-        break;
+      const resp = await fetchJsonWithFallbackOnMiss(
+        `/api/pin/path/list${url.search}`,
+        url.toString(),
+        isEmptyListDataPayload
+      );
+      if (!resp.ok) {
+        throw new Error(`Sync failed: ${resp.status}`);
       }
-      processItem(item);
-    }
 
-    if (hitLatest || !nextCursor) break;
-    cursor = nextCursor;
-  }
-
-  const processedCount = Array.from(deltas.values()).reduce((s, d) => s + d.count, 0);
-  console.debug(`[GigSquare Rating] incremental: processed ${processedCount} ratings, hitLatest=${hitLatest}`);
-
-  // --- Backfill: 1 extra page of older records per sync ---
-  let backfillCursor = kvGet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY);
-  // Seed backfill cursor from last incremental page's nextCursor if not yet set
-  if (!backfillCursor && lastIncrementalNextCursor) {
-    backfillCursor = lastIncrementalNextCursor;
-  }
-  if (backfillCursor) {
-    const url = new URL('https://manapi.metaid.io/pin/path/list');
-    url.searchParams.set('path', GIG_SQUARE_RATING_PATH);
-    url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
-    url.searchParams.set('cursor', backfillCursor);
-    try {
-      const resp = await fetchJsonWithFallbackOnMiss(`/api/pin/path/list${url.search}`, url.toString(), isEmptyListDataPayload);
-      if (resp.ok) {
-        const json = await resp.json() as Record<string, unknown>;
-        const data = json?.data as Record<string, unknown> | undefined;
-        const list = Array.isArray(data?.list) ? data!.list as Record<string, unknown>[] : [];
-        const nextCursor = typeof data?.nextCursor === 'string' && data.nextCursor ? data.nextCursor : null;
-        for (const item of list) processItem(item);
-        console.debug(`[GigSquare Rating] backfill: processed ${list.length} items, nextCursor=${nextCursor ?? 'done'}`);
-        if (nextCursor) {
-          kvSet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY, nextCursor);
-        } else {
-          db.run('DELETE FROM kv WHERE key = ?', [GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY]);
-        }
-      }
-    } catch (e) {
-      console.warn('[GigSquare Rating] backfill error', e);
-    }
-  }
-
-  // --- Apply deltas to DB ---
-  const affectedServices = deltas.size;
-  for (const [serviceID, delta] of deltas) {
-    db.run(
-      `UPDATE remote_skill_service
-       SET rating_avg = (rating_avg * rating_count + ?) / (rating_count + ?),
-           rating_count = rating_count + ?
-       WHERE id = ?`,
-      [delta.sum, delta.count, delta.count, serviceID]
-    );
-  }
-  console.debug(`[GigSquare Rating] updated ${affectedServices} services`);
-
-  if (newLatestPinId) {
-    kvSet(GIG_SQUARE_RATING_LATEST_PIN_KEY, newLatestPinId);
-  }
+      const json = await resp.json() as Record<string, unknown>;
+      const data = json?.data as Record<string, unknown> | undefined;
+      return {
+        list: Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : [],
+        nextCursor: typeof data?.nextCursor === 'string' ? data.nextCursor : null,
+      };
+    },
+    setLatestPinId: (pinId: string) => {
+      kvSet(GIG_SQUARE_RATING_LATEST_PIN_KEY, pinId);
+    },
+    setBackfillCursor: (cursor: string) => {
+      kvSet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY, cursor);
+    },
+    clearBackfillCursor: () => {
+      db.run('DELETE FROM kv WHERE key = ?', [GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY]);
+    },
+  });
 
   sqliteStore.getSaveFunction()();
 }
