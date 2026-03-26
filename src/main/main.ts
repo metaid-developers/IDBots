@@ -80,6 +80,8 @@ import { ServiceRefundSettlementService } from './services/serviceRefundSettleme
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import {
   extractSessionOrderTxid,
+  findMatchingOrderSessionId,
+  resolveOrderSessionId,
   selectProtocolPinContent,
 } from './services/serviceOrderSessionResolution.js';
 import {
@@ -1784,6 +1786,31 @@ const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | 
     return orderStore.setCoworkSessionId(matched.id, sessionId);
   }
   return matched;
+};
+
+const listCoworkSessionsForOrderResolution = (): NonNullable<ReturnType<CoworkStore['getSession']>>[] => {
+  const coworkStore = getCoworkStore();
+  return coworkStore
+    .listSessions()
+    .map((session) => coworkStore.getSession(session.id))
+    .filter((session): session is NonNullable<ReturnType<CoworkStore['getSession']>> => Boolean(session));
+};
+
+const resolveCoworkSessionIdForOrder = (
+  order: ServiceOrderRecord,
+  sessions: NonNullable<ReturnType<CoworkStore['getSession']>>[],
+): string | null => {
+  const resolvedSessionId = resolveOrderSessionId({
+    directSessionId: order.coworkSessionId,
+    fallbackSessionId: findMatchingOrderSessionId(sessions, order),
+  });
+  if (!resolvedSessionId) {
+    return null;
+  }
+  if (!order.coworkSessionId) {
+    getServiceOrderStore().setCoworkSessionId(order.id, resolvedSessionId);
+  }
+  return resolvedSessionId;
 };
 
 const getServiceOrderSummaryForSession = (
@@ -3568,16 +3595,39 @@ if (!gotTheLock) {
         ratingsByPaymentTxid.set(paymentTxid, list);
       }
 
+      const sellerOrders = getServiceOrderStore()
+        .listOrdersByStatuses('seller', ['completed', 'refunded'])
+        .filter((order) => toSafeString(order.servicePinId).trim() === serviceId);
       const page = normalizePositiveInteger(params?.page, 1);
       const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE);
       const detailPage = buildMyServiceOrderDetails({
         serviceId,
-        sellerOrders: getServiceOrderStore().listOrdersByStatuses('seller', ['completed', 'refunded']),
+        sellerOrders,
         ratingsByPaymentTxid,
         page,
         pageSize,
       });
-      return { success: true, page: detailPage };
+      const itemsNeedingSessionResolution = detailPage.items.filter((item) => !toSafeString(item.coworkSessionId).trim());
+      if (itemsNeedingSessionResolution.length === 0) {
+        return { success: true, page: detailPage };
+      }
+
+      const sellerOrderById = new Map(sellerOrders.map((order) => [order.id, order] as const));
+      const coworkSessions = listCoworkSessionsForOrderResolution();
+      const items = detailPage.items.map((item) => {
+        if (toSafeString(item.coworkSessionId).trim()) {
+          return item;
+        }
+        const order = sellerOrderById.get(item.id);
+        if (!order) {
+          return item;
+        }
+        const resolvedSessionId = resolveCoworkSessionIdForOrder(order, coworkSessions);
+        return resolvedSessionId
+          ? { ...item, coworkSessionId: resolvedSessionId }
+          : item;
+      });
+      return { success: true, page: { ...detailPage, items } };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my service orders' };
     }

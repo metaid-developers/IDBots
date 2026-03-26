@@ -30,6 +30,7 @@ import {
   isNeedsRatingMessage,
   shouldCompleteBuyerOrderObserverSession,
 } from './privateChatOrderObserverState';
+import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -637,6 +638,22 @@ async function processOne(
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         markProcessed(db, row.id, saveDb);
         return;
+      }
+
+      const sellerOrderSessionId = resolveOrderSessionId({
+        fallbackSessionId: coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id)?.coworkSessionId,
+      });
+      if (serviceOrderLifecycle && txid && sellerOrderSessionId) {
+        try {
+          serviceOrderLifecycle.attachCoworkSessionToSellerOrder({
+            localMetabotId: metabot.id,
+            counterpartyGlobalMetaId: fromGlobalMetaId,
+            paymentTxid: txid,
+            coworkSessionId: sellerOrderSessionId,
+          });
+        } catch (error) {
+          emitLog(`[Order] Failed to persist seller session link: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       const sendEncryptedMsg = async (text: string) => {

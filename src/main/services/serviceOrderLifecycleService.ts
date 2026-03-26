@@ -54,6 +54,10 @@ export interface MarkBuyerOrderFirstResponseReceivedInput extends ServiceOrderPa
   receivedAt?: number;
 }
 
+export interface AttachSellerCoworkSessionInput extends ServiceOrderPaymentMatchInput {
+  coworkSessionId: string;
+}
+
 interface ServiceOrderLifecycleServiceOptions {
   now?: () => number;
   buildRefundRequestPayload?: (order: ServiceOrderRecord) => Record<string, unknown>;
@@ -254,6 +258,19 @@ export class ServiceOrderLifecycleService {
       deliveryMessagePinId: input.deliveryMessagePinId ?? null,
       deliveredAt: input.deliveredAt ?? this.now(),
     });
+  }
+
+  attachCoworkSessionToSellerOrder(
+    input: AttachSellerCoworkSessionInput
+  ): ServiceOrderRecord | null {
+    const order = this.store.findOrderByPayment({
+      role: 'seller',
+      localMetabotId: input.localMetabotId,
+      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+      paymentTxid: input.paymentTxid,
+    });
+    if (!order) return null;
+    return this.store.setCoworkSessionId(order.id, input.coworkSessionId);
   }
 
   async scanTimedOutOrders(): Promise<void> {
