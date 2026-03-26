@@ -77,9 +77,7 @@
       "nsis"
     ],
     "icon": "build/icons/win/icon.ico",
-    "signtoolOptions": {
-      "sign": "scripts/windows-sign.cjs"
-    },
+    "sign": "scripts/windows-sign.cjs",
     "extraResources": [
       {
         "from": "resources/mingit",
