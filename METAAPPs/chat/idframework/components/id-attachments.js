@@ -643,14 +643,21 @@ class IdAttachments extends HTMLElement {
           background: var(--id-attachment-bg, #f9fafb);
           min-height: 54px;
         }
-        .media-image,
-        .media-video {
+        .media-image {
           width: 100%;
           border-radius: 6px;
           display: block;
           aspect-ratio: 4 / 3;
           max-height: 440px;
           object-fit: cover;
+          background: #111827;
+        }
+        .media-video {
+          width: 100%;
+          height: auto;
+          max-width: 100%;
+          border-radius: 6px;
+          display: block;
           background: #111827;
         }
         .image-trigger {
