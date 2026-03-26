@@ -210,7 +210,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
                 <ClipboardDocumentIcon className="h-4 w-4" />
               )}
             </button>
-            <code className="block px-4 py-3 font-mono text-claude-darkText whitespace-pre">
+            <code className="block px-4 py-3 font-mono text-slate-100 whitespace-pre">
               {trimmedCodeText}
             </code>
           </div>
@@ -248,7 +248,7 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
           </SyntaxHighlighter>
         ) : (
           <div className="m-0 overflow-x-auto bg-[#282c34] text-[13px] leading-6">
-            <code className="block px-4 py-3 font-mono text-claude-darkText whitespace-pre">
+            <code className="block px-4 py-3 font-mono text-slate-100 whitespace-pre">
               {trimmedCodeText}
             </code>
           </div>

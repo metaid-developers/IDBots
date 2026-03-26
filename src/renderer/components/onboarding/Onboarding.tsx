@@ -17,6 +17,7 @@ import {
   shouldShowApiFormatSelector,
   getProviderDefaultBaseUrl,
 } from '../../services/llmConnection';
+import { getDefaultOnboardingProvider } from './onboardingDefaults.js';
 
 const AVATAR_MAX_SIZE_BYTES = 100 * 1024;
 
@@ -68,12 +69,13 @@ function getProvidersForOnboarding(): NonNullable<AppConfig['providers']> {
   return result as NonNullable<AppConfig['providers']>;
 }
 
-const DEFAULT_ONBOARDING_PROVIDER: ProviderKey = 'deepseek';
 const DEFAULT_ONBOARDING_API_FORMAT: 'anthropic' | 'openai' = 'openai';
 
 const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [step, setStep] = useState<OnboardingStep>(1);
-  const [provider, setProvider] = useState<ProviderKey>(DEFAULT_ONBOARDING_PROVIDER);
+  const [provider, setProvider] = useState<ProviderKey>(
+    () => getDefaultOnboardingProvider(i18nService.getLanguage()) as ProviderKey
+  );
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiFormat, setApiFormat] = useState<'anthropic' | 'openai'>(DEFAULT_ONBOARDING_API_FORMAT);
