@@ -2171,6 +2171,42 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('metaapps:list', () => {
+    try {
+      const apps = getMetaAppManager().listMetaApps();
+      return { success: true, apps };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list MetaApps' };
+    }
+  });
+
+  ipcMain.handle('metaapps:open', async (_event, input: { appId: string; targetPath?: string }) => {
+    try {
+      return await openMetaApp({
+        appId: String(input?.appId ?? ''),
+        targetPath: typeof input?.targetPath === 'string' ? input.targetPath : undefined,
+        manager: getMetaAppManager(),
+        ensureServerReady: ensureMetaAppServerReady,
+        shellOpenExternal: shell.openExternal,
+      });
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to open MetaApp' };
+    }
+  });
+
+  ipcMain.handle('metaapps:resolveUrl', async (_event, input: { appId: string; targetPath?: string }) => {
+    try {
+      return await resolveMetaAppUrl({
+        appId: String(input?.appId ?? ''),
+        targetPath: typeof input?.targetPath === 'string' ? input.targetPath : undefined,
+        manager: getMetaAppManager(),
+        ensureServerReady: ensureMetaAppServerReady,
+      });
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to resolve MetaApp URL' };
+    }
+  });
+
   ipcMain.handle('skills:getConfig', (_event, skillId: string) => {
     return getSkillManager().getSkillConfig(skillId);
   });

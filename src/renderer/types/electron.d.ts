@@ -1,5 +1,6 @@
 import type { McpServerConfig, McpServerFormData } from './mcp';
 import type { GigSquareProviderInfo, GigSquareService } from './gigSquare';
+import type { MetaAppRecord, MetaAppUrlResult } from './metaApp';
 
 interface ApiResponse {
   ok: boolean;
@@ -343,7 +344,11 @@ interface IElectronAPI {
     onChanged: (callback: () => void) => () => void;
   };
   metaapps: {
+    list: () => Promise<{ success: boolean; apps?: MetaAppRecord[]; error?: string }>;
+    open: (input: { appId: string; targetPath?: string }) => Promise<MetaAppUrlResult>;
+    resolveUrl: (input: { appId: string; targetPath?: string }) => Promise<MetaAppUrlResult>;
     autoRoutingPrompt: () => Promise<{ success: boolean; prompt?: string | null; error?: string }>;
+    onChanged: (callback: () => void) => () => void;
   };
   api: {
     fetch: (options: {

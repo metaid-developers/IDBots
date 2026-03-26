@@ -27,7 +27,15 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   metaapps: {
+    list: () => ipcRenderer.invoke('metaapps:list'),
+    open: (input: { appId: string; targetPath?: string }) => ipcRenderer.invoke('metaapps:open', input),
+    resolveUrl: (input: { appId: string; targetPath?: string }) => ipcRenderer.invoke('metaapps:resolveUrl', input),
     autoRoutingPrompt: () => ipcRenderer.invoke('metaapps:autoRoutingPrompt'),
+    onChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('metaapps:changed', handler);
+      return () => ipcRenderer.removeListener('metaapps:changed', handler);
+    },
   },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),

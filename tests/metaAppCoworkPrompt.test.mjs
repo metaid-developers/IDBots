@@ -106,7 +106,7 @@ test('buildCoworkAutoRoutingPrompt prioritizes MetaApps for local app-opening re
   );
 });
 
-test('preload exposes metaapps.autoRoutingPrompt through window.electron', async () => {
+test('preload exposes the MetaApp renderer API through window.electron', async () => {
   const electronModuleId = require.resolve('electron');
   const preloadModuleId = require.resolve('../dist-electron/preload.js');
   const originalElectronExports = require.cache[electronModuleId]?.exports ?? require('electron');
@@ -126,8 +126,17 @@ test('preload exposes metaapps.autoRoutingPrompt through window.electron', async
         },
       },
       ipcRenderer: {
-        invoke: async (channel) => {
+        invoke: async (channel, input) => {
           invokeCalls.push(channel);
+          if (channel === 'metaapps:list') {
+            return { success: true, apps: [{ id: 'buzz', name: 'Buzz' }] };
+          }
+          if (channel === 'metaapps:open') {
+            return { success: true, appId: input?.appId, url: 'http://127.0.0.1:43210/buzz/app/index.html' };
+          }
+          if (channel === 'metaapps:resolveUrl') {
+            return { success: true, appId: input?.appId, url: 'http://127.0.0.1:43210/buzz/app/index.html#hash' };
+          }
           return { success: true, prompt: 'metaapp prompt' };
         },
         on: () => {},
@@ -152,11 +161,40 @@ test('preload exposes metaapps.autoRoutingPrompt through window.electron', async
   }
 
   assert.ok(exposedApi, 'Expected preload to expose window.electron');
+  assert.equal(typeof exposedApi.metaapps?.list, 'function');
+  assert.equal(typeof exposedApi.metaapps?.open, 'function');
+  assert.equal(typeof exposedApi.metaapps?.resolveUrl, 'function');
   assert.equal(typeof exposedApi.metaapps?.autoRoutingPrompt, 'function');
+  assert.equal(typeof exposedApi.metaapps?.onChanged, 'function');
+
+  const listResult = await exposedApi.metaapps.list();
+  assert.deepEqual(listResult, { success: true, apps: [{ id: 'buzz', name: 'Buzz' }] });
+
+  const openResult = await exposedApi.metaapps.open({ appId: 'buzz' });
+  assert.deepEqual(openResult, {
+    success: true,
+    appId: 'buzz',
+    url: 'http://127.0.0.1:43210/buzz/app/index.html',
+  });
+
+  const resolvedUrl = await exposedApi.metaapps.resolveUrl({ appId: 'buzz' });
+  assert.deepEqual(resolvedUrl, {
+    success: true,
+    appId: 'buzz',
+    url: 'http://127.0.0.1:43210/buzz/app/index.html#hash',
+  });
+
+  const unsubscribe = exposedApi.metaapps.onChanged(() => {});
+  assert.equal(typeof unsubscribe, 'function');
 
   const result = await exposedApi.metaapps.autoRoutingPrompt();
   assert.deepEqual(result, { success: true, prompt: 'metaapp prompt' });
-  assert.deepEqual(invokeCalls, ['metaapps:autoRoutingPrompt']);
+  assert.deepEqual(invokeCalls, [
+    'metaapps:list',
+    'metaapps:open',
+    'metaapps:resolveUrl',
+    'metaapps:autoRoutingPrompt',
+  ]);
 });
 
 test('CoworkRunner registers the open_metaapp tool when starting a local Claude session', async () => {
