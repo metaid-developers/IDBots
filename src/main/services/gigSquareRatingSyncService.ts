@@ -41,6 +41,7 @@ interface SyncGigSquareRatingsInput {
 }
 
 const LOG_PREFIX = '[GigSquare Rating]';
+const UNIX_SECONDS_MAX = 10_000_000_000;
 
 const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -59,6 +60,24 @@ const parseContentSummary = (value: unknown): Record<string, unknown> | null => 
     }
   }
   return null;
+};
+
+const normalizeTimestampMs = (value: unknown, fallbackNow: () => number): number => {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number(value)
+      : Number.NaN;
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackNow();
+  }
+
+  if (parsed < UNIX_SECONDS_MAX) {
+    return Math.trunc(parsed * 1000);
+  }
+
+  return Math.trunc(parsed);
 };
 
 export const parseRatingPin = (
@@ -88,9 +107,8 @@ export const parseRatingPin = (
   const comment = commentRaw.trim() ? commentRaw : null;
   const raterGlobalMetaId = toSafeString(item.globalMetaId).trim() || null;
   const raterMetaId = toSafeString(item.metaid ?? item.createMetaId).trim() || null;
-  const timestamp = typeof item.timestamp === 'number' && item.timestamp > 0
-    ? item.timestamp
-    : (options.now ?? Date.now)();
+  const fallbackNow = options.now ?? Date.now;
+  const timestamp = normalizeTimestampMs(item.timestamp, fallbackNow);
 
   return {
     pinId,
@@ -136,10 +154,41 @@ export async function syncGigSquareRatings(
     const parsed = parseRatingPin(item, { now });
     if (!parsed) return;
 
+    const alreadySeenResult = input.db.exec(
+      'SELECT 1 FROM remote_skill_service_rating_seen WHERE pin_id = ?',
+      [parsed.pinId]
+    );
+    const alreadySeen = Boolean(alreadySeenResult[0]?.values?.length);
+
     input.db.run(
-      `INSERT OR IGNORE INTO remote_skill_service_rating_seen (
+      `INSERT INTO remote_skill_service_rating_seen (
         pin_id, service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(pin_id) DO UPDATE SET
+        service_paid_tx = CASE
+          WHEN remote_skill_service_rating_seen.service_paid_tx IS NULL
+            OR TRIM(remote_skill_service_rating_seen.service_paid_tx) = ''
+          THEN excluded.service_paid_tx
+          ELSE remote_skill_service_rating_seen.service_paid_tx
+        END,
+        comment = CASE
+          WHEN remote_skill_service_rating_seen.comment IS NULL
+            OR TRIM(remote_skill_service_rating_seen.comment) = ''
+          THEN excluded.comment
+          ELSE remote_skill_service_rating_seen.comment
+        END,
+        rater_global_metaid = CASE
+          WHEN remote_skill_service_rating_seen.rater_global_metaid IS NULL
+            OR TRIM(remote_skill_service_rating_seen.rater_global_metaid) = ''
+          THEN excluded.rater_global_metaid
+          ELSE remote_skill_service_rating_seen.rater_global_metaid
+        END,
+        rater_metaid = CASE
+          WHEN remote_skill_service_rating_seen.rater_metaid IS NULL
+            OR TRIM(remote_skill_service_rating_seen.rater_metaid) = ''
+          THEN excluded.rater_metaid
+          ELSE remote_skill_service_rating_seen.rater_metaid
+        END`,
       [
         parsed.pinId,
         parsed.serviceId,
@@ -151,7 +200,7 @@ export async function syncGigSquareRatings(
         parsed.createdAt,
       ]
     );
-    if ((input.db.getRowsModified?.() || 0) <= 0) return;
+    if (alreadySeen || (input.db.getRowsModified?.() || 0) <= 0) return;
 
     const delta = deltas.get(parsed.serviceId) || { sum: 0, count: 0 };
     delta.sum += parsed.rate;
