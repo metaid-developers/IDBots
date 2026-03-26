@@ -571,7 +571,6 @@ async function syncRemoteSkillServices(): Promise<void> {
         };
       },
       upsertService: (parsed) => {
-        if (!parsed.serviceName || !parsed.providerMetaId || !parsed.providerAddress) return;
         const params = sanitizeDbParams([
           parsed.id,
           parsed.providerMetaId,

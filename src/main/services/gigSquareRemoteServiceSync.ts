@@ -1,4 +1,5 @@
 type RemoteSkillServiceItem = Record<string, unknown>;
+const DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES = 1000;
 
 export type ParsedRemoteSkillServiceRow = {
   id: string;
@@ -53,20 +54,7 @@ const parseGigSquareContentSummary = (value: unknown): Record<string, unknown> |
 export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): ParsedRemoteSkillServiceRow | null => {
   const id = toSafeString(item.id).trim();
   const summary = parseGigSquareContentSummary(item.contentSummary);
-  if (!summary) {
-    if (!id) return null;
-    return {
-      id,
-      serviceName: '',
-      displayName: '',
-      description: '',
-      price: '0',
-      currency: '',
-      providerMetaId: '',
-      providerGlobalMetaId: '',
-      providerAddress: '',
-    };
-  }
+  if (!summary) return null;
   const serviceName = toSafeString(summary.serviceName).trim();
   const displayName = toSafeString(summary.displayName).trim() || serviceName || 'Service';
   const description = toSafeString(summary.description).trim();
@@ -150,16 +138,28 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
 
 export async function syncRemoteSkillServicesWithCursor(input: {
   pageSize: number;
+  maxPages?: number;
   fetchPage: (cursor?: string) => Promise<{ list: RemoteSkillServiceItem[]; nextCursor?: string | null }>;
   upsertService: (row: ParsedRemoteSkillServiceRow) => void;
 }): Promise<void> {
+  const maxPages = Number.isFinite(input.maxPages) && (input.maxPages as number) > 0
+    ? Math.floor(input.maxPages as number)
+    : DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES;
   let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  let pages = 0;
   do {
+    if (pages >= maxPages) break;
     const page = await input.fetchPage(cursor);
+    pages += 1;
     for (const item of page.list) {
       const parsed = parseRemoteSkillServiceItem(item);
       if (parsed) input.upsertService(parsed);
     }
-    cursor = page.nextCursor || undefined;
-  } while (cursor);
+    const nextCursor = page.nextCursor || undefined;
+    if (!nextCursor) break;
+    if (seenCursors.has(nextCursor)) break;
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  } while (true);
 }
