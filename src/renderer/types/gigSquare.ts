@@ -17,6 +17,7 @@ export type GigSquareService = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  ratingAvg?: number;
   ratingCount?: number;
   updatedAt?: number;
   refundRisk?: GigSquareRefundRisk | null;

@@ -82,6 +82,10 @@ import {
   extractSessionOrderTxid,
   selectProtocolPinContent,
 } from './services/serviceOrderSessionResolution.js';
+import {
+  parseRemoteSkillServiceRow,
+  syncRemoteSkillServicesWithCursor,
+} from './services/gigSquareRemoteServiceSync';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -368,19 +372,6 @@ const toSafeNumber = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const parseGigSquareContentSummary = (value: unknown): Record<string, unknown> | null => {
-  if (!value) return null;
-  if (typeof value === 'object') return value as Record<string, unknown>;
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-};
-
 const buildPrivateMessagePayload = (to: string, encryptedContent: string, replyPin = ''): string => {
   const body = {
     to,
@@ -410,36 +401,6 @@ const extractChatPubkeyFromList = (list: any[], metaid: string): string | null =
     if (raw) return raw;
   }
   return null;
-};
-
-const parseGigSquareService = (item: Record<string, unknown>): GigSquareService | null => {
-  const summary = parseGigSquareContentSummary(item.contentSummary);
-  if (!summary) return null;
-  const serviceName = toSafeString(summary.serviceName).trim();
-  const displayName = toSafeString(summary.displayName).trim() || serviceName || 'Service';
-  const description = toSafeString(summary.description).trim();
-  const price = toSafeString(summary.price).trim() || '0';
-  const currency = toSafeString(summary.currency || summary.priceUnit).trim();
-  const providerMetaId = toSafeString(item.metaid || item.createMetaId).trim();
-  const providerGlobalMetaId = toSafeString(item.globalMetaId).trim();
-  const paymentAddress = toSafeString(summary.paymentAddress).trim();
-  const providerAddress = paymentAddress || toSafeString(item.address || item.addres).trim();
-  const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
-  const serviceIcon = typeof summary.serviceIcon === 'string' ? summary.serviceIcon.trim() || null : null;
-  if (!serviceName || !providerMetaId || !providerAddress) return null;
-  return {
-    id: toSafeString(item.id).trim() || serviceName,
-    serviceName,
-    displayName,
-    description,
-    price,
-    currency,
-    providerMetaId,
-    providerGlobalMetaId,
-    providerAddress,
-    avatar,
-    serviceIcon,
-  };
 };
 
 const sanitizeDbParams = (params: unknown[]): (string | number | null)[] => {
@@ -591,82 +552,78 @@ async function syncRemoteSkillServices(): Promise<void> {
   if (gigSquareSyncInProgress) return;
   gigSquareSyncInProgress = true;
   try {
-    const url = new URL('https://manapi.metaid.io/pin/path/list');
-    url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
-    url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
-    const localPath = `/api/pin/path/list${url.search}`;
-    const response = await fetchJsonWithFallbackOnMiss(localPath, url.toString(), isEmptyListDataPayload);
-    if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
-    const json = await response.json();
-    const list = Array.isArray(json?.data?.list) ? json.data.list : [];
     const sqliteStore = getStore();
     const db = sqliteStore.getDatabase();
-    const now = Date.now();
-    for (const item of list as Record<string, unknown>[]) {
-      const parsed = parseGigSquareService(item);
-      if (!parsed) continue;
-      const summary = parseGigSquareContentSummary(item.contentSummary);
-      const contentSummaryJson = summary ? JSON.stringify(summary) : '';
-      const providerMetaBot = summary ? toSafeString((summary as Record<string, unknown>).providerMetaBot).trim() : '';
-      const providerSkill = summary ? toSafeString((summary as Record<string, unknown>).providerSkill).trim() : '';
-      const skillDocument = summary ? toSafeString((summary as Record<string, unknown>).skillDocument).trim() : '';
-      const inputType = summary ? toSafeString((summary as Record<string, unknown>).inputType).trim() : '';
-      const outputType = summary ? toSafeString((summary as Record<string, unknown>).outputType).trim() : '';
-      const endpoint = summary ? toSafeString((summary as Record<string, unknown>).endpoint).trim() : '';
-      const itemTimestamp = typeof item.timestamp === 'number' && item.timestamp > 0
-        ? item.timestamp
-        : now;
-      const params = sanitizeDbParams([
-        parsed.id,
-        parsed.providerMetaId,
-        parsed.providerGlobalMetaId,
-        parsed.providerAddress,
-        parsed.serviceName,
-        parsed.displayName,
-        parsed.description,
-        parsed.price,
-        parsed.currency,
-        parsed.avatar,
-        parsed.serviceIcon,
-        providerMetaBot || null,
-        providerSkill || null,
-        skillDocument || null,
-        inputType || null,
-        outputType || null,
-        endpoint || null,
-        contentSummaryJson || null,
-        parsed.providerAddress,
-        itemTimestamp,
-      ]);
-      db.run(
-        `INSERT INTO remote_skill_service (
-          id, metaid, global_metaid, address, service_name, display_name, description,
-          price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
-          skill_document, input_type, output_type, endpoint, content_summary_json, payment_address, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          metaid = excluded.metaid,
-          global_metaid = excluded.global_metaid,
-          address = excluded.address,
-          service_name = excluded.service_name,
-          display_name = excluded.display_name,
-          description = excluded.description,
-          price = excluded.price,
-          currency = excluded.currency,
-          avatar = excluded.avatar,
-          service_icon = excluded.service_icon,
-          provider_meta_bot = excluded.provider_meta_bot,
-          provider_skill = excluded.provider_skill,
-          skill_document = excluded.skill_document,
-          input_type = excluded.input_type,
-          output_type = excluded.output_type,
-          endpoint = excluded.endpoint,
-          content_summary_json = excluded.content_summary_json,
-          payment_address = excluded.payment_address,
-          updated_at = excluded.updated_at`,
-        params
-      );
-    }
+    await syncRemoteSkillServicesWithCursor({
+      pageSize: GIG_SQUARE_SYNC_SIZE,
+      fetchPage: async (cursor?: string) => {
+        const url = new URL('https://manapi.metaid.io/pin/path/list');
+        url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
+        url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
+        if (cursor) url.searchParams.set('cursor', cursor);
+        const localPath = `/api/pin/path/list${url.search}`;
+        const response = await fetchJsonWithFallbackOnMiss(localPath, url.toString(), isEmptyListDataPayload);
+        if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
+        const json = await response.json();
+        return {
+          list: Array.isArray(json?.data?.list) ? json.data.list as Record<string, unknown>[] : [],
+          nextCursor: typeof json?.data?.nextCursor === 'string' ? json.data.nextCursor : null,
+        };
+      },
+      upsertService: (parsed) => {
+        if (!parsed.serviceName || !parsed.providerMetaId || !parsed.providerAddress) return;
+        const params = sanitizeDbParams([
+          parsed.id,
+          parsed.providerMetaId,
+          parsed.providerGlobalMetaId,
+          parsed.providerAddress,
+          parsed.serviceName,
+          parsed.displayName,
+          parsed.description,
+          parsed.price,
+          parsed.currency,
+          parsed.avatar,
+          parsed.serviceIcon,
+          parsed.providerMetaBot || null,
+          parsed.providerSkill || null,
+          parsed.skillDocument || null,
+          parsed.inputType || null,
+          parsed.outputType || null,
+          parsed.endpoint || null,
+          parsed.contentSummaryJson || null,
+          parsed.paymentAddress || parsed.providerAddress,
+          parsed.updatedAt || Date.now(),
+        ]);
+        db.run(
+          `INSERT INTO remote_skill_service (
+            id, metaid, global_metaid, address, service_name, display_name, description,
+            price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
+            skill_document, input_type, output_type, endpoint, content_summary_json, payment_address, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            metaid = excluded.metaid,
+            global_metaid = excluded.global_metaid,
+            address = excluded.address,
+            service_name = excluded.service_name,
+            display_name = excluded.display_name,
+            description = excluded.description,
+            price = excluded.price,
+            currency = excluded.currency,
+            avatar = excluded.avatar,
+            service_icon = excluded.service_icon,
+            provider_meta_bot = excluded.provider_meta_bot,
+            provider_skill = excluded.provider_skill,
+            skill_document = excluded.skill_document,
+            input_type = excluded.input_type,
+            output_type = excluded.output_type,
+            endpoint = excluded.endpoint,
+            content_summary_json = excluded.content_summary_json,
+            payment_address = excluded.payment_address,
+            updated_at = excluded.updated_at`,
+          params
+        );
+      },
+    });
     sqliteStore.getSaveFunction()();
   } finally {
     gigSquareSyncInProgress = false;
@@ -829,7 +786,7 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const db = getStore().getDatabase();
   const result = db.exec(`
     SELECT id, metaid, global_metaid, address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_skill, updated_at, rating_count
+           price, currency, avatar, service_icon, provider_skill, updated_at, rating_avg, rating_count
     FROM remote_skill_service
     ORDER BY
       CASE WHEN rating_count > 0
@@ -843,28 +800,11 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const columns = result[0].columns as string[];
   const rows = result[0].values as (string | number)[][];
   return rows.map((row) => {
-    const getVal = (col: string): string => {
-      const i = columns.indexOf(col);
-      if (i < 0) return '';
-      const v = row[i];
-      return v != null ? String(v) : '';
-    };
-    return {
-      id: getVal('id'),
-      serviceName: getVal('service_name'),
-      displayName: getVal('display_name'),
-      description: getVal('description'),
-      price: getVal('price'),
-      currency: getVal('currency'),
-      providerMetaId: getVal('metaid'),
-      providerGlobalMetaId: getVal('global_metaid'),
-      providerAddress: getVal('payment_address') || getVal('address'),
-      avatar: getVal('avatar') || undefined,
-      serviceIcon: getVal('service_icon') || undefined,
-      providerSkill: getVal('provider_skill') || undefined,
-      ratingCount: (() => { const i = columns.indexOf('rating_count'); return i >= 0 && row[i] != null ? Number(row[i]) : 0; })(),
-      updatedAt: (() => { const i = columns.indexOf('updated_at'); return i >= 0 && row[i] != null ? Number(row[i]) : 0; })(),
-    } as GigSquareService;
+    const raw = columns.reduce<Record<string, unknown>>((acc, col, idx) => {
+      acc[col] = row[idx];
+      return acc;
+    }, {});
+    return parseRemoteSkillServiceRow(raw) as GigSquareService;
   });
 }
 
