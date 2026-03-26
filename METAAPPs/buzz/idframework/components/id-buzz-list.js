@@ -405,7 +405,10 @@ class IdBuzzList extends HTMLElement {
 
       var rawList = Array.isArray(result && result.list) ? result.list : [];
       var pageSize = this._getPageSize();
-      var list = rawList.length > pageSize ? rawList.slice(0, pageSize) : rawList;
+      var isHotStaticBatch = !this._isProfileMode() && this._getCurrentTab() === 'hot' && !isLoadMore && rawList.length > pageSize;
+      var list = isHotStaticBatch
+        ? rawList
+        : (rawList.length > pageSize ? rawList.slice(0, pageSize) : rawList);
       var total = Number((result && result.total) ?? 0);
       var nextCursor = (result && result.nextCursor !== undefined && result.nextCursor !== null)
         ? String(result.nextCursor)
@@ -421,6 +424,20 @@ class IdBuzzList extends HTMLElement {
       if (rawList.length > list.length) {
         hasMore = !!(nextCursor && list.length > 0);
       }
+      if (isHotStaticBatch) {
+        hasMore = false;
+        nextCursor = '';
+      }
+      var mergedList = list;
+      if (isLoadMore) {
+        var existingList = segment && Array.isArray(segment.list) ? segment.list : [];
+        var merged = this._mergeUniqueBuzzItems(existingList, list);
+        mergedList = merged.list;
+        if (merged.uniqueIncomingCount === 0 && existingList.length > 0) {
+          hasMore = false;
+          nextCursor = '';
+        }
+      }
 
       if (segment) {
         segment.total = Number.isFinite(total) ? total : list.length;
@@ -428,7 +445,7 @@ class IdBuzzList extends HTMLElement {
         segment.hasMore = hasMore;
         segment.error = '';
         if (isLoadMore) {
-          segment.list = (Array.isArray(segment.list) ? segment.list : []).concat(list);
+          segment.list = mergedList;
         } else {
           segment.list = list;
         }
@@ -513,6 +530,41 @@ class IdBuzzList extends HTMLElement {
       if (normalized) return normalized;
     }
     return '';
+  }
+
+  _buzzItemKey(item) {
+    if (!item || typeof item !== 'object') return '';
+    return String(
+      item.id ||
+      item.lastId ||
+      (item.raw && (item.raw.id || item.raw.pinId || item.raw.pinid)) ||
+      ''
+    ).trim();
+  }
+
+  _mergeUniqueBuzzItems(existingList, incomingList) {
+    var merged = Array.isArray(existingList) ? existingList.slice() : [];
+    var source = Array.isArray(incomingList) ? incomingList : [];
+    var seen = new Set();
+
+    merged.forEach((item) => {
+      var key = this._buzzItemKey(item);
+      if (key) seen.add(key);
+    });
+
+    var uniqueIncomingCount = 0;
+    source.forEach((item) => {
+      var key = this._buzzItemKey(item);
+      if (key && seen.has(key)) return;
+      if (key) seen.add(key);
+      merged.push(item);
+      uniqueIncomingCount += 1;
+    });
+
+    return {
+      list: merged,
+      uniqueIncomingCount: uniqueIncomingCount,
+    };
   }
 
   async _waitForCommand(commandName, maxWaitMs = 5000) {
@@ -1418,6 +1470,15 @@ class IdBuzzList extends HTMLElement {
         .buzz-sentinel {
           height: 1px;
         }
+        .end-of-list {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 48px;
+          color: #6b7280;
+          font-size: 13px;
+          text-align: center;
+        }
         .post-modal {
           position: fixed;
           inset: 0;
@@ -1462,6 +1523,7 @@ class IdBuzzList extends HTMLElement {
           ${!this._loading && !this._error && this._buzzList.length === 0 ? `<div class="empty">${this._escapeHtml(this._emptyMessage || this._t('buzz.list.emptyDefault', 'No buzz data.'))}</div>` : ''}
           ${!this._loading ? this._buzzList.map((item, index) => this._renderBuzzItem(item, index)).join('') : ''}
           ${this._loadingMore ? `<div class="loading-more"><span class="spinner"></span>${this._escapeHtml(this._t('buzz.list.loadingMore', 'Loading more...'))}</div>` : ''}
+          ${!this._loading && !this._loadingMore && !this._error && this._buzzList.length > 0 && !this._hasMore ? `<div class="end-of-list">${this._escapeHtml(this._t('buzz.list.noMore', 'No more content.'))}</div>` : ''}
           <div class="buzz-sentinel"></div>
         </div>
       </section>
