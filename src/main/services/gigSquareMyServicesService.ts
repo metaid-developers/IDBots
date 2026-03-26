@@ -119,6 +119,12 @@ const normalizePageSize = (value: number, fallback: number): number => {
   return Math.floor(value);
 };
 
+export const clampPageSize = (value: number, maxPageSize: number): number => {
+  const normalizedMax = normalizePageSize(maxPageSize, 1);
+  const normalizedValue = normalizePageSize(value, normalizedMax);
+  return Math.min(normalizedValue, normalizedMax);
+};
+
 const compareNumbersDesc = (a: number | null | undefined, b: number | null | undefined): number => {
   return toSafeNumber(b) - toSafeNumber(a);
 };
@@ -175,12 +181,32 @@ const getOrderFinalizedAt = (order: GigSquareMyServiceOrderSource): number => {
 };
 
 const pickRatingDetail = (
-  ratingOrList: GigSquareMyServiceRating | GigSquareMyServiceRating[] | undefined
+  ratingOrList: GigSquareMyServiceRating | GigSquareMyServiceRating[] | undefined,
+  counterpartyGlobalMetaid?: string | null,
 ): GigSquareMyServiceOrderDetail['rating'] => {
   if (!ratingOrList) return null;
-  const rating = Array.isArray(ratingOrList)
-    ? [...ratingOrList].sort((a, b) => compareNumbersDesc(a.createdAt, b.createdAt))[0]
-    : ratingOrList;
+  const ratings = Array.isArray(ratingOrList) ? [...ratingOrList] : [ratingOrList];
+  const normalizedBuyerGlobalMetaId = toSafeString(counterpartyGlobalMetaid).trim();
+  const sortByNewest = (left: GigSquareMyServiceRating, right: GigSquareMyServiceRating) =>
+    compareNumbersDesc(left.createdAt, right.createdAt);
+
+  let rating: GigSquareMyServiceRating | undefined;
+  if (!normalizedBuyerGlobalMetaId) {
+    rating = ratings.sort(sortByNewest)[0];
+  } else {
+    const exactMatches = ratings
+      .filter((candidate) => toSafeString(candidate.raterGlobalMetaId).trim() === normalizedBuyerGlobalMetaId)
+      .sort(sortByNewest);
+    if (exactMatches.length > 0) {
+      rating = exactMatches[0];
+    } else {
+      const txOnlyCandidates = ratings
+        .filter((candidate) => !toSafeString(candidate.raterGlobalMetaId).trim())
+        .sort(sortByNewest);
+      rating = txOnlyCandidates[0];
+    }
+  }
+  if (!rating) return null;
   const rate = toSafeNumber(rating.rate);
   if (!Number.isFinite(rate) || rate <= 0) return null;
   return {
@@ -296,7 +322,9 @@ export function buildMyServiceOrderDetails(input: {
         refundCompletedAt: order.refundCompletedAt == null ? null : toSafeNumber(order.refundCompletedAt),
         counterpartyGlobalMetaid: toSafeString(order.counterpartyGlobalMetaid).trim() || null,
         coworkSessionId: toSafeString(order.coworkSessionId).trim() || null,
-        rating: paymentTxid ? pickRatingDetail(input.ratingsByPaymentTxid.get(paymentTxid)) : null,
+        rating: paymentTxid
+          ? pickRatingDetail(input.ratingsByPaymentTxid.get(paymentTxid), order.counterpartyGlobalMetaid)
+          : null,
       };
     });
 

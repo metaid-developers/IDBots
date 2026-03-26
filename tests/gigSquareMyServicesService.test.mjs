@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   buildMyServiceSummaries,
   buildMyServiceOrderDetails,
+  clampPageSize,
 } = require('../dist-electron/services/gigSquareMyServicesService.js');
 
 test('buildMyServiceSummaries filters services by owned globalmetaids and paginates 8 rows', () => {
@@ -109,4 +110,53 @@ test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
   assert.equal(result.items[0].rating?.rate, 5);
   assert.equal(result.items[0].rating?.comment, 'Excellent');
   assert.equal(result.items[0].rating?.raterGlobalMetaId, 'buyer-1');
+});
+
+test('buildMyServiceOrderDetails prefers rating with matching buyer identity over newer mismatched tx match', () => {
+  const result = buildMyServiceOrderDetails({
+    serviceId: 'svc-1',
+    sellerOrders: [
+      {
+        id: 'order-1',
+        servicePinId: 'svc-1',
+        status: 'completed',
+        paymentTxid: 'paid-1',
+        paymentAmount: '2.5',
+        paymentCurrency: 'SPACE',
+        counterpartyGlobalMetaid: 'buyer-1',
+      },
+    ],
+    ratingsByPaymentTxid: new Map([
+      ['paid-1', [
+        {
+          servicePaidTx: 'paid-1',
+          rate: 1,
+          comment: 'Wrong buyer but newer',
+          raterGlobalMetaId: 'buyer-other',
+          raterMetaId: 'meta-other',
+          createdAt: 2_000,
+        },
+        {
+          servicePaidTx: 'paid-1',
+          rate: 5,
+          comment: 'Correct buyer',
+          raterGlobalMetaId: 'buyer-1',
+          raterMetaId: 'meta-buyer-1',
+          createdAt: 1_000,
+        },
+      ]],
+    ]),
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.equal(result.items[0].rating?.rate, 5);
+  assert.equal(result.items[0].rating?.comment, 'Correct buyer');
+  assert.equal(result.items[0].rating?.raterGlobalMetaId, 'buyer-1');
+});
+
+test('clampPageSize caps requested page size at product maximum', () => {
+  assert.equal(clampPageSize(99, 8), 8);
+  assert.equal(clampPageSize(99, 10), 10);
+  assert.equal(clampPageSize(0, 8), 8);
 });

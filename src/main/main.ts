@@ -93,6 +93,7 @@ import {
 import {
   buildMyServiceOrderDetails,
   buildMyServiceSummaries,
+  clampPageSize,
   type GigSquareMyServiceRating,
 } from './services/gigSquareMyServicesService';
 
@@ -3521,7 +3522,7 @@ if (!gotTheLock) {
   }) => {
     try {
       const page = normalizePositiveInteger(params?.page, 1);
-      const pageSize = normalizePositiveInteger(params?.pageSize, GIG_SQUARE_MY_SERVICES_PAGE_SIZE);
+      const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICES_PAGE_SIZE);
       const summaryPage = buildMyServiceSummaries({
         ownedGlobalMetaIds: listOwnedGigSquareProviderGlobalMetaIds(),
         services: listRemoteSkillServicesFromDb(),
@@ -3568,7 +3569,7 @@ if (!gotTheLock) {
       }
 
       const page = normalizePositiveInteger(params?.page, 1);
-      const pageSize = normalizePositiveInteger(params?.pageSize, GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE);
+      const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE);
       const detailPage = buildMyServiceOrderDetails({
         serviceId,
         sellerOrders: getServiceOrderStore().listOrdersByStatuses('seller', ['completed', 'refunded']),
