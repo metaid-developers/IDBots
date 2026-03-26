@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
+import { MetaAppsView } from './components/metaapps';
 import { SkillsView } from './components/skills';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import MetabotsView from './components/metabots/MetabotsView';
@@ -34,7 +35,7 @@ import Onboarding from './components/onboarding/Onboarding';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'metaapps' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -273,6 +274,10 @@ const App: React.FC = () => {
 
   const handleShowSkills = useCallback(() => {
     setMainView('skills');
+  }, []);
+
+  const handleShowMetaApps = useCallback(() => {
+    setMainView('metaapps');
   }, []);
 
   const handleShowCowork = useCallback(() => {
@@ -662,6 +667,7 @@ const App: React.FC = () => {
           onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
           activeView={mainView}
+          onShowMetaApps={handleShowMetaApps}
           onShowSkills={handleShowSkills}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
@@ -676,6 +682,13 @@ const App: React.FC = () => {
           <div className="h-full rounded-xl dark:bg-claude-darkBg bg-claude-bg overflow-hidden">
             {mainView === 'gigSquare' ? (
               <GigSquareView />
+            ) : mainView === 'metaapps' ? (
+              <MetaAppsView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+                updateBadge={isSidebarCollapsed ? updateBadge : null}
+              />
             ) : mainView === 'skills' ? (
               <SkillsView
                 isSidebarCollapsed={isSidebarCollapsed}
