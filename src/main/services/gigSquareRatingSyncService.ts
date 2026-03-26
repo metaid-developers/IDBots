@@ -223,6 +223,12 @@ export async function syncGigSquareRatings(
             OR TRIM(remote_skill_service_rating_seen.rater_metaid) = ''
           THEN excluded.rater_metaid
           ELSE remote_skill_service_rating_seen.rater_metaid
+        END,
+        created_at = CASE
+          WHEN remote_skill_service_rating_seen.created_at > 0
+            AND remote_skill_service_rating_seen.created_at < ${UNIX_SECONDS_MAX}
+          THEN remote_skill_service_rating_seen.created_at * 1000
+          ELSE remote_skill_service_rating_seen.created_at
         END`,
       [
         parsed.pinId,

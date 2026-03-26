@@ -167,6 +167,52 @@ test('syncGigSquareRatings normalizes second-based timestamps to milliseconds fo
   assert.equal(createdAt, 1_710_000_000_000);
 });
 
+test('syncGigSquareRatings normalizes second-based created_at for an already-seen replayed row', async () => {
+  const db = await createSqlDatabase();
+  createRatingTables(db);
+  db.run(
+    'INSERT INTO remote_skill_service (id, rating_avg, rating_count) VALUES (?, ?, ?)',
+    ['svc-1', 4, 1]
+  );
+  db.run(
+    `INSERT INTO remote_skill_service_rating_seen (
+      pin_id, service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['pin-seconds', 'svc-1', null, 4, null, null, null, 1_710_000_000]
+  );
+
+  await syncGigSquareRatings({
+    db,
+    latestPinId: null,
+    backfillCursor: null,
+    maxPages: 1,
+    fetchPage: async () => ({
+      list: [{
+        id: 'pin-seconds',
+        metaid: 'buyer-meta',
+        globalMetaId: 'buyer-global',
+        timestamp: 1_710_000_000,
+        contentSummary: JSON.stringify({
+          serviceID: 'svc-1',
+          servicePaidTx: 's'.repeat(64),
+          rate: '4',
+          comment: 'Replay',
+        }),
+      }],
+      nextCursor: null,
+    }),
+    setLatestPinId: () => {},
+    setBackfillCursor: () => {},
+    clearBackfillCursor: () => {},
+  });
+
+  const createdAt = db.exec(
+    'SELECT created_at FROM remote_skill_service_rating_seen WHERE pin_id = ?',
+    ['pin-seconds']
+  )[0].values[0][0];
+  assert.equal(createdAt, 1_710_000_000_000);
+});
+
 test('syncGigSquareRatings keeps scanning the first page after latestPinId to enrich older seen rows', async () => {
   const db = await createSqlDatabase();
   createRatingTables(db);
