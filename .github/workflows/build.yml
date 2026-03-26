@@ -77,23 +77,33 @@ jobs:
         shell: bash
         run: mkdir -p resources/mingit
 
-      # 根据平台启用签名配置
-      - name: Configure code signing
+      # 根据平台启用签名配置（避免 Windows 缺少 bash）
+      - name: Configure code signing (macOS)
+        if: runner.os == 'macOS'
         shell: bash
+        env:
+          SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
+          SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
-          if [ "$RUNNER_OS" = "macOS" ] && [ -n "${SECRET_CSC_LINK}" ]; then
+          if [ -n "${SECRET_CSC_LINK}" ] && [ -n "${SECRET_CSC_KEY_PASSWORD}" ]; then
             echo "CSC_LINK=${SECRET_CSC_LINK}" >> "$GITHUB_ENV"
             echo "CSC_KEY_PASSWORD=${SECRET_CSC_KEY_PASSWORD}" >> "$GITHUB_ENV"
-            echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
-          elif [ "$RUNNER_OS" = "Windows" ] && [ -n "${SECRET_WIN_CERT_SHA1}" ]; then
             echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
           else
             echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
           fi
+
+      - name: Configure code signing (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         env:
-          SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
-          SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           SECRET_WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+        run: |
+          if ($env:SECRET_WIN_CERT_SHA1) {
+            "CSC_IDENTITY_AUTO_DISCOVERY=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            "CSC_IDENTITY_AUTO_DISCOVERY=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: Prepare macOS signing keychain
         if: runner.os == 'macOS'
