@@ -1,5 +1,11 @@
 import type { McpServerConfig, McpServerFormData } from './mcp';
-import type { GigSquareProviderInfo, GigSquareService } from './gigSquare';
+import type {
+  GigSquareMyServiceOrderDetail,
+  GigSquareMyServiceSummary,
+  GigSquarePageResult,
+  GigSquareProviderInfo,
+  GigSquareService,
+} from './gigSquare';
 
 interface ApiResponse {
   ok: boolean;
@@ -367,6 +373,16 @@ interface IElectronAPI {
   };
   gigSquare: {
     fetchServices: () => Promise<{ success: boolean; list?: GigSquareService[]; error?: string }>;
+    fetchMyServices: (params?: { page?: number; pageSize?: number }) => Promise<{
+      success: boolean;
+      page?: GigSquarePageResult<GigSquareMyServiceSummary>;
+      error?: string;
+    }>;
+    fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number }) => Promise<{
+      success: boolean;
+      page?: GigSquarePageResult<GigSquareMyServiceOrderDetail>;
+      error?: string;
+    }>;
     syncFromRemote: () => Promise<{ success: boolean; error?: string }>;
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) => Promise<{ success: boolean; error?: string } & GigSquareProviderInfo>;
     preflightOrder: (params: { metabotId: number; toGlobalMetaId: string }) => Promise<{ success: boolean; error?: string; errorCode?: 'open_order_exists' | string }>;

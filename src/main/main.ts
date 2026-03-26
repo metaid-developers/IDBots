@@ -90,6 +90,11 @@ import {
   repairServiceRatingAggregate,
   syncGigSquareRatings,
 } from './services/gigSquareRatingSyncService';
+import {
+  buildMyServiceOrderDetails,
+  buildMyServiceSummaries,
+  type GigSquareMyServiceRating,
+} from './services/gigSquareMyServicesService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -326,6 +331,8 @@ const publishServiceOrderEventToCowork = (
 const GIG_SQUARE_SERVICE_PATH = '/protocols/skill-service';
 const GIG_SQUARE_CHATPUBKEY_PATH = '/info/chatpubkey';
 const GIG_SQUARE_SERVICE_LIMIT = 10;
+const GIG_SQUARE_MY_SERVICES_PAGE_SIZE = 8;
+const GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE = 10;
 const GIG_SQUARE_SYNC_SIZE = 200;
 const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
 const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
@@ -357,6 +364,9 @@ type GigSquareService = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  ratingAvg?: number;
+  ratingCount?: number;
+  updatedAt?: number;
   refundRisk?: {
     hasUnresolvedRefund: boolean;
     unresolvedRefundAgeHours: number;
@@ -374,6 +384,12 @@ const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizePositiveInteger = (value: unknown, fallback: number): number => {
+  const parsed = toSafeNumber(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
 };
 
 const buildPrivateMessagePayload = (to: string, encryptedContent: string, replyPin = ''): string => {
@@ -727,6 +743,51 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
     return parseRemoteSkillServiceRow(raw) as GigSquareService;
   });
 }
+
+function listGigSquareRatingsFromDb(serviceId?: string): GigSquareMyServiceRating[] {
+  const db = getStore().getDatabase();
+  const trimmedServiceId = typeof serviceId === 'string' ? serviceId.trim() : '';
+  const params: string[] = [];
+  const clauses = [
+    'service_paid_tx IS NOT NULL',
+    "TRIM(service_paid_tx) <> ''",
+  ];
+  if (trimmedServiceId) {
+    clauses.push('service_id = ?');
+    params.push(trimmedServiceId);
+  }
+  const result = db.exec(`
+    SELECT service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
+    FROM remote_skill_service_rating_seen
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY created_at DESC
+  `, params);
+  if (!result.length || !result[0].values.length) return [];
+  const columns = result[0].columns as string[];
+  const rows = result[0].values as (string | number | null)[][];
+  return rows.map((row) => {
+    const raw = columns.reduce<Record<string, unknown>>((acc, col, idx) => {
+      acc[col] = row[idx];
+      return acc;
+    }, {});
+    return {
+      serviceId: toSafeString(raw.service_id).trim(),
+      servicePaidTx: toSafeString(raw.service_paid_tx).trim() || null,
+      rate: toSafeNumber(raw.rate),
+      comment: toSafeString(raw.comment).trim() || null,
+      raterGlobalMetaId: toSafeString(raw.rater_global_metaid).trim() || null,
+      raterMetaId: toSafeString(raw.rater_metaid).trim() || null,
+      createdAt: toSafeNumber(raw.created_at),
+    };
+  });
+}
+
+const listOwnedGigSquareProviderGlobalMetaIds = (): Set<string> => new Set(
+  getMetabotStore()
+    .listMetabots()
+    .map((metabot) => toSafeString(metabot.globalmetaid).trim())
+    .filter(Boolean)
+);
 
 type CaptureRect = { x: number; y: number; width: number; height: number };
 
@@ -3451,6 +3512,73 @@ if (!gotTheLock) {
       return { success: true, list };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch services' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:fetchMyServices', async (_event, params?: {
+    page?: number;
+    pageSize?: number;
+  }) => {
+    try {
+      const page = normalizePositiveInteger(params?.page, 1);
+      const pageSize = normalizePositiveInteger(params?.pageSize, GIG_SQUARE_MY_SERVICES_PAGE_SIZE);
+      const summaryPage = buildMyServiceSummaries({
+        ownedGlobalMetaIds: listOwnedGigSquareProviderGlobalMetaIds(),
+        services: listRemoteSkillServicesFromDb(),
+        sellerOrders: getServiceOrderStore().listOrdersByStatuses('seller', ['completed', 'refunded']),
+        page,
+        pageSize,
+      });
+      const items = await Promise.all(
+        summaryPage.items.map(async (item) => ({
+          ...item,
+          avatar: await resolvePinAssetSource(item.avatar ?? null),
+          serviceIcon: await resolvePinAssetSource(item.serviceIcon ?? null),
+        }))
+      );
+      return { success: true, page: { ...summaryPage, items } };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my services' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:fetchMyServiceOrders', async (_event, params?: {
+    serviceId?: string;
+    page?: number;
+    pageSize?: number;
+  }) => {
+    try {
+      const serviceId = toSafeString(params?.serviceId).trim();
+      if (!serviceId) {
+        return { success: false, error: 'serviceId is required' };
+      }
+      const ownedGlobalMetaIds = listOwnedGigSquareProviderGlobalMetaIds();
+      const service = listRemoteSkillServicesFromDb().find((item) => item.id === serviceId);
+      if (!service || !ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())) {
+        return { success: false, error: 'Service not found' };
+      }
+
+      const ratingsByPaymentTxid = new Map<string, GigSquareMyServiceRating[]>();
+      for (const rating of listGigSquareRatingsFromDb(serviceId)) {
+        const paymentTxid = toSafeString(rating.servicePaidTx).trim();
+        if (!paymentTxid) continue;
+        const list = ratingsByPaymentTxid.get(paymentTxid) ?? [];
+        list.push(rating);
+        ratingsByPaymentTxid.set(paymentTxid, list);
+      }
+
+      const page = normalizePositiveInteger(params?.page, 1);
+      const pageSize = normalizePositiveInteger(params?.pageSize, GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE);
+      const detailPage = buildMyServiceOrderDetails({
+        serviceId,
+        sellerOrders: getServiceOrderStore().listOrdersByStatuses('seller', ['completed', 'refunded']),
+        ratingsByPaymentTxid,
+        page,
+        pageSize,
+      });
+      return { success: true, page: detailPage };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my service orders' };
     }
   });
 
