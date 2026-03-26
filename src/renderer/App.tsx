@@ -25,12 +25,14 @@ import { clearSelection } from './store/slices/quickActionSlice';
 import { setActiveSkillIds } from './store/slices/skillSlice';
 import type { ApiConfig } from './services/api';
 import type { CoworkPermissionResult } from './types/cowork';
+import type { MetaAppRecord } from './types/metaApp';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import Onboarding from './components/onboarding/Onboarding';
+import { startMetaAppSession } from './components/metaapps/metaAppSession.js';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -314,6 +316,17 @@ const App: React.FC = () => {
       }));
     }, 0);
   }, [dispatch, mainView, currentSessionId]);
+
+  const handleStartTaskWithMetaApp = useCallback(async (app: MetaAppRecord) => {
+    coworkService.clearSession();
+    dispatch(clearSelection());
+    dispatch(setActiveSkillIds([]));
+    const session = await startMetaAppSession({ app, coworkService });
+    if (!session) {
+      throw new Error(i18nService.t('metaAppUseFailed'));
+    }
+    setMainView('cowork');
+  }, [dispatch]);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -687,6 +700,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
+                onStartTaskWithMetaApp={handleStartTaskWithMetaApp}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
             ) : mainView === 'skills' ? (
