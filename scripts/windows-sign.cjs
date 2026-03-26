@@ -7,11 +7,44 @@ const DEFAULT_TIMESTAMP_URLS = [
   "http://timestamp.sectigo.com"
 ];
 
-function runSignTool(signtoolPath, args) {
+function runSignTool(signtoolPath, args, options = {}) {
+  const timeoutMs =
+    Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : 60000;
+
   return new Promise((resolve, reject) => {
+    let settled = false;
     const child = spawn(signtoolPath, args, { stdio: "inherit" });
-    child.on("error", reject);
+
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      try {
+        child.kill();
+      } catch {
+        // best effort
+      }
+      reject(new Error(`signtool timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+
     child.on("exit", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       if (code === 0) {
         resolve();
         return;
@@ -54,7 +87,9 @@ module.exports = async function signWindowsArtifact(configuration) {
   }
 
   const timestampUrls = getTimestampUrls();
-  const maxAttemptsPerUrl = 2;
+  const maxAttemptsPerUrl = 1;
+  const timeoutMs = Number(process.env.WIN_SIGNTOOL_TIMEOUT_MS || 60000);
+  const requireTimestamp = String(process.env.WIN_REQUIRE_TIMESTAMP || "").toLowerCase() === "true";
   const errors = [];
 
   for (const timestampUrl of timestampUrls) {
@@ -79,7 +114,7 @@ module.exports = async function signWindowsArtifact(configuration) {
             `[windows-sign] retrying with timestamp server ${timestampUrl} (attempt ${attempt}/${maxAttemptsPerUrl})`
           );
         }
-        await runSignTool(signtoolPath, args);
+        await runSignTool(signtoolPath, args, { timeoutMs });
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -89,6 +124,16 @@ module.exports = async function signWindowsArtifact(configuration) {
         }
       }
     }
+  }
+
+  if (!requireTimestamp) {
+    console.warn(`[windows-sign] timestamp unavailable, fallback to signing without timestamp for ${filePath}`);
+    await runSignTool(
+      signtoolPath,
+      ["sign", "/sha1", thumbprint, "/fd", "SHA256", "/v", filePath],
+      { timeoutMs }
+    );
+    return;
   }
 
   throw new Error(`windows-sign: all timestamp attempts failed:\n${errors.join("\n")}`);
