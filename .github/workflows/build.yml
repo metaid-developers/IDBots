@@ -146,7 +146,7 @@ jobs:
           WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
           WIN_SIGNTOOL_PATH: ${{ vars.WIN_SIGNTOOL_PATH }}
           WIN_TIMESTAMP_URL: ${{ vars.WIN_TIMESTAMP_URL }}
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not $env:WIN_CERT_SHA1) {
             Write-Error "Missing WIN_CERT_SHA1 secret for Windows code signing."
@@ -158,7 +158,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           WIN_SIGNTOOL_PATH: ${{ vars.WIN_SIGNTOOL_PATH }}
-        shell: pwsh
+        shell: powershell
         run: |
           $signTool = if ($env:WIN_SIGNTOOL_PATH) { $env:WIN_SIGNTOOL_PATH } else { 'C:\sign\signtool.exe' }
           if (-not (Test-Path $signTool)) {
