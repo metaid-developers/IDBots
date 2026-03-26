@@ -161,3 +161,103 @@ test('syncGigSquareRatings normalizes second-based timestamps to milliseconds fo
   )[0].values[0][0];
   assert.equal(createdAt, 1_710_000_000_000);
 });
+
+test('syncGigSquareRatings keeps scanning the first page after latestPinId to enrich older seen rows', async () => {
+  const db = await createSqlDatabase();
+  createRatingTables(db);
+  db.run(
+    'INSERT INTO remote_skill_service (id, rating_avg, rating_count) VALUES (?, ?, ?)',
+    ['svc-1', 4, 2]
+  );
+  db.run(
+    `INSERT INTO remote_skill_service_rating_seen (
+      pin_id, service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['pin-latest', 'svc-1', 'z'.repeat(64), 4, 'Latest', 'latest-global', 'latest-meta', 1_710_000_100_000]
+  );
+  db.run(
+    `INSERT INTO remote_skill_service_rating_seen (
+      pin_id, service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['pin-old', 'svc-1', null, 5, null, null, null, 1_710_000_000_000]
+  );
+
+  const fetchCalls = [];
+  await syncGigSquareRatings({
+    db,
+    latestPinId: 'pin-latest',
+    backfillCursor: null,
+    maxPages: 5,
+    fetchPage: async (cursor) => {
+      fetchCalls.push(cursor);
+      if (!cursor) {
+        return {
+          list: [
+            {
+              id: 'pin-new',
+              metaid: 'new-meta',
+              globalMetaId: 'new-global',
+              timestamp: 1_710_000_200,
+              contentSummary: JSON.stringify({
+                serviceID: 'svc-1',
+                servicePaidTx: 'n'.repeat(64),
+                rate: '3',
+                comment: 'Fresh',
+              }),
+            },
+            {
+              id: 'pin-latest',
+              metaid: 'latest-meta',
+              globalMetaId: 'latest-global',
+              timestamp: 1_710_000_150,
+              contentSummary: JSON.stringify({
+                serviceID: 'svc-1',
+                servicePaidTx: 'z'.repeat(64),
+                rate: '4',
+                comment: 'Latest',
+              }),
+            },
+            {
+              id: 'pin-old',
+              metaid: 'old-meta',
+              globalMetaId: 'old-global',
+              timestamp: 1_710_000_050,
+              contentSummary: JSON.stringify({
+                serviceID: 'svc-1',
+                servicePaidTx: 'o'.repeat(64),
+                rate: '5',
+                comment: 'Older replay',
+              }),
+            },
+          ],
+          nextCursor: 'cursor-2',
+        };
+      }
+
+      assert.equal(cursor, 'cursor-2');
+      return {
+        list: [],
+        nextCursor: null,
+      };
+    },
+    setLatestPinId: () => {},
+    setBackfillCursor: () => {},
+    clearBackfillCursor: () => {},
+  });
+
+  const oldRow = db.exec(
+    `SELECT service_paid_tx, comment, rater_global_metaid, rater_metaid
+     FROM remote_skill_service_rating_seen
+     WHERE pin_id = ?`,
+    ['pin-old']
+  )[0].values[0];
+  assert.deepEqual(oldRow, ['o'.repeat(64), 'Older replay', 'old-global', 'old-meta']);
+
+  const aggregateRow = db.exec(
+    'SELECT rating_avg, rating_count FROM remote_skill_service WHERE id = ?',
+    ['svc-1']
+  )[0].values[0];
+  assert.deepEqual(aggregateRow, [11 / 3, 3]);
+
+  assert.deepEqual(fetchCalls, [undefined, 'cursor-2']);
+});

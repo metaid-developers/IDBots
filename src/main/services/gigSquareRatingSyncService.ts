@@ -236,7 +236,6 @@ export async function syncGigSquareRatings(
       const itemId = toSafeString(item.id).trim();
       if (input.latestPinId && itemId === input.latestPinId) {
         hitLatest = true;
-        break;
       }
       processItem(item);
     }
