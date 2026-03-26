@@ -20,7 +20,7 @@ jobs:
         include:
           - os: macos-latest
             build_args: --mac --arm64 --dir
-          - os: windows-latest
+          - os: windows-signer
             build_args: --win --x64
 
     steps:
@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: mkdir -p resources/mingit
 
-      # 当 CSC_LINK Secret 未配置时，禁用自动签名
+      # 根据平台启用签名配置
       - name: Configure code signing
         shell: bash
         run: |
@@ -85,12 +85,15 @@ jobs:
             echo "CSC_LINK=${SECRET_CSC_LINK}" >> "$GITHUB_ENV"
             echo "CSC_KEY_PASSWORD=${SECRET_CSC_KEY_PASSWORD}" >> "$GITHUB_ENV"
             echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = "Windows" ] && [ -n "${SECRET_WIN_CERT_SHA1}" ]; then
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
           else
             echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
           fi
         env:
           SECRET_CSC_LINK: ${{ secrets.CSC_LINK }}
           SECRET_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          SECRET_WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
 
       - name: Prepare macOS signing keychain
         if: runner.os == 'macOS'
@@ -127,11 +130,37 @@ jobs:
           npx electron-builder ${{ matrix.build_args }}
           --publish never
 
-      - name: Build Electron app package (Windows unsigned)
+      - name: Build Electron app package (Windows signed)
         if: runner.os == 'Windows'
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder ${{ matrix.build_args }} --publish never
+          WIN_CERT_SHA1: ${{ secrets.WIN_CERT_SHA1 }}
+          WIN_SIGNTOOL_PATH: ${{ vars.WIN_SIGNTOOL_PATH }}
+          WIN_TIMESTAMP_URL: ${{ vars.WIN_TIMESTAMP_URL }}
+        shell: pwsh
+        run: |
+          if (-not $env:WIN_CERT_SHA1) {
+            Write-Error "Missing WIN_CERT_SHA1 secret for Windows code signing."
+            exit 1
+          }
+          npx electron-builder ${{ matrix.build_args }} --publish never
+
+      - name: Verify Windows signatures
+        if: runner.os == 'Windows'
+        env:
+          WIN_SIGNTOOL_PATH: ${{ vars.WIN_SIGNTOOL_PATH }}
+        shell: pwsh
+        run: |
+          $signTool = if ($env:WIN_SIGNTOOL_PATH) { $env:WIN_SIGNTOOL_PATH } else { 'C:\sign\signtool.exe' }
+          if (-not (Test-Path $signTool)) {
+            Write-Error "signtool not found at: $signTool"
+            exit 1
+          }
+          $installer = Get-ChildItem -Path release -Filter 'IDBots Setup *.exe' | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "Windows installer not found in release directory."
+            exit 1
+          }
+          & $signTool verify /pa /all $installer.FullName
 
       - name: Notarize app (macOS)
         if: runner.os == 'macOS'
@@ -219,7 +248,7 @@ jobs:
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist-windows-latest
+          name: dist-windows-signer
           path: release-assets/windows
 
       - name: Verify release assets
