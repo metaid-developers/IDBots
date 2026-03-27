@@ -11,7 +11,25 @@ import {
   type CoworkMemoryGuardLevel,
 } from './libs/coworkMemoryExtractor';
 import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
-import type { MemoryBackend, MemoryDeleteUserMemoryInput } from './memory/memoryBackend';
+import type {
+  MemoryBackend,
+  MemoryCreateUserMemoryInput,
+  MemoryDeleteUserMemoryInput,
+  MemoryListUserMemoriesOptions,
+  MemoryUpdateUserMemoryInput,
+  MemoryUserMemoryStats,
+} from './memory/memoryBackend';
+import {
+  OWNER_SCOPE_KEY,
+  createOwnerMemoryScope,
+  normalizeMemoryScopeSelector,
+  normalizeScopeChannel,
+  normalizeScopeIdentity,
+  type MemoryScope,
+  type MemoryUsageClass,
+  type MemoryVisibility,
+} from './memory/memoryScope';
+import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -40,6 +58,13 @@ const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 60;
 const MEMORY_NEAR_DUPLICATE_MIN_SCORE = 0.82;
 const MEMORY_PROCEDURAL_TEXT_RE = /(执行以下命令|run\s+(?:the\s+)?following\s+command|\b(?:cd|npm|pnpm|yarn|node|python|bash|sh|git|curl|wget)\b|\$[A-Z_][A-Z0-9_]*|&&|--[a-z0-9-]+|\/tmp\/|\.sh\b|\.bat\b|\.ps1\b)/i;
 const MEMORY_ASSISTANT_STYLE_TEXT_RE = /^(?:使用|use)\s+[A-Za-z0-9._-]+\s*(?:技能|skill)/i;
+const MEMORY_OPERATIONAL_PREFERENCE_RE = /(默认语言|回复格式|输出风格|回复风格|尽量简洁|保持简短|reply(?:\s+in)?|respond(?:\s+in)?|language|format|style|tone|markdown|concise|brief)/i;
+const MEMORY_PREFERENCE_RE = /(偏好|喜欢|prefer|preference|likes?|dislikes?)/i;
+const SCOPED_USER_MEMORIES_BACKFILL_KEY = 'userMemories.scopeBackfill.v1.completed';
+const MEMORY_ROW_SELECT_COLUMNS = `
+  id, text, fingerprint, confidence, is_explicit, status,
+  created_at, updated_at, last_used_at, scope_kind, scope_key, usage_class, visibility
+`;
 
 function normalizeMemoryGuardLevel(value: string | undefined): CoworkMemoryGuardLevel {
   if (value === 'strict' || value === 'standard' || value === 'relaxed') return value;
@@ -320,6 +345,59 @@ function shouldAutoDeleteMemoryText(text: string): boolean {
     || isQuestionLikeMemoryText(normalized);
 }
 
+function normalizeMemoryUsageClass(value?: string | null): MemoryUsageClass {
+  if (value === 'preference' || value === 'operational_preference') {
+    return value;
+  }
+  return 'profile_fact';
+}
+
+function normalizeMemoryVisibility(value?: string | null): MemoryVisibility {
+  return value === 'external_safe' ? 'external_safe' : 'local_only';
+}
+
+function classifyMemoryText(text: string, scope: MemoryScope): {
+  usageClass: MemoryUsageClass;
+  visibility: MemoryVisibility;
+} {
+  const normalized = normalizeMemoryText(text);
+  const usageClass = MEMORY_OPERATIONAL_PREFERENCE_RE.test(normalized)
+    ? 'operational_preference'
+    : MEMORY_PREFERENCE_RE.test(normalized)
+      ? 'preference'
+      : 'profile_fact';
+  const visibility = scope.kind === 'owner' && usageClass === 'operational_preference'
+    ? 'external_safe'
+    : 'local_only';
+  return { usageClass, visibility };
+}
+
+function inferPeerGlobalMetaIdFromConversationId(
+  sourceChannel?: string | null,
+  externalConversationId?: string | null
+): string | null {
+  if (normalizeScopeChannel(sourceChannel) !== 'metaweb_private') {
+    return null;
+  }
+  const normalizedConversationId = normalizeScopeIdentity(externalConversationId);
+  const match = normalizedConversationId.match(/^metaweb-private:(.+)$/);
+  return match?.[1] ? normalizeScopeIdentity(match[1]) : null;
+}
+
+function parsePeerGlobalMetaIdFromMetadata(metadataJson?: string | null): string | null {
+  if (!metadataJson) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(metadataJson) as { peerGlobalMetaId?: unknown };
+    return normalizeScopeIdentity(
+      typeof parsed.peerGlobalMetaId === 'string' ? parsed.peerGlobalMetaId : null
+    ) || null;
+  } catch {
+    return null;
+  }
+}
+
 // Types mirroring src/types/cowork.ts for main process use
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
 export type CoworkMessageType = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'system';
@@ -396,6 +474,10 @@ export interface CoworkUserMemory {
   confidence: number;
   isExplicit: boolean;
   status: CoworkUserMemoryStatus;
+  scopeKind?: MemoryScope['kind'];
+  scopeKey?: string;
+  usageClass?: MemoryUsageClass;
+  visibility?: MemoryVisibility;
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
@@ -550,6 +632,17 @@ interface CoworkUserMemoryRow {
   updated_at: number;
   last_used_at: number | null;
   metabot_id?: number | null;
+  scope_kind?: string | null;
+  scope_key?: string | null;
+  usage_class?: string | null;
+  visibility?: string | null;
+}
+
+interface CoworkUserMemorySourceRow {
+  session_id: string | null;
+  source_channel: string | null;
+  external_conversation_id: string | null;
+  created_at: number | string;
 }
 
 interface CoworkMemoryPolicyRow {
@@ -570,6 +663,13 @@ interface CoworkConversationMappingRow {
   metadata_json: string | null;
   created_at: number | string;
   last_active_at: number | string;
+}
+
+interface MemoryScopeResolutionContext {
+  sourceChannel?: string | null;
+  externalConversationId?: string | null;
+  sessionType?: CoworkSessionType | null;
+  peerGlobalMetaId?: string | null;
 }
 
 export class CoworkStore implements MemoryBackend {
@@ -595,6 +695,7 @@ export class CoworkStore implements MemoryBackend {
     this.ensureMemorySchemaCompatibility();
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
+    this.backfillScopedMemoryMetadata();
   }
 
   private ensureMemorySchemaCompatibility(): void {
@@ -637,8 +738,36 @@ export class CoworkStore implements MemoryBackend {
         }
         changed = true;
       }
+      if (!memoryColumns.includes('scope_kind')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'owner';");
+        changed = true;
+      }
+      if (!memoryColumns.includes('scope_key')) {
+        this.db.run(`ALTER TABLE user_memories ADD COLUMN scope_key TEXT NOT NULL DEFAULT '${OWNER_SCOPE_KEY}';`);
+        changed = true;
+      }
+      if (!memoryColumns.includes('usage_class')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN usage_class TEXT NOT NULL DEFAULT 'profile_fact';");
+        changed = true;
+      }
+      if (!memoryColumns.includes('visibility')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN visibility TEXT NOT NULL DEFAULT 'local_only';");
+        changed = true;
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_status_updated
+        ON user_memories(metabot_id, scope_kind, scope_key, status, updated_at DESC)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_fingerprint
+        ON user_memories(metabot_id, scope_kind, scope_key, fingerprint)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_usage_visibility
+        ON user_memories(metabot_id, usage_class, visibility, status, updated_at DESC)
+      `);
     } catch (error) {
-      console.warn('[CoworkStore] Failed to verify user_memories metabot_id column:', error);
+      console.warn('[CoworkStore] Failed to verify user_memories scoped columns:', error);
     }
 
     try {
@@ -792,6 +921,249 @@ export class CoworkStore implements MemoryBackend {
     } catch (error) {
       console.warn('[CoworkStore] Failed to verify cowork_conversation_mappings schema:', error);
     }
+  }
+
+  private getKvValue(key: string): string | null {
+    const row = this.getOne<{ value: string }>('SELECT value FROM kv WHERE key = ?', [key]);
+    if (!row?.value) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(row.value) as unknown;
+      return typeof parsed === 'string' ? parsed : row.value;
+    } catch {
+      return row.value;
+    }
+  }
+
+  private setKvValue(key: string, value: string): void {
+    this.db.run(`
+      INSERT INTO kv (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `, [key, JSON.stringify(value), Date.now()]);
+    this.saveDb();
+  }
+
+  private resolveMemoryScopeSelector(input: {
+    scope?: MemoryScope | null;
+    scopeKind?: MemoryScope['kind'] | null;
+    scopeKey?: string | null;
+  }): MemoryScope {
+    return normalizeMemoryScopeSelector(input) ?? createOwnerMemoryScope();
+  }
+
+  private resolveMemoryClassification(
+    text: string,
+    scope: MemoryScope,
+    overrides: {
+      usageClass?: MemoryUsageClass | null;
+      visibility?: MemoryVisibility | null;
+    } = {}
+  ): {
+    usageClass: MemoryUsageClass;
+    visibility: MemoryVisibility;
+  } {
+    const inferred = classifyMemoryText(text, scope);
+    const usageClass = normalizeMemoryUsageClass(overrides.usageClass ?? inferred.usageClass);
+    let visibility = normalizeMemoryVisibility(overrides.visibility ?? inferred.visibility);
+    if (scope.kind !== 'owner' || usageClass !== 'operational_preference') {
+      visibility = 'local_only';
+    }
+    return { usageClass, visibility };
+  }
+
+  private getMemoryScopeResolutionContextBySession(sessionId?: string | null): MemoryScopeResolutionContext {
+    if (!sessionId) {
+      return {
+        sourceChannel: 'cowork_ui',
+        externalConversationId: null,
+        sessionType: null,
+        peerGlobalMetaId: null,
+      };
+    }
+
+    const sessionRow = this.getOne<{
+      session_type?: string | null;
+      peer_global_metaid?: string | null;
+    }>(`
+      SELECT session_type, peer_global_metaid
+      FROM cowork_sessions
+      WHERE id = ?
+      LIMIT 1
+    `, [sessionId]);
+
+    const mappingRow = this.getOne<{
+      channel: string;
+      external_conversation_id: string | null;
+      metadata_json: string | null;
+    }>(`
+      SELECT channel, external_conversation_id, metadata_json
+      FROM cowork_conversation_mappings
+      WHERE cowork_session_id = ?
+      ORDER BY
+        CASE WHEN channel = 'cowork_ui' THEN 1 ELSE 0 END ASC,
+        last_active_at DESC
+      LIMIT 1
+    `, [sessionId]);
+
+    return {
+      sourceChannel: mappingRow?.channel || 'cowork_ui',
+      externalConversationId: mappingRow?.external_conversation_id ?? sessionId,
+      sessionType: (sessionRow?.session_type === 'agent_agent'
+        ? 'a2a'
+        : sessionRow?.session_type) as CoworkSessionType | null | undefined ?? 'standard',
+      peerGlobalMetaId:
+        normalizeScopeIdentity(sessionRow?.peer_global_metaid)
+        || parsePeerGlobalMetaIdFromMetadata(mappingRow?.metadata_json)
+        || null,
+    };
+  }
+
+  private getMemoryScopeResolutionContextFromMapping(
+    sourceChannel?: string | null,
+    externalConversationId?: string | null,
+    metabotId?: number | null
+  ): MemoryScopeResolutionContext {
+    const normalizedChannel = normalizeScopeChannel(sourceChannel);
+    const normalizedConversationId = normalizeScopeIdentity(externalConversationId);
+    if (!normalizedChannel || !normalizedConversationId) {
+      return {};
+    }
+
+    const mapping = this.getConversationMapping(normalizedChannel, normalizedConversationId, metabotId ?? null);
+    if (!mapping) {
+      return {};
+    }
+
+    const sessionContext = this.getMemoryScopeResolutionContextBySession(mapping.coworkSessionId);
+    return {
+      sourceChannel: mapping.channel,
+      externalConversationId: mapping.externalConversationId,
+      sessionType: sessionContext.sessionType ?? null,
+      peerGlobalMetaId:
+        sessionContext.peerGlobalMetaId
+        || parsePeerGlobalMetaIdFromMetadata(mapping.metadataJson)
+        || inferPeerGlobalMetaIdFromConversationId(mapping.channel, mapping.externalConversationId),
+    };
+  }
+
+  private buildResolvedMemoryScopeInput(input: ResolveMemoryScopesInput & { sessionId?: string | null }): ResolveMemoryScopesInput {
+    const sessionContext = this.getMemoryScopeResolutionContextBySession(input.sessionId);
+    const sourceChannel = normalizeScopeChannel(input.sourceChannel)
+      || normalizeScopeChannel(sessionContext.sourceChannel)
+      || '';
+    const externalConversationId = normalizeScopeIdentity(input.externalConversationId)
+      || normalizeScopeIdentity(sessionContext.externalConversationId)
+      || null;
+    const mappingContext = this.getMemoryScopeResolutionContextFromMapping(
+      sourceChannel,
+      externalConversationId,
+      input.metabotId ?? null
+    );
+
+    const resolvedChannel = sourceChannel
+      || normalizeScopeChannel(mappingContext.sourceChannel)
+      || '';
+    const resolvedConversationId = externalConversationId
+      || normalizeScopeIdentity(mappingContext.externalConversationId)
+      || null;
+    const resolvedPeerGlobalMetaId = normalizeScopeIdentity(input.peerGlobalMetaId)
+      || normalizeScopeIdentity(sessionContext.peerGlobalMetaId)
+      || normalizeScopeIdentity(mappingContext.peerGlobalMetaId)
+      || inferPeerGlobalMetaIdFromConversationId(resolvedChannel, resolvedConversationId)
+      || null;
+
+    const inputSessionType = input.sessionType === 'agent_agent' ? 'a2a' : input.sessionType;
+    const resolvedSessionType = inputSessionType
+      || sessionContext.sessionType
+      || mappingContext.sessionType
+      || null;
+
+    return {
+      metabotId: input.metabotId,
+      sourceChannel: resolvedChannel || null,
+      externalConversationId: resolvedConversationId,
+      peerGlobalMetaId: resolvedPeerGlobalMetaId,
+      sessionType: resolvedSessionType,
+    };
+  }
+
+  private inferBackfilledMemoryScope(memoryId: string, metabotId: number): MemoryScope {
+    const sources = this.getAll<CoworkUserMemorySourceRow>(`
+      SELECT session_id, source_channel, external_conversation_id, created_at
+      FROM user_memory_sources
+      WHERE memory_id = ?
+      ORDER BY is_active DESC, created_at DESC
+    `, [memoryId]);
+
+    for (const source of sources) {
+      const resolved = resolveMemoryScopes(this.buildResolvedMemoryScopeInput({
+        metabotId,
+        sessionId: source.session_id,
+        sourceChannel: source.source_channel,
+        externalConversationId: source.external_conversation_id,
+      }));
+      if (resolved.resolutionReason !== 'owner_default') {
+        return resolved.writeScope;
+      }
+    }
+
+    return createOwnerMemoryScope();
+  }
+
+  private backfillScopedMemoryMetadata(): void {
+    if (this.getKvValue(SCOPED_USER_MEMORIES_BACKFILL_KEY) === '1') {
+      return;
+    }
+
+    const memoryColumns = this.db.exec('PRAGMA table_info(user_memories);');
+    const columnNames = (memoryColumns[0]?.values || []).map((row) => String(row[1]));
+    if (!columnNames.includes('scope_kind') || !columnNames.includes('scope_key')) {
+      return;
+    }
+
+    const rows = this.getAll<{
+      id: string;
+      metabot_id: number | string | null;
+      text: string;
+    }>(`
+      SELECT id, metabot_id, text
+      FROM user_memories
+    `);
+
+    this.db.run('BEGIN TRANSACTION');
+    try {
+      for (const row of rows) {
+        const metabotId = parseIdNumber(row.metabot_id);
+        if (metabotId == null) {
+          continue;
+        }
+        const scope = this.inferBackfilledMemoryScope(row.id, metabotId);
+        const classification = this.resolveMemoryClassification(row.text, scope);
+        this.db.run(`
+          UPDATE user_memories
+          SET scope_kind = ?, scope_key = ?, usage_class = ?, visibility = ?
+          WHERE id = ? AND metabot_id = ?
+        `, [
+          scope.kind,
+          scope.key,
+          classification.usageClass,
+          classification.visibility,
+          row.id,
+          metabotId,
+        ]);
+      }
+      this.db.run('COMMIT');
+    } catch (error) {
+      this.db.run('ROLLBACK');
+      console.warn('[CoworkStore] Failed to backfill scoped memory metadata:', error);
+      return;
+    }
+
+    this.setKvValue(SCOPED_USER_MEMORIES_BACKFILL_KEY, '1');
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
@@ -1194,30 +1566,10 @@ export class CoworkStore implements MemoryBackend {
     sourceChannel: string;
     externalConversationId: string | null;
   } {
-    if (!sessionId) {
-      return {
-        sourceChannel: 'cowork_ui',
-        externalConversationId: null,
-      };
-    }
-    const row = this.getOne<{ channel: string; external_conversation_id: string | null }>(`
-      SELECT channel, external_conversation_id
-      FROM cowork_conversation_mappings
-      WHERE cowork_session_id = ?
-      ORDER BY
-        CASE WHEN channel = 'cowork_ui' THEN 1 ELSE 0 END ASC,
-        last_active_at DESC
-      LIMIT 1
-    `, [sessionId]);
-    if (!row) {
-      return {
-        sourceChannel: 'cowork_ui',
-        externalConversationId: sessionId,
-      };
-    }
+    const context = this.getMemoryScopeResolutionContextBySession(sessionId);
     return {
-      sourceChannel: row.channel || 'cowork_ui',
-      externalConversationId: row.external_conversation_id ?? sessionId,
+      sourceChannel: context.sourceChannel || 'cowork_ui',
+      externalConversationId: context.externalConversationId ?? sessionId ?? null,
     };
   }
 
@@ -1742,6 +2094,10 @@ export class CoworkStore implements MemoryBackend {
       confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0.7,
       isExplicit: Boolean(row.is_explicit),
       status: (row.status === 'stale' || row.status === 'deleted' ? row.status : 'created') as CoworkUserMemoryStatus,
+      scopeKind: row.scope_kind === 'contact' || row.scope_kind === 'conversation' ? row.scope_kind : 'owner',
+      scopeKey: normalizeScopeIdentity(row.scope_key) || OWNER_SCOPE_KEY,
+      usageClass: normalizeMemoryUsageClass(row.usage_class),
+      visibility: normalizeMemoryVisibility(row.visibility),
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at),
       lastUsedAt: row.last_used_at === null ? null : Number(row.last_used_at),
@@ -1786,13 +2142,7 @@ export class CoworkStore implements MemoryBackend {
     ]);
   }
 
-  private createOrReviveUserMemory(input: {
-    text: string;
-    confidence?: number;
-    isExplicit?: boolean;
-    source?: CoworkUserMemorySourceInput;
-    metabotId: number;
-  }): { memory: CoworkUserMemory; created: boolean; updated: boolean } {
+  private createOrReviveUserMemory(input: MemoryCreateUserMemoryInput): { memory: CoworkUserMemory; created: boolean; updated: boolean } {
     const normalizedText = truncate(normalizeMemoryText(input.text), 360);
     if (!normalizedText) {
       throw new Error('Memory text is required');
@@ -1803,25 +2153,30 @@ export class CoworkStore implements MemoryBackend {
     const confidence = Math.max(0, Math.min(1, Number.isFinite(input.confidence) ? Number(input.confidence) : 0.75));
     const explicitFlag = input.isExplicit ? 1 : 0;
     const metabotId = input.metabotId;
+    const scope = this.resolveMemoryScopeSelector(input);
+    const classification = this.resolveMemoryClassification(normalizedText, scope, {
+      usageClass: input.usageClass ?? null,
+      visibility: input.visibility ?? null,
+    });
 
     let existing = this.getOne<CoworkUserMemoryRow>(`
-      SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+      SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
-      WHERE fingerprint = ? AND status != 'deleted' AND metabot_id = ?
+      WHERE fingerprint = ? AND status != 'deleted' AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
       ORDER BY updated_at DESC
       LIMIT 1
-    `, [fingerprint, metabotId]);
+    `, [fingerprint, metabotId, scope.kind, scope.key]);
 
     if (!existing) {
       const incomingSemanticKey = normalizeMemorySemanticKey(normalizedText);
       if (incomingSemanticKey) {
         const candidates = this.getAll<CoworkUserMemoryRow>(`
-          SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+          SELECT ${MEMORY_ROW_SELECT_COLUMNS}
           FROM user_memories
-          WHERE status != 'deleted' AND metabot_id = ?
+          WHERE status != 'deleted' AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
           ORDER BY updated_at DESC
           LIMIT 200
-        `, [metabotId]);
+        `, [metabotId, scope.kind, scope.key]);
         let bestCandidate: CoworkUserMemoryRow | null = null;
         let bestScore = 0;
         for (const candidate of candidates) {
@@ -1842,14 +2197,31 @@ export class CoworkStore implements MemoryBackend {
       const mergedText = choosePreferredMemoryText(existing.text, normalizedText);
       const mergedExplicit = existing.is_explicit ? 1 : explicitFlag;
       const mergedConfidence = Math.max(Number(existing.confidence) || 0, confidence);
+      const mergedClassification = this.resolveMemoryClassification(mergedText, scope, {
+        usageClass: input.usageClass ?? normalizeMemoryUsageClass(existing.usage_class),
+        visibility: input.visibility ?? normalizeMemoryVisibility(existing.visibility),
+      });
       this.db.run(`
         UPDATE user_memories
-        SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = 'created', updated_at = ?
-        WHERE id = ?
-      `, [mergedText, buildMemoryFingerprint(mergedText), mergedConfidence, mergedExplicit, now, existing.id]);
+        SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = 'created',
+            usage_class = ?, visibility = ?, updated_at = ?
+        WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+      `, [
+        mergedText,
+        buildMemoryFingerprint(mergedText),
+        mergedConfidence,
+        mergedExplicit,
+        mergedClassification.usageClass,
+        mergedClassification.visibility,
+        now,
+        existing.id,
+        metabotId,
+        scope.kind,
+        scope.key,
+      ]);
       this.addMemorySource(existing.id, metabotId, input.source);
       const memory = this.getOne<CoworkUserMemoryRow>(`
-        SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+        SELECT ${MEMORY_ROW_SELECT_COLUMNS}
         FROM user_memories
         WHERE id = ?
       `, [existing.id]);
@@ -1862,13 +2234,27 @@ export class CoworkStore implements MemoryBackend {
     const id = uuidv4();
     this.db.run(`
       INSERT INTO user_memories (
-        id, metabot_id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, NULL)
-    `, [id, metabotId, normalizedText, fingerprint, confidence, explicitFlag, now, now]);
+        id, metabot_id, text, fingerprint, confidence, is_explicit, status,
+        scope_kind, scope_key, usage_class, visibility, created_at, updated_at, last_used_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, NULL)
+    `, [
+      id,
+      metabotId,
+      normalizedText,
+      fingerprint,
+      confidence,
+      explicitFlag,
+      scope.kind,
+      scope.key,
+      classification.usageClass,
+      classification.visibility,
+      now,
+      now,
+    ]);
     this.addMemorySource(id, metabotId, input.source);
 
     const memory = this.getOne<CoworkUserMemoryRow>(`
-      SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+      SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
       WHERE id = ?
     `, [id]);
@@ -1879,24 +2265,17 @@ export class CoworkStore implements MemoryBackend {
     return { memory: this.mapMemoryRow(memory), created: true, updated: false };
   }
 
-  listUserMemories(options: {
-    metabotId: number;
-    query?: string;
-    status?: CoworkUserMemoryStatus | 'all';
-    limit?: number;
-    offset?: number;
-    includeDeleted?: boolean;
-    touchLastUsed?: boolean;
-  }): CoworkUserMemory[] {
+  listUserMemories(options: MemoryListUserMemoriesOptions): CoworkUserMemory[] {
     const metabotId = options.metabotId;
     const query = normalizeMemoryText(options.query || '');
     const includeDeleted = Boolean(options.includeDeleted);
     const status = options.status || 'all';
     const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 200)));
     const offset = Math.max(0, Math.floor(options.offset ?? 0));
+    const scope = this.resolveMemoryScopeSelector(options);
 
-    const clauses: string[] = ['metabot_id = ?'];
-    const params: Array<string | number> = [metabotId];
+    const clauses: string[] = ['metabot_id = ?', 'scope_kind = ?', 'scope_key = ?'];
+    const params: Array<string | number> = [metabotId, scope.kind, scope.key];
 
     if (!includeDeleted && status === 'all') {
       clauses.push(`status != 'deleted'`);
@@ -1913,7 +2292,7 @@ export class CoworkStore implements MemoryBackend {
     const whereClause = `WHERE ${clauses.join(' AND ')}`;
 
     const rows = this.getAll<CoworkUserMemoryRow>(`
-      SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+      SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
       ${whereClause}
       ORDER BY updated_at DESC
@@ -1943,31 +2322,19 @@ export class CoworkStore implements MemoryBackend {
     }
   }
 
-  createUserMemory(input: {
-    text: string;
-    confidence?: number;
-    isExplicit?: boolean;
-    source?: CoworkUserMemorySourceInput;
-    metabotId: number;
-  }): CoworkUserMemory {
+  createUserMemory(input: MemoryCreateUserMemoryInput): CoworkUserMemory {
     const result = this.createOrReviveUserMemory(input);
     this.saveDb();
     return result.memory;
   }
 
-  updateUserMemory(input: {
-    id: string;
-    metabotId: number;
-    text?: string;
-    confidence?: number;
-    status?: CoworkUserMemoryStatus;
-    isExplicit?: boolean;
-  }): CoworkUserMemory | null {
+  updateUserMemory(input: MemoryUpdateUserMemoryInput): CoworkUserMemory | null {
+    const scope = this.resolveMemoryScopeSelector(input);
     const current = this.getOne<CoworkUserMemoryRow>(`
-      SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+      SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
-      WHERE id = ? AND metabot_id = ?
-    `, [input.id, input.metabotId]);
+      WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+    `, [input.id, input.metabotId, scope.kind, scope.key]);
     if (!current) return null;
 
     const now = Date.now();
@@ -1982,18 +2349,36 @@ export class CoworkStore implements MemoryBackend {
       ? input.status
       : current.status;
     const nextExplicit = input.isExplicit !== undefined ? (input.isExplicit ? 1 : 0) : current.is_explicit;
+    const nextClassification = this.resolveMemoryClassification(nextText, scope, {
+      usageClass: input.usageClass ?? normalizeMemoryUsageClass(current.usage_class),
+      visibility: input.visibility ?? normalizeMemoryVisibility(current.visibility),
+    });
 
     this.db.run(`
       UPDATE user_memories
-      SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = ?, updated_at = ?
-      WHERE id = ? AND metabot_id = ?
-    `, [nextText, buildMemoryFingerprint(nextText), nextConfidence, nextExplicit, nextStatus, now, input.id, input.metabotId]);
+      SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = ?,
+          usage_class = ?, visibility = ?, updated_at = ?
+      WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+    `, [
+      nextText,
+      buildMemoryFingerprint(nextText),
+      nextConfidence,
+      nextExplicit,
+      nextStatus,
+      nextClassification.usageClass,
+      nextClassification.visibility,
+      now,
+      input.id,
+      input.metabotId,
+      scope.kind,
+      scope.key,
+    ]);
 
     const updated = this.getOne<CoworkUserMemoryRow>(`
-      SELECT id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at
+      SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
-      WHERE id = ? AND metabot_id = ?
-    `, [input.id, input.metabotId]);
+      WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+    `, [input.id, input.metabotId, scope.kind, scope.key]);
 
     this.saveDb();
     return updated ? this.mapMemoryRow(updated) : null;
@@ -2007,6 +2392,9 @@ export class CoworkStore implements MemoryBackend {
   ): boolean {
     const id = typeof inputOrId === 'string' ? inputOrId : inputOrId.id;
     const metabotId = typeof inputOrId === 'string' ? Number(metabotIdArg) : Number(inputOrId.metabotId);
+    const scope = typeof inputOrId === 'string'
+      ? createOwnerMemoryScope()
+      : this.resolveMemoryScopeSelector(inputOrId);
     if (!id || !Number.isFinite(metabotId)) {
       return false;
     }
@@ -2014,18 +2402,22 @@ export class CoworkStore implements MemoryBackend {
     this.db.run(`
       UPDATE user_memories
       SET status = 'deleted', updated_at = ?
-      WHERE id = ? AND metabot_id = ?
-    `, [now, id, metabotId]);
-    this.db.run(`
-      UPDATE user_memory_sources
-      SET is_active = 0
-      WHERE memory_id = ?
-    `, [id]);
+      WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+    `, [now, id, metabotId, scope.kind, scope.key]);
+    const memoryRowsModified = this.db.getRowsModified?.() || 0;
+    if (memoryRowsModified > 0) {
+      this.db.run(`
+        UPDATE user_memory_sources
+        SET is_active = 0
+        WHERE memory_id = ?
+      `, [id]);
+    }
     this.saveDb();
-    return (this.db.getRowsModified?.() || 0) > 0;
+    return memoryRowsModified > 0;
   }
 
-  getUserMemoryStats(metabotId: number): CoworkUserMemoryStats {
+  getUserMemoryStats(metabotId: number): MemoryUserMemoryStats {
+    const scope = createOwnerMemoryScope();
     const rows = this.getAll<{
       status: string;
       is_explicit: number;
@@ -2033,11 +2425,11 @@ export class CoworkStore implements MemoryBackend {
     }>(`
       SELECT status, is_explicit, COUNT(*) AS count
       FROM user_memories
-      WHERE metabot_id = ?
+      WHERE metabot_id = ? AND scope_kind = ? AND scope_key = ?
       GROUP BY status, is_explicit
-    `, [metabotId]);
+    `, [metabotId, scope.kind, scope.key]);
 
-    const stats: CoworkUserMemoryStats = {
+    const stats: MemoryUserMemoryStats = {
       total: 0,
       created: 0,
       stale: 0,
@@ -2134,6 +2526,10 @@ export class CoworkStore implements MemoryBackend {
     if (metabotId == null) {
       return result;
     }
+    const resolvedScopes = resolveMemoryScopes(this.buildResolvedMemoryScopeInput({
+      metabotId,
+      sessionId: options.sessionId,
+    }));
 
     const extracted = extractTurnMemoryChanges({
       userText: options.userText,
@@ -2168,6 +2564,7 @@ export class CoworkStore implements MemoryBackend {
           text: change.text,
           confidence: change.confidence,
           isExplicit: change.isExplicit,
+          scope: resolvedScopes.writeScope,
           source: {
             role: 'user',
             sessionId: options.sessionId,
@@ -2200,7 +2597,13 @@ export class CoworkStore implements MemoryBackend {
         continue;
       }
 
-      const candidates = this.listUserMemories({ metabotId, status: 'all', includeDeleted: false, limit: 100 });
+      const candidates = this.listUserMemories({
+        metabotId,
+        scope: resolvedScopes.writeScope,
+        status: 'all',
+        includeDeleted: false,
+        limit: 100,
+      });
       let target: CoworkUserMemory | null = null;
       let bestScore = 0;
       for (const entry of candidates) {
@@ -2217,7 +2620,11 @@ export class CoworkStore implements MemoryBackend {
         continue;
       }
 
-      const deleted = this.deleteUserMemory(target.id, metabotId);
+      const deleted = this.deleteUserMemory({
+        id: target.id,
+        metabotId,
+        scope: resolvedScopes.writeScope,
+      });
       if (deleted) result.deleted += 1;
       else result.skipped += 1;
     }
