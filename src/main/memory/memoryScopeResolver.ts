@@ -17,7 +17,7 @@ export interface ResolveMemoryScopesInput {
 export interface ResolvedMemoryScopes {
   writeScope: MemoryScope;
   readScopes: MemoryScope[];
-  allowOwnerOperationalPreferences: boolean;
+  ownerReadPolicy: 'none' | 'operational_preference_only' | 'all';
   resolutionReason: 'owner_default' | 'contact_direct' | 'conversation_fallback';
 }
 
@@ -48,8 +48,8 @@ function isDirectExternalSession(
 function withOwnerOperationalPreferences(writeScope: MemoryScope): ResolvedMemoryScopes {
   return {
     writeScope,
-    readScopes: [writeScope, createOwnerMemoryScope()],
-    allowOwnerOperationalPreferences: true,
+    readScopes: [writeScope],
+    ownerReadPolicy: 'operational_preference_only',
     resolutionReason: writeScope.kind === 'contact' ? 'contact_direct' : 'conversation_fallback',
   };
 }
@@ -59,7 +59,7 @@ function ownerOnlyResolution(): ResolvedMemoryScopes {
   return {
     writeScope: ownerScope,
     readScopes: [ownerScope],
-    allowOwnerOperationalPreferences: false,
+    ownerReadPolicy: 'all',
     resolutionReason: 'owner_default',
   };
 }

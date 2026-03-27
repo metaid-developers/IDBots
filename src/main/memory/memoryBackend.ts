@@ -43,6 +43,7 @@ export interface MemoryUserMemoryStats {
 }
 
 export interface MemoryScopeSelectorInput {
+  // Normalize and validate with `normalizeMemoryScopeSelector` before using these fields.
   scope?: MemoryScope;
   scopeKind?: MemoryScopeKind;
   scopeKey?: string;
