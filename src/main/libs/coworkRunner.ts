@@ -873,10 +873,20 @@ export class CoworkRunner extends EventEmitter {
       };
     }
     console.log('[Memory System] Target MetaBot ID: ' + metabotId + ' (write, sessionId=' + sessionId + ')');
+    const session = this.store.getSession(sessionId);
+    const sourceContext = this.store.getConversationSourceContextBySession(sessionId);
+    const resolvedScopes = resolveMemoryScopes({
+      metabotId,
+      sourceChannel: sourceContext.sourceChannel,
+      externalConversationId: sourceContext.externalConversationId,
+      sessionType: session?.sessionType,
+      peerGlobalMetaId: session?.peerGlobalMetaId,
+    });
 
     if (args.action === 'list') {
       const entries = this.getMemoryBackend().listUserMemories({
         metabotId,
+        scope: resolvedScopes.writeScope,
         query: args.query,
         status: 'all',
         includeDeleted: true,
@@ -934,6 +944,7 @@ export class CoworkRunner extends EventEmitter {
         confidence: args.confidence,
         isExplicit: args.is_explicit ?? true,
         metabotId,
+        scope: resolvedScopes.writeScope,
         source: {
           sessionId,
           messageId: lastUserMsg?.id,
@@ -985,6 +996,7 @@ export class CoworkRunner extends EventEmitter {
       const updated = this.getMemoryBackend().updateUserMemory({
         id: args.id.trim(),
         metabotId,
+        scope: resolvedScopes.writeScope,
         text: args.text,
         confidence: args.confidence,
         status: args.status,
@@ -1026,7 +1038,11 @@ export class CoworkRunner extends EventEmitter {
       };
     }
 
-    const deleted = this.getMemoryBackend().deleteUserMemory(args.id.trim(), metabotId);
+    const deleted = this.getMemoryBackend().deleteUserMemory({
+      id: args.id.trim(),
+      metabotId,
+      scope: resolvedScopes.writeScope,
+    });
     return {
       text: this.formatMemoryUserEditsResult({
         action: 'delete',

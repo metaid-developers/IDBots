@@ -88,6 +88,21 @@ test('non-allowlisted a2a channels fall back to conversation scope', () => {
   assert.equal(resolved.ownerReadPolicy, 'operational_preference_only');
 });
 
+test('structured IM direct channels resolve to contact scope when a stable peer id exists', () => {
+  const resolved = resolveMemoryScopes({
+    metabotId: 7,
+    sourceChannel: 'im:telegram:direct',
+    externalConversationId: 'telegram-chat-123',
+    peerGlobalMetaId: 'telegram-user-42',
+    sessionType: 'standard',
+  });
+
+  assert.equal(resolved.writeScope.kind, 'contact');
+  assert.equal(resolved.writeScope.key, 'im:telegram:direct:peer:telegram-user-42');
+  assert.deepEqual(resolved.readScopes.map((scope) => scope.kind), ['contact']);
+  assert.equal(resolved.ownerReadPolicy, 'operational_preference_only');
+});
+
 test('direct external sessions without peerGlobalMetaId fall back to conversation scope', () => {
   const resolved = resolveMemoryScopes({
     metabotId: 7,

@@ -23,6 +23,7 @@ export interface ResolvedMemoryScopes {
 
 const GROUP_OR_SHARED_CHANNEL_HINTS = ['group', 'order', 'shared', 'orchestrator'];
 const DIRECT_EXTERNAL_CHANNELS = new Set(['metaweb_private']);
+const STRUCTURED_DIRECT_CHANNEL_SUFFIX = ':direct';
 
 function isGroupOrSharedChannel(sourceChannel: string): boolean {
   return GROUP_OR_SHARED_CHANNEL_HINTS.some((hint) => sourceChannel.includes(hint));
@@ -39,7 +40,8 @@ function isDirectExternalSession(
   if (groupOrShared) {
     return false;
   }
-  return DIRECT_EXTERNAL_CHANNELS.has(sourceChannel);
+  return DIRECT_EXTERNAL_CHANNELS.has(sourceChannel)
+    || sourceChannel.endsWith(STRUCTURED_DIRECT_CHANNEL_SUFFIX);
 }
 
 function withOwnerOperationalPreferences(writeScope: MemoryScope): ResolvedMemoryScopes {
