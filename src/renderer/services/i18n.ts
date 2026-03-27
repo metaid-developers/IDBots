@@ -565,6 +565,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metaAppOpen: '打开',
     metaAppOpenFailed: '打开元应用失败',
     metaAppUseFailed: '使用元应用失败',
+    metaAppsCommunityPageInfo: '第 {page} 页 · 每页 {size} 条',
+    metaAppsPreviousPage: '上一页',
+    metaAppsNextPage: '下一页',
 
     // MetaBot
     metabots: 'MetaBot',
@@ -1530,6 +1533,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metaAppOpen: 'Open',
     metaAppOpenFailed: 'Failed to open MetaApp',
     metaAppUseFailed: 'Failed to start with MetaApp',
+    metaAppsCommunityPageInfo: 'Page {page} · {size} per page',
+    metaAppsPreviousPage: 'Previous',
+    metaAppsNextPage: 'Next',
 
     // MetaBot
     metabots: 'MetaBot',

@@ -25,10 +25,16 @@ interface MetaAppsManagerProps {
   onStartTaskWithMetaApp?: (app: MetaAppRecord) => Promise<void> | void;
 }
 
+const COMMUNITY_PAGE_SIZE = 30;
+const COMMUNITY_ROOT_CURSOR = '0';
+
 const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaApp }) => {
   const [activeTab, setActiveTab] = useState<'local' | 'recommended' | 'chainCommunity'>('local');
   const [apps, setApps] = useState<MetaAppRecord[]>([]);
   const [communityApps, setCommunityApps] = useState<CommunityMetaAppRecord[]>([]);
+  const [communityCursor, setCommunityCursor] = useState(COMMUNITY_ROOT_CURSOR);
+  const [communityCursorStack, setCommunityCursorStack] = useState<string[]>([]);
+  const [communityNextCursor, setCommunityNextCursor] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isCommunityLoading, setIsCommunityLoading] = useState(false);
@@ -71,21 +77,27 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
       }
     });
 
-    async function loadCommunityApps() {
+    async function loadCommunityApps(cursor = communityCursor) {
       setIsCommunityLoading(true);
       setActionError('');
       try {
-        const result = await metaAppService.listCommunityMetaApps();
+        const result = await metaAppService.listCommunityMetaApps({
+          cursor,
+          size: COMMUNITY_PAGE_SIZE,
+        });
         if (!isActive) return;
         if (result.success && result.apps) {
           setCommunityApps(result.apps);
+          setCommunityNextCursor(result.nextCursor || null);
         } else {
           setCommunityApps([]);
+          setCommunityNextCursor(null);
           setActionError(result.error || i18nService.t('metaAppsLoadFailed'));
         }
       } catch (error) {
         if (!isActive) return;
         setCommunityApps([]);
+        setCommunityNextCursor(null);
         setActionError(error instanceof Error ? error.message : i18nService.t('metaAppsLoadFailed'));
       } finally {
         if (isActive) {
@@ -98,7 +110,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
       isActive = false;
       unsubscribe();
     };
-  }, [activeTab]);
+  }, [activeTab, communityCursor]);
 
   useEffect(() => {
     if (activeTab !== 'chainCommunity') {
@@ -111,17 +123,23 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
       setIsCommunityLoading(true);
       setActionError('');
       try {
-        const result = await metaAppService.listCommunityMetaApps();
+        const result = await metaAppService.listCommunityMetaApps({
+          cursor: communityCursor,
+          size: COMMUNITY_PAGE_SIZE,
+        });
         if (!isActive) return;
         if (result.success && result.apps) {
           setCommunityApps(result.apps);
+          setCommunityNextCursor(result.nextCursor || null);
         } else {
           setCommunityApps([]);
+          setCommunityNextCursor(null);
           setActionError(result.error || i18nService.t('metaAppsLoadFailed'));
         }
       } catch (error) {
         if (!isActive) return;
         setCommunityApps([]);
+        setCommunityNextCursor(null);
         setActionError(error instanceof Error ? error.message : i18nService.t('metaAppsLoadFailed'));
       } finally {
         if (isActive) {
@@ -135,7 +153,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
     return () => {
       isActive = false;
     };
-  }, [activeTab]);
+  }, [activeTab, communityCursor]);
 
   const filteredApps = useMemo(
     () => filterMetaApps(apps, searchQuery),
@@ -149,6 +167,9 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
 
   const recommendedEmptyState = getRecommendedMetaAppsEmptyState(i18nService.getLanguage());
   const communityEmptyState = getCommunityMetaAppsEmptyState(i18nService.getLanguage());
+  const hasPreviousCommunityPage = communityCursorStack.length > 0;
+  const hasNextCommunityPage = Boolean(communityNextCursor && communityNextCursor !== communityCursor);
+  const communityPageNumber = communityCursorStack.length + 1;
 
   const renderMetaAppVisual = (app: { name: string; cover?: string; icon?: string }) => {
     const visual = getMetaAppVisualModel(app);
@@ -206,9 +227,13 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
         setActionError(result.error || i18nService.t('metaAppInstallFailed'));
       }
 
-      const refreshed = await metaAppService.listCommunityMetaApps();
+      const refreshed = await metaAppService.listCommunityMetaApps({
+        cursor: communityCursor,
+        size: COMMUNITY_PAGE_SIZE,
+      });
       if (refreshed.success && refreshed.apps) {
         setCommunityApps(refreshed.apps);
+        setCommunityNextCursor(refreshed.nextCursor || null);
       }
 
       const localResult = await window.electron.metaapps.list();
@@ -220,6 +245,57 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
     } finally {
       setInstallingSourcePinId(null);
     }
+  };
+
+  const handlePreviousCommunityPage = () => {
+    if (isCommunityLoading || !hasPreviousCommunityPage) return;
+    const previousCursor = communityCursorStack[communityCursorStack.length - 1] || COMMUNITY_ROOT_CURSOR;
+    setActionError('');
+    setCommunityCursorStack((prev) => prev.slice(0, -1));
+    setCommunityCursor(previousCursor);
+  };
+
+  const handleNextCommunityPage = () => {
+    if (isCommunityLoading || !hasNextCommunityPage || !communityNextCursor) return;
+    setActionError('');
+    setCommunityCursorStack((prev) => [...prev, communityCursor]);
+    setCommunityCursor(communityNextCursor);
+  };
+
+  const renderChainCommunityPagination = () => {
+    if (!hasPreviousCommunityPage && !hasNextCommunityPage) {
+      return null;
+    }
+
+    const pageInfo = i18nService.t('metaAppsCommunityPageInfo')
+      .replace('{page}', String(communityPageNumber))
+      .replace('{size}', String(COMMUNITY_PAGE_SIZE));
+
+    return (
+      <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/40 bg-claude-surface/40 px-3 py-2">
+        <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {pageInfo}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={isCommunityLoading || !hasPreviousCommunityPage}
+            onClick={handlePreviousCommunityPage}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {i18nService.t('metaAppsPreviousPage')}
+          </button>
+          <button
+            type="button"
+            disabled={isCommunityLoading || !hasNextCommunityPage}
+            onClick={handleNextCommunityPage}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 hover:text-claude-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {i18nService.t('metaAppsNextPage')}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const renderLocalTab = () => {
@@ -321,86 +397,92 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
       );
     }
 
-    if (filteredCommunityApps.length === 0) {
+    if (communityApps.length === 0) {
       return (
-        <div className="py-12 text-center">
-          <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
-            {communityEmptyState.title}
+        <div className="space-y-4">
+          <div className="py-12 text-center">
+            <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+              {communityEmptyState.title}
+            </div>
+            <div className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {communityEmptyState.description}
+            </div>
           </div>
-          <div className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {communityEmptyState.description}
-          </div>
+          {renderChainCommunityPagination()}
         </div>
       );
     }
 
     return (
-      <div className="grid grid-cols-2 gap-3">
-        {filteredCommunityApps.map((app) => {
-          const statusLabel = getCommunityMetaAppStatusLabel(app.status, i18nService.getLanguage());
-          const actionLabel = getCommunityMetaAppActionLabel(app.status, i18nService.getLanguage());
-          const disabled =
-            app.status === 'installed'
-            || app.status === 'uninstallable'
-            || installingSourcePinId !== null;
+      <div>
+        <div className="grid grid-cols-2 gap-3">
+          {filteredCommunityApps.map((app) => {
+            const statusLabel = getCommunityMetaAppStatusLabel(app.status, i18nService.getLanguage());
+            const actionLabel = getCommunityMetaAppActionLabel(app.status, i18nService.getLanguage());
+            const disabled =
+              app.status === 'installed'
+              || app.status === 'uninstallable'
+              || installingSourcePinId !== null;
 
-          return (
-            <div
-              key={app.sourcePinId}
-              className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
-            >
-              {renderMetaAppVisual(app)}
-              <div className="flex items-start justify-between mb-2">
-                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
-                  {app.name}
-                </span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-claude-accent/10 text-claude-accent font-medium">
-                  {statusLabel}
-                </span>
-              </div>
-
-              <Tooltip
-                content={app.description}
-                position="bottom"
-                maxWidth="360px"
-                className="block w-full"
+            return (
+              <div
+                key={app.sourcePinId}
+                className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
               >
-                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
-                  {app.description}
-                </p>
-              </Tooltip>
-
-              <div className="flex items-center justify-between gap-2 mt-1">
-                <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
-                  <span className="truncate">v{app.version}</span>
-                  <span>·</span>
-                  <span className="truncate">{app.creatorMetaId || '-'}</span>
+                {renderMetaAppVisual(app)}
+                <div className="flex items-start justify-between mb-2">
+                  <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
+                    {app.name}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-claude-accent/10 text-claude-accent font-medium">
+                    {statusLabel}
+                  </span>
                 </div>
+
                 <Tooltip
-                  content={app.reason || actionLabel}
-                  position="top"
+                  content={app.description}
+                  position="bottom"
+                  maxWidth="360px"
+                  className="block w-full"
                 >
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => void handleInstallCommunityMetaApp(app)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={actionLabel}
-                  >
-                    <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-                    <span>{actionLabel}</span>
-                  </button>
+                  <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
+                    {app.description}
+                  </p>
                 </Tooltip>
-              </div>
 
-              {app.reason ? (
-                <div className="mt-2 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2">
-                  {app.reason}
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
+                    <span className="truncate">v{app.version}</span>
+                    <span>·</span>
+                    <span className="truncate">{app.creatorMetaId || '-'}</span>
+                  </div>
+                  <Tooltip
+                    content={app.reason || actionLabel}
+                    position="top"
+                  >
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => void handleInstallCommunityMetaApp(app)}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={actionLabel}
+                    >
+                      <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+                      <span>{actionLabel}</span>
+                    </button>
+                  </Tooltip>
                 </div>
-              ) : null}
-            </div>
-          );
-        })}
+
+                {app.reason ? (
+                  <div className="mt-2 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2">
+                    {app.reason}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        {renderChainCommunityPagination()}
       </div>
     );
   };
