@@ -542,6 +542,18 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const handleViewSession = async (event: Event) => {
+      const { sessionId } = (event as CustomEvent).detail;
+      if (sessionId) {
+        setMainView('cowork');
+        await coworkService.loadSession(sessionId);
+      }
+    };
+    window.addEventListener('cowork:viewSession', handleViewSession);
+    return () => window.removeEventListener('cowork:viewSession', handleViewSession);
+  }, []);
+
+  useEffect(() => {
     if (!isInitialized) return;
 
     let cancelled = false;

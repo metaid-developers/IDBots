@@ -84,6 +84,10 @@ contextBridge.exposeInMainWorld('electron', {
   },
   gigSquare: {
     fetchServices: () => ipcRenderer.invoke('gigSquare:fetchServices'),
+    fetchMyServices: (params?: { page?: number; pageSize?: number; refresh?: boolean }) =>
+      ipcRenderer.invoke('gigSquare:fetchMyServices', params),
+    fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number; refresh?: boolean }) =>
+      ipcRenderer.invoke('gigSquare:fetchMyServiceOrders', params),
     syncFromRemote: () => ipcRenderer.invoke('gigSquare:syncFromRemote'),
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) =>
       ipcRenderer.invoke('gigSquare:fetchProviderInfo', params),
@@ -100,6 +104,19 @@ contextBridge.exposeInMainWorld('electron', {
       outputType: string;
       serviceIconDataUrl?: string | null;
     }) => ipcRenderer.invoke('gigSquare:publishService', params),
+    revokeService: (params: { serviceId: string }) =>
+      ipcRenderer.invoke('gigSquare:revokeService', params),
+    modifyService: (params: {
+      serviceId: string;
+      serviceName?: string;
+      displayName?: string;
+      description?: string;
+      providerSkill?: string;
+      price?: string;
+      currency?: string;
+      outputType?: string;
+      serviceIconDataUrl?: string | null;
+    }) => ipcRenderer.invoke('gigSquare:modifyService', params),
     sendOrder: (params: {
       metabotId: number;
       toGlobalMetaId: string;

@@ -22,5 +22,8 @@ export function getGigSquareOrderErrorMessageKey(errorCode) {
   if (errorCode === 'open_order_exists') {
     return 'gigSquareOpenOrderExists';
   }
+  if (errorCode === 'self_order_not_allowed') {
+    return 'gigSquareSelfOrderNotAllowed';
+  }
   return null;
 }
