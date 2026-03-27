@@ -68,6 +68,7 @@ import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
 import { ensureMetaAppServerReady, stopMetaAppServer } from './services/metaAppLocalServer';
 import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
+import { installCommunityMetaApp, listCommunityMetaApps } from './services/metaAppChainService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -2177,6 +2178,33 @@ if (!gotTheLock) {
       return { success: true, apps };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list MetaApps' };
+    }
+  });
+
+  ipcMain.handle('metaapps:listCommunity', async () => {
+    try {
+      return await listCommunityMetaApps({ manager: getMetaAppManager() });
+    } catch (error) {
+      return { success: false, apps: [], error: error instanceof Error ? error.message : 'Failed to list community MetaApps' };
+    }
+  });
+
+  ipcMain.handle('metaapps:installCommunity', async (_event, input: { sourcePinId: string }) => {
+    try {
+      const result = await installCommunityMetaApp({
+        sourcePinId: String(input?.sourcePinId || ''),
+        manager: getMetaAppManager(),
+      });
+      if (result.success) {
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('metaapps:changed');
+          }
+        });
+      }
+      return result;
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to install community MetaApp' };
     }
   });
 
