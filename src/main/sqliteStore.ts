@@ -170,18 +170,6 @@ export class SqliteStore {
       ON user_memories(fingerprint);
     `);
     this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_user_memories_scope_status_updated
-      ON user_memories(metabot_id, scope_kind, scope_key, status, updated_at DESC);
-    `);
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_user_memories_scope_fingerprint
-      ON user_memories(metabot_id, scope_kind, scope_key, fingerprint);
-    `);
-    this.db.run(`
-      CREATE INDEX IF NOT EXISTS idx_user_memories_usage_visibility
-      ON user_memories(metabot_id, usage_class, visibility, status, updated_at DESC);
-    `);
-    this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_user_memory_sources_session_id
       ON user_memory_sources(session_id, is_active);
     `);

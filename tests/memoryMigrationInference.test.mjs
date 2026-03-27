@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import Module from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -11,6 +13,8 @@ import {
   getIndexNames,
   getRow,
 } from './memoryTestUtils.mjs';
+
+const require = Module.createRequire(import.meta.url);
 
 test('sqlite store initializes scoped memory columns and indexes for fresh databases', async () => {
   const { db, cleanup } = await createSqliteStore();
@@ -28,6 +32,48 @@ test('sqlite store initializes scoped memory columns and indexes for fresh datab
     assert(indexNames.includes('idx_user_memories_usage_visibility'));
   } finally {
     cleanup();
+  }
+});
+
+test('SqliteStore.create() upgrades legacy user_memories scope columns before creating scoped indexes', async () => {
+  const legacyDb = await createLegacyMemoryDb();
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-sqlitestore-memory-scope-'));
+  const { DB_FILENAME } = require('../dist-electron/appConstants.js');
+  const dbPath = path.join(userDataPath, DB_FILENAME);
+  fs.writeFileSync(dbPath, Buffer.from(legacyDb.export()));
+
+  const originalLoad = Module._load;
+  Module._load = function patchedModuleLoad(request, parent, isMain) {
+    if (request === 'electron') {
+      return {
+        app: {
+          isPackaged: false,
+          getAppPath: () => process.cwd(),
+          getPath: () => userDataPath,
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+
+  try {
+    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const sqliteStore = await SqliteStore.create(userDataPath);
+    const db = sqliteStore.getDatabase();
+
+    const columns = getColumns(db, 'user_memories');
+    assert(columns.includes('scope_kind'));
+    assert(columns.includes('scope_key'));
+    assert(columns.includes('usage_class'));
+    assert(columns.includes('visibility'));
+
+    const indexNames = getIndexNames(db, 'user_memories');
+    assert(indexNames.includes('idx_user_memories_scope_status_updated'));
+    assert(indexNames.includes('idx_user_memories_scope_fingerprint'));
+    assert(indexNames.includes('idx_user_memories_usage_visibility'));
+  } finally {
+    Module._load = originalLoad;
+    fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });
 
