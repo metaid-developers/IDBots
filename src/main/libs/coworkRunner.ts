@@ -16,6 +16,9 @@ import { isQuestionLikeMemoryText, type CoworkMemoryGuardLevel } from './coworkM
 import { z } from 'zod';
 import { ensureSandboxReady, getSandboxRuntimeInfoIfReady, type SandboxRuntimeInfo } from './coworkSandboxRuntime';
 import { isPathWithin, resolveElectronExecutablePath } from './runtimePaths';
+import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
+import { createOwnerMemoryScope } from '../memory/memoryScope';
+import { resolveMemoryScopes } from '../memory/memoryScopeResolver';
 import {
   buildSandboxRequest,
   collectSkillFilesForSandbox,
@@ -646,42 +649,89 @@ export class CoworkRunner extends EventEmitter {
       .replace(/'/g, '&apos;');
   }
 
-  private buildUserMemoriesXml(sessionId: string, options?: { enabled?: boolean }): string {
-    // A2A order sessions: skip owner memories entirely — they describe the local operator,
-    // not the remote client, and would cause the bot to misidentify the client.
+  private buildScopedMemoryPromptBlocksXml(
+    sessionId: string,
+    currentUserText: string,
+    options?: { enabled?: boolean }
+  ): string {
     const session = this.store.getSession(sessionId);
-    if (session?.sessionType === 'a2a') {
-      return '<userMemories></userMemories>';
-    }
-
     const memoryPolicy = this.getSessionMemoryPolicy(sessionId);
     const memoryEnabled = options?.enabled ?? this.isSessionMemoryEnabled(sessionId);
     if (!memoryEnabled) {
-      return '<userMemories></userMemories>';
+      return '';
     }
 
     const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     if (metabotId == null) {
-      return '<userMemories></userMemories>';
+      return '';
     }
 
-    console.log('[Memory System] Target MetaBot ID: ' + metabotId + ' (read, sessionId=' + sessionId + ')');
-    const memories = this.getMemoryBackend().listUserMemories({
+    const sourceContext = this.store.getConversationSourceContextBySession(sessionId);
+    const resolvedScopes = resolveMemoryScopes({
       metabotId,
-      status: 'created',
-      includeDeleted: false,
-      limit: memoryPolicy.memoryUserMemoriesMaxItems,
-      offset: 0,
-      touchLastUsed: true,
+      sourceChannel: sourceContext.sourceChannel,
+      externalConversationId: sourceContext.externalConversationId,
+      sessionType: session?.sessionType,
+      peerGlobalMetaId: session?.peerGlobalMetaId,
     });
 
-    if (memories.length === 0) {
-      return '<userMemories></userMemories>';
-    }
+    const ownerEntries = resolvedScopes.ownerReadPolicy === 'none'
+      ? []
+      : this.getMemoryBackend().listUserMemories({
+          metabotId,
+          scope: createOwnerMemoryScope(),
+          status: 'created',
+          includeDeleted: false,
+          limit: Math.max(memoryPolicy.memoryUserMemoriesMaxItems, 12),
+          offset: 0,
+        });
+    const contactEntries = resolvedScopes.writeScope.kind === 'contact'
+      ? this.getMemoryBackend().listUserMemories({
+          metabotId,
+          scope: resolvedScopes.writeScope,
+          status: 'created',
+          includeDeleted: false,
+          limit: memoryPolicy.memoryUserMemoriesMaxItems,
+          offset: 0,
+        })
+      : [];
+    const conversationEntries = resolvedScopes.writeScope.kind === 'conversation'
+      ? this.getMemoryBackend().listUserMemories({
+          metabotId,
+          scope: resolvedScopes.writeScope,
+          status: 'created',
+          includeDeleted: false,
+          limit: memoryPolicy.memoryUserMemoriesMaxItems,
+          offset: 0,
+        })
+      : [];
+    const promptBlocksXml = buildScopedMemoryPromptBlocks({
+      channel: sourceContext.sourceChannel,
+      currentUserText,
+      ownerEntries,
+      contactEntries,
+      conversationEntries,
+      maxOwnerEntries: memoryPolicy.memoryUserMemoriesMaxItems,
+      maxScopedEntries: memoryPolicy.memoryUserMemoriesMaxItems,
+      maxOwnerOperationalPreferences: Math.min(3, memoryPolicy.memoryUserMemoriesMaxItems),
+    });
 
-    const lines = memories
-      .map((memory) => `- ${this.escapeXml(memory.text)}`);
-    return `<userMemories>\n${lines.join('\n')}\n</userMemories>`;
+    coworkLog('INFO', 'memory:promptBlocks', 'Built scoped memory prompt blocks', {
+      sessionId,
+      sourceChannel: sourceContext.sourceChannel,
+      writeScopeKind: resolvedScopes.writeScope.kind,
+      writeScopeKey: resolvedScopes.writeScope.key,
+      ownerReadPolicy: resolvedScopes.ownerReadPolicy,
+      ownerEntries: ownerEntries.length,
+      contactEntries: contactEntries.length,
+      conversationEntries: conversationEntries.length,
+      includedOwnerBlock: promptBlocksXml.includes('<ownerMemories>'),
+      includedContactBlock: promptBlocksXml.includes('<contactMemories>'),
+      includedConversationBlock: promptBlocksXml.includes('<conversationMemories>'),
+      includedOwnerOperationalBlock: promptBlocksXml.includes('<ownerOperationalPreferences>'),
+    });
+
+    return promptBlocksXml;
   }
 
   private formatChatSearchOutput(records: Array<{
@@ -2106,7 +2156,7 @@ export class CoworkRunner extends EventEmitter {
     workspaceRoot: string,
     cwd: string,
     confirmationMode: 'modal' | 'text',
-    userMemoriesXml: string,
+    memoryPromptBlocksXml: string,
     memoryEnabled: boolean,
     personaBlock?: string
   ): string {
@@ -2121,7 +2171,8 @@ export class CoworkRunner extends EventEmitter {
     ];
     if (memoryEnabled) {
       memoryRecallPrompt.push(
-        '- User memories are injected as <userMemories> facts and should be treated as stable personal context.',
+        '- Memories may be injected as scoped blocks such as <ownerMemories>, <contactMemories>, <conversationMemories>, or <ownerOperationalPreferences>.',
+        '- Treat each injected memory block as stable context only for that scope; do not assume omitted scopes are available.',
         '- Use `memory_user_edits` only when the user explicitly asks to remember, update, list, or delete memory facts.',
         '- Never write transient conversation facts, news content, or source citations into user memory unless the user explicitly asks.'
       );
@@ -2131,7 +2182,7 @@ export class CoworkRunner extends EventEmitter {
       personaBlock,
       safetyPrompt,
       localTimePrompt,
-      userMemoriesXml,
+      memoryPromptBlocksXml,
       memoryRecallPrompt.join('\n'),
       trimmedBasePrompt,
     ];
@@ -2437,7 +2488,7 @@ export class CoworkRunner extends EventEmitter {
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildUserMemoriesXml(sessionId, { enabled: sessionMemoryEnabled }),
+      this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled }),
       sessionMemoryEnabled,
       personaBlock
     );
@@ -2508,7 +2559,7 @@ export class CoworkRunner extends EventEmitter {
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildUserMemoriesXml(sessionId, { enabled: sessionMemoryEnabled }),
+      this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled }),
       sessionMemoryEnabled,
       personaBlock
     );

@@ -14,7 +14,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "check:cross-platform-paths": "node scripts/check-cross-platform-paths.js",
     "check:cross-platform-paths:full": "node scripts/check-cross-platform-paths.js --with-build",
-    "test:memory": "npx rimraf dist-electron && npm run compile:electron && node --test tests/memoryScopeResolver.test.mjs tests/memoryMigrationInference.test.mjs tests/memoryScopedCrud.test.mjs",
+    "test:memory": "npx rimraf dist-electron && npm run compile:electron && node --test tests/memoryScopeResolver.test.mjs tests/memoryMigrationInference.test.mjs tests/memoryScopedCrud.test.mjs tests/memoryScopedRecall.test.mjs tests/memoryPromptBlocks.test.mjs",
     "test:wallet": "npm run compile:electron && node --test tests/metabotWalletService.test.mjs",
     "test:im-gateway": "npm run compile:electron && node --test tests/imGatewayConnectivity.test.mjs",
     "test:subsidy": "npm run compile:electron && node --test tests/mvcSubsidyService.test.mjs",
