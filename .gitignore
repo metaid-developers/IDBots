@@ -21,7 +21,6 @@ Dev-docs/
 CLAUDE.md
 localdocs/
 docs/
-tests/
 
 # Local DB (never commit)
 *.sqlite
