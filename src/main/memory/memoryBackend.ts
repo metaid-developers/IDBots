@@ -146,6 +146,7 @@ export interface MemoryBackend {
   updateUserMemory(input: MemoryUpdateUserMemoryInput): MemoryUserMemory | null;
   deleteUserMemory(input: MemoryDeleteUserMemoryInput): boolean;
   deleteUserMemory(id: string, metabotId: number): boolean;
+  getUserMemoryStats(input: { metabotId: number } & MemoryScopeSelectorInput): MemoryUserMemoryStats;
   getUserMemoryStats(metabotId: number): MemoryUserMemoryStats;
   applyTurnMemoryUpdates(options: ApplyTurnMemoryUpdatesOptions): Promise<ApplyTurnMemoryUpdatesResult>;
 }

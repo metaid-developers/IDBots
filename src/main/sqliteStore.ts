@@ -1161,14 +1161,12 @@ export class SqliteStore {
   }
 
   private tryReadLegacyMemoryText(): string {
-    // Prefer app-bound paths over process.cwd() so behavior is consistent when started from different directories or packaged.
+    // Prefer app-bound paths so behavior is consistent when started from different directories or packaged.
     const candidates = [
       path.join(app.getAppPath(), 'MEMORY.md'),
       path.join(app.getPath('userData'), 'MEMORY.md'),
-      path.join(process.cwd(), 'MEMORY.md'),
       path.join(app.getAppPath(), 'memory.md'),
       path.join(app.getPath('userData'), 'memory.md'),
-      path.join(process.cwd(), 'memory.md'),
     ];
 
     for (const candidate of candidates) {
@@ -1275,12 +1273,12 @@ export class SqliteStore {
       }
 
       this.db.run('COMMIT;');
+      this.set(USER_MEMORIES_MIGRATION_KEY, '1');
     } catch (error) {
       this.db.run('ROLLBACK;');
       console.warn('Failed to migrate legacy MEMORY.md entries:', error);
+      return;
     }
-
-    this.set(USER_MEMORIES_MIGRATION_KEY, '1');
   }
 
   getP2PConfig(): Record<string, unknown> | undefined {

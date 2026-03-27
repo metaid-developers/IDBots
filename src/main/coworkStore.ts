@@ -16,6 +16,7 @@ import type {
   MemoryCreateUserMemoryInput,
   MemoryDeleteUserMemoryInput,
   MemoryListUserMemoriesOptions,
+  MemoryScopeSelectorInput,
   MemoryUpdateUserMemoryInput,
   MemoryUserMemoryStats,
 } from './memory/memoryBackend';
@@ -1141,6 +1142,26 @@ export class CoworkStore implements MemoryBackend {
         if (metabotId == null) {
           continue;
         }
+        const existing = this.getOne<{
+          scope_kind?: string | null;
+          scope_key?: string | null;
+          usage_class?: string | null;
+          visibility?: string | null;
+        }>(`
+          SELECT scope_kind, scope_key, usage_class, visibility
+          FROM user_memories
+          WHERE id = ? AND metabot_id = ?
+          LIMIT 1
+        `, [row.id, metabotId]);
+        const hasNonDefaultScopedMetadata = (
+          (existing?.scope_kind != null && existing.scope_kind !== 'owner')
+          || (existing?.scope_key != null && existing.scope_key !== OWNER_SCOPE_KEY)
+          || (existing?.usage_class != null && existing.usage_class !== 'profile_fact')
+          || (existing?.visibility != null && existing.visibility !== 'local_only')
+        );
+        if (hasNonDefaultScopedMetadata) {
+          continue;
+        }
         const scope = this.inferBackfilledMemoryScope(row.id, metabotId);
         const classification = this.resolveMemoryClassification(row.text, scope);
         this.db.run(`
@@ -1749,12 +1770,23 @@ export class CoworkStore implements MemoryBackend {
   }
 
   deleteSession(id: string): void {
-    const metabotId = this.getMetabotIdForSession(id) ?? this.getDefaultMetabotId();
+    const session = this.getSession(id);
+    const metabotId = session?.metabotId ?? this.getDefaultMetabotId();
+    const sourceContext = this.getConversationSourceContextBySession(id);
+    const resolvedWriteScope = metabotId == null
+      ? createOwnerMemoryScope()
+      : resolveMemoryScopes({
+          metabotId,
+          sourceChannel: sourceContext.sourceChannel,
+          externalConversationId: sourceContext.externalConversationId,
+          sessionType: session?.sessionType,
+          peerGlobalMetaId: session?.peerGlobalMetaId,
+        }).writeScope;
     this.markMemorySourcesInactiveBySession(id);
     this.db.run('DELETE FROM cowork_conversation_mappings WHERE cowork_session_id = ?', [id]);
     this.db.run('DELETE FROM cowork_sessions WHERE id = ?', [id]);
     if (metabotId != null) {
-      this.markOrphanImplicitMemoriesStale(metabotId);
+      this.markOrphanImplicitMemoriesStale(metabotId, { scope: resolvedWriteScope });
     }
     this.saveDb();
   }
@@ -2092,7 +2124,7 @@ export class CoworkStore implements MemoryBackend {
       id: row.id,
       text: row.text,
       confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0.7,
-      isExplicit: Boolean(row.is_explicit),
+      isExplicit: Number(row.is_explicit) !== 0,
       status: (row.status === 'stale' || row.status === 'deleted' ? row.status : 'created') as CoworkUserMemoryStatus,
       scopeKind: row.scope_kind === 'contact' || row.scope_kind === 'conversation' ? row.scope_kind : 'owner',
       scopeKey: normalizeScopeIdentity(row.scope_key) || OWNER_SCOPE_KEY,
@@ -2195,7 +2227,7 @@ export class CoworkStore implements MemoryBackend {
 
     if (existing) {
       const mergedText = choosePreferredMemoryText(existing.text, normalizedText);
-      const mergedExplicit = existing.is_explicit ? 1 : explicitFlag;
+      const mergedExplicit = Number(existing.is_explicit) !== 0 ? 1 : explicitFlag;
       const mergedConfidence = Math.max(Number(existing.confidence) || 0, confidence);
       const mergedClassification = this.resolveMemoryClassification(mergedText, scope, {
         usageClass: input.usageClass ?? normalizeMemoryUsageClass(existing.usage_class),
@@ -2416,8 +2448,15 @@ export class CoworkStore implements MemoryBackend {
     return memoryRowsModified > 0;
   }
 
-  getUserMemoryStats(metabotId: number): MemoryUserMemoryStats {
-    const scope = createOwnerMemoryScope();
+  getUserMemoryStats(input: { metabotId: number } & MemoryScopeSelectorInput): MemoryUserMemoryStats;
+  getUserMemoryStats(metabotId: number): MemoryUserMemoryStats;
+  getUserMemoryStats(inputOrMetabotId: ({ metabotId: number } & MemoryScopeSelectorInput) | number): MemoryUserMemoryStats {
+    const metabotId = typeof inputOrMetabotId === 'number'
+      ? inputOrMetabotId
+      : inputOrMetabotId.metabotId;
+    const scope = typeof inputOrMetabotId === 'number'
+      ? createOwnerMemoryScope()
+      : this.resolveMemoryScopeSelector(inputOrMetabotId);
     const rows = this.getAll<{
       status: string;
       is_explicit: number;
@@ -2444,21 +2483,26 @@ export class CoworkStore implements MemoryBackend {
       if (row.status === 'created') stats.created += count;
       if (row.status === 'stale') stats.stale += count;
       if (row.status === 'deleted') stats.deleted += count;
-      if (row.is_explicit) stats.explicit += count;
+      if (Number(row.is_explicit) !== 0) stats.explicit += count;
       else stats.implicit += count;
     }
 
     return stats;
   }
 
-  autoDeleteNonPersonalMemories(metabotId?: number): number {
+  autoDeleteNonPersonalMemories(metabotId?: number, scopeSelector?: MemoryScopeSelectorInput): number {
+    const scope = metabotId == null ? null : this.resolveMemoryScopeSelector(scopeSelector ?? {});
     const rows = metabotId == null
       ? this.getAll<Pick<CoworkUserMemoryRow, 'id' | 'text'>>(
           `SELECT id, text FROM user_memories WHERE status = 'created'`
         )
       : this.getAll<Pick<CoworkUserMemoryRow, 'id' | 'text'>>(
-          `SELECT id, text FROM user_memories WHERE status = 'created' AND metabot_id = ?`,
-          [metabotId]
+          `
+            SELECT id, text
+            FROM user_memories
+            WHERE status = 'created' AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+          `,
+          [metabotId, scope?.kind ?? 'owner', scope?.key ?? OWNER_SCOPE_KEY]
         );
     if (rows.length === 0) return 0;
 
@@ -2495,12 +2539,15 @@ export class CoworkStore implements MemoryBackend {
     `, [sessionId]);
   }
 
-  markOrphanImplicitMemoriesStale(metabotId: number): void {
+  markOrphanImplicitMemoriesStale(metabotId: number, scopeSelector?: MemoryScopeSelectorInput): void {
+    const scope = this.resolveMemoryScopeSelector(scopeSelector ?? {});
     const now = Date.now();
     this.db.run(`
       UPDATE user_memories
       SET status = 'stale', updated_at = ?
       WHERE metabot_id = ?
+        AND scope_kind = ?
+        AND scope_key = ?
         AND is_explicit = 0
         AND status = 'created'
         AND NOT EXISTS (
@@ -2508,7 +2555,7 @@ export class CoworkStore implements MemoryBackend {
           FROM user_memory_sources s
           WHERE s.memory_id = user_memories.id AND s.is_active = 1
         )
-    `, [now, metabotId]);
+    `, [now, metabotId, scope.kind, scope.key]);
   }
 
   async applyTurnMemoryUpdates(options: ApplyTurnMemoryUpdatesOptions): Promise<ApplyTurnMemoryUpdatesResult> {
@@ -2629,7 +2676,7 @@ export class CoworkStore implements MemoryBackend {
       else result.skipped += 1;
     }
 
-    this.markOrphanImplicitMemoriesStale(metabotId);
+    this.markOrphanImplicitMemoriesStale(metabotId, { scope: resolvedScopes.writeScope });
     this.saveDb();
     return result;
   }
