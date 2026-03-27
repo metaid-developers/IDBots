@@ -11,6 +11,7 @@ interface MetabotsViewProps {
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
   onRequestModelSettings?: () => void;
+  onRequestOnboarding?: () => void;
 }
 
 const MetabotsView: React.FC<MetabotsViewProps> = ({
@@ -19,6 +20,7 @@ const MetabotsView: React.FC<MetabotsViewProps> = ({
   onNewChat,
   updateBadge,
   onRequestModelSettings,
+  onRequestOnboarding,
 }) => {
   const isMac = window.electron.platform === 'darwin';
   return (
@@ -53,7 +55,10 @@ const MetabotsView: React.FC<MetabotsViewProps> = ({
 
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-3xl mx-auto px-4 py-6">
-          <MetabotsManager onRequestModelSettings={onRequestModelSettings} />
+          <MetabotsManager
+            onRequestModelSettings={onRequestModelSettings}
+            onRequestOnboarding={onRequestOnboarding}
+          />
         </div>
       </div>
     </div>
