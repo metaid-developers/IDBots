@@ -17,6 +17,7 @@ import {
   getCommunityMetaAppActionLabel,
   getCommunityMetaAppsEmptyState,
   getCommunityMetaAppStatusLabel,
+  getMetaAppVisualModel,
   getRecommendedMetaAppsEmptyState,
 } from './metaAppPresentation.js';
 
@@ -149,6 +150,28 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
   const recommendedEmptyState = getRecommendedMetaAppsEmptyState(i18nService.getLanguage());
   const communityEmptyState = getCommunityMetaAppsEmptyState(i18nService.getLanguage());
 
+  const renderMetaAppVisual = (app: { name: string; cover?: string; icon?: string }) => {
+    const visual = getMetaAppVisualModel(app);
+
+    if (visual.kind === 'none' || !visual.src) {
+      return (
+        <div className="mb-3 aspect-[16/7] rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border flex items-center justify-center">
+          <Squares2X2Icon className="h-8 w-8 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+        </div>
+      );
+    }
+
+    return (
+      <div className="mb-3 aspect-[16/7] rounded-xl overflow-hidden dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border">
+        <img
+          src={visual.src}
+          alt={app.name}
+          className={`h-full w-full ${visual.kind === 'cover' ? 'object-cover' : 'object-contain p-4'}`}
+        />
+      </div>
+    );
+  };
+
   const handleOpenMetaApp = async (app: MetaAppRecord) => {
     if (openingAppId || startingAppId) return;
     setOpeningAppId(app.id);
@@ -228,15 +251,11 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
             key={app.id}
             className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
           >
+            {renderMetaAppVisual(app)}
             <div className="flex items-start justify-between mb-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
-                  <Squares2X2Icon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-                </div>
-                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
-                  {app.name}
-                </span>
-              </div>
+              <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
+                {app.name}
+              </span>
             </div>
 
             <Tooltip
@@ -330,15 +349,11 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
               key={app.sourcePinId}
               className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
             >
+              {renderMetaAppVisual(app)}
               <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
-                    <Squares2X2Icon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-                  </div>
-                  <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
-                    {app.name}
-                  </span>
-                </div>
+                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
+                  {app.name}
+                </span>
                 <span className="px-1.5 py-0.5 rounded text-[10px] bg-claude-accent/10 text-claude-accent font-medium">
                   {statusLabel}
                 </span>

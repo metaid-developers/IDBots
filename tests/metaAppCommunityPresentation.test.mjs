@@ -6,6 +6,7 @@ import {
   getCommunityMetaAppActionLabel,
   getCommunityMetaAppsEmptyState,
   getCommunityMetaAppStatusLabel,
+  getMetaAppVisualModel,
 } from '../src/renderer/components/metaapps/metaAppPresentation.js';
 
 const sampleCommunityApps = [
@@ -57,4 +58,11 @@ test('getCommunityMetaAppStatusLabel and action label map statuses', () => {
 
   assert.equal(getCommunityMetaAppStatusLabel('install', 'en'), 'Install');
   assert.equal(getCommunityMetaAppActionLabel('update', 'en'), 'Update');
+});
+
+test('getMetaAppVisualModel works for chain community records too', () => {
+  assert.deepEqual(
+    getMetaAppVisualModel({ cover: 'data:image/png;base64,aaa', icon: 'data:image/png;base64,bbb' }),
+    { src: 'data:image/png;base64,aaa', kind: 'cover' },
+  );
 });

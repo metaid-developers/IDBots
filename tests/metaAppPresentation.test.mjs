@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildUseMetaAppPrompt,
   filterMetaApps,
+  getMetaAppVisualModel,
   getRecommendedMetaAppsEmptyState,
 } from '../src/renderer/components/metaapps/metaAppPresentation.js';
 
@@ -31,6 +32,21 @@ test('buildUseMetaAppPrompt builds a cowork prompt around the selected MetaApp',
   const prompt = buildUseMetaAppPrompt({ name: 'Buzz' });
   assert.match(prompt, /使用本地元应用 Buzz/);
   assert.match(prompt, /如果需要，请直接打开它/);
+});
+
+test('getMetaAppVisualModel prefers cover, then icon, then none', () => {
+  assert.deepEqual(
+    getMetaAppVisualModel({ cover: 'https://example.com/cover.png', icon: 'https://example.com/icon.png' }),
+    { src: 'https://example.com/cover.png', kind: 'cover' },
+  );
+  assert.deepEqual(
+    getMetaAppVisualModel({ icon: 'https://example.com/icon.png' }),
+    { src: 'https://example.com/icon.png', kind: 'icon' },
+  );
+  assert.deepEqual(
+    getMetaAppVisualModel({}),
+    { src: null, kind: 'none' },
+  );
 });
 
 test('getRecommendedMetaAppsEmptyState returns localized placeholder copy', () => {

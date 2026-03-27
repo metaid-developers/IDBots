@@ -30,6 +30,20 @@ export function buildUseMetaAppPrompt(app) {
   return `请帮我使用本地元应用 ${name}。如果需要，请直接打开它，并基于这个应用继续协助我完成任务。`;
 }
 
+export function getMetaAppVisualModel(app) {
+  const cover = String(app?.cover || '').trim();
+  if (cover) {
+    return { src: cover, kind: 'cover' };
+  }
+
+  const icon = String(app?.icon || '').trim();
+  if (icon) {
+    return { src: icon, kind: 'icon' };
+  }
+
+  return { src: null, kind: 'none' };
+}
+
 export function getRecommendedMetaAppsEmptyState(language = 'zh') {
   if (language === 'zh') {
     return {
