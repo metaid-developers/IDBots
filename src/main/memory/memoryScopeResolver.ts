@@ -27,6 +27,24 @@ function isGroupOrSharedChannel(sourceChannel: string): boolean {
   return GROUP_OR_SHARED_CHANNEL_HINTS.some((hint) => sourceChannel.includes(hint));
 }
 
+function hasValidMetabotId(metabotId?: number | null): boolean {
+  return typeof metabotId === 'number' && Number.isFinite(metabotId) && metabotId > 0;
+}
+
+function isDirectExternalSession(
+  input: ResolveMemoryScopesInput,
+  sourceChannel: string,
+  groupOrShared: boolean
+): boolean {
+  if (groupOrShared) {
+    return false;
+  }
+  if (sourceChannel === 'metaweb_private') {
+    return true;
+  }
+  return input.sessionType === 'a2a';
+}
+
 function withOwnerOperationalPreferences(writeScope: MemoryScope): ResolvedMemoryScopes {
   return {
     writeScope,
@@ -48,13 +66,16 @@ function ownerOnlyResolution(): ResolvedMemoryScopes {
 
 export function resolveMemoryScopes(input: ResolveMemoryScopesInput): ResolvedMemoryScopes {
   const sourceChannel = normalizeScopeChannel(input.sourceChannel);
+  if (!hasValidMetabotId(input.metabotId)) {
+    return ownerOnlyResolution();
+  }
   if (!sourceChannel || sourceChannel === 'cowork_ui') {
     return ownerOnlyResolution();
   }
 
   const groupOrShared = isGroupOrSharedChannel(sourceChannel);
 
-  if (!groupOrShared) {
+  if (isDirectExternalSession(input, sourceChannel, groupOrShared)) {
     const contactScope = createContactMemoryScope({
       sourceChannel,
       peerGlobalMetaId: input.peerGlobalMetaId,

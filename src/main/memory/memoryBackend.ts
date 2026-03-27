@@ -80,6 +80,11 @@ export interface MemoryUpdateUserMemoryInput extends MemoryScopeSelectorInput, M
   isExplicit?: boolean;
 }
 
+export interface MemoryDeleteUserMemoryInput extends MemoryScopeSelectorInput {
+  id: string;
+  metabotId: number;
+}
+
 export interface MemoryPolicy {
   metabotId: number;
   memoryEnabled: boolean;
