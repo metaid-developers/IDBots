@@ -723,6 +723,47 @@ export class ServiceOrderStore {
     return this.getOrderById(orderId);
   }
 
+  markRefundedLocally(
+    orderId: string,
+    input: {
+      resolvedAt: number;
+      failureReason?: string | null;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refunded') {
+      return order;
+    }
+
+    const failureReason = String(input.failureReason || '').trim();
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = 'refunded',
+        failed_at = COALESCE(failed_at, ?),
+        failure_reason = CASE
+          WHEN COALESCE(failure_reason, '') = '' AND ? <> '' THEN ?
+          ELSE failure_reason
+        END,
+        refund_requested_at = COALESCE(refund_requested_at, ?),
+        refund_completed_at = COALESCE(refund_completed_at, ?),
+        next_retry_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      input.resolvedAt,
+      failureReason,
+      failureReason,
+      input.resolvedAt,
+      input.resolvedAt,
+      input.resolvedAt,
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
   setCoworkSessionId(orderId: string, coworkSessionId: string): ServiceOrderRecord | null {
     const order = this.getOrderById(orderId);
     if (!order) return null;

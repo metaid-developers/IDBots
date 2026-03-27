@@ -5,7 +5,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const {
+  isRemoteSkillServiceListSemanticMiss,
   syncRemoteSkillServicesWithCursor,
+  parseRemoteSkillServiceItem,
   parseRemoteSkillServiceRow,
 } = require('../dist-electron/services/gigSquareRemoteServiceSync.js');
 
@@ -117,4 +119,104 @@ test('parseRemoteSkillServiceRow normalizes second-based updated_at to milliseco
   });
 
   assert.equal(row.updatedAt, 1_773_514_659_000);
+});
+
+test('parseRemoteSkillServiceItem preserves chain status and operation metadata', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-modify-1',
+    status: 0,
+    operation: 'modify',
+    path: '@svc-root-1',
+    address: '1abc',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    timestamp: 1_773_514_659,
+    contentSummary: {
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      price: '0.0001',
+      currency: 'SPACE',
+      providerMetaBot: 'global-1',
+      providerSkill: 'weather',
+    },
+  });
+
+  assert.equal(row.operation, 'modify');
+  assert.equal(row.path, '@svc-root-1');
+  assert.equal(row.status, 0);
+  assert.equal(row.sourceServicePinId, 'svc-root-1');
+});
+
+test('parseRemoteSkillServiceItem preserves revoke rows even when contentSummary is empty', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-revoke-1',
+    status: -1,
+    operation: 'revoke',
+    path: '@svc-root-1',
+    address: '1abc',
+    create_address: '1abc',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    timestamp: 1_773_514_700,
+    contentSummary: '',
+  });
+
+  assert.ok(row);
+  assert.equal(row.operation, 'revoke');
+  assert.equal(row.path, '@svc-root-1');
+  assert.equal(row.sourceServicePinId, 'svc-root-1');
+  assert.equal(row.status, -1);
+  assert.equal(row.available, 0);
+  assert.equal(row.providerMetaId, 'meta-1');
+  assert.equal(row.providerGlobalMetaId, 'global-1');
+});
+
+test('parseRemoteSkillServiceItem ignores original protocol path when mutation target pin is absent', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-modify-2',
+    status: 0,
+    operation: 'modify',
+    path: '/protocols/skill-service',
+    originalId: '/protocols/skill-service',
+    address: '1abc',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    contentSummary: {
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      price: '0.0001',
+      currency: 'SPACE',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(row.sourceServicePinId, 'svc-modify-2');
+});
+
+test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutation metadata', () => {
+  assert.equal(isRemoteSkillServiceListSemanticMiss({
+    data: {
+      list: [{
+        id: 'svc-local-1',
+        contentSummary: {
+          serviceName: 'weather-service',
+        },
+      }],
+    },
+  }), true);
+
+  assert.equal(isRemoteSkillServiceListSemanticMiss({
+    data: {
+      list: [{
+        id: 'svc-remote-1',
+        operation: 'create',
+        status: 0,
+        contentSummary: {
+          serviceName: 'weather-service',
+        },
+      }],
+    },
+  }), false);
 });

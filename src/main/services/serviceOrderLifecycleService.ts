@@ -6,6 +6,7 @@ import { getTimedOutOrderTransition } from './serviceOrderState';
 import { buildRefundRequestPayload } from './serviceOrderProtocols.js';
 
 export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
+export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = 'self_order_not_allowed';
 export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = 60_000;
 
 export interface CreateBuyerOrderInput {
@@ -60,6 +61,7 @@ export interface AttachSellerCoworkSessionInput extends ServiceOrderPaymentMatch
 
 interface ServiceOrderLifecycleServiceOptions {
   now?: () => number;
+  resolveLocalMetabotGlobalMetaId?: (localMetabotId: number) => string | null | undefined;
   buildRefundRequestPayload?: (order: ServiceOrderRecord) => Record<string, unknown>;
   createRefundRequestPin?: (input: {
     order: ServiceOrderRecord;
@@ -84,9 +86,20 @@ export class ServiceOrderOpenOrderExistsError extends Error {
   }
 }
 
+export class ServiceOrderSelfOrderNotAllowedError extends Error {
+  code: string;
+
+  constructor() {
+    super('A MetaBot cannot order its own service.');
+    this.name = 'ServiceOrderSelfOrderNotAllowedError';
+    this.code = SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE;
+  }
+}
+
 export class ServiceOrderLifecycleService {
   private store: ServiceOrderStore;
   private now: () => number;
+  private resolveLocalMetabotGlobalMetaId: (localMetabotId: number) => string | null | undefined;
   private pendingBuyerOrderPairs = new Set<string>();
   private buildRefundRequestPayload: (order: ServiceOrderRecord) => Record<string, unknown>;
   private createRefundRequestPin?: (input: {
@@ -105,6 +118,8 @@ export class ServiceOrderLifecycleService {
   ) {
     this.store = store;
     this.now = options.now ?? (() => Date.now());
+    this.resolveLocalMetabotGlobalMetaId =
+      options.resolveLocalMetabotGlobalMetaId ?? (() => null);
     this.buildRefundRequestPayload =
       options.buildRefundRequestPayload ?? ((order) => this.buildDefaultRefundRequestPayload(order));
     this.createRefundRequestPin = options.createRefundRequestPin;
@@ -117,6 +132,7 @@ export class ServiceOrderLifecycleService {
     localMetabotId: number,
     counterpartyGlobalMetaId: string
   ): void {
+    this.assertNotSelfDirectedOrder(localMetabotId, counterpartyGlobalMetaId);
     if (this.pendingBuyerOrderPairs.has(this.getBuyerPairKey(localMetabotId, counterpartyGlobalMetaId))) {
       throw new ServiceOrderOpenOrderExistsError(`pending:${localMetabotId}:${counterpartyGlobalMetaId}`);
     }
@@ -130,11 +146,15 @@ export class ServiceOrderLifecycleService {
     localMetabotId: number,
     counterpartyGlobalMetaId: string
   ): { allowed: true } | { allowed: false; errorCode: string; error: string } {
+    this.repairSelfDirectedOrders();
     try {
       this.assertNoOpenBuyerOrderForPair(localMetabotId, counterpartyGlobalMetaId);
       return { allowed: true };
     } catch (error) {
-      if (error instanceof ServiceOrderOpenOrderExistsError) {
+      if (
+        error instanceof ServiceOrderOpenOrderExistsError
+        || error instanceof ServiceOrderSelfOrderNotAllowedError
+      ) {
         return {
           allowed: false,
           errorCode: error.code,
@@ -163,6 +183,7 @@ export class ServiceOrderLifecycleService {
     localMetabotId: number,
     counterpartyGlobalMetaId: string
   ): () => void {
+    this.repairSelfDirectedOrders();
     this.assertNoOpenBuyerOrderForPair(localMetabotId, counterpartyGlobalMetaId);
     const pairKey = this.getBuyerPairKey(localMetabotId, counterpartyGlobalMetaId);
     this.pendingBuyerOrderPairs.add(pairKey);
@@ -176,6 +197,10 @@ export class ServiceOrderLifecycleService {
   }
 
   createBuyerOrder(input: CreateBuyerOrderInput): ServiceOrderRecord {
+    this.assertNotSelfDirectedOrder(
+      input.localMetabotId,
+      input.counterpartyGlobalMetaId
+    );
     this.assertNoPersistedOpenBuyerOrderForPair(
       input.localMetabotId,
       input.counterpartyGlobalMetaId
@@ -199,6 +224,10 @@ export class ServiceOrderLifecycleService {
   }
 
   createSellerOrder(input: CreateSellerOrderInput): ServiceOrderRecord {
+    this.assertNotSelfDirectedOrder(
+      input.localMetabotId,
+      input.counterpartyGlobalMetaId
+    );
     return this.store.createOrder({
       role: 'seller',
       localMetabotId: input.localMetabotId,
@@ -274,6 +303,7 @@ export class ServiceOrderLifecycleService {
   }
 
   async scanTimedOutOrders(): Promise<void> {
+    this.repairSelfDirectedOrders();
     const now = this.now();
     const openBuyerOrders = this.store.listOrdersByStatuses('buyer', [
       'awaiting_first_response',
@@ -292,6 +322,47 @@ export class ServiceOrderLifecycleService {
     for (const order of retryCandidates) {
       await this.tryCreateRefundRequest(order.id, now);
     }
+  }
+
+  repairSelfDirectedOrders(): ServiceOrderRecord[] {
+    const paymentTxids = new Set<string>();
+    const candidateStatuses = [
+      'awaiting_first_response',
+      'in_progress',
+      'failed',
+      'refund_pending',
+    ] as const;
+
+    for (const role of ['buyer', 'seller'] as const) {
+      for (const order of this.store.listOrdersByStatuses(role, [...candidateStatuses])) {
+        if (this.isSelfDirectedOrder(order)) {
+          paymentTxids.add(order.paymentTxid);
+        }
+      }
+    }
+
+    if (paymentTxids.size === 0) {
+      return [];
+    }
+
+    const resolvedAt = this.now();
+    const repaired: ServiceOrderRecord[] = [];
+    for (const paymentTxid of paymentTxids) {
+      for (const order of this.store.listOrdersByPaymentTxid(paymentTxid)) {
+        if (order.status === 'completed' || order.status === 'refunded') {
+          continue;
+        }
+        const updated = this.store.markRefundedLocally(order.id, {
+          resolvedAt,
+          failureReason: SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
+        });
+        if (updated) {
+          repaired.push(updated);
+        }
+      }
+    }
+
+    return repaired;
   }
 
   async tryCreateRefundRequest(
@@ -356,6 +427,38 @@ export class ServiceOrderLifecycleService {
     counterpartyGlobalMetaId: string
   ): string {
     return `${localMetabotId}:${counterpartyGlobalMetaId}`;
+  }
+
+  private isSelfDirectedOrder(order: ServiceOrderRecord): boolean {
+    return this.isSelfDirectedPair(order.localMetabotId, order.counterpartyGlobalMetaid);
+  }
+
+  private isSelfDirectedPair(
+    localMetabotId: number,
+    counterpartyGlobalMetaId: string
+  ): boolean {
+    const localGlobalMetaId = this.normalizeGlobalMetaId(
+      this.resolveLocalMetabotGlobalMetaId(localMetabotId)
+    );
+    const normalizedCounterparty = this.normalizeGlobalMetaId(counterpartyGlobalMetaId);
+    return Boolean(
+      localGlobalMetaId
+      && normalizedCounterparty
+      && localGlobalMetaId === normalizedCounterparty
+    );
+  }
+
+  private assertNotSelfDirectedOrder(
+    localMetabotId: number,
+    counterpartyGlobalMetaId: string
+  ): void {
+    if (this.isSelfDirectedPair(localMetabotId, counterpartyGlobalMetaId)) {
+      throw new ServiceOrderSelfOrderNotAllowedError();
+    }
+  }
+
+  private normalizeGlobalMetaId(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private mirrorRefundPendingToCounterparts(

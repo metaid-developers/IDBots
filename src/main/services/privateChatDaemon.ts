@@ -574,6 +574,18 @@ async function processOne(
     if (isOrderMessage(plaintext)) {
       const source: OrderSource = 'metaweb_private';
       const txid = extractOrderTxid(plaintext);
+      const localGlobalMetaId = (metabot.globalmetaid || '').trim();
+      if (
+        source === 'metaweb_private'
+        && fromGlobalMetaId
+        && localGlobalMetaId
+        && fromGlobalMetaId === localGlobalMetaId
+      ) {
+        emitLog(`[Order] Skip self-directed order message for ${localGlobalMetaId.slice(0, 12)}…`);
+        serviceOrderLifecycle?.repairSelfDirectedOrders();
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
       const payment = await checkOrderPaymentStatus({
         txid,
         plaintext,

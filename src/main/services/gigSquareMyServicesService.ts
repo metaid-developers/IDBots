@@ -1,5 +1,7 @@
 export interface GigSquareMyServiceSource {
   id: string;
+  currentPinId?: string;
+  sourceServicePinId?: string;
   serviceName?: string;
   displayName?: string;
   description?: string;
@@ -11,6 +13,13 @@ export interface GigSquareMyServiceSource {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  outputType?: string | null;
+  creatorMetabotId?: number | null;
+  creatorMetabotName?: string | null;
+  creatorMetabotAvatar?: string | null;
+  canModify?: boolean;
+  canRevoke?: boolean;
+  blockedReason?: string | null;
   ratingAvg?: number;
   ratingCount?: number;
   updatedAt?: number;
@@ -44,6 +53,8 @@ export interface GigSquareMyServiceRating {
 
 export interface GigSquareMyServiceSummary {
   id: string;
+  currentPinId: string;
+  sourceServicePinId: string;
   serviceName: string;
   displayName: string;
   description: string;
@@ -55,6 +66,12 @@ export interface GigSquareMyServiceSummary {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  creatorMetabotId: number | null;
+  creatorMetabotName?: string | null;
+  creatorMetabotAvatar?: string | null;
+  canModify: boolean;
+  canRevoke: boolean;
+  blockedReason: string | null;
   successCount: number;
   refundCount: number;
   grossRevenue: string;
@@ -111,6 +128,12 @@ const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const toOptionalInteger = (value: unknown): number | null => {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 };
 
 const normalizePage = (value: number): number => {
@@ -257,12 +280,16 @@ export function buildMyServiceSummaries(input: {
       return updatedSort !== 0 ? updatedSort : compareStringsDesc(left.id, right.id);
     })
     .map((service) => {
-      const stats = orderStatsByServiceId.get(service.id);
+      const currentPinId = toSafeString(service.currentPinId ?? service.id).trim() || toSafeString(service.id).trim();
+      const sourceServicePinId = toSafeString(service.sourceServicePinId).trim() || currentPinId;
+      const stats = orderStatsByServiceId.get(currentPinId);
       const servicePriceUnits = parseDecimalToUnits(service.price);
       const completedCount = BigInt(stats?.successCount ?? 0);
       const recognizedRevenueUnits = servicePriceUnits * completedCount;
       return {
-        id: service.id,
+        id: currentPinId,
+        currentPinId,
+        sourceServicePinId,
         serviceName: toSafeString(service.serviceName).trim(),
         displayName: toSafeString(service.displayName).trim() || toSafeString(service.serviceName).trim() || 'Service',
         description: toSafeString(service.description).trim(),
@@ -274,6 +301,13 @@ export function buildMyServiceSummaries(input: {
         avatar: service.avatar ?? null,
         serviceIcon: service.serviceIcon ?? null,
         providerSkill: toSafeString(service.providerSkill).trim() || null,
+        outputType: toSafeString(service.outputType).trim() || null,
+        creatorMetabotId: toOptionalInteger(service.creatorMetabotId),
+        creatorMetabotName: toSafeString(service.creatorMetabotName).trim() || null,
+        creatorMetabotAvatar: toSafeString(service.creatorMetabotAvatar).trim() || null,
+        canModify: Boolean(service.canModify),
+        canRevoke: Boolean(service.canRevoke),
+        blockedReason: toSafeString(service.blockedReason).trim() || null,
         successCount: stats?.successCount ?? 0,
         refundCount: stats?.refundCount ?? 0,
         grossRevenue: formatUnitsToDecimal(recognizedRevenueUnits),

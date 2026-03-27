@@ -6,6 +6,8 @@ export type GigSquareRefundRisk = {
 
 export type GigSquareService = {
   id: string;
+  currentPinId?: string;
+  sourceServicePinId?: string;
   serviceName: string;
   displayName: string;
   description: string;
@@ -42,6 +44,8 @@ export type GigSquarePageResult<T> = {
 
 export type GigSquareMyServiceSummary = {
   id: string;
+  currentPinId: string;
+  sourceServicePinId: string;
   serviceName: string;
   displayName: string;
   description: string;
@@ -53,6 +57,13 @@ export type GigSquareMyServiceSummary = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  outputType?: string | null;
+  creatorMetabotId: number | null;
+  creatorMetabotName?: string | null;
+  creatorMetabotAvatar?: string | null;
+  canModify: boolean;
+  canRevoke: boolean;
+  blockedReason: string | null;
   successCount: number;
   refundCount: number;
   grossRevenue: string;
@@ -86,4 +97,26 @@ export type GigSquareMyServiceOrderDetail = {
   counterpartyAvatar?: string | null;
   coworkSessionId: string | null;
   rating: GigSquareMyServiceOrderRating | null;
+};
+
+export type GigSquareModifyServiceParams = {
+  serviceId: string;
+  serviceName?: string;
+  displayName?: string;
+  description?: string;
+  providerSkill?: string;
+  price?: string;
+  currency?: string;
+  outputType?: string;
+  serviceIconDataUrl?: string | null;
+};
+
+export type GigSquareServiceMutationResult = {
+  success: boolean;
+  txids?: string[];
+  pinId?: string;
+  creatorMetabotId?: number;
+  warning?: string;
+  error?: string;
+  errorCode?: string;
 };

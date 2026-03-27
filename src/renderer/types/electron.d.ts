@@ -1,10 +1,12 @@
 import type { McpServerConfig, McpServerFormData } from './mcp';
 import type {
+  GigSquareModifyServiceParams,
   GigSquareMyServiceOrderDetail,
   GigSquareMyServiceSummary,
   GigSquarePageResult,
   GigSquareProviderInfo,
   GigSquareService,
+  GigSquareServiceMutationResult,
 } from './gigSquare';
 
 interface ApiResponse {
@@ -385,7 +387,7 @@ interface IElectronAPI {
     }>;
     syncFromRemote: () => Promise<{ success: boolean; error?: string }>;
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) => Promise<{ success: boolean; error?: string } & GigSquareProviderInfo>;
-    preflightOrder: (params: { metabotId: number; toGlobalMetaId: string }) => Promise<{ success: boolean; error?: string; errorCode?: 'open_order_exists' | string }>;
+    preflightOrder: (params: { metabotId: number; toGlobalMetaId: string }) => Promise<{ success: boolean; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | string }>;
     publishService: (params: {
       metabotId: number;
       serviceName: string;
@@ -397,7 +399,9 @@ interface IElectronAPI {
       outputType: string;
       serviceIconDataUrl?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;
-    sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string; peerName?: string | null; peerAvatar?: string | null; serviceId?: string | null; servicePrice?: string | null; serviceCurrency?: string | null; serviceSkill?: string | null; serverBotGlobalMetaId?: string | null; servicePaidTx?: string | null }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | string }>;
+    revokeService: (params: { serviceId: string }) => Promise<GigSquareServiceMutationResult>;
+    modifyService: (params: GigSquareModifyServiceParams) => Promise<GigSquareServiceMutationResult>;
+    sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string; peerName?: string | null; peerAvatar?: string | null; serviceId?: string | null; servicePrice?: string | null; serviceCurrency?: string | null; serviceSkill?: string | null; serverBotGlobalMetaId?: string | null; servicePaidTx?: string | null }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | string }>;
     pingProvider: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string }>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;

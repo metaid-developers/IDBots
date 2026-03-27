@@ -105,6 +105,50 @@ test('buildMyServiceSummaries ignores anomalous seller payment amounts when comp
   assert.equal(result.items[0].netIncome, '0.0001');
 });
 
+test('buildMyServiceSummaries uses current pin for metrics and preserves creator/action metadata', () => {
+  const result = buildMyServiceSummaries({
+    ownedGlobalMetaIds: new Set(['owned-global']),
+    services: [{
+      id: 'svc-m2',
+      currentPinId: 'svc-m2',
+      sourceServicePinId: 'svc-root',
+      displayName: 'Weather V2',
+      serviceName: 'weather-service',
+      description: 'desc',
+      price: '2',
+      currency: 'SPACE',
+      providerMetaId: 'meta-1',
+      providerGlobalMetaId: 'owned-global',
+      providerAddress: 'addr-1',
+      creatorMetabotId: 7,
+      creatorMetabotName: 'Caster Bot',
+      creatorMetabotAvatar: 'avatar://caster',
+      canModify: true,
+      canRevoke: true,
+      blockedReason: null,
+      updatedAt: 123,
+    }],
+    sellerOrders: [
+      { id: 'old-order', servicePinId: 'svc-root', status: 'completed', paymentAmount: '99' },
+      { id: 'current-order', servicePinId: 'svc-m2', status: 'completed', paymentAmount: '1' },
+    ],
+    page: 1,
+    pageSize: 8,
+  });
+
+  assert.equal(result.items[0].id, 'svc-m2');
+  assert.equal(result.items[0].currentPinId, 'svc-m2');
+  assert.equal(result.items[0].sourceServicePinId, 'svc-root');
+  assert.equal(result.items[0].successCount, 1);
+  assert.equal(result.items[0].grossRevenue, '2');
+  assert.equal(result.items[0].creatorMetabotId, 7);
+  assert.equal(result.items[0].creatorMetabotName, 'Caster Bot');
+  assert.equal(result.items[0].creatorMetabotAvatar, 'avatar://caster');
+  assert.equal(result.items[0].canModify, true);
+  assert.equal(result.items[0].canRevoke, true);
+  assert.equal(result.items[0].blockedReason, null);
+});
+
 test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
   const result = buildMyServiceOrderDetails({
     serviceId: 'svc-1',

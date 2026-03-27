@@ -104,6 +104,19 @@ contextBridge.exposeInMainWorld('electron', {
       outputType: string;
       serviceIconDataUrl?: string | null;
     }) => ipcRenderer.invoke('gigSquare:publishService', params),
+    revokeService: (params: { serviceId: string }) =>
+      ipcRenderer.invoke('gigSquare:revokeService', params),
+    modifyService: (params: {
+      serviceId: string;
+      serviceName?: string;
+      displayName?: string;
+      description?: string;
+      providerSkill?: string;
+      price?: string;
+      currency?: string;
+      outputType?: string;
+      serviceIconDataUrl?: string | null;
+    }) => ipcRenderer.invoke('gigSquare:modifyService', params),
     sendOrder: (params: {
       metabotId: number;
       toGlobalMetaId: string;

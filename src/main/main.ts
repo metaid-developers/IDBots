@@ -74,6 +74,7 @@ import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreS
 import {
   ServiceOrderLifecycleService,
   ServiceOrderOpenOrderExistsError,
+  ServiceOrderSelfOrderNotAllowedError,
 } from './services/serviceOrderLifecycleService';
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
@@ -85,6 +86,7 @@ import {
   selectProtocolPinContent,
 } from './services/serviceOrderSessionResolution.js';
 import {
+  isRemoteSkillServiceListSemanticMiss,
   parseRemoteSkillServiceRow,
   syncRemoteSkillServicesWithCursor,
 } from './services/gigSquareRemoteServiceSync';
@@ -99,6 +101,23 @@ import {
   type GigSquareMyServiceRating,
 } from './services/gigSquareMyServicesService';
 import { resolveSellerOrderServiceMatch } from './services/gigSquareMyServicesRepairService';
+import {
+  applyLocalServiceState,
+  resolveCurrentServiceChains,
+  resolveServiceActionAvailability,
+  type GigSquareResolvedCurrentService,
+} from './services/gigSquareServiceStateService';
+import {
+  GIG_SQUARE_MUTATION_SYNC_DELAY_MS,
+  buildGigSquareLocalServiceRecordForModify,
+  buildGigSquareLocalServiceRecordForRevoke,
+  buildGigSquareModifyMetaidPayload,
+  buildGigSquareRevokeMetaidPayload,
+  buildGigSquareServicePayload,
+  validateGigSquareModifyDraft,
+  validateGigSquareServiceMutation,
+  type GigSquareModifyDraft,
+} from './services/gigSquareServiceMutationService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -357,6 +376,8 @@ const GIG_SQUARE_IMAGE_MIME_TYPES = new Set([
 
 type GigSquareService = {
   id: string;
+  pinId?: string;
+  sourceServicePinId?: string;
   serviceName: string;
   displayName: string;
   description: string;
@@ -365,9 +386,17 @@ type GigSquareService = {
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
+  createAddress?: string | null;
+  paymentAddress?: string | null;
   avatar?: string | null;
   serviceIcon?: string | null;
+  providerMetaBot?: string | null;
   providerSkill?: string | null;
+  status?: number;
+  operation?: string | null;
+  path?: string | null;
+  originalId?: string | null;
+  available?: number;
   ratingAvg?: number;
   ratingCount?: number;
   updatedAt?: number;
@@ -376,6 +405,39 @@ type GigSquareService = {
     unresolvedRefundAgeHours: number;
     hidden?: boolean;
   } | null;
+};
+
+type GigSquareCurrentMyService = GigSquareResolvedCurrentService<GigSquareService> & {
+  creatorMetabotId: number | null;
+  creatorMetabotName: string | null;
+  creatorMetabotAvatar: string | null;
+  canModify: boolean;
+  canRevoke: boolean;
+  blockedReason: string | null;
+};
+
+type GigSquareLocalServiceRecord = {
+  id: string;
+  pinId: string;
+  sourceServicePinId: string;
+  currentPinId: string;
+  txid: string;
+  metabotId: number;
+  providerGlobalMetaId: string;
+  providerSkill: string;
+  serviceName: string;
+  displayName: string;
+  description: string;
+  serviceIcon: string | null;
+  price: string;
+  currency: string;
+  skillDocument: string;
+  inputType: string;
+  outputType: string;
+  endpoint: string;
+  payloadJson: string;
+  revokedAt: number | null;
+  updatedAt: number;
 };
 
 const toSafeString = (value: unknown): string => {
@@ -465,6 +527,8 @@ const ensureGigSquareSchema = (): void => {
     CREATE TABLE IF NOT EXISTS gig_square_services (
       id TEXT PRIMARY KEY,
       pin_id TEXT NOT NULL,
+      source_service_pin_id TEXT,
+      current_pin_id TEXT,
       txid TEXT NOT NULL,
       metabot_id INTEGER NOT NULL,
       provider_global_metaid TEXT NOT NULL,
@@ -480,9 +544,31 @@ const ensureGigSquareSchema = (): void => {
       output_type TEXT NOT NULL,
       endpoint TEXT NOT NULL,
       payload_json TEXT NOT NULL,
+      revoked_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+  `);
+  const gigSquareColumnsResult = db.exec('PRAGMA table_info(gig_square_services)');
+  const gigSquareColumns = (gigSquareColumnsResult[0]?.values ?? []).map((row) => String(row[1]));
+  if (!gigSquareColumns.includes('source_service_pin_id')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN source_service_pin_id TEXT');
+  }
+  if (!gigSquareColumns.includes('current_pin_id')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN current_pin_id TEXT');
+  }
+  if (!gigSquareColumns.includes('revoked_at')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN revoked_at INTEGER');
+  }
+  db.run(`
+    UPDATE gig_square_services
+    SET source_service_pin_id = COALESCE(NULLIF(TRIM(source_service_pin_id), ''), pin_id, id)
+    WHERE source_service_pin_id IS NULL OR TRIM(source_service_pin_id) = ''
+  `);
+  db.run(`
+    UPDATE gig_square_services
+    SET current_pin_id = COALESCE(NULLIF(TRIM(current_pin_id), ''), pin_id, id)
+    WHERE current_pin_id IS NULL OR TRIM(current_pin_id) = ''
   `);
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_gig_square_services_metabot
@@ -492,6 +578,10 @@ const ensureGigSquareSchema = (): void => {
     CREATE INDEX IF NOT EXISTS idx_gig_square_services_service_name
     ON gig_square_services(service_name);
   `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_gig_square_services_current_pin
+    ON gig_square_services(current_pin_id);
+  `);
   sqliteStore.getSaveFunction()();
   gigSquareSchemaReady = true;
 };
@@ -499,7 +589,9 @@ const ensureGigSquareSchema = (): void => {
 const insertGigSquareServiceRow = (input: {
   id: string;
   pinId: string;
-  txid: string;
+  sourceServicePinId?: string;
+  currentPinId?: string;
+  txid?: string;
   metabotId: number;
   providerGlobalMetaId: string;
   providerSkill: string;
@@ -514,20 +606,24 @@ const insertGigSquareServiceRow = (input: {
   outputType: string;
   endpoint: string;
   payloadJson: string;
+  revokedAt?: number | null;
+  updatedAt?: number;
 }): void => {
   ensureGigSquareSchema();
   const sqliteStore = getStore();
   const db = sqliteStore.getDatabase();
-  const now = Date.now();
+  const now = input.updatedAt ?? Date.now();
   db.run(
     `
       INSERT INTO gig_square_services (
-        id, pin_id, txid, metabot_id, provider_global_metaid, provider_skill,
+        id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid, provider_skill,
         service_name, display_name, description, service_icon, price, currency,
-        skill_document, input_type, output_type, endpoint, payload_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        skill_document, input_type, output_type, endpoint, payload_json, revoked_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         pin_id = excluded.pin_id,
+        source_service_pin_id = excluded.source_service_pin_id,
+        current_pin_id = excluded.current_pin_id,
         txid = excluded.txid,
         metabot_id = excluded.metabot_id,
         provider_global_metaid = excluded.provider_global_metaid,
@@ -543,12 +639,15 @@ const insertGigSquareServiceRow = (input: {
         output_type = excluded.output_type,
         endpoint = excluded.endpoint,
         payload_json = excluded.payload_json,
+        revoked_at = excluded.revoked_at,
         updated_at = excluded.updated_at
     `,
     sanitizeDbParams([
       input.id,
       input.pinId,
-      input.txid,
+      input.sourceServicePinId || input.pinId,
+      input.currentPinId || input.pinId,
+      input.txid ?? '',
       input.metabotId,
       input.providerGlobalMetaId,
       input.providerSkill,
@@ -563,11 +662,221 @@ const insertGigSquareServiceRow = (input: {
       input.outputType,
       input.endpoint,
       input.payloadJson,
+      input.revokedAt ?? null,
       now,
       now,
     ])
   );
   sqliteStore.getSaveFunction()();
+};
+
+const hasGigSquareLocalServiceRecord = (servicePinId: string): boolean => {
+  ensureGigSquareSchema();
+  const normalizedServicePinId = toSafeString(servicePinId).trim();
+  if (!normalizedServicePinId) return false;
+  const result = getStore().getDatabase().exec(
+    `SELECT 1
+     FROM gig_square_services
+     WHERE id = ?
+        OR pin_id = ?
+        OR source_service_pin_id = ?
+        OR current_pin_id = ?
+     LIMIT 1`,
+    sanitizeDbParams([
+      normalizedServicePinId,
+      normalizedServicePinId,
+      normalizedServicePinId,
+      normalizedServicePinId,
+    ]),
+  );
+  return Boolean(result[0]?.values?.length);
+};
+
+const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
+  ensureGigSquareSchema();
+  const db = getStore().getDatabase();
+  const result = db.exec(`
+    SELECT id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid,
+           provider_skill, service_name, display_name, description, service_icon, price, currency,
+           skill_document, input_type, output_type, endpoint, payload_json, revoked_at, updated_at
+    FROM gig_square_services
+    ORDER BY updated_at DESC
+  `);
+  if (!result.length || !result[0].values.length) return [];
+  const columns = result[0].columns as string[];
+  const rows = result[0].values as unknown[][];
+  return rows.map((row) => {
+    const raw = columns.reduce<Record<string, unknown>>((acc, col, idx) => {
+      acc[col] = row[idx];
+      return acc;
+    }, {});
+    return {
+      id: toSafeString(raw.id).trim(),
+      pinId: toSafeString(raw.pin_id).trim(),
+      sourceServicePinId: toSafeString(raw.source_service_pin_id).trim() || toSafeString(raw.pin_id).trim(),
+      currentPinId: toSafeString(raw.current_pin_id).trim() || toSafeString(raw.pin_id).trim(),
+      txid: toSafeString(raw.txid).trim(),
+      metabotId: Math.trunc(toSafeNumber(raw.metabot_id)),
+      providerGlobalMetaId: toSafeString(raw.provider_global_metaid).trim(),
+      providerSkill: toSafeString(raw.provider_skill).trim(),
+      serviceName: toSafeString(raw.service_name).trim(),
+      displayName: toSafeString(raw.display_name).trim(),
+      description: toSafeString(raw.description).trim(),
+      serviceIcon: toSafeString(raw.service_icon).trim() || null,
+      price: toSafeString(raw.price).trim(),
+      currency: toSafeString(raw.currency).trim(),
+      skillDocument: toSafeString(raw.skill_document).trim(),
+      inputType: toSafeString(raw.input_type).trim(),
+      outputType: toSafeString(raw.output_type).trim(),
+      endpoint: toSafeString(raw.endpoint).trim(),
+      payloadJson: toSafeString(raw.payload_json).trim(),
+      revokedAt: raw.revoked_at == null ? null : Math.trunc(toSafeNumber(raw.revoked_at)),
+      updatedAt: Math.trunc(toSafeNumber(raw.updated_at)),
+    };
+  });
+};
+
+const markGigSquareLocalServiceRevoked = (service: {
+  id: string;
+  currentPinId?: string;
+  sourceServicePinId?: string;
+  creatorMetabotId?: number | null;
+  providerGlobalMetaId?: string;
+  providerSkill?: string | null;
+  serviceName?: string;
+  displayName?: string;
+  description?: string;
+  serviceIcon?: string | null;
+  price?: string;
+  currency?: string;
+  outputType?: string | null;
+  endpoint?: string | null;
+}): void => {
+  ensureGigSquareSchema();
+  const normalizedServicePinId = toSafeString(service.currentPinId || service.id).trim();
+  if (!normalizedServicePinId) return;
+  const now = Date.now();
+  const db = getStore().getDatabase();
+  db.run(
+    `UPDATE gig_square_services
+     SET revoked_at = ?,
+         updated_at = ?
+     WHERE id = ?
+        OR pin_id = ?
+        OR source_service_pin_id = ?
+        OR current_pin_id = ?`,
+    sanitizeDbParams([
+      now,
+      now,
+      normalizedServicePinId,
+      normalizedServicePinId,
+      normalizedServicePinId,
+      normalizedServicePinId,
+    ]),
+  );
+  if (!hasGigSquareLocalServiceRecord(normalizedServicePinId)) {
+    insertGigSquareServiceRow(buildGigSquareLocalServiceRecordForRevoke({
+      service,
+      now,
+    }));
+    return;
+  }
+  getStore().getSaveFunction()();
+};
+
+const updateGigSquareLocalServiceAfterModify = (input: {
+  targetService: {
+    id: string;
+    currentPinId?: string;
+    sourceServicePinId?: string;
+    creatorMetabotId?: number | null;
+    providerGlobalMetaId?: string;
+    providerSkill?: string | null;
+    serviceName?: string;
+    displayName?: string;
+    description?: string;
+    serviceIcon?: string | null;
+    price?: string;
+    currency?: string;
+    outputType?: string | null;
+    endpoint?: string | null;
+  };
+  currentPinId: string;
+  providerSkill: string;
+  serviceName: string;
+  displayName: string;
+  description: string;
+  serviceIcon: string | null;
+  price: string;
+  currency: string;
+  outputType: string;
+  endpoint: string;
+  payloadJson: string;
+}): void => {
+  ensureGigSquareSchema();
+  const normalizedTargetServiceId = toSafeString(
+    input.targetService.currentPinId || input.targetService.id
+  ).trim();
+  if (!normalizedTargetServiceId) return;
+  const now = Date.now();
+  const db = getStore().getDatabase();
+  db.run(
+    `UPDATE gig_square_services
+     SET current_pin_id = ?,
+         provider_skill = ?,
+         service_name = ?,
+         display_name = ?,
+         description = ?,
+         service_icon = ?,
+         price = ?,
+         currency = ?,
+         output_type = ?,
+         endpoint = ?,
+         payload_json = ?,
+         revoked_at = NULL,
+         updated_at = ?
+     WHERE id = ?
+        OR pin_id = ?
+        OR source_service_pin_id = ?
+        OR current_pin_id = ?`,
+    sanitizeDbParams([
+      toSafeString(input.currentPinId).trim() || normalizedTargetServiceId,
+      input.providerSkill,
+      input.serviceName,
+      input.displayName,
+      input.description,
+      input.serviceIcon,
+      input.price,
+      input.currency,
+      input.outputType,
+      input.endpoint,
+      input.payloadJson,
+      now,
+      normalizedTargetServiceId,
+      normalizedTargetServiceId,
+      normalizedTargetServiceId,
+      normalizedTargetServiceId,
+    ]),
+  );
+  if (!hasGigSquareLocalServiceRecord(normalizedTargetServiceId)) {
+    insertGigSquareServiceRow(buildGigSquareLocalServiceRecordForModify({
+      service: input.targetService,
+      currentPinId: toSafeString(input.currentPinId).trim() || normalizedTargetServiceId,
+      providerSkill: input.providerSkill,
+      serviceName: input.serviceName,
+      displayName: input.displayName,
+      description: input.description,
+      serviceIcon: input.serviceIcon,
+      price: input.price,
+      currency: input.currency,
+      outputType: input.outputType,
+      endpoint: input.endpoint,
+      payloadJson: input.payloadJson,
+      now,
+    }));
+    return;
+  }
+  getStore().getSaveFunction()();
 };
 
 let gigSquareSyncInProgress = false;
@@ -586,7 +895,11 @@ async function syncRemoteSkillServices(): Promise<void> {
         url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
         if (cursor) url.searchParams.set('cursor', cursor);
         const localPath = `/api/pin/path/list${url.search}`;
-        const response = await fetchJsonWithFallbackOnMiss(localPath, url.toString(), isEmptyListDataPayload);
+        const response = await fetchJsonWithFallbackOnMiss(
+          localPath,
+          url.toString(),
+          isRemoteSkillServiceListSemanticMiss,
+        );
         if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
         const json = await response.json();
         return {
@@ -597,9 +910,11 @@ async function syncRemoteSkillServices(): Promise<void> {
       upsertService: (parsed) => {
         const params = sanitizeDbParams([
           parsed.id,
+          parsed.pinId,
           parsed.providerMetaId,
           parsed.providerGlobalMetaId,
           parsed.providerAddress,
+          parsed.createAddress || parsed.providerAddress,
           parsed.serviceName,
           parsed.displayName,
           parsed.description,
@@ -613,20 +928,29 @@ async function syncRemoteSkillServices(): Promise<void> {
           parsed.inputType || null,
           parsed.outputType || null,
           parsed.endpoint || null,
+          parsed.status,
+          parsed.operation,
+          parsed.path || null,
+          parsed.originalId || null,
+          parsed.sourceServicePinId,
+          parsed.available,
           parsed.contentSummaryJson || null,
           parsed.paymentAddress || parsed.providerAddress,
           parsed.updatedAt || Date.now(),
         ]);
         db.run(
           `INSERT INTO remote_skill_service (
-            id, metaid, global_metaid, address, service_name, display_name, description,
+            id, pin_id, metaid, global_metaid, address, create_address, service_name, display_name, description,
             price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
-            skill_document, input_type, output_type, endpoint, content_summary_json, payment_address, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            skill_document, input_type, output_type, endpoint, status, operation, path,
+            original_id, source_service_pin_id, available, content_summary_json, payment_address, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
+            pin_id = excluded.pin_id,
             metaid = excluded.metaid,
             global_metaid = excluded.global_metaid,
             address = excluded.address,
+            create_address = excluded.create_address,
             service_name = excluded.service_name,
             display_name = excluded.display_name,
             description = excluded.description,
@@ -640,6 +964,12 @@ async function syncRemoteSkillServices(): Promise<void> {
             input_type = excluded.input_type,
             output_type = excluded.output_type,
             endpoint = excluded.endpoint,
+            status = excluded.status,
+            operation = excluded.operation,
+            path = excluded.path,
+            original_id = excluded.original_id,
+            source_service_pin_id = excluded.source_service_pin_id,
+            available = excluded.available,
             content_summary_json = excluded.content_summary_json,
             payment_address = excluded.payment_address,
             updated_at = excluded.updated_at`,
@@ -725,8 +1055,9 @@ async function syncGigSquareRemoteData(): Promise<void> {
 function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const db = getStore().getDatabase();
   const result = db.exec(`
-    SELECT id, metaid, global_metaid, address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_skill, updated_at, rating_avg, rating_count
+    SELECT id, pin_id, source_service_pin_id, status, operation, path, original_id, available,
+           metaid, global_metaid, address, create_address, payment_address, service_name, display_name, description,
+           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, updated_at, rating_avg, rating_count
     FROM remote_skill_service
     ORDER BY
       CASE WHEN rating_count > 0
@@ -793,6 +1124,81 @@ const listOwnedGigSquareProviderGlobalMetaIds = (): Set<string> => new Set(
     .map((metabot) => toSafeString(metabot.globalmetaid).trim())
     .filter(Boolean)
 );
+const resolveGigSquareServiceCreatorMetabot = (
+  service: GigSquareService,
+): { id: number | null; name: string | null; avatar: string | null } => {
+  const metabotStore = getMetabotStore();
+  const providerGlobalMetaId = toSafeString(service.providerGlobalMetaId).trim();
+  const providerMetaId = toSafeString(service.providerMetaId).trim();
+  const createAddress = toSafeString(service.createAddress ?? service.providerAddress).trim();
+
+  if (providerGlobalMetaId) {
+    const byGlobalMeta = metabotStore.getMetabotByGlobalMetaId(providerGlobalMetaId);
+    if (byGlobalMeta) {
+      return {
+        id: byGlobalMeta.id,
+        name: toSafeString(byGlobalMeta.name).trim() || null,
+        avatar: byGlobalMeta.avatar ?? null,
+      };
+    }
+  }
+
+  const byAddressOrMetaid = metabotStore
+    .listMetabots()
+    .find((metabot) => {
+      const mvcAddress = toSafeString(metabot.mvc_address).trim();
+      const btcAddress = toSafeString(metabot.btc_address).trim();
+      const dogeAddress = toSafeString(metabot.doge_address).trim();
+      if (
+        createAddress
+        && (mvcAddress === createAddress || btcAddress === createAddress || dogeAddress === createAddress)
+      ) {
+        return true;
+      }
+      return Boolean(providerMetaId) && toSafeString(metabot.metaid).trim() === providerMetaId;
+    });
+
+  if (!byAddressOrMetaid) {
+    return { id: null, name: null, avatar: null };
+  }
+
+  return {
+    id: byAddressOrMetaid.id,
+    name: toSafeString(byAddressOrMetaid.name).trim() || null,
+    avatar: byAddressOrMetaid.avatar ?? null,
+  };
+};
+
+const listCurrentMyGigSquareServices = (): GigSquareCurrentMyService[] => {
+  const ownedGlobalMetaIds = listOwnedGigSquareProviderGlobalMetaIds();
+  const sellerOrders = getServiceOrderStore().listOrdersByRole('seller');
+  const resolvedCurrentRows = applyLocalServiceState(
+    resolveCurrentServiceChains(
+      listRemoteSkillServicesFromDb().filter((service) =>
+        ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())
+      ),
+    ),
+    listGigSquareLocalServiceRecords(),
+  );
+
+  return resolvedCurrentRows.map((service) => {
+    const creator = resolveGigSquareServiceCreatorMetabot(service);
+    const actionAvailability = resolveServiceActionAvailability({
+      currentService: service,
+      sellerOrders,
+      creatorMetabotExists: creator.id != null,
+    });
+    return {
+      ...service,
+      creatorMetabotId: creator.id,
+      creatorMetabotName: creator.name,
+      creatorMetabotAvatar: creator.avatar,
+      canModify: actionAvailability.canModify,
+      canRevoke: actionAvailability.canRevoke,
+      blockedReason: actionAvailability.blockedReason,
+    };
+  });
+};
 
 const unwrapMetaidInfoRecord = (payload: unknown): Record<string, unknown> | null => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -1709,6 +2115,10 @@ const getServiceOrderLifecycleService = () => {
     serviceOrderLifecycleService = new ServiceOrderLifecycleService(
       getServiceOrderStore(),
       {
+        resolveLocalMetabotGlobalMetaId: (localMetabotId) => {
+          const metabot = getMetabotStore().getMetabotById(localMetabotId);
+          return metabot?.globalmetaid ?? null;
+        },
         buildRefundRequestPayload: (order) => {
           const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
           if (!metabot?.globalmetaid?.trim()) {
@@ -1759,6 +2169,10 @@ const getServiceOrderLifecycleService = () => {
     );
   }
   return serviceOrderLifecycleService;
+};
+
+const repairSelfDirectedServiceOrders = (): void => {
+  getServiceOrderLifecycleService().repairSelfDirectedOrders();
 };
 
 async function fetchProtocolPinsFromIndexer(
@@ -2635,6 +3049,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
     try {
+      repairSelfDirectedServiceOrders();
       const session = enrichCoworkSessionWithServiceOrderSummary(
         getCoworkStore().getSession(sessionId)
       );
@@ -2649,6 +3064,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('cowork:session:list', async () => {
     try {
+      repairSelfDirectedServiceOrders();
       const sessions = getCoworkStore().listSessions().map((session) =>
         enrichCoworkSessionWithServiceOrderSummary(session)
       );
@@ -3717,14 +4133,22 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:fetchServices', async () => {
     try {
+      repairSelfDirectedServiceOrders();
       const refundRiskByProvider = new Map(
         getServiceRefundSyncService()
           .listProviderRefundRiskSummaries()
           .map((summary) => [summary.providerGlobalMetaId, summary] as const)
       );
+      const currentServices = applyLocalServiceState(
+        resolveCurrentServiceChains(listRemoteSkillServicesFromDb()),
+        listGigSquareLocalServiceRecords(),
+      );
       const list = await Promise.all(
-        listRemoteSkillServicesFromDb().map(async (item) => ({
+        currentServices.map(async (item) => ({
           ...item,
+          id: item.currentPinId,
+          currentPinId: item.currentPinId,
+          sourceServicePinId: item.sourceServicePinId,
           avatar: await resolvePinAssetSource(item.avatar ?? null),
           serviceIcon: await resolvePinAssetSource(item.serviceIcon ?? null),
           refundRisk: refundRiskByProvider.get(item.providerGlobalMetaId) ?? null,
@@ -3747,9 +4171,10 @@ if (!gotTheLock) {
       });
       const page = normalizePositiveInteger(params?.page, 1);
       const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICES_PAGE_SIZE);
+      const currentMyServices = listCurrentMyGigSquareServices();
       const summaryPage = buildMyServiceSummaries({
         ownedGlobalMetaIds: listOwnedGigSquareProviderGlobalMetaIds(),
-        services: listRemoteSkillServicesFromDb(),
+        services: currentMyServices,
         sellerOrders: getServiceOrderStore().listOrdersByStatuses('seller', ['completed', 'refunded']),
         page,
         pageSize,
@@ -3759,6 +4184,7 @@ if (!gotTheLock) {
           ...item,
           avatar: await resolvePinAssetSource(item.avatar ?? null),
           serviceIcon: await resolvePinAssetSource(item.serviceIcon ?? null),
+          creatorMetabotAvatar: await resolvePinAssetSource(item.creatorMetabotAvatar ?? null),
         }))
       );
       return { success: true, page: { ...summaryPage, items } };
@@ -3781,14 +4207,18 @@ if (!gotTheLock) {
       if (!serviceId) {
         return { success: false, error: 'serviceId is required' };
       }
-      const ownedGlobalMetaIds = listOwnedGigSquareProviderGlobalMetaIds();
-      const service = listRemoteSkillServicesFromDb().find((item) => item.id === serviceId);
-      if (!service || !ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())) {
+      const currentMyServices = listCurrentMyGigSquareServices();
+      const service = currentMyServices.find((item) => item.currentPinId === serviceId || item.id === serviceId);
+      if (!service) {
+        return { success: false, error: 'Service not found' };
+      }
+      const currentPinId = toSafeString(service.currentPinId ?? service.id).trim();
+      if (!currentPinId) {
         return { success: false, error: 'Service not found' };
       }
 
       const ratingsByPaymentTxid = new Map<string, GigSquareMyServiceRating[]>();
-      for (const rating of listGigSquareRatingsFromDb(serviceId)) {
+      for (const rating of listGigSquareRatingsFromDb(currentPinId)) {
         const paymentTxid = toSafeString(rating.servicePaidTx).trim();
         if (!paymentTxid) continue;
         const list = ratingsByPaymentTxid.get(paymentTxid) ?? [];
@@ -3798,11 +4228,11 @@ if (!gotTheLock) {
 
       const sellerOrders = getServiceOrderStore()
         .listOrdersByStatuses('seller', ['completed', 'refunded'])
-        .filter((order) => toSafeString(order.servicePinId).trim() === serviceId);
+        .filter((order) => toSafeString(order.servicePinId).trim() === currentPinId);
       const page = normalizePositiveInteger(params?.page, 1);
       const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE);
       const detailPage = buildMyServiceOrderDetails({
-        serviceId,
+        serviceId: currentPinId,
         sellerOrders,
         ratingsByPaymentTxid,
         page,
@@ -3977,6 +4407,7 @@ if (!gotTheLock) {
     toGlobalMetaId: string;
   }) => {
     try {
+      repairSelfDirectedServiceOrders();
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
 
@@ -4146,6 +4577,212 @@ if (!gotTheLock) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to publish service' };
     }
   });
+  ipcMain.handle('gigSquare:revokeService', async (_event, params?: { serviceId?: string }) => {
+    try {
+      await syncGigSquareMyServicesData({ refresh: true });
+      const serviceId = toSafeString(params?.serviceId).trim();
+      if (!serviceId) {
+        return { success: false, error: 'serviceId is required', errorCode: 'service_id_required' };
+      }
+
+      const currentService = listCurrentMyGigSquareServices().find((item) =>
+        item.currentPinId === serviceId || item.id === serviceId
+      );
+      const validation = validateGigSquareServiceMutation({
+        action: 'revoke',
+        service: currentService
+          ? {
+            currentPinId: currentService.currentPinId,
+            creatorMetabotId: currentService.creatorMetabotId,
+            canModify: currentService.canModify,
+            canRevoke: currentService.canRevoke,
+            blockedReason: currentService.blockedReason,
+          }
+          : null,
+      });
+      if (!validation.ok || !validation.creatorMetabotId || !currentService) {
+        return {
+          success: false,
+          error: validation.error || 'Service not found',
+          errorCode: validation.errorCode || 'service_not_found',
+        };
+      }
+
+      const result = await createPin(
+        getMetabotStore(),
+        validation.creatorMetabotId,
+        buildGigSquareRevokeMetaidPayload(currentService.currentPinId),
+      );
+      markGigSquareLocalServiceRevoked(currentService);
+
+      let warning: string | undefined;
+      await new Promise((resolve) => setTimeout(resolve, GIG_SQUARE_MUTATION_SYNC_DELAY_MS));
+      try {
+        await syncGigSquareMyServicesData({ refresh: true });
+      } catch {
+        warning = 'Revoke broadcasted successfully, but chain sync may still be catching up';
+      }
+
+      return {
+        success: true,
+        txids: result.txids,
+        pinId: result.pinId,
+        creatorMetabotId: validation.creatorMetabotId,
+        warning,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to revoke service',
+      };
+    }
+  });
+
+  ipcMain.handle('gigSquare:modifyService', async (_event, params?: {
+    serviceId?: string;
+    serviceName?: string;
+    displayName?: string;
+    description?: string;
+    providerSkill?: string;
+    price?: string;
+    currency?: string;
+    outputType?: string;
+    serviceIconDataUrl?: string | null;
+  }) => {
+    try {
+      await syncGigSquareMyServicesData({ refresh: true });
+      const serviceId = toSafeString(params?.serviceId).trim();
+      if (!serviceId) {
+        return { success: false, error: 'serviceId is required', errorCode: 'service_id_required' };
+      }
+
+      const currentService = listCurrentMyGigSquareServices().find((item) =>
+        item.currentPinId === serviceId || item.id === serviceId
+      );
+      const validation = validateGigSquareServiceMutation({
+        action: 'modify',
+        service: currentService
+          ? {
+            currentPinId: currentService.currentPinId,
+            creatorMetabotId: currentService.creatorMetabotId,
+            canModify: currentService.canModify,
+            canRevoke: currentService.canRevoke,
+            blockedReason: currentService.blockedReason,
+          }
+          : null,
+      });
+      if (!validation.ok || !validation.creatorMetabotId || !currentService) {
+        return {
+          success: false,
+          error: validation.error || 'Service not found',
+          errorCode: validation.errorCode || 'service_not_found',
+        };
+      }
+
+      const draft: GigSquareModifyDraft = {
+        serviceName: toSafeString(params?.serviceName).trim() || toSafeString(currentService.serviceName).trim(),
+        displayName: toSafeString(params?.displayName).trim() || toSafeString(currentService.displayName).trim(),
+        description: toSafeString(params?.description).trim() || toSafeString(currentService.description).trim(),
+        providerSkill: toSafeString(params?.providerSkill).trim() || toSafeString(currentService.providerSkill).trim(),
+        price: toSafeString(params?.price).trim() || toSafeString(currentService.price).trim(),
+        currency: toSafeString(params?.currency).trim() || toSafeString(currentService.currency).trim(),
+        outputType: toSafeString(params?.outputType).trim() || 'text',
+      };
+      const draftValidation = validateGigSquareModifyDraft(draft);
+      if (!draftValidation.ok) {
+        return { success: false, error: draftValidation.error, errorCode: draftValidation.errorCode };
+      }
+
+      const store = getMetabotStore();
+      const creatorMetabot = store.getMetabotById(validation.creatorMetabotId);
+      if (!creatorMetabot || !creatorMetabot.globalmetaid) {
+        return {
+          success: false,
+          error: 'Creator MetaBot not found',
+          errorCode: 'gigSquareMyServicesBlockedMissingCreatorMetabot',
+        };
+      }
+
+      const normalizedCurrency = normalizeGigSquareCurrency(draft.currency);
+      const paymentAddress = (() => {
+        if (normalizedCurrency === 'BTC') return creatorMetabot.btc_address || '';
+        if (normalizedCurrency === 'DOGE') return creatorMetabot.doge_address || '';
+        return creatorMetabot.mvc_address || '';
+      })();
+
+      let serviceIconUri = toSafeString(currentService.serviceIcon).trim();
+      const serviceIconDataUrl = toSafeString(params?.serviceIconDataUrl).trim();
+      if (serviceIconDataUrl) {
+        const parsed = parseDataUrlImage(serviceIconDataUrl);
+        if (!parsed) {
+          return { success: false, error: 'serviceIcon data invalid', errorCode: 'service_icon_invalid' };
+        }
+        if (!GIG_SQUARE_IMAGE_MIME_TYPES.has(parsed.mime)) {
+          return { success: false, error: 'serviceIcon type invalid', errorCode: 'service_icon_type_invalid' };
+        }
+        const fileResult = await createPin(store, validation.creatorMetabotId, {
+          operation: 'create',
+          path: '/file',
+          encryption: '0',
+          version: '1.0.0',
+          contentType: parsed.mime,
+          payload: parsed.buffer,
+        });
+        serviceIconUri = `metafile://${fileResult.pinId}`;
+      }
+
+      const payload = buildGigSquareServicePayload({
+        draft: {
+          ...draft,
+          currency: normalizedCurrency,
+          serviceIconUri: serviceIconUri || null,
+        },
+        providerGlobalMetaId: creatorMetabot.globalmetaid,
+        paymentAddress,
+      });
+      const payloadJson = JSON.stringify(payload);
+      const result = await createPin(store, validation.creatorMetabotId, buildGigSquareModifyMetaidPayload({
+        targetPinId: currentService.currentPinId,
+        payloadJson,
+      }));
+      updateGigSquareLocalServiceAfterModify({
+        targetService: currentService,
+        currentPinId: toSafeString(result.pinId).trim() || currentService.currentPinId,
+        providerSkill: draft.providerSkill,
+        serviceName: draft.serviceName,
+        displayName: draft.displayName,
+        description: draft.description,
+        serviceIcon: serviceIconUri || null,
+        price: draft.price,
+        currency: normalizedCurrency,
+        outputType: draft.outputType,
+        endpoint: 'simplemsg',
+        payloadJson,
+      });
+
+      let warning: string | undefined;
+      await new Promise((resolve) => setTimeout(resolve, GIG_SQUARE_MUTATION_SYNC_DELAY_MS));
+      try {
+        await syncGigSquareMyServicesData({ refresh: true });
+      } catch {
+        warning = 'Modify broadcasted successfully, but chain sync may still be catching up';
+      }
+
+      return {
+        success: true,
+        txids: result.txids,
+        pinId: result.pinId,
+        creatorMetabotId: validation.creatorMetabotId,
+        warning,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to modify service',
+      };
+    }
+  });
+
 ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     metabotId: number;
     toGlobalMetaId: string;
@@ -4195,7 +4832,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           toGlobalMetaId
         );
       } catch (error) {
-        if (error instanceof ServiceOrderOpenOrderExistsError) {
+        if (
+          error instanceof ServiceOrderOpenOrderExistsError
+          || error instanceof ServiceOrderSelfOrderNotAllowedError
+        ) {
           return {
             success: false,
             errorCode: error.code,
@@ -4313,7 +4953,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           orderMessagePinId: result.pinId ?? null,
         });
       } catch (error) {
-        if (error instanceof ServiceOrderOpenOrderExistsError) {
+        if (
+          error instanceof ServiceOrderOpenOrderExistsError
+          || error instanceof ServiceOrderSelfOrderNotAllowedError
+        ) {
           return {
             success: false,
             errorCode: error.code,

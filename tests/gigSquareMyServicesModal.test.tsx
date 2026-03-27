@@ -26,6 +26,8 @@ test('list view shows plain rating score and renders second-based updatedAt as a
       servicesPage={{
         items: [{
           id: 'svc-1',
+          currentPinId: 'svc-1',
+          sourceServicePinId: 'svc-root',
           displayName: 'Weather',
           serviceName: 'weather-service',
           description: 'desc',
@@ -34,6 +36,11 @@ test('list view shows plain rating score and renders second-based updatedAt as a
           providerMetaId: 'meta-1',
           providerGlobalMetaId: 'global-1',
           providerAddress: 'addr-1',
+          creatorMetabotId: 7,
+          creatorMetabotName: 'CreatorBot',
+          canModify: true,
+          canRevoke: true,
+          blockedReason: null,
           successCount: 3,
           refundCount: 1,
           grossRevenue: '0.3',
@@ -55,6 +62,7 @@ test('list view shows plain rating score and renders second-based updatedAt as a
   assert.doesNotMatch(markup, /1970/);
   assert.doesNotMatch(markup, /· 6/);
   assert.match(markup, /平均评分[^<]*5\.0/);
+  assert.match(markup, /创建 MetaBot[^<]*CreatorBot/);
 });
 
 test('detail view renders completed\\/refunded order rows and a disabled session action when sessionId is missing', () => {
