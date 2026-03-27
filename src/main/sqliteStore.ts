@@ -433,9 +433,11 @@ export class SqliteStore {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS remote_skill_service (
         id TEXT PRIMARY KEY,
+        pin_id TEXT,
         metaid TEXT,
         global_metaid TEXT,
         address TEXT,
+        create_address TEXT,
         service_name TEXT,
         display_name TEXT,
         description TEXT,
@@ -449,7 +451,16 @@ export class SqliteStore {
         input_type TEXT,
         output_type TEXT,
         endpoint TEXT,
+        status INTEGER NOT NULL DEFAULT 0,
+        operation TEXT,
+        path TEXT,
+        original_id TEXT,
+        source_service_pin_id TEXT,
+        available INTEGER NOT NULL DEFAULT 1,
         content_summary_json TEXT,
+        payment_address TEXT,
+        rating_count INTEGER NOT NULL DEFAULT 0,
+        rating_avg REAL NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
       );
     `);
@@ -457,13 +468,17 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS remote_skill_service_rating_seen (
         pin_id TEXT PRIMARY KEY,
         service_id TEXT,
+        service_paid_tx TEXT,
         rate REAL,
+        comment TEXT,
+        rater_global_metaid TEXT,
+        rater_metaid TEXT,
         created_at INTEGER NOT NULL
       );
     `);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_seen_service
-        ON remote_skill_service_rating_seen(service_id);
+      ON remote_skill_service_rating_seen(service_id);
     `);
 
     this.db.run(`
@@ -872,8 +887,40 @@ export class SqliteStore {
     try {
       const rssColsResult = this.db.exec('PRAGMA table_info(remote_skill_service)');
       const rssColumns = (rssColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!rssColumns.includes('pin_id')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN pin_id TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('create_address')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN create_address TEXT');
+        this.save();
+      }
       if (!rssColumns.includes('payment_address')) {
         this.db.run('ALTER TABLE remote_skill_service ADD COLUMN payment_address TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('status')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN status INTEGER NOT NULL DEFAULT 0');
+        this.save();
+      }
+      if (!rssColumns.includes('operation')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN operation TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('path')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN path TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('original_id')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN original_id TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('source_service_pin_id')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN source_service_pin_id TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('available')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN available INTEGER NOT NULL DEFAULT 1');
         this.save();
       }
       // Migration: Add rating columns to remote_skill_service
@@ -885,8 +932,64 @@ export class SqliteStore {
         this.db.run('ALTER TABLE remote_skill_service ADD COLUMN rating_avg REAL NOT NULL DEFAULT 0');
         this.save();
       }
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET pin_id = COALESCE(NULLIF(TRIM(pin_id), ''), id)
+        WHERE pin_id IS NULL OR TRIM(pin_id) = ''
+      `);
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET source_service_pin_id = COALESCE(
+          NULLIF(TRIM(source_service_pin_id), ''),
+          NULLIF(TRIM(original_id), ''),
+          CASE
+            WHEN path IS NOT NULL AND TRIM(path) <> '' AND substr(TRIM(path), 1, 1) = '@'
+              THEN substr(TRIM(path), 2)
+            ELSE pin_id
+          END
+        )
+        WHERE source_service_pin_id IS NULL OR TRIM(source_service_pin_id) = ''
+      `);
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET create_address = COALESCE(NULLIF(TRIM(create_address), ''), address)
+        WHERE create_address IS NULL OR TRIM(create_address) = ''
+      `);
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET available = CASE WHEN status < 0 THEN 0 ELSE 1 END
+      `);
+      this.save();
     } catch (error) {
       console.warn('Failed to migrate remote_skill_service payment_address:', error);
+    }
+
+    try {
+      const ratingSeenColsResult = this.db.exec('PRAGMA table_info(remote_skill_service_rating_seen)');
+      const ratingSeenColumns = (ratingSeenColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!ratingSeenColumns.includes('service_paid_tx')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN service_paid_tx TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('comment')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN comment TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('rater_global_metaid')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN rater_global_metaid TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('rater_metaid')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN rater_metaid TEXT');
+        this.save();
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_paid_tx
+          ON remote_skill_service_rating_seen(service_paid_tx)
+      `);
+      this.save();
+    } catch (error) {
+      console.warn('Failed to migrate remote_skill_service_rating_seen detail columns:', error);
     }
 
     this.save();

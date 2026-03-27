@@ -34,6 +34,7 @@ import {
   isNeedsRatingMessage,
   shouldCompleteBuyerOrderObserverSession,
 } from './privateChatOrderObserverState';
+import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -626,6 +627,18 @@ async function processOne(
     if (isOrderMessage(plaintext)) {
       const source: OrderSource = 'metaweb_private';
       const txid = extractOrderTxid(plaintext);
+      const localGlobalMetaId = (metabot.globalmetaid || '').trim();
+      if (
+        source === 'metaweb_private'
+        && fromGlobalMetaId
+        && localGlobalMetaId
+        && fromGlobalMetaId === localGlobalMetaId
+      ) {
+        emitLog(`[Order] Skip self-directed order message for ${localGlobalMetaId.slice(0, 12)}…`);
+        serviceOrderLifecycle?.repairSelfDirectedOrders();
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
       const payment = await checkOrderPaymentStatus({
         txid,
         plaintext,
@@ -690,6 +703,22 @@ async function processOne(
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         markProcessed(db, row.id, saveDb);
         return;
+      }
+
+      const sellerOrderSessionId = resolveOrderSessionId({
+        fallbackSessionId: coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id)?.coworkSessionId,
+      });
+      if (serviceOrderLifecycle && txid && sellerOrderSessionId) {
+        try {
+          serviceOrderLifecycle.attachCoworkSessionToSellerOrder({
+            localMetabotId: metabot.id,
+            counterpartyGlobalMetaId: fromGlobalMetaId,
+            paymentTxid: txid,
+            coworkSessionId: sellerOrderSessionId,
+          });
+        } catch (error) {
+          emitLog(`[Order] Failed to persist seller session link: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       const sendEncryptedMsg = async (text: string) => {

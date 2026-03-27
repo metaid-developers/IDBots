@@ -144,6 +144,28 @@ test('store can backfill a missing cowork session id onto an existing order row'
   assert.equal(store.getSessionSummary('session-1')?.status, 'awaiting_first_response');
 });
 
+test('store can repair a missing seller service reference without changing order timing fields', async () => {
+  const { store } = await createServiceOrderStoreForTest();
+  const order = store.createOrder({
+    role: 'seller',
+    localMetabotId: 3,
+    counterpartyGlobalMetaid: 'buyer-global-metaid',
+    serviceName: 'Service Order',
+    paymentTxid: 'e'.repeat(64),
+    paymentAmount: '0.001',
+    now: 1_770_000_000_000,
+  });
+
+  const repaired = store.repairOrderServiceReference(order.id, {
+    servicePinId: 'svc-post-buzz',
+    serviceName: 'post-buzz-service',
+  });
+
+  assert.equal(repaired?.servicePinId, 'svc-post-buzz');
+  assert.equal(repaired?.serviceName, 'post-buzz-service');
+  assert.equal(repaired?.updatedAt, order.updatedAt);
+});
+
 test('store bootstrap remediates legacy duplicate payment rows before creating unique dedupe index', async () => {
   const db = await createSqlDatabase();
   db.run(`

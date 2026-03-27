@@ -382,8 +382,13 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
 
       // Always append structured fields so B-side regex can reliably parse txid and amount,
       // regardless of how the LLM phrased the natural text.
-      const structuredFields = `\n支付金额 ${service.price} ${service.currency}\ntxid: ${txId}`;
-      const orderPayload = `[ORDER] ${naturalOrderText}${structuredFields}`;
+      const structuredFields = [
+        `支付金额 ${service.price} ${service.currency}`,
+        `txid: ${txId}`,
+        `service id: ${service.id}`,
+        `skill name: ${service.providerSkill || service.serviceName}`,
+      ].join('\n');
+      const orderPayload = `[ORDER] ${naturalOrderText}\n${structuredFields}`;
 
       const sendResult = await window.electron.gigSquare.sendOrder({
         metabotId: selectedMetabotId,

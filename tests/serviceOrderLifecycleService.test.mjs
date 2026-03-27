@@ -8,6 +8,7 @@ const initSqlJs = require('sql.js');
 const { ServiceOrderStore } = require('../dist-electron/serviceOrderStore.js');
 const {
   DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS,
+  SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
   ServiceOrderLifecycleService,
 } = require('../dist-electron/services/serviceOrderLifecycleService.js');
 
@@ -43,6 +44,7 @@ async function createLifecycleServiceForTest(options = {}) {
   const service = new ServiceOrderLifecycleService(store, {
     now: options.now || (() => 1_770_000_000_000),
     createRefundRequestPin: options.createRefundRequestPin,
+    resolveLocalMetabotGlobalMetaId: options.resolveLocalMetabotGlobalMetaId,
     onOrderEvent: options.onOrderEvent,
   });
   return { db, store, service };
@@ -85,6 +87,23 @@ test('getBuyerOrderAvailability reports allowed when the pair has no unresolved 
   );
 });
 
+test('getBuyerOrderAvailability rejects self-directed orders for the same MetaBot global identity', async () => {
+  const { service } = await createLifecycleServiceForTest({
+    resolveLocalMetabotGlobalMetaId: (localMetabotId) => (
+      localMetabotId === 7 ? 'seller-global-metaid' : null
+    ),
+  });
+
+  assert.deepEqual(
+    service.getBuyerOrderAvailability(7, 'seller-global-metaid'),
+    {
+      allowed: false,
+      errorCode: SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
+      error: 'A MetaBot cannot order its own service.',
+    }
+  );
+});
+
 test('createBuyerOrder persists SLA deadlines and links the cowork session', async () => {
   const now = 1_770_000_000_000;
   const { service } = await createLifecycleServiceForTest({
@@ -114,6 +133,60 @@ test('reserveBuyerOrderCreation refuses concurrent in-flight creation for the sa
 
   const nextRelease = service.reserveBuyerOrderCreation(7, 'seller-global-metaid');
   nextRelease();
+});
+
+test('repairSelfDirectedOrders locally resolves broken self-order rows so they no longer block new orders', async () => {
+  const now = 1_770_000_333_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+    resolveLocalMetabotGlobalMetaId: (localMetabotId) => (
+      localMetabotId === 7 ? 'self-global-metaid' : null
+    ),
+  });
+
+  const buyerOrder = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 7,
+    counterpartyGlobalMetaid: 'self-global-metaid',
+    servicePinId: 'service-pin-id',
+    serviceName: 'Weather Pro',
+    paymentTxid: 'c'.repeat(64),
+    paymentChain: 'mvc',
+    paymentAmount: '12.34',
+    paymentCurrency: 'SPACE',
+    coworkSessionId: 'buyer-session-id',
+    status: 'refund_pending',
+    now,
+  });
+  const sellerOrder = store.createOrder({
+    role: 'seller',
+    localMetabotId: 7,
+    counterpartyGlobalMetaid: 'self-global-metaid',
+    servicePinId: 'service-pin-id',
+    serviceName: 'Weather Pro',
+    paymentTxid: 'c'.repeat(64),
+    paymentChain: 'mvc',
+    paymentAmount: '12.34',
+    paymentCurrency: 'SPACE',
+    coworkSessionId: 'seller-session-id',
+    status: 'refund_pending',
+    now,
+  });
+
+  const repaired = service.repairSelfDirectedOrders();
+
+  assert.equal(repaired.length, 2);
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'refunded');
+  assert.equal(store.getOrderById(sellerOrder.id)?.status, 'refunded');
+  assert.equal(store.getOrderById(buyerOrder.id)?.failureReason, SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE);
+  assert.deepEqual(
+    service.getBuyerOrderAvailability(7, 'self-global-metaid'),
+    {
+      allowed: false,
+      errorCode: SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
+      error: 'A MetaBot cannot order its own service.',
+    }
+  );
 });
 
 test('createSellerOrder persists a seller-side ledger row keyed by payment txid', async () => {

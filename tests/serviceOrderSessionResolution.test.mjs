@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   extractSessionOrderTxid,
+  findMatchingOrderSessionId,
+  resolveOrderSessionId,
   selectProtocolPinContent,
 } from '../src/main/services/serviceOrderSessionResolution.js';
 
@@ -33,4 +35,49 @@ test('extractSessionOrderTxid recovers the payment txid from a stored order mess
   ]);
 
   assert.equal(txid, 'a'.repeat(64));
+});
+
+test('resolveOrderSessionId prefers an explicit cowork_session_id over txid fallback', () => {
+  const resolved = resolveOrderSessionId({
+    directSessionId: 'session-direct',
+    fallbackSessionId: 'session-fallback',
+  });
+
+  assert.equal(resolved, 'session-direct');
+});
+
+test('findMatchingOrderSessionId finds the newest matching a2a session by txid, metabot, and peer', () => {
+  const txid = 'a'.repeat(64);
+  const resolved = findMatchingOrderSessionId([
+    {
+      id: 'session-mismatch-peer',
+      sessionType: 'a2a',
+      metabotId: 9,
+      peerGlobalMetaId: 'buyer-other',
+      updatedAt: 500,
+      messages: [{ content: `[ORDER] wrong peer\ntxid: ${txid}` }],
+    },
+    {
+      id: 'session-match',
+      sessionType: 'a2a',
+      metabotId: 9,
+      peerGlobalMetaId: 'buyer-1',
+      updatedAt: 400,
+      messages: [{ content: `[ORDER] right peer\ntxid: ${txid}` }],
+    },
+    {
+      id: 'session-wrong-metabot',
+      sessionType: 'a2a',
+      metabotId: 10,
+      peerGlobalMetaId: 'buyer-1',
+      updatedAt: 900,
+      messages: [{ content: `[ORDER] wrong metabot\ntxid: ${txid}` }],
+    },
+  ], {
+    paymentTxid: txid,
+    localMetabotId: 9,
+    counterpartyGlobalMetaid: 'buyer-1',
+  });
+
+  assert.equal(resolved, 'session-match');
 });

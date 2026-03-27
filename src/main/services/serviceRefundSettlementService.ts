@@ -6,6 +6,7 @@ import {
   buildRefundFinalizePayload,
   parseRefundRequestPayload,
 } from './serviceOrderProtocols.js';
+import { SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE } from './serviceOrderLifecycleService';
 
 export interface RefundRequestPinDetail {
   pinId: string;
@@ -37,6 +38,12 @@ interface ServiceRefundSettlementServiceOptions {
     type: 'refunded';
     order: ServiceOrderRecord;
   }) => void | Promise<void>;
+}
+
+export interface ProcessSellerRefundResult {
+  order: ServiceOrderRecord;
+  refundTxid?: string;
+  refundFinalizePinId?: string;
 }
 
 export class ServiceRefundSettlementService {
@@ -73,11 +80,7 @@ export class ServiceRefundSettlementService {
 
   async processSellerRefundForSession(
     sessionId: string
-  ): Promise<{
-    order: ServiceOrderRecord;
-    refundTxid: string;
-    refundFinalizePinId: string;
-  }> {
+  ): Promise<ProcessSellerRefundResult> {
     const order = this.store.findLatestOrderBySessionId(sessionId);
     if (!order) {
       throw new Error('Refund order not found for this session');
@@ -87,11 +90,7 @@ export class ServiceRefundSettlementService {
 
   async processSellerRefundForOrderId(
     orderId: string
-  ): Promise<{
-    order: ServiceOrderRecord;
-    refundTxid: string;
-    refundFinalizePinId: string;
-  }> {
+  ): Promise<ProcessSellerRefundResult> {
     const order = this.store.getOrderById(orderId);
     if (!order) {
       throw new Error('Refund order not found');
@@ -104,6 +103,10 @@ export class ServiceRefundSettlementService {
     }
     if (order.status !== 'refund_pending' || !order.refundRequestPinId) {
       throw new Error('No pending refund request found for this seller session');
+    }
+
+    if (this.isSelfDirectedOrder(order)) {
+      return this.resolveSelfDirectedRefund(order);
     }
 
     const refundRequestPayload = await this.loadAndValidateRefundRequestPayload(order);
@@ -172,6 +175,45 @@ export class ServiceRefundSettlementService {
       order: sellerOrder,
       refundTxid,
       refundFinalizePinId,
+    };
+  }
+
+  private async resolveSelfDirectedRefund(
+    order: ServiceOrderRecord
+  ): Promise<ProcessSellerRefundResult> {
+    const refundCompletedAt = this.now();
+    const updatedOrders = this.store
+      .listOrdersByPaymentTxid(order.paymentTxid)
+      .map((candidate) => {
+        if (candidate.status === 'completed' || candidate.status === 'refunded') {
+          return candidate;
+        }
+        return this.store.markRefundedLocally(candidate.id, {
+          resolvedAt: refundCompletedAt,
+          failureReason: SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
+        });
+      })
+      .filter(Boolean) as ServiceOrderRecord[];
+
+    if (this.onOrderEvent) {
+      for (const updatedOrder of updatedOrders) {
+        await this.onOrderEvent({
+          type: 'refunded',
+          order: updatedOrder,
+        });
+      }
+    }
+
+    const sellerOrder = updatedOrders.find((candidate) => candidate.id === order.id)
+      ?? this.store.getOrderById(order.id);
+    if (!sellerOrder) {
+      throw new Error('Failed to reload refunded seller order');
+    }
+
+    return {
+      order: sellerOrder,
+      refundTxid: sellerOrder.refundTxid ?? undefined,
+      refundFinalizePinId: sellerOrder.refundFinalizePinId ?? undefined,
     };
   }
 
@@ -252,5 +294,13 @@ export class ServiceRefundSettlementService {
       });
     }
     return refundTxid;
+  }
+
+  private isSelfDirectedOrder(order: ServiceOrderRecord): boolean {
+    const localGlobalMetaId = this.resolveLocalMetabotGlobalMetaId(order.localMetabotId);
+    if (typeof localGlobalMetaId !== 'string' || !localGlobalMetaId.trim()) {
+      return false;
+    }
+    return localGlobalMetaId.trim() === String(order.counterpartyGlobalMetaid || '').trim();
   }
 }
