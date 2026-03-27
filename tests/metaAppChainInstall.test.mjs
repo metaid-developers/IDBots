@@ -163,3 +163,85 @@ test('installCommunityMetaApp blocks install on appId conflict with different cr
   const existingAppMd = fs.readFileSync(path.join(metaAppsRoot, 'chat', 'APP.md'), 'utf8');
   assert.match(existingAppMd, /creator-metaid:\s*idq1local/i);
 });
+
+test('installCommunityMetaApp can locate a later-page record via nextCursor pagination', async () => {
+  assert.equal(typeof installCommunityMetaApp, 'function', 'installCommunityMetaApp() should be exported');
+  assert.equal(typeof MetaAppManager, 'function', 'MetaAppManager should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+  const fetchCalls = [];
+
+  const result = await withMetaAppsRoot(metaAppsRoot, async () => {
+    const manager = new MetaAppManager();
+    return installCommunityMetaApp({
+      sourcePinId: 'pin-simple-music-player',
+      manager,
+      fetchList: async ({ cursor = '0', size } = {}) => {
+        fetchCalls.push({ cursor, size });
+        if (cursor === '0') {
+          return {
+            list: [
+              {
+                id: 'pin-buzz',
+                globalMetaId: 'idq1creator',
+                timestamp: 1_777_777_777,
+                contentSummary: JSON.stringify({
+                  title: 'Buzz',
+                  appName: 'buzz',
+                  intro: 'Buzz app from chain',
+                  runtime: 'browser',
+                  version: '1.0.0',
+                  code: 'metafile://zip-buzz',
+                  codeType: 'application/zip',
+                  indexFile: 'index.html',
+                  disabled: false,
+                }),
+              },
+            ],
+            nextCursor: 'cursor-2',
+          };
+        }
+
+        if (cursor === 'cursor-2') {
+          return {
+            list: [
+              {
+                id: 'pin-simple-music-player',
+                globalMetaId: 'idq1music',
+                timestamp: 1_777_777_778,
+                contentSummary: JSON.stringify({
+                  title: '简单音乐播放器',
+                  appName: 'simple-music-player',
+                  intro: 'Play local music files',
+                  runtime: 'browser',
+                  version: '1.0.0',
+                  code: 'metafile://zip-simple-music-player',
+                  codeType: 'application/zip',
+                  indexFile: 'index.html',
+                  disabled: false,
+                }),
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+
+        return { list: [], nextCursor: null };
+      },
+      fetchCodeZip: async (pinId) => {
+        assert.equal(pinId, 'zip-simple-music-player');
+        return createZipBuffer([{ name: 'index.html', content: '<html>music</html>' }]);
+      },
+      now: () => 333,
+    });
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.appId, 'simple-music-player');
+  assert.deepEqual(fetchCalls, [
+    { cursor: '0', size: 100 },
+    { cursor: 'cursor-2', size: 100 },
+  ]);
+  assert.equal(fs.existsSync(path.join(metaAppsRoot, 'simple-music-player', 'APP.md')), true);
+});

@@ -1,5 +1,6 @@
 import type {
   CommunityMetaAppInstallResult,
+  CommunityMetaAppListParams,
   CommunityMetaAppListResult,
   MetaAppRecord,
   MetaAppUrlResult,
@@ -19,9 +20,9 @@ class MetaAppService {
     }
   }
 
-  async listCommunityMetaApps(): Promise<CommunityMetaAppListResult> {
+  async listCommunityMetaApps(input?: CommunityMetaAppListParams): Promise<CommunityMetaAppListResult> {
     try {
-      return await window.electron.metaapps.listCommunity();
+      return await window.electron.metaapps.listCommunity(input);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to list community MetaApps';
       console.error('Failed to list community MetaApps:', error);

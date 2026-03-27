@@ -13,6 +13,10 @@ const MANAPI_BASE = 'https://manapi.metaid.io';
 const MAN_CONTENT_BASE = 'https://man.metaid.io/content';
 const METAAPP_PROTOCOL_PATH = '/protocols/metaapp';
 const METAAPPS_CONFIG_FILE_NAME = 'metaapps.config.json';
+const DEFAULT_COMMUNITY_METAAPPS_PAGE_SIZE = 30;
+const COMMUNITY_METAAPPS_INSTALL_SCAN_PAGE_SIZE = 100;
+const COMMUNITY_METAAPPS_SCAN_MAX_PAGES = 100;
+const COMMUNITY_METAAPPS_ROOT_CURSOR = '0';
 
 type LocalMetaAppLike = {
   id: string;
@@ -26,13 +30,27 @@ type MetaAppManagerLike = {
   ensureMetaAppsRoot: () => string;
 };
 
-type FetchListFn = () => Promise<unknown[]>;
+type CommunityMetaAppListPageInput = {
+  cursor?: string;
+  size?: number;
+};
+
+type CommunityMetaAppListPage = {
+  list: unknown[];
+  nextCursor: string | null;
+};
+
+type FetchListFn = (
+  input?: CommunityMetaAppListPageInput,
+) => Promise<unknown[] | CommunityMetaAppListPage>;
 
 type FetchZipFn = (pinId: string) => Promise<Buffer>;
 
 type ListCommunityMetaAppsInput = {
   manager: Pick<MetaAppManagerLike, 'listMetaApps'>;
   fetchList?: FetchListFn;
+  cursor?: string;
+  size?: number;
 };
 
 type InstallCommunityMetaAppInput = {
@@ -88,6 +106,7 @@ export type CommunityMetaAppRecord = {
 export type CommunityMetaAppListResult = {
   success: boolean;
   apps: CommunityMetaAppRecord[];
+  nextCursor?: string | null;
   error?: string;
 };
 
@@ -140,6 +159,43 @@ const asBoolean = (value: unknown): boolean => {
   if (typeof value === 'boolean') return value;
   const normalized = asText(value).toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
+};
+
+const normalizeListCursor = (value: unknown): string => {
+  const normalized = asText(value);
+  return normalized || COMMUNITY_METAAPPS_ROOT_CURSOR;
+};
+
+const normalizeListPageSize = (
+  value: unknown,
+  fallback = DEFAULT_COMMUNITY_METAAPPS_PAGE_SIZE,
+): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.trunc(parsed));
+};
+
+const normalizeFetchListResult = (value: unknown): CommunityMetaAppListPage => {
+  if (Array.isArray(value)) {
+    return { list: value, nextCursor: null };
+  }
+
+  const parsed = parseJsonObject(value);
+  if (!parsed) {
+    return { list: [], nextCursor: null };
+  }
+
+  const data = parseJsonObject(parsed.data);
+  const list = Array.isArray(data?.list)
+    ? data.list
+    : Array.isArray(parsed.list)
+      ? parsed.list
+      : [];
+  const nextCursor = asText(data?.nextCursor ?? parsed.nextCursor) || null;
+
+  return { list, nextCursor };
 };
 
 const normalizeVersion = (value: string): string => {
@@ -349,10 +405,12 @@ const toCommunityRecord = (
   };
 };
 
-const defaultFetchList: FetchListFn = async () => {
+const defaultFetchList: FetchListFn = async (input = {}) => {
+  const cursor = normalizeListCursor(input.cursor);
+  const size = normalizeListPageSize(input.size);
   const url = new URL(`${MANAPI_BASE}/pin/path/list`);
-  url.searchParams.set('cursor', '0');
-  url.searchParams.set('size', '200');
+  url.searchParams.set('cursor', cursor);
+  url.searchParams.set('size', String(size));
   url.searchParams.set('path', METAAPP_PROTOCOL_PATH);
   const localPath = `/api/pin/path/list${url.search}`;
   const response = await fetchJsonWithFallbackOnMiss(localPath, url.toString(), isEmptyListDataPayload);
@@ -360,18 +418,8 @@ const defaultFetchList: FetchListFn = async () => {
     throw new Error(`MetaApp chain list request failed: ${response.status} ${response.statusText}`);
   }
 
-  const json = await response.json() as {
-    data?: { list?: unknown[] };
-    list?: unknown[];
-  };
-
-  if (Array.isArray(json?.data?.list)) {
-    return json.data.list;
-  }
-  if (Array.isArray(json?.list)) {
-    return json.list;
-  }
-  return [];
+  const json = await response.json() as unknown;
+  return normalizeFetchListResult(json);
 };
 
 const defaultFetchCodeZip: FetchZipFn = async (pinId) => {
@@ -390,7 +438,11 @@ const defaultFetchCodeZip: FetchZipFn = async (pinId) => {
 export async function listCommunityMetaApps(input: ListCommunityMetaAppsInput): Promise<CommunityMetaAppListResult> {
   try {
     const fetchList = input.fetchList || defaultFetchList;
-    const rawList = await fetchList();
+    const rawPage = normalizeFetchListResult(await fetchList({
+      cursor: normalizeListCursor(input.cursor),
+      size: normalizeListPageSize(input.size),
+    }));
+    const rawList = rawPage.list;
     const localApps = input.manager.listMetaApps() || [];
     const localMap = new Map<string, LocalMetaAppLike>();
     localApps.forEach((app) => {
@@ -410,11 +462,52 @@ export async function listCommunityMetaApps(input: ListCommunityMetaAppsInput): 
       .map((item) => toCommunityRecord(item, localMap))
       .sort((a, b) => b.publishedAt - a.publishedAt || a.name.localeCompare(b.name));
 
-    return { success: true, apps: records };
+    return {
+      success: true,
+      apps: records,
+      nextCursor: rawPage.nextCursor,
+    };
   } catch (error) {
-    return { success: false, apps: [], error: error instanceof Error ? error.message : String(error) };
+    return {
+      success: false,
+      apps: [],
+      nextCursor: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
+
+const findCommunityMetaAppBySourcePinId = async (
+  input: Pick<InstallCommunityMetaAppInput, 'sourcePinId' | 'manager' | 'fetchList'>,
+): Promise<{ record?: CommunityMetaAppRecord; error?: string }> => {
+  let cursor = COMMUNITY_METAAPPS_ROOT_CURSOR;
+
+  for (let pageIndex = 0; pageIndex < COMMUNITY_METAAPPS_SCAN_MAX_PAGES; pageIndex += 1) {
+    const result = await listCommunityMetaApps({
+      manager: input.manager,
+      fetchList: input.fetchList,
+      cursor,
+      size: COMMUNITY_METAAPPS_INSTALL_SCAN_PAGE_SIZE,
+    });
+
+    if (!result.success) {
+      return { error: result.error || 'Failed to load community MetaApps' };
+    }
+
+    const record = result.apps.find((item) => item.sourcePinId === input.sourcePinId);
+    if (record) {
+      return { record };
+    }
+
+    const nextCursor = asText(result.nextCursor);
+    if (!nextCursor || nextCursor === cursor) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+
+  return {};
+};
 
 const safeExtractZip = (buffer: Buffer, destination: string): void => {
   if (!AdmZip) {
@@ -589,16 +682,17 @@ export async function installCommunityMetaApp(input: InstallCommunityMetaAppInpu
     return { success: false, error: 'sourcePinId is required' };
   }
 
-  const listResult = await listCommunityMetaApps({
+  const lookup = await findCommunityMetaAppBySourcePinId({
+    sourcePinId,
     manager: input.manager,
     fetchList: input.fetchList,
   });
 
-  if (!listResult.success) {
-    return { success: false, error: listResult.error || 'Failed to load community MetaApps' };
+  if (lookup.error) {
+    return { success: false, error: lookup.error };
   }
 
-  const targetRecord = listResult.apps.find((item) => item.sourcePinId === sourcePinId);
+  const targetRecord = lookup.record;
   if (!targetRecord) {
     return { success: false, error: `MetaApp protocol pin not found: ${sourcePinId}` };
   }

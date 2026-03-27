@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   metaapps: {
     list: () => ipcRenderer.invoke('metaapps:list'),
-    listCommunity: () => ipcRenderer.invoke('metaapps:listCommunity'),
+    listCommunity: (input?: { cursor?: string; size?: number }) => ipcRenderer.invoke('metaapps:listCommunity', input),
     installCommunity: (input: { sourcePinId: string }) => ipcRenderer.invoke('metaapps:installCommunity', input),
     open: (input: { appId: string; targetPath?: string }) => ipcRenderer.invoke('metaapps:open', input),
     resolveUrl: (input: { appId: string; targetPath?: string }) => ipcRenderer.invoke('metaapps:resolveUrl', input),

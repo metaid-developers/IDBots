@@ -116,3 +116,44 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
   assert.equal(nativeOnly.status, 'uninstallable');
   assert.match(nativeOnly.reason || '', /browser/i);
 });
+
+test('listCommunityMetaApps forwards cursor and size, and returns nextCursor', async () => {
+  assert.equal(typeof listCommunityMetaApps, 'function', 'listCommunityMetaApps() should be exported');
+
+  const calls = [];
+  const result = await listCommunityMetaApps({
+    manager: { listMetaApps: () => [] },
+    cursor: 'cursor-30',
+    size: 30,
+    fetchList: async (params = {}) => {
+      calls.push(params);
+      return {
+        list: [
+          {
+            id: 'pin-page-2',
+            globalMetaId: 'idq1creator',
+            timestamp: 1_888_888_888,
+            contentSummary: JSON.stringify({
+              title: 'Paged App',
+              appName: 'paged-app',
+              intro: 'Paged chain app',
+              runtime: 'browser',
+              version: '1.0.0',
+              code: 'metafile://zip-paged-app',
+              codeType: 'application/zip',
+              indexFile: 'index.html',
+              disabled: false,
+            }),
+          },
+        ],
+        nextCursor: 'cursor-60',
+      };
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.nextCursor, 'cursor-60');
+  assert.deepEqual(calls, [{ cursor: 'cursor-30', size: 30 }]);
+  assert.equal(result.apps.length, 1);
+  assert.equal(result.apps[0]?.appId, 'paged-app');
+});

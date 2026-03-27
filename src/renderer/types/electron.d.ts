@@ -2,6 +2,7 @@ import type { McpServerConfig, McpServerFormData } from './mcp';
 import type { GigSquareProviderInfo, GigSquareService } from './gigSquare';
 import type {
   CommunityMetaAppInstallResult,
+  CommunityMetaAppListParams,
   CommunityMetaAppListResult,
   MetaAppRecord,
   MetaAppUrlResult,
@@ -350,7 +351,7 @@ interface IElectronAPI {
   };
   metaapps: {
     list: () => Promise<{ success: boolean; apps?: MetaAppRecord[]; error?: string }>;
-    listCommunity: () => Promise<CommunityMetaAppListResult>;
+    listCommunity: (input?: CommunityMetaAppListParams) => Promise<CommunityMetaAppListResult>;
     installCommunity: (input: { sourcePinId: string }) => Promise<CommunityMetaAppInstallResult>;
     open: (input: { appId: string; targetPath?: string }) => Promise<MetaAppUrlResult>;
     resolveUrl: (input: { appId: string; targetPath?: string }) => Promise<MetaAppUrlResult>;

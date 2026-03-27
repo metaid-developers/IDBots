@@ -35,6 +35,11 @@ export interface CommunityMetaAppRecord {
   reason: string;
 }
 
+export interface CommunityMetaAppListParams {
+  cursor?: string;
+  size?: number;
+}
+
 export interface MetaAppUrlResult {
   success: boolean;
   appId?: string;
@@ -46,6 +51,7 @@ export interface MetaAppUrlResult {
 export interface CommunityMetaAppListResult {
   success: boolean;
   apps?: CommunityMetaAppRecord[];
+  nextCursor?: string | null;
   error?: string;
 }
 
