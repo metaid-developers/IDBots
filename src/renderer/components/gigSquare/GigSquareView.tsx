@@ -175,7 +175,7 @@ const GigSquareView: React.FC = () => {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             {heroStats && (
               <span className="text-xs px-2.5 py-1 rounded-full bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {heroStats}
@@ -184,14 +184,14 @@ const GigSquareView: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsMyServicesModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+              className="btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
             >
               {i18nService.t('gigSquareMyServicesButton')}
             </button>
             <button
               type="button"
               onClick={() => setIsPublishModalOpen(true)}
-              className="btn-idchat-primary px-3 py-1.5 text-xs font-medium"
+              className="btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
             >
               {i18nService.t('gigSquarePublishButton')}
             </button>
@@ -210,11 +210,11 @@ const GigSquareView: React.FC = () => {
             {i18nService.t('gigSquareNoTwin')}
           </div>
         )}
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-claude-border bg-claude-surfaceMuted/70 p-2 dark:border-claude-darkBorder dark:bg-claude-darkSurfaceMuted/70">
           <select
             value={currencyFilter}
             onChange={(e) => setCurrencyFilter(e.target.value as typeof currencyFilter)}
-            className="shrink-0 pl-2 pr-6 py-1.5 text-xs rounded-lg border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-text dark:text-claude-darkText focus:outline-none focus:ring-1 focus:ring-claude-accent appearance-none cursor-pointer"
+            className="h-9 shrink-0 rounded-lg border border-claude-border bg-[var(--bg-panel)] pl-3 pr-8 text-sm text-claude-text focus:outline-none focus:ring-1 focus:ring-claude-accent dark:border-claude-darkBorder dark:bg-claude-darkSurface dark:text-claude-darkText cursor-pointer"
           >
             <option value="all">{i18nService.t('gigSquareCurrencyAll')}</option>
             <option value="BTC">BTC</option>
@@ -224,19 +224,19 @@ const GigSquareView: React.FC = () => {
           <select
             value={sortOrder}
             onChange={(e) => setSortOrder(e.target.value as typeof sortOrder)}
-            className="shrink-0 pl-2 pr-6 py-1.5 text-xs rounded-lg border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-text dark:text-claude-darkText focus:outline-none focus:ring-1 focus:ring-claude-accent appearance-none cursor-pointer"
+            className="h-9 shrink-0 rounded-lg border border-claude-border bg-[var(--bg-panel)] pl-3 pr-8 text-sm text-claude-text focus:outline-none focus:ring-1 focus:ring-claude-accent dark:border-claude-darkBorder dark:bg-claude-darkSurface dark:text-claude-darkText cursor-pointer"
           >
             <option value="rating">{i18nService.t('gigSquareSortRating')}</option>
             <option value="updated">{i18nService.t('gigSquareSortUpdated')}</option>
           </select>
-          <div className="relative flex-1">
-            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-claude-textSecondary dark:text-claude-darkTextSecondary pointer-events-none" />
+          <div className="relative min-w-[240px] flex-1">
+            <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-claude-textSecondary dark:text-claude-darkTextSecondary" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={i18nService.t('gigSquareSearchPlaceholder')}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-text dark:text-claude-darkText placeholder-claude-textSecondary dark:placeholder-claude-darkTextSecondary focus:outline-none focus:ring-1 focus:ring-claude-accent"
+              className="h-9 w-full rounded-lg border border-claude-border bg-[var(--bg-panel)] pl-9 pr-3 text-sm text-claude-text placeholder-claude-textSecondary focus:outline-none focus:ring-1 focus:ring-claude-accent dark:border-claude-darkBorder dark:bg-claude-darkSurface dark:text-claude-darkText dark:placeholder-claude-darkTextSecondary"
             />
           </div>
         </div>
@@ -286,69 +286,78 @@ const GigSquareView: React.FC = () => {
                       handleOpenModal(service);
                     }
                   }}
-                  className={`text-left rounded-2xl border px-4 py-4 hover:shadow-lg hover:-translate-y-0.5 transition cursor-pointer ${
+                  className={`cursor-pointer rounded-2xl border px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
                     hasRefundRisk
-                      ? 'border-red-500/40 bg-red-500/[0.06] dark:bg-red-500/[0.08]'
+                      ? 'border-amber-400/60 bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
                       : 'dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
-                          {service.displayName}
-                        </div>
-                        {refundRiskBadge && (
-                          <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
-                            {i18nService.t('gigSquareRefundRiskBadge')}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary ">
-                        {service.description}
-                      </div>
-                    </div>
+                  <div className="flex items-start gap-3">
                     {iconSrc ? (
                       <img
                         src={iconSrc}
                         alt={service.displayName}
-                        className="h-16 w-16 rounded-lg object-cover border border-claude-border dark:border-claude-darkBorder flex-shrink-0"
+                        className="h-14 w-14 flex-shrink-0 rounded-xl border border-claude-border object-cover dark:border-claude-darkBorder"
                       />
                     ) : (
-                      <div className="h-16 w-16 rounded-lg bg-claude-accent/20 flex items-center justify-center text-sm font-semibold text-claude-accent flex-shrink-0">
+                      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl bg-claude-accent/20 text-sm font-semibold text-claude-accent">
                         {service.displayName.slice(0, 1).toUpperCase()}
                       </div>
                     )}
-                  </div>
-                  <div className="mt-4 flex items-center justify-between">
-                    <div>
-                      <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                        {i18nService.t('gigSquareOrderService')}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-[15px] font-semibold text-claude-text dark:text-claude-darkText">
+                            {service.displayName}
+                          </div>
+                          <div className="mt-1 truncate font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            {service.serviceName}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            {price.unit}
+                          </div>
+                          <div className="text-base font-semibold text-claude-accent">
+                            {price.amount}
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
-                        {service.serviceName}
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {service.providerSkill && (
+                          <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
+                            {service.providerSkill}
+                          </span>
+                        )}
+                        {refundRiskBadge && (
+                          <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                            {i18nService.t('gigSquareRefundRiskBadge')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 line-clamp-2 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {service.description}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                        {price.unit}
-                      </div>
-                      <div className="text-sm font-semibold text-claude-accent">
-                        {price.amount}
-                      </div>
-                    </div>
                   </div>
-                  <div className="mt-3 flex items-center justify-between">
+                  <div className="mt-4 flex items-center justify-between gap-3 border-t border-claude-border/70 pt-3 dark:border-claude-darkBorder/70">
                     <div className="min-w-0 flex items-center gap-2">
                       <img
                         src={providerAvatarSrc}
                         alt={providerName}
-                        className="h-6 w-6 rounded-full object-cover border border-claude-border dark:border-claude-darkBorder flex-shrink-0"
+                        className="h-7 w-7 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder flex-shrink-0"
                         onError={(e) => { e.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
                       />
-                      <span className="min-w-0 truncate text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                        {providerName}
-                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-medium text-claude-text dark:text-claude-darkText">
+                          {providerName}
+                        </div>
+                        {providerLookupId && (
+                          <div className="truncate text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            {providerLookupId}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -356,7 +365,7 @@ const GigSquareView: React.FC = () => {
                         e.stopPropagation();
                         handleOpenModal(service);
                       }}
-                      className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium"
+                      className="btn-idchat-primary-filled shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium"
                     >
                       {i18nService.t('gigSquarePayAndRequest')}
                     </button>

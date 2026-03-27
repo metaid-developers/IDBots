@@ -61,11 +61,13 @@ test('list view shows plain rating score and renders second-based updatedAt as a
 
   assert.doesNotMatch(markup, /1970/);
   assert.doesNotMatch(markup, /· 6/);
-  assert.match(markup, /平均评分[^<]*5\.0/);
+  assert.match(markup, /平均评分/);
+  assert.match(markup, />5\.0</);
   assert.match(markup, /创建 MetaBot[^<]*CreatorBot/);
 });
 
 test('detail view renders completed\\/refunded order rows and a disabled session action when sessionId is missing', () => {
+  const buyerGlobalMetaid = 'idq14h123456789abcdef9xz';
   const markup = renderToStaticMarkup(
     <GigSquareMyServicesModal
       isOpen
@@ -86,7 +88,7 @@ test('detail view renders completed\\/refunded order rows and a disabled session
           createdAt: 1_770_000_000_000,
           deliveredAt: 1_770_000_060_000,
           refundCompletedAt: 1_770_000_120_000,
-          counterpartyGlobalMetaid: 'buyer-1',
+          counterpartyGlobalMetaid: buyerGlobalMetaid,
           counterpartyName: 'Alice',
           counterpartyAvatar: 'https://example.com/avatar.png',
           coworkSessionId: null,
@@ -94,7 +96,7 @@ test('detail view renders completed\\/refunded order rows and a disabled session
             rate: 4,
             comment: 'Very solid',
             createdAt: 1_770_000_180_000,
-            raterGlobalMetaId: 'buyer-1',
+            raterGlobalMetaId: buyerGlobalMetaid,
             raterMetaId: 'meta-buyer-1',
             pinId: `${'b'.repeat(64)}i0`,
           },
@@ -112,7 +114,8 @@ test('detail view renders completed\\/refunded order rows and a disabled session
 
   assert.match(markup, /退款/);
   assert.match(markup, /Alice/);
-  assert.match(markup, /buyer-1/);
+  assert.match(markup, /idq14h\.\.\.9xz/);
+  assert.doesNotMatch(markup, /idq14h123456789abcdef9xz/);
   assert.match(markup, /example\.com\/avatar\.png/);
   assert.match(markup, /评价 Txid|Rating Txid/);
   assert.match(markup, /复制到剪贴板/);
