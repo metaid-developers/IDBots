@@ -1,4 +1,9 @@
-import type { MetaAppRecord, MetaAppUrlResult } from '../types/metaApp';
+import type {
+  CommunityMetaAppInstallResult,
+  CommunityMetaAppListResult,
+  MetaAppRecord,
+  MetaAppUrlResult,
+} from '../types/metaApp';
 
 class MetaAppService {
   async listMetaApps(): Promise<MetaAppRecord[]> {
@@ -11,6 +16,26 @@ class MetaAppService {
     } catch (error) {
       console.error('Failed to list MetaApps:', error);
       return [];
+    }
+  }
+
+  async listCommunityMetaApps(): Promise<CommunityMetaAppListResult> {
+    try {
+      return await window.electron.metaapps.listCommunity();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to list community MetaApps';
+      console.error('Failed to list community MetaApps:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  async installCommunityMetaApp(sourcePinId: string): Promise<CommunityMetaAppInstallResult> {
+    try {
+      return await window.electron.metaapps.installCommunity({ sourcePinId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to install community MetaApp';
+      console.error('Failed to install community MetaApp:', error);
+      return { success: false, error: message };
     }
   }
 
