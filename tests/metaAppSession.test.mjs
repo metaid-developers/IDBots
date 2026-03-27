@@ -1,24 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { startMetaAppSession } from '../src/renderer/components/metaapps/metaAppSession.js';
+import { openSelectedMetaApp } from '../src/renderer/components/metaapps/metaAppLaunch.js';
 
-test('startMetaAppSession starts a cowork session with the selected MetaApp prompt', async () => {
-  let startOptions = null;
-  const session = { id: 'session-metaapp-1' };
-
-  const result = await startMetaAppSession({
-    app: { name: 'Buzz' },
-    coworkService: {
-      startSession: async (options) => {
-        startOptions = options;
-        return session;
+test('openSelectedMetaApp opens the selected MetaApp directly', async () => {
+  const calls = [];
+  const result = await openSelectedMetaApp({
+    app: {
+      id: 'buzz',
+      entry: '/buzz/app/index.html',
+    },
+    metaAppService: {
+      openMetaApp: async (appId, targetPath) => {
+        calls.push({ appId, targetPath });
+        return { success: true, appId, url: 'http://127.0.0.1:43210/buzz/app/index.html' };
       },
     },
   });
 
-  assert.equal(result, session);
-  assert.ok(startOptions);
-  assert.match(startOptions.prompt, /使用本地元应用 Buzz/);
-  assert.match(startOptions.prompt, /如果需要，请直接打开它/);
+  assert.deepEqual(calls, [
+    {
+      appId: 'buzz',
+      targetPath: '/buzz/app/index.html',
+    },
+  ]);
+  assert.deepEqual(result, {
+    success: true,
+    appId: 'buzz',
+    url: 'http://127.0.0.1:43210/buzz/app/index.html',
+  });
+});
+
+test('openSelectedMetaApp throws the open error when direct launch fails', async () => {
+  await assert.rejects(
+    () => openSelectedMetaApp({
+      app: {
+        id: 'buzz',
+        entry: '/buzz/app/index.html',
+      },
+      metaAppService: {
+        openMetaApp: async () => ({ success: false, error: 'launch failed' }),
+      },
+    }),
+    /launch failed/,
+  );
 });

@@ -29,10 +29,11 @@ import type { MetaAppRecord } from './types/metaApp';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
+import { metaAppService } from './services/metaApp';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import Onboarding from './components/onboarding/Onboarding';
-import { startMetaAppSession } from './components/metaapps/metaAppSession.js';
+import { openSelectedMetaApp } from './components/metaapps/metaAppLaunch.js';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -318,14 +319,7 @@ const App: React.FC = () => {
   }, [dispatch, mainView, currentSessionId]);
 
   const handleStartTaskWithMetaApp = useCallback(async (app: MetaAppRecord) => {
-    coworkService.clearSession();
-    dispatch(clearSelection());
-    dispatch(setActiveSkillIds([]));
-    const session = await startMetaAppSession({ app, coworkService });
-    if (!session) {
-      throw new Error(i18nService.t('metaAppUseFailed'));
-    }
-    setMainView('cowork');
+    await openSelectedMetaApp({ app, metaAppService });
   }, [dispatch]);
 
   const showToast = useCallback((message: string) => {
