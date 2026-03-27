@@ -22,6 +22,7 @@ export interface ResolvedMemoryScopes {
 }
 
 const GROUP_OR_SHARED_CHANNEL_HINTS = ['group', 'order', 'shared', 'orchestrator'];
+const DIRECT_EXTERNAL_CHANNELS = new Set(['metaweb_private']);
 
 function isGroupOrSharedChannel(sourceChannel: string): boolean {
   return GROUP_OR_SHARED_CHANNEL_HINTS.some((hint) => sourceChannel.includes(hint));
@@ -32,17 +33,13 @@ function hasValidMetabotId(metabotId?: number | null): boolean {
 }
 
 function isDirectExternalSession(
-  input: ResolveMemoryScopesInput,
   sourceChannel: string,
   groupOrShared: boolean
 ): boolean {
   if (groupOrShared) {
     return false;
   }
-  if (sourceChannel === 'metaweb_private') {
-    return true;
-  }
-  return input.sessionType === 'a2a';
+  return DIRECT_EXTERNAL_CHANNELS.has(sourceChannel);
 }
 
 function withOwnerOperationalPreferences(writeScope: MemoryScope): ResolvedMemoryScopes {
@@ -75,7 +72,7 @@ export function resolveMemoryScopes(input: ResolveMemoryScopesInput): ResolvedMe
 
   const groupOrShared = isGroupOrSharedChannel(sourceChannel);
 
-  if (isDirectExternalSession(input, sourceChannel, groupOrShared)) {
+  if (isDirectExternalSession(sourceChannel, groupOrShared)) {
     const contactScope = createContactMemoryScope({
       sourceChannel,
       peerGlobalMetaId: input.peerGlobalMetaId,

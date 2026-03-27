@@ -16,11 +16,11 @@ export interface MemoryScopeSelectorInputLike {
 export const OWNER_SCOPE_KEY = 'owner:self';
 
 function normalizeScopePart(value?: string | null): string {
-  return String(value ?? '').trim().replace(/\s+/g, '_');
+  return String(value ?? '').trim();
 }
 
 export function normalizeScopeChannel(channel?: string | null): string {
-  return normalizeScopePart(channel).toLowerCase();
+  return normalizeScopePart(channel).replace(/\s+/g, '_').toLowerCase();
 }
 
 export function normalizeScopeIdentity(value?: string | null): string {

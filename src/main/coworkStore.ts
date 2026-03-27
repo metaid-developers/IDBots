@@ -11,7 +11,7 @@ import {
   type CoworkMemoryGuardLevel,
 } from './libs/coworkMemoryExtractor';
 import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
-import type { MemoryBackend } from './memory/memoryBackend';
+import type { MemoryBackend, MemoryDeleteUserMemoryInput } from './memory/memoryBackend';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -1999,10 +1999,10 @@ export class CoworkStore implements MemoryBackend {
     return updated ? this.mapMemoryRow(updated) : null;
   }
 
-  deleteUserMemory(input: { id: string; metabotId: number }): boolean;
+  deleteUserMemory(input: MemoryDeleteUserMemoryInput): boolean;
   deleteUserMemory(id: string, metabotId: number): boolean;
   deleteUserMemory(
-    inputOrId: { id: string; metabotId: number } | string,
+    inputOrId: MemoryDeleteUserMemoryInput | string,
     metabotIdArg?: number
   ): boolean {
     const id = typeof inputOrId === 'string' ? inputOrId : inputOrId.id;
