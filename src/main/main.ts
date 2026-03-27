@@ -3275,6 +3275,8 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:memory:listEntries', async (_event, input: {
     sessionId?: string;
     metabotId?: number;
+    scopeKind?: 'owner' | 'contact' | 'conversation';
+    scopeKey?: string;
     query?: string;
     status?: 'created' | 'stale' | 'deleted' | 'all';
     includeDeleted?: boolean;
@@ -3290,6 +3292,8 @@ if (!gotTheLock) {
       }
       const entries = memoryBackend.listUserMemories({
         metabotId,
+        scopeKind: input?.scopeKind,
+        scopeKey: input?.scopeKey,
         query: input?.query?.trim() || undefined,
         status: input?.status || 'all',
         includeDeleted: Boolean(input?.includeDeleted),
@@ -3307,6 +3311,8 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:memory:createEntry', async (_event, input: {
     sessionId?: string;
     metabotId?: number;
+    scopeKind?: 'owner' | 'contact' | 'conversation';
+    scopeKey?: string;
     text: string;
     confidence?: number;
     isExplicit?: boolean;
@@ -3323,6 +3329,8 @@ if (!gotTheLock) {
         confidence: input.confidence,
         isExplicit: input?.isExplicit,
         metabotId,
+        scopeKind: input?.scopeKind,
+        scopeKey: input?.scopeKey,
       });
       return { success: true, entry };
     } catch (error) {
@@ -3335,6 +3343,8 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:memory:updateEntry', async (_event, input: {
     sessionId?: string;
     metabotId?: number;
+    scopeKind?: 'owner' | 'contact' | 'conversation';
+    scopeKey?: string;
     id: string;
     text?: string;
     confidence?: number;
@@ -3351,6 +3361,8 @@ if (!gotTheLock) {
       const entry = memoryBackend.updateUserMemory({
         id: input.id,
         metabotId,
+        scopeKind: input?.scopeKind,
+        scopeKey: input?.scopeKey,
         text: input.text,
         confidence: input.confidence,
         status: input.status,
@@ -3370,6 +3382,8 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:memory:deleteEntry', async (_event, input: {
     sessionId?: string;
     metabotId?: number;
+    scopeKind?: 'owner' | 'contact' | 'conversation';
+    scopeKey?: string;
     id: string;
   }) => {
     try {
@@ -3379,7 +3393,12 @@ if (!gotTheLock) {
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const success = memoryBackend.deleteUserMemory(input.id, metabotId);
+      const success = memoryBackend.deleteUserMemory({
+        id: input.id,
+        metabotId,
+        scopeKind: input?.scopeKind,
+        scopeKey: input?.scopeKey,
+      });
       return success
         ? { success: true }
         : { success: false, error: 'Memory entry not found' };
@@ -3390,7 +3409,12 @@ if (!gotTheLock) {
       };
     }
   });
-  ipcMain.handle('cowork:memory:getStats', async (_event, input?: { sessionId?: string; metabotId?: number }) => {
+  ipcMain.handle('cowork:memory:getStats', async (_event, input?: {
+    sessionId?: string;
+    metabotId?: number;
+    scopeKind?: 'owner' | 'contact' | 'conversation';
+    scopeKey?: string;
+  }) => {
     try {
       const store = getCoworkStore();
       const memoryBackend = store.getMemoryBackend();
@@ -3398,7 +3422,11 @@ if (!gotTheLock) {
       if (metabotId == null) {
         return { success: false, error: 'No MetaBot available for memory' };
       }
-      const stats = memoryBackend.getUserMemoryStats(metabotId);
+      const stats = memoryBackend.getUserMemoryStats({
+        metabotId,
+        scopeKind: input?.scopeKind,
+        scopeKey: input?.scopeKey,
+      });
       return { success: true, stats };
     } catch (error) {
       return {
