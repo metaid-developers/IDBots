@@ -749,6 +749,48 @@ export class ServiceOrderStore {
     return this.getOrderById(orderId);
   }
 
+  repairOrderServiceReference(
+    orderId: string,
+    input: {
+      servicePinId: string;
+      serviceName?: string | null;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+
+    const normalizedServicePinId = String(input.servicePinId || '').trim();
+    if (!normalizedServicePinId) {
+      return order;
+    }
+
+    const normalizedServiceName = String(input.serviceName || '').trim();
+    if (
+      order.servicePinId === normalizedServicePinId
+      && (!normalizedServiceName || order.serviceName === normalizedServiceName)
+    ) {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        service_pin_id = ?,
+        service_name = CASE
+          WHEN ? <> '' THEN ?
+          ELSE service_name
+        END
+      WHERE id = ?
+    `, [
+      normalizedServicePinId,
+      normalizedServiceName,
+      normalizedServiceName,
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
   recordRefundTransfer(
     orderId: string,
     input: {

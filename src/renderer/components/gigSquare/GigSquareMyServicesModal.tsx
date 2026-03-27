@@ -3,6 +3,7 @@ import {
   ArrowPathIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  DocumentDuplicateIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
@@ -38,6 +39,7 @@ interface GigSquareMyServicesModalProps {
 
 const LIST_PAGE_SIZE = 8;
 const DETAIL_PAGE_SIZE = 10;
+const UNIX_SECONDS_MAX = 10_000_000_000;
 
 const createEmptyPageResult = <T,>(pageSize: number): GigSquarePageResult<T> => ({
   items: [],
@@ -47,8 +49,14 @@ const createEmptyPageResult = <T,>(pageSize: number): GigSquarePageResult<T> => 
   totalPages: 0,
 });
 
+const normalizeTimestampMs = (value: number | null | undefined): number | null => {
+  if (!value || !Number.isFinite(value) || value <= 0) return null;
+  return value < UNIX_SECONDS_MAX ? Math.trunc(value * 1000) : Math.trunc(value);
+};
+
 const formatDateTime = (value: number | null | undefined): string => {
-  if (!value) return '—';
+  const normalizedValue = normalizeTimestampMs(value);
+  if (!normalizedValue) return '—';
   try {
     return new Intl.DateTimeFormat(undefined, {
       year: 'numeric',
@@ -56,15 +64,62 @@ const formatDateTime = (value: number | null | undefined): string => {
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-    }).format(value);
+    }).format(normalizedValue);
   } catch {
-    return new Date(value).toLocaleString();
+    return new Date(normalizedValue).toLocaleString();
   }
 };
 
 const getServiceDisplayName = (service: SelectedServiceLike | null | undefined): string => {
   if (!service) return 'Service';
   return service.displayName?.trim() || service.serviceName?.trim() || service.id;
+};
+
+const getCounterpartyDisplayName = (order: GigSquareMyServiceOrderDetail): string => {
+  return order.counterpartyName?.trim() || order.counterpartyGlobalMetaid?.trim() || '—';
+};
+
+const extractPinTxid = (pinId: string | null | undefined): string => {
+  const normalizedPinId = String(pinId || '').trim();
+  const match = /^([0-9a-fA-F]{64})i\d+$/i.exec(normalizedPinId);
+  return match?.[1] || normalizedPinId;
+};
+
+const showTxidCopiedToast = (): void => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('app:showToast', {
+    detail: i18nService.t('gigSquareMyServicesTxidCopied'),
+  }));
+};
+
+const CopyValueButton: React.FC<{
+  value: string;
+}> = ({ value }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    if (!value || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      return;
+    }
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    showTxidCopiedToast();
+    window.setTimeout(() => setCopied(false), 1600);
+  }, [value]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleCopy()}
+      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-claude-border text-claude-textSecondary transition hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover ${
+        copied ? 'text-claude-accent' : ''
+      }`}
+      title={i18nService.t('copyToClipboard')}
+      aria-label={i18nService.t('copyToClipboard')}
+    >
+      <DocumentDuplicateIcon className="h-3.5 w-3.5" />
+    </button>
+  );
 };
 
 const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
@@ -98,7 +153,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   const activeOrdersPage = ordersPage ?? internalOrdersPage;
   const detailServiceId = activeSelectedService?.id?.trim() || '';
 
-  const loadServicesPage = useCallback(async (pageNumber: number) => {
+  const loadServicesPage = useCallback(async (
+    pageNumber: number,
+    options?: { refresh?: boolean },
+  ) => {
     if (typeof window === 'undefined' || !window.electron?.gigSquare) return;
     setServicesLoading(true);
     setServicesError(null);
@@ -106,6 +164,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
       const result = await window.electron.gigSquare.fetchMyServices({
         page: pageNumber,
         pageSize: LIST_PAGE_SIZE,
+        refresh: Boolean(options?.refresh),
       });
       if (result?.success && result.page) {
         setInternalServicesPage(result.page);
@@ -119,7 +178,11 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     }
   }, []);
 
-  const loadOrdersPage = useCallback(async (serviceId: string, pageNumber: number) => {
+  const loadOrdersPage = useCallback(async (
+    serviceId: string,
+    pageNumber: number,
+    options?: { refresh?: boolean },
+  ) => {
     if (!serviceId || typeof window === 'undefined' || !window.electron?.gigSquare) return;
     setOrdersLoading(true);
     setOrdersError(null);
@@ -128,6 +191,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
         serviceId,
         page: pageNumber,
         pageSize: DETAIL_PAGE_SIZE,
+        refresh: Boolean(options?.refresh),
       });
       if (result?.success && result.page) {
         setInternalOrdersPage(result.page);
@@ -159,12 +223,16 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || servicesPage) return;
-    void loadServicesPage(servicesPageNumber);
+    void loadServicesPage(servicesPageNumber, {
+      refresh: servicesPageNumber === 1,
+    });
   }, [isOpen, servicesPage, servicesPageNumber, loadServicesPage]);
 
   useEffect(() => {
     if (!isOpen || activeView !== 'detail' || !detailServiceId || ordersPage) return;
-    void loadOrdersPage(detailServiceId, ordersPageNumber);
+    void loadOrdersPage(detailServiceId, ordersPageNumber, {
+      refresh: ordersPageNumber === 1,
+    });
   }, [isOpen, activeView, detailServiceId, ordersPage, ordersPageNumber, loadOrdersPage]);
 
   const headerSubtitle = useMemo(() => {
@@ -207,10 +275,14 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
 
   const handleRefresh = useCallback(() => {
     if (activeView === 'detail' && detailServiceId) {
-      void loadOrdersPage(detailServiceId, activeOrdersPage.page || ordersPageNumber);
+      void loadOrdersPage(detailServiceId, activeOrdersPage.page || ordersPageNumber, {
+        refresh: true,
+      });
       return;
     }
-    void loadServicesPage(activeServicesPage.page || servicesPageNumber);
+    void loadServicesPage(activeServicesPage.page || servicesPageNumber, {
+      refresh: true,
+    });
   }, [
     activeOrdersPage.page,
     activeServicesPage.page,
@@ -338,114 +410,80 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 const revokeAction = getMyServiceActionState('revoke');
                 const editAction = getMyServiceActionState('edit');
                 const ratingText = service.ratingCount > 0
-                  ? `${service.ratingAvg.toFixed(1)} / 5 · ${service.ratingCount}`
+                  ? service.ratingAvg.toFixed(1)
                   : i18nService.t('gigSquareMyServicesRatingEmpty');
 
                 return (
                   <div
                     key={service.id}
-                    className="rounded-2xl border border-claude-border bg-[var(--bg-panel)] px-5 py-4 dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+                    className="rounded-xl border border-claude-border bg-[var(--bg-panel)] px-4 py-3 dark:border-claude-darkBorder dark:bg-claude-darkSurface"
                   >
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start gap-3">
                           {service.serviceIcon ? (
                             <img
                               src={service.serviceIcon}
                               alt={getServiceDisplayName(service)}
-                              className="h-14 w-14 rounded-xl border border-claude-border object-cover dark:border-claude-darkBorder"
+                              className="h-10 w-10 rounded-lg border border-claude-border object-cover dark:border-claude-darkBorder"
                             />
                           ) : (
-                            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-claude-accent/15 text-lg font-semibold text-claude-accent">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-claude-accent/15 text-sm font-semibold text-claude-accent">
                               {getServiceDisplayName(service).slice(0, 1).toUpperCase()}
                             </div>
                           )}
 
                           <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate text-base font-semibold text-claude-text dark:text-claude-darkText">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <div className="truncate text-sm font-semibold text-claude-text dark:text-claude-darkText">
                                 {getServiceDisplayName(service)}
                               </div>
                               {service.providerSkill && (
-                                <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
+                                <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[10px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
                                   {service.providerSkill}
                                 </span>
                               )}
+                              <span className="rounded-full bg-claude-accent/10 px-2 py-0.5 text-[10px] font-semibold text-claude-accent">
+                                {price.amount} {price.unit}
+                              </span>
                             </div>
-                            <div className="mt-1 font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              {service.serviceName || service.id}
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                              <span className="font-mono">
+                                {service.serviceName || service.id}
+                              </span>
+                              <span>
+                                {i18nService.t('gigSquareMyServicesUpdatedAt')} {formatDateTime(service.updatedAt)}
+                              </span>
                             </div>
-                            <p className="mt-2 line-clamp-2 text-sm text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            <p className="mt-1 line-clamp-1 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                               {service.description || '—'}
                             </p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-1 text-[10px] font-medium text-claude-text dark:bg-claude-darkSurfaceMuted dark:text-claude-darkText">
+                                {i18nService.t(getMyServiceMetricLabel('successCount'))} {service.successCount}
+                              </span>
+                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-1 text-[10px] font-medium text-claude-text dark:bg-claude-darkSurfaceMuted dark:text-claude-darkText">
+                                {i18nService.t(getMyServiceMetricLabel('refundCount'))} {service.refundCount}
+                              </span>
+                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-1 text-[10px] font-medium text-claude-text dark:bg-claude-darkSurfaceMuted dark:text-claude-darkText">
+                                {i18nService.t(getMyServiceMetricLabel('grossRevenue'))} {grossRevenue.amount} {grossRevenue.unit}
+                              </span>
+                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-1 text-[10px] font-medium text-claude-text dark:bg-claude-darkSurfaceMuted dark:text-claude-darkText">
+                                {i18nService.t(getMyServiceMetricLabel('netIncome'))} {netIncome.amount} {netIncome.unit}
+                              </span>
+                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-1 text-[10px] font-medium text-claude-text dark:bg-claude-darkSurfaceMuted dark:text-claude-darkText">
+                                {i18nService.t(getMyServiceMetricLabel('ratingAvg'))} {ratingText}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
-
-                      <div className="shrink-0 rounded-xl bg-claude-surfaceMuted px-3 py-2 text-right dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {price.unit}
-                        </div>
-                        <div className="text-base font-semibold text-claude-accent">
-                          {price.amount}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-5">
-                      <div className="rounded-xl bg-claude-surfaceMuted px-3 py-2 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t(getMyServiceMetricLabel('successCount'))}
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-claude-text dark:text-claude-darkText">
-                          {service.successCount}
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-claude-surfaceMuted px-3 py-2 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t(getMyServiceMetricLabel('refundCount'))}
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-claude-text dark:text-claude-darkText">
-                          {service.refundCount}
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-claude-surfaceMuted px-3 py-2 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t(getMyServiceMetricLabel('grossRevenue'))}
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-claude-text dark:text-claude-darkText">
-                          {grossRevenue.amount} {grossRevenue.unit}
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-claude-surfaceMuted px-3 py-2 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t(getMyServiceMetricLabel('netIncome'))}
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-claude-text dark:text-claude-darkText">
-                          {netIncome.amount} {netIncome.unit}
-                        </div>
-                      </div>
-                      <div className="rounded-xl bg-claude-surfaceMuted px-3 py-2 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t(getMyServiceMetricLabel('ratingAvg'))}
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-claude-text dark:text-claude-darkText">
-                          {ratingText}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                        {i18nService.t('gigSquareMyServicesUpdatedAt')} {formatDateTime(service.updatedAt)}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center gap-1.5 lg:justify-end">
                         <button
                           type="button"
                           onClick={() => handleOpenDetail(service)}
                           disabled={detailAction.disabled}
-                          className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                          className="btn-idchat-primary-filled px-2.5 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {i18nService.t('gigSquareMyServicesActionDetail')}
                         </button>
@@ -453,7 +491,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                           type="button"
                           disabled={revokeAction.disabled}
                           title={revokeAction.key ? i18nService.t(revokeAction.key) : undefined}
-                          className="rounded-lg border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-textSecondary opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
+                          className="rounded-lg border border-claude-border px-2.5 py-1.5 text-[11px] font-medium text-claude-textSecondary opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
                         >
                           {i18nService.t('gigSquareMyServicesActionRevoke')}
                         </button>
@@ -461,7 +499,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                           type="button"
                           disabled={editAction.disabled}
                           title={editAction.key ? i18nService.t(editAction.key) : undefined}
-                          className="rounded-lg border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-textSecondary opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
+                          className="rounded-lg border border-claude-border px-2.5 py-1.5 text-[11px] font-medium text-claude-textSecondary opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary"
                         >
                           {i18nService.t('gigSquareMyServicesActionEdit')}
                         </button>
@@ -525,6 +563,8 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
 
               {activeOrdersPage.items.map((order) => {
                 const price = formatGigSquarePrice(order.paymentAmount, order.paymentCurrency);
+                const buyerName = getCounterpartyDisplayName(order);
+                const ratingTxid = extractPinTxid(order.rating?.pinId);
                 const sessionAction = getMyServiceSessionActionState(order.coworkSessionId);
                 return (
                   <div
@@ -547,8 +587,28 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                             <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                               {i18nService.t('gigSquareMyServicesOrderBuyer')}
                             </div>
-                            <div className="mt-1 break-all text-sm text-claude-text dark:text-claude-darkText">
-                              {order.counterpartyGlobalMetaid || '—'}
+                            <div className="mt-1 flex items-center gap-3">
+                              {order.counterpartyAvatar ? (
+                                <img
+                                  src={order.counterpartyAvatar}
+                                  alt={buyerName}
+                                  className="h-9 w-9 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
+                                />
+                              ) : (
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-claude-accent/15 text-xs font-semibold text-claude-accent">
+                                  {buyerName.slice(0, 1).toUpperCase()}
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-claude-text dark:text-claude-darkText">
+                                  {buyerName}
+                                </div>
+                                {order.counterpartyGlobalMetaid && buyerName !== order.counterpartyGlobalMetaid && (
+                                  <div className="break-all text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                                    {order.counterpartyGlobalMetaid}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div>
@@ -563,8 +623,11 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                             <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                               {i18nService.t('gigSquareMyServicesOrderTxid')}
                             </div>
-                            <div className="mt-1 break-all font-mono text-sm text-claude-text dark:text-claude-darkText">
-                              {order.paymentTxid ? shortenMyServiceHash(order.paymentTxid, 14, 8) : '—'}
+                            <div className="mt-1 flex items-center gap-2">
+                              <div className="min-w-0 break-all font-mono text-sm text-claude-text dark:text-claude-darkText">
+                                {order.paymentTxid ? shortenMyServiceHash(order.paymentTxid, 14, 8) : '—'}
+                              </div>
+                              {order.paymentTxid && <CopyValueButton value={order.paymentTxid} />}
                             </div>
                           </div>
                           <div>
@@ -602,6 +665,19 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               ? `${order.rating.rate} / 5`
                               : i18nService.t('gigSquareMyServicesOrderUnrated')}
                           </div>
+                          {order.rating?.pinId && (
+                            <>
+                              <div className="mt-2 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                                {i18nService.t('gigSquareMyServicesOrderRatingTxid')}
+                              </div>
+                              <div className="mt-1 flex items-center gap-2">
+                                <div className="min-w-0 break-all font-mono text-xs text-claude-text dark:text-claude-darkText">
+                                  {shortenMyServiceHash(ratingTxid, 14, 8)}
+                                </div>
+                                <CopyValueButton value={ratingTxid} />
+                              </div>
+                            </>
+                          )}
                           {order.rating?.comment && (
                             <>
                               <div className="mt-2 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">

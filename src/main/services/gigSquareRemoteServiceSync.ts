@@ -1,5 +1,6 @@
 type RemoteSkillServiceItem = Record<string, unknown>;
 const DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES = 1000;
+const UNIX_SECONDS_MAX = 10_000_000_000;
 
 export type ParsedRemoteSkillServiceRow = {
   id: string;
@@ -38,6 +39,12 @@ const toSafeNumber = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const normalizeTimestampMs = (value: unknown): number => {
+  const parsed = toSafeNumber(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return parsed < UNIX_SECONDS_MAX ? Math.trunc(parsed * 1000) : Math.trunc(parsed);
+};
+
 const parseGigSquareContentSummary = (value: unknown): Record<string, unknown> | null => {
   if (!value) return null;
   if (typeof value === 'object') return value as Record<string, unknown>;
@@ -73,9 +80,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
   const inputType = toSafeString((summary as Record<string, unknown>).inputType).trim();
   const outputType = toSafeString((summary as Record<string, unknown>).outputType).trim();
   const endpoint = toSafeString((summary as Record<string, unknown>).endpoint).trim();
-  const itemTimestamp = typeof item.timestamp === 'number' && item.timestamp > 0
-    ? item.timestamp
-    : Date.now();
+  const itemTimestamp = normalizeTimestampMs(item.timestamp) || Date.now();
   const contentSummaryJson = JSON.stringify(summary);
   return {
     id: id || serviceName,
@@ -132,7 +137,7 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     paymentAddress: toSafeString(row.paymentAddress ?? row.payment_address).trim() || undefined,
     ratingAvg: ratingAvgRaw == null ? undefined : toSafeNumber(ratingAvgRaw),
     ratingCount: ratingCountRaw == null ? undefined : toSafeNumber(ratingCountRaw),
-    updatedAt: updatedAtRaw == null ? undefined : toSafeNumber(updatedAtRaw),
+    updatedAt: updatedAtRaw == null ? undefined : normalizeTimestampMs(updatedAtRaw),
   };
 };
 

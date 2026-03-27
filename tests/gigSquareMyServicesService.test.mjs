@@ -44,7 +44,7 @@ test('buildMyServiceOrderDetails only returns completed and refunded seller orde
   assert.deepEqual(result.items.map((item) => item.id), ['2', '1']);
 });
 
-test('buildMyServiceSummaries aggregates seller counts and revenue totals per owned service', () => {
+test('buildMyServiceSummaries aggregates seller counts and revenue totals per owned service price instead of raw order payment amounts', () => {
   const result = buildMyServiceSummaries({
     ownedGlobalMetaIds: new Set(['owned-global']),
     services: [{
@@ -73,10 +73,36 @@ test('buildMyServiceSummaries aggregates seller counts and revenue totals per ow
 
   assert.equal(result.items[0].successCount, 1);
   assert.equal(result.items[0].refundCount, 1);
-  assert.equal(result.items[0].grossRevenue, '4.75');
-  assert.equal(result.items[0].netIncome, '3.5');
+  assert.equal(result.items[0].grossRevenue, '10');
+  assert.equal(result.items[0].netIncome, '10');
   assert.equal(result.items[0].ratingAvg, 4.5);
   assert.equal(result.items[0].ratingCount, 2);
+});
+
+test('buildMyServiceSummaries ignores anomalous seller payment amounts when computing revenue', () => {
+  const result = buildMyServiceSummaries({
+    ownedGlobalMetaIds: new Set(['owned-global']),
+    services: [{
+      id: 'svc-weather',
+      displayName: 'Weather',
+      serviceName: 'weather-service',
+      description: 'desc',
+      price: '0.0001',
+      currency: 'SPACE',
+      providerMetaId: 'meta-1',
+      providerGlobalMetaId: 'owned-global',
+      providerAddress: 'addr-1',
+      updatedAt: 123,
+    }],
+    sellerOrders: [
+      { id: 'done-1', servicePinId: 'svc-weather', status: 'completed', paymentAmount: '3.8794796' },
+    ],
+    page: 1,
+    pageSize: 8,
+  });
+
+  assert.equal(result.items[0].grossRevenue, '0.0001');
+  assert.equal(result.items[0].netIncome, '0.0001');
 });
 
 test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
@@ -95,6 +121,7 @@ test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
     ],
     ratingsByPaymentTxid: new Map([
       ['paid-1', {
+        pinId: `${'b'.repeat(64)}i0`,
         servicePaidTx: 'paid-1',
         rate: 5,
         comment: 'Excellent',
@@ -109,6 +136,7 @@ test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
 
   assert.equal(result.items[0].rating?.rate, 5);
   assert.equal(result.items[0].rating?.comment, 'Excellent');
+  assert.equal(result.items[0].rating?.pinId, `${'b'.repeat(64)}i0`);
   assert.equal(result.items[0].rating?.raterGlobalMetaId, 'buyer-1');
 });
 

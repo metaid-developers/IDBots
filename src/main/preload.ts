@@ -84,9 +84,9 @@ contextBridge.exposeInMainWorld('electron', {
   },
   gigSquare: {
     fetchServices: () => ipcRenderer.invoke('gigSquare:fetchServices'),
-    fetchMyServices: (params?: { page?: number; pageSize?: number }) =>
+    fetchMyServices: (params?: { page?: number; pageSize?: number; refresh?: boolean }) =>
       ipcRenderer.invoke('gigSquare:fetchMyServices', params),
-    fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number }) =>
+    fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number; refresh?: boolean }) =>
       ipcRenderer.invoke('gigSquare:fetchMyServiceOrders', params),
     syncFromRemote: () => ipcRenderer.invoke('gigSquare:syncFromRemote'),
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) =>

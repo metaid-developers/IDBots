@@ -63,6 +63,7 @@ export type GigSquareMyServiceSummary = {
 };
 
 export type GigSquareMyServiceOrderRating = {
+  pinId?: string | null;
   rate: number;
   comment: string | null;
   createdAt: number | null;
@@ -81,6 +82,8 @@ export type GigSquareMyServiceOrderDetail = {
   deliveredAt: number | null;
   refundCompletedAt: number | null;
   counterpartyGlobalMetaid: string | null;
+  counterpartyName?: string | null;
+  counterpartyAvatar?: string | null;
   coworkSessionId: string | null;
   rating: GigSquareMyServiceOrderRating | null;
 };

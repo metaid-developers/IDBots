@@ -22,18 +22,35 @@ export interface OrderPaymentCheckResult {
 
 const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*(SPACE|BTC|DOGE)/i;
-const SKILL_ID_RE = /skill(?:\s+service)?\s+id\s*[:：=]?\s*([^\s,，。]+)/i;
-const SKILL_NAME_RE = /(?:skill(?:\s+name)?|技能(?:名称?)?)\s*[:：=]?\s*([\w-]+)/i;
+const SKILL_ID_PATTERNS = [
+  /(?:skill(?:\s+service)?\s+id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID))\s*[:：=]?\s*([^\s,，。]+)/i,
+];
+const SKILL_NAME_PATTERNS = [
+  /(?:skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?\s*([\w-]+)/i,
+  /用\s*([\w-]+)\s*技能/i,
+  /使用\s*([\w-]+)\s*技能/i,
+  /(?:use|using)\s+([\w-]+)\s+skill/i,
+];
 const SATOSHI_PER_UNIT = 100_000_000;
 
+function extractFirstMatch(plaintext: string, patterns: RegExp[]): string | null {
+  const source = String(plaintext || '');
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    const value = typeof match?.[1] === 'string' ? match[1].trim() : '';
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
 export function extractOrderSkillId(plaintext: string): string | null {
-  const match = plaintext.match(SKILL_ID_RE);
-  return match ? (match[1] || null) : null;
+  return extractFirstMatch(plaintext, SKILL_ID_PATTERNS);
 }
 
 export function extractOrderSkillName(plaintext: string): string | null {
-  const match = plaintext.match(SKILL_NAME_RE);
-  return match ? (match[1] || null) : null;
+  return extractFirstMatch(plaintext, SKILL_NAME_PATTERNS);
 }
 
 export function extractOrderTxid(plaintext: string): string | null {

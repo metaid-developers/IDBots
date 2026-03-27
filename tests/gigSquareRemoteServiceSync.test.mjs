@@ -109,3 +109,12 @@ test('parseRemoteSkillServiceRow exposes ratingAvg when present in the cache row
   assert.equal(row.ratingAvg, 4.2);
   assert.equal(row.ratingCount, 6);
 });
+
+test('parseRemoteSkillServiceRow normalizes second-based updated_at to milliseconds', () => {
+  const row = parseRemoteSkillServiceRow({
+    id: 'svc-1',
+    updated_at: 1_773_514_659,
+  });
+
+  assert.equal(row.updatedAt, 1_773_514_659_000);
+});

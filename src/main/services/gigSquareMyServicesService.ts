@@ -32,6 +32,7 @@ export interface GigSquareMyServiceOrderSource {
 }
 
 export interface GigSquareMyServiceRating {
+  pinId?: string | null;
   serviceId?: string;
   servicePaidTx?: string | null;
   rate?: number | null;
@@ -74,8 +75,11 @@ export interface GigSquareMyServiceOrderDetail {
   deliveredAt: number | null;
   refundCompletedAt: number | null;
   counterpartyGlobalMetaid: string | null;
+  counterpartyName?: string | null;
+  counterpartyAvatar?: string | null;
   coworkSessionId: string | null;
   rating: null | {
+    pinId?: string | null;
     rate: number;
     comment: string | null;
     createdAt: number | null;
@@ -210,6 +214,7 @@ const pickRatingDetail = (
   const rate = toSafeNumber(rating.rate);
   if (!Number.isFinite(rate) || rate <= 0) return null;
   return {
+    pinId: toSafeString(rating.pinId).trim() || null,
     rate,
     comment: toSafeString(rating.comment).trim() || null,
     createdAt: rating.createdAt == null ? null : toSafeNumber(rating.createdAt),
@@ -228,8 +233,6 @@ export function buildMyServiceSummaries(input: {
   const orderStatsByServiceId = new Map<string, {
     successCount: number;
     refundCount: number;
-    grossRevenueUnits: bigint;
-    netIncomeUnits: bigint;
   }>();
 
   for (const order of input.sellerOrders) {
@@ -238,14 +241,9 @@ export function buildMyServiceSummaries(input: {
     const existing = orderStatsByServiceId.get(serviceId) ?? {
       successCount: 0,
       refundCount: 0,
-      grossRevenueUnits: 0n,
-      netIncomeUnits: 0n,
     };
-    const amountUnits = parseDecimalToUnits(order.paymentAmount);
-    existing.grossRevenueUnits += amountUnits;
     if (order.status === COMPLETED_STATUS) {
       existing.successCount += 1;
-      existing.netIncomeUnits += amountUnits;
     } else if (order.status === REFUNDED_STATUS) {
       existing.refundCount += 1;
     }
@@ -260,6 +258,9 @@ export function buildMyServiceSummaries(input: {
     })
     .map((service) => {
       const stats = orderStatsByServiceId.get(service.id);
+      const servicePriceUnits = parseDecimalToUnits(service.price);
+      const completedCount = BigInt(stats?.successCount ?? 0);
+      const recognizedRevenueUnits = servicePriceUnits * completedCount;
       return {
         id: service.id,
         serviceName: toSafeString(service.serviceName).trim(),
@@ -275,8 +276,8 @@ export function buildMyServiceSummaries(input: {
         providerSkill: toSafeString(service.providerSkill).trim() || null,
         successCount: stats?.successCount ?? 0,
         refundCount: stats?.refundCount ?? 0,
-        grossRevenue: formatUnitsToDecimal(stats?.grossRevenueUnits ?? 0n),
-        netIncome: formatUnitsToDecimal(stats?.netIncomeUnits ?? 0n),
+        grossRevenue: formatUnitsToDecimal(recognizedRevenueUnits),
+        netIncome: formatUnitsToDecimal(recognizedRevenueUnits),
         ratingAvg: toSafeNumber(service.ratingAvg),
         ratingCount: toSafeNumber(service.ratingCount),
         updatedAt: toSafeNumber(service.updatedAt),

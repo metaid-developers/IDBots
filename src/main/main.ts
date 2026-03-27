@@ -98,6 +98,7 @@ import {
   clampPageSize,
   type GigSquareMyServiceRating,
 } from './services/gigSquareMyServicesService';
+import { resolveSellerOrderServiceMatch } from './services/gigSquareMyServicesRepairService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -760,7 +761,7 @@ function listGigSquareRatingsFromDb(serviceId?: string): GigSquareMyServiceRatin
     params.push(trimmedServiceId);
   }
   const result = db.exec(`
-    SELECT service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
+    SELECT pin_id, service_id, service_paid_tx, rate, comment, rater_global_metaid, rater_metaid, created_at
     FROM remote_skill_service_rating_seen
     WHERE ${clauses.join(' AND ')}
     ORDER BY created_at DESC
@@ -774,6 +775,7 @@ function listGigSquareRatingsFromDb(serviceId?: string): GigSquareMyServiceRatin
       return acc;
     }, {});
     return {
+      pinId: toSafeString(raw.pin_id).trim() || null,
       serviceId: toSafeString(raw.service_id).trim(),
       servicePaidTx: toSafeString(raw.service_paid_tx).trim() || null,
       rate: toSafeNumber(raw.rate),
@@ -791,6 +793,197 @@ const listOwnedGigSquareProviderGlobalMetaIds = (): Set<string> => new Set(
     .map((metabot) => toSafeString(metabot.globalmetaid).trim())
     .filter(Boolean)
 );
+
+const unwrapMetaidInfoRecord = (payload: unknown): Record<string, unknown> | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const nested = record.MetaIdInfo ?? record.metaIdInfo ?? record.metaidInfo;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return {
+      ...record,
+      ...(nested as Record<string, unknown>),
+    };
+  }
+  return record;
+};
+
+async function fetchMetaidUserInfoByGlobalMetaId(globalMetaId: string): Promise<{
+  code?: number;
+  message?: string;
+  data?: Record<string, unknown>;
+}> {
+  const normalizedGlobalMetaId = toSafeString(globalMetaId).trim();
+  if (!normalizedGlobalMetaId) {
+    return {};
+  }
+  const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(normalizedGlobalMetaId)}`;
+  const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(normalizedGlobalMetaId)}`;
+  const res = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isSemanticallyEmptyMetaidInfoPayload);
+  const payload = await res.json() as { code?: number; message?: string; data?: Record<string, unknown> };
+  const data = unwrapMetaidInfoRecord(payload?.data);
+  if (data) {
+    const avatarUrl = await resolveMetaidAvatarSource(data);
+    if (avatarUrl) {
+      data.avatarUrl = avatarUrl;
+    }
+    payload.data = data;
+  }
+  return payload;
+}
+
+let gigSquareMyServicesSyncPromise: Promise<void> | null = null;
+let gigSquareMyServicesPendingRemoteRefresh = false;
+
+const getPrivateChatOrderText = (
+  db: ReturnType<SqliteStore['getDatabase']>,
+  pinId: string,
+): string | null => {
+  const normalizedPinId = toSafeString(pinId).trim();
+  if (!normalizedPinId) return null;
+  const result = db.exec(
+    `SELECT content
+     FROM private_chat_messages
+     WHERE pin_id = ?
+     LIMIT 1`,
+    [normalizedPinId],
+  );
+  const content = toSafeString(result[0]?.values?.[0]?.[0]).trim();
+  return content || null;
+};
+
+const getCoworkOrderText = (
+  db: ReturnType<SqliteStore['getDatabase']>,
+  sessionId: string,
+): string | null => {
+  const normalizedSessionId = toSafeString(sessionId).trim();
+  if (!normalizedSessionId) return null;
+  const result = db.exec(
+    `SELECT content
+     FROM cowork_messages
+     WHERE session_id = ?
+       AND type = 'user'
+     ORDER BY
+       CASE WHEN sequence IS NULL THEN 1 ELSE 0 END ASC,
+       sequence ASC,
+       created_at ASC
+     LIMIT 1`,
+    [normalizedSessionId],
+  );
+  const content = toSafeString(result[0]?.values?.[0]?.[0]).trim();
+  return content || null;
+};
+
+function listGigSquareRatingServiceIdByTxid(): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const rating of listGigSquareRatingsFromDb()) {
+    const paymentTxid = toSafeString(rating.servicePaidTx).trim();
+    const serviceId = toSafeString(rating.serviceId).trim();
+    if (!paymentTxid || !serviceId || map.has(paymentTxid)) {
+      continue;
+    }
+    map.set(paymentTxid, serviceId);
+  }
+  return map;
+}
+
+function repairSellerOrdersForGigSquareMyServices(): void {
+  const services = listRemoteSkillServicesFromDb();
+  if (services.length === 0) return;
+
+  const db = getStore().getDatabase();
+  const store = getServiceOrderStore();
+  const sellerOrders = store.listOrdersByRole('seller');
+  if (sellerOrders.length === 0) return;
+
+  const ratingServiceIdByTxid = listGigSquareRatingServiceIdByTxid();
+  const metabotGlobalMetaIdById = new Map(
+    getMetabotStore()
+      .listMetabots()
+      .map((metabot) => [metabot.id, toSafeString(metabot.globalmetaid).trim()] as const),
+  );
+  const privateTextCache = new Map<string, string | null>();
+  const coworkTextCache = new Map<string, string | null>();
+
+  for (const order of sellerOrders) {
+    const providerGlobalMetaId = metabotGlobalMetaIdById.get(order.localMetabotId) ?? '';
+    const orderMessagePinId = toSafeString(order.orderMessagePinId).trim();
+    const coworkSessionId = toSafeString(order.coworkSessionId).trim();
+
+    let orderText: string | null = null;
+    if (orderMessagePinId) {
+      if (!privateTextCache.has(orderMessagePinId)) {
+        privateTextCache.set(orderMessagePinId, getPrivateChatOrderText(db, orderMessagePinId));
+      }
+      orderText = privateTextCache.get(orderMessagePinId) ?? null;
+    }
+    if (!orderText && coworkSessionId) {
+      if (!coworkTextCache.has(coworkSessionId)) {
+        coworkTextCache.set(coworkSessionId, getCoworkOrderText(db, coworkSessionId));
+      }
+      orderText = coworkTextCache.get(coworkSessionId) ?? null;
+    }
+
+    const match = resolveSellerOrderServiceMatch({
+      order: {
+        id: order.id,
+        providerGlobalMetaId,
+        servicePinId: order.servicePinId,
+        serviceName: order.serviceName,
+        paymentTxid: order.paymentTxid,
+        paymentAmount: order.paymentAmount,
+        paymentCurrency: order.paymentCurrency,
+        createdAt: order.createdAt,
+      },
+      services,
+      ratingServiceIdByTxid,
+      orderText,
+    });
+    if (!match) {
+      continue;
+    }
+
+    if (
+      toSafeString(order.servicePinId).trim() === match.serviceId
+      && toSafeString(order.serviceName).trim() === match.serviceName
+    ) {
+      continue;
+    }
+    store.repairOrderServiceReference(order.id, {
+      servicePinId: match.serviceId,
+      serviceName: match.serviceName,
+    });
+  }
+}
+
+async function syncGigSquareMyServicesData(options?: { refresh?: boolean }): Promise<void> {
+  if (options?.refresh) {
+    gigSquareMyServicesPendingRemoteRefresh = true;
+  }
+  if (gigSquareMyServicesSyncPromise) {
+    return gigSquareMyServicesSyncPromise;
+  }
+
+  gigSquareMyServicesSyncPromise = (async () => {
+    do {
+      const shouldRefresh = gigSquareMyServicesPendingRemoteRefresh;
+      gigSquareMyServicesPendingRemoteRefresh = false;
+      if (shouldRefresh) {
+        try {
+          await syncGigSquareRemoteData();
+        } catch (error) {
+          console.warn('[GigSquare] My services remote refresh failed', error);
+        }
+      }
+      repairSellerOrdersForGigSquareMyServices();
+    } while (gigSquareMyServicesPendingRemoteRefresh);
+  })().finally(() => {
+    gigSquareMyServicesSyncPromise = null;
+  });
+
+  return gigSquareMyServicesSyncPromise;
+}
 
 type CaptureRect = { x: number; y: number; width: number; height: number };
 
@@ -3546,8 +3739,12 @@ if (!gotTheLock) {
   ipcMain.handle('gigSquare:fetchMyServices', async (_event, params?: {
     page?: number;
     pageSize?: number;
+    refresh?: boolean;
   }) => {
     try {
+      await syncGigSquareMyServicesData({
+        refresh: Boolean(params?.refresh),
+      });
       const page = normalizePositiveInteger(params?.page, 1);
       const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICES_PAGE_SIZE);
       const summaryPage = buildMyServiceSummaries({
@@ -3574,8 +3771,12 @@ if (!gotTheLock) {
     serviceId?: string;
     page?: number;
     pageSize?: number;
+    refresh?: boolean;
   }) => {
     try {
+      await syncGigSquareMyServicesData({
+        refresh: Boolean(params?.refresh),
+      });
       const serviceId = toSafeString(params?.serviceId).trim();
       if (!serviceId) {
         return { success: false, error: 'serviceId is required' };
@@ -3607,14 +3808,9 @@ if (!gotTheLock) {
         page,
         pageSize,
       });
-      const itemsNeedingSessionResolution = detailPage.items.filter((item) => !toSafeString(item.coworkSessionId).trim());
-      if (itemsNeedingSessionResolution.length === 0) {
-        return { success: true, page: detailPage };
-      }
-
       const sellerOrderById = new Map(sellerOrders.map((order) => [order.id, order] as const));
       const coworkSessions = listCoworkSessionsForOrderResolution();
-      const items = detailPage.items.map((item) => {
+      const sessionResolvedItems = detailPage.items.map((item) => {
         if (toSafeString(item.coworkSessionId).trim()) {
           return item;
         }
@@ -3627,6 +3823,38 @@ if (!gotTheLock) {
           ? { ...item, coworkSessionId: resolvedSessionId }
           : item;
       });
+
+      const counterpartyIds = [...new Set(
+        sessionResolvedItems
+          .map((item) => toSafeString(item.counterpartyGlobalMetaid).trim())
+          .filter(Boolean),
+      )];
+      const counterpartyInfoById = new Map<string, { name: string | null; avatarUrl: string | null }>();
+      await Promise.all(counterpartyIds.map(async (counterpartyId) => {
+        try {
+          const payload = await fetchMetaidUserInfoByGlobalMetaId(counterpartyId);
+          const data = unwrapMetaidInfoRecord(payload?.data);
+          counterpartyInfoById.set(counterpartyId, {
+            name: toSafeString(data?.name).trim() || null,
+            avatarUrl: toSafeString(data?.avatarUrl).trim() || null,
+          });
+        } catch (error) {
+          console.warn('[GigSquare] Failed to hydrate counterparty info', counterpartyId, error);
+        }
+      }));
+
+      const items = sessionResolvedItems.map((item) => {
+        const counterpartyId = toSafeString(item.counterpartyGlobalMetaid).trim();
+        const counterpartyInfo = counterpartyInfoById.get(counterpartyId);
+        if (!counterpartyInfo) {
+          return item;
+        }
+        return {
+          ...item,
+          counterpartyName: counterpartyInfo.name,
+          counterpartyAvatar: counterpartyInfo.avatarUrl,
+        };
+      });
       return { success: true, page: { ...detailPage, items } };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my service orders' };
@@ -3635,7 +3863,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('gigSquare:syncFromRemote', async () => {
     try {
-      await syncGigSquareRemoteData();
+      await syncGigSquareMyServicesData({ refresh: true });
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Sync failed' };
@@ -4814,17 +5042,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   });
 
   ipcMain.handle('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId: string }) => {
-    const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
-    const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(params.globalMetaId)}`;
-    const res = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isSemanticallyEmptyMetaidInfoPayload);
-    const payload = await res.json() as { data?: Record<string, unknown> };
-    if (payload?.data && typeof payload.data === 'object') {
-      const avatarUrl = await resolveMetaidAvatarSource(payload.data);
-      if (avatarUrl) {
-        payload.data.avatarUrl = avatarUrl;
-      }
-    }
-    return payload;
+    return fetchMetaidUserInfoByGlobalMetaId(params.globalMetaId);
   });
 
   // MCP is currently suspended and not exposed to renderer.

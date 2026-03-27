@@ -373,12 +373,12 @@ interface IElectronAPI {
   };
   gigSquare: {
     fetchServices: () => Promise<{ success: boolean; list?: GigSquareService[]; error?: string }>;
-    fetchMyServices: (params?: { page?: number; pageSize?: number }) => Promise<{
+    fetchMyServices: (params?: { page?: number; pageSize?: number; refresh?: boolean }) => Promise<{
       success: boolean;
       page?: GigSquarePageResult<GigSquareMyServiceSummary>;
       error?: string;
     }>;
-    fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number }) => Promise<{
+    fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number; refresh?: boolean }) => Promise<{
       success: boolean;
       page?: GigSquarePageResult<GigSquareMyServiceOrderDetail>;
       error?: string;
