@@ -2,6 +2,8 @@ export interface MetaAppRecord {
   id: string;
   name: string;
   description: string;
+  icon?: string;
+  cover?: string;
   isOfficial: boolean;
   updatedAt: number;
   entry: string;
@@ -18,6 +20,8 @@ export interface CommunityMetaAppRecord {
   appId: string;
   name: string;
   description: string;
+  icon?: string;
+  cover?: string;
   version: string;
   runtime: string;
   creatorMetaId: string;

@@ -74,6 +74,8 @@ test('installCommunityMetaApp installs zip payload and writes APP.md + registry 
             intro: 'Buzz app from chain',
             runtime: 'browser/android',
             version: '1.1.0',
+            icon: 'metafile://icon-buzz',
+            coverImg: 'metafile://cover-buzz',
             code: 'metafile://zip-buzz',
             codeType: 'application/zip',
             indexFile: 'index.html',
@@ -106,6 +108,8 @@ test('installCommunityMetaApp installs zip payload and writes APP.md + registry 
   assert.equal(config.defaults?.buzz?.version, '1.1.0');
   assert.equal(config.defaults?.buzz?.['creator-metaid'], 'idq1creator');
   assert.equal(config.defaults?.buzz?.['source-type'], 'chain-community');
+  assert.equal(config.defaults?.buzz?.icon, 'metafile://icon-buzz');
+  assert.equal(config.defaults?.buzz?.cover, 'metafile://cover-buzz');
   assert.equal(config.defaults?.buzz?.installedAt, 111);
   assert.equal(config.defaults?.buzz?.updatedAt, 111);
 });

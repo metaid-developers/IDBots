@@ -194,6 +194,72 @@ test('listMetaApps exposes version, creator-metaid, and source-type from APP.md'
   assert.equal(buzz.managedByIdbots, true);
 });
 
+test('listMetaApps prefers registry icon and cover metadata, then falls back to APP.md frontmatter', () => {
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  writeJson(path.join(metaAppsRoot, 'metaapps.config.json'), {
+    version: 1,
+    description: 'Default MetaApp configuration for IDBots',
+    defaults: {
+      buzz: {
+        version: '1.0.0',
+        'creator-metaid': 'idbots',
+        'source-type': 'chain-community',
+        icon: 'metafile://config-icon',
+        cover: 'https://example.com/config-cover.png',
+      },
+    },
+  });
+
+  writeFile(
+    path.join(metaAppsRoot, 'buzz', 'APP.md'),
+    [
+      '---',
+      'name: buzz-app',
+      'description: buzz app',
+      'entry: /buzz/app/index.html',
+      'icon: metafile://frontmatter-icon',
+      'cover: https://example.com/frontmatter-cover.png',
+      '---',
+      '',
+      '## When To Use',
+      'Open buzz timeline.',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'buzz', 'app', 'index.html'), '<html>buzz</html>');
+
+  writeFile(
+    path.join(metaAppsRoot, 'chat', 'APP.md'),
+    [
+      '---',
+      'name: chat-app',
+      'description: chat app',
+      'entry: /chat/app/index.html',
+      'icon: metafile://chat-icon',
+      'cover: https://example.com/chat-cover.png',
+      '---',
+      '',
+      '## When To Use',
+      'Open chat.',
+    ].join('\n'),
+  );
+  writeFile(path.join(metaAppsRoot, 'chat', 'app', 'index.html'), '<html>chat</html>');
+
+  const apps = withMetaAppsRoot(metaAppsRoot, () => new MetaAppManager().listMetaApps());
+  assert.equal(apps.length, 2);
+
+  const buzz = apps.find((app) => app.id === 'buzz');
+  assert.ok(buzz);
+  assert.equal(buzz.icon, 'metafile://config-icon');
+  assert.equal(buzz.cover, 'https://example.com/config-cover.png');
+
+  const chat = apps.find((app) => app.id === 'chat');
+  assert.ok(chat);
+  assert.equal(chat.icon, 'metafile://chat-icon');
+  assert.equal(chat.cover, 'https://example.com/chat-cover.png');
+});
+
 test('listMetaApps falls back to metaapps.config defaults when APP.md omits managed metadata', () => {
   const tempDir = createTempDir();
   const metaAppsRoot = path.join(tempDir, 'METAAPPs');

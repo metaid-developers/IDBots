@@ -43,6 +43,8 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
         intro: 'Buzz chain app',
         runtime: 'browser/android',
         version: '1.2.0',
+        icon: 'metafile://icon-buzz',
+        coverImg: 'metafile://cover-buzz',
         code: 'metafile://zip-buzz',
         codeType: 'application/zip',
         indexFile: 'index.html',
@@ -101,6 +103,8 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
   assert.equal(buzz.status, 'update');
   assert.equal(buzz.installable, true);
   assert.equal(buzz.codePinId, 'zip-buzz');
+  assert.equal(buzz.icon, 'metafile://icon-buzz');
+  assert.equal(buzz.cover, 'metafile://cover-buzz');
 
   const chat = result.apps.find((app) => app.appId === 'chat');
   assert.ok(chat);

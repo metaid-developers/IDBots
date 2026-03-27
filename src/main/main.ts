@@ -88,6 +88,29 @@ import {
 app.name = APP_NAME;
 app.setName(APP_NAME);
 
+const normalizeMetaAppVisualFallback = (value?: string): string | undefined => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.toLowerCase().startsWith('metafile://')) {
+    return undefined;
+  }
+  return normalized;
+};
+
+const resolveMetaAppVisualFields = async <T extends { icon?: string; cover?: string }>(record: T): Promise<T> => {
+  const [icon, cover] = await Promise.all([
+    record.icon ? resolvePinAssetSource(record.icon) : Promise.resolve(null),
+    record.cover ? resolvePinAssetSource(record.cover) : Promise.resolve(null),
+  ]);
+  return {
+    ...record,
+    icon: icon || normalizeMetaAppVisualFallback(record.icon),
+    cover: cover || normalizeMetaAppVisualFallback(record.cover),
+  };
+};
+
 const LEGACY_APP_NAMES = ['OctoBot', 'octobot'];
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;
@@ -2172,10 +2195,11 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('metaapps:list', () => {
+  ipcMain.handle('metaapps:list', async () => {
     try {
       const apps = getMetaAppManager().listMetaApps();
-      return { success: true, apps };
+      const resolvedApps = await Promise.all(apps.map((app) => resolveMetaAppVisualFields(app)));
+      return { success: true, apps: resolvedApps };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list MetaApps' };
     }
@@ -2183,7 +2207,12 @@ if (!gotTheLock) {
 
   ipcMain.handle('metaapps:listCommunity', async () => {
     try {
-      return await listCommunityMetaApps({ manager: getMetaAppManager() });
+      const result = await listCommunityMetaApps({ manager: getMetaAppManager() });
+      if (!result.success || !result.apps) {
+        return result;
+      }
+      const apps = await Promise.all(result.apps.map((app) => resolveMetaAppVisualFields(app)));
+      return { ...result, apps };
     } catch (error) {
       return { success: false, apps: [], error: error instanceof Error ? error.message : 'Failed to list community MetaApps' };
     }

@@ -47,6 +47,8 @@ type ChainMetaAppPayload = {
   title: string;
   appName: string;
   intro: string;
+  icon: string;
+  cover: string;
   runtime: string;
   version: string;
   indexFile: string;
@@ -68,6 +70,8 @@ export type CommunityMetaAppRecord = {
   appId: string;
   name: string;
   description: string;
+  icon?: string;
+  cover?: string;
   version: string;
   runtime: string;
   creatorMetaId: string;
@@ -102,6 +106,8 @@ type MetaAppsConfig = {
     version?: string;
     'creator-metaid'?: string;
     'source-type'?: string;
+    icon?: string;
+    cover?: string;
     installedAt?: number;
     updatedAt?: number;
   }>;
@@ -268,6 +274,8 @@ const decodeChainPayload = (item: unknown): ChainMetaAppCandidate | null => {
       title,
       appName,
       intro: asText(content.intro),
+      icon: asText(content.icon),
+      cover: asText(content.coverImg),
       runtime: asText(content.runtime),
       version: normalizeVersion(asText(content.version)),
       indexFile: normalizeIndexFile(asText(content.indexFile)),
@@ -325,6 +333,8 @@ const toCommunityRecord = (
     appId,
     name: chain.payload.title || chain.payload.appName || appId,
     description: chain.payload.intro || chain.payload.title || chain.payload.appName || appId,
+    icon: chain.payload.icon || undefined,
+    cover: chain.payload.cover || undefined,
     version: normalizeVersion(chain.payload.version),
     runtime: chain.payload.runtime,
     creatorMetaId: chain.creatorMetaId,
@@ -659,6 +669,8 @@ export async function installCommunityMetaApp(input: InstallCommunityMetaAppInpu
       version: targetRecord.version,
       'creator-metaid': targetRecord.creatorMetaId,
       'source-type': 'chain-community',
+      icon: targetRecord.icon,
+      cover: targetRecord.cover,
       installedAt: typeof existing.installedAt === 'number' ? existing.installedAt : nowTs,
       updatedAt: nowTs,
     };

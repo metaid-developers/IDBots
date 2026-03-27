@@ -31,6 +31,8 @@ type MetaAppDefaultConfig = {
   version?: string;
   'creator-metaid'?: string;
   'source-type'?: string;
+  icon?: string;
+  cover?: string;
   installedAt?: number;
   updatedAt?: number;
 };
@@ -45,6 +47,8 @@ export type MetaAppRecord = {
   id: string;
   name: string;
   description: string;
+  icon?: string;
+  cover?: string;
   isOfficial: boolean;
   updatedAt: number;
   entry: string;
@@ -307,6 +311,8 @@ const loadMetaAppDefaultFromDir = (appDir: string): MetaAppDefaultConfig => {
     version: String(frontmatter.version ?? '0').trim() || '0',
     'creator-metaid': String(frontmatter['creator-metaid'] ?? '').trim(),
     'source-type': normalizeSourceType(frontmatter['source-type'] ?? 'manual'),
+    icon: String(frontmatter.icon ?? '').trim(),
+    cover: String(frontmatter.cover ?? '').trim(),
   };
 };
 
@@ -569,6 +575,12 @@ export class MetaAppManager {
         const sourceType = hasRegistryEntry
           ? normalizeSourceType(appDefaults['source-type'] ?? 'manual')
           : normalizeSourceType(frontmatter['source-type'] || 'manual');
+        const icon = hasRegistryEntry
+          ? String(appDefaults.icon ?? frontmatter.icon ?? '').trim()
+          : String(frontmatter.icon || '').trim();
+        const cover = hasRegistryEntry
+          ? String(appDefaults.cover ?? frontmatter.cover ?? '').trim()
+          : String(frontmatter.cover || '').trim();
         const entryFilePath = resolveEntryFilePath(id, dir, entry);
         if (!entryFilePath) {
           return;
@@ -577,6 +589,8 @@ export class MetaAppManager {
           id,
           name,
           description,
+          icon: icon || undefined,
+          cover: cover || undefined,
           isOfficial: isTruthy(frontmatter.official),
           updatedAt: fs.statSync(appFile).mtimeMs,
           entry,
@@ -690,6 +704,8 @@ export class MetaAppManager {
           bundledDefault['creator-metaid'] ?? existing['creator-metaid'] ?? ''
         ).trim(),
         'source-type': normalizeSourceType(bundledDefault['source-type'] ?? existing['source-type'] ?? 'manual'),
+        icon: String(bundledDefault.icon ?? existing.icon ?? '').trim(),
+        cover: String(bundledDefault.cover ?? existing.cover ?? '').trim(),
         installedAt: typeof existing.installedAt === 'number' ? existing.installedAt : now,
         updatedAt: now,
       };
