@@ -1,4 +1,10 @@
 import type { CoworkMemoryGuardLevel } from '../libs/coworkMemoryExtractor';
+import type {
+  MemoryScope,
+  MemoryScopeKind,
+  MemoryUsageClass,
+  MemoryVisibility,
+} from './memoryScope';
 
 export type MemoryUserMemoryStatus = 'created' | 'stale' | 'deleted';
 
@@ -8,6 +14,10 @@ export interface MemoryUserMemory {
   confidence: number;
   isExplicit: boolean;
   status: MemoryUserMemoryStatus;
+  scopeKind?: MemoryScopeKind;
+  scopeKey?: string;
+  usageClass?: MemoryUsageClass;
+  visibility?: MemoryVisibility;
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
@@ -30,6 +40,44 @@ export interface MemoryUserMemoryStats {
   deleted: number;
   explicit: number;
   implicit: number;
+}
+
+export interface MemoryScopeSelectorInput {
+  scope?: MemoryScope;
+  scopeKind?: MemoryScopeKind;
+  scopeKey?: string;
+}
+
+export interface MemoryScopeClassifyInput {
+  usageClass?: MemoryUsageClass;
+  visibility?: MemoryVisibility;
+}
+
+export interface MemoryListUserMemoriesOptions extends MemoryScopeSelectorInput {
+  metabotId: number;
+  query?: string;
+  status?: MemoryUserMemoryStatus | 'all';
+  limit?: number;
+  offset?: number;
+  includeDeleted?: boolean;
+  touchLastUsed?: boolean;
+}
+
+export interface MemoryCreateUserMemoryInput extends MemoryScopeSelectorInput, MemoryScopeClassifyInput {
+  text: string;
+  confidence?: number;
+  isExplicit?: boolean;
+  source?: MemoryUserMemorySourceInput;
+  metabotId: number;
+}
+
+export interface MemoryUpdateUserMemoryInput extends MemoryScopeSelectorInput, MemoryScopeClassifyInput {
+  id: string;
+  metabotId: number;
+  text?: string;
+  confidence?: number;
+  status?: MemoryUserMemoryStatus;
+  isExplicit?: boolean;
 }
 
 export interface MemoryPolicy {
@@ -87,30 +135,9 @@ export interface MemoryBackend {
   getEffectiveMemoryPolicyForMetabot(metabotId?: number | null): MemoryEffectivePolicy;
   getEffectiveMemoryPolicyForSession(sessionId?: string | null): MemoryEffectivePolicy;
   setMemoryPolicyForMetabot(metabotId: number, updates: MemoryPolicyUpdates): MemoryPolicy;
-  listUserMemories(options: {
-    metabotId: number;
-    query?: string;
-    status?: MemoryUserMemoryStatus | 'all';
-    limit?: number;
-    offset?: number;
-    includeDeleted?: boolean;
-    touchLastUsed?: boolean;
-  }): MemoryUserMemory[];
-  createUserMemory(input: {
-    text: string;
-    confidence?: number;
-    isExplicit?: boolean;
-    source?: MemoryUserMemorySourceInput;
-    metabotId: number;
-  }): MemoryUserMemory;
-  updateUserMemory(input: {
-    id: string;
-    metabotId: number;
-    text?: string;
-    confidence?: number;
-    status?: MemoryUserMemoryStatus;
-    isExplicit?: boolean;
-  }): MemoryUserMemory | null;
+  listUserMemories(options: MemoryListUserMemoriesOptions): MemoryUserMemory[];
+  createUserMemory(input: MemoryCreateUserMemoryInput): MemoryUserMemory;
+  updateUserMemory(input: MemoryUpdateUserMemoryInput): MemoryUserMemory | null;
   deleteUserMemory(id: string, metabotId: number): boolean;
   getUserMemoryStats(metabotId: number): MemoryUserMemoryStats;
   applyTurnMemoryUpdates(options: ApplyTurnMemoryUpdatesOptions): Promise<ApplyTurnMemoryUpdatesResult>;
