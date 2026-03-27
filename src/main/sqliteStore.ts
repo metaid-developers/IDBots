@@ -118,11 +118,16 @@ export class SqliteStore {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS user_memories (
         id TEXT PRIMARY KEY,
+        metabot_id INTEGER REFERENCES metabots(id),
         text TEXT NOT NULL,
         fingerprint TEXT NOT NULL,
         confidence REAL NOT NULL DEFAULT 0.75,
         is_explicit INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'created',
+        scope_kind TEXT NOT NULL DEFAULT 'owner',
+        scope_key TEXT NOT NULL DEFAULT 'owner:self',
+        usage_class TEXT NOT NULL DEFAULT 'profile_fact',
+        visibility TEXT NOT NULL DEFAULT 'local_only',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_used_at INTEGER
@@ -750,6 +755,30 @@ export class SqliteStore {
         }
         this.save();
       }
+      if (!umColumns.includes('scope_kind')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'owner';");
+      }
+      if (!umColumns.includes('scope_key')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN scope_key TEXT NOT NULL DEFAULT 'owner:self';");
+      }
+      if (!umColumns.includes('usage_class')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN usage_class TEXT NOT NULL DEFAULT 'profile_fact';");
+      }
+      if (!umColumns.includes('visibility')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN visibility TEXT NOT NULL DEFAULT 'local_only';");
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_status_updated
+        ON user_memories(metabot_id, scope_kind, scope_key, status, updated_at DESC)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_fingerprint
+        ON user_memories(metabot_id, scope_kind, scope_key, fingerprint)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_usage_visibility
+        ON user_memories(metabot_id, usage_class, visibility, status, updated_at DESC)
+      `);
     } catch (error) {
       console.warn('Failed to migrate user_memories metabot_id:', error);
     }
