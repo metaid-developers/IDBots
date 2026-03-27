@@ -27,7 +27,8 @@ export function buildOrderPrompts(params: {
       : null,
     `- Your goal: execute the requested skill accurately and return a detailed, clear result to the client.`,
     `- After the service, the client may rate your performance and the quality of your result. Aim to exceed expectations.`,
-    `- IMPORTANT: The <userMemories> block in this prompt describes your owner (the local operator), NOT the current client. Do not apply the owner's personal preferences or name to the client.`,
+    `- IMPORTANT: Scoped memory blocks such as <ownerMemories>, <contactMemories>, <conversationMemories>, and <ownerOperationalPreferences> may appear in this prompt.`,
+    `- If an owner-scoped memory block appears, it describes your owner (the local operator), NOT the current client. Do not apply the owner's personal preferences or name to the client.`,
   ].filter(Boolean).join('\n');
 
   const baseSystemPrompt = [

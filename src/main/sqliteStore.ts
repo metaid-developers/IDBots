@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
+import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -118,11 +119,16 @@ export class SqliteStore {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS user_memories (
         id TEXT PRIMARY KEY,
+        metabot_id INTEGER REFERENCES metabots(id),
         text TEXT NOT NULL,
         fingerprint TEXT NOT NULL,
         confidence REAL NOT NULL DEFAULT 0.75,
         is_explicit INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'created',
+        scope_kind TEXT NOT NULL DEFAULT 'owner',
+        scope_key TEXT NOT NULL DEFAULT '${OWNER_SCOPE_KEY}',
+        usage_class TEXT NOT NULL DEFAULT 'profile_fact',
+        visibility TEXT NOT NULL DEFAULT 'local_only',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_used_at INTEGER
@@ -162,6 +168,18 @@ export class SqliteStore {
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_user_memories_fingerprint
       ON user_memories(fingerprint);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_user_memories_scope_status_updated
+      ON user_memories(metabot_id, scope_kind, scope_key, status, updated_at DESC);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_user_memories_scope_fingerprint
+      ON user_memories(metabot_id, scope_kind, scope_key, fingerprint);
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_user_memories_usage_visibility
+      ON user_memories(metabot_id, usage_class, visibility, status, updated_at DESC);
     `);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_user_memory_sources_session_id
@@ -750,6 +768,30 @@ export class SqliteStore {
         }
         this.save();
       }
+      if (!umColumns.includes('scope_kind')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'owner';");
+      }
+      if (!umColumns.includes('scope_key')) {
+        this.db.run(`ALTER TABLE user_memories ADD COLUMN scope_key TEXT NOT NULL DEFAULT '${OWNER_SCOPE_KEY}';`);
+      }
+      if (!umColumns.includes('usage_class')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN usage_class TEXT NOT NULL DEFAULT 'profile_fact';");
+      }
+      if (!umColumns.includes('visibility')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN visibility TEXT NOT NULL DEFAULT 'local_only';");
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_status_updated
+        ON user_memories(metabot_id, scope_kind, scope_key, status, updated_at DESC)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_fingerprint
+        ON user_memories(metabot_id, scope_kind, scope_key, fingerprint)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_usage_visibility
+        ON user_memories(metabot_id, usage_class, visibility, status, updated_at DESC)
+      `);
     } catch (error) {
       console.warn('Failed to migrate user_memories metabot_id:', error);
     }
@@ -1119,14 +1161,12 @@ export class SqliteStore {
   }
 
   private tryReadLegacyMemoryText(): string {
-    // Prefer app-bound paths over process.cwd() so behavior is consistent when started from different directories or packaged.
+    // Prefer app-bound paths so behavior is consistent when started from different directories or packaged.
     const candidates = [
       path.join(app.getAppPath(), 'MEMORY.md'),
       path.join(app.getPath('userData'), 'MEMORY.md'),
-      path.join(process.cwd(), 'MEMORY.md'),
       path.join(app.getAppPath(), 'memory.md'),
       path.join(app.getPath('userData'), 'memory.md'),
-      path.join(process.cwd(), 'memory.md'),
     ];
 
     for (const candidate of candidates) {
@@ -1201,8 +1241,17 @@ export class SqliteStore {
       for (const text of entries) {
         const fingerprint = this.memoryFingerprint(text);
         const existing = this.db.exec(
-          `SELECT id FROM user_memories WHERE fingerprint = ? AND status != 'deleted' LIMIT 1`,
-          [fingerprint]
+          `
+            SELECT id
+            FROM user_memories
+            WHERE metabot_id = ?
+              AND scope_kind = 'owner'
+              AND scope_key = ?
+              AND fingerprint = ?
+              AND status != 'deleted'
+            LIMIT 1
+          `,
+          [defaultMetabotId, OWNER_SCOPE_KEY, fingerprint]
         );
         if (existing[0]?.values?.[0]?.[0]) {
           continue;
@@ -1210,9 +1259,12 @@ export class SqliteStore {
 
         const memoryId = crypto.randomUUID();
         this.db.run(`
-          INSERT INTO user_memories (id, metabot_id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at)
-          VALUES (?, ?, ?, ?, ?, 1, 'created', ?, ?, NULL)
-        `, [memoryId, defaultMetabotId, text, fingerprint, 0.9, now, now]);
+          INSERT INTO user_memories (
+            id, metabot_id, text, fingerprint, confidence, is_explicit, status,
+            scope_kind, scope_key, usage_class, visibility, created_at, updated_at, last_used_at
+          )
+          VALUES (?, ?, ?, ?, ?, 1, 'created', 'owner', ?, 'profile_fact', 'local_only', ?, ?, NULL)
+        `, [memoryId, defaultMetabotId, text, fingerprint, 0.9, OWNER_SCOPE_KEY, now, now]);
 
         this.db.run(`
           INSERT INTO user_memory_sources (id, memory_id, session_id, message_id, role, is_active, created_at)
@@ -1221,12 +1273,12 @@ export class SqliteStore {
       }
 
       this.db.run('COMMIT;');
+      this.set(USER_MEMORIES_MIGRATION_KEY, '1');
     } catch (error) {
       this.db.run('ROLLBACK;');
       console.warn('Failed to migrate legacy MEMORY.md entries:', error);
+      return;
     }
-
-    this.set(USER_MEMORIES_MIGRATION_KEY, '1');
   }
 
   getP2PConfig(): Record<string, unknown> | undefined {
