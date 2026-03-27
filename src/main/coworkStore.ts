@@ -1999,7 +1999,17 @@ export class CoworkStore implements MemoryBackend {
     return updated ? this.mapMemoryRow(updated) : null;
   }
 
-  deleteUserMemory(id: string, metabotId: number): boolean {
+  deleteUserMemory(input: { id: string; metabotId: number }): boolean;
+  deleteUserMemory(id: string, metabotId: number): boolean;
+  deleteUserMemory(
+    inputOrId: { id: string; metabotId: number } | string,
+    metabotIdArg?: number
+  ): boolean {
+    const id = typeof inputOrId === 'string' ? inputOrId : inputOrId.id;
+    const metabotId = typeof inputOrId === 'string' ? Number(metabotIdArg) : Number(inputOrId.metabotId);
+    if (!id || !Number.isFinite(metabotId)) {
+      return false;
+    }
     const now = Date.now();
     this.db.run(`
       UPDATE user_memories
