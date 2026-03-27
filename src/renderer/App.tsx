@@ -30,6 +30,7 @@ import { matchesShortcut } from './services/shortcuts';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import Onboarding from './components/onboarding/Onboarding';
+import { shouldShowInitialOnboarding } from './components/onboarding/onboardingGate.js';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -37,7 +38,7 @@ const App: React.FC = () => {
   const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
-  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -166,24 +167,29 @@ const App: React.FC = () => {
         // 初始化定时任务服务
         await scheduledTaskService.init();
 
-        // Onboarding check: redirect to onboarding if no LLM config or no twin MetaBot
+        // Onboarding visibility: show the wizard initially when LLM config is missing
+        // or when there are no local MetaBots yet. Users can close it and continue into the app.
         const hasProviderWithApiKey =
           config.providers &&
           Object.values(config.providers).some(
             (p: { enabled?: boolean; apiKey?: string }) =>
               p?.enabled && p?.apiKey && String(p.apiKey).trim() !== ''
           );
-        let showOnboarding = !hasProviderWithApiKey;
-        if (hasProviderWithApiKey) {
-          try {
-            const mbRes = await window.electron.idbots.getMetaBots();
-            const hasTwin = mbRes?.success && mbRes?.list?.some((m) => m.metabot_type === 'twin');
-            showOnboarding = !hasTwin;
-          } catch {
-            showOnboarding = true;
+        let metabotCount = 0;
+        try {
+          const metabotResult = await window.electron.metabot.list();
+          if (metabotResult?.success && Array.isArray(metabotResult.list)) {
+            metabotCount = metabotResult.list.length;
           }
+        } catch {
+          metabotCount = 0;
         }
-        setNeedsOnboarding(showOnboarding);
+        setShowOnboarding(
+          shouldShowInitialOnboarding({
+            hasProviderWithApiKey,
+            metabotCount,
+          })
+        );
         setIsInitialized(true);
       } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -248,8 +254,19 @@ const App: React.FC = () => {
         dispatch(setSelectedModel(preferred));
       }
     }
-    setNeedsOnboarding(false);
+    setMainView('cowork');
+    setShowOnboarding(false);
   }, [dispatch]);
+
+  const handleOpenOnboarding = useCallback(() => {
+    setMainView('cowork');
+    setShowOnboarding(true);
+  }, []);
+
+  const handleCloseOnboarding = useCallback(() => {
+    setMainView('cowork');
+    setShowOnboarding(false);
+  }, []);
 
   useEffect(() => {
     if (!isInitialized || !selectedModel?.id) return;
@@ -648,8 +665,8 @@ const App: React.FC = () => {
     );
   }
 
-  if (needsOnboarding) {
-    return <Onboarding onComplete={handleOnboardingComplete} />;
+  if (showOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} onClose={handleCloseOnboarding} />;
   }
 
   return (
@@ -698,6 +715,7 @@ const App: React.FC = () => {
                 onNewChat={handleNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
                 onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
+                onRequestOnboarding={handleOpenOnboarding}
               />
             ) : (
               <CoworkView
@@ -707,6 +725,7 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
+                onRequestOnboarding={handleOpenOnboarding}
               />
             )}
           </div>

@@ -711,9 +711,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     onboardingRetry: '重试',
     onboardingSkip: '跳过',
     onboardingSkipHint: '名字已上链，可跳过并进入',
+    onboardingClose: '关闭引导',
     onboardingEnterIdBots: '进入 IDBots',
     onboardingCelebration: '觉醒完成！',
     onboardingTwinDefaultRole: '我是你的数字主分身 (I am your primary digital twin)',
+    metabotCreateFirstPrompt: '请先创建 MetaBot',
 
     // 邮箱技能配置
     emailTab: '邮箱',
@@ -1662,9 +1664,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     onboardingRetry: 'Retry',
     onboardingSkip: 'Skip',
     onboardingSkipHint: 'Name is on chain. You can skip and enter.',
+    onboardingClose: 'Close onboarding',
     onboardingEnterIdBots: 'Enter IDBots',
     onboardingCelebration: 'Awakening complete!',
     onboardingTwinDefaultRole: 'I am your primary digital twin',
+    metabotCreateFirstPrompt: 'Create a MetaBot first',
 
     // Email Skill Config
     emailTab: 'Email',

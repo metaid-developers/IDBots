@@ -21,6 +21,7 @@ import type { SettingsOpenOptions } from '../Settings';
 import type { CoworkSession } from '../../types/cowork';
 import type { LocalizedPrompt } from '../../types/quickAction';
 import { resolveQuickActionPromptSkillMapping } from '../quick-actions/quickActionPresentation.js';
+import { shouldRouteFirstMetabotCreationToOnboarding } from '../onboarding/onboardingGate.js';
 
 type MetaBotForSelector = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -107,6 +108,7 @@ const MetaBotSelector: React.FC<{
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
+  onRequestOnboarding?: () => void;
   onShowSkills?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -114,11 +116,20 @@ export interface CoworkViewProps {
   updateBadge?: React.ReactNode;
 }
 
-const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSkills, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+const CoworkView: React.FC<CoworkViewProps> = ({
+  onRequestAppSettings,
+  onRequestOnboarding,
+  onShowSkills,
+  isSidebarCollapsed,
+  onToggleSidebar,
+  onNewChat,
+  updateBadge,
+}) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
   const [metabots, setMetabots] = useState<Array<{ id: number; name: string; avatar: string | null; metabot_type: string }>>([]);
+  const [localMetabotCount, setLocalMetabotCount] = useState(0);
   const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(null);
   const [selectedMetabotLlmId, setSelectedMetabotLlmId] = useState<string | null>(null);
   // Track if we're starting a session to prevent duplicate submissions
@@ -142,23 +153,28 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const selectedPromptId = useSelector((state: RootState) => state.quickAction.selectedPromptId);
 
-  const loadSelectableMetaBots = useCallback(async (): Promise<MetaBotForSelector[]> => {
+  const loadSelectableMetaBots = useCallback(async (): Promise<{ selectable: MetaBotForSelector[]; localCount: number }> => {
     const [selectorResult, fullListResult] = await Promise.all([
       window.electron?.idbots?.getMetaBots?.(),
       window.electron?.metabot?.list?.(),
     ]);
+    const localList = fullListResult?.success && fullListResult.list ? fullListResult.list : [];
+    const localCount = localList.length;
     if (!selectorResult?.success || !selectorResult.list) {
-      return [];
+      return { selectable: [], localCount };
     }
     if (!fullListResult?.success || !fullListResult.list) {
-      return selectorResult.list;
+      return { selectable: selectorResult.list, localCount: selectorResult.list.length };
     }
     const llmConfiguredIds = new Set(
-      fullListResult.list
+      localList
         .filter((metabot) => metabot.enabled && typeof metabot.llm_id === 'string' && metabot.llm_id.trim())
         .map((metabot) => metabot.id)
     );
-    return selectorResult.list.filter((metabot) => llmConfiguredIds.has(metabot.id));
+    return {
+      selectable: selectorResult.list.filter((metabot) => llmConfiguredIds.has(metabot.id)),
+      localCount,
+    };
   }, []);
 
   const buildApiConfigNotice = (error?: string) => {
@@ -178,11 +194,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   useEffect(() => {
     const loadMetaBots = async () => {
-      const list = await loadSelectableMetaBots();
-      setMetabots(list);
-      if (list.length > 0) {
+      const { selectable, localCount } = await loadSelectableMetaBots();
+      setMetabots(selectable);
+      setLocalMetabotCount(localCount);
+      if (selectable.length > 0) {
         const preferred = store.getState().cowork.preferredMetabotId;
-        if (preferred != null && list.some((m) => m.id === preferred)) {
+        if (preferred != null && selectable.some((m) => m.id === preferred)) {
           setSelectedMetabotId(preferred);
           dispatch(clearPreferredMetabotId());
         }
@@ -196,10 +213,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     if (preferredMetabotId == null) return;
     let cancelled = false;
     const refetchAndSelect = async () => {
-      const list = await loadSelectableMetaBots();
+      const { selectable, localCount } = await loadSelectableMetaBots();
       if (cancelled) return;
-      setMetabots(list);
-      if (list.some((m) => m.id === preferredMetabotId)) {
+      setMetabots(selectable);
+      setLocalMetabotCount(localCount);
+      if (selectable.some((m) => m.id === preferredMetabotId)) {
         setSelectedMetabotId(preferredMetabotId);
       }
       dispatch(clearPreferredMetabotId());
@@ -306,6 +324,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     };
 
     try {
+      if (shouldRouteFirstMetabotCreationToOnboarding(localMetabotCount)) {
+        onRequestOnboarding?.();
+        return;
+      }
       try {
         const apiConfig = await coworkService.checkApiConfig();
         if (apiConfig && !apiConfig.hasConfig) {
@@ -399,6 +421,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       isStartingRef.current = false;
     }
   };
+
+  const shouldPromptCreateMetabot = shouldRouteFirstMetabotCreationToOnboarding(localMetabotCount);
 
   const handleContinueSession = async (prompt: string, skillPrompt?: string) => {
     if (!currentSession) return;
@@ -569,17 +593,28 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             </div>
 
             {/* MetaBot selector (when creating new session) - centered, slightly larger */}
-            {metabots.length > 0 && (
-              <div className="flex justify-center">
-                <MetaBotSelector
-                  metabots={metabots}
-                  selectedId={selectedMetabotId}
-                  onSelect={setSelectedMetabotId}
-                  label={i18nService.t('coworkMetaBotLabel')}
-                  placeholder={i18nService.t('coworkMetaBotPlaceholder')}
-                />
-              </div>
-            )}
+            <div className="flex flex-col items-center gap-3">
+              {metabots.length > 0 && (
+                <div className="flex justify-center">
+                  <MetaBotSelector
+                    metabots={metabots}
+                    selectedId={selectedMetabotId}
+                    onSelect={setSelectedMetabotId}
+                    label={i18nService.t('coworkMetaBotLabel')}
+                    placeholder={i18nService.t('coworkMetaBotPlaceholder')}
+                  />
+                </div>
+              )}
+              {shouldPromptCreateMetabot && (
+                <button
+                  type="button"
+                  onClick={() => onRequestOnboarding?.()}
+                  className="text-sm font-medium text-red-500 transition-colors hover:text-red-400"
+                >
+                  {i18nService.t('metabotCreateFirstPrompt')}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Quick Actions (above input) */}

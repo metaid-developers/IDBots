@@ -11,6 +11,7 @@ import MetaBotCreateSuccessModal, { type SyncStepKey } from './MetaBotCreateSucc
 import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
 import MetaBotRestoreMnemonicModal from './MetaBotRestoreMnemonicModal';
 import MetaBotListCard from './MetaBotListCard';
+import { shouldRouteFirstMetabotCreationToOnboarding } from '../onboarding/onboardingGate.js';
 
 type ViewMode = 'list' | 'add' | 'edit';
 interface EditSyncPlan {
@@ -26,7 +27,10 @@ const providerLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1
 const sortMetabotsByCreatedAtAsc = (metabots: Metabot[]) =>
   [...metabots].sort((a, b) => a.created_at - b.created_at || a.id - b.id);
 
-const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ onRequestModelSettings }) => {
+const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequestOnboarding?: () => void }> = ({
+  onRequestModelSettings,
+  onRequestOnboarding,
+}) => {
   const dispatch = useDispatch();
   const [list, setList] = useState<Metabot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -93,6 +97,11 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void }> = ({ on
   const handleAdd = () => {
     if (list.length >= METABOT_LIMIT) {
       setShowLimitModal(true);
+      return;
+    }
+    if (shouldRouteFirstMetabotCreationToOnboarding(list.length)) {
+      setActionError('');
+      onRequestOnboarding?.();
       return;
     }
     setActionError('');
