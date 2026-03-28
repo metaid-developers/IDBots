@@ -65,6 +65,23 @@ test('config rejects invalid pair inventory and trade-limit asset keys', () => {
   }), /target_inventory|trade_limits|max_usable_inventory/i);
 });
 
+test('config rejects inverted trade-limit ranges', () => {
+  assert.throws(() => validateConfig({
+    market_data: {
+      provider: 'cex',
+      quote_fallback_enabled: true,
+      execute_fallback_enabled: false,
+    },
+    pairs: {
+      'BTC/SPACE': {
+        target_inventory: { BTC: '1', SPACE: '1' },
+        trade_limits: { min_in_BTC: '2', max_in_BTC: '1', min_in_SPACE: '1', max_in_SPACE: '10' },
+        max_usable_inventory: { BTC: '1', SPACE: '1' },
+      },
+    },
+  }), /trade_limits/i);
+});
+
 test('loadConfig validates parsed config before returning', () => {
   const { tmpRoot, env } = createEnv();
   writeConfig(tmpRoot, { pairs: { 'BTC/SPACE': { spread_bps: 200 } }, market_data: { provider: 'cex' } });

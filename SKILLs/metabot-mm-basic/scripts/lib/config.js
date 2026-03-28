@@ -89,6 +89,14 @@ function validateConfig(config) {
               break;
             }
           }
+          for (const asset of assets) {
+            const minValue = Number(pairConfig.trade_limits[`min_in_${asset}`]);
+            const maxValue = Number(pairConfig.trade_limits[`max_in_${asset}`]);
+            if (!(minValue <= maxValue)) {
+              errors.push('trade_limits');
+              break;
+            }
+          }
         }
       }
 
