@@ -808,23 +808,23 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 return (
                   <div
                     key={service.id}
-                    className="rounded-xl border border-claude-border bg-[var(--bg-panel)] px-4 py-3 dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+                    className="rounded-xl border border-claude-border bg-[var(--bg-panel)] px-4 py-2.5 dark:border-claude-darkBorder dark:bg-claude-darkSurface"
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-2.5">
                       {service.serviceIcon ? (
                         <img
                           src={service.serviceIcon}
                           alt={getServiceDisplayName(service)}
-                          className="h-11 w-11 rounded-xl border border-claude-border object-cover dark:border-claude-darkBorder"
+                          className="h-10 w-10 rounded-xl border border-claude-border object-cover dark:border-claude-darkBorder"
                         />
                       ) : (
-                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-claude-accent/15 text-sm font-semibold text-claude-accent">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-claude-accent/15 text-sm font-semibold text-claude-accent">
                           {getServiceDisplayName(service).slice(0, 1).toUpperCase()}
                         </div>
                       )}
 
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-[15px] font-semibold text-claude-text dark:text-claude-darkText">
@@ -840,10 +840,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               </span>
                             </div>
 
-                            <div className="mt-1 font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            <div className="mt-0.5 font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
                               {service.serviceName || service.id}
                             </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                               <span>
                                 {i18nService.t('gigSquareMyServicesUpdatedAt')} {formatDateTime(service.updatedAt)}
                               </span>
@@ -851,16 +851,16 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                                 {i18nService.t('gigSquareMyServicesCreatorMetabot')} {service.creatorMetabotName || service.creatorMetabotId || '—'}
                               </span>
                             </div>
-                            <p className="mt-1.5 line-clamp-2 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            <p className="mt-1 line-clamp-1 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                               {service.description || '—'}
                             </p>
                           </div>
 
-                          <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
+                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:ml-auto sm:max-w-[220px]">
                             <button
                               type="button"
                               onClick={() => handleOpenDetail(service)}
-                              className="btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
+                              className="btn-idchat-primary whitespace-nowrap px-2.5 py-1 text-[11px] font-medium"
                             >
                               {i18nService.t('gigSquareMyServicesActionDetail')}
                             </button>
@@ -869,7 +869,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               onClick={() => handleOpenModify(service)}
                               disabled={editDisabled}
                               title={!service.canModify ? i18nService.t(blockedReasonKey) : undefined}
-                              className="rounded-lg border border-claude-border whitespace-nowrap px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+                              className="rounded-lg border border-claude-border whitespace-nowrap px-2.5 py-1 text-[11px] font-medium text-claude-textSecondary hover:bg-claude-surfaceHover disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
                             >
                               {i18nService.t('gigSquareMyServicesActionEdit')}
                             </button>
@@ -878,14 +878,14 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               onClick={() => handleOpenRevoke(service)}
                               disabled={revokeDisabled}
                               title={!service.canRevoke ? i18nService.t(blockedReasonKey) : undefined}
-                              className="rounded-lg border border-red-400/40 whitespace-nowrap px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-500/5 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-300"
+                              className="rounded-lg border border-red-400/40 whitespace-nowrap px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-500/5 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-300"
                             >
                               {i18nService.t('gigSquareMyServicesActionRevoke')}
                             </button>
                           </div>
                         </div>
 
-                        <div className="mt-3 flex flex-col gap-2 border-t border-claude-border/70 pt-3 dark:border-claude-darkBorder/70 lg:flex-row lg:items-end lg:justify-between">
+                        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-claude-border/70 pt-2.5 dark:border-claude-darkBorder/70">
                           <div className="flex flex-wrap gap-2">
                             <CompactMetric
                               label={i18nService.t(getMyServiceMetricLabel('grossRevenue'))}

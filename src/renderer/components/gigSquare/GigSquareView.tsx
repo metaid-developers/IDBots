@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
 import { fetchMetaidInfoByGlobalId, type MetaidInfoResult } from '../../services/metabotInfoService';
@@ -8,14 +8,60 @@ import GigSquareOrderModal from './GigSquareOrderModal';
 import GigSquareMyServicesModal from './GigSquareMyServicesModal';
 import GigSquarePublishModal from './GigSquarePublishModal';
 import {
+  copyGigSquareProviderIdToClipboard,
   DEFAULT_GIG_SQUARE_PROVIDER_AVATAR,
   getGigSquareProviderAvatarSrc,
   getGigSquareProviderDisplayName,
+  shortenGigSquareProviderGlobalMetaId,
 } from './gigSquareProviderPresentation.js';
 import {
   getGigSquareRefundRiskBadge,
   shouldHideRiskyGigSquareService,
 } from './gigSquareRefundRiskPresentation.js';
+
+const showToastMessage = (message: string): void => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+};
+
+const GigSquareProviderIdRow: React.FC<{
+  providerId: string | null | undefined;
+}> = ({ providerId }) => {
+  const normalizedProviderId = String(providerId || '').trim();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
+    const didCopy = await copyGigSquareProviderIdToClipboard(normalizedProviderId, clipboard);
+    if (!didCopy) return;
+    setCopied(true);
+    showToastMessage(i18nService.t('gigSquareProviderIdCopied'));
+    window.setTimeout(() => setCopied(false), 1600);
+  }, [normalizedProviderId]);
+
+  if (!normalizedProviderId) return null;
+
+  return (
+    <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+      <span className="truncate text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+        {shortenGigSquareProviderGlobalMetaId(normalizedProviderId)}
+      </span>
+      <button
+        type="button"
+        onClick={(event) => void handleCopy(event)}
+        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-claude-border text-claude-textSecondary transition hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover ${
+          copied ? 'text-claude-accent' : ''
+        }`}
+        title={i18nService.t('copyToClipboard')}
+        aria-label={i18nService.t('copyToClipboard')}
+      >
+        <DocumentDuplicateIcon className="h-3 w-3" />
+      </button>
+    </div>
+  );
+};
 
 const GigSquareView: React.FC = () => {
   const [services, setServices] = useState<GigSquareService[]>([]);
@@ -353,9 +399,7 @@ const GigSquareView: React.FC = () => {
                           {providerName}
                         </div>
                         {providerLookupId && (
-                          <div className="truncate text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                            {providerLookupId}
-                          </div>
+                          <GigSquareProviderIdRow providerId={providerLookupId} />
                         )}
                       </div>
                     </div>
