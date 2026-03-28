@@ -31,11 +31,23 @@ test('resolveConfigPath defaults to userData/metabot-mm-basic/config.json', () =
   assert.equal(result, '/tmp/idbots-user/metabot-mm-basic/config.json');
 });
 
-test('config requires positive target inventory, trade limits, and explicit quote/execute fallback flags', () => {
+test('config requires positive target inventory, trade limits, max usable caps, and explicit quote/execute fallback flags', () => {
   assert.throws(() => validateConfig({
-    market_data: { provider: 'cex' },
-    pairs: { 'BTC/SPACE': { target_inventory: { BTC: '0', SPACE: '100' } } },
-  }), /target|trade_limits|quote_fallback_enabled|execute_fallback_enabled/i);
+    quote_fallback_enabled: true,
+    execute_fallback_enabled: true,
+    market_data: {
+      provider: 'cex',
+      quote_fallback_enabled: true,
+      execute_fallback_enabled: true,
+    },
+    pairs: {
+      'BTC/SPACE': {
+        target_inventory: { BTC: '1', SPACE: '100' },
+        trade_limits: { min_in: '0', max_in: '-1' },
+        max_usable_inventory: { BTC: '0' },
+      },
+    },
+  }), /target|trade_limits|max_usable_inventory|quote_fallback_enabled|execute_fallback_enabled/i);
 });
 
 test('loadConfig rereads the JSON file on each quote/execute call instead of caching stale operator edits', () => {

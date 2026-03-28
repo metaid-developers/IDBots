@@ -33,16 +33,16 @@ function validateConfig(config) {
     errors.push('market_data.provider');
   }
 
-  if (!config.pairs || typeof config.pairs !== 'object' || Object.keys(config.pairs).length === 0) {
-    errors.push('pairs');
-  }
-
-  if (config.quote_fallback_enabled === undefined) {
+  if (config.market_data?.quote_fallback_enabled === undefined) {
     errors.push('quote_fallback_enabled');
   }
 
-  if (config.execute_fallback_enabled === undefined) {
+  if (config.market_data?.execute_fallback_enabled === undefined) {
     errors.push('execute_fallback_enabled');
+  }
+
+  if (!config.pairs || typeof config.pairs !== 'object' || Object.keys(config.pairs).length === 0) {
+    errors.push('pairs');
   }
 
   if (config.pairs && typeof config.pairs === 'object') {
@@ -52,12 +52,22 @@ function validateConfig(config) {
         continue;
       }
 
-      if (!pairConfig.trade_limits) {
+      if (!pairConfig.trade_limits || typeof pairConfig.trade_limits !== 'object') {
         errors.push('trade_limits');
+      } else {
+        const values = Object.values(pairConfig.trade_limits);
+        if (values.length === 0 || values.some((value) => !isPositiveNumber(value))) {
+          errors.push('trade_limits');
+        }
       }
 
-      if (!pairConfig.max_usable) {
-        errors.push('max_usable');
+      if (!pairConfig.max_usable_inventory || typeof pairConfig.max_usable_inventory !== 'object') {
+        errors.push('max_usable_inventory');
+      } else {
+        const values = Object.values(pairConfig.max_usable_inventory);
+        if (values.length === 0 || values.some((value) => !isPositiveNumber(value))) {
+          errors.push('max_usable_inventory');
+        }
       }
 
       const targetInventory = pairConfig.target_inventory;

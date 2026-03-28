@@ -36,10 +36,31 @@ test('quote-confirm payload validates quote_context when has_prior_quote is true
   }), /quoted_output|quoted_at/i);
 });
 
+test('quote payload rejects missing pair and direction for non-supported-pair queries', () => {
+  assert.throws(() => normalizePayload({
+    mode: 'quote',
+    query: { kind: 'price' },
+  }), /pair|direction/i);
+});
+
 test('quote payload may omit pair and direction only for supported-pair discovery', () => {
   const result = normalizePayload({
     mode: 'quote',
     query: { kind: 'supported_pairs' },
   });
   assert.equal(result.query.kind, 'supported_pairs');
+});
+
+test('rejects amount_in that exceeds supported asset precision', () => {
+  assert.throws(() => normalizePayload({
+    mode: 'execute',
+    service: { pair: 'BTC/SPACE', direction: 'btc_to_space' },
+    order: {
+      amount_in: '0.0000000001',
+      pay_txid: 'a'.repeat(64),
+      payer_globalmetaid: 'gmid',
+      payout_address: 'dest',
+      refund_address: 'refund',
+    },
+  }), /precision/i);
 });
