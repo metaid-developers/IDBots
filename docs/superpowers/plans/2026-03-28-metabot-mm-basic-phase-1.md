@@ -113,6 +113,8 @@ official: true
 ---
 ```
 
+Task 1 is still only the built-in shell. If routing metadata would otherwise overstate implemented behavior, it is acceptable for the frontmatter description to preserve these routing keywords while explicitly noting that this is the Phase 1 scaffold / stub and that full execution behavior arrives in later tasks.
+
 ```js
 #!/usr/bin/env node
 'use strict';
