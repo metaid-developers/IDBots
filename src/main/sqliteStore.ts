@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
+import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -118,11 +119,16 @@ export class SqliteStore {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS user_memories (
         id TEXT PRIMARY KEY,
+        metabot_id INTEGER REFERENCES metabots(id),
         text TEXT NOT NULL,
         fingerprint TEXT NOT NULL,
         confidence REAL NOT NULL DEFAULT 0.75,
         is_explicit INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'created',
+        scope_kind TEXT NOT NULL DEFAULT 'owner',
+        scope_key TEXT NOT NULL DEFAULT '${OWNER_SCOPE_KEY}',
+        usage_class TEXT NOT NULL DEFAULT 'profile_fact',
+        visibility TEXT NOT NULL DEFAULT 'local_only',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_used_at INTEGER
@@ -415,9 +421,11 @@ export class SqliteStore {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS remote_skill_service (
         id TEXT PRIMARY KEY,
+        pin_id TEXT,
         metaid TEXT,
         global_metaid TEXT,
         address TEXT,
+        create_address TEXT,
         service_name TEXT,
         display_name TEXT,
         description TEXT,
@@ -431,7 +439,16 @@ export class SqliteStore {
         input_type TEXT,
         output_type TEXT,
         endpoint TEXT,
+        status INTEGER NOT NULL DEFAULT 0,
+        operation TEXT,
+        path TEXT,
+        original_id TEXT,
+        source_service_pin_id TEXT,
+        available INTEGER NOT NULL DEFAULT 1,
         content_summary_json TEXT,
+        payment_address TEXT,
+        rating_count INTEGER NOT NULL DEFAULT 0,
+        rating_avg REAL NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
       );
     `);
@@ -439,13 +456,17 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS remote_skill_service_rating_seen (
         pin_id TEXT PRIMARY KEY,
         service_id TEXT,
+        service_paid_tx TEXT,
         rate REAL,
+        comment TEXT,
+        rater_global_metaid TEXT,
+        rater_metaid TEXT,
         created_at INTEGER NOT NULL
       );
     `);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_seen_service
-        ON remote_skill_service_rating_seen(service_id);
+      ON remote_skill_service_rating_seen(service_id);
     `);
 
     this.db.run(`
@@ -750,6 +771,30 @@ export class SqliteStore {
         }
         this.save();
       }
+      if (!umColumns.includes('scope_kind')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'owner';");
+      }
+      if (!umColumns.includes('scope_key')) {
+        this.db.run(`ALTER TABLE user_memories ADD COLUMN scope_key TEXT NOT NULL DEFAULT '${OWNER_SCOPE_KEY}';`);
+      }
+      if (!umColumns.includes('usage_class')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN usage_class TEXT NOT NULL DEFAULT 'profile_fact';");
+      }
+      if (!umColumns.includes('visibility')) {
+        this.db.run("ALTER TABLE user_memories ADD COLUMN visibility TEXT NOT NULL DEFAULT 'local_only';");
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_status_updated
+        ON user_memories(metabot_id, scope_kind, scope_key, status, updated_at DESC)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_scope_fingerprint
+        ON user_memories(metabot_id, scope_kind, scope_key, fingerprint)
+      `);
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_user_memories_usage_visibility
+        ON user_memories(metabot_id, usage_class, visibility, status, updated_at DESC)
+      `);
     } catch (error) {
       console.warn('Failed to migrate user_memories metabot_id:', error);
     }
@@ -830,8 +875,40 @@ export class SqliteStore {
     try {
       const rssColsResult = this.db.exec('PRAGMA table_info(remote_skill_service)');
       const rssColumns = (rssColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!rssColumns.includes('pin_id')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN pin_id TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('create_address')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN create_address TEXT');
+        this.save();
+      }
       if (!rssColumns.includes('payment_address')) {
         this.db.run('ALTER TABLE remote_skill_service ADD COLUMN payment_address TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('status')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN status INTEGER NOT NULL DEFAULT 0');
+        this.save();
+      }
+      if (!rssColumns.includes('operation')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN operation TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('path')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN path TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('original_id')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN original_id TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('source_service_pin_id')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN source_service_pin_id TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('available')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN available INTEGER NOT NULL DEFAULT 1');
         this.save();
       }
       // Migration: Add rating columns to remote_skill_service
@@ -843,8 +920,64 @@ export class SqliteStore {
         this.db.run('ALTER TABLE remote_skill_service ADD COLUMN rating_avg REAL NOT NULL DEFAULT 0');
         this.save();
       }
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET pin_id = COALESCE(NULLIF(TRIM(pin_id), ''), id)
+        WHERE pin_id IS NULL OR TRIM(pin_id) = ''
+      `);
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET source_service_pin_id = COALESCE(
+          NULLIF(TRIM(source_service_pin_id), ''),
+          NULLIF(TRIM(original_id), ''),
+          CASE
+            WHEN path IS NOT NULL AND TRIM(path) <> '' AND substr(TRIM(path), 1, 1) = '@'
+              THEN substr(TRIM(path), 2)
+            ELSE pin_id
+          END
+        )
+        WHERE source_service_pin_id IS NULL OR TRIM(source_service_pin_id) = ''
+      `);
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET create_address = COALESCE(NULLIF(TRIM(create_address), ''), address)
+        WHERE create_address IS NULL OR TRIM(create_address) = ''
+      `);
+      this.db.run(`
+        UPDATE remote_skill_service
+        SET available = CASE WHEN status < 0 THEN 0 ELSE 1 END
+      `);
+      this.save();
     } catch (error) {
       console.warn('Failed to migrate remote_skill_service payment_address:', error);
+    }
+
+    try {
+      const ratingSeenColsResult = this.db.exec('PRAGMA table_info(remote_skill_service_rating_seen)');
+      const ratingSeenColumns = (ratingSeenColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!ratingSeenColumns.includes('service_paid_tx')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN service_paid_tx TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('comment')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN comment TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('rater_global_metaid')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN rater_global_metaid TEXT');
+        this.save();
+      }
+      if (!ratingSeenColumns.includes('rater_metaid')) {
+        this.db.run('ALTER TABLE remote_skill_service_rating_seen ADD COLUMN rater_metaid TEXT');
+        this.save();
+      }
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_remote_skill_service_rating_paid_tx
+          ON remote_skill_service_rating_seen(service_paid_tx)
+      `);
+      this.save();
+    } catch (error) {
+      console.warn('Failed to migrate remote_skill_service_rating_seen detail columns:', error);
     }
 
     this.save();
@@ -1119,14 +1252,12 @@ export class SqliteStore {
   }
 
   private tryReadLegacyMemoryText(): string {
-    // Prefer app-bound paths over process.cwd() so behavior is consistent when started from different directories or packaged.
+    // Prefer app-bound paths so behavior is consistent when started from different directories or packaged.
     const candidates = [
       path.join(app.getAppPath(), 'MEMORY.md'),
       path.join(app.getPath('userData'), 'MEMORY.md'),
-      path.join(process.cwd(), 'MEMORY.md'),
       path.join(app.getAppPath(), 'memory.md'),
       path.join(app.getPath('userData'), 'memory.md'),
-      path.join(process.cwd(), 'memory.md'),
     ];
 
     for (const candidate of candidates) {
@@ -1201,8 +1332,17 @@ export class SqliteStore {
       for (const text of entries) {
         const fingerprint = this.memoryFingerprint(text);
         const existing = this.db.exec(
-          `SELECT id FROM user_memories WHERE fingerprint = ? AND status != 'deleted' LIMIT 1`,
-          [fingerprint]
+          `
+            SELECT id
+            FROM user_memories
+            WHERE metabot_id = ?
+              AND scope_kind = 'owner'
+              AND scope_key = ?
+              AND fingerprint = ?
+              AND status != 'deleted'
+            LIMIT 1
+          `,
+          [defaultMetabotId, OWNER_SCOPE_KEY, fingerprint]
         );
         if (existing[0]?.values?.[0]?.[0]) {
           continue;
@@ -1210,9 +1350,12 @@ export class SqliteStore {
 
         const memoryId = crypto.randomUUID();
         this.db.run(`
-          INSERT INTO user_memories (id, metabot_id, text, fingerprint, confidence, is_explicit, status, created_at, updated_at, last_used_at)
-          VALUES (?, ?, ?, ?, ?, 1, 'created', ?, ?, NULL)
-        `, [memoryId, defaultMetabotId, text, fingerprint, 0.9, now, now]);
+          INSERT INTO user_memories (
+            id, metabot_id, text, fingerprint, confidence, is_explicit, status,
+            scope_kind, scope_key, usage_class, visibility, created_at, updated_at, last_used_at
+          )
+          VALUES (?, ?, ?, ?, ?, 1, 'created', 'owner', ?, 'profile_fact', 'local_only', ?, ?, NULL)
+        `, [memoryId, defaultMetabotId, text, fingerprint, 0.9, OWNER_SCOPE_KEY, now, now]);
 
         this.db.run(`
           INSERT INTO user_memory_sources (id, memory_id, session_id, message_id, role, is_active, created_at)
@@ -1221,12 +1364,12 @@ export class SqliteStore {
       }
 
       this.db.run('COMMIT;');
+      this.set(USER_MEMORIES_MIGRATION_KEY, '1');
     } catch (error) {
       this.db.run('ROLLBACK;');
       console.warn('Failed to migrate legacy MEMORY.md entries:', error);
+      return;
     }
-
-    this.set(USER_MEMORIES_MIGRATION_KEY, '1');
   }
 
   getP2PConfig(): Record<string, unknown> | undefined {

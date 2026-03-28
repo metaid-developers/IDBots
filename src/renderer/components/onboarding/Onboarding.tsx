@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { CheckCircleIcon, ArrowPathIcon, PhotoIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, ArrowPathIcon, PhotoIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import { defaultConfig } from '../../config';
@@ -18,6 +18,7 @@ import {
   getProviderDefaultBaseUrl,
 } from '../../services/llmConnection';
 import { getDefaultOnboardingProvider } from './onboardingDefaults.js';
+import { getOnboardingCloseButtonClassName, shouldShowOnboardingClose } from './onboardingGate.js';
 
 const AVATAR_MAX_SIZE_BYTES = 100 * 1024;
 
@@ -52,6 +53,7 @@ export interface TwinFormData {
 
 export interface OnboardingProps {
   onComplete: () => void;
+  onClose?: () => void;
 }
 
 /** Build providers config from config + defaults (same source as Settings). */
@@ -71,7 +73,7 @@ function getProvidersForOnboarding(): NonNullable<AppConfig['providers']> {
 
 const DEFAULT_ONBOARDING_API_FORMAT: 'anthropic' | 'openai' = 'openai';
 
-const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
+const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onClose }) => {
   const [step, setStep] = useState<OnboardingStep>(1);
   const [provider, setProvider] = useState<ProviderKey>(
     () => getDefaultOnboardingProvider(i18nService.getLanguage()) as ProviderKey
@@ -269,10 +271,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   };
 
   const isAwakeningRunning = step === 3 && running && !awakeningComplete;
+  const showCloseButton = shouldShowOnboardingClose({
+    hasCloseHandler: Boolean(onClose),
+    step,
+    running,
+    awakeningComplete,
+  });
   const visibleProviderKeys = ALL_PROVIDER_KEYS.filter((k) => providers[k] != null);
 
   return (
-    <div className="h-screen flex flex-col dark:bg-[#0a0e17] bg-[#0f172a]" style={{ background: 'var(--bg-main, #0f172a)' }}>
+    <div className="relative h-screen flex flex-col dark:bg-[#0a0e17] bg-[#0f172a]" style={{ background: 'var(--bg-main, #0f172a)' }}>
       {isAwakeningRunning && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center"
@@ -282,19 +290,32 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       )}
       <div className={`flex-1 flex flex-col items-center justify-center p-6 min-h-0 ${isAwakeningRunning ? 'pointer-events-none' : ''}`}>
         <div className="w-full max-w-lg rounded-2xl border border-white/10 dark:border-white/10 bg-white/5 dark:bg-white/5 shadow-2xl overflow-hidden">
-          <div className="flex border-b border-white/10 px-6 py-4 gap-2">
-            {STEP_LABELS.map(({ step: s, key }) => (
-              <div
-                key={s}
-                className={`flex-1 text-center text-sm font-medium py-1 rounded-lg ${
-                  step === s
-                    ? 'bg-claude-accent/20 text-claude-accent'
-                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'
-                }`}
+          <div className="flex items-center gap-3 border-b border-white/10 px-6 py-4">
+            <div className="flex flex-1 gap-2">
+              {STEP_LABELS.map(({ step: s, key }) => (
+                <div
+                  key={s}
+                  className={`flex-1 text-center text-sm font-medium py-1 rounded-lg ${
+                    step === s
+                      ? 'bg-claude-accent/20 text-claude-accent'
+                      : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'
+                  }`}
+                >
+                  {i18nService.t(key)}
+                </div>
+              ))}
+            </div>
+            {showCloseButton && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label={i18nService.t('onboardingClose')}
+                title={i18nService.t('onboardingClose')}
+                className={getOnboardingCloseButtonClassName()}
               >
-                {i18nService.t(key)}
-              </div>
-            ))}
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            )}
           </div>
 
           <div className="p-6">

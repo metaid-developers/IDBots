@@ -292,3 +292,64 @@ test('processSellerRefundForSession preserves DOGE refund chain and currency sem
   assert.equal(transferInputs[0].refundCurrency, 'DOGE');
   assert.equal(transferInputs[0].refundAmount, '25.50000000');
 });
+
+test('processSellerRefundForSession locally resolves broken self-orders without transfer or finalize proof', async () => {
+  let fetchCalls = 0;
+  let transferCalls = 0;
+  let finalizeCalls = 0;
+  const { db, store, service } = await createRefundSettlementServiceForTest({
+    fetchRefundRequestPin: async () => {
+      fetchCalls += 1;
+      return {
+        pinId: 'refund-request-pin-id',
+        content: JSON.stringify({
+          paymentTxid: 'd'.repeat(64),
+          servicePinId: 'different-service-pin-id',
+          refundAmount: '12.34',
+          refundCurrency: 'SPACE',
+          refundToAddress: '1refund-address',
+          buyerGlobalMetaId: 'self-global-metaid',
+          sellerGlobalMetaId: 'self-global-metaid',
+        }),
+      };
+    },
+    executeRefundTransfer: async () => {
+      transferCalls += 1;
+      return { txId: 'e'.repeat(64) };
+    },
+    createRefundFinalizePin: async () => {
+      finalizeCalls += 1;
+      return { pinId: 'refund-finalize-pin-id' };
+    },
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 7 ? 'self-global-metaid' : null
+    ),
+  });
+  insertRefundPendingOrder(db, {
+    id: 'self-buyer-order',
+    role: 'buyer',
+    localMetabotId: 7,
+    counterpartyGlobalMetaId: 'self-global-metaid',
+    coworkSessionId: 'buyer-session-id',
+    paymentTxid: 'd'.repeat(64),
+  });
+  insertRefundPendingOrder(db, {
+    id: 'self-seller-order',
+    role: 'seller',
+    localMetabotId: 7,
+    counterpartyGlobalMetaId: 'self-global-metaid',
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: 'd'.repeat(64),
+  });
+
+  const result = await service.processSellerRefundForSession('seller-session-id');
+
+  assert.equal(result.refundTxid, undefined);
+  assert.equal(result.refundFinalizePinId, undefined);
+  assert.equal(fetchCalls, 0);
+  assert.equal(transferCalls, 0);
+  assert.equal(finalizeCalls, 0);
+  assert.equal(store.getOrderById('self-buyer-order')?.status, 'refunded');
+  assert.equal(store.getOrderById('self-seller-order')?.status, 'refunded');
+  assert.equal(store.getOrderById('self-seller-order')?.refundTxid, null);
+});

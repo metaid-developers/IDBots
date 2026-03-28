@@ -6,6 +6,15 @@ function extractOrderTxid(plaintext) {
   return match[1] || null;
 }
 
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -69,4 +78,62 @@ export function extractSessionOrderTxid(messages) {
   }
 
   return null;
+}
+
+export function resolveOrderSessionId(input) {
+  const directSessionId = normalizeString(input?.directSessionId);
+  if (directSessionId) {
+    return directSessionId;
+  }
+  const fallbackSessionId = normalizeString(input?.fallbackSessionId);
+  return fallbackSessionId || null;
+}
+
+export function findMatchingOrderSessionId(sessions, order) {
+  if (!Array.isArray(sessions) || !order || typeof order !== 'object') {
+    return null;
+  }
+
+  const paymentTxid = normalizeString(order.paymentTxid);
+  const localMetabotId = normalizeNumber(order.localMetabotId);
+  const counterpartyGlobalMetaid = normalizeString(order.counterpartyGlobalMetaid);
+  if (!paymentTxid || localMetabotId == null || localMetabotId <= 0) {
+    return null;
+  }
+
+  const candidates = sessions
+    .filter((session) => {
+      if (!session || typeof session !== 'object') {
+        return false;
+      }
+
+      const sessionType = normalizeString(session.sessionType);
+      if (sessionType && sessionType !== 'a2a') {
+        return false;
+      }
+
+      if (normalizeNumber(session.metabotId) !== localMetabotId) {
+        return false;
+      }
+
+      const sessionPeerGlobalMetaId = normalizeString(session.peerGlobalMetaId);
+      if (
+        counterpartyGlobalMetaid
+        && sessionPeerGlobalMetaId
+        && sessionPeerGlobalMetaId !== counterpartyGlobalMetaid
+      ) {
+        return false;
+      }
+
+      return extractSessionOrderTxid(session.messages) === paymentTxid;
+    })
+    .sort((left, right) => {
+      const updatedDiff = (normalizeNumber(right?.updatedAt) ?? 0) - (normalizeNumber(left?.updatedAt) ?? 0);
+      if (updatedDiff !== 0) {
+        return updatedDiff;
+      }
+      return normalizeString(right?.id).localeCompare(normalizeString(left?.id));
+    });
+
+  return normalizeString(candidates[0]?.id) || null;
 }

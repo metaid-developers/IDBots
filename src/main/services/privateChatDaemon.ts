@@ -19,6 +19,10 @@ import { buildOrderPrompts } from './orderPromptBuilder';
 import { checkOrderPaymentStatus, extractOrderTxid, extractOrderSkillId, extractOrderSkillName, OrderSource } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
 import type { CoworkStore } from '../coworkStore';
+import type { MemoryBackend } from '../memory/memoryBackend';
+import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
+import { createOwnerMemoryScope } from '../memory/memoryScope';
+import { resolveMemoryScopes } from '../memory/memoryScopeResolver';
 import type { MetaidDataPayload } from './metaidCore';
 import { generateSessionTitle } from '../libs/coworkUtil';
 import type { ServiceOrderLifecycleService } from './serviceOrderLifecycleService';
@@ -30,6 +34,7 @@ import {
   isNeedsRatingMessage,
   shouldCompleteBuyerOrderObserverSession,
 } from './privateChatOrderObserverState';
+import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -200,15 +205,64 @@ function buildPrivateReplySystemPrompt(metabot: {
   ].join('\n');
 }
 
-function buildMemoryContextBlock(memories: string[]): string {
-  if (memories.length === 0) {
-    return '';
-  }
-  const lines = memories.map((text) => `- ${text}`);
-  return [
-    'Known durable user memories (if relevant, use naturally):',
-    ...lines,
-  ].join('\n');
+export function buildPrivateReplyMemoryPromptBlocks(params: {
+  memoryBackend: Pick<MemoryBackend, 'listUserMemories'>;
+  metabotId: number;
+  sourceChannel: string;
+  externalConversationId: string;
+  peerGlobalMetaId?: string | null;
+  limit: number;
+  currentUserText?: string;
+}): string {
+  const resolved = resolveMemoryScopes({
+    metabotId: params.metabotId,
+    sourceChannel: params.sourceChannel,
+    externalConversationId: params.externalConversationId,
+    peerGlobalMetaId: params.peerGlobalMetaId,
+    sessionType: 'a2a',
+  });
+
+  const ownerEntries = resolved.ownerReadPolicy === 'none'
+    ? []
+    : params.memoryBackend.listUserMemories({
+        metabotId: params.metabotId,
+        scope: createOwnerMemoryScope(),
+        status: 'created',
+        includeDeleted: false,
+        limit: Math.max(params.limit, 12),
+        offset: 0,
+      });
+  const contactEntries = resolved.writeScope.kind === 'contact'
+    ? params.memoryBackend.listUserMemories({
+        metabotId: params.metabotId,
+        scope: resolved.writeScope,
+        status: 'created',
+        includeDeleted: false,
+        limit: params.limit,
+        offset: 0,
+      })
+    : [];
+  const conversationEntries = resolved.writeScope.kind === 'conversation'
+    ? params.memoryBackend.listUserMemories({
+        metabotId: params.metabotId,
+        scope: resolved.writeScope,
+        status: 'created',
+        includeDeleted: false,
+        limit: params.limit,
+        offset: 0,
+      })
+    : [];
+
+  return buildScopedMemoryPromptBlocks({
+    channel: params.sourceChannel,
+    currentUserText: params.currentUserText,
+    ownerEntries,
+    contactEntries,
+    conversationEntries,
+    maxOwnerEntries: params.limit,
+    maxScopedEntries: params.limit,
+    maxOwnerOperationalPreferences: Math.min(3, params.limit),
+  });
 }
 
 function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string {
@@ -573,6 +627,18 @@ async function processOne(
     if (isOrderMessage(plaintext)) {
       const source: OrderSource = 'metaweb_private';
       const txid = extractOrderTxid(plaintext);
+      const localGlobalMetaId = (metabot.globalmetaid || '').trim();
+      if (
+        source === 'metaweb_private'
+        && fromGlobalMetaId
+        && localGlobalMetaId
+        && fromGlobalMetaId === localGlobalMetaId
+      ) {
+        emitLog(`[Order] Skip self-directed order message for ${localGlobalMetaId.slice(0, 12)}…`);
+        serviceOrderLifecycle?.repairSelfDirectedOrders();
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
       const payment = await checkOrderPaymentStatus({
         txid,
         plaintext,
@@ -637,6 +703,22 @@ async function processOne(
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         markProcessed(db, row.id, saveDb);
         return;
+      }
+
+      const sellerOrderSessionId = resolveOrderSessionId({
+        fallbackSessionId: coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id)?.coworkSessionId,
+      });
+      if (serviceOrderLifecycle && txid && sellerOrderSessionId) {
+        try {
+          serviceOrderLifecycle.attachCoworkSessionToSellerOrder({
+            localMetabotId: metabot.id,
+            counterpartyGlobalMetaId: fromGlobalMetaId,
+            paymentTxid: txid,
+            coworkSessionId: sellerOrderSessionId,
+          });
+        } catch (error) {
+          emitLog(`[Order] Failed to persist seller session link: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
 
       const sendEncryptedMsg = async (text: string) => {
@@ -821,16 +903,15 @@ async function processOne(
     const memoryBackend = coworkStore.getMemoryBackend();
     const memoryPolicy = memoryBackend.getEffectiveMemoryPolicyForMetabot(metabot.id);
     const memoryContext = memoryPolicy.memoryEnabled
-      ? buildMemoryContextBlock(
-          memoryBackend.listUserMemories({
-            metabotId: metabot.id,
-            status: 'created',
-            includeDeleted: false,
-            limit: memoryPolicy.memoryUserMemoriesMaxItems,
-            offset: 0,
-            touchLastUsed: true,
-          }).map((entry) => entry.text)
-        )
+      ? buildPrivateReplyMemoryPromptBlocks({
+          memoryBackend,
+          metabotId: metabot.id,
+          sourceChannel: 'metaweb_private',
+          externalConversationId,
+          peerGlobalMetaId: fromGlobalMetaId,
+          limit: memoryPolicy.memoryUserMemoriesMaxItems,
+          currentUserText: plaintext,
+        })
       : '';
 
     const llmId = typeof metabot.llm_id === 'string' && metabot.llm_id.trim()
