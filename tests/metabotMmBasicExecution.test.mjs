@@ -4,6 +4,17 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { normalizePayload } = require('../SKILLs/metabot-mm-basic/scripts/lib/payload.js');
+const {
+  verifyPaymentProof,
+  verifyWithRetry,
+  classifyLatePayment,
+} = require('../SKILLs/metabot-mm-basic/scripts/lib/paymentProof.js');
+const {
+  createInMemoryTerminalState,
+  recordTerminalOutcome,
+  getTerminalOutcome,
+  createLifecycleTrace,
+} = require('../SKILLs/metabot-mm-basic/scripts/lib/state.js');
 
 test('pair + direction are authoritative and reject conflicting asset_in', () => {
   assert.throws(() => normalizePayload({
@@ -83,4 +94,56 @@ test('rejects missing or invalid mode', () => {
     service: { pair: 'BTC/SPACE', direction: 'btc_to_space' },
     order: { amount_in: '1' },
   }), /mode/i);
+});
+
+test('payment verification rejects when normalized base units do not match exactly', async () => {
+  await assert.rejects(
+    () => verifyPaymentProof({ expectedBaseUnits: '10000', paidBaseUnits: '9999' }),
+    /amount/i
+  );
+});
+
+test('payment proof rejects txs that are missing, on the wrong chain, or absent from the tx source', async () => {
+  await assert.rejects(() => verifyPaymentProof({
+    expectedChain: 'btc',
+    txSourceResult: null,
+  }), /discoverable|chain/i);
+});
+
+test('payment proof sums outputs to the bot receiving address and rejects mismatched totals', async () => {
+  await assert.rejects(() => verifyPaymentProof({
+    expectedReceivingAddress: 'bot-btc-address',
+    txOutputs: [
+      { address: 'bot-btc-address', baseUnits: '5000' },
+      { address: 'other', baseUnits: '5000' },
+    ],
+    expectedBaseUnits: '15000',
+  }), /receiving address|amount/i);
+});
+
+test('duplicate execute for the same pay_txid returns the recorded terminal outcome', async () => {
+  const state = createInMemoryTerminalState();
+  await recordTerminalOutcome(state, 'txid-1', { mode: 'executed' });
+  const result = await getTerminalOutcome(state, 'txid-1');
+  assert.equal(result.mode, 'executed');
+});
+
+test('execution lifecycle records pending_payment_proof, validated, and executed canonical states in order', async () => {
+  const trace = createLifecycleTrace();
+  await trace.mark('pending_payment_proof');
+  await trace.mark('validated');
+  await trace.mark('executed');
+  assert.deepEqual(trace.states, ['pending_payment_proof', 'validated', 'executed']);
+});
+
+test('late payment after tx lookup void resolves to refund_required rather than delayed execute', async () => {
+  const result = classifyLatePayment({ previousOutcome: 'void', txFoundLater: true });
+  assert.equal(result, 'refund_required');
+});
+
+test('missing tx lookup retries once after ~5 seconds and then returns void when still unresolved', async () => {
+  const failingSourceTwice = async () => null;
+  const result = await verifyWithRetry({ txid: 'a'.repeat(64), retryDelayMs: 5000 }, failingSourceTwice);
+  assert.equal(result.mode, 'void');
+  assert.equal(result.lookupAttempts, 2);
 });
