@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const Decimal = require('decimal.js');
 const {
   computeCrossRate,
   buildBidAsk,
@@ -48,13 +49,13 @@ test('quoteFromMid uses spread_bps as total spread', () => {
 test('inventory skew raises mid when SPACE is abundant and BTC is scarce', () => {
   const result = computeSkewBps({
     targetBase: '1',
-    currentBase: '0.8',
+    currentBase: '0.2',
     targetQuote: '100000',
-    currentQuote: '120000',
+    currentQuote: '140000',
     sensitivityBps: 500,
     maxSkewBps: 300,
   });
-  assert.equal(result, 200);
+  assert.equal(result, 300);
 });
 
 test('slippage rejects execute when latest output is worse than quoted output beyond slippage_bps', () => {
@@ -66,9 +67,22 @@ test('slippage rejects execute when latest output is worse than quoted output be
 });
 
 test('fallback fair value is allowed for quote but blocked for execute when execute fallback is disabled', async () => {
-  const cfg = { market_data: { quote_fallback_enabled: true, execute_fallback_enabled: false } };
-  await assert.doesNotReject(() => resolveFairValue({ mode: 'quote', config: cfg, fetchImpl: failingFetch }));
-  await assert.rejects(() => resolveFairValue({ mode: 'execute', config: cfg, fetchImpl: failingFetch }), /fallback/i);
+  const cfg = {
+    market_data: { quote_fallback_enabled: true, execute_fallback_enabled: false },
+    pairs: { 'BTC/SPACE': { fair_value_fallback: 123 } },
+  };
+  await assert.doesNotReject(() => resolveFairValue({
+    mode: 'quote',
+    pair: 'BTC/SPACE',
+    config: cfg,
+    fetchImpl: failingFetch,
+  }));
+  await assert.rejects(() => resolveFairValue({
+    mode: 'execute',
+    pair: 'BTC/SPACE',
+    config: cfg,
+    fetchImpl: failingFetch,
+  }), /fallback/i);
 });
 
 test('market data client reuses a short-lived cached quote within cache_ttl_ms', async () => {
@@ -97,4 +111,41 @@ test('roundExecutableOutput floors output to supported asset precision before tr
     rawOutput: '0.123456789',
   });
   assert.equal(result, '0.12345678');
+});
+
+test('fallback rejects unsupported pair even when fallback is enabled', async () => {
+  const cfg = {
+    market_data: { quote_fallback_enabled: true, execute_fallback_enabled: true },
+    pairs: { 'BTC/SPACE': { fair_value_fallback: 123 } },
+  };
+  await assert.rejects(() => resolveFairValue({
+    mode: 'quote',
+    pair: 'ABC/SPACE',
+    config: cfg,
+    fetchImpl: failingFetch,
+  }), /unsupported pair/i);
+});
+
+test('fallback requires configured fair value when market data is unavailable', async () => {
+  const cfg = { market_data: { quote_fallback_enabled: true, execute_fallback_enabled: true }, pairs: {} };
+  await assert.rejects(() => resolveFairValue({
+    mode: 'quote',
+    pair: 'BTC/SPACE',
+    config: cfg,
+    fetchImpl: failingFetch,
+  }), /fair value/i);
+});
+
+test('rounded output below minimum transferable amount triggers refund after round-down', () => {
+  const rounded = roundExecutableOutput({
+    assetOut: 'BTC',
+    rawOutput: '0.000005459',
+  });
+  const roundedUnits = BigInt(new Decimal(rounded).mul(1e8).toFixed(0));
+  const result = classifyOutputAmount({
+    assetOut: 'BTC',
+    roundedOutputBaseUnits: roundedUnits.toString(),
+  });
+  assert.equal(rounded, '0.00000545');
+  assert.equal(result, 'refund_required');
 });

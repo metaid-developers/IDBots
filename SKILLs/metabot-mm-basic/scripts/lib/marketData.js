@@ -3,6 +3,7 @@
 const { computeCrossRate } = require('./pricing');
 
 const MARKET_DATA_URL = 'https://www.metalet.space/wallet-api/v3/coin/price?net=mainnet';
+const SUPPORTED_PAIRS = new Set(['BTC/SPACE', 'DOGE/SPACE']);
 
 let cachedQuotes = null;
 let cachedAtMs = 0;
@@ -13,6 +14,14 @@ function validateQuote(value, label) {
     throw new Error(`Invalid ${label} quote`);
   }
   return parsed;
+}
+
+function ensureSupportedPair(pair) {
+  const normalized = String(pair || '').trim().toUpperCase();
+  if (!SUPPORTED_PAIRS.has(normalized)) {
+    throw new Error('unsupported pair');
+  }
+  return normalized;
 }
 
 async function fetchSpotQuotes({ fetchImpl }) {
@@ -56,21 +65,22 @@ async function resolveFairValue({
   now,
   cacheTtlMs,
 } = {}) {
+  const normalizedPair = pair ? ensureSupportedPair(pair) : null;
   try {
     const quotes = await readSpotQuotes({ fetchImpl, now, cacheTtlMs });
-    if (pair) {
-      return { fairValue: computeCrossRate(quotes, pair), source: 'market', quotes };
+    if (normalizedPair) {
+      return { fairValue: computeCrossRate(quotes, normalizedPair), source: 'market', quotes };
     }
     return { fairValue: null, source: 'market', quotes };
   } catch (error) {
     if (!isFallbackAllowed(mode, config)) {
       throw new Error('fallback fair value not allowed');
     }
-    const fallback = pair && config?.pairs?.[pair]?.fair_value_fallback;
+    const fallback = normalizedPair && config?.pairs?.[normalizedPair]?.fair_value_fallback;
     if (fallback !== undefined && fallback !== null) {
       return { fairValue: String(fallback), source: 'fallback' };
     }
-    return { fairValue: null, source: 'fallback' };
+    throw new Error('fallback fair value unavailable');
   }
 }
 
