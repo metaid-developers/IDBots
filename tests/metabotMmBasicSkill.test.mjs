@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -43,8 +44,23 @@ test('metabot-mm-basic prompt advertises market making, exact-in, and BTC/SPACE 
   const { manager } = createManager();
   const skill = manager.listSkills().find((entry) => entry.id === 'metabot-mm-basic');
 
+  assert.ok(skill);
   assert.match(skill.prompt, /BTC\s*\/\s*SPACE/i);
   assert.match(skill.prompt, /DOGE\s*\/\s*SPACE/i);
   assert.match(skill.prompt, /做市|market/i);
   assert.match(skill.prompt, /exact-in|按市价|询价|退款/i);
+});
+
+test('metabot-mm-basic script enforces payload and returns stub response', () => {
+  const scriptPath = path.resolve(process.cwd(), 'SKILLs', 'metabot-mm-basic', 'scripts', 'index.js');
+
+  const missingPayload = spawnSync('node', [scriptPath], { encoding: 'utf8' });
+  assert.notEqual(missingPayload.status, 0);
+  assert.match(missingPayload.stderr, /--payload is required/i);
+
+  const payload = JSON.stringify({ input: 'test' });
+  const withPayload = spawnSync('node', [scriptPath, '--payload', payload], { encoding: 'utf8' });
+  assert.equal(withPayload.status, 0);
+  const parsed = JSON.parse(withPayload.stdout.trim());
+  assert.deepEqual(parsed, { mode: 'stub', ok: true });
 });
