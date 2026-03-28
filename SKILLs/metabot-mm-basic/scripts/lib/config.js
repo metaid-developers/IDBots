@@ -19,7 +19,8 @@ function resolveConfigPath({ env }) {
 function loadConfig({ env }) {
   const filePath = resolveConfigPath({ env });
   const raw = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  return validateConfig(parsed);
 }
 
 function isPositiveNumber(value) {
@@ -33,6 +34,10 @@ function validateExactKeys(map, expectedKeys) {
     return false;
   }
   return expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(map, key));
+}
+
+function buildTradeLimitKeys(assets) {
+  return assets.flatMap((asset) => [`min_in_${asset}`, `max_in_${asset}`]);
 }
 
 function validateConfig(config) {
@@ -74,21 +79,12 @@ function validateConfig(config) {
       if (!pairConfig.trade_limits || typeof pairConfig.trade_limits !== 'object') {
         errors.push('trade_limits');
       } else {
-        if (!validateExactKeys(pairConfig.trade_limits, assets)) {
+        const expectedTradeKeys = buildTradeLimitKeys(assets);
+        if (!validateExactKeys(pairConfig.trade_limits, expectedTradeKeys)) {
           errors.push('trade_limits');
         } else {
-          for (const asset of assets) {
-            const limits = pairConfig.trade_limits[asset];
-            if (!limits || typeof limits !== 'object') {
-              errors.push('trade_limits');
-              break;
-            }
-            const allowedKeys = ['min_in', 'max_in'];
-            if (!validateExactKeys(limits, allowedKeys)) {
-              errors.push('trade_limits');
-              break;
-            }
-            if (!isPositiveNumber(limits.min_in) || !isPositiveNumber(limits.max_in)) {
+          for (const key of expectedTradeKeys) {
+            if (!isPositiveNumber(pairConfig.trade_limits[key])) {
               errors.push('trade_limits');
               break;
             }

@@ -41,10 +41,7 @@ test('config rejects non-boolean fallback flags', () => {
     pairs: {
       'BTC/SPACE': {
         target_inventory: { BTC: '1', SPACE: '1' },
-        trade_limits: {
-          BTC: { min_in: '0.1', max_in: '1' },
-          SPACE: { min_in: '1', max_in: '10' },
-        },
+        trade_limits: { min_in_BTC: '0.1', max_in_BTC: '1', min_in_SPACE: '1', max_in_SPACE: '10' },
         max_usable_inventory: { BTC: '1', SPACE: '1' },
       },
     },
@@ -61,18 +58,44 @@ test('config rejects invalid pair inventory and trade-limit asset keys', () => {
     pairs: {
       'BTC/SPACE': {
         target_inventory: { BTC: '1' },
-        trade_limits: { BTC: { min_in: '0', max_in: '-1' }, DOGE: { min_in: '1', max_in: '10' } },
+        trade_limits: { min_in_BTC: '0', max_in_BTC: '-1', min_in_DOGE: '1', max_in_DOGE: '10' },
         max_usable_inventory: { BTC: '0', SPACE: '1' },
       },
     },
   }), /target_inventory|trade_limits|max_usable_inventory/i);
 });
 
+test('loadConfig validates parsed config before returning', () => {
+  const { tmpRoot, env } = createEnv();
+  writeConfig(tmpRoot, { pairs: { 'BTC/SPACE': { spread_bps: 200 } }, market_data: { provider: 'cex' } });
+  assert.throws(() => loadConfig({ env }), /Invalid config/i);
+});
+
 test('loadConfig rereads the JSON file on each quote/execute call instead of caching stale operator edits', () => {
   const { tmpRoot, env } = createEnv();
-  writeConfig(tmpRoot, { pairs: { 'BTC/SPACE': { spread_bps: 200 } } });
+  writeConfig(tmpRoot, {
+    market_data: { provider: 'cex', quote_fallback_enabled: true, execute_fallback_enabled: false },
+    pairs: {
+      'BTC/SPACE': {
+        spread_bps: 200,
+        target_inventory: { BTC: '1', SPACE: '1' },
+        trade_limits: { min_in_BTC: '0.1', max_in_BTC: '1', min_in_SPACE: '1', max_in_SPACE: '10' },
+        max_usable_inventory: { BTC: '1', SPACE: '1' },
+      },
+    },
+  });
   const first = loadConfig({ env });
-  writeConfig(tmpRoot, { pairs: { 'BTC/SPACE': { spread_bps: 300 } } });
+  writeConfig(tmpRoot, {
+    market_data: { provider: 'cex', quote_fallback_enabled: true, execute_fallback_enabled: false },
+    pairs: {
+      'BTC/SPACE': {
+        spread_bps: 300,
+        target_inventory: { BTC: '1', SPACE: '1' },
+        trade_limits: { min_in_BTC: '0.1', max_in_BTC: '1', min_in_SPACE: '1', max_in_SPACE: '10' },
+        max_usable_inventory: { BTC: '1', SPACE: '1' },
+      },
+    },
+  });
   const second = loadConfig({ env });
   assert.equal(first.pairs['BTC/SPACE'].spread_bps, 200);
   assert.equal(second.pairs['BTC/SPACE'].spread_bps, 300);
