@@ -19,5 +19,11 @@ try {
   process.exit(1);
 }
 
-normalizePayload(payload);
+try {
+  normalizePayload(payload);
+} catch (error) {
+  const message = error && error.message ? error.message : 'Invalid payload.';
+  process.stderr.write(`Error: ${message}\n`);
+  process.exit(1);
+}
 process.stdout.write(`${JSON.stringify({ mode: 'stub', ok: true })}\n`);

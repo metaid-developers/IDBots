@@ -3,6 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 
+const SUPPORTED_PAIRS = {
+  'BTC/SPACE': ['BTC', 'SPACE'],
+  'DOGE/SPACE': ['DOGE', 'SPACE'],
+};
+
 function resolveConfigPath({ env }) {
   const base = String(env?.IDBOTS_USER_DATA_PATH || '').trim();
   if (!base) {
@@ -22,6 +27,14 @@ function isPositiveNumber(value) {
   return Number.isFinite(parsed) && parsed > 0;
 }
 
+function validateExactKeys(map, expectedKeys) {
+  const keys = Object.keys(map);
+  if (keys.length !== expectedKeys.length) {
+    return false;
+  }
+  return expectedKeys.every((key) => Object.prototype.hasOwnProperty.call(map, key));
+}
+
 function validateConfig(config) {
   if (!config || typeof config !== 'object') {
     throw new Error('config is required.');
@@ -33,11 +46,11 @@ function validateConfig(config) {
     errors.push('market_data.provider');
   }
 
-  if (config.market_data?.quote_fallback_enabled === undefined) {
+  if (typeof config.market_data?.quote_fallback_enabled !== 'boolean') {
     errors.push('quote_fallback_enabled');
   }
 
-  if (config.market_data?.execute_fallback_enabled === undefined) {
+  if (typeof config.market_data?.execute_fallback_enabled !== 'boolean') {
     errors.push('execute_fallback_enabled');
   }
 
@@ -46,7 +59,13 @@ function validateConfig(config) {
   }
 
   if (config.pairs && typeof config.pairs === 'object') {
-    for (const [, pairConfig] of Object.entries(config.pairs)) {
+    for (const [pairKey, pairConfig] of Object.entries(config.pairs)) {
+      const assets = SUPPORTED_PAIRS[pairKey];
+      if (!assets) {
+        errors.push('pairs');
+        continue;
+      }
+
       if (!pairConfig || typeof pairConfig !== 'object') {
         errors.push('pair_config');
         continue;
@@ -55,18 +74,38 @@ function validateConfig(config) {
       if (!pairConfig.trade_limits || typeof pairConfig.trade_limits !== 'object') {
         errors.push('trade_limits');
       } else {
-        const values = Object.values(pairConfig.trade_limits);
-        if (values.length === 0 || values.some((value) => !isPositiveNumber(value))) {
+        if (!validateExactKeys(pairConfig.trade_limits, assets)) {
           errors.push('trade_limits');
+        } else {
+          for (const asset of assets) {
+            const limits = pairConfig.trade_limits[asset];
+            if (!limits || typeof limits !== 'object') {
+              errors.push('trade_limits');
+              break;
+            }
+            const allowedKeys = ['min_in', 'max_in'];
+            if (!validateExactKeys(limits, allowedKeys)) {
+              errors.push('trade_limits');
+              break;
+            }
+            if (!isPositiveNumber(limits.min_in) || !isPositiveNumber(limits.max_in)) {
+              errors.push('trade_limits');
+              break;
+            }
+          }
         }
       }
 
       if (!pairConfig.max_usable_inventory || typeof pairConfig.max_usable_inventory !== 'object') {
         errors.push('max_usable_inventory');
       } else {
-        const values = Object.values(pairConfig.max_usable_inventory);
-        if (values.length === 0 || values.some((value) => !isPositiveNumber(value))) {
+        if (!validateExactKeys(pairConfig.max_usable_inventory, assets)) {
           errors.push('max_usable_inventory');
+        } else {
+          const values = Object.values(pairConfig.max_usable_inventory);
+          if (values.some((value) => !isPositiveNumber(value))) {
+            errors.push('max_usable_inventory');
+          }
         }
       }
 
@@ -74,9 +113,13 @@ function validateConfig(config) {
       if (!targetInventory || typeof targetInventory !== 'object') {
         errors.push('target_inventory');
       } else {
-        const values = Object.values(targetInventory);
-        if (values.length === 0 || values.some((value) => !isPositiveNumber(value))) {
+        if (!validateExactKeys(targetInventory, assets)) {
           errors.push('target_inventory');
+        } else {
+          const values = Object.values(targetInventory);
+          if (values.some((value) => !isPositiveNumber(value))) {
+            errors.push('target_inventory');
+          }
         }
       }
     }

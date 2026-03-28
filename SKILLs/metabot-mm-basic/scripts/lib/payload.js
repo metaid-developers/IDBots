@@ -1,11 +1,12 @@
 'use strict';
 
-const DEFAULT_ASSET_DECIMALS = 8;
 const ASSET_DECIMALS = {
   BTC: 8,
   SPACE: 8,
   DOGE: 8,
 };
+
+const SUPPORTED_PAIRS = new Set(['BTC/SPACE', 'DOGE/SPACE']);
 
 function parsePair(pair) {
   if (typeof pair !== 'string') {
@@ -18,6 +19,11 @@ function parsePair(pair) {
 
   if (!base || !quote) {
     throw new Error('pair must be in BASE/QUOTE format.');
+  }
+
+  const normalizedPair = `${base}/${quote}`;
+  if (!SUPPORTED_PAIRS.has(normalizedPair)) {
+    throw new Error('unsupported pair.');
   }
 
   return { base, quote };
@@ -63,7 +69,10 @@ function ensurePrecision(amountIn, assetIn) {
     return;
   }
 
-  const maxDecimals = ASSET_DECIMALS[assetIn] ?? DEFAULT_ASSET_DECIMALS;
+  const maxDecimals = ASSET_DECIMALS[assetIn];
+  if (maxDecimals === undefined) {
+    throw new Error('unsupported asset.');
+  }
   const fractionalDigits = countFractionalDigits(amountIn);
   if (fractionalDigits > maxDecimals) {
     throw new Error('amount_in exceeds supported precision.');
@@ -97,11 +106,7 @@ function normalizePayload(payload) {
     throw new Error('payload is required.');
   }
 
-  if (!payload.mode) {
-    return payload;
-  }
-
-  if (payload.mode !== 'quote' && payload.mode !== 'execute') {
+  if (!payload.mode || (payload.mode !== 'quote' && payload.mode !== 'execute')) {
     throw new Error('mode must be quote or execute.');
   }
 

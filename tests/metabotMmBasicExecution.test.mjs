@@ -64,3 +64,23 @@ test('rejects amount_in that exceeds supported asset precision', () => {
     },
   }), /precision/i);
 });
+
+test('rejects unsupported pairs and assets', () => {
+  assert.throws(() => normalizePayload({
+    mode: 'quote',
+    service: { pair: 'ABC/SPACE', direction: 'abc_to_space' },
+    order: { amount_in: '1' },
+  }), /pair|asset/i);
+});
+
+test('rejects missing or invalid mode', () => {
+  assert.throws(() => normalizePayload({
+    service: { pair: 'BTC/SPACE', direction: 'btc_to_space' },
+    order: { amount_in: '1' },
+  }), /mode/i);
+  assert.throws(() => normalizePayload({
+    mode: 'estimate',
+    service: { pair: 'BTC/SPACE', direction: 'btc_to_space' },
+    order: { amount_in: '1' },
+  }), /mode/i);
+});
