@@ -7,6 +7,7 @@ const SUPPORTED_PAIRS = new Set(['BTC/SPACE', 'DOGE/SPACE']);
 
 let cachedQuotes = null;
 let cachedAtMs = 0;
+let inFlightQuotes = null;
 
 function validateQuote(value, label) {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -44,10 +45,17 @@ async function readSpotQuotes({ fetchImpl, now, cacheTtlMs } = {}) {
   if (ttl > 0 && cachedQuotes && nowFn() - cachedAtMs <= ttl) {
     return cachedQuotes;
   }
-  const quotes = await fetchSpotQuotes({ fetchImpl });
-  cachedQuotes = quotes;
-  cachedAtMs = nowFn();
-  return quotes;
+  if (inFlightQuotes) {
+    return inFlightQuotes;
+  }
+  inFlightQuotes = fetchSpotQuotes({ fetchImpl }).then((quotes) => {
+    cachedQuotes = quotes;
+    cachedAtMs = nowFn();
+    return quotes;
+  }).finally(() => {
+    inFlightQuotes = null;
+  });
+  return inFlightQuotes;
 }
 
 function isFallbackAllowed(mode, config) {
@@ -77,10 +85,14 @@ async function resolveFairValue({
       throw new Error('fallback fair value not allowed');
     }
     const fallback = normalizedPair && config?.pairs?.[normalizedPair]?.fair_value_fallback;
-    if (fallback !== undefined && fallback !== null) {
-      return { fairValue: String(fallback), source: 'fallback' };
+    if (fallback === undefined || fallback === null) {
+      throw new Error('fallback fair value unavailable');
     }
-    throw new Error('fallback fair value unavailable');
+    const parsed = typeof fallback === 'number' ? fallback : Number(fallback);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error('fallback fair value invalid');
+    }
+    return { fairValue: String(fallback), source: 'fallback' };
   }
 }
 

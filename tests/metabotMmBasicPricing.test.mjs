@@ -35,9 +35,28 @@ function mockFetchOnce(responseJson) {
   return fn;
 }
 
+function mockFetchDelayed(responseJson, delayMs = 10) {
+  const fn = async () => {
+    fn.callCount += 1;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => responseJson,
+    };
+  };
+  fn.callCount = 0;
+  return fn;
+}
+
 test('buildFairValue computes BTC/SPACE from btc and space USDT quotes', async () => {
   const quotes = { btc: 66960.15, space: 0.0502, doge: 0.0925 };
   assert.equal(computeCrossRate(quotes, 'BTC/SPACE'), '1333867.53');
+});
+
+test('buildFairValue preserves DOGE/SPACE precision', async () => {
+  const quotes = { btc: 66960.15, space: 0.0502, doge: 0.0925 };
+  assert.equal(computeCrossRate(quotes, 'DOGE/SPACE'), '1.842629');
 });
 
 test('quoteFromMid uses spread_bps as total spread', () => {
@@ -92,6 +111,16 @@ test('market data client reuses a short-lived cached quote within cache_ttl_ms',
   assert.equal(fetchImpl.callCount, 1);
 });
 
+test('market data client deduplicates concurrent fetches on a cache miss', async () => {
+  const fetchImpl = mockFetchDelayed({ btc: 1, doge: 2, space: 3 }, 20);
+  const [first, second] = await Promise.all([
+    readSpotQuotes({ now: () => 1000, cacheTtlMs: 0, fetchImpl }),
+    readSpotQuotes({ now: () => 1000, cacheTtlMs: 0, fetchImpl }),
+  ]);
+  assert.equal(fetchImpl.callCount, 1);
+  assert.deepEqual(first, second);
+});
+
 test('usable inventory clips live balance by max_usable_inventory before skew and settlement checks', () => {
   const usable = resolveUsableInventory({ liveBalance: '1000', maxUsable: '600' });
   assert.equal(usable, '600');
@@ -128,6 +157,19 @@ test('fallback rejects unsupported pair even when fallback is enabled', async ()
 
 test('fallback requires configured fair value when market data is unavailable', async () => {
   const cfg = { market_data: { quote_fallback_enabled: true, execute_fallback_enabled: true }, pairs: {} };
+  await assert.rejects(() => resolveFairValue({
+    mode: 'quote',
+    pair: 'BTC/SPACE',
+    config: cfg,
+    fetchImpl: failingFetch,
+  }), /fair value/i);
+});
+
+test('fallback rejects invalid fair_value_fallback values', async () => {
+  const cfg = {
+    market_data: { quote_fallback_enabled: true, execute_fallback_enabled: true },
+    pairs: { 'BTC/SPACE': { fair_value_fallback: '-1' } },
+  };
   await assert.rejects(() => resolveFairValue({
     mode: 'quote',
     pair: 'BTC/SPACE',

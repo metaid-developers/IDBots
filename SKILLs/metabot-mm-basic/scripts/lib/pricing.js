@@ -15,6 +15,10 @@ const MIN_OUTPUT_BASE_UNITS = {
 };
 
 const SUPPORTED_PAIRS = new Set(['BTC/SPACE', 'DOGE/SPACE']);
+const CROSS_RATE_DECIMALS = {
+  'BTC/SPACE': 2,
+  'DOGE/SPACE': 6,
+};
 
 function normalizePair(pair) {
   const normalized = String(pair || '').trim().toUpperCase();
@@ -38,7 +42,8 @@ function computeCrossRate(quotes, pair) {
   if (!base.isFinite() || base.lte(0) || !space.isFinite() || space.lte(0)) {
     throw new Error('invalid quotes');
   }
-  return base.div(space).toFixed(2);
+  const decimals = CROSS_RATE_DECIMALS[normalized] ?? 2;
+  return base.div(space).toFixed(decimals);
 }
 
 function buildBidAsk({ mid, spreadBps }) {
