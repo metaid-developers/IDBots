@@ -43,7 +43,8 @@ test('metabot-mm-basic prompt advertises market making, exact-in, and BTC/SPACE 
   const { manager } = createManager();
   const skill = manager.listSkills().find((entry) => entry.id === 'metabot-mm-basic');
 
-  assert.match(skill.prompt, /BTC|DOGE|SPACE/i);
+  assert.match(skill.prompt, /BTC\s*\/\s*SPACE/i);
+  assert.match(skill.prompt, /DOGE\s*\/\s*SPACE/i);
   assert.match(skill.prompt, /做市|market/i);
   assert.match(skill.prompt, /exact-in|按市价|询价|退款/i);
 });
