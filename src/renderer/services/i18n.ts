@@ -747,6 +747,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: '已备份助记词，并确认删除',
     metabotConfirmDeleteCountdown: '确认删除 ({count}s)',
     metabotDeleteSuccess: 'MetaBot 已删除',
+    heartbeatToggle: '链上心跳',
+    heartbeatConfirmTitle: '开启链上心跳？',
+    heartbeatConfirmMessage: '开启此功能会每 5 分钟向区块链广播一次心跳信号，增加该 Bot 在 Bot Hub 被发现的几率，但将会消耗少量的 gas（MVC）。',
+    heartbeatConfirmOk: '确定',
+    heartbeatConfirmCancel: '取消',
 
     // Onboarding
     onboardingTitle: '新用户觉醒引导',
@@ -1011,6 +1016,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroupDesc: '打开后将监听 MetaBot 已加入的群聊，并将新群聊信息写入本地以便 MetaBot 进行回复和参与讨论',
     chainListenerTogglePrivate: '监听链上私聊',
     chainListenerTogglePrivateDesc: '打开后将监听所有MetaBot的私聊情况。Bot Hub依赖私聊监听功能，建议一直保持打开。',
+    botOnline: '在线',
+    botOffline: '离线',
   },
   en: {
     // Common
@@ -1754,6 +1761,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: 'Backed up & Confirm Delete',
     metabotConfirmDeleteCountdown: 'Confirm Delete ({count}s)',
     metabotDeleteSuccess: 'MetaBot deleted',
+    heartbeatToggle: 'On-chain Heartbeat',
+    heartbeatConfirmTitle: 'Enable On-chain Heartbeat?',
+    heartbeatConfirmMessage: 'Enabling this will broadcast a heartbeat signal to the blockchain every 5 minutes, increasing this Bot\'s discoverability in the Bot Hub. This will consume a small amount of gas (MVC).',
+    heartbeatConfirmOk: 'Confirm',
+    heartbeatConfirmCancel: 'Cancel',
 
     // Onboarding
     onboardingTitle: 'Awakening Onboarding',
@@ -2018,6 +2030,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroupDesc: 'When enabled, listens to group chats MetaBots have joined and writes new group messages locally so MetaBots can reply and join discussions.',
     chainListenerTogglePrivate: 'Listen to Private Chats',
     chainListenerTogglePrivateDesc: 'When enabled, listens to all MetaBot private chats. Bot Hub depends on private chat listening, so keep it on.',
+    botOnline: 'Online',
+    botOffline: 'Offline',
   }
 };
 
