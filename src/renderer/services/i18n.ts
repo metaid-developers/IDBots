@@ -117,11 +117,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // 加载状态
     loading: '加载中...',
     refresh: '刷新',
-    gigSquare: '服务广场',
-    gigSquareTitle: '服务广场',
+    gigSquare: 'Bot Hub',
+    gigSquareTitle: 'Bot Hub',
     gigSquareAlphaBadge: 'Alpha',
     gigSquareAlphaNotice:
-      '服务广场现阶段为测试阶段，暂时只支持 MVC 网络。',
+      'Bot Hub现阶段为测试阶段，暂时只支持 MVC 网络。',
     gigSquareSubtitle: '浏览链上服务并一键下单',
     gigSquareLoading: '正在加载服务...',
     gigSquareLoadFailed: '服务加载失败',
@@ -607,7 +607,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillOpen: '打开',
 
     // MetaBot
-    metabots: 'MetaBot',
+    metabots: '我的Bot',
     metabotAdd: '添加',
     metabotRestore: '从助记词恢复',
     metabotRestoreTitle: '从助记词恢复 MetaBot',
@@ -1010,7 +1010,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroup: '监听链上群聊',
     chainListenerToggleGroupDesc: '打开后将监听 MetaBot 已加入的群聊，并将新群聊信息写入本地以便 MetaBot 进行回复和参与讨论',
     chainListenerTogglePrivate: '监听链上私聊',
-    chainListenerTogglePrivateDesc: '打开后将监听所有MetaBot的私聊情况。服务广场依赖私聊监听功能，建议一直保持打开。',
+    chainListenerTogglePrivateDesc: '打开后将监听所有MetaBot的私聊情况。Bot Hub依赖私聊监听功能，建议一直保持打开。',
   },
   en: {
     // Common
@@ -1124,11 +1124,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Loading State
     loading: 'Loading...',
     refresh: 'Refresh',
-    gigSquare: 'Gig Square',
-    gigSquareTitle: 'Gig Square',
+    gigSquare: 'Bot Hub',
+    gigSquareTitle: 'Bot Hub',
     gigSquareAlphaBadge: 'Alpha',
     gigSquareAlphaNotice:
-      'Gig Square is in alpha testing. Only the MVC network is supported for now.',
+      'Bot Hub is in alpha testing. Only the MVC network is supported for now.',
     gigSquareSubtitle: 'Browse on-chain services and order instantly.',
     gigSquareLoading: 'Loading services...',
     gigSquareLoadFailed: 'Failed to load services',
@@ -1614,7 +1614,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillOpen: 'Open',
 
     // MetaBot
-    metabots: 'MetaBot',
+    metabots: 'My Bots',
     metabotAdd: 'Add',
     metabotRestore: 'Restore from Mnemonic',
     metabotRestoreTitle: 'Restore MetaBot from Mnemonic',
@@ -2017,7 +2017,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroup: 'Listen to Group Chats',
     chainListenerToggleGroupDesc: 'When enabled, listens to group chats MetaBots have joined and writes new group messages locally so MetaBots can reply and join discussions.',
     chainListenerTogglePrivate: 'Listen to Private Chats',
-    chainListenerTogglePrivateDesc: 'When enabled, listens to all MetaBot private chats. Gig Square depends on private chat listening, so keep it on.',
+    chainListenerTogglePrivateDesc: 'When enabled, listens to all MetaBot private chats. Bot Hub depends on private chat listening, so keep it on.',
   }
 };
 
