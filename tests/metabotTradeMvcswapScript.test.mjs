@@ -186,7 +186,13 @@ function createFetchStubForDirectTokenTrade(calls) {
 
 test('quote-only request returns an estimated output without calling execute endpoints', async () => {
   const result = await handleTradeRequest({
-    input: '10 SPACE 能换多少 MC',
+    request: {
+      action: 'quote',
+      direction: 'space_to_token',
+      amountIn: '10',
+      tokenSymbol: 'MC',
+      slippagePercent: 1,
+    },
     env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
     fetchImpl: createFetchStubForQuote(),
   });
@@ -216,7 +222,13 @@ test('quote flow formats token outputs using live token decimals', async () => {
   };
 
   const result = await handleTradeRequest({
-    input: '10 SPACE 能换多少 USD1',
+    request: {
+      action: 'quote',
+      direction: 'space_to_token',
+      amountIn: '10',
+      tokenSymbol: 'USD1',
+      slippagePercent: 1,
+    },
     env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
     fetchImpl,
   });
@@ -247,7 +259,13 @@ test('token -> SPACE quote uses the live token decimals when calling router', as
   };
 
   const result = await handleTradeRequest({
-    input: '卖出 1.23 MEME 换 SPACE，报价',
+    request: {
+      action: 'quote',
+      direction: 'token_to_space',
+      amountIn: '1.23',
+      tokenSymbol: 'MEME',
+      slippagePercent: 1,
+    },
     env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
     fetchImpl,
   });
@@ -274,7 +292,13 @@ test('quote flow rejects router routes that require mvcswap v2', async () => {
   await assert.rejects(
     () =>
       handleTradeRequest({
-        input: '10 SPACE 能换多少 MC',
+        request: {
+          action: 'quote',
+          direction: 'space_to_token',
+          amountIn: '10',
+          tokenSymbol: 'MC',
+          slippagePercent: 1,
+        },
         env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
         fetchImpl,
       }),
@@ -284,7 +308,13 @@ test('quote flow rejects router routes that require mvcswap v2', async () => {
 
 test('preview request returns a confirmation instruction when executeNow is false', async () => {
   const result = await handleTradeRequest({
-    input: '帮我买 10 SPACE 的 MC',
+    request: {
+      action: 'preview',
+      direction: 'space_to_token',
+      amountIn: '10',
+      tokenSymbol: 'MC',
+      slippagePercent: 1,
+    },
     env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
     fetchImpl: createFetchStubForQuote(),
   });
@@ -297,7 +327,13 @@ test('preview request returns a confirmation instruction when executeNow is fals
 test('SPACE -> token execute flow builds mvc raw tx and submits token1totoken2', async () => {
   const calls = [];
   const result = await handleTradeRequest({
-    input: '帮我买 10 SPACE 的 MC，确定交易',
+    request: {
+      action: 'execute',
+      direction: 'space_to_token',
+      amountIn: '10',
+      tokenSymbol: 'MC',
+      slippagePercent: 1,
+    },
     env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
     fetchImpl: createFetchStubForDirectSpaceTrade(calls),
   });
@@ -368,7 +404,13 @@ test('SPACE -> token execute flow rejects when SPACE balance cannot cover input 
   await assert.rejects(
     () =>
       handleTradeRequest({
-        input: '帮我买 10 SPACE 的 MC，确定交易',
+        request: {
+          action: 'execute',
+          direction: 'space_to_token',
+          amountIn: '10',
+          tokenSymbol: 'MC',
+          slippagePercent: 1,
+        },
         env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
         fetchImpl,
       }),
@@ -381,7 +423,13 @@ test('SPACE -> token execute flow rejects when SPACE balance cannot cover input 
 test('token -> SPACE execute flow builds ft raw tx and mvc fee raw tx before token2totoken1', async () => {
   const calls = [];
   const result = await handleTradeRequest({
-    input: '卖出 500 MC 换 SPACE，确定执行',
+    request: {
+      action: 'execute',
+      direction: 'token_to_space',
+      amountIn: '500',
+      tokenSymbol: 'MC',
+      slippagePercent: 1,
+    },
     env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
     fetchImpl: createFetchStubForDirectTokenTrade(calls),
   });
@@ -468,7 +516,13 @@ test('token -> SPACE execute flow rejects when the mvc fee tx has no change outp
   await assert.rejects(
     () =>
       handleTradeRequest({
-        input: '卖出 500 MC 换 SPACE，确定执行',
+        request: {
+          action: 'execute',
+          direction: 'token_to_space',
+          amountIn: '500',
+          tokenSymbol: 'MC',
+          slippagePercent: 1,
+        },
         env: { IDBOTS_METABOT_ID: '1', IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
         fetchImpl,
       }),

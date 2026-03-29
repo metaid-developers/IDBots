@@ -1,21 +1,25 @@
 'use strict';
 
-function formatPreview({ intent, estimatedOut, minimumReceived, outputSymbol }) {
+function getInputUnit(request) {
+  return request.direction === 'space_to_token' ? 'SPACE' : request.tokenSymbol;
+}
+
+function formatPreview({ request, estimatedOut, minimumReceived, outputSymbol }) {
   return [
-    `将用 ${intent.amount} ${intent.amountUnit} 兑换 ${outputSymbol}`,
+    `将用 ${request.amountIn} ${getInputUnit(request)} 兑换 ${outputSymbol}`,
     `预计收到：${estimatedOut} ${outputSymbol}`,
     `最少收到：${minimumReceived} ${outputSymbol}`,
-    `滑点：${intent.slippagePercent}%`,
+    `滑点：${request.slippagePercent}%`,
     '如确认执行，请回复：确认交易',
   ].join('\n');
 }
 
-function formatQuote({ intent, estimatedOut, minimumReceived, outputSymbol }) {
+function formatQuote({ request, estimatedOut, minimumReceived, outputSymbol }) {
   return [
-    `${intent.amount} ${intent.amountUnit} 的报价如下`,
+    `${request.amountIn} ${getInputUnit(request)} 的报价如下`,
     `预计收到：${estimatedOut} ${outputSymbol}`,
     `最少收到：${minimumReceived} ${outputSymbol}`,
-    `滑点：${intent.slippagePercent}%`,
+    `滑点：${request.slippagePercent}%`,
   ].join('\n');
 }
 

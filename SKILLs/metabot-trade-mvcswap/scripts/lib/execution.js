@@ -1,6 +1,5 @@
 'use strict';
 
-const { parseTradeIntent } = require('./intent.js');
 const {
   fetchAllPairs,
   resolveSpacePair,
@@ -19,6 +18,45 @@ const {
   buildMvcTransferRawTx,
 } = require('./localRpc.js');
 const { formatPreview, formatQuote, formatExecuted } = require('./formatter.js');
+
+function validateTradeRequest(request) {
+  if (!request || typeof request !== 'object') {
+    return { ok: false, reason: 'Trade request is missing.' };
+  }
+
+  const action = String(request.action || '').trim().toLowerCase();
+  const direction = String(request.direction || '').trim().toLowerCase();
+  const amountIn = String(request.amountIn || '').trim();
+  const tokenSymbol = String(request.tokenSymbol || '').trim().toUpperCase();
+  const slippagePercent = Number(request.slippagePercent);
+
+  if (!['quote', 'preview', 'execute'].includes(action)) {
+    return { ok: false, reason: 'Trade request action must be quote, preview, or execute.' };
+  }
+  if (!['space_to_token', 'token_to_space'].includes(direction)) {
+    return { ok: false, reason: 'Trade request direction must be space_to_token or token_to_space.' };
+  }
+  if (!amountIn || !/^\d+(\.\d+)?$/.test(amountIn) || Number(amountIn) <= 0) {
+    return { ok: false, reason: 'Trade request amountIn must be a positive decimal.' };
+  }
+  if (!tokenSymbol || tokenSymbol === 'SPACE') {
+    return { ok: false, reason: 'Trade request tokenSymbol must be the non-SPACE token symbol.' };
+  }
+  if (!Number.isFinite(slippagePercent) || slippagePercent < 0) {
+    return { ok: false, reason: 'Trade request slippagePercent must be a non-negative number.' };
+  }
+
+  return {
+    ok: true,
+    request: {
+      action,
+      direction,
+      amountIn,
+      tokenSymbol,
+      slippagePercent,
+    },
+  };
+}
 
 function getTokenDecimals(token) {
   const decimals = Number(token?.decimal);
@@ -51,20 +89,20 @@ function computeMinimumReceived(amountOutBase, slippagePercent, decimals = 8) {
   return fromBaseUnits(adjusted.toString(), decimals);
 }
 
-async function loadTradeContext({ intent, fetchImpl, env }) {
+async function loadTradeContext({ request, fetchImpl, env }) {
   const allPairs = await fetchAllPairs({ fetchImpl });
   const resolvedPair = resolveSpacePair({
     pairs: allPairs.data,
-    tokenSymbol: intent.tokenSymbol,
-    direction: intent.direction,
+    tokenSymbol: request.tokenSymbol,
+    direction: request.direction,
   });
   const tokenDecimals = getTokenDecimals(resolvedPair.token);
-  const inputDecimals = intent.direction === 'space_to_token' ? 8 : tokenDecimals;
-  const outputDecimals = intent.direction === 'space_to_token' ? tokenDecimals : 8;
+  const inputDecimals = request.direction === 'space_to_token' ? 8 : tokenDecimals;
+  const outputDecimals = request.direction === 'space_to_token' ? tokenDecimals : 8;
   const quote = await quoteRoute({
-    direction: intent.direction,
-    tokenSymbol: intent.tokenSymbol,
-    amount: intent.amount,
+    direction: request.direction,
+    tokenSymbol: request.tokenSymbol,
+    amount: request.amountIn,
     inputDecimals,
     fetchImpl,
   });
@@ -89,7 +127,7 @@ async function ensureSufficientSpaceBalance({ env, fetchImpl, metabotId, require
   }
 }
 
-async function executeTrade({ intent, env, fetchImpl, context }) {
+async function executeTrade({ request, env, fetchImpl, context }) {
   const metabotId = Number(env?.IDBOTS_METABOT_ID || 0);
   if (!Number.isInteger(metabotId) || metabotId < 1) {
     throw new Error('IDBOTS_METABOT_ID is required.');
@@ -99,15 +137,15 @@ async function executeTrade({ intent, env, fetchImpl, context }) {
   const requestArgs = await requestSwapArgs({
     symbol: context.resolvedPair.symbol,
     address: account.mvc_address,
-    op: intent.direction === 'space_to_token' ? 3 : 4,
+    op: request.direction === 'space_to_token' ? 3 : 4,
     fetchImpl,
   });
-  const outputSymbol = intent.direction === 'space_to_token' ? intent.tokenSymbol : 'SPACE';
+  const outputSymbol = request.direction === 'space_to_token' ? request.tokenSymbol : 'SPACE';
   const estimatedOut = fromBaseUnits(context.quote.amountOut, context.outputDecimals);
   const txFeeSats = toSafeInteger(String(requestArgs.txFee || 0), 'txFee');
 
-  if (intent.direction === 'space_to_token') {
-    const amountInSats = toSafeInteger(toBaseUnits(intent.amount, context.inputDecimals), 'amount');
+  if (request.direction === 'space_to_token') {
+    const amountInSats = toSafeInteger(toBaseUnits(request.amountIn, context.inputDecimals), 'amount');
     await ensureSufficientSpaceBalance({
       env,
       fetchImpl,
@@ -137,11 +175,11 @@ async function executeTrade({ intent, env, fetchImpl, context }) {
     return {
       mode: 'executed',
       message: formatExecuted({
-        directionLabel: 'SPACE -> ' + intent.tokenSymbol,
-        inputAmount: intent.amount,
+        directionLabel: 'SPACE -> ' + request.tokenSymbol,
+        inputAmount: request.amountIn,
         inputUnit: 'SPACE',
         outputAmount: estimatedOut,
-        outputUnit: intent.tokenSymbol,
+        outputUnit: request.tokenSymbol,
         txid: swap.txid,
       }),
     };
@@ -168,14 +206,14 @@ async function executeTrade({ intent, env, fetchImpl, context }) {
         {
           kind: 'mvc_ft_transfer',
           token: {
-            symbol: intent.tokenSymbol,
+            symbol: request.tokenSymbol,
             tokenID: context.resolvedPair.token.tokenID,
             genesisHash: resolveTokenGenesis(context.resolvedPair.token),
             codeHash: context.resolvedPair.token.codeHash,
             decimal: context.resolvedPair.token.decimal,
           },
           to_address: requestArgs.tokenToAddress,
-          amount: toBaseUnits(intent.amount, Number(context.resolvedPair.token.decimal || 8)),
+          amount: toBaseUnits(request.amountIn, Number(context.resolvedPair.token.decimal || 8)),
           fee_rate: context.feeRate,
           funding: {
             step_index: 0,
@@ -206,9 +244,9 @@ async function executeTrade({ intent, env, fetchImpl, context }) {
   return {
     mode: 'executed',
     message: formatExecuted({
-      directionLabel: `${intent.tokenSymbol} -> SPACE`,
-      inputAmount: intent.amount,
-      inputUnit: intent.tokenSymbol,
+      directionLabel: `${request.tokenSymbol} -> SPACE`,
+      inputAmount: request.amountIn,
+      inputUnit: request.tokenSymbol,
       outputAmount: estimatedOut,
       outputUnit: 'SPACE',
       txid: swap.txid,
@@ -216,35 +254,37 @@ async function executeTrade({ intent, env, fetchImpl, context }) {
   };
 }
 
-async function handleTradeRequest({ input, env, fetchImpl = fetch }) {
-  const intent = parseTradeIntent(input);
-  if (intent.kind !== 'trade') {
-    return { mode: 'unsupported', message: intent.reason };
+async function handleTradeRequest({ request, env, fetchImpl = fetch }) {
+  const validation = validateTradeRequest(request);
+  if (!validation.ok) {
+    return { mode: 'unsupported', message: validation.reason };
   }
+  const normalizedRequest = validation.request;
 
-  const context = await loadTradeContext({ intent, fetchImpl, env });
-  const outputSymbol = intent.direction === 'space_to_token' ? intent.tokenSymbol : 'SPACE';
+  const context = await loadTradeContext({ request: normalizedRequest, fetchImpl, env });
+  const outputSymbol = normalizedRequest.direction === 'space_to_token' ? normalizedRequest.tokenSymbol : 'SPACE';
   const estimatedOut = fromBaseUnits(context.quote.amountOut, context.outputDecimals);
-  const minimumReceived = computeMinimumReceived(context.quote.amountOut, intent.slippagePercent, context.outputDecimals);
+  const minimumReceived = computeMinimumReceived(context.quote.amountOut, normalizedRequest.slippagePercent, context.outputDecimals);
 
-  if (intent.quoteOnly) {
+  if (normalizedRequest.action === 'quote') {
     return {
       mode: 'quote',
-      message: formatQuote({ intent, estimatedOut, minimumReceived, outputSymbol }),
+      message: formatQuote({ request: normalizedRequest, estimatedOut, minimumReceived, outputSymbol }),
     };
   }
 
-  if (!intent.executeNow) {
+  if (normalizedRequest.action === 'preview') {
     return {
       mode: 'preview',
-      message: formatPreview({ intent, estimatedOut, minimumReceived, outputSymbol }),
+      message: formatPreview({ request: normalizedRequest, estimatedOut, minimumReceived, outputSymbol }),
     };
   }
 
-  return executeTrade({ intent, env, fetchImpl, context });
+  return executeTrade({ request: normalizedRequest, env, fetchImpl, context });
 }
 
 module.exports = {
   handleTradeRequest,
   computeMinimumReceived,
+  validateTradeRequest,
 };
