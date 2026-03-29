@@ -142,13 +142,6 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "baoyu-image-studio": {
-      "order": 175,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774310400000,
-      "enabled": true
-    },
     "local-tools": {
       "order": 200,
       "version": "1.0.0",
@@ -183,55 +176,6 @@
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
-    },
-    "superpowers-using-superpowers": {
-      "order": 310,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
-    },
-    "superpowers-brainstorming": {
-      "order": 311,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
-    },
-    "superpowers-writing-plans": {
-      "order": 312,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
-    },
-    "superpowers-test-driven-development": {
-      "order": 313,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
-    },
-    "superpowers-systematic-debugging": {
-      "order": 314,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
-    },
-    "superpowers-using-git-worktrees": {
-      "order": 315,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
-    },
-    "superpowers-verification-before-completion": {
-      "order": 316,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774224000000,
-      "enabled": false
     }
   }
 }
