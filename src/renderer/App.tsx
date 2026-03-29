@@ -31,6 +31,7 @@ import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import Onboarding from './components/onboarding/Onboarding';
 import { shouldShowInitialOnboarding } from './components/onboarding/onboardingGate.js';
+import { normalizePreselectedSkillId } from './utils/newChatPreselect';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
@@ -312,12 +313,13 @@ const App: React.FC = () => {
     setIsSidebarCollapsed((prev) => !prev);
   }, []);
 
-  const handleNewChat = useCallback((preselectSkillId?: string) => {
+  const handleNewChat = useCallback((preselectSkillId?: unknown) => {
     const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
+    const normalizedPreselectSkillId = normalizePreselectedSkillId(preselectSkillId);
     coworkService.clearSession();
     dispatch(clearSelection());
-    if (preselectSkillId) {
-      dispatch(setActiveSkillIds([preselectSkillId]));
+    if (normalizedPreselectSkillId) {
+      dispatch(setActiveSkillIds([normalizedPreselectSkillId]));
     }
     setMainView('cowork');
     window.setTimeout(() => {
@@ -326,6 +328,10 @@ const App: React.FC = () => {
       }));
     }, 0);
   }, [dispatch, mainView, currentSessionId]);
+
+  const handleBlankNewChat = useCallback(() => {
+    handleNewChat();
+  }, [handleNewChat]);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -474,7 +480,7 @@ const App: React.FC = () => {
 
       if (matchesShortcut(event, activeShortcuts.newChat)) {
         event.preventDefault();
-        handleNewChat();
+        handleBlankNewChat();
         return;
       }
 
@@ -492,7 +498,7 @@ const App: React.FC = () => {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleShowSettings, handleNewChat]);
+  }, [handleShowSettings, handleBlankNewChat]);
 
   useEffect(() => {
     return () => {
@@ -523,10 +529,10 @@ const App: React.FC = () => {
   // 监听托盘菜单新建任务的 IPC 事件
   useEffect(() => {
     const unsubscribe = window.electron.appEvents.onNewTask(() => {
-      handleNewChat();
+      handleBlankNewChat();
     });
     return unsubscribe;
-  }, [handleNewChat]);
+  }, [handleBlankNewChat]);
 
   // 监听定时任务查看会话事件
   useEffect(() => {
@@ -696,7 +702,7 @@ const App: React.FC = () => {
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowGigSquare={handleShowGigSquare}
           onShowMetabots={handleShowMetabots}
-          onNewChat={handleNewChat}
+          onNewChat={handleBlankNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
           updateBadge={!isSidebarCollapsed ? updateBadge : null}
@@ -709,7 +715,7 @@ const App: React.FC = () => {
               <SkillsView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
+                onNewChat={handleBlankNewChat}
                 onStartTaskWithSkill={(skillId) => handleNewChat(skillId)}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
@@ -717,14 +723,14 @@ const App: React.FC = () => {
               <ScheduledTasksView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
+                onNewChat={handleBlankNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
             ) : mainView === 'metabots' ? (
               <MetabotsView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
+                onNewChat={handleBlankNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
                 onRequestModelSettings={() => handleShowSettings({ initialTab: 'model' })}
                 onRequestOnboarding={handleOpenOnboarding}
@@ -735,7 +741,7 @@ const App: React.FC = () => {
                 onShowSkills={handleShowSkills}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
+                onNewChat={handleBlankNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
                 onRequestOnboarding={handleOpenOnboarding}
               />
