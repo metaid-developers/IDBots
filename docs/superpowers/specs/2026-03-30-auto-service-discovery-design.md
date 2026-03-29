@@ -108,12 +108,13 @@ Appended to the system prompt after `<available_skills>`:
       "servicePinId": "...",
       "serviceName": "...",
       "providerGlobalMetaid": "...",
-      "providerAddress": "...",
       "price": "...",
       "currency": "...",
       "userTask": "summary of what the user needs",
       "taskContext": "full content/context for the task"
     }
+    Note: providerAddress is resolved by the system from the service record
+    using servicePinId — the LLM does not need to provide it.
   </notice>
   <remote_service>
     <service_pin_id>pin_abc123</service_pin_id>
@@ -157,7 +158,7 @@ In `coworkRunner` or `coworkStore`, after an assistant message stream completes:
 Before executing payment, verify that Bot B is actually reachable:
 
 1. Send a PING message to Bot B via the existing encrypted private chat handshake mechanism
-2. Wait for PONG response (timeout: configurable, e.g., 30 seconds)
+2. Wait for PONG response (timeout: 15 seconds, matching existing `gigSquare:pingProvider` default)
 3. **PONG received** → proceed to payment (step 3.3)
 4. **PONG timeout** →
    - Mark this service as offline in `heartbeatPollingService.onlineBots`
@@ -170,7 +171,7 @@ Before executing payment, verify that Bot B is actually reachable:
 
 1. Call `executeTransfer()`:
    - From: Bot A's wallet (the cowork session's `metabotId`)
-   - To: `providerAddress` from the delegation JSON
+   - To: `providerAddress` resolved from the service record via `servicePinId`
    - Amount: `price` in `currency` (SPACE/BTC/DOGE)
    - Use current fee rate from `feeRateStore`
 2. On success: capture `txid`
@@ -196,7 +197,7 @@ skill name: {serviceName}
 
 ### 3.5 Service Order & A2A Session Creation
 
-1. `serviceOrderStore.createBuyerOrder()` — with:
+1. `serviceOrderLifecycleService.createBuyerOrder()` — with:
    - `localMetabotId`: Bot A's ID
    - `counterpartyGlobalMetaid`: Bot B's global MetaID
    - `servicePinId`, `serviceName`
