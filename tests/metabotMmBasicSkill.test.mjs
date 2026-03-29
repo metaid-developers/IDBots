@@ -51,16 +51,38 @@ test('metabot-mm-basic prompt advertises market making, exact-in, and BTC/SPACE 
   assert.match(skill.prompt, /exact-in|按市价|询价|退款/i);
 });
 
-test('metabot-mm-basic script enforces payload and returns stub response', () => {
+test('metabot-mm-basic script enforces payload and surfaces runtime config errors', () => {
   const scriptPath = path.resolve(process.cwd(), 'SKILLs', 'metabot-mm-basic', 'scripts', 'index.js');
 
   const missingPayload = spawnSync('node', [scriptPath], { encoding: 'utf8' });
   assert.notEqual(missingPayload.status, 0);
   assert.match(missingPayload.stderr, /--payload is required/i);
 
-  const payload = JSON.stringify({ input: 'test' });
-  const withPayload = spawnSync('node', [scriptPath, '--payload', payload], { encoding: 'utf8' });
-  assert.equal(withPayload.status, 0);
-  const parsed = JSON.parse(withPayload.stdout.trim());
-  assert.deepEqual(parsed, { mode: 'stub', ok: true });
+  const payload = JSON.stringify({ mode: 'quote', query: { kind: 'supported_pairs' } });
+  const withPayload = spawnSync('node', [scriptPath, '--payload', payload], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      IDBOTS_USER_DATA_PATH: '/tmp/idbots-mm-basic-skill-test-missing-config',
+      IDBOTS_METABOT_ID: '1',
+    },
+  });
+  assert.notEqual(withPayload.status, 0);
+  assert.match(withPayload.stderr, /IDBOTS_USER_DATA_PATH|config|ENOENT/i);
+});
+
+test('metabot-mm-basic skill prompt documents trigger conditions, structured payloads, stdout JSON, and reply behavior', () => {
+  const skillPath = path.resolve(process.cwd(), 'SKILLs', 'metabot-mm-basic', 'SKILL.md');
+  const content = require('fs').readFileSync(skillPath, 'utf8');
+
+  assert.match(content, /何时触发/i);
+  assert.match(content, /参数抽取规则|参数抽取/i);
+  assert.match(content, /缺参时必须追问|必须追问/i);
+  assert.match(content, /精确命令格式|命令格式/i);
+  assert.match(content, /stdout JSON 格式|stdout JSON/i);
+  assert.match(content, /AI 收到结果后应该怎么回复用户|怎么回复用户/i);
+  assert.match(content, /BTC\/SPACE/i);
+  assert.match(content, /DOGE\/SPACE/i);
+  assert.match(content, /quote_context/i);
+  assert.match(content, /refunded|executed|void/i);
 });
