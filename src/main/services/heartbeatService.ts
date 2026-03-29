@@ -19,17 +19,10 @@ const HEARTBEAT_PIN_DATA = {
 };
 
 export type CreatePinFn = (
-  metabotStore: unknown,
+  metabotStore: any,
   metabotId: number,
-  metaidData: {
-    path: string;
-    contentType: string;
-    payload: string;
-    operation: string;
-    version: string;
-    encryption: string;
-  },
-  options?: { network?: string }
+  metaidData: any,
+  options?: { feeRate?: number; network?: string }
 ) => Promise<{ txids: string[]; pinId: string; totalCost: number }>;
 
 export interface HeartbeatServiceDeps {

@@ -102,3 +102,110 @@ test('heartbeat_enabled migration is idempotent — second SqliteStore.create do
     fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });
+
+// ── HeartbeatService class unit tests ──
+
+import { describe, it } from 'node:test';
+
+async function loadHeartbeatService() {
+  const mod = await import('../dist-electron/services/heartbeatService.js');
+  return mod.HeartbeatService;
+}
+
+function mockCreatePin() {
+  const calls = [];
+  const fn = async (store, metabotId, data, options) => {
+    calls.push({ store, metabotId, data, options });
+    return { txids: ['tx1'], pinId: 'pin1', totalCost: 100 };
+  };
+  return { fn, calls };
+}
+
+describe('HeartbeatService', () => {
+  it('startHeartbeat registers an active timer', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn } = mockCreatePin();
+    const svc = new HeartbeatService({ createPin: fn });
+    svc.startHeartbeat(1);
+    assert.equal(svc.isActive(1), true);
+    assert.equal(svc.activeCount(), 1);
+    svc.stopAll();
+  });
+
+  it('fires createPin immediately on start', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn, calls } = mockCreatePin();
+    const svc = new HeartbeatService({ createPin: fn });
+    svc.startHeartbeat(42);
+    await new Promise(r => setTimeout(r, 50));
+    assert.ok(calls.length >= 1);
+    assert.equal(calls[0].metabotId, 42);
+    svc.stopAll();
+  });
+
+  it('passes correct heartbeat pin parameters', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn, calls } = mockCreatePin();
+    const svc = new HeartbeatService({ createPin: fn });
+    svc.startHeartbeat(1);
+    await new Promise(r => setTimeout(r, 50));
+    const c = calls[0];
+    assert.equal(c.data.path, '/protocols/metabot-heartbeat');
+    assert.equal(c.data.contentType, 'text/plain');
+    assert.equal(c.data.payload, '');
+    assert.equal(c.options.network, 'mvc');
+    svc.stopAll();
+  });
+
+  it('stopHeartbeat clears the timer', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn } = mockCreatePin();
+    const svc = new HeartbeatService({ createPin: fn });
+    svc.startHeartbeat(1);
+    svc.stopHeartbeat(1);
+    assert.equal(svc.isActive(1), false);
+  });
+
+  it('stopAll clears all timers', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn } = mockCreatePin();
+    const svc = new HeartbeatService({ createPin: fn });
+    svc.startHeartbeat(1);
+    svc.startHeartbeat(2);
+    assert.equal(svc.activeCount(), 2);
+    svc.stopAll();
+    assert.equal(svc.activeCount(), 0);
+  });
+
+  it('replaces existing timer for same metabotId', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn } = mockCreatePin();
+    const svc = new HeartbeatService({ createPin: fn });
+    svc.startHeartbeat(1);
+    svc.startHeartbeat(1);
+    assert.equal(svc.activeCount(), 1);
+    svc.stopAll();
+  });
+
+  it('createPin errors do not crash the service', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    let n = 0;
+    const svc = new HeartbeatService({ createPin: async () => { n++; throw new Error('fail'); } });
+    svc.startHeartbeat(1);
+    await new Promise(r => setTimeout(r, 50));
+    assert.ok(n >= 1);
+    assert.equal(svc.isActive(1), true);
+    svc.stopAll();
+  });
+
+  it('passes getMetabotStore to createPin', async () => {
+    const HeartbeatService = await loadHeartbeatService();
+    const { fn, calls } = mockCreatePin();
+    const store = { id: 'mock' };
+    const svc = new HeartbeatService({ createPin: fn, getMetabotStore: () => store });
+    svc.startHeartbeat(1);
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(calls[0].store, store);
+    svc.stopAll();
+  });
+});
