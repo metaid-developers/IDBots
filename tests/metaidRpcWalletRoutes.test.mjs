@@ -218,7 +218,7 @@ test('rpc transfer route forwards btc, doge, and space transfer requests through
     assert.equal(payloads[2].success, true);
     assert.equal(payloads[2].txid, 'tx-mvc');
 
-    assert.deepEqual(calls, [
+    const expectedCalls = [
       {
         metabotId: 1,
         chain: 'btc',
@@ -240,7 +240,10 @@ test('rpc transfer route forwards btc, doge, and space transfer requests through
         amountSpaceOrDoge: '0.5',
         feeRate: 1,
       },
-    ]);
+    ];
+    const sortByChain = (items) => items.slice().sort((a, b) => a.chain.localeCompare(b.chain));
+    assert.equal(calls.length, expectedCalls.length);
+    assert.deepEqual(sortByChain(calls), sortByChain(expectedCalls));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -254,46 +257,97 @@ test('rpc transfer route rejects unsupported chain or missing fields with 400', 
   };
   const { server, baseUrl } = await startRpcServerForTestWithOverrides({ transferService });
   try {
-    const responses = await Promise.all([
-      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    const cases = [
+      {
+        body: {
           metabot_id: 1,
           chain: 'eth',
           to_address: '0xabc',
           amount: '1',
-        }),
-      }),
-      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        },
+        error: /unsupported/i,
+      },
+      {
+        body: {
+          metabot_id: 1,
+          to_address: '1btc-recipient',
+          amount: '1',
+        },
+        error: /chain/i,
+      },
+      {
+        body: {
           metabot_id: 1,
           chain: 'btc',
           amount: '1',
-        }),
-      }),
-      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        },
+        error: /to_address/i,
+      },
+      {
+        body: {
           metabot_id: 1,
           chain: 'doge',
           to_address: 'DogeRecipient',
           amount: 'abc',
+        },
+        error: /amount/i,
+      },
+      {
+        body: {
+          metabot_id: 1,
+          chain: 'btc',
+          to_address: '1btc-recipient',
+          amount: '0',
+        },
+        error: /amount/i,
+      },
+      {
+        body: {
+          metabot_id: 1,
+          chain: 'btc',
+          to_address: '1btc-recipient',
+          amount: '-1',
+        },
+        error: /amount/i,
+      },
+      {
+        body: {
+          metabot_id: 1,
+          chain: 'btc',
+          to_address: '1btc-recipient',
+          amount: '1',
+          fee_rate: 0,
+        },
+        error: /fee_rate/i,
+      },
+      {
+        body: {
+          metabot_id: 1,
+          chain: 'btc',
+          to_address: '1btc-recipient',
+          amount: '1',
+          fee_rate: -2,
+        },
+        error: /fee_rate/i,
+      },
+    ];
+
+    const responses = await Promise.all(
+      cases.map((testCase) =>
+        fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testCase.body),
         }),
-      }),
-    ]);
+      ),
+    );
 
     const bodies = await Promise.all(responses.map((res) => res.json()));
 
-    assert.equal(responses[0].status, 400);
-    assert.match(String(bodies[0].error || ''), /chain/i);
-    assert.equal(responses[1].status, 400);
-    assert.match(String(bodies[1].error || ''), /to_address/i);
-    assert.equal(responses[2].status, 400);
-    assert.match(String(bodies[2].error || ''), /amount/i);
+    responses.forEach((res, index) => {
+      assert.equal(res.status, 400);
+      assert.match(String(bodies[index].error || ''), cases[index].error);
+    });
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

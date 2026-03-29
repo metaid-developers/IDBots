@@ -275,10 +275,15 @@ export function startMetaidRpcServer(
       }
 
       const chainRaw = String(parsed.chain || '').toLowerCase().trim();
+      if (!chainRaw) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'chain is required' }));
+        return;
+      }
       const chain = chainRaw === 'space' ? 'mvc' : chainRaw;
       if (chain !== 'mvc' && chain !== 'btc' && chain !== 'doge') {
         res.writeHead(400);
-        res.end(JSON.stringify({ success: false, error: 'chain is required' }));
+        res.end(JSON.stringify({ success: false, error: 'Unsupported chain' }));
         return;
       }
       const metabotId = Number(parsed.metabot_id);
@@ -295,12 +300,24 @@ export function startMetaidRpcServer(
       }
       const amountRaw = parsed.amount ?? '';
       const amount = typeof amountRaw === 'number' ? String(amountRaw) : String(amountRaw || '').trim();
-      if (!amount || !Number.isFinite(Number(amount))) {
+      const amountValue = Number(amount);
+      if (!amount || !Number.isFinite(amountValue) || amountValue <= 0) {
         res.writeHead(400);
-        res.end(JSON.stringify({ success: false, error: 'amount is required' }));
+        res.end(JSON.stringify({ success: false, error: 'amount must be positive' }));
         return;
       }
-      const feeRate = Number.isFinite(Number(parsed.fee_rate)) ? Number(parsed.fee_rate) : getGlobalFeeRate(chain);
+      let feeRate: number;
+      if (parsed.fee_rate != null) {
+        const feeRateValue = Number(parsed.fee_rate);
+        if (!Number.isFinite(feeRateValue) || feeRateValue <= 0) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'fee_rate must be positive' }));
+          return;
+        }
+        feeRate = feeRateValue;
+      } else {
+        feeRate = getGlobalFeeRate(chain);
+      }
 
       try {
         const result = await executeTransfer(getMetabotStore(), {
