@@ -51,6 +51,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [isAddressExpanded, setIsAddressExpanded] = useState(false);
   const [showBackupMnemonicModal, setShowBackupMnemonicModal] = useState(false);
   const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' | 'btc' } | null>(null);
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState(metabot.heartbeat_enabled || false);
 
   const refreshAllBalances = useCallback(() => {
     setBalance((prev) => ({ ...prev, loading: true }));
@@ -178,6 +179,47 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           <div
             className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
               metabot.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+            }`}
+          />
+        </div>
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-2 mt-2"
+        onClick={(e) => e.stopPropagation()}
+        role="presentation"
+      >
+        <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary flex items-center gap-1">
+          <span>💓</span>
+          <span>{i18nService.t('heartbeatToggle')}</span>
+        </span>
+        <div
+          className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
+            heartbeatEnabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!heartbeatEnabled) {
+              const confirmed = window.confirm(
+                `${i18nService.t('heartbeatConfirmTitle')}\n\n${i18nService.t('heartbeatConfirmMessage')}`
+              );
+              if (!confirmed) return;
+            }
+            const newEnabled = !heartbeatEnabled;
+            setHeartbeatEnabled(newEnabled);
+            window.electron.heartbeat
+              .toggle({ metabotId: metabot.id, enabled: newEnabled })
+              .catch(() => {
+                setHeartbeatEnabled(!newEnabled);
+              });
+          }}
+          role="switch"
+          aria-checked={heartbeatEnabled}
+          title={i18nService.t('heartbeatToggle')}
+        >
+          <div
+            className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+              heartbeatEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
             }`}
           />
         </div>
