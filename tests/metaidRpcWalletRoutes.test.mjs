@@ -43,7 +43,7 @@ async function startRpcServerForTest() {
   return startRpcServerForTestWithOverrides({});
 }
 
-async function startRpcServerForTestWithOverrides({ walletRawTxService = null } = {}) {
+async function startRpcServerForTestWithOverrides({ walletRawTxService = null, transferService = null } = {}) {
   const originalLoad = Module._load;
   Module._load = function patchedModuleLoad(request, parent, isMain) {
     if (request === 'electron') {
@@ -69,6 +69,9 @@ async function startRpcServerForTestWithOverrides({ walletRawTxService = null } 
     }
     if (walletRawTxService && (request === './walletRawTxService' || request.endsWith('/walletRawTxService'))) {
       return walletRawTxService;
+    }
+    if (transferService && (request === './transferService' || request.endsWith('/transferService'))) {
+      return transferService;
     }
     return originalLoad(request, parent, isMain);
   };
@@ -155,6 +158,143 @@ test('rpc routes expose account-summary, address-balance, and fee-rate-summary e
     assert.equal(typeof feeJson.defaultFeeRate, 'number');
   } finally {
     global.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('rpc transfer route forwards btc, doge, and space transfer requests through the same generic contract', async () => {
+  const calls = [];
+  const transferService = {
+    async executeTransfer(_store, params) {
+      calls.push(params);
+      return { success: true, txId: `tx-${params.chain}` };
+    },
+  };
+
+  const { server, baseUrl } = await startRpcServerForTestWithOverrides({ transferService });
+  try {
+    const responses = await Promise.all([
+      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metabot_id: 1,
+          chain: 'btc',
+          to_address: '1btc-recipient',
+          amount: '0.001',
+          fee_rate: 2,
+        }),
+      }),
+      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metabot_id: 1,
+          chain: 'doge',
+          to_address: 'DogeRecipient',
+          amount: '1.25',
+          fee_rate: 300000,
+        }),
+      }),
+      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metabot_id: 1,
+          chain: 'space',
+          to_address: '1space-recipient',
+          amount: '0.5',
+          fee_rate: 1,
+        }),
+      }),
+    ]);
+
+    const payloads = await Promise.all(responses.map((res) => res.json()));
+
+    assert.equal(payloads[0].success, true);
+    assert.equal(payloads[0].txid, 'tx-btc');
+    assert.equal(payloads[1].success, true);
+    assert.equal(payloads[1].txid, 'tx-doge');
+    assert.equal(payloads[2].success, true);
+    assert.equal(payloads[2].txid, 'tx-mvc');
+
+    assert.deepEqual(calls, [
+      {
+        metabotId: 1,
+        chain: 'btc',
+        toAddress: '1btc-recipient',
+        amountSpaceOrDoge: '0.001',
+        feeRate: 2,
+      },
+      {
+        metabotId: 1,
+        chain: 'doge',
+        toAddress: 'DogeRecipient',
+        amountSpaceOrDoge: '1.25',
+        feeRate: 300000,
+      },
+      {
+        metabotId: 1,
+        chain: 'mvc',
+        toAddress: '1space-recipient',
+        amountSpaceOrDoge: '0.5',
+        feeRate: 1,
+      },
+    ]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('rpc transfer route rejects unsupported chain or missing fields with 400', async () => {
+  const transferService = {
+    async executeTransfer() {
+      throw new Error('should not execute');
+    },
+  };
+  const { server, baseUrl } = await startRpcServerForTestWithOverrides({ transferService });
+  try {
+    const responses = await Promise.all([
+      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metabot_id: 1,
+          chain: 'eth',
+          to_address: '0xabc',
+          amount: '1',
+        }),
+      }),
+      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metabot_id: 1,
+          chain: 'btc',
+          amount: '1',
+        }),
+      }),
+      fetch(`${baseUrl}/api/idbots/wallet/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metabot_id: 1,
+          chain: 'doge',
+          to_address: 'DogeRecipient',
+          amount: 'abc',
+        }),
+      }),
+    ]);
+
+    const bodies = await Promise.all(responses.map((res) => res.json()));
+
+    assert.equal(responses[0].status, 400);
+    assert.match(String(bodies[0].error || ''), /chain/i);
+    assert.equal(responses[1].status, 400);
+    assert.match(String(bodies[1].error || ''), /to_address/i);
+    assert.equal(responses[2].status, 400);
+    assert.match(String(bodies[2].error || ''), /amount/i);
+  } finally {
     await new Promise((resolve) => server.close(resolve));
   }
 });
