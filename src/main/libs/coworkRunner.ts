@@ -366,6 +366,70 @@ function mergeNoProxyList(currentValue: string | undefined, requiredHosts: strin
   return items.join(',');
 }
 
+// ---------------------------------------------------------------------------
+// Delegation pattern detection
+// ---------------------------------------------------------------------------
+
+export interface DelegationRequest {
+  servicePinId: string;
+  serviceName: string;
+  providerGlobalMetaid: string;
+  price: string;
+  currency: string;
+  userTask: string;
+  taskContext: string;
+}
+
+const DELEGATE_REMOTE_SERVICE_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
+
+/**
+ * Detects and parses a `[DELEGATE_REMOTE_SERVICE]` message emitted by the LLM.
+ *
+ * Returns a validated {@link DelegationRequest} when all required fields are
+ * present, or `null` when the content does not match the expected pattern.
+ */
+export function parseDelegationMessage(content: string): DelegationRequest | null {
+  const idx = content.indexOf(DELEGATE_REMOTE_SERVICE_PREFIX);
+  if (idx === -1) return null;
+
+  const afterPrefix = content.slice(idx + DELEGATE_REMOTE_SERVICE_PREFIX.length);
+  const firstBrace = afterPrefix.indexOf('{');
+  const lastBrace = afterPrefix.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
+
+  const jsonStr = afterPrefix.slice(firstBrace, lastBrace + 1);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) return null;
+
+  const obj = parsed as Record<string, unknown>;
+
+  // Validate required fields
+  if (
+    typeof obj.servicePinId !== 'string' || !obj.servicePinId ||
+    typeof obj.serviceName !== 'string' || !obj.serviceName ||
+    typeof obj.providerGlobalMetaid !== 'string' || !obj.providerGlobalMetaid
+  ) {
+    return null;
+  }
+
+  return {
+    servicePinId: obj.servicePinId,
+    serviceName: obj.serviceName,
+    providerGlobalMetaid: obj.providerGlobalMetaid,
+    price: typeof obj.price === 'string' ? obj.price : '',
+    currency: typeof obj.currency === 'string' ? obj.currency : '',
+    userTask: typeof obj.userTask === 'string' ? obj.userTask : '',
+    taskContext: typeof obj.taskContext === 'string' ? obj.taskContext : '',
+  };
+}
+
 // Event types emitted by the runner
 export interface CoworkRunnerEvents {
   message: (sessionId: string, message: CoworkMessage) => void;
