@@ -144,6 +144,29 @@ test('payment proof sums outputs to the bot receiving address and rejects mismat
   }), /receiving address|amount/i);
 });
 
+test('payment proof rejects matching-address outputs with missing or invalid baseUnits', async () => {
+  await assert.rejects(() => verifyPaymentProof({
+    expectedReceivingAddress: 'bot-btc-address',
+    expectedBaseUnits: '10000',
+    paidBaseUnits: '10000',
+    expectedChain: 'btc',
+    txSourceResult: { chain: 'btc' },
+    txOutputs: [
+      { address: 'bot-btc-address' },
+    ],
+  }), /base units|amount|output/i);
+  await assert.rejects(() => verifyPaymentProof({
+    expectedReceivingAddress: 'bot-btc-address',
+    expectedBaseUnits: '10000',
+    paidBaseUnits: '10000',
+    expectedChain: 'btc',
+    txSourceResult: { chain: 'btc' },
+    txOutputs: [
+      { address: 'bot-btc-address', baseUnits: 'not-a-number' },
+    ],
+  }), /base units|amount|output/i);
+});
+
 test('duplicate execute for the same pay_txid returns the recorded terminal outcome', async () => {
   const state = createInMemoryTerminalState();
   await recordTerminalOutcome(state, 'txid-1', { mode: 'executed' });

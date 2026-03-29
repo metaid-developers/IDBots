@@ -20,8 +20,11 @@ function sumOutputsForAddress(txOutputs, expectedReceivingAddress) {
 
   return txOutputs.reduce((total, output) => {
     if (output?.address === expectedReceivingAddress) {
+      if (output.baseUnits === undefined || output.baseUnits === null) {
+        throw new Error('payment proof output base units are required.');
+      }
       const baseUnits = toBaseUnits(output.baseUnits, 'output base units');
-      return total + (baseUnits ?? 0n);
+      return total + baseUnits;
     }
     return total;
   }, 0n);
