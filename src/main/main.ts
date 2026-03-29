@@ -58,6 +58,8 @@ import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privat
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
+import { HeartbeatService } from './services/heartbeatService';
+import { HeartbeatPollingService, fetchHeartbeatFromChain } from './services/heartbeatPollingService';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -1776,6 +1778,8 @@ let serviceRefundSettlementService: ServiceRefundSettlementService | null = null
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
+let heartbeatService: HeartbeatService | null = null;
+let heartbeatPollingService: HeartbeatPollingService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -2098,6 +2102,25 @@ const getMetabotStore = () => {
   }
   return metabotStore;
 };
+
+function getHeartbeatService(): HeartbeatService {
+  if (!heartbeatService) {
+    heartbeatService = new HeartbeatService({
+      createPin,
+      getMetabotStore: () => getMetabotStore(),
+    });
+  }
+  return heartbeatService;
+}
+
+function getHeartbeatPollingService(): HeartbeatPollingService {
+  if (!heartbeatPollingService) {
+    heartbeatPollingService = new HeartbeatPollingService({
+      fetchHeartbeat: fetchHeartbeatFromChain,
+    });
+  }
+  return heartbeatPollingService;
+}
 
 const getServiceOrderStore = () => {
   if (!serviceOrderStore) {
@@ -5114,6 +5137,54 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
+  // --- Heartbeat IPC handlers ---
+
+  ipcMain.handle('heartbeat:toggle', async (_event, params: { metabotId: number; enabled: boolean }) => {
+    try {
+      const db = getStore().getDatabase();
+      const save = getStore().getSaveFunction();
+      db.run('UPDATE metabots SET heartbeat_enabled = ? WHERE id = ?', [params.enabled ? 1 : 0, params.metabotId]);
+      save();
+
+      if (params.enabled) {
+        getHeartbeatService().startHeartbeat(params.metabotId);
+      } else {
+        getHeartbeatService().stopHeartbeat(params.metabotId);
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to toggle heartbeat' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getStatus', async (_event, metabotId: number) => {
+    try {
+      const active = getHeartbeatService().isActive(metabotId);
+      return { success: true, active };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat status' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getOnlineServices', async () => {
+    try {
+      const services = getHeartbeatPollingService().availableServices;
+      return { success: true, services };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get online services' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getOnlineBots', async () => {
+    try {
+      const bots = Object.fromEntries(getHeartbeatPollingService().onlineBots);
+      return { success: true, bots };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get online bots' };
+    }
+  });
+
   ipcMain.handle('idbots:getAddressBalance', async (_event, options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) => {
     try {
       const store = getMetabotStore();
@@ -5986,6 +6057,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       },
       stopCognitiveOrchestrator,
       stopP2P: () => p2pIndexerService.stop(),
+      stopHeartbeatServices: () => {
+        if (heartbeatService) {
+          heartbeatService.stopAll();
+          heartbeatService = null;
+        }
+        if (heartbeatPollingService) {
+          heartbeatPollingService.stopPolling();
+          heartbeatPollingService = null;
+        }
+      },
       deactivateGroupChatTasks: () => {
         try {
           const db = getStore().getDatabase();
@@ -6131,6 +6212,27 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     setInterval(() => {
       void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
     }, 10 * 60 * 1000);
+
+    // Start heartbeats for MetaBots with heartbeat_enabled = 1
+    try {
+      const allBots = getMetabotStore().listMetabots();
+      for (const bot of allBots) {
+        if (bot.heartbeat_enabled) {
+          getHeartbeatService().startHeartbeat(bot.id);
+        }
+      }
+    } catch (e) { console.warn('[Heartbeat] Failed to start heartbeats:', e); }
+
+    // Start heartbeat polling for online service discovery
+    try {
+      getHeartbeatPollingService().startPolling(() => {
+        try {
+          return listRemoteSkillServicesFromDb().filter(
+            (s) => s.available !== 0 && (s.status ?? 0) >= 0
+          );
+        } catch { return []; }
+      });
+    } catch (e) { console.warn('[Heartbeat] Failed to start heartbeat polling:', e); }
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
     // Local skills (Cowork / Read-Bash) only when trigger is Boss (supervisor or metabot owner GlobalMetaID).

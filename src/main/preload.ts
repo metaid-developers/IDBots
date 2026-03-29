@@ -138,6 +138,16 @@ contextBridge.exposeInMainWorld('electron', {
       timeoutMs?: number;
     }) => ipcRenderer.invoke('gigSquare:pingProvider', params),
   },
+  heartbeat: {
+    toggle: (params: { metabotId: number; enabled: boolean }) =>
+      ipcRenderer.invoke('heartbeat:toggle', params),
+    getStatus: (metabotId: number) =>
+      ipcRenderer.invoke('heartbeat:getStatus', metabotId),
+    getOnlineServices: () =>
+      ipcRenderer.invoke('heartbeat:getOnlineServices'),
+    getOnlineBots: () =>
+      ipcRenderer.invoke('heartbeat:getOnlineBots'),
+  },
   appEvents: {
     onOpenSettings: (callback: () => void) => {
       const handler = () => callback();
