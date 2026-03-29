@@ -588,7 +588,18 @@ interface IElectronAPI {
         balance?: { btc?: { value: number; unit: string }; mvc?: { value: number; unit: string }; doge?: { value: number; unit: string } };
         error?: string;
       }>;
+    getMetabotWalletAssets: (input: { metabotId: number }) => Promise<{
+      success: boolean;
+      assets?: ElectronMetabotWalletAssets;
+      error?: string;
+    }>;
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => Promise<{
+      success: boolean;
+      list?: Array<{ title: string; desc: string; feeRate: number }>;
+      defaultFeeRate?: number;
+      error?: string;
+    }>;
+    getTokenTransferFeeSummary: (input: { kind: 'mrc20' | 'mvc-ft' }) => Promise<{
       success: boolean;
       list?: Array<{ title: string; desc: string; feeRate: number }>;
       defaultFeeRate?: number;
@@ -615,6 +626,27 @@ interface IElectronAPI {
       };
       error?: string;
     }>;
+    buildTokenTransferPreview: (params: {
+      kind: 'mrc20' | 'mvc-ft';
+      metabotId: number;
+      asset: ElectronTokenTransferAsset;
+      toAddress: string;
+      amount: string;
+      feeRate: number;
+    }) => Promise<{
+      success: boolean;
+      preview?: {
+        fromAddress: string;
+        toAddress: string;
+        amount: string;
+        amountUnit: string;
+        feeEstimated: string;
+        feeEstimatedUnit: string;
+        chainSymbol: 'BTC' | 'SPACE';
+        feeRate: number;
+      };
+      error?: string;
+    }>;
     executeTransfer: (params: {
       metabotId: number;
       chain: 'mvc' | 'doge' | 'btc';
@@ -622,6 +654,23 @@ interface IElectronAPI {
       amountSpaceOrDoge: string;
       feeRate: number;
     }) => Promise<{ success: boolean; txId?: string; error?: string }>;
+    executeTokenTransfer: (params: {
+      kind: 'mrc20' | 'mvc-ft';
+      metabotId: number;
+      asset: ElectronTokenTransferAsset;
+      toAddress: string;
+      amount: string;
+      feeRate: number;
+    }) => Promise<{
+      success: boolean;
+      result?: {
+        txId: string;
+        commitTxId?: string;
+        revealTxId?: string;
+        rawTx?: string;
+      };
+      error?: string;
+    }>;
     getMetaBotMnemonic: (metabotId: number) => Promise<{ success: boolean; mnemonic?: string; error?: string }>;
     deleteMetaBot: (metabotId: number) => Promise<{ success: boolean; error?: string }>;
     syncMetaBot: (metabotId: number) => Promise<{
@@ -758,6 +807,62 @@ interface IMSettings {
   systemPrompt?: string;
   skillsEnabled: boolean;
 }
+
+interface ElectronMrc20Asset {
+  kind: 'mrc20';
+  chain: 'btc';
+  symbol: string;
+  tokenName: string;
+  mrc20Id: string;
+  address: string;
+  decimal: number;
+  icon?: string;
+  balance: {
+    confirmed: string;
+    unconfirmed: string;
+    pendingIn: string;
+    pendingOut: string;
+    display: string;
+  };
+}
+
+interface ElectronMvcFtAsset {
+  kind: 'mvc-ft';
+  chain: 'mvc';
+  symbol: string;
+  tokenName: string;
+  genesis: string;
+  codeHash: string;
+  sensibleId?: string;
+  address: string;
+  decimal: number;
+  icon?: string;
+  balance: {
+    confirmed: string;
+    unconfirmed: string;
+    display: string;
+  };
+}
+
+interface ElectronNativeWalletAsset {
+  kind: 'native';
+  chain: 'btc' | 'doge' | 'mvc';
+  symbol: 'BTC' | 'DOGE' | 'SPACE';
+  address: string;
+  balance: {
+    confirmed: string;
+    display: string;
+  };
+}
+
+interface ElectronMetabotWalletAssets {
+  metabotId: number;
+  nativeAssets: ElectronNativeWalletAsset[];
+  mrc20Assets: ElectronMrc20Asset[];
+  mvcFtAssets: ElectronMvcFtAsset[];
+}
+
+type ElectronTokenTransferAsset = ElectronMrc20Asset | ElectronMvcFtAsset;
 
 interface IMGatewayStatus {
   dingtalk: DingTalkGatewayStatus;

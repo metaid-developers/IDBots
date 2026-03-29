@@ -10,6 +10,11 @@ import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
 import MetaBotBackupMnemonicModal from './MetaBotBackupMnemonicModal';
 import MetaBotTransferModal from './MetaBotTransferModal';
+import MetaBotWalletAssetsModal, {
+  type MetaBotWalletAssetsBundle,
+  type WalletDisplayAsset,
+} from './MetaBotWalletAssetsModal';
+import MetaBotTokenTransferModal, { type TokenTransferAsset } from './MetaBotTokenTransferModal';
 
 interface MetaBotListCardProps {
   metabot: Metabot;
@@ -51,6 +56,11 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [isAddressExpanded, setIsAddressExpanded] = useState(false);
   const [showBackupMnemonicModal, setShowBackupMnemonicModal] = useState(false);
   const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' | 'btc' } | null>(null);
+  const [showWalletAssetsModal, setShowWalletAssetsModal] = useState(false);
+  const [walletAssets, setWalletAssets] = useState<MetaBotWalletAssetsBundle | null>(null);
+  const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
+  const [walletAssetsError, setWalletAssetsError] = useState('');
+  const [tokenTransferAsset, setTokenTransferAsset] = useState<TokenTransferAsset | null>(null);
 
   const refreshAllBalances = useCallback(() => {
     setBalance((prev) => ({ ...prev, loading: true }));
@@ -75,6 +85,31 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
         });
       });
   }, [metabot.id]);
+
+  const refreshWalletAssets = useCallback(() => {
+    setWalletAssetsLoading(true);
+    setWalletAssetsError('');
+    return window.electron.idbots
+      .getMetabotWalletAssets({ metabotId: metabot.id })
+      .then((res) => {
+        if (!res.success || !res.assets) {
+          setWalletAssetsError(res.error || i18nService.t('metabotWalletAssetsLoadFailed'));
+          return;
+        }
+        setWalletAssets(res.assets);
+      })
+      .catch((error) => {
+        setWalletAssetsError(error instanceof Error ? error.message : i18nService.t('metabotWalletAssetsLoadFailed'));
+      })
+      .finally(() => {
+        setWalletAssetsLoading(false);
+      });
+  }, [metabot.id]);
+
+  useEffect(() => {
+    if (!showWalletAssetsModal) return;
+    void refreshWalletAssets();
+  }, [showWalletAssetsModal, refreshWalletAssets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +161,14 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const btcAddr = metabot.btc_address ?? '';
   const mvcAddr = metabot.mvc_address ?? '';
   const dogeAddr = metabot.doge_address ?? '';
+
+  const handleWalletAssetTransfer = (asset: WalletDisplayAsset) => {
+    if (asset.kind === 'native') {
+      setTransferModal({ chain: asset.chain });
+      return;
+    }
+    setTokenTransferAsset(asset);
+  };
 
   return (
     <>
@@ -344,7 +387,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
                 </button>
               </div>
             )}
-            <div className="pt-1">
+            <div className="pt-1 flex items-center gap-3">
               <button
                 type="button"
                 onClick={(e) => {
@@ -354,6 +397,16 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
                 className="text-xs text-claude-accent hover:underline"
               >
                 {i18nService.t('metabotBackupMnemonic')}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowWalletAssetsModal(true);
+                }}
+                className="text-xs text-claude-accent hover:underline"
+              >
+                {i18nService.t('metabotViewMoreTokenBalances')}
               </button>
             </div>
           </div>
@@ -365,6 +418,18 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           onClose={() => setShowBackupMnemonicModal(false)}
         />
       )}
+      <MetaBotWalletAssetsModal
+        isOpen={showWalletAssetsModal}
+        metabot={metabot}
+        assets={walletAssets}
+        loading={walletAssetsLoading}
+        error={walletAssetsError}
+        onClose={() => setShowWalletAssetsModal(false)}
+        onRefresh={() => {
+          void refreshWalletAssets();
+        }}
+        onTransfer={handleWalletAssetTransfer}
+      />
       {transferModal && (
         <MetaBotTransferModal
           metabot={metabot}
@@ -376,6 +441,17 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           onSuccess={() => {
             setTransferModal(null);
             void refreshAllBalances();
+          }}
+        />
+      )}
+      {tokenTransferAsset && (
+        <MetaBotTokenTransferModal
+          metabot={metabot}
+          asset={tokenTransferAsset}
+          onClose={() => setTokenTransferAsset(null)}
+          onSuccess={() => {
+            void refreshAllBalances();
+            void refreshWalletAssets();
           }}
         />
       )}
