@@ -9,8 +9,9 @@ const require = createRequire(import.meta.url);
 const Module = require('node:module');
 const { DB_FILENAME } = require('../dist-electron/appConstants.js');
 
+// Worktree is at <repoRoot>/.claude/worktrees/<name>/
+// Go up 3 levels from the worktree root to reach the repo root where node_modules lives.
 const worktreeRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-// Worktree is at <repoRoot>/.claude/worktrees/<name>/ — go up 3 levels to reach the repo root
 const repoRoot = path.resolve(worktreeRoot, '..', '..', '..');
 
 function patchElectron(userDataPath) {
@@ -63,9 +64,9 @@ test('heartbeat_enabled column defaults to 0 in metabots table', async () => {
     const db = sqliteStore.getDatabase();
 
     // Inspect the column default via PRAGMA table_info
+    // Each row: [cid, name, type, notnull, dflt_value, pk]
     const result = db.exec('PRAGMA table_info(metabots)');
     const rows = result[0]?.values || [];
-    // Each row: [cid, name, type, notnull, dflt_value, pk]
     const hbRow = rows.find((row) => String(row[1]) === 'heartbeat_enabled');
     assert(hbRow != null, 'heartbeat_enabled column not found in metabots table');
 
