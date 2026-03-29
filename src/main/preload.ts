@@ -417,7 +417,11 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('idbots:restoreMetaBotFromMnemonic', input),
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       ipcRenderer.invoke('idbots:getAddressBalance', options),
+    getMetabotWalletAssets: (input: { metabotId: number }) =>
+      ipcRenderer.invoke('idbots:getMetabotWalletAssets', input),
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
+    getTokenTransferFeeSummary: (input: { kind: 'mrc20' | 'mvc-ft' }) =>
+      ipcRenderer.invoke('idbots:getTokenTransferFeeSummary', input),
     buildTransferPreview: (params: {
       metabotId: number;
       chain: 'mvc' | 'doge' | 'btc';
@@ -425,6 +429,14 @@ contextBridge.exposeInMainWorld('electron', {
       amountSpaceOrDoge: string;
       feeRate: number;
     }) => ipcRenderer.invoke('idbots:buildTransferPreview', params),
+    buildTokenTransferPreview: (params: {
+      kind: 'mrc20' | 'mvc-ft';
+      metabotId: number;
+      asset: any;
+      toAddress: string;
+      amount: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:buildTokenTransferPreview', params),
     executeTransfer: (params: {
       metabotId: number;
       chain: 'mvc' | 'doge' | 'btc';
@@ -432,6 +444,14 @@ contextBridge.exposeInMainWorld('electron', {
       amountSpaceOrDoge: string;
       feeRate: number;
     }) => ipcRenderer.invoke('idbots:executeTransfer', params),
+    executeTokenTransfer: (params: {
+      kind: 'mrc20' | 'mvc-ft';
+      metabotId: number;
+      asset: any;
+      toAddress: string;
+      amount: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:executeTokenTransfer', params),
     getMetaBotMnemonic: (metabotId: number) => ipcRenderer.invoke('idbots:getMetaBotMnemonic', metabotId),
     deleteMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:deleteMetaBot', metabotId),
     syncMetaBot: (metabotId: number) => ipcRenderer.invoke('idbots:syncMetaBot', metabotId),

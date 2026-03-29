@@ -36,6 +36,7 @@ import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/meta
 import { fetchMetaidInfoByAddress, fetchMetaidInfoByMetaid, fetchMetaidRestoreProfile, type MetaidAddressInfo } from './services/metabotRestoreService';
 import { requestMvcGasSubsidy } from './services/mvcSubsidyService';
 import { getAddressBalance } from './services/addressBalanceService';
+import { getMetabotWalletAssets } from './services/metabotWalletAssetService';
 import {
   getFeeSummary,
   getDefaultFeeRate,
@@ -44,6 +45,12 @@ import {
   type TransferChain,
 } from './services/transferService';
 import { getRate as getGlobalFeeRate, getAllTiers as getGlobalFeeTiers } from './services/feeRateStore';
+import {
+  buildTokenTransferPreview as buildTokenTransferPreviewService,
+  executeTokenTransfer as executeTokenTransferService,
+  getTokenTransferChain,
+} from './services/metabotTokenTransferService';
+import { registerMetabotWalletIpcHandlers } from './services/metabotWalletIpc';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/metaidCore';
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
@@ -5216,6 +5223,29 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       }
     }
   );
+
+  registerMetabotWalletIpcHandlers({
+    ipcMain,
+    getMetabotStore,
+    getMetabotWalletAssets,
+    async getTokenTransferFeeSummary(kind) {
+      const chain = getTokenTransferChain(kind);
+      const globalTiers = getGlobalFeeTiers()[chain];
+      if (Array.isArray(globalTiers) && globalTiers.length > 0) {
+        return {
+          list: globalTiers,
+          defaultFeeRate: getGlobalFeeRate(chain),
+        };
+      }
+      const summary = await getFeeSummary(chain);
+      return {
+        list: summary.list,
+        defaultFeeRate: getDefaultFeeRate(chain, summary.list),
+      };
+    },
+    buildTokenTransferPreview: buildTokenTransferPreviewService,
+    executeTokenTransfer: executeTokenTransferService,
+  });
 
   ipcMain.handle('metabot:setEnabled', async (_event, id: number, enabled: boolean) => {
     try {
