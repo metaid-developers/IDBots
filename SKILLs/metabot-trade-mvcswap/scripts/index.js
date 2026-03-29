@@ -29,14 +29,20 @@ async function main() {
     writeStderr('  --amount-in <decimal>');
     writeStderr('  --token-symbol <symbol>');
     writeStderr('  --slippage-percent <decimal>   optional, default: 1');
+    writeStderr('  --metabot-id <int>             optional; overrides IDBOTS_METABOT_ID (Cowork injects env)');
     writeStderr('  -h, --help                     show this message');
     process.exit(0);
   }
 
   try {
+    const { metabotIdCli, ...tradeRequest } = parsed;
+    const env = { ...process.env };
+    if (metabotIdCli != null) {
+      env.IDBOTS_METABOT_ID = String(metabotIdCli);
+    }
     const result = await handleTradeRequest({
-      request: parsed,
-      env: process.env,
+      request: tradeRequest,
+      env,
       fetchImpl: fetch,
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);

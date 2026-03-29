@@ -465,6 +465,24 @@ test('token -> SPACE execute flow builds ft raw tx and mvc fee raw tx before tok
   assert.match(result.message, /交易已提交|TxID/i);
 });
 
+test('execute without MetaBot context fails with a Cowork-oriented message', async () => {
+  await assert.rejects(
+    () =>
+      handleTradeRequest({
+        request: {
+          action: 'execute',
+          direction: 'space_to_token',
+          amountIn: '10',
+          tokenSymbol: 'MC',
+          slippagePercent: 1,
+        },
+        env: { IDBOTS_RPC_URL: 'http://127.0.0.1:31200' },
+        fetchImpl: createFetchStubForQuote(),
+      }),
+    /MetaBot identity is not available|IDBOTS_METABOT_ID/i,
+  );
+});
+
 test('token -> SPACE execute flow rejects when the mvc fee tx has no change output for FT funding', async () => {
   const fetchImpl = async (url) => {
     const href = String(url);

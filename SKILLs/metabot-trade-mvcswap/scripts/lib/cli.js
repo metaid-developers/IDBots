@@ -5,7 +5,8 @@ const { parseArgs } = require('node:util');
 const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
 const ACTIONS = new Set(['quote', 'preview', 'execute']);
 const DIRECTIONS = new Set(['space_to_token', 'token_to_space']);
-const USAGE = 'Usage: node index.js --action <quote|preview|execute> --direction <space_to_token|token_to_space> --amount-in "<decimal>" --token-symbol "<symbol>" [--slippage-percent "<decimal>"]';
+const USAGE =
+  'Usage: node index.js --action <quote|preview|execute> --direction <space_to_token|token_to_space> --amount-in "<decimal>" --token-symbol "<symbol>" [--slippage-percent "<decimal>"] [--metabot-id <positive-integer>]';
 
 function normalizeTokenSymbol(token) {
   return String(token || '').trim().toUpperCase();
@@ -26,6 +27,7 @@ function parseTradeCliArgs(argv) {
       'amount-in': { type: 'string' },
       'token-symbol': { type: 'string' },
       'slippage-percent': { type: 'string' },
+      'metabot-id': { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
     allowPositionals: true,
@@ -65,12 +67,27 @@ function parseTradeCliArgs(argv) {
     fail('--slippage-percent must be a non-negative decimal');
   }
 
+  let metabotIdCli = null;
+  const rawMetabotId = values['metabot-id'];
+  if (rawMetabotId != null && String(rawMetabotId).trim() !== '') {
+    const idStr = String(rawMetabotId).trim();
+    if (!/^\d+$/.test(idStr)) {
+      fail('--metabot-id must be a positive integer');
+    }
+    const idNum = Number(idStr);
+    if (!Number.isInteger(idNum) || idNum < 1) {
+      fail('--metabot-id must be a positive integer');
+    }
+    metabotIdCli = idNum;
+  }
+
   return {
     action,
     direction,
     amountIn,
     tokenSymbol,
     slippagePercent: Number(rawSlippage),
+    metabotIdCli,
   };
 }
 

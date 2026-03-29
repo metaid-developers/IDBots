@@ -130,7 +130,9 @@ async function ensureSufficientSpaceBalance({ env, fetchImpl, metabotId, require
 async function executeTrade({ request, env, fetchImpl, context }) {
   const metabotId = Number(env?.IDBOTS_METABOT_ID || 0);
   if (!Number.isInteger(metabotId) || metabotId < 1) {
-    throw new Error('IDBOTS_METABOT_ID is required.');
+    throw new Error(
+      'MetaBot identity is not available (IDBOTS_METABOT_ID). Run this skill from IDBots Cowork so the current session MetaBot is injected, or pass --metabot-id for manual debugging only.',
+    );
   }
 
   const account = await getAccountSummary({ env, fetchImpl, metabotId });

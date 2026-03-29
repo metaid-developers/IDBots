@@ -21,6 +21,7 @@ test('parseTradeCliArgs parses a SPACE -> token quote request with explicit slip
     amountIn: '10',
     tokenSymbol: 'MC',
     slippagePercent: 0.5,
+    metabotIdCli: null,
   });
 });
 
@@ -37,6 +38,19 @@ test('parseTradeCliArgs uses the default slippage percent when omitted', () => {
   assert.equal(request.amountIn, '500');
   assert.equal(request.tokenSymbol, 'DOGE');
   assert.equal(request.slippagePercent, 1);
+  assert.equal(request.metabotIdCli, null);
+});
+
+test('parseTradeCliArgs accepts optional --metabot-id', () => {
+  const request = parseTradeCliArgs([
+    '--action', 'execute',
+    '--direction', 'space_to_token',
+    '--amount-in', '1',
+    '--token-symbol', 'METAID',
+    '--metabot-id', '42',
+  ]);
+
+  assert.equal(request.metabotIdCli, 42);
 });
 
 test('parseTradeCliArgs rejects missing required flags', () => {
