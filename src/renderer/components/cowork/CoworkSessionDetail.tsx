@@ -1647,6 +1647,32 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundActionError, setRefundActionError] = useState<string | null>(null);
+  const [delegationBlocking, setDelegationBlocking] = useState(false);
+
+  // Fetch initial delegation blocking state when session changes
+  useEffect(() => {
+    if (!currentSession?.id) {
+      setDelegationBlocking(false);
+      return;
+    }
+    let cancelled = false;
+    window.electron?.cowork?.isDelegationBlocking?.(currentSession.id)
+      .then((blocking: boolean) => {
+        if (!cancelled) setDelegationBlocking(!!blocking);
+      })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, [currentSession?.id]);
+
+  // Listen for delegation state changes from the main process
+  useEffect(() => {
+    const cleanup = window.electron?.cowork?.onDelegationStateChange?.((data) => {
+      if (data.sessionId === currentSession?.id) {
+        setDelegationBlocking(data.blocking);
+      }
+    });
+    return () => { cleanup?.(); };
+  }, [currentSession?.id]);
 
   // Fetch MetaBot when session has metabotId (for avatar/name and llm_id for model restriction)
   useEffect(() => {
@@ -2430,13 +2456,26 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         </div>
       ) : (
         <div className="p-4 shrink-0">
+          {delegationBlocking && (
+            <div className="max-w-3xl mx-auto mb-2">
+              <div className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                <svg className="animate-spin h-4 w-4 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="text-xs text-amber-700 dark:text-amber-300">
+                  {i18nService.t('delegationWaitingForResult')}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="max-w-3xl mx-auto">
             <CoworkPromptInput
               onSubmit={onContinue}
               onStop={onStop}
               isStreaming={isStreaming}
-              placeholder={i18nService.t('coworkContinuePlaceholder')}
-              disabled={false}
+              placeholder={delegationBlocking ? i18nService.t('delegationInputDisabledPlaceholder') : i18nService.t('coworkContinuePlaceholder')}
+              disabled={delegationBlocking}
               onManageSkills={onManageSkills}
               size="large"
               showModelSelector={true}
