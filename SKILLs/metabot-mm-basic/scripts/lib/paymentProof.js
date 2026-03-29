@@ -35,11 +35,11 @@ async function verifyPaymentProof({
   expectedReceivingAddress,
   txOutputs,
 } = {}) {
-  if (expectedChain && !txSourceResult) {
+  if (txSourceResult == null) {
     throw new Error('payment proof is not discoverable.');
   }
 
-  if (expectedChain && txSourceResult?.chain && txSourceResult.chain !== expectedChain) {
+  if (expectedChain && (!txSourceResult?.chain || txSourceResult.chain !== expectedChain)) {
     throw new Error('payment proof chain does not match expected chain.');
   }
 
@@ -52,7 +52,7 @@ async function verifyPaymentProof({
     }
   }
 
-  if (expected !== null && paidBaseUnits !== undefined) {
+  if (expected !== null) {
     const paid = toBaseUnits(paidBaseUnits, 'paid base units');
     if (paid !== expected) {
       throw new Error('paid amount does not exactly match requested amount.');

@@ -98,7 +98,7 @@ test('rejects missing or invalid mode', () => {
 
 test('payment verification rejects when normalized base units do not match exactly', async () => {
   await assert.rejects(
-    () => verifyPaymentProof({ expectedBaseUnits: '10000', paidBaseUnits: '9999' }),
+    () => verifyPaymentProof({ expectedBaseUnits: '10000', paidBaseUnits: '9999', txSourceResult: {} }),
     /amount/i
   );
 });
@@ -108,11 +108,16 @@ test('payment proof rejects txs that are missing, on the wrong chain, or absent 
     expectedChain: 'btc',
     txSourceResult: null,
   }), /discoverable|chain/i);
+  await assert.rejects(() => verifyPaymentProof({
+    expectedChain: 'btc',
+    txSourceResult: { chain: 'doge' },
+  }), /discoverable|chain/i);
 });
 
 test('payment proof sums outputs to the bot receiving address and rejects mismatched totals', async () => {
   await assert.rejects(() => verifyPaymentProof({
     expectedReceivingAddress: 'bot-btc-address',
+    txSourceResult: {},
     txOutputs: [
       { address: 'bot-btc-address', baseUnits: '5000' },
       { address: 'other', baseUnits: '5000' },
@@ -124,6 +129,7 @@ test('payment proof sums outputs to the bot receiving address and rejects mismat
 test('duplicate execute for the same pay_txid returns the recorded terminal outcome', async () => {
   const state = createInMemoryTerminalState();
   await recordTerminalOutcome(state, 'txid-1', { mode: 'executed' });
+  await recordTerminalOutcome(state, 'txid-1', { mode: 'refund_required' });
   const result = await getTerminalOutcome(state, 'txid-1');
   assert.equal(result.mode, 'executed');
 });
