@@ -985,7 +985,7 @@ export class SqliteStore {
       const hbColsResult = this.db.exec('PRAGMA table_info(metabots)');
       const hbColumns = (hbColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
       if (!hbColumns.includes('heartbeat_enabled')) {
-        this.db.run('ALTER TABLE metabots ADD COLUMN heartbeat_enabled INTEGER NOT NULL DEFAULT 0');
+        this.db.run('ALTER TABLE metabots ADD COLUMN heartbeat_enabled INTEGER DEFAULT 0');
         this.save();
       }
     } catch (error) {
