@@ -437,6 +437,7 @@ export interface CoworkRunnerEvents {
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
   complete: (sessionId: string, claudeSessionId: string | null) => void;
   error: (sessionId: string, error: string) => void;
+  'delegation:requested': (sessionId: string, delegation: DelegationRequest) => void;
 }
 
 export interface PermissionRequest {
@@ -4982,6 +4983,22 @@ export class CoworkRunner extends EventEmitter {
       });
       this.emit('messageUpdate', sessionId, currentStreamingMessageId, currentStreamingContent);
     }
+
+    // Check for delegation pattern in finalized content
+    if (currentStreamingContent) {
+      const delegation = parseDelegationMessage(currentStreamingContent);
+      if (delegation) {
+        // Mark this message as internal (suppress from user view) by updating metadata
+        if (currentStreamingMessageId) {
+          this.updateMessageMerged(sessionId, currentStreamingMessageId, {
+            metadata: { isStreaming: false, isDelegationInternal: true },
+          });
+        }
+        // Emit delegation event for the pipeline handler in main.ts
+        this.emit('delegation:requested', sessionId, delegation);
+      }
+    }
+
     activeSession.currentStreamingMessageId = null;
     activeSession.currentStreamingContent = '';
     activeSession.currentStreamingTextTruncated = false;
