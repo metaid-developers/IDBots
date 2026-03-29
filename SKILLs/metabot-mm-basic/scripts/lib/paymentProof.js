@@ -39,24 +39,40 @@ async function verifyPaymentProof({
     throw new Error('payment proof is not discoverable.');
   }
 
-  if (expectedChain && (!txSourceResult?.chain || txSourceResult.chain !== expectedChain)) {
+  if (!expectedChain) {
+    throw new Error('expected chain is required.');
+  }
+
+  if (!txSourceResult?.chain || txSourceResult.chain !== expectedChain) {
     throw new Error('payment proof chain does not match expected chain.');
+  }
+
+  if (expectedBaseUnits === undefined || expectedBaseUnits === null) {
+    throw new Error('expected base units are required.');
+  }
+
+  if (paidBaseUnits === undefined || paidBaseUnits === null) {
+    throw new Error('paid base units are required.');
+  }
+
+  if (!expectedReceivingAddress) {
+    throw new Error('expected receiving address is required.');
+  }
+
+  if (!Array.isArray(txOutputs)) {
+    throw new Error('payment proof outputs are not discoverable.');
   }
 
   const expected = toBaseUnits(expectedBaseUnits, 'expected base units');
 
-  if (expectedReceivingAddress) {
-    const observed = sumOutputsForAddress(txOutputs, expectedReceivingAddress);
-    if (expected !== null && observed !== expected) {
-      throw new Error('payment receiving address amount mismatch.');
-    }
+  const observed = sumOutputsForAddress(txOutputs, expectedReceivingAddress);
+  if (observed !== expected) {
+    throw new Error('payment receiving address amount mismatch.');
   }
 
-  if (expected !== null) {
-    const paid = toBaseUnits(paidBaseUnits, 'paid base units');
-    if (paid !== expected) {
-      throw new Error('paid amount does not exactly match requested amount.');
-    }
+  const paid = toBaseUnits(paidBaseUnits, 'paid base units');
+  if (paid !== expected) {
+    throw new Error('paid amount does not exactly match requested amount.');
   }
 
   return { ok: true };
@@ -67,8 +83,9 @@ function sleep(ms) {
 }
 
 async function verifyWithRetry(options, txLookup) {
-  const { txid, retryDelayMs = 5000 } = options || {};
+  const { txid, retryDelayMs = 5000, sleep: injectedSleep } = options || {};
   let attempts = 0;
+  const wait = typeof injectedSleep === 'function' ? injectedSleep : sleep;
 
   const lookup = async () => {
     attempts += 1;
@@ -77,7 +94,7 @@ async function verifyWithRetry(options, txLookup) {
 
   let txSourceResult = await lookup();
   if (!txSourceResult) {
-    await sleep(retryDelayMs);
+    await wait(retryDelayMs);
     txSourceResult = await lookup();
   }
 

@@ -16,9 +16,18 @@ function buildIdempotencyKey({
   direction,
   payerGlobalmetaid,
 }) {
+  if (!payTxid) {
+    throw new Error('payTxid is required.');
+  }
+
   if (serviceOrderPinId) {
     return `${serviceOrderPinId}:${payTxid}`;
   }
+
+  if (!pair || !direction || !payerGlobalmetaid) {
+    throw new Error('payTxid, pair, direction, and payerGlobalmetaid are required.');
+  }
+
   return `${payTxid}:${pair}:${direction}:${payerGlobalmetaid}`;
 }
 
