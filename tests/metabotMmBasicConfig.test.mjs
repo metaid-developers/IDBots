@@ -117,3 +117,14 @@ test('loadConfig rereads the JSON file on each quote/execute call instead of cac
   assert.equal(first.pairs['BTC/SPACE'].spread_bps, 200);
   assert.equal(second.pairs['BTC/SPACE'].spread_bps, 300);
 });
+
+test('config example file stays in sync with the runtime schema', () => {
+  const examplePath = path.resolve(process.cwd(), 'SKILLs', 'metabot-mm-basic', 'config.example.json');
+  const raw = fs.readFileSync(examplePath, 'utf8');
+  const parsed = JSON.parse(raw);
+  const validated = validateConfig(parsed);
+
+  assert.equal(validated.market_data.provider, 'cex');
+  assert.ok(validated.pairs['BTC/SPACE']);
+  assert.ok(validated.pairs['DOGE/SPACE']);
+});

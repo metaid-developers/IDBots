@@ -127,6 +127,18 @@ official: true
 
 ## 精确命令格式
 
+运行时配置文件默认路径：
+
+```text
+$IDBOTS_USER_DATA_PATH/metabot-mm-basic/config.json
+```
+
+仓库内提供了一份可直接复制并修改的样例：
+
+```text
+$SKILLS_ROOT/metabot-mm-basic/config.example.json
+```
+
 ### 1. 查询支持交易对
 
 ```bash
