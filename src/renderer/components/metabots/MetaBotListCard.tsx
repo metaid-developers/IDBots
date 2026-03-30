@@ -194,17 +194,14 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           <span>💓</span>
           <span>{i18nService.t('heartbeatToggle')}</span>
         </span>
-        <button
-          type="button"
+        <div
           className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
             heartbeatEnabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
           }`}
           onClick={(e) => {
             e.stopPropagation();
-            e.preventDefault();
             const newEnabled = !heartbeatEnabled;
             if (newEnabled) {
-              // Show confirmation for enabling
               const msg = `${i18nService.t('heartbeatConfirmTitle')}\n\n${i18nService.t('heartbeatConfirmMessage')}`;
               if (!confirm(msg)) return;
             }
@@ -213,12 +210,12 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
               .toggle({ metabotId: metabot.id, enabled: newEnabled })
               .then((res: any) => {
                 if (!res?.success) {
-                  console.error('[HeartbeatToggle] toggle failed:', res?.error);
+                  console.error('[HeartbeatToggle] failed:', res?.error);
                   setHeartbeatEnabled(!newEnabled);
                 }
               })
               .catch((err: any) => {
-                console.error('[HeartbeatToggle] toggle error:', err);
+                console.error('[HeartbeatToggle] error:', err);
                 setHeartbeatEnabled(!newEnabled);
               });
           }}
@@ -231,7 +228,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
               heartbeatEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
             }`}
           />
-        </button>
+        </div>
       </div>
 
       {metabot.goal && (
