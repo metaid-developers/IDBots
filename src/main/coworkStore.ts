@@ -414,6 +414,7 @@ export interface CoworkMessageMetadata {
   isError?: boolean;
   isStreaming?: boolean;
   isFinal?: boolean;
+  isDelegationInternal?: boolean;
   skillIds?: string[];
   suppressRunningStatus?: boolean;
   [key: string]: unknown;
@@ -2020,6 +2021,17 @@ export class CoworkStore implements MemoryBackend {
     `, values);
 
     this.saveDb();
+  }
+
+  deleteMessage(sessionId: string, messageId: string): void {
+    this.db.run(`
+      DELETE FROM cowork_messages
+      WHERE id = ? AND session_id = ?
+    `, [messageId, sessionId]);
+
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
   }
 
   // Config operations

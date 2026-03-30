@@ -81,6 +81,7 @@ import {
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
+import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
 import {
   extractSessionOrderTxid,
@@ -1984,24 +1985,47 @@ const executeDelegationPipeline = async (
     return;
   }
 
-  // -----------------------------------------------------------------------
-  // Step 2: PING/PONG handshake
-  // -----------------------------------------------------------------------
-  injectDelegationSystemMessage(
-    sessionId,
-    `Checking availability of "${delegation.serviceName}" provider...`
-  );
-  emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
-
-  let chatPubkey: string | null = null;
+  const serviceOrderLifecycle = getServiceOrderLifecycleService();
+  let releaseBuyerOrderCreation: (() => void) | null = null;
   try {
-    chatPubkey = await resolveChatPubkeyForProvider(
-      providerGlobalMetaId,
-      toSafeString(service.providerMetaId).trim() || undefined
+    releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
+      metabotId,
+      providerGlobalMetaId
     );
   } catch (error) {
-    console.warn(LOG_TAG, 'Failed to resolve chat pubkey:', error);
+    if (
+      error instanceof ServiceOrderOpenOrderExistsError ||
+      error instanceof ServiceOrderSelfOrderNotAllowedError
+    ) {
+      injectDelegationSystemMessage(
+        sessionId,
+        `Delegation blocked: ${error.message}`
+      );
+      emitDelegationStateChange({ sessionId, blocking: false, message: 'Order unavailable' });
+      return;
+    }
+    throw error;
   }
+
+  try {
+    // -----------------------------------------------------------------------
+    // Step 2: PING/PONG handshake
+    // -----------------------------------------------------------------------
+    injectDelegationSystemMessage(
+      sessionId,
+      `Checking availability of "${delegation.serviceName}" provider...`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
+
+    let chatPubkey: string | null = null;
+    try {
+      chatPubkey = await resolveChatPubkeyForProvider(
+        providerGlobalMetaId,
+        toSafeString(service.providerMetaId).trim() || undefined
+      );
+    } catch (error) {
+      console.warn(LOG_TAG, 'Failed to resolve chat pubkey:', error);
+    }
 
   if (!chatPubkey) {
     injectDelegationSystemMessage(
@@ -2200,14 +2224,28 @@ const executeDelegationPipeline = async (
   // -----------------------------------------------------------------------
   // Step 5: Create buyer order via ServiceOrderLifecycleService
   // -----------------------------------------------------------------------
-  const serviceOrderLifecycle = getServiceOrderLifecycleService();
-  let orderId = '';
-  try {
-    const releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
-      metabotId,
-      providerGlobalMetaId
-    );
+    try {
+      const observerSession = await ensureBuyerOrderObserverSession(coworkStoreInst, {
+        metabotId,
+        peerGlobalMetaId: providerGlobalMetaId,
+        peerName: toSafeString(service.providerMetaBot || service.providerName).trim() || null,
+        peerAvatar: toSafeString(service.avatar).trim() || null,
+        serviceId: delegation.servicePinId,
+        servicePrice: price,
+        serviceCurrency: normalizedCurrency,
+        serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
+        serverBotGlobalMetaId: providerGlobalMetaId,
+        servicePaidTx: paymentTxid,
+        orderPayload,
+      });
+      if (observerSession.initialMessage) {
+        emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
+      }
+    } catch (error) {
+      console.warn(LOG_TAG, 'Failed to create buyer observer session:', error);
+    }
 
+    let orderId = '';
     try {
       const order = serviceOrderLifecycle.createBuyerOrder({
         localMetabotId: metabotId,
@@ -2223,53 +2261,53 @@ const executeDelegationPipeline = async (
       });
       orderId = order.id;
       console.log(LOG_TAG, 'Buyer order created, id:', orderId);
-    } finally {
-      releaseBuyerOrderCreation();
-    }
-  } catch (error) {
-    if (
-      error instanceof ServiceOrderOpenOrderExistsError ||
-      error instanceof ServiceOrderSelfOrderNotAllowedError
-    ) {
-      console.warn(LOG_TAG, 'Order creation blocked:', error.message);
+    } catch (error) {
+      if (
+        error instanceof ServiceOrderOpenOrderExistsError ||
+        error instanceof ServiceOrderSelfOrderNotAllowedError
+      ) {
+        console.warn(LOG_TAG, 'Order creation blocked:', error.message);
+        injectDelegationSystemMessage(
+          sessionId,
+          `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
+        );
+        emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
+        return;
+      }
+      console.error(LOG_TAG, 'Failed to create buyer order:', error);
       injectDelegationSystemMessage(
         sessionId,
-        `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
+        `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
       );
-      emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
-      return;
+      // Continue to blocking mode even if order tracking failed — the order was sent
     }
-    console.error(LOG_TAG, 'Failed to create buyer order:', error);
+
+    // -----------------------------------------------------------------------
+    // Step 6: Enter delegation blocking mode
+    // -----------------------------------------------------------------------
+    coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
+
+    const txLink = `https://whatsonchain.com/tx/${paymentTxid}`;
     injectDelegationSystemMessage(
       sessionId,
-      `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
+      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\nPayment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
     );
-    // Continue to blocking mode even if order tracking failed — the order was sent
+
+    emitDelegationStateChange({
+      sessionId,
+      blocking: true,
+      orderId: orderId || paymentTxid,
+      message: `Waiting for delivery from "${delegation.serviceName}"`,
+    });
+
+    console.log(LOG_TAG, 'Delegation pipeline complete, session is now in blocking mode', {
+      sessionId,
+      orderId,
+      paymentTxid,
+    });
+  } finally {
+    releaseBuyerOrderCreation?.();
   }
-
-  // -----------------------------------------------------------------------
-  // Step 6: Enter delegation blocking mode
-  // -----------------------------------------------------------------------
-  coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
-
-  const txLink = `https://whatsonchain.com/tx/${paymentTxid}`;
-  injectDelegationSystemMessage(
-    sessionId,
-    `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\nPayment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
-  );
-
-  emitDelegationStateChange({
-    sessionId,
-    blocking: true,
-    orderId: orderId || paymentTxid,
-    message: `Waiting for delivery from "${delegation.serviceName}"`,
-  });
-
-  console.log(LOG_TAG, 'Delegation pipeline complete, session is now in blocking mode', {
-    sessionId,
-    orderId,
-    paymentTxid,
-  });
 };
 
 const getCoworkRunner = () => {
@@ -5418,72 +5456,24 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         payload: payloadStr,
       });
 
-      // Create buyer-side observer session so MetaBot A can watch the conversation.
-      // Each order gets its own session (keyed by txid so retries don't duplicate).
       let coworkSessionId: string | null = null;
       try {
-        const coworkStoreInst = getCoworkStore();
-        const txidForKey = (result.txids?.[0] || '').slice(0, 16) || String(Date.now());
-        const externalConversationId = `metaweb_order:buyer:${metabotId}:${toGlobalMetaId}:${txidForKey}`;
-        const existing = coworkStoreInst.getConversationMapping('metaweb_order', externalConversationId, metabotId);
-        if (!existing) {
-          const config = coworkStoreInst.getConfig();
-          const fallbackTitle = orderPayload.split('\n')[0].slice(0, 50)
-            || `Order-${(peerName || toGlobalMetaId).slice(0, 20)}`;
-          const generatedTitle = await generateSessionTitle(orderPayload).catch(() => null);
-          const sessionTitle = generatedTitle?.trim() || fallbackTitle;
-          const session = coworkStoreInst.createSession(
-            sessionTitle,
-            config.workingDirectory,
-            '',
-            'local',
-            [],
-            metabotId,
-            'a2a',
-            toGlobalMetaId,
-            peerName,
-            peerAvatar
-          );
-          coworkStoreInst.upsertConversationMapping({
-            channel: 'metaweb_order',
-            externalConversationId,
-            metabotId,
-            coworkSessionId: session.id,
-            metadataJson: JSON.stringify({
-              role: 'buyer',
-              peerGlobalMetaId: toGlobalMetaId,
-              peerName,
-              peerAvatar,
-              serviceId,
-              servicePrice,
-              serviceCurrency,
-              serviceSkill,
-              serverBotGlobalMetaId,
-              servicePaidTx: servicePaidTx || null,
-            }),
-          });
-          // Add the order message as the first message — direction:'outgoing' so it shows on the right.
-          // Do NOT set senderName/senderAvatar here: those fields identify the *peer* sender.
-          // The local MetaBot's name/avatar come from the session's metabotName/metabotAvatar.
-          const initialMessage = coworkStoreInst.addMessage(session.id, {
-            type: 'user',
-            content: orderPayload,
-            metadata: {
-              sourceChannel: 'metaweb_order',
-              externalConversationId,
-              direction: 'outgoing',
-            },
-          });
-          // Notify renderer immediately so the session appears without restart
-          const safeMsg = sanitizeCoworkMessageForIpc(initialMessage);
-          BrowserWindow.getAllWindows().forEach(win => {
-            if (!win.isDestroyed()) {
-              try { win.webContents.send('cowork:stream:message', { sessionId: session.id, message: safeMsg }); } catch { /* ignore */ }
-            }
-          });
-          coworkSessionId = session.id;
-        } else {
-          coworkSessionId = existing.coworkSessionId;
+        const observerSession = await ensureBuyerOrderObserverSession(getCoworkStore(), {
+          metabotId,
+          peerGlobalMetaId: toGlobalMetaId,
+          peerName,
+          peerAvatar,
+          serviceId,
+          servicePrice,
+          serviceCurrency,
+          serviceSkill,
+          serverBotGlobalMetaId,
+          servicePaidTx,
+          orderPayload,
+        });
+        coworkSessionId = observerSession.coworkSessionId;
+        if (observerSession.initialMessage) {
+          emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
         }
       } catch (sessionErr) {
         console.warn('[GigSquare] Failed to create buyer observer session:', sessionErr);

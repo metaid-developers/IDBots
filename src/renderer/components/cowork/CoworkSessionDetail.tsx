@@ -125,6 +125,7 @@ const getStringArray = (value: unknown): string | null => {
 
 const ORDER_PREFIX = '[ORDER]';
 const DELIVERY_PREFIX = '[DELIVERY]';
+const DELEGATION_CONTROL_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
 
 type GigSquareOrderPayload = {
   txid?: string;
@@ -670,12 +671,23 @@ type ConversationTurn = {
   assistantItems: AssistantTurnItem[];
 };
 
+const shouldHideControlMessage = (message: CoworkMessage): boolean => {
+  if (message.metadata?.isDelegationInternal) {
+    return true;
+  }
+  return typeof message.content === 'string' && message.content.includes(DELEGATION_CONTROL_PREFIX);
+};
+
 const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
   const items: DisplayItem[] = [];
   const groupsByToolUseId = new Map<string, ToolGroupItem>();
   let pendingAdjacentGroup: ToolGroupItem | null = null;
 
   for (const message of messages) {
+    if (shouldHideControlMessage(message)) {
+      continue;
+    }
+
     if (message.type === 'tool_use') {
       const group: ToolGroupItem = { type: 'tool_group', toolUse: message };
       items.push(group);
@@ -2419,7 +2431,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         className="flex-1 overflow-y-auto min-h-0 pt-3"
       >
         {isA2ASession ? (
-          currentSession.messages.map((msg) => (
+          currentSession.messages.filter((msg) => !shouldHideControlMessage(msg)).map((msg) => (
             <A2AMessageItem
               key={msg.id}
               message={msg}

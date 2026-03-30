@@ -2,6 +2,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
+  it('detects delegation control prefix anywhere in assistant content', async () => {
+    const { containsDelegationControlPrefix } = await import('../dist-electron/libs/coworkRunner.js');
+    assert.equal(containsDelegationControlPrefix('normal reply'), false);
+    assert.equal(
+      containsDelegationControlPrefix('I will hand this off now.\n[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"p1"}'),
+      true
+    );
+  });
+
   it('parses valid delegation message', async () => {
     const { parseDelegationMessage } = await import('../dist-electron/libs/coworkRunner.js');
     const content = `[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"pin123","serviceName":"Test Service","providerGlobalMetaid":"gm456","price":"200","currency":"SPACE","userTask":"translate article","taskContext":"article text"}`;

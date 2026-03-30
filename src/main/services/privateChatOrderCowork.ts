@@ -88,6 +88,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       confirmationMode: 'text',
       systemPrompt: request.systemPrompt,
       autoApprove: true,
+      disableRemoteServicesPrompt: true,
     }).catch((error) => {
       this.rejectAccumulator(sessionId, error instanceof Error ? error : new Error(String(error)));
     });
