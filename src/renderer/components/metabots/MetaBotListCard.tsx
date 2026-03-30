@@ -201,10 +201,6 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           onClick={(e) => {
             e.stopPropagation();
             const newEnabled = !heartbeatEnabled;
-            if (newEnabled) {
-              const msg = `${i18nService.t('heartbeatConfirmTitle')}\n\n${i18nService.t('heartbeatConfirmMessage')}`;
-              if (!confirm(msg)) return;
-            }
             setHeartbeatEnabled(newEnabled);
             window.electron.heartbeat
               .toggle({ metabotId: metabot.id, enabled: newEnabled })
