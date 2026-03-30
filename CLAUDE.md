@@ -96,6 +96,7 @@ The `man-p2p` binary runs as a managed subprocess. Key services:
 ## Key Rules
 
 - **IPC boundary**: never bypass IPC. All renderer↔main communication goes through `preload.ts` contextBridge.
+- **No window.confirm/alert in renderer**: `window.confirm()` and `window.alert()` are blocked or hidden by Electron in this app. Use React state-based modals for user confirmations instead.
 - **Local-first**: local P2P/API hit first, remote/MetaID fallback only when local semantics miss.
 - **P2P truth model**: healthy + `peerCount === 0` → online peerless state (not "Connecting..."); startup failure → offline with error detail.
 - **DB safety**: never delete/reset user data. Schema changes need idempotent first-run migrations. Treat user SQLite as persistent upgrade state.

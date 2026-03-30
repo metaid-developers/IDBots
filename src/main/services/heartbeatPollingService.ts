@@ -1,5 +1,5 @@
 const HEARTBEAT_ONLINE_WINDOW_SEC = 6 * 60; // 6 minutes
-const HEARTBEAT_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const HEARTBEAT_POLL_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
 const MANAPI_HOST = 'https://manapi.metaid.io';
 
 export interface HeartbeatDeps {
