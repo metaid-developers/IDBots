@@ -187,29 +187,38 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
       <div
         className="flex items-center justify-between gap-2 mt-2"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
         role="presentation"
       >
         <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary flex items-center gap-1">
           <span>💓</span>
           <span>{i18nService.t('heartbeatToggle')}</span>
         </span>
-        <div
+        <button
+          type="button"
           className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
             heartbeatEnabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
           }`}
           onClick={(e) => {
             e.stopPropagation();
-            if (!heartbeatEnabled) {
-              const confirmed = window.confirm(
-                `${i18nService.t('heartbeatConfirmTitle')}\n\n${i18nService.t('heartbeatConfirmMessage')}`
-              );
-              if (!confirmed) return;
-            }
+            e.preventDefault();
             const newEnabled = !heartbeatEnabled;
+            if (newEnabled) {
+              // Show confirmation for enabling
+              const msg = `${i18nService.t('heartbeatConfirmTitle')}\n\n${i18nService.t('heartbeatConfirmMessage')}`;
+              if (!confirm(msg)) return;
+            }
             setHeartbeatEnabled(newEnabled);
             window.electron.heartbeat
               .toggle({ metabotId: metabot.id, enabled: newEnabled })
-              .catch(() => {
+              .then((res: any) => {
+                if (!res?.success) {
+                  console.error('[HeartbeatToggle] toggle failed:', res?.error);
+                  setHeartbeatEnabled(!newEnabled);
+                }
+              })
+              .catch((err: any) => {
+                console.error('[HeartbeatToggle] toggle error:', err);
                 setHeartbeatEnabled(!newEnabled);
               });
           }}
@@ -222,7 +231,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
               heartbeatEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
             }`}
           />
-        </div>
+        </button>
       </div>
 
       {metabot.goal && (
