@@ -81,12 +81,14 @@ import {
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
+import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
 import {
   extractSessionOrderTxid,
   findMatchingOrderSessionId,
   resolveOrderSessionId,
   selectProtocolPinContent,
 } from './services/serviceOrderSessionResolution.js';
+import { publishServiceOrderEventToCowork as publishServiceOrderEventToCoworkStore } from './services/serviceOrderCoworkBridge';
 import {
   isRemoteSkillServiceListSemanticMiss,
   parseRemoteSkillServiceRow,
@@ -315,41 +317,17 @@ const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
   });
 };
 
-const buildServiceOrderEventMessage = (
-  type: 'refund_requested' | 'refunded',
-  order: ServiceOrderRecord
-): string => {
-  if (type === 'refund_requested') {
-    if (order.role === 'seller') {
-      const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
-      return `系统提示：买家已发起全额退款申请，请人工处理。${pinId}`.trim();
-    }
-    const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
-    return `系统提示：服务订单已超时，已自动发起全额退款申请。${pinId}`.trim();
-  }
-
-  const refundTxid = order.refundTxid ? ` 退款 txid：${order.refundTxid}` : '';
-  return `系统提示：退款已处理完成。${refundTxid}`.trim();
-};
-
 const publishServiceOrderEventToCowork = (
   type: 'refund_requested' | 'refunded',
   order: ServiceOrderRecord
 ): void => {
-  if (!order.coworkSessionId) return;
-  const message = getCoworkStore().addMessage(order.coworkSessionId, {
-    type: 'system',
-    content: buildServiceOrderEventMessage(type, order),
-    metadata: {
-      sourceChannel: 'metaweb_order',
-      refreshSessionSummary: true,
-      serviceOrderEvent: type,
-      paymentTxid: order.paymentTxid,
-      refundRequestPinId: order.refundRequestPinId,
-      refundTxid: order.refundTxid,
-    },
-  });
-  emitCoworkStreamMessage(order.coworkSessionId, message);
+  const result = publishServiceOrderEventToCoworkStore(getCoworkStore(), type, order);
+  if (result.message && order.coworkSessionId) {
+    emitCoworkStreamMessage(order.coworkSessionId, result.message);
+  }
+  if (result.delegationStateChange) {
+    emitDelegationStateChange(result.delegationStateChange);
+  }
 };
 
 
@@ -1994,6 +1972,19 @@ const executeDelegationPipeline = async (
   const providerGlobalMetaId = toSafeString(service.providerGlobalMetaId || service.globalMetaId).trim();
 
   // -----------------------------------------------------------------------
+  // Step 1b: Self-order guard — reject before payment if buyer === provider
+  // -----------------------------------------------------------------------
+  const buyerGlobalMetaId = (metabot.globalmetaid || '').trim();
+  if (buyerGlobalMetaId && providerGlobalMetaId && buyerGlobalMetaId === providerGlobalMetaId) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation rejected: a MetaBot cannot order its own service. Provider "${delegation.serviceName}" belongs to the same MetaBot.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Self-order rejected' });
+    return;
+  }
+
+  // -----------------------------------------------------------------------
   // Step 2: PING/PONG handshake
   // -----------------------------------------------------------------------
   injectDelegationSystemMessage(
@@ -2164,18 +2155,15 @@ const executeDelegationPipeline = async (
   );
   emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
 
-  const orderPayload = JSON.stringify({
-    type: 'order',
-    serviceId: delegation.servicePinId,
-    serviceName: delegation.serviceName,
-    task: delegation.userTask,
+  const orderPayload = buildDelegationOrderPayload({
     taskContext: delegation.taskContext,
+    userTask: delegation.userTask,
+    serviceName: delegation.serviceName || service.serviceName || service.displayName,
+    providerSkill: toSafeString(service.providerSkill).trim(),
+    servicePinId: delegation.servicePinId,
+    paymentTxid,
     price,
     currency: normalizedCurrency,
-    paidTx: paymentTxid,
-    buyerGlobalMetaId: metabot.globalmetaid || '',
-    buyerName: metabot.name || '',
-    timestamp: Math.floor(Date.now() / 1000),
   });
 
   let orderPinId: string | null = null;
