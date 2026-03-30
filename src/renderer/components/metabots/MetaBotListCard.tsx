@@ -52,6 +52,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [showBackupMnemonicModal, setShowBackupMnemonicModal] = useState(false);
   const [transferModal, setTransferModal] = useState<{ chain: 'mvc' | 'doge' | 'btc' } | null>(null);
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(metabot.heartbeat_enabled || false);
+  const [showHeartbeatConfirm, setShowHeartbeatConfirm] = useState(false);
 
   const refreshAllBalances = useCallback(() => {
     setBalance((prev) => ({ ...prev, loading: true }));
@@ -200,19 +201,23 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           }`}
           onClick={(e) => {
             e.stopPropagation();
-            const newEnabled = !heartbeatEnabled;
-            setHeartbeatEnabled(newEnabled);
+            if (!heartbeatEnabled) {
+              setShowHeartbeatConfirm(true);
+              return;
+            }
+            // Toggling OFF — no confirmation needed
+            setHeartbeatEnabled(false);
             window.electron.heartbeat
-              .toggle({ metabotId: metabot.id, enabled: newEnabled })
+              .toggle({ metabotId: metabot.id, enabled: false })
               .then((res: any) => {
                 if (!res?.success) {
                   console.error('[HeartbeatToggle] failed:', res?.error);
-                  setHeartbeatEnabled(!newEnabled);
+                  setHeartbeatEnabled(true);
                 }
               })
               .catch((err: any) => {
                 console.error('[HeartbeatToggle] error:', err);
-                setHeartbeatEnabled(!newEnabled);
+                setHeartbeatEnabled(true);
               });
           }}
           role="switch"
@@ -422,6 +427,58 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
             void refreshAllBalances();
           }}
         />
+      )}
+      {showHeartbeatConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={(e) => { e.stopPropagation(); setShowHeartbeatConfirm(false); }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold dark:text-claude-darkText text-claude-text mb-2">
+              {i18nService.t('heartbeatConfirmTitle')}
+            </p>
+            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mb-4 leading-relaxed">
+              {i18nService.t('heartbeatConfirmMessage')}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowHeartbeatConfirm(false); }}
+                className="px-3 py-1.5 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              >
+                {i18nService.t('heartbeatConfirmCancel')}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowHeartbeatConfirm(false);
+                  setHeartbeatEnabled(true);
+                  window.electron.heartbeat
+                    .toggle({ metabotId: metabot.id, enabled: true })
+                    .then((res: any) => {
+                      if (!res?.success) {
+                        console.error('[HeartbeatToggle] failed:', res?.error);
+                        setHeartbeatEnabled(false);
+                      }
+                    })
+                    .catch((err: any) => {
+                      console.error('[HeartbeatToggle] error:', err);
+                      setHeartbeatEnabled(false);
+                    });
+                }}
+                className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium"
+              >
+                {i18nService.t('heartbeatConfirmOk')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

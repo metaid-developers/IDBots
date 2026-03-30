@@ -31,23 +31,30 @@ export class HeartbeatPollingService {
   }
 
   async pollAll(services: any[]): Promise<void> {
+    console.log(`[HeartbeatPolling] pollAll: checking ${services.length} services`);
     const nextOnlineBots: Map<string, number> = new Map();
     const nextAvailableServices: any[] = [];
 
     for (const service of services) {
       const globalMetaId: string = service.providerGlobalMetaId || service.globalMetaId || '';
       const mvcAddress: string = service.providerAddress || service.paymentAddress || service.address || '';
-      if (!mvcAddress) continue;
+      if (!mvcAddress) {
+        console.log(`[HeartbeatPolling] skip service "${service.displayName || service.serviceName}" — no address`);
+        continue;
+      }
 
       let heartbeat: { timestamp: number } | null = null;
       try {
         heartbeat = await this.deps.fetchHeartbeat(mvcAddress);
-      } catch {
-        // treat as offline on fetch error
+      } catch (err) {
+        console.warn(`[HeartbeatPolling] fetch error for ${mvcAddress}:`, err);
       }
 
       const timestampSec = heartbeat ? heartbeat.timestamp : null;
-      if (this.checkOnlineStatus(timestampSec)) {
+      const isOnline = this.checkOnlineStatus(timestampSec);
+      console.log(`[HeartbeatPolling] "${service.displayName || service.serviceName}" addr=${mvcAddress.slice(0, 10)}... ts=${timestampSec} online=${isOnline}`);
+
+      if (isOnline) {
         if (globalMetaId) {
           nextOnlineBots.set(globalMetaId, timestampSec as number);
         }
@@ -57,14 +64,20 @@ export class HeartbeatPollingService {
 
     this._onlineBots = nextOnlineBots;
     this._availableServices = nextAvailableServices;
+    console.log(`[HeartbeatPolling] result: ${nextOnlineBots.size} online bots, ${nextAvailableServices.length} available services`);
   }
 
   startPolling(getServices: () => any[]): void {
+    console.log('[HeartbeatPolling] startPolling called');
     // Fire immediately
-    this.pollAll(getServices()).catch(() => {});
+    this.pollAll(getServices()).catch((err) => {
+      console.warn('[HeartbeatPolling] initial poll error:', err);
+    });
 
     this._intervalId = setInterval(() => {
-      this.pollAll(getServices()).catch(() => {});
+      this.pollAll(getServices()).catch((err) => {
+        console.warn('[HeartbeatPolling] interval poll error:', err);
+      });
     }, HEARTBEAT_POLL_INTERVAL_MS);
   }
 
@@ -87,13 +100,28 @@ export async function fetchHeartbeatFromChain(
   mvcAddress: string
 ): Promise<{ timestamp: number } | null> {
   const url = `${MANAPI_HOST}/address/pin/list/${encodeURIComponent(mvcAddress)}?cursor=0&size=1&path=/protocols/metabot-heartbeat`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const json = (await res.json()) as { data?: { list?: Array<{ timestamp?: number }> } };
-  const list = json?.data?.list;
-  if (!Array.isArray(list) || list.length === 0) return null;
-  const item = list[0];
-  const ts = item?.timestamp;
-  if (typeof ts !== 'number') return null;
-  return { timestamp: ts };
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[HeartbeatPolling] fetch ${url} → ${res.status}`);
+      return null;
+    }
+    const json = await res.json();
+    // Handle both response formats: { data: { list: [...] } } and { list: [...] }
+    const list = json?.data?.list || json?.list || json?.result?.list;
+    if (!Array.isArray(list) || list.length === 0) {
+      console.log(`[HeartbeatPolling] no heartbeat pins for ${mvcAddress.slice(0, 10)}...`);
+      return null;
+    }
+    const item = list[0];
+    const ts = item?.timestamp ?? item?.genesisHeight ?? null;
+    if (typeof ts !== 'number') {
+      console.log(`[HeartbeatPolling] heartbeat pin has no valid timestamp:`, item);
+      return null;
+    }
+    return { timestamp: ts };
+  } catch (err) {
+    console.warn(`[HeartbeatPolling] fetchHeartbeatFromChain error for ${mvcAddress}:`, err);
+    return null;
+  }
 }
