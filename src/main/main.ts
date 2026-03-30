@@ -2377,6 +2377,12 @@ const getCoworkRunner = () => {
         }
         return overrides;
       },
+      getRemoteServicesPrompt: () => {
+        try {
+          const services = getHeartbeatPollingService().availableServices;
+          return getSkillManager().buildRemoteServicesPrompt(services);
+        } catch { return null; }
+      },
       getMetabotById: (id: number) => {
         const m = getMetabotStore().getMetabotById(id);
         return m ? { name: m.name, role: m.role, soul: m.soul, background: m.background ?? null, goal: m.goal ?? null } : null;
