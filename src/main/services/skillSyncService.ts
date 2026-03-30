@@ -16,11 +16,16 @@ try {
   // adm-zip not installed; install operations will fail gracefully
 }
 
-const OFFICIAL_ADDRESS = '1MFi1WM2NXnV3kjdLKaUw7Ad23LSvSD9fY';
 const MANAPI_BASE = 'https://manapi.metaid.io';
 const MAN_CONTENT_BASE = 'https://man.metaid.io/content';
 const SKILLS_DIR_NAME = 'SKILLs';
 const SKILLS_CONFIG_FILE = 'skills.config.json';
+
+export const FEATURED_SKILL_ADDRESSES = [
+  '1MFi1WM2NXnV3kjdLKaUw7Ad23LSvSD9fY',
+  '1GrqX7K9jdnUor8hAoAfDx99uFH2tT75Za',
+  '12ghVWG1yAgNjzXj4mr3qK9DgyornMUikZ',
+] as const;
 
 export type OfficialSkillStatus = 'download' | 'update' | 'installed' | 'conflict';
 
@@ -39,6 +44,15 @@ type SkillsConfig = {
   version?: number;
   description?: string;
   defaults: Record<string, { order?: number; enabled?: boolean; version?: string; 'creator-metaid'?: string; installedAt?: number }>;
+};
+
+type ParsedOfficialSkillDefinition = {
+  name: string;
+  remoteVersion: string;
+  skillFileUri: string;
+  remoteCreator: string;
+  description?: string;
+  priority: number;
 };
 
 /**
@@ -127,6 +141,138 @@ function extractPinIdFromUri(uri: string): string | null {
   return trimmed || null;
 }
 
+function extractSkillListFromPayload(data: { data?: { list?: unknown[] }; list?: unknown[]; pins?: unknown[] }): unknown[] {
+  return Array.isArray(data.data?.list)
+    ? data.data.list
+    : Array.isArray(data.list)
+      ? data.list
+      : Array.isArray(data.pins)
+        ? data.pins
+        : [];
+}
+
+function parseOfficialSkillDefinition(
+  pin: unknown,
+  addressPriority: Map<string, number>,
+): ParsedOfficialSkillDefinition | null {
+  const pinObj = pin as Record<string, unknown>;
+  const contentSummary = pinObj.contentSummary ?? pinObj.content ?? pinObj.body ?? '';
+  let parsed: Record<string, unknown> = {};
+  try {
+    if (typeof contentSummary === 'string') {
+      parsed = JSON.parse(contentSummary) as Record<string, unknown>;
+    } else if (contentSummary && typeof contentSummary === 'object') {
+      parsed = contentSummary as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  const name = String(parsed.name ?? parsed.skillName ?? parsed.id ?? '').trim();
+  const skillFileUri = String(
+    parsed['skill-file'] ?? parsed.skillFileUri ?? parsed.skill_file_uri ?? parsed.uri ?? ''
+  ).trim();
+  const remoteVersion = String(parsed.version ?? parsed.skillVersion ?? '0').trim();
+  const remoteCreator = String(
+    pinObj.globalMetaId ?? parsed.creator ?? parsed['creator-metaid'] ?? parsed.creatorMetaid ?? ''
+  ).trim();
+  const description = typeof parsed.description === 'string' ? parsed.description : undefined;
+  const address = String(pinObj.address ?? pinObj.create_address ?? '').trim();
+  const priority = addressPriority.get(address) ?? FEATURED_SKILL_ADDRESSES.length;
+
+  if (!name || !skillFileUri) {
+    return null;
+  }
+
+  return {
+    name,
+    remoteVersion,
+    skillFileUri,
+    remoteCreator,
+    description,
+    priority,
+  };
+}
+
+function shouldReplaceOfficialSkillDefinition(
+  current: ParsedOfficialSkillDefinition,
+  candidate: ParsedOfficialSkillDefinition,
+): boolean {
+  const versionComparison = compareVersions(candidate.remoteVersion, current.remoteVersion);
+  if (versionComparison !== 0) {
+    return versionComparison > 0;
+  }
+  return candidate.priority < current.priority;
+}
+
+export function buildOfficialSkillStatuses(
+  rawPins: unknown[],
+  options: {
+    config: SkillsConfig;
+    skillsRoot: string;
+  },
+): OfficialSkillItem[] {
+  const addressPriority = new Map(FEATURED_SKILL_ADDRESSES.map((address, index) => [address, index]));
+  const preferredByName = new Map<string, ParsedOfficialSkillDefinition>();
+
+  for (const pin of rawPins) {
+    const parsed = parseOfficialSkillDefinition(pin, addressPriority);
+    if (!parsed) {
+      continue;
+    }
+    const current = preferredByName.get(parsed.name);
+    if (!current || shouldReplaceOfficialSkillDefinition(current, parsed)) {
+      preferredByName.set(parsed.name, parsed);
+    }
+  }
+
+  const skills: OfficialSkillItem[] = [];
+  for (const preferred of preferredByName.values()) {
+    const skillDir = path.join(options.skillsRoot, preferred.name);
+    const skillDirExists = fs.existsSync(skillDir) && fs.statSync(skillDir).isDirectory();
+    const localSkill = options.config.defaults[preferred.name];
+    const localVersion = (localSkill?.version ?? '').trim() || '0';
+    const localCreator = localSkill?.['creator-metaid'];
+
+    let status: OfficialSkillStatus;
+    if (!skillDirExists) {
+      status = 'download';
+    } else if (!localSkill) {
+      status = 'download';
+    } else if (localCreator && localCreator !== preferred.remoteCreator) {
+      status = 'conflict';
+    } else if (compareVersions(preferred.remoteVersion, localVersion) > 0) {
+      status = 'update';
+    } else {
+      status = 'installed';
+    }
+
+    skills.push({
+      name: preferred.name,
+      remoteVersion: preferred.remoteVersion,
+      skillFileUri: preferred.skillFileUri,
+      remoteCreator: preferred.remoteCreator,
+      description: preferred.description,
+      status,
+      localVersion: localSkill?.version,
+      localCreator,
+    });
+  }
+
+  return skills;
+}
+
+async function fetchOfficialSkillPinsForAddress(address: string): Promise<unknown[]> {
+  const url = `${MANAPI_BASE}/address/pin/list/${address}?cursor=0&size=200&path=/protocols/metabot-skill`;
+  const localPath = `/api/address/pin/list/${address}?cursor=0&size=200&path=/protocols/metabot-skill`;
+  const response = await fetchJsonWithFallbackOnMiss(localPath, url, isEmptyListDataPayload);
+  if (!response.ok) {
+    throw new Error(`MetaWeb API error (${address}): ${response.status} ${response.statusText}`);
+  }
+  const data = (await response.json()) as { data?: { list?: unknown[] }; list?: unknown[]; pins?: unknown[] };
+  return extractSkillListFromPayload(data);
+}
+
 /**
  * Fetch official skills list from MetaWeb and compute status for each.
  */
@@ -136,84 +282,31 @@ export async function getOfficialSkillsStatus(): Promise<{
   error?: string;
 }> {
   try {
-    const url = `${MANAPI_BASE}/address/pin/list/${OFFICIAL_ADDRESS}?cursor=0&size=200&path=/protocols/metabot-skill`;
-    const localPath = `/api/address/pin/list/${OFFICIAL_ADDRESS}?cursor=0&size=200&path=/protocols/metabot-skill`;
-    const response = await fetchJsonWithFallbackOnMiss(localPath, url, isEmptyListDataPayload);
-    if (!response.ok) {
-      return { success: false, error: `MetaWeb API error: ${response.status} ${response.statusText}` };
+    const rawPins: unknown[] = [];
+    const errors: string[] = [];
+
+    for (const address of FEATURED_SKILL_ADDRESSES) {
+      try {
+        rawPins.push(...await fetchOfficialSkillPinsForAddress(address));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(message);
+      }
     }
-    const data = (await response.json()) as { data?: { list?: unknown[] }; list?: unknown[]; pins?: unknown[] };
-    // API returns { code, message, data: { list, nextCursor, total } }
-    const rawList = Array.isArray(data.data?.list)
-      ? data.data.list
-      : Array.isArray(data.list)
-        ? data.list
-        : Array.isArray(data.pins)
-          ? data.pins
-          : [];
+
+    if (rawPins.length === 0 && errors.length > 0) {
+      return { success: false, error: errors.join(' | ') };
+    }
 
     ensureConfigExists();
     const config = loadSkillsConfig();
-    const skills: OfficialSkillItem[] = [];
+    const skills = buildOfficialSkillStatuses(rawPins, {
+      config,
+      skillsRoot: getSkillsRoot(),
+    });
 
-    for (const pin of rawList) {
-      const pinObj = pin as Record<string, unknown>;
-      const contentSummary = pinObj.contentSummary ?? pinObj.content ?? pinObj.body ?? '';
-      let parsed: Record<string, unknown> = {};
-      try {
-        if (typeof contentSummary === 'string') {
-          parsed = JSON.parse(contentSummary) as Record<string, unknown>;
-        } else if (contentSummary && typeof contentSummary === 'object') {
-          parsed = contentSummary as Record<string, unknown>;
-        }
-      } catch {
-        continue;
-      }
-
-      // ContentSummaryParsed: name, version, "skill-file" (metafile://<pinid>)
-      const name = String(parsed.name ?? parsed.skillName ?? parsed.id ?? '').trim();
-      const skillFileUri = String(
-        parsed['skill-file'] ?? parsed.skillFileUri ?? parsed.skill_file_uri ?? parsed.uri ?? ''
-      ).trim();
-      const remoteVersion = String(parsed.version ?? parsed.skillVersion ?? '0').trim();
-      // remoteCreator from top-level item.globalMetaId per SDD
-      const remoteCreator = String(pinObj.globalMetaId ?? parsed.creator ?? parsed['creator-metaid'] ?? parsed.creatorMetaid ?? '').trim();
-      const description = typeof parsed.description === 'string' ? parsed.description : undefined;
-
-      if (!name || !skillFileUri) continue;
-
-      const skillsRoot = getSkillsRoot();
-      const skillDir = path.join(skillsRoot, name);
-      const skillDirExists = fs.existsSync(skillDir) && fs.statSync(skillDir).isDirectory();
-
-      const localSkill = config.defaults[name];
-      // Compare chain metabot-skill version with local skills.config.json defaults[].version
-      const localVersion = (localSkill?.version ?? '').trim() || '0';
-      const localCreator = localSkill?.['creator-metaid'];
-
-      let status: OfficialSkillStatus;
-      if (!skillDirExists) {
-        status = 'download';
-      } else if (!localSkill) {
-        status = 'download';
-      } else if (localCreator && localCreator !== remoteCreator) {
-        status = 'conflict';
-      } else if (compareVersions(remoteVersion, localVersion) > 0) {
-        status = 'update';
-      } else {
-        status = 'installed';
-      }
-
-      skills.push({
-        name,
-        remoteVersion,
-        skillFileUri,
-        remoteCreator,
-        description,
-        status,
-        localVersion: localSkill?.version,
-        localCreator: localCreator,
-      });
+    if (errors.length > 0) {
+      console.warn('[skill-sync] partial featured skill fetch failure:', errors.join(' | '));
     }
 
     return { success: true, skills };
