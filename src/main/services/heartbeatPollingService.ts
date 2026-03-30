@@ -114,9 +114,10 @@ export async function fetchHeartbeatFromChain(
       return null;
     }
     const item = list[0];
-    const ts = item?.timestamp ?? item?.genesisHeight ?? null;
+    // Use seenTime (broadcast time in seconds), NOT timestamp (genesis time, stale)
+    const ts = item?.seenTime ?? item?.seen_time ?? null;
     if (typeof ts !== 'number') {
-      console.log(`[HeartbeatPolling] heartbeat pin has no valid timestamp:`, item);
+      console.log(`[HeartbeatPolling] heartbeat pin has no valid seenTime:`, JSON.stringify(item).slice(0, 200));
       return null;
     }
     return { timestamp: ts };
