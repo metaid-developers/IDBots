@@ -15,6 +15,7 @@ import MetaBotWalletAssetsModal, {
   type WalletDisplayAsset,
 } from './MetaBotWalletAssetsModal';
 import MetaBotTokenTransferModal, { type TokenTransferAsset } from './MetaBotTokenTransferModal';
+import { buildMetaBotToggleViewModel } from './metaBotCardPresentation.js';
 
 interface MetaBotListCardProps {
   metabot: Metabot;
@@ -163,6 +164,14 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const btcAddr = metabot.btc_address ?? '';
   const mvcAddr = metabot.mvc_address ?? '';
   const dogeAddr = metabot.doge_address ?? '';
+  const enabledToggleView = buildMetaBotToggleViewModel({
+    enabled: metabot.enabled,
+    variant: 'enable',
+  });
+  const heartbeatToggleView = buildMetaBotToggleViewModel({
+    enabled: heartbeatEnabled,
+    variant: 'heartbeat',
+  });
 
   const handleWalletAssetTransfer = (asset: WalletDisplayAsset) => {
     if (asset.kind === 'native') {
@@ -209,9 +218,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           </div>
         </div>
         <div
-          className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
-            metabot.enabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
-          }`}
+          className={enabledToggleView.trackClass}
           onClick={(e) => {
             e.stopPropagation();
             onToggleEnabled(!metabot.enabled);
@@ -221,27 +228,23 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           title={metabot.enabled ? i18nService.t('metabotActive') : i18nService.t('metabotInactive')}
         >
           <div
-            className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-              metabot.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-            }`}
+            className={enabledToggleView.knobClass}
           />
         </div>
       </div>
 
       <div
-        className="flex items-center justify-between gap-2 mt-2"
+        className="mt-2 inline-flex items-center gap-2"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
         role="presentation"
       >
-        <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary flex items-center gap-1">
+        <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary inline-flex items-center gap-1">
           <span>💓</span>
           <span>{i18nService.t('heartbeatToggle')}</span>
         </span>
         <div
-          className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
-            heartbeatEnabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
-          }`}
+          className={heartbeatToggleView.trackClass}
           onClick={(e) => {
             e.stopPropagation();
             if (!heartbeatEnabled) {
@@ -268,9 +271,7 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           title={i18nService.t('heartbeatToggle')}
         >
           <div
-            className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-              heartbeatEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-            }`}
+            className={heartbeatToggleView.knobClass}
           />
         </div>
       </div>
