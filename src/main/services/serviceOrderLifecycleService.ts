@@ -100,7 +100,7 @@ export class ServiceOrderLifecycleService {
   private store: ServiceOrderStore;
   private now: () => number;
   private resolveLocalMetabotGlobalMetaId: (localMetabotId: number) => string | null | undefined;
-  private pendingBuyerOrderPairs = new Set<string>();
+  private pendingBuyerOrderPayments = new Set<string>();
   private buildRefundRequestPayload: (order: ServiceOrderRecord) => Record<string, unknown>;
   private createRefundRequestPin?: (input: {
     order: ServiceOrderRecord;
@@ -128,32 +128,17 @@ export class ServiceOrderLifecycleService {
     this.onOrderEvent = options.onOrderEvent;
   }
 
-  assertNoOpenBuyerOrderForPair(
-    localMetabotId: number,
-    counterpartyGlobalMetaId: string
-  ): void {
-    this.assertNotSelfDirectedOrder(localMetabotId, counterpartyGlobalMetaId);
-    if (this.pendingBuyerOrderPairs.has(this.getBuyerPairKey(localMetabotId, counterpartyGlobalMetaId))) {
-      throw new ServiceOrderOpenOrderExistsError(`pending:${localMetabotId}:${counterpartyGlobalMetaId}`);
-    }
-    this.assertNoPersistedOpenBuyerOrderForPair(
-      localMetabotId,
-      counterpartyGlobalMetaId
-    );
-  }
-
   getBuyerOrderAvailability(
     localMetabotId: number,
     counterpartyGlobalMetaId: string
   ): { allowed: true } | { allowed: false; errorCode: string; error: string } {
     this.repairSelfDirectedOrders();
     try {
-      this.assertNoOpenBuyerOrderForPair(localMetabotId, counterpartyGlobalMetaId);
+      this.assertNotSelfDirectedOrder(localMetabotId, counterpartyGlobalMetaId);
       return { allowed: true };
     } catch (error) {
       if (
-        error instanceof ServiceOrderOpenOrderExistsError
-        || error instanceof ServiceOrderSelfOrderNotAllowedError
+        error instanceof ServiceOrderSelfOrderNotAllowedError
       ) {
         return {
           allowed: false,
@@ -165,43 +150,43 @@ export class ServiceOrderLifecycleService {
     }
   }
 
-  private assertNoPersistedOpenBuyerOrderForPair(
+  private assertNoPendingBuyerOrderForPayment(
     localMetabotId: number,
-    counterpartyGlobalMetaId: string
+    counterpartyGlobalMetaId: string,
+    paymentTxid?: string | null
   ): void {
-    const existing = this.store.findLatestOpenOrderForPair(
-      'buyer',
-      localMetabotId,
-      counterpartyGlobalMetaId
-    );
-    if (existing) {
-      throw new ServiceOrderOpenOrderExistsError(existing.id);
+    const key = this.getBuyerPaymentKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
+    if (!key) return;
+    if (this.pendingBuyerOrderPayments.has(key)) {
+      throw new ServiceOrderOpenOrderExistsError(`pending:${key}`);
     }
   }
 
   reserveBuyerOrderCreation(
     localMetabotId: number,
-    counterpartyGlobalMetaId: string
+    counterpartyGlobalMetaId: string,
+    paymentTxid?: string | null
   ): () => void {
     this.repairSelfDirectedOrders();
-    this.assertNoOpenBuyerOrderForPair(localMetabotId, counterpartyGlobalMetaId);
-    const pairKey = this.getBuyerPairKey(localMetabotId, counterpartyGlobalMetaId);
-    this.pendingBuyerOrderPairs.add(pairKey);
+    this.assertNotSelfDirectedOrder(localMetabotId, counterpartyGlobalMetaId);
+    this.assertNoPendingBuyerOrderForPayment(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
+    const paymentKey = this.getBuyerPaymentKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
+    if (paymentKey) {
+      this.pendingBuyerOrderPayments.add(paymentKey);
+    }
 
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      this.pendingBuyerOrderPairs.delete(pairKey);
+      if (paymentKey) {
+        this.pendingBuyerOrderPayments.delete(paymentKey);
+      }
     };
   }
 
   createBuyerOrder(input: CreateBuyerOrderInput): ServiceOrderRecord {
     this.assertNotSelfDirectedOrder(
-      input.localMetabotId,
-      input.counterpartyGlobalMetaId
-    );
-    this.assertNoPersistedOpenBuyerOrderForPair(
       input.localMetabotId,
       input.counterpartyGlobalMetaId
     );
@@ -422,11 +407,14 @@ export class ServiceOrderLifecycleService {
     });
   }
 
-  private getBuyerPairKey(
+  private getBuyerPaymentKey(
     localMetabotId: number,
-    counterpartyGlobalMetaId: string
-  ): string {
-    return `${localMetabotId}:${counterpartyGlobalMetaId}`;
+    counterpartyGlobalMetaId: string,
+    paymentTxid?: string | null
+  ): string | null {
+    const normalizedTxid = typeof paymentTxid === 'string' ? paymentTxid.trim() : '';
+    if (!normalizedTxid) return null;
+    return `${localMetabotId}:${counterpartyGlobalMetaId}:${normalizedTxid}`;
   }
 
   private isSelfDirectedOrder(order: ServiceOrderRecord): boolean {

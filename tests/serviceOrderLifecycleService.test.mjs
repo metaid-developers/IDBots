@@ -50,29 +50,24 @@ async function createLifecycleServiceForTest(options = {}) {
   return { db, store, service };
 }
 
-test('createBuyerOrder refuses a second unresolved order for the same buyer/seller pair', async () => {
+test('createBuyerOrder allows multiple unresolved orders for the same buyer/seller pair when payment txids differ', async () => {
   const { service } = await createLifecycleServiceForTest();
 
-  service.createBuyerOrder(baseOrderInput());
+  const first = service.createBuyerOrder(baseOrderInput());
+  const second = service.createBuyerOrder(baseOrderInput({ paymentTxid: 'b'.repeat(64) }));
 
-  assert.throws(
-    () => service.createBuyerOrder(baseOrderInput({ paymentTxid: 'b'.repeat(64) })),
-    /open order already exists/i
-  );
+  assert.equal(first.paymentTxid, 'a'.repeat(64));
+  assert.equal(second.paymentTxid, 'b'.repeat(64));
 });
 
-test('getBuyerOrderAvailability reports blocked before payment when the pair already has an unresolved order', async () => {
+test('getBuyerOrderAvailability stays allowed when the pair already has an unresolved order', async () => {
   const { service } = await createLifecycleServiceForTest();
 
   service.createBuyerOrder(baseOrderInput());
 
   assert.deepEqual(
     service.getBuyerOrderAvailability(7, 'seller-global-metaid'),
-    {
-      allowed: false,
-      errorCode: 'open_order_exists',
-      error: 'Open order already exists for this buyer and provider.',
-    }
+    { allowed: true }
   );
 });
 
@@ -119,19 +114,22 @@ test('createBuyerOrder persists SLA deadlines and links the cowork session', asy
   assert.equal(order.deliveryDeadlineAt, now + 15 * 60_000);
 });
 
-test('reserveBuyerOrderCreation refuses concurrent in-flight creation for the same buyer/seller pair', async () => {
+test('reserveBuyerOrderCreation refuses concurrent in-flight creation for the same payment txid only', async () => {
   const { service } = await createLifecycleServiceForTest();
 
-  const release = service.reserveBuyerOrderCreation(7, 'seller-global-metaid');
+  const release = service.reserveBuyerOrderCreation(7, 'seller-global-metaid', 'a'.repeat(64));
 
   assert.throws(
-    () => service.reserveBuyerOrderCreation(7, 'seller-global-metaid'),
+    () => service.reserveBuyerOrderCreation(7, 'seller-global-metaid', 'a'.repeat(64)),
     /open order already exists/i
   );
 
+  const otherRelease = service.reserveBuyerOrderCreation(7, 'seller-global-metaid', 'b'.repeat(64));
+  otherRelease();
+
   release();
 
-  const nextRelease = service.reserveBuyerOrderCreation(7, 'seller-global-metaid');
+  const nextRelease = service.reserveBuyerOrderCreation(7, 'seller-global-metaid', 'a'.repeat(64));
   nextRelease();
 });
 

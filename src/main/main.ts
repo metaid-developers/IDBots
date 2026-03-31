@@ -1993,46 +1993,24 @@ const executeDelegationPipeline = async (
   }
 
   const serviceOrderLifecycle = getServiceOrderLifecycleService();
-  let releaseBuyerOrderCreation: (() => void) | null = null;
+  // -----------------------------------------------------------------------
+  // Step 2: PING/PONG handshake
+  // -----------------------------------------------------------------------
+  injectDelegationSystemMessage(
+    sessionId,
+    `Checking availability of "${delegation.serviceName}" provider...`
+  );
+  emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
+
+  let chatPubkey: string | null = null;
   try {
-    releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
-      metabotId,
-      providerGlobalMetaId
+    chatPubkey = await resolveChatPubkeyForProvider(
+      providerGlobalMetaId,
+      toSafeString(service.providerMetaId).trim() || undefined
     );
   } catch (error) {
-    if (
-      error instanceof ServiceOrderOpenOrderExistsError ||
-      error instanceof ServiceOrderSelfOrderNotAllowedError
-    ) {
-      injectDelegationSystemMessage(
-        sessionId,
-        `Delegation blocked: ${error.message}`
-      );
-      emitDelegationStateChange({ sessionId, blocking: false, message: 'Order unavailable' });
-      return;
-    }
-    throw error;
+    console.warn(LOG_TAG, 'Failed to resolve chat pubkey:', error);
   }
-
-  try {
-    // -----------------------------------------------------------------------
-    // Step 2: PING/PONG handshake
-    // -----------------------------------------------------------------------
-    injectDelegationSystemMessage(
-      sessionId,
-      `Checking availability of "${delegation.serviceName}" provider...`
-    );
-    emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
-
-    let chatPubkey: string | null = null;
-    try {
-      chatPubkey = await resolveChatPubkeyForProvider(
-        providerGlobalMetaId,
-        toSafeString(service.providerMetaId).trim() || undefined
-      );
-    } catch (error) {
-      console.warn(LOG_TAG, 'Failed to resolve chat pubkey:', error);
-    }
 
   if (!chatPubkey) {
     injectDelegationSystemMessage(
@@ -2307,14 +2285,11 @@ const executeDelegationPipeline = async (
       message: `Waiting for delivery from "${delegation.serviceName}"`,
     });
 
-    console.log(LOG_TAG, 'Delegation pipeline complete, session is now in blocking mode', {
-      sessionId,
-      orderId,
-      paymentTxid,
-    });
-  } finally {
-    releaseBuyerOrderCreation?.();
-  }
+  console.log(LOG_TAG, 'Delegation pipeline complete, session is now in blocking mode', {
+    sessionId,
+    orderId,
+    paymentTxid,
+  });
 };
 
 const getCoworkRunner = () => {
@@ -5424,7 +5399,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       try {
         releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
           metabotId,
-          toGlobalMetaId
+          toGlobalMetaId,
+          servicePaidTx
         );
       } catch (error) {
         if (
