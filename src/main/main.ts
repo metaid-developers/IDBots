@@ -90,6 +90,7 @@ import { ServiceRefundSettlementService } from './services/serviceRefundSettleme
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
+import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import {
   extractSessionOrderTxid,
   findMatchingOrderSessionId,
@@ -2272,10 +2273,13 @@ const executeDelegationPipeline = async (
     // -----------------------------------------------------------------------
     coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
 
-    const txLink = `https://whatsonchain.com/tx/${paymentTxid}`;
+    const txLink = buildTransactionExplorerUrl(paymentChain, paymentTxid);
+    const paymentLine = txLink
+      ? `Payment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
+      : `Payment: ${paymentTxid.slice(0, 16)}...`;
     injectDelegationSystemMessage(
       sessionId,
-      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\nPayment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
+      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\n${paymentLine}`
     );
 
     emitDelegationStateChange({
