@@ -51,14 +51,7 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "metabot-mm-basic": {
-      "order": 22,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1774656000000,
-      "enabled": true
-    },
-   "proactive-agent-3.1.0": {
+    "proactive-agent-3.1.0": {
       "order": 40,
       "version": "1.0.0",
       "creator-metaid": "",
