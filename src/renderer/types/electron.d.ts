@@ -327,6 +327,24 @@ interface AssignGroupChatTaskResult {
   error?: string;
 }
 
+interface ElectronHeartbeatProviderState {
+  key: string;
+  globalMetaId: string;
+  address: string;
+  lastSeenSec: number | null;
+  lastCheckAt: number | null;
+  lastSource: string | null;
+  lastError: string | null;
+  online: boolean;
+  optimisticLocal: boolean;
+}
+
+interface ElectronHeartbeatDiscoverySnapshot {
+  onlineBots: Record<string, number>;
+  availableServices: unknown[];
+  providers: Record<string, ElectronHeartbeatProviderState>;
+}
+
 interface IElectronAPI {
   platform: string;
   arch: string;
@@ -761,6 +779,8 @@ interface IElectronAPI {
     getStatus: (metabotId: number) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
     getOnlineServices: () => Promise<{ success: boolean; services?: unknown[]; error?: string }>;
     getOnlineBots: () => Promise<{ success: boolean; bots?: Record<string, number>; error?: string }>;
+    getDiscoverySnapshot: () => Promise<{ success: boolean; snapshot?: ElectronHeartbeatDiscoverySnapshot; error?: string }>;
+    onDiscoveryChanged: (callback: (snapshot: ElectronHeartbeatDiscoverySnapshot) => void) => () => void;
   };
 }
 

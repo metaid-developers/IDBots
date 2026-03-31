@@ -16,6 +16,8 @@ export type GigSquareService = {
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
+  createAddress?: string | null;
+  paymentAddress?: string | null;
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
@@ -54,6 +56,8 @@ export type GigSquareMyServiceSummary = {
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
+  createAddress?: string | null;
+  paymentAddress?: string | null;
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;

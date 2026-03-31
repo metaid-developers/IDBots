@@ -9,10 +9,22 @@ const require = createRequire(import.meta.url);
 const Module = require('node:module');
 const { DB_FILENAME } = require('../dist-electron/appConstants.js');
 
-// Worktree is at <repoRoot>/.claude/worktrees/<name>/
-// Go up 3 levels from the worktree root to reach the repo root where node_modules lives.
-const worktreeRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const repoRoot = path.resolve(worktreeRoot, '..', '..', '..');
+function resolveRepoRoot() {
+  let current = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  while (true) {
+    const candidateWasm = path.join(current, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+    if (fs.existsSync(candidateWasm)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error('Failed to resolve repo root for heartbeatService tests');
+    }
+    current = parent;
+  }
+}
+
+const repoRoot = resolveRepoRoot();
 
 function patchElectron(userDataPath) {
   const originalLoad = Module._load;

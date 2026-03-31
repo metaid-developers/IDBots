@@ -66,7 +66,11 @@ import { performChatCompletionForOrchestrator } from './services/cognitiveChatCo
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
 import { HeartbeatService } from './services/heartbeatService';
-import { HeartbeatPollingService, fetchHeartbeatFromChain } from './services/heartbeatPollingService';
+import {
+  HeartbeatPollingService,
+  fetchHeartbeatFromChain,
+  type HeartbeatDiscoverySnapshot,
+} from './services/heartbeatPollingService';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -321,6 +325,19 @@ const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
         win.webContents.send('cowork:stream:message', { sessionId, message: safeMessage });
       } catch (error) {
         console.error('Failed to forward cowork message:', error);
+      }
+    }
+  });
+};
+
+const emitHeartbeatDiscoveryChanged = (snapshot: HeartbeatDiscoverySnapshot): void => {
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win) => {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send('heartbeat:discoveryChanged', snapshot);
+      } catch (error) {
+        console.error('Failed to forward heartbeat discovery snapshot:', error);
       }
     }
   });
@@ -1039,6 +1056,11 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
 async function syncGigSquareRemoteData(): Promise<void> {
   await syncRemoteSkillServices();
   await syncRemoteSkillServiceRatings();
+  if (heartbeatPollingService) {
+    await heartbeatPollingService.refreshNow().catch((error) => {
+      console.warn('[Heartbeat] Refresh after GigSquare sync failed:', error);
+    });
+  }
 }
 
 function listRemoteSkillServicesFromDb(): GigSquareService[] {
@@ -2391,7 +2413,7 @@ const getCoworkRunner = () => {
       },
       getRemoteServicesPrompt: () => {
         try {
-          const services = getHeartbeatPollingService().availableServices;
+          const services = getHeartbeatPollingService().getDiscoverySnapshot().availableServices;
           return getSkillManager().buildRemoteServicesPrompt(services);
         } catch { return null; }
       },
@@ -2609,11 +2631,33 @@ const getMetabotStore = () => {
   return metabotStore;
 };
 
+function recordLocalHeartbeatDiscovery(metabotId: number, timestampSec: number): void {
+  try {
+    const metabot = getMetabotStore().getMetabotById(metabotId);
+    if (!metabot) return;
+    const providerAddress = toSafeString(metabot.mvc_address).trim();
+    if (!providerAddress) return;
+    getHeartbeatPollingService().recordLocalHeartbeat({
+      globalMetaId: toSafeString(metabot.globalmetaid).trim() || null,
+      address: providerAddress,
+      timestampSec,
+    });
+    void getHeartbeatPollingService().refreshNow().catch((error) => {
+      console.warn('[Heartbeat] Refresh after local heartbeat failed:', error);
+    });
+  } catch (error) {
+    console.warn('[Heartbeat] Failed to record local heartbeat discovery:', error);
+  }
+}
+
 function getHeartbeatService(): HeartbeatService {
   if (!heartbeatService) {
     heartbeatService = new HeartbeatService({
       createPin,
       getMetabotStore: () => getMetabotStore(),
+      onHeartbeatSuccess: ({ metabotId, timestampSec }) => {
+        recordLocalHeartbeatDiscovery(metabotId, timestampSec);
+      },
     });
   }
   return heartbeatService;
@@ -2623,6 +2667,9 @@ function getHeartbeatPollingService(): HeartbeatPollingService {
   if (!heartbeatPollingService) {
     heartbeatPollingService = new HeartbeatPollingService({
       fetchHeartbeat: fetchHeartbeatFromChain,
+    });
+    heartbeatPollingService.subscribe((snapshot) => {
+      emitHeartbeatDiscoveryChanged(snapshot);
     });
   }
   return heartbeatPollingService;
@@ -5624,8 +5671,19 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
       if (params.enabled) {
         getHeartbeatService().startHeartbeat(params.metabotId);
+        void getHeartbeatPollingService().refreshNow().catch((error) => {
+          console.warn('[Heartbeat] Refresh after toggle-on failed:', error);
+        });
       } else {
         getHeartbeatService().stopHeartbeat(params.metabotId);
+        const metabot = getMetabotStore().getMetabotById(params.metabotId);
+        const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
+        if (globalMetaId) {
+          getHeartbeatPollingService().forceOffline(globalMetaId);
+        }
+        void getHeartbeatPollingService().refreshNow().catch((error) => {
+          console.warn('[Heartbeat] Refresh after toggle-off failed:', error);
+        });
       }
 
       return { success: true };
@@ -5645,7 +5703,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getOnlineServices', async () => {
     try {
-      const services = getHeartbeatPollingService().availableServices;
+      const services = getHeartbeatPollingService().getDiscoverySnapshot().availableServices;
       return { success: true, services };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online services' };
@@ -5654,10 +5712,19 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getOnlineBots', async () => {
     try {
-      const bots = Object.fromEntries(getHeartbeatPollingService().onlineBots);
+      const bots = getHeartbeatPollingService().getDiscoverySnapshot().onlineBots;
       return { success: true, bots };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online bots' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getDiscoverySnapshot', async () => {
+    try {
+      const snapshot = getHeartbeatPollingService().getDiscoverySnapshot();
+      return { success: true, snapshot };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat discovery snapshot' };
     }
   });
 

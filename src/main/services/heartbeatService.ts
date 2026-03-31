@@ -28,6 +28,7 @@ export type CreatePinFn = (
 export interface HeartbeatServiceDeps {
   createPin: CreatePinFn;
   getMetabotStore?: () => unknown;
+  onHeartbeatSuccess?: (input: { metabotId: number; pinId: string; timestampSec: number }) => void;
 }
 
 export class HeartbeatService {
@@ -56,6 +57,11 @@ export class HeartbeatService {
           { network: 'mvc' }
         );
         console.log(`[HeartbeatService] metabot ${metabotId} heartbeat ok pinId=${result.pinId}`);
+        this.deps.onHeartbeatSuccess?.({
+          metabotId,
+          pinId: result.pinId,
+          timestampSec: Math.floor(Date.now() / 1000),
+        });
       } catch (err) {
         console.error(`[HeartbeatService] metabot ${metabotId} heartbeat failed:`, err);
       }

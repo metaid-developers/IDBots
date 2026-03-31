@@ -1,16 +1,113 @@
+import { fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
+import { getP2PLocalBase } from './p2pLocalEndpoint';
+
 const HEARTBEAT_ONLINE_WINDOW_SEC = 10 * 60; // 10 minutes
-const HEARTBEAT_POLL_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+const HEARTBEAT_POLL_INTERVAL_MS = 60 * 1000; // 1 minute
+const HEARTBEAT_FETCH_CONCURRENCY = 6;
+const HEARTBEAT_PROTOCOL_PATH = '/protocols/metabot-heartbeat';
 const MANAPI_HOST = 'https://manapi.metaid.io';
 
-export interface HeartbeatDeps {
-  fetchHeartbeat: (mvcAddress: string) => Promise<{ timestamp: number } | null>;
+export interface HeartbeatFetchResult {
+  timestamp?: number | null;
+  source?: string;
+  error?: string | null;
 }
+
+export interface HeartbeatProviderState {
+  key: string;
+  globalMetaId: string;
+  address: string;
+  lastSeenSec: number | null;
+  lastCheckAt: number | null;
+  lastSource: string | null;
+  lastError: string | null;
+  online: boolean;
+  optimisticLocal: boolean;
+}
+
+export interface HeartbeatDiscoverySnapshot {
+  onlineBots: Record<string, number>;
+  availableServices: any[];
+  providers: Record<string, HeartbeatProviderState>;
+}
+
+export interface HeartbeatDeps {
+  fetchHeartbeat: (mvcAddress: string) => Promise<HeartbeatFetchResult | null>;
+  now?: () => number;
+}
+
+type ProviderGroup = {
+  key: string;
+  globalMetaId: string;
+  address: string;
+  services: any[];
+};
+
+type HeartbeatListener = (snapshot: HeartbeatDiscoverySnapshot) => void;
+
+const toSafeString = (value: unknown): string => {
+  if (typeof value === 'string') return value.trim();
+  if (value == null) return '';
+  return String(value).trim();
+};
+
+const toNumberOrNull = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveServiceGlobalMetaId = (service: any): string => {
+  return toSafeString(service?.providerGlobalMetaId || service?.globalMetaId);
+};
+
+const resolveServiceProviderAddress = (service: any): string => {
+  return toSafeString(service?.providerAddress || service?.createAddress || service?.address);
+};
+
+const buildProviderKey = (globalMetaId: string, address: string): string => {
+  return `${globalMetaId}::${address}`;
+};
+
+const pickLatestTimestamp = (...values: Array<number | null | undefined>): number | null => {
+  let latest: number | null = null;
+  for (const value of values) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    if (latest == null || value > latest) {
+      latest = value;
+    }
+  }
+  return latest;
+};
+
+const normalizeHeartbeatSource = (value: unknown): string | null => {
+  const normalized = toSafeString(value);
+  return normalized || null;
+};
+
+const isHeartbeatSemanticMiss = (payload: unknown): boolean => {
+  const list = (
+    (payload as { data?: { list?: unknown } } | null)?.data?.list
+    ?? (payload as { list?: unknown } | null)?.list
+    ?? (payload as { result?: { list?: unknown } } | null)?.result?.list
+  );
+  return !Array.isArray(list) || list.length === 0;
+};
 
 export class HeartbeatPollingService {
   private deps: HeartbeatDeps;
   private _onlineBots: Map<string, number> = new Map();
   private _availableServices: any[] = [];
+  private _providerStates: Map<string, HeartbeatProviderState> = new Map();
+  private _localHeartbeatsByAddress: Map<string, { globalMetaId: string; lastSeenSec: number }> = new Map();
+  private _forcedOfflineGlobalMetaIds: Set<string> = new Set();
+  private _listeners: Set<HeartbeatListener> = new Set();
   private _intervalId: ReturnType<typeof setInterval> | null = null;
+  private _getServices: (() => any[]) | null = null;
+  private _pollPromise: Promise<void> | null = null;
+  private _pendingRefresh = false;
 
   constructor(deps: HeartbeatDeps) {
     this.deps = deps;
@@ -24,73 +121,123 @@ export class HeartbeatPollingService {
     return this._availableServices;
   }
 
+  get providerStates(): Map<string, HeartbeatProviderState> {
+    return this._providerStates;
+  }
+
+  getDiscoverySnapshot(): HeartbeatDiscoverySnapshot {
+    return {
+      onlineBots: Object.fromEntries(this._onlineBots),
+      availableServices: this._availableServices.map((service) => ({ ...service })),
+      providers: Object.fromEntries(
+        [...this._providerStates.entries()].map(([key, state]) => [key, { ...state }]),
+      ),
+    };
+  }
+
+  subscribe(listener: HeartbeatListener): () => void {
+    this._listeners.add(listener);
+    return () => {
+      this._listeners.delete(listener);
+    };
+  }
+
   checkOnlineStatus(timestampSec: number | null): boolean {
     if (timestampSec == null) return false;
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = Math.floor(this.nowMs() / 1000);
     return nowSec - timestampSec <= HEARTBEAT_ONLINE_WINDOW_SEC;
+  }
+
+  recordLocalHeartbeat(input: {
+    globalMetaId?: string | null;
+    address?: string | null;
+    timestampSec?: number | null;
+  }): void {
+    const address = toSafeString(input.address);
+    if (!address) return;
+    const globalMetaId = toSafeString(input.globalMetaId);
+    if (globalMetaId) {
+      this._forcedOfflineGlobalMetaIds.delete(globalMetaId);
+    }
+    const timestampSec = toNumberOrNull(input.timestampSec) ?? Math.floor(this.nowMs() / 1000);
+    this._localHeartbeatsByAddress.set(address, {
+      globalMetaId,
+      lastSeenSec: timestampSec,
+    });
   }
 
   async pollAll(services: any[]): Promise<void> {
     console.log(`[HeartbeatPolling] pollAll: checking ${services.length} services`);
+    const providerGroups = this.buildProviderGroups(services);
+    const results = await this.mapWithConcurrency(
+      providerGroups,
+      HEARTBEAT_FETCH_CONCURRENCY,
+      async (group) => this.evaluateProviderGroup(group),
+    );
+
     const nextOnlineBots: Map<string, number> = new Map();
     const nextAvailableServices: any[] = [];
+    const nextProviderStates: Map<string, HeartbeatProviderState> = new Map();
 
-    for (const service of services) {
-      const globalMetaId: string = service.providerGlobalMetaId || service.globalMetaId || '';
-      const status = Number(service?.status ?? 0);
-      if (Number.isFinite(status) && status < 0) {
-        console.log(`[HeartbeatPolling] skip revoked service "${service.displayName || service.serviceName}" status=${status}`);
-        continue;
-      }
+    for (const result of results) {
+      nextProviderStates.set(result.state.key, result.state);
+      if (!result.state.online) continue;
 
-      const available = Number(service?.available ?? 1);
-      if (Number.isFinite(available) && available === 0) {
-        console.log(`[HeartbeatPolling] skip unavailable service "${service.displayName || service.serviceName}" available=${available}`);
-        continue;
-      }
-
-      const mvcAddress: string = service.providerAddress || service.paymentAddress || service.address || '';
-      if (!mvcAddress) {
-        console.log(`[HeartbeatPolling] skip service "${service.displayName || service.serviceName}" — no address`);
-        continue;
-      }
-
-      let heartbeat: { timestamp: number } | null = null;
-      try {
-        heartbeat = await this.deps.fetchHeartbeat(mvcAddress);
-      } catch (err) {
-        console.warn(`[HeartbeatPolling] fetch error for ${mvcAddress}:`, err);
-      }
-
-      const timestampSec = heartbeat ? heartbeat.timestamp : null;
-      const isOnline = this.checkOnlineStatus(timestampSec);
-      console.log(`[HeartbeatPolling] "${service.displayName || service.serviceName}" addr=${mvcAddress.slice(0, 10)}... ts=${timestampSec} online=${isOnline}`);
-
-      if (isOnline) {
-        if (globalMetaId) {
-          nextOnlineBots.set(globalMetaId, timestampSec as number);
+      if (result.state.globalMetaId && result.state.lastSeenSec != null) {
+        const existing = nextOnlineBots.get(result.state.globalMetaId);
+        if (existing == null || result.state.lastSeenSec > existing) {
+          nextOnlineBots.set(result.state.globalMetaId, result.state.lastSeenSec);
         }
-        nextAvailableServices.push(service);
       }
+
+      nextAvailableServices.push(...result.services);
     }
 
     this._onlineBots = nextOnlineBots;
     this._availableServices = nextAvailableServices;
-    console.log(`[HeartbeatPolling] result: ${nextOnlineBots.size} online bots, ${nextAvailableServices.length} available services`);
+    this._providerStates = nextProviderStates;
+
+    console.log(
+      `[HeartbeatPolling] result: ${nextOnlineBots.size} online bots, ${nextAvailableServices.length} available services`,
+    );
+    this.emitChange();
   }
 
   startPolling(getServices: () => any[]): void {
     console.log('[HeartbeatPolling] startPolling called');
-    // Fire immediately
-    this.pollAll(getServices()).catch((err) => {
+    this.stopPolling();
+    this._getServices = getServices;
+    void this.refreshNow().catch((err) => {
       console.warn('[HeartbeatPolling] initial poll error:', err);
     });
 
     this._intervalId = setInterval(() => {
-      this.pollAll(getServices()).catch((err) => {
+      void this.refreshNow().catch((err) => {
         console.warn('[HeartbeatPolling] interval poll error:', err);
       });
     }, HEARTBEAT_POLL_INTERVAL_MS);
+  }
+
+  async refreshNow(): Promise<void> {
+    if (!this._getServices) {
+      return;
+    }
+
+    if (this._pollPromise) {
+      this._pendingRefresh = true;
+      return this._pollPromise;
+    }
+
+    this._pollPromise = (async () => {
+      do {
+        this._pendingRefresh = false;
+        await this.pollAll(this._getServices ? this._getServices() : []);
+      } while (this._pendingRefresh);
+    })().finally(() => {
+      this._pollPromise = null;
+    });
+
+    return this._pollPromise;
   }
 
   stopPolling(): void {
@@ -101,40 +248,230 @@ export class HeartbeatPollingService {
   }
 
   markOffline(globalMetaId: string): void {
-    this._onlineBots.delete(globalMetaId);
+    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    if (!normalizedGlobalMetaId) return;
+
+    this._onlineBots.delete(normalizedGlobalMetaId);
     this._availableServices = this._availableServices.filter(
-      (s: any) => (s.providerGlobalMetaId || s.globalMetaId) !== globalMetaId
+      (service: any) => resolveServiceGlobalMetaId(service) !== normalizedGlobalMetaId,
     );
+    this._providerStates = new Map(
+      [...this._providerStates.entries()].filter(([, state]) => state.globalMetaId !== normalizedGlobalMetaId),
+    );
+    this._localHeartbeatsByAddress = new Map(
+      [...this._localHeartbeatsByAddress.entries()].filter(
+        ([, state]) => state.globalMetaId !== normalizedGlobalMetaId,
+      ),
+    );
+    this.emitChange();
+  }
+
+  forceOffline(globalMetaId: string): void {
+    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    if (!normalizedGlobalMetaId) return;
+    this._forcedOfflineGlobalMetaIds.add(normalizedGlobalMetaId);
+    this.markOffline(normalizedGlobalMetaId);
+  }
+
+  private nowMs(): number {
+    return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  private emitChange(): void {
+    if (this._listeners.size === 0) return;
+    const snapshot = this.getDiscoverySnapshot();
+    for (const listener of this._listeners) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.warn('[HeartbeatPolling] change listener failed:', error);
+      }
+    }
+  }
+
+  private buildProviderGroups(services: any[]): ProviderGroup[] {
+    const groups = new Map<string, ProviderGroup>();
+
+    for (const service of services) {
+      const status = Number(service?.status ?? 0);
+      if (Number.isFinite(status) && status < 0) {
+        console.log(
+          `[HeartbeatPolling] skip revoked service "${service.displayName || service.serviceName}" status=${status}`,
+        );
+        continue;
+      }
+
+      const available = Number(service?.available ?? 1);
+      if (Number.isFinite(available) && available === 0) {
+        console.log(
+          `[HeartbeatPolling] skip unavailable service "${service.displayName || service.serviceName}" available=${available}`,
+        );
+        continue;
+      }
+
+      const globalMetaId = resolveServiceGlobalMetaId(service);
+      const address = resolveServiceProviderAddress(service);
+      if (!address) {
+        console.log(
+          `[HeartbeatPolling] skip service "${service.displayName || service.serviceName}" — no provider address`,
+        );
+        continue;
+      }
+
+      const key = buildProviderKey(globalMetaId, address);
+      const existing = groups.get(key);
+      if (existing) {
+        existing.services.push(service);
+        continue;
+      }
+      groups.set(key, {
+        key,
+        globalMetaId,
+        address,
+        services: [service],
+      });
+    }
+
+    return [...groups.values()];
+  }
+
+  private async evaluateProviderGroup(group: ProviderGroup): Promise<{
+    services: any[];
+    state: HeartbeatProviderState;
+  }> {
+    const previousState = this._providerStates.get(group.key);
+    const localHeartbeat = this._localHeartbeatsByAddress.get(group.address);
+    let fetchResult: HeartbeatFetchResult | null = null;
+    let fetchError: string | null = null;
+
+    try {
+      fetchResult = await this.deps.fetchHeartbeat(group.address);
+    } catch (error) {
+      fetchError = error instanceof Error ? error.message : String(error);
+      console.warn(`[HeartbeatPolling] fetch error for ${group.address}:`, error);
+    }
+
+    const fetchedTimestamp = toNumberOrNull(fetchResult?.timestamp);
+    const previousTimestamp = previousState?.lastSeenSec ?? null;
+    const optimisticLocalTimestamp =
+      localHeartbeat && this.checkOnlineStatus(localHeartbeat.lastSeenSec)
+        ? localHeartbeat.lastSeenSec
+        : null;
+    const latestTimestamp = pickLatestTimestamp(
+      fetchedTimestamp,
+      previousTimestamp,
+      optimisticLocalTimestamp,
+    );
+    const forcedOffline =
+      Boolean(group.globalMetaId) && this._forcedOfflineGlobalMetaIds.has(group.globalMetaId);
+    const online = forcedOffline ? false : this.checkOnlineStatus(latestTimestamp);
+    const optimisticLocal =
+      !forcedOffline
+      &&
+      optimisticLocalTimestamp != null
+      && latestTimestamp === optimisticLocalTimestamp
+      && fetchedTimestamp == null;
+    const lastSource =
+      latestTimestamp != null && fetchedTimestamp != null && latestTimestamp === fetchedTimestamp
+        ? normalizeHeartbeatSource(fetchResult?.source) ?? 'remote'
+        : optimisticLocal
+          ? 'local-heartbeat'
+          : previousState?.lastSource ?? normalizeHeartbeatSource(fetchResult?.source);
+    const fetchResultError = toSafeString(fetchResult?.error || '');
+    const lastError = forcedOffline
+      ? 'locally_disabled'
+      : (fetchError ?? (fetchResultError || null));
+    const state: HeartbeatProviderState = {
+      key: group.key,
+      globalMetaId: group.globalMetaId,
+      address: group.address,
+      lastSeenSec: latestTimestamp,
+      lastCheckAt: Math.floor(this.nowMs() / 1000),
+      lastSource,
+      lastError,
+      online,
+      optimisticLocal,
+    };
+
+    console.log(
+      `[HeartbeatPolling] provider=${group.globalMetaId || 'unknown'} addr=${group.address.slice(0, 10)}... ts=${latestTimestamp} online=${online} source=${lastSource || 'unknown'}`,
+    );
+
+    return {
+      services: online ? group.services : [],
+      state,
+    };
+  }
+
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    worker: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    if (items.length === 0) return [];
+    const results = new Array<R>(items.length);
+    const concurrency = Math.max(1, Math.min(limit, items.length));
+    let nextIndex = 0;
+
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        while (true) {
+          const index = nextIndex;
+          nextIndex += 1;
+          if (index >= items.length) {
+            return;
+          }
+          results[index] = await worker(items[index]);
+        }
+      }),
+    );
+
+    return results;
   }
 }
 
 export async function fetchHeartbeatFromChain(
-  mvcAddress: string
-): Promise<{ timestamp: number } | null> {
-  const url = `${MANAPI_HOST}/address/pin/list/${encodeURIComponent(mvcAddress)}?cursor=0&size=1&path=/protocols/metabot-heartbeat`;
+  mvcAddress: string,
+): Promise<HeartbeatFetchResult | null> {
+  const normalizedAddress = toSafeString(mvcAddress);
+  if (!normalizedAddress) {
+    return { timestamp: null, source: 'none', error: 'missing_address' };
+  }
+
+  const query = `cursor=0&size=1&path=${encodeURIComponent(HEARTBEAT_PROTOCOL_PATH)}`;
+  const localPath = `/api/address/pin/list/${encodeURIComponent(normalizedAddress)}?${query}`;
+  const fallbackUrl = `${MANAPI_HOST}/address/pin/list/${encodeURIComponent(normalizedAddress)}?${query}`;
+  const localBase = getP2PLocalBase();
+
   try {
-    const res = await fetch(url);
+    const res = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isHeartbeatSemanticMiss);
+    const source = res.url.startsWith(localBase) ? 'local' : 'remote';
     if (!res.ok) {
-      console.warn(`[HeartbeatPolling] fetch ${url} → ${res.status}`);
-      return null;
+      console.warn(`[HeartbeatPolling] fetch ${res.url} → ${res.status}`);
+      return { timestamp: null, source, error: `status_${res.status}` };
     }
+
     const json = await res.json();
-    // Handle both response formats: { data: { list: [...] } } and { list: [...] }
     const list = json?.data?.list || json?.list || json?.result?.list;
     if (!Array.isArray(list) || list.length === 0) {
-      console.log(`[HeartbeatPolling] no heartbeat pins for ${mvcAddress.slice(0, 10)}...`);
-      return null;
+      console.log(`[HeartbeatPolling] no heartbeat pins for ${normalizedAddress.slice(0, 10)}...`);
+      return { timestamp: null, source, error: 'semantic_miss' };
     }
+
     const item = list[0];
-    // Use seenTime (broadcast time in seconds), NOT timestamp (genesis time, stale)
-    const ts = item?.seenTime ?? item?.seen_time ?? null;
-    if (typeof ts !== 'number') {
-      console.log(`[HeartbeatPolling] heartbeat pin has no valid seenTime:`, JSON.stringify(item).slice(0, 200));
-      return null;
+    const timestamp = toNumberOrNull(item?.seenTime ?? item?.seen_time);
+    if (timestamp == null) {
+      console.log(
+        '[HeartbeatPolling] heartbeat pin has no valid seenTime:',
+        JSON.stringify(item).slice(0, 200),
+      );
+      return { timestamp: null, source, error: 'invalid_seen_time' };
     }
-    return { timestamp: ts };
-  } catch (err) {
-    console.warn(`[HeartbeatPolling] fetchHeartbeatFromChain error for ${mvcAddress}:`, err);
-    return null;
+
+    return { timestamp, source, error: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[HeartbeatPolling] fetchHeartbeatFromChain error for ${normalizedAddress}:`, error);
+    return { timestamp: null, source: 'error', error: message || 'network_error' };
   }
 }

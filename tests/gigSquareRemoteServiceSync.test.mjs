@@ -195,6 +195,43 @@ test('parseRemoteSkillServiceItem ignores original protocol path when mutation t
   assert.equal(row.sourceServicePinId, 'svc-modify-2');
 });
 
+test('parseRemoteSkillServiceItem keeps provider identity address separate from paymentAddress', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-btc-pay-1',
+    status: 0,
+    operation: 'create',
+    address: 'mvc-provider-address',
+    create_address: 'mvc-provider-address',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    contentSummary: {
+      serviceName: 'cross-chain-service',
+      displayName: 'Cross Chain',
+      description: 'desc',
+      price: '0.0001',
+      currency: 'BTC',
+      paymentAddress: 'btc-payment-address',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(row.providerAddress, 'mvc-provider-address');
+  assert.equal(row.createAddress, 'mvc-provider-address');
+  assert.equal(row.paymentAddress, 'btc-payment-address');
+});
+
+test('parseRemoteSkillServiceRow preserves createAddress and paymentAddress independently', () => {
+  const row = parseRemoteSkillServiceRow({
+    id: 'svc-row-1',
+    create_address: 'mvc-provider-address',
+    payment_address: 'btc-payment-address',
+  });
+
+  assert.equal(row.providerAddress, 'mvc-provider-address');
+  assert.equal(row.createAddress, 'mvc-provider-address');
+  assert.equal(row.paymentAddress, 'btc-payment-address');
+});
+
 test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutation metadata', () => {
   assert.equal(isRemoteSkillServiceListSemanticMiss({
     data: {

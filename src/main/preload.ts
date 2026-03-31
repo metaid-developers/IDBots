@@ -147,6 +147,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('heartbeat:getOnlineServices'),
     getOnlineBots: () =>
       ipcRenderer.invoke('heartbeat:getOnlineBots'),
+    getDiscoverySnapshot: () =>
+      ipcRenderer.invoke('heartbeat:getDiscoverySnapshot'),
+    onDiscoveryChanged: (callback: (data: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on('heartbeat:discoveryChanged', handler);
+      return () => ipcRenderer.removeListener('heartbeat:discoveryChanged', handler);
+    },
   },
   appEvents: {
     onOpenSettings: (callback: () => void) => {

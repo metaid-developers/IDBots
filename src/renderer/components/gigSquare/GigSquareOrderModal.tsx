@@ -272,7 +272,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       setError(i18nService.t('gigSquarePromptRequired'));
       return;
     }
-    if (!service?.providerAddress) {
+    const paymentAddress = service?.paymentAddress || service?.providerAddress;
+    if (!service?.providerAddress || !paymentAddress) {
       setError(i18nService.t('gigSquareOrderFailed'));
       return;
     }
@@ -301,12 +302,13 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     setStatus('paying');
     const trimmedPrompt = prompt.trim();
     const amount = paymentAmount;
+    const paymentAddress = service.paymentAddress || service.providerAddress;
 
     try {
       const payment = await window.electron.idbots.executeTransfer({
         metabotId: selectedMetabotId,
         chain,
-        toAddress: service.providerAddress,
+        toAddress: paymentAddress,
         amountSpaceOrDoge: amount,
         feeRate,
       });

@@ -125,14 +125,27 @@ const GigSquareView: React.FC = () => {
   }, [loadServices, loadMetabot]);
 
   useEffect(() => {
-    const fetchOnline = () => {
-      window.electron.heartbeat.getOnlineBots().then((res: any) => {
-        if (res.success) setOnlineBots(res.bots);
-      });
+    let cancelled = false;
+
+    window.electron.heartbeat.getDiscoverySnapshot().then((res) => {
+      if (cancelled || !res.success || !res.snapshot) return;
+      setOnlineBots(res.snapshot.onlineBots);
+    }).catch(() => {
+      if (!cancelled) {
+        setOnlineBots({});
+      }
+    });
+
+    const unsubscribe = window.electron.heartbeat.onDiscoveryChanged((snapshot) => {
+      if (!cancelled) {
+        setOnlineBots(snapshot.onlineBots ?? {});
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
     };
-    fetchOnline();
-    const interval = setInterval(fetchOnline, 60_000); // refresh every minute
-    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {

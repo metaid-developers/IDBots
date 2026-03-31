@@ -136,6 +136,63 @@ test('pollAll handles mixed online and offline services', async () => {
   assert.equal(svc.availableServices[0].serviceName, 'svc-a');
 });
 
+test('pollAll queries heartbeat once per provider and keeps all active services for that provider', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const addresses = [];
+
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async (address) => {
+      addresses.push(address);
+      return { timestamp: nowSec - 15 };
+    },
+  });
+
+  await svc.pollAll([
+    {
+      providerGlobalMetaId: 'bot-shared',
+      providerAddress: 'mvc-provider-address',
+      paymentAddress: 'btc-payment-address',
+      serviceName: 'svc-a',
+    },
+    {
+      providerGlobalMetaId: 'bot-shared',
+      providerAddress: 'mvc-provider-address',
+      paymentAddress: 'doge-payment-address',
+      serviceName: 'svc-b',
+    },
+  ]);
+
+  assert.deepEqual(addresses, ['mvc-provider-address']);
+  assert.equal(svc.onlineBots.size, 1);
+  assert.equal(svc.availableServices.length, 2);
+});
+
+test('pollAll keeps provider online through a transient semantic miss while cached heartbeat is still fresh', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  let callCount = 0;
+
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { timestamp: nowSec - 20 };
+      }
+      return null;
+    },
+  });
+
+  const services = [
+    { providerGlobalMetaId: 'bot-cache', providerAddress: 'mvc-provider-address', serviceName: 'svc-cache' },
+  ];
+
+  await svc.pollAll(services);
+  assert.equal(svc.onlineBots.size, 1);
+
+  await svc.pollAll(services);
+  assert.equal(svc.onlineBots.size, 1);
+  assert.equal(svc.availableServices.length, 1);
+});
+
 test('pollAll stores the lastSeen timestamp in onlineBots', async () => {
   const nowSec = Math.floor(Date.now() / 1000);
   const expectedTs = nowSec - 45;
@@ -166,14 +223,15 @@ test('pollAll skips services with no address', async () => {
   assert.equal(svc.availableServices.length, 0);
 });
 
-test('pollAll replaces previous results on each call', async () => {
-  const nowSec = Math.floor(Date.now() / 1000);
+test('pollAll keeps the freshest seen heartbeat until the cached timestamp ages past the online window', async () => {
+  let nowSec = Math.floor(Date.now() / 1000);
 
   let callCount = 0;
   const svc = new HeartbeatPollingService({
+    now: () => nowSec * 1000,
     fetchHeartbeat: async () => {
       callCount += 1;
-      // First call: online; second call (same service): offline
+      // First call: fresh heartbeat; second call: stale chain data
       return callCount === 1
         ? { timestamp: nowSec - 10 }
         : { timestamp: nowSec - 3600 };
@@ -187,6 +245,10 @@ test('pollAll replaces previous results on each call', async () => {
   await svc.pollAll(services);
   assert.equal(svc.onlineBots.size, 1);
 
+  await svc.pollAll(services);
+  assert.equal(svc.onlineBots.size, 1);
+
+  nowSec += ONLINE_WINDOW_SEC + 5;
   await svc.pollAll(services);
   assert.equal(svc.onlineBots.size, 0);
   assert.equal(svc.availableServices.length, 0);
@@ -347,4 +409,20 @@ test('stopPolling prevents further polling ticks', async () => {
 
 test('fetchHeartbeatFromChain is exported as a function', () => {
   assert.equal(typeof fetchHeartbeatFromChain, 'function');
+});
+
+test('getDiscoverySnapshot exposes bots, services, and provider debug state consistently', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async () => ({ timestamp: nowSec - 10, source: 'local' }),
+  });
+
+  await svc.pollAll([
+    { providerGlobalMetaId: 'bot-snapshot', providerAddress: 'mvc-provider-address', serviceName: 'svc-snapshot' },
+  ]);
+
+  const snapshot = svc.getDiscoverySnapshot();
+  assert.equal(snapshot.onlineBots['bot-snapshot'], nowSec - 10);
+  assert.equal(snapshot.availableServices.length, 1);
+  assert.equal(snapshot.providers['bot-snapshot::mvc-provider-address']?.online, true);
 });

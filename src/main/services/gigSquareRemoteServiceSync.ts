@@ -154,7 +154,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
     || (summary as Record<string, unknown> | null)?.providerMetaBot
   ).trim();
   const paymentAddress = toSafeString((summary as Record<string, unknown> | null)?.paymentAddress).trim();
-  const providerAddress = paymentAddress || toSafeString(item.address || item.addres || item.createAddress || item.create_address).trim();
+  const providerAddress = createAddress || toSafeString(item.address || item.addres).trim();
   if (!summary) {
     if (operation !== 'revoke') return null;
     return {
@@ -177,7 +177,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
       outputType: null,
       endpoint: null,
       contentSummaryJson: null,
-      paymentAddress: paymentAddress || providerAddress,
+      paymentAddress: paymentAddress || null,
       status,
       operation,
       path,
@@ -223,7 +223,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
     outputType: outputType || null,
     endpoint: endpoint || null,
     contentSummaryJson: contentSummaryJson || null,
-    paymentAddress: paymentAddress || providerAddress,
+    paymentAddress: paymentAddress || null,
     status,
     operation,
     path,
@@ -250,8 +250,8 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     providerGlobalMetaId: toSafeString(row.providerGlobalMetaId ?? row.global_metaid).trim(),
     providerAddress: toSafeString(
       row.providerAddress
-      ?? row.paymentAddress
-      ?? row.payment_address
+      ?? row.createAddress
+      ?? row.create_address
       ?? row.address
     ).trim(),
     avatar: toSafeString(row.avatar).trim() || undefined,
