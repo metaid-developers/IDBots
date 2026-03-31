@@ -28,6 +28,8 @@ import { generateSessionTitle } from '../libs/coworkUtil';
 import type { ServiceOrderLifecycleService } from './serviceOrderLifecycleService';
 import {
   buildDeliveryMessage,
+  buildCoworkDeliveryResultMessage,
+  cleanServiceResultText,
   parseDeliveryMessage,
 } from './serviceOrderProtocols.js';
 import {
@@ -310,15 +312,18 @@ function handleAutoDeliveryResult(
   const parsedContent = parseDeliveryMessage(deliveryContent);
   const resultText = parsedContent && typeof parsedContent.result === 'string'
     ? parsedContent.result
-    : deliveryContent;
+    : cleanServiceResultText(deliveryContent);
 
   // 3. Inject delivery result as assistant message into original cowork session
   const resultMsg = coworkStore.addMessage(sourceCoworkSessionId, {
     type: 'assistant',
-    content: `Remote service "${serviceName}" has delivered the result.\n\n---\n\n${resultText}\n\n---\n\nService: ${serviceName}\nPayment: ${paymentAmount} ${paymentCurrency}\nTX: ${paymentTxid}`,
+    content: buildCoworkDeliveryResultMessage(resultText),
     metadata: {
       delegationDelivery: true,
       orderId,
+      serviceName,
+      paymentAmount,
+      paymentCurrency,
       paymentTxid,
     },
   });

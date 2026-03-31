@@ -8,6 +8,7 @@ import type { MetabotStore } from '../metabotStore';
 import type { OrderSource } from './orderPayment';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import { cleanServiceResultText } from './serviceOrderProtocols.js';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -74,6 +75,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
     const sessionId = await this.createOrderSession(request);
+    this.injectProcessingNotice(sessionId, request);
     this.sessionIds.add(sessionId);
     const responsePromise = this.createAccumulatorPromise(sessionId, request);
 
@@ -180,6 +182,27 @@ export class PrivateChatOrderCowork extends EventEmitter {
     });
   }
 
+  private injectProcessingNotice(sessionId: string, request: OrderCoworkRequest): void {
+    const peerName = request.peerName?.trim();
+    const content = peerName
+      ? `${peerName}，已收到你的服务订单，正在处理，稍后返回结果。`
+      : '已收到服务订单，正在处理，稍后返回结果。';
+    const notice = this.coworkStore.addMessage(sessionId, {
+      type: 'assistant',
+      content,
+      metadata: {
+        sourceChannel: request.source,
+        externalConversationId: request.externalConversationId,
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        orderProcessingNotice: true,
+      },
+    });
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:message', { sessionId, message: notice });
+    }
+  }
+
   private handleMessage(sessionId: string, message: CoworkMessage): void {
     if (!this.sessionIds.has(sessionId)) return;
     const accumulator = this.accumulators.get(sessionId);
@@ -214,7 +237,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!this.sessionIds.has(sessionId)) return;
     const accumulator = this.accumulators.get(sessionId);
     if (!accumulator) return;
-    const serviceReply = this.formatReply(accumulator.messages);
+    const serviceReply = this.formatReply(sessionId, accumulator.messages);
     const request = accumulator.request;
     this.cleanupAccumulator(sessionId);
     if (this.emitToRenderer) {
@@ -253,7 +276,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     this.accumulators.delete(sessionId);
   }
 
-  private formatReply(messages: CoworkMessage[]): string {
+  private formatReply(sessionId: string, messages: CoworkMessage[]): string {
     // Find the last non-thinking assistant message with content — that's the final answer.
     // We deliberately skip thinking blocks and intermediate streaming chunks so the buyer
     // only sees the clean result, not the full execution trace.
@@ -261,8 +284,25 @@ export class PrivateChatOrderCowork extends EventEmitter {
       const msg = messages[i];
       if (msg.type !== 'assistant') continue;
       if (msg.metadata?.isThinking) continue;
+      if (msg.metadata?.orderProcessingNotice === true) continue;
       const text = (msg.content || '').trim();
-      if (text) return text;
+      if (!text) continue;
+      const cleaned = cleanServiceResultText(text) || text;
+      if (cleaned !== text) {
+        this.coworkStore.updateMessage(sessionId, msg.id, {
+          content: cleaned,
+          metadata: msg.metadata,
+        });
+        messages[i].content = cleaned;
+        if (this.emitToRenderer) {
+          this.emitToRenderer('cowork:stream:messageUpdate', {
+            sessionId,
+            messageId: msg.id,
+            content: cleaned,
+          });
+        }
+      }
+      return cleaned;
     }
     return '处理完成，但没有生成回复。';
   }

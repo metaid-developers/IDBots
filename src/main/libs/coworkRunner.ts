@@ -1802,6 +1802,10 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private formatSandboxHistoryMessage(message: CoworkMessage): string | null {
+    if (message.metadata?.excludeFromSandboxHistory === true) {
+      return null;
+    }
+
     const content = this.truncateSandboxHistoryContent(message.content || '', SANDBOX_HISTORY_MAX_MESSAGE_CHARS);
     if (!content) {
       return null;

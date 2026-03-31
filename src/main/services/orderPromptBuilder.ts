@@ -32,11 +32,14 @@ export function buildOrderPrompts(params: {
   const orderContextBlock = [
     '## Current Service Order Context',
     `- You are now executing a paid service order. The client has already completed payment.`,
-    `- Client name: ${clientName}. Address the client by their name in your response.`,
+    `- Client name: ${clientName}.`,
     resolvedSkill
       ? `- Required skill: **${resolvedSkill}**. You MUST use this skill to fulfill the order. Do not substitute or skip it.`
       : null,
     `- Your goal: execute the requested skill accurately and return a detailed, clear result to the client.`,
+    `- Return only the substantive deliverable that should be forwarded to the end user.`,
+    `- Do not repeat greetings, self-introduction, payment amount, txid, service id, skill name, order confirmation, service-complete boilerplate, rating requests, or other bot-to-bot chatter.`,
+    `- Start directly with the actual result content. If you use markdown, start with the result heading itself.`,
     `- After the service, the client may rate your performance and the quality of your result. Aim to exceed expectations.`,
     `- IMPORTANT: Scoped memory blocks such as <ownerMemories>, <contactMemories>, <conversationMemories>, and <ownerOperationalPreferences> may appear in this prompt.`,
     `- If an owner-scoped memory block appears, it describes your owner (the local operator), NOT the current client. Do not apply the owner's personal preferences or name to the client.`,
