@@ -1928,13 +1928,6 @@ const executeDelegationPipeline = async (
   delegation: DelegationRequest
 ): Promise<void> => {
   const LOG_TAG = '[DelegationPipeline]';
-  console.log(LOG_TAG, 'Starting delegation pipeline', {
-    sessionId,
-    servicePinId: delegation.servicePinId,
-    providerGlobalMetaid: delegation.providerGlobalMetaid,
-    price: delegation.price,
-    currency: delegation.currency,
-  });
 
   const coworkStoreInst = getCoworkStore();
 
@@ -2122,8 +2115,6 @@ const executeDelegationPipeline = async (
     return;
   }
 
-  console.log(LOG_TAG, 'PONG received, provider is online');
-
   // -----------------------------------------------------------------------
   // Step 3: Execute payment
   // -----------------------------------------------------------------------
@@ -2167,7 +2158,6 @@ const executeDelegationPipeline = async (
     }
 
     paymentTxid = (transferResult as { success: true; txId: string }).txId;
-    console.log(LOG_TAG, 'Payment successful, txid:', paymentTxid);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown payment error';
     injectDelegationSystemMessage(
@@ -2218,7 +2208,6 @@ const executeDelegationPipeline = async (
     });
 
     orderPinId = result.pinId ?? null;
-    console.log(LOG_TAG, 'ORDER message sent, pinId:', orderPinId, 'txids:', result.txids);
   } catch (error) {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
     injectDelegationSystemMessage(
@@ -2268,7 +2257,6 @@ const executeDelegationPipeline = async (
         orderMessagePinId: orderPinId,
       });
       orderId = order.id;
-      console.log(LOG_TAG, 'Buyer order created, id:', orderId);
     } catch (error) {
       if (
         error instanceof ServiceOrderOpenOrderExistsError ||
@@ -2310,12 +2298,6 @@ const executeDelegationPipeline = async (
       orderId: orderId || paymentTxid,
       message: `Waiting for delivery from "${delegation.serviceName}"`,
     });
-
-  console.log(LOG_TAG, 'Delegation pipeline complete, session is now in blocking mode', {
-    sessionId,
-    orderId,
-    paymentTxid,
-  });
 };
 
 const getCoworkRunner = () => {
@@ -2506,7 +2488,6 @@ const getCoworkRunner = () => {
 
     // Handle delegation requests from the LLM
     coworkRunner.on('delegation:requested', (sessionId: string, delegation: DelegationRequest) => {
-      console.log('[CoworkRunner] Delegation requested:', { sessionId, delegation });
       // Execute the full delegation pipeline asynchronously.
       // Errors are handled inside the pipeline; we catch here as a safety net.
       executeDelegationPipeline(sessionId, delegation).catch((error) => {
@@ -5815,11 +5796,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       _event,
       params: { metabotId: number; chain: TransferChain; toAddress: string; amountSpaceOrDoge: string; feeRate: number }
     ) => {
-      console.log('[IPC] idbots:executeTransfer', JSON.stringify(params));
       try {
         const store = getMetabotStore();
         const result = await executeTransfer(store, params);
-        console.log('[IPC] idbots:executeTransfer result', result?.success ? 'success' : 'failed', result?.txId ?? result?.error);
         return result;
       } catch (error) {
         const msg =

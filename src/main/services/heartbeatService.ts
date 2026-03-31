@@ -56,7 +56,6 @@ export class HeartbeatService {
           HEARTBEAT_PIN_DATA,
           { network: 'mvc' }
         );
-        console.log(`[HeartbeatService] metabot ${metabotId} heartbeat ok pinId=${result.pinId}`);
         this.deps.onHeartbeatSuccess?.({
           metabotId,
           pinId: result.pinId,

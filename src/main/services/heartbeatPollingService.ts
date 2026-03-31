@@ -167,7 +167,6 @@ export class HeartbeatPollingService {
   }
 
   async pollAll(services: any[]): Promise<void> {
-    console.log(`[HeartbeatPolling] pollAll: checking ${services.length} services`);
     const providerGroups = this.buildProviderGroups(services);
     const results = await this.mapWithConcurrency(
       providerGroups,
@@ -196,15 +195,10 @@ export class HeartbeatPollingService {
     this._onlineBots = nextOnlineBots;
     this._availableServices = nextAvailableServices;
     this._providerStates = nextProviderStates;
-
-    console.log(
-      `[HeartbeatPolling] result: ${nextOnlineBots.size} online bots, ${nextAvailableServices.length} available services`,
-    );
     this.emitChange();
   }
 
   startPolling(getServices: () => any[]): void {
-    console.log('[HeartbeatPolling] startPolling called');
     this.stopPolling();
     this._getServices = getServices;
     void this.refreshNow().catch((err) => {
@@ -295,26 +289,17 @@ export class HeartbeatPollingService {
     for (const service of services) {
       const status = Number(service?.status ?? 0);
       if (Number.isFinite(status) && status < 0) {
-        console.log(
-          `[HeartbeatPolling] skip revoked service "${service.displayName || service.serviceName}" status=${status}`,
-        );
         continue;
       }
 
       const available = Number(service?.available ?? 1);
       if (Number.isFinite(available) && available === 0) {
-        console.log(
-          `[HeartbeatPolling] skip unavailable service "${service.displayName || service.serviceName}" available=${available}`,
-        );
         continue;
       }
 
       const globalMetaId = resolveServiceGlobalMetaId(service);
       const address = resolveServiceProviderAddress(service);
       if (!address) {
-        console.log(
-          `[HeartbeatPolling] skip service "${service.displayName || service.serviceName}" — no provider address`,
-        );
         continue;
       }
 
@@ -393,10 +378,6 @@ export class HeartbeatPollingService {
       optimisticLocal,
     };
 
-    console.log(
-      `[HeartbeatPolling] provider=${group.globalMetaId || 'unknown'} addr=${group.address.slice(0, 10)}... ts=${latestTimestamp} online=${online} source=${lastSource || 'unknown'}`,
-    );
-
     return {
       services: online ? group.services : [],
       state,
@@ -454,17 +435,13 @@ export async function fetchHeartbeatFromChain(
     const json = await res.json();
     const list = json?.data?.list || json?.list || json?.result?.list;
     if (!Array.isArray(list) || list.length === 0) {
-      console.log(`[HeartbeatPolling] no heartbeat pins for ${normalizedAddress.slice(0, 10)}...`);
       return { timestamp: null, source, error: 'semantic_miss' };
     }
 
     const item = list[0];
     const timestamp = toNumberOrNull(item?.seenTime ?? item?.seen_time);
     if (timestamp == null) {
-      console.log(
-        '[HeartbeatPolling] heartbeat pin has no valid seenTime:',
-        JSON.stringify(item).slice(0, 200),
-      );
+      console.warn('[HeartbeatPolling] heartbeat pin has no valid seenTime');
       return { timestamp: null, source, error: 'invalid_seen_time' };
     }
 

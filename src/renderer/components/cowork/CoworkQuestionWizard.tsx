@@ -105,22 +105,13 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
   };
 
   const handleSelectOption = (question: QuestionItem, optionLabel: string) => {
-    console.log('[CoworkQuestionWizard] handleSelectOption:', {
-      question: question.question,
-      optionLabel,
-      multiSelect: question.multiSelect,
-      currentAnswers: answers,
-    });
-
     if (!question.multiSelect) {
       // 单选模式：直接设置答案
       setAnswers((prev) => {
-        const newAnswers = {
+        return {
           ...prev,
           [question.question]: optionLabel,
         };
-        console.log('[CoworkQuestionWizard] 单选 - 新答案:', newAnswers);
-        return newAnswers;
       });
 
       // 单选题选择后自动跳转到下一题（延迟执行以显示选中效果）
@@ -139,16 +130,13 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
       // 多选模式：切换选项
       setAnswers((prev) => {
         const rawValue = prev[question.question] ?? '';
-        console.log('[CoworkQuestionWizard] 多选 - 当前值:', rawValue);
 
         // 如果 rawValue 为空，直接添加新选项
         if (!rawValue.trim()) {
-          const newAnswers = {
+          return {
             ...prev,
             [question.question]: optionLabel,
           };
-          console.log('[CoworkQuestionWizard] 多选 - 首次选择:', newAnswers);
-          return newAnswers;
         }
 
         // 否则解析现有值并切换
@@ -159,30 +147,23 @@ const CoworkQuestionWizard: React.FC<CoworkQuestionWizardProps> = ({
             .filter(Boolean)
         );
 
-        console.log('[CoworkQuestionWizard] 多选 - 解析后的集合:', Array.from(current));
-
         if (current.has(optionLabel)) {
           current.delete(optionLabel);
-          console.log('[CoworkQuestionWizard] 多选 - 取消选中:', optionLabel);
         } else {
           current.add(optionLabel);
-          console.log('[CoworkQuestionWizard] 多选 - 选中:', optionLabel);
         }
 
         // 如果删除后为空，返回空字符串
         if (current.size === 0) {
           const newAnswers = { ...prev };
           delete newAnswers[question.question];
-          console.log('[CoworkQuestionWizard] 多选 - 所有选项已取消:', newAnswers);
           return newAnswers;
         }
 
-        const newAnswers = {
+        return {
           ...prev,
           [question.question]: Array.from(current).join('|||'),
         };
-        console.log('[CoworkQuestionWizard] 多选 - 更新后的答案:', newAnswers);
-        return newAnswers;
       });
     }
   };

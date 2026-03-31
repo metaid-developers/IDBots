@@ -51,14 +51,6 @@ export function runOrchestratorSkillTurn(
     : `orchestrator:${now}`;
 
   const hasAvailableSkills = systemPrompt.includes('<available_skills>');
-  console.log('[Orchestrator] [Bridge] runOrchestratorSkillTurn start:', {
-    cwd,
-    metabotId,
-    groupId: normalizedGroupId || null,
-    systemPromptLength: systemPrompt.length,
-    userMessageLength: userMessage.length,
-    hasAvailableSkills,
-  });
 
   const session = store.createSession(
     sessionTitle,
@@ -137,15 +129,6 @@ export function runOrchestratorSkillTurn(
           break;
         }
       }
-      console.log('[Orchestrator] [Bridge] skill-turn complete:', {
-        totalMessages: messages.length,
-        toolUseCount,
-        toolResultCount,
-        lastAssistantLength: lastAssistantContent.length,
-      });
-      if (toolUseCount === 0 && toolResultCount === 0) {
-        console.warn('[Orchestrator] [Bridge] No tool_use/tool_result messages — agent may not have invoked Read/Bash.');
-      }
       finish(lastAssistantContent || '');
     };
 
@@ -162,7 +145,6 @@ export function runOrchestratorSkillTurn(
     runner.on('complete', onComplete);
     runner.on('error', onError);
 
-    console.log('[Orchestrator] [Bridge] Calling runner.startSession sessionId=', sessionId);
     runner
       .startSession(sessionId, userMessage, {
         skipInitialUserMessage: true,

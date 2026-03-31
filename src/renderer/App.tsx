@@ -214,12 +214,10 @@ const App: React.FC = () => {
   // Network status monitoring
   useEffect(() => {
     const handleOnline = () => {
-      console.log('[Renderer] Network online');
       window.electron.networkStatus.send('online');
     };
 
     const handleOffline = () => {
-      console.log('[Renderer] Network offline');
       window.electron.networkStatus.send('offline');
     };
 

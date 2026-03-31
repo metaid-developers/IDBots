@@ -209,18 +209,6 @@ function buildSystemPrompt(
   const isLatestFromPrivileged =
     !!latest &&
     ((sup !== '' && latest === sup) || (own !== '' && latest === own));
-  if (process.env.NODE_ENV === 'development' && (sup || own)) {
-    console.log(
-      '[Orchestrator] Privileged IDs — supervisor:',
-      sup || '(none)',
-      'owner:',
-      own || '(none)',
-      '; latest sender globalmetaid:',
-      latest || '(none)',
-      '; isLatestFromPrivileged:',
-      isLatestFromPrivileged
-    );
-  }
 
   return `[System Role]
 你是名为 ${name} 的 Web3 数字生命。你的人设是: ${role}
@@ -567,10 +555,6 @@ async function runReplyPipeline(
     ((supTrim !== '' && latestTrim === supTrim) ||
       (ownerGlobalMetaid != null && ownerGlobalMetaid !== '' && latestTrim === ownerGlobalMetaid))
   );
-  console.log('[Orchestrator] [DEBUG] Boss (supervisor_globalmetaid):', supervisorGlobalmetaid ?? '(none)');
-  console.log('[Orchestrator] [DEBUG] Owner (boss_global_metaid):', ownerGlobalMetaid ?? '(none)');
-  console.log('[Orchestrator] [DEBUG] Latest message sender globalmetaid:', latestMessageSenderGlobalmetaid ?? '(none)');
-  console.log('[Orchestrator] [DEBUG] Is latest message from privileged (supervisor or owner)?', isLatestFromPrivileged);
 
   let systemPrompt = buildSystemPrompt(
     metabot.name,
@@ -596,22 +580,12 @@ async function runReplyPipeline(
 
   const userMessage = buildUserMessage(triggerReason);
 
-  console.log('[Orchestrator] [DEBUG] System prompt (first 600 chars, log only; full length', systemPrompt.length, '):', systemPrompt.slice(0, 600));
-  console.log('[Orchestrator] [DEBUG] Use Read/Bash tool loop?', useToolLoop);
-
   let replyText: string;
 
   if (useToolLoop && allowedRoots.length > 0) {
     if (runSkillTurnViaCowork) {
-      const hasSkillsBlock = systemPrompt.includes('<available_skills>');
-      const skillsSnippet = systemPrompt.includes('<available_skills>')
-        ? systemPrompt.slice(systemPrompt.indexOf('<available_skills>'), systemPrompt.indexOf('</available_skills>') + '</available_skills>'.length).slice(0, 600)
-        : '(none)';
-      console.log('[Orchestrator] [DEBUG] Using Cowork for skill turn (runSkillTurnViaCowork).');
-      console.log('[Orchestrator] [DEBUG] systemPrompt length:', systemPrompt.length, 'has <available_skills>:', hasSkillsBlock, 'snippet:', skillsSnippet);
       // Use the last root (typically project/bundled SKILLs) so cwd contains the skill scripts; first root is often userData which may be empty in dev.
       const cwdForCowork = allowedRoots.length > 1 ? allowedRoots[allowedRoots.length - 1]! : allowedRoots[0]!;
-      console.log('[Orchestrator] [DEBUG] Cowork cwd (chosen root):', cwdForCowork, 'all roots:', allowedRoots);
       try {
         if (isLatestFromPrivileged) {
           await broadcastGroupChat(task.metabot_id, task.group_id, metabot.name, '响应中…');
@@ -642,7 +616,6 @@ async function runReplyPipeline(
 
       while (round < MAX_TOOL_CALLS) {
         round++;
-        console.log('[Orchestrator] [DEBUG] Tool loop round', round, 'messages count:', chatMessages.length);
         const chatWithTools = chatWithToolsOverride ?? chatCompletionWithTools;
         let result: Awaited<ReturnType<typeof chatCompletionWithTools>>;
         try {
@@ -657,15 +630,6 @@ async function runReplyPipeline(
 
         lastContent = result.content?.trim();
         lastToolCalls = result.tool_calls;
-
-        if (result.tool_calls?.length) {
-          console.log('[Orchestrator] [DEBUG] LLM returned tool_calls (count=', result.tool_calls.length, '):', result.tool_calls.map((tc) => tc.name).join(', '));
-          for (const tc of result.tool_calls) {
-            console.log('[Orchestrator] LLM tool_calls:', tc.name, 'arguments:', tc.arguments);
-          }
-        } else {
-          console.log('[Orchestrator] [DEBUG] LLM returned content only (no tool_calls). Final reply length:', lastContent?.length ?? 0);
-        }
 
         if (lastToolCalls?.length) {
           chatMessages.push({
@@ -683,11 +647,9 @@ async function runReplyPipeline(
               const args = JSON.parse(tc.arguments || '{}') as Record<string, unknown>;
               if (tc.name === 'Read') {
                 const filePath = typeof args.file_path === 'string' ? args.file_path : '';
-                console.log('[Orchestrator] [HOOK] Executing Read:', filePath);
                 observation = executeRead(filePath, allowedRoots);
               } else if (tc.name === 'Bash') {
                 const command = typeof args.command === 'string' ? args.command : '';
-                console.log('[Orchestrator] [HOOK] Executing Bash:', command.slice(0, 120));
                 observation = await executeBash(command, allowedRoots, task.metabot_id);
               } else {
                 observation = `Unknown tool: ${tc.name}`;
@@ -695,7 +657,6 @@ async function runReplyPipeline(
             } catch (err) {
               observation = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
             }
-            console.log('[Orchestrator] [HOOK] Tool result for', tc.name, ':', observation.slice(0, 200));
             chatMessages.push({
               role: 'tool',
               tool_call_id: tc.id,
@@ -713,7 +674,6 @@ async function runReplyPipeline(
       }
     }
   } else {
-    console.log('[Orchestrator] [DEBUG] No tool loop: one-shot reply.');
     try {
       replyText = await performChatCompletion(systemPrompt, userMessage, metabot.llm_id ?? undefined);
     } catch (err) {
@@ -738,7 +698,6 @@ async function runReplyPipeline(
   const nowIso = new Date().toISOString();
   db.run('UPDATE group_chat_tasks SET last_replied_at = ? WHERE id = ?', [nowIso, task.id]);
   saveDb();
-  console.log('[Orchestrator] Reply sent successfully for task', task.id, 'group', task.group_id);
 }
 
 /**
@@ -771,15 +730,6 @@ async function tick(
   const taskCount = taskRows[0]?.values?.length ?? 0;
 
   if (taskCount === 0) {
-    if (tickCount % LOG_EVERY_N_TICKS === 1) {
-      const totalResult = db.exec('SELECT COUNT(*) AS n FROM group_chat_tasks');
-      const total = totalResult[0]?.values?.[0]?.[0] ?? 0;
-      console.log(
-        '[Orchestrator] tick: no active tasks (total rows in group_chat_tasks:',
-        total,
-        '; if you edited the DB file on disk, restart the app to load changes)'
-      );
-    }
     return;
   }
 
@@ -807,11 +757,6 @@ async function tick(
       effectiveLastProcessed = 0;
       db.run('UPDATE group_chat_tasks SET last_processed_msg_id = 0 WHERE id = ?', [task.id]);
       saveDb();
-      if (tickCount % LOG_EVERY_N_TICKS === 1) {
-        console.log(
-          `[Orchestrator] task ${task.id} group ${task.group_id.slice(0, 12)}…: reset last_processed_msg_id (was ${task.last_processed_msg_id}, max in table ${maxIdInGroup})`
-        );
-      }
     }
 
     const newMsgResult = db.exec(
@@ -827,21 +772,6 @@ async function tick(
     }
 
     if (!newMsgResult[0]?.values?.length) {
-      if (tickCount % LOG_EVERY_N_TICKS === 1) {
-        const diag = db.exec(
-          `SELECT COUNT(*) AS total, COALESCE(MAX(id), 0) AS max_id,
-           SUM(CASE WHEN id > ? AND is_processed = 0 THEN 1 ELSE 0 END) AS unprocessed_after_last
-           FROM group_chat_messages WHERE group_id = ?`,
-          [effectiveLastProcessed, task.group_id]
-        );
-        const total = diag[0]?.values?.[0]?.[0] ?? 0;
-        const maxId = diag[0]?.values?.[0]?.[1] ?? 0;
-        const unprocessedAfter = diag[0]?.values?.[0]?.[2] ?? 0;
-        console.log(
-          `[Orchestrator] [DEBUG] task ${task.id} group_id=${task.group_id.slice(0, 20)}…: no new messages to process. ` +
-            `last_processed=${effectiveLastProcessed} total_msgs=${total} max_id=${maxId} unprocessed_after_last=${unprocessedAfter}`
-        );
-      }
       db.run(
         'UPDATE group_chat_tasks SET last_processed_msg_id = ? WHERE id = ?',
         [effectiveLastProcessed, task.id]
@@ -911,9 +841,6 @@ async function tick(
       }
 
       if (shouldReply) {
-        console.log(
-          `[Orchestrator] 🎯 TRIGGER FIRED for Bot ${task.metabot_id} in Group ${task.group_id}. Reason: ${reason}.`
-        );
         thinkingTasks.add(task.id);
         runReplyPipeline(
           task,
@@ -937,10 +864,6 @@ async function tick(
     );
   }
 
-  if (tickCount % LOG_EVERY_N_TICKS === 1 && tickLog.length > 0) {
-    console.log('[Orchestrator] tick:', taskCount, 'tasks,', tickLog.join('; '));
-  }
-
   saveDb();
 }
 
@@ -959,7 +882,6 @@ export function startOrchestrator(
 ): void {
   stopOrchestrator();
   tickCount = 0;
-  console.log('[Orchestrator] daemon started (tick every', TICK_INTERVAL_MS / 1000, 's)');
   tickIntervalId = setInterval(() => {
     tick(db, saveDb, getMetabotById, performChatCompletion, broadcastGroupChat, options).catch((err) => {
       console.error('[Orchestrator] tick error:', err);

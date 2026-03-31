@@ -59,18 +59,11 @@ export async function fetchFromLocalOrFallback(
 
     const isEnvelopeHit = !isJsonApiPath(localPath) || await isSuccessfulEnvelope(localRes);
     if (localRes.ok && isEnvelopeHit) {
-      console.log(`[p2p-proxy] local hit: ${localPath}`);
       return localRes;
     }
 
-    // Non-2xx response from local node
-    const reason = !localRes.ok ? `status ${localRes.status}` : 'code != 1';
-    console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
-  } catch (err: unknown) {
-    const name = (err as { name?: string }).name ?? '';
-    const reason =
-      name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network error';
-    console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
+  } catch (_err: unknown) {
+    void _err;
   }
 
   return fetch(fallbackUrl, options);
@@ -93,22 +86,11 @@ export async function fetchJsonWithFallbackOnMiss(
     const payload = await parseJsonClone(localRes);
     const isEnvelopeHit = !isJsonApiPath(localPath) || (payload as { code?: unknown } | undefined)?.code === 1;
 
-    if (localRes.ok && isEnvelopeHit) {
-      if (isSemanticMiss(payload)) {
-        console.log(`[p2p-proxy] fallback: ${localPath} → semantic miss`);
-      } else {
-        console.log(`[p2p-proxy] local hit: ${localPath}`);
-        return localRes;
-      }
-    } else {
-      const reason = !localRes.ok ? `status ${localRes.status}` : 'code != 1';
-      console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
+    if (localRes.ok && isEnvelopeHit && !isSemanticMiss(payload)) {
+      return localRes;
     }
-  } catch (err: unknown) {
-    const name = (err as { name?: string }).name ?? '';
-    const reason =
-      name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network error';
-    console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
+  } catch (_err: unknown) {
+    void _err;
   }
 
   return fetch(fallbackUrl, options);
@@ -138,33 +120,21 @@ export async function fetchContentWithFallback(
     });
 
     if (localRes.headers.get('x-man-content-status') === 'metadata-only') {
-      console.log(`[p2p-proxy] fallback: ${localPath} → metadata-only`);
       return fetch(fallbackUrl);
     }
 
     const contentLength = localRes.headers.get('content-length');
     if (localRes.ok && contentLength && parseInt(contentLength, 10) > 0) {
-      console.log(`[p2p-proxy] local hit: ${localPath}`);
       return localRes;
     }
     if (localRes.ok && !contentLength) {
       const bodyBytes = await localRes.clone().arrayBuffer();
       if (bodyBytes.byteLength > 0) {
-        console.log(`[p2p-proxy] local hit: ${localPath}`);
         return localRes;
       }
     }
-
-    // Empty body or non-2xx
-    const reason = !localRes.ok
-      ? `status ${localRes.status}`
-      : 'empty body';
-    console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
-  } catch (err: unknown) {
-    const name = (err as { name?: string }).name ?? '';
-    const reason =
-      name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network error';
-    console.log(`[p2p-proxy] fallback: ${localPath} → ${reason}`);
+  } catch (_err: unknown) {
+    void _err;
   }
 
   return fetch(fallbackUrl);
