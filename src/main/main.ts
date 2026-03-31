@@ -8,7 +8,7 @@ import os from 'os';
 import { SqliteStore } from './sqliteStore';
 import { CoworkStore } from './coworkStore';
 import type { MemoryBackend } from './memory/memoryBackend';
-import { CoworkRunner } from './libs/coworkRunner';
+import { CoworkRunner, type DelegationRequest } from './libs/coworkRunner';
 import { SkillManager } from './skillManager';
 import { MetaAppManager } from './metaAppManager';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
@@ -65,6 +65,8 @@ import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privat
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
+import { HeartbeatService } from './services/heartbeatService';
+import { HeartbeatPollingService, fetchHeartbeatFromChain } from './services/heartbeatPollingService';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -86,12 +88,15 @@ import {
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
+import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
+import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
 import {
   extractSessionOrderTxid,
   findMatchingOrderSessionId,
   resolveOrderSessionId,
   selectProtocolPinContent,
 } from './services/serviceOrderSessionResolution.js';
+import { publishServiceOrderEventToCowork as publishServiceOrderEventToCoworkStore } from './services/serviceOrderCoworkBridge';
 import {
   isRemoteSkillServiceListSemanticMiss,
   parseRemoteSkillServiceRow,
@@ -320,41 +325,17 @@ const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
   });
 };
 
-const buildServiceOrderEventMessage = (
-  type: 'refund_requested' | 'refunded',
-  order: ServiceOrderRecord
-): string => {
-  if (type === 'refund_requested') {
-    if (order.role === 'seller') {
-      const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
-      return `系统提示：买家已发起全额退款申请，请人工处理。${pinId}`.trim();
-    }
-    const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
-    return `系统提示：服务订单已超时，已自动发起全额退款申请。${pinId}`.trim();
-  }
-
-  const refundTxid = order.refundTxid ? ` 退款 txid：${order.refundTxid}` : '';
-  return `系统提示：退款已处理完成。${refundTxid}`.trim();
-};
-
 const publishServiceOrderEventToCowork = (
   type: 'refund_requested' | 'refunded',
   order: ServiceOrderRecord
 ): void => {
-  if (!order.coworkSessionId) return;
-  const message = getCoworkStore().addMessage(order.coworkSessionId, {
-    type: 'system',
-    content: buildServiceOrderEventMessage(type, order),
-    metadata: {
-      sourceChannel: 'metaweb_order',
-      refreshSessionSummary: true,
-      serviceOrderEvent: type,
-      paymentTxid: order.paymentTxid,
-      refundRequestPinId: order.refundRequestPinId,
-      refundTxid: order.refundTxid,
-    },
-  });
-  emitCoworkStreamMessage(order.coworkSessionId, message);
+  const result = publishServiceOrderEventToCoworkStore(getCoworkStore(), type, order);
+  if (result.message && order.coworkSessionId) {
+    emitCoworkStreamMessage(order.coworkSessionId, result.message);
+  }
+  if (result.delegationStateChange) {
+    emitDelegationStateChange(result.delegationStateChange);
+  }
 };
 
 
@@ -1783,6 +1764,8 @@ let serviceRefundSettlementService: ServiceRefundSettlementService | null = null
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
+let heartbeatService: HeartbeatService | null = null;
+let heartbeatPollingService: HeartbeatPollingService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -1812,6 +1795,526 @@ const getCoworkStore = () => {
     }
   }
   return coworkStore;
+};
+
+// ---------------------------------------------------------------------------
+// Delegation pipeline — orchestrates handshake, payment, order, A2A, blocking
+// ---------------------------------------------------------------------------
+
+/**
+ * Broadcast a delegation state change event to all renderer windows.
+ */
+const emitDelegationStateChange = (data: {
+  sessionId: string;
+  blocking: boolean;
+  orderId?: string;
+  message?: string;
+}) => {
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send('cowork:delegation:stateChange', data);
+      } catch { /* ignore */ }
+    }
+  });
+};
+
+/**
+ * Inject a system message into a cowork session and forward it to all
+ * renderer windows so it appears in the chat immediately.
+ */
+const injectDelegationSystemMessage = (sessionId: string, content: string) => {
+  const coworkStoreInst = getCoworkStore();
+  const message = coworkStoreInst.addMessage(sessionId, {
+    type: 'system',
+    content,
+  });
+  const safeMessage = sanitizeCoworkMessageForIpc(message);
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send('cowork:stream:message', { sessionId, message: safeMessage });
+      } catch { /* ignore */ }
+    }
+  });
+};
+
+/**
+ * Resolve the ECDH chat pubkey for a given provider globalMetaId.
+ * This mirrors the logic in the `gigSquare:fetchProviderInfo` handler.
+ */
+const resolveChatPubkeyForProvider = async (
+  providerGlobalMetaId: string,
+  providerMetaId?: string
+): Promise<string | null> => {
+  // First try fetching info directly
+  let chatPubkey: string | null = null;
+  try {
+    const info = await fetchMetaidInfoByMetaid(providerGlobalMetaId);
+    chatPubkey = toSafeString(info?.chatpubkey).trim() || null;
+  } catch { /* ignore */ }
+
+  if (chatPubkey) return chatPubkey;
+
+  // Fall back to searching /info/chatpubkey pins
+  const buildUrl = (metaid: string | null, size: number) => {
+    const url = new URL('https://manapi.metaid.io/pin/path/list');
+    url.searchParams.set('path', GIG_SQUARE_CHATPUBKEY_PATH);
+    url.searchParams.set('size', String(size));
+    if (metaid) {
+      url.searchParams.set('metaid', metaid);
+    }
+    return url.toString();
+  };
+
+  const fetchList = async (url: string) => {
+    const localPath = `/api/pin/path/list${new URL(url).search}`;
+    const response = await fetchJsonWithFallbackOnMiss(localPath, url, isEmptyListDataPayload);
+    if (!response.ok) return [];
+    const json = await response.json();
+    return Array.isArray(json?.data?.list) ? json.data.list : [];
+  };
+
+  const candidates = [providerMetaId, providerGlobalMetaId].filter(Boolean) as string[];
+  for (const metaid of candidates) {
+    const list = await fetchList(buildUrl(metaid, 20));
+    chatPubkey = extractChatPubkeyFromList(list, metaid);
+    if (chatPubkey) return chatPubkey;
+  }
+
+  // Broader search without metaid filter
+  const list = await fetchList(buildUrl(null, 200));
+  const matchId = providerMetaId || providerGlobalMetaId || '';
+  chatPubkey = extractChatPubkeyFromList(list, matchId);
+  return chatPubkey;
+};
+
+/**
+ * Execute the full delegation pipeline when the LLM emits [DELEGATE_REMOTE_SERVICE].
+ *
+ * Steps:
+ * 1. Resolve service from heartbeat polling's available services
+ * 2. PING/PONG handshake with the provider
+ * 3. Execute payment
+ * 4. Build & send encrypted ORDER message via createPin
+ * 5. Create buyer order record
+ * 6. Enter delegation blocking mode
+ */
+const executeDelegationPipeline = async (
+  sessionId: string,
+  delegation: DelegationRequest
+): Promise<void> => {
+  const LOG_TAG = '[DelegationPipeline]';
+  console.log(LOG_TAG, 'Starting delegation pipeline', {
+    sessionId,
+    servicePinId: delegation.servicePinId,
+    providerGlobalMetaid: delegation.providerGlobalMetaid,
+    price: delegation.price,
+    currency: delegation.currency,
+  });
+
+  const coworkStoreInst = getCoworkStore();
+
+  // -----------------------------------------------------------------------
+  // Step 0: Resolve session context (metabotId, wallet, etc.)
+  // -----------------------------------------------------------------------
+  const session = coworkStoreInst.getSession(sessionId);
+  if (!session) {
+    console.error(LOG_TAG, 'Session not found:', sessionId);
+    return;
+  }
+
+  const metabotId = session.metabotId;
+  if (metabotId == null || typeof metabotId !== 'number') {
+    injectDelegationSystemMessage(sessionId, `Delegation failed: no MetaBot associated with this session.`);
+    return;
+  }
+
+  const metabotStore = getMetabotStore();
+  const metabot = metabotStore.getMetabotById(metabotId);
+  if (!metabot) {
+    injectDelegationSystemMessage(sessionId, `Delegation failed: MetaBot #${metabotId} not found.`);
+    return;
+  }
+
+  const wallet = metabotStore.getMetabotWalletByMetabotId(metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    injectDelegationSystemMessage(sessionId, `Delegation failed: MetaBot wallet mnemonic is missing.`);
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 1: Resolve service from heartbeat polling's available services
+  // -----------------------------------------------------------------------
+  const pollingService = getHeartbeatPollingService();
+  const service = pollingService.availableServices.find(
+    (s: any) =>
+      (s.pinId === delegation.servicePinId || s.sourceServicePinId === delegation.servicePinId) &&
+      (s.providerGlobalMetaId || s.globalMetaId) === delegation.providerGlobalMetaid
+  );
+
+  if (!service) {
+    console.warn(LOG_TAG, 'Service not found in available services, looking up from DB');
+    // Fall back to DB lookup
+    const allServices = listRemoteSkillServicesFromDb();
+    const dbService = allServices.find(
+      (s) =>
+        (s.pinId === delegation.servicePinId || s.sourceServicePinId === delegation.servicePinId) &&
+        s.providerGlobalMetaId === delegation.providerGlobalMetaid
+    );
+    if (!dbService) {
+      injectDelegationSystemMessage(
+        sessionId,
+        `Delegation failed: Service "${delegation.serviceName}" (${delegation.servicePinId}) not found.`
+      );
+      return;
+    }
+    // Service exists but is not in the online list — treat as potentially offline
+    injectDelegationSystemMessage(
+      sessionId,
+      `Provider for "${delegation.serviceName}" appears offline. The service was not found in available online services. Please try again later.`
+    );
+    return;
+  }
+
+  const providerGlobalMetaId = toSafeString(service.providerGlobalMetaId || service.globalMetaId).trim();
+
+  // -----------------------------------------------------------------------
+  // Step 1b: Self-order guard — reject before payment if buyer === provider
+  // -----------------------------------------------------------------------
+  const buyerGlobalMetaId = (metabot.globalmetaid || '').trim();
+  if (buyerGlobalMetaId && providerGlobalMetaId && buyerGlobalMetaId === providerGlobalMetaId) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation rejected: a MetaBot cannot order its own service. Provider "${delegation.serviceName}" belongs to the same MetaBot.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Self-order rejected' });
+    return;
+  }
+
+  const serviceOrderLifecycle = getServiceOrderLifecycleService();
+  let releaseBuyerOrderCreation: (() => void) | null = null;
+  try {
+    releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
+      metabotId,
+      providerGlobalMetaId
+    );
+  } catch (error) {
+    if (
+      error instanceof ServiceOrderOpenOrderExistsError ||
+      error instanceof ServiceOrderSelfOrderNotAllowedError
+    ) {
+      injectDelegationSystemMessage(
+        sessionId,
+        `Delegation blocked: ${error.message}`
+      );
+      emitDelegationStateChange({ sessionId, blocking: false, message: 'Order unavailable' });
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    // -----------------------------------------------------------------------
+    // Step 2: PING/PONG handshake
+    // -----------------------------------------------------------------------
+    injectDelegationSystemMessage(
+      sessionId,
+      `Checking availability of "${delegation.serviceName}" provider...`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
+
+    let chatPubkey: string | null = null;
+    try {
+      chatPubkey = await resolveChatPubkeyForProvider(
+        providerGlobalMetaId,
+        toSafeString(service.providerMetaId).trim() || undefined
+      );
+    } catch (error) {
+      console.warn(LOG_TAG, 'Failed to resolve chat pubkey:', error);
+    }
+
+  if (!chatPubkey) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation failed: Could not resolve chat pubkey for provider "${delegation.serviceName}".`
+    );
+    pollingService.markOffline(providerGlobalMetaId);
+    return;
+  }
+
+  // Send PING and wait for PONG
+  let pongReceived = false;
+  try {
+    const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+      wallet.mnemonic,
+      wallet.path || "m/44'/10001'/0'/0/0"
+    );
+    const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey);
+    const encryptedPing = ecdhEncrypt('ping', sharedSecret);
+    const pingPayload = buildPrivateMessagePayload(providerGlobalMetaId, encryptedPing, '');
+    await createPin(metabotStore, metabotId, {
+      operation: 'create',
+      path: '/protocols/simplemsg',
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: pingPayload,
+    });
+
+    // Poll for PONG (reuse pattern from gigSquare:pingProvider)
+    const db = getStore().getDatabase();
+    const timeoutMs = 15000;
+    const deadline = Date.now() + timeoutMs;
+    const normalizeWord = (v: string) => v.toLowerCase().replace(/[^a-z]/g, '');
+    const myGlobalMetaId = metabot.globalmetaid?.trim() ?? '';
+
+    pongReceived = await new Promise<boolean>((resolve) => {
+      const check = () => {
+        try {
+          const result = db.exec(
+            `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+             FROM private_chat_messages
+             WHERE is_processed = 0
+             ORDER BY id DESC
+             LIMIT 50`
+          );
+          if (result[0]?.values?.length) {
+            const cols = result[0].columns as string[];
+            for (const row of result[0].values as unknown[][]) {
+              const r = cols.reduce((acc: Record<string, unknown>, c, i) => { acc[c] = row[i]; return acc; }, {});
+              const fromGlobal = ((r.from_global_metaid as string) || (r.from_metaid as string) || '').trim();
+              const toGlobal = ((r.to_global_metaid as string) || '').trim();
+              if (fromGlobal !== providerGlobalMetaId) continue;
+              if (myGlobalMetaId && toGlobal && toGlobal !== myGlobalMetaId) continue;
+              const cipherText = (r.content as string) || '';
+              const peerPubkey = (r.from_chat_pubkey as string) || chatPubkey;
+              try {
+                const peerShared = computeEcdhSharedSecretSha256(privateKeyBuffer, peerPubkey);
+                const plain = ecdhDecrypt(cipherText, peerShared);
+                if (plain && normalizeWord(plain.trim()) === 'pong') { resolve(true); return; }
+              } catch { /* try raw */ }
+              try {
+                const peerSharedRaw = computeEcdhSharedSecret(privateKeyBuffer, peerPubkey);
+                const plain = ecdhDecrypt(cipherText, peerSharedRaw);
+                if (plain && normalizeWord(plain.trim()) === 'pong') { resolve(true); return; }
+              } catch { /* ignore */ }
+            }
+          }
+        } catch { /* ignore db errors */ }
+        if (Date.now() >= deadline) { resolve(false); } else { setTimeout(check, 1000); }
+      };
+      check();
+    });
+  } catch (error) {
+    console.error(LOG_TAG, 'PING/PONG handshake failed:', error);
+    pongReceived = false;
+  }
+
+  if (!pongReceived) {
+    pollingService.markOffline(providerGlobalMetaId);
+    injectDelegationSystemMessage(
+      sessionId,
+      `Provider for "${delegation.serviceName}" is not responding (PONG timeout). Marked offline. Please try an alternative service or try again later.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Provider offline' });
+    return;
+  }
+
+  console.log(LOG_TAG, 'PONG received, provider is online');
+
+  // -----------------------------------------------------------------------
+  // Step 3: Execute payment
+  // -----------------------------------------------------------------------
+  const price = delegation.price || service.price || '0';
+  const currency = delegation.currency || service.currency || 'SPACE';
+  const normalizedCurrency = currency.toUpperCase() === 'MVC' ? 'SPACE' : currency.toUpperCase();
+  const paymentAddress = toSafeString(service.paymentAddress || service.providerAddress || service.address).trim();
+
+  if (!paymentAddress) {
+    injectDelegationSystemMessage(sessionId, `Delegation failed: No payment address found for provider.`);
+    return;
+  }
+
+  injectDelegationSystemMessage(
+    sessionId,
+    `Sending payment of ${price} ${normalizedCurrency} to provider...`
+  );
+  emitDelegationStateChange({ sessionId, blocking: false, message: 'Processing payment...' });
+
+  const paymentChain: TransferChain = normalizedCurrency === 'DOGE' ? 'doge' : 'mvc';
+  let paymentTxid = '';
+
+  try {
+    const feeRate = await resolveTransferFeeRate(paymentChain);
+    const transferResult = await executeTransfer(metabotStore, {
+      metabotId,
+      chain: paymentChain,
+      toAddress: paymentAddress,
+      amountSpaceOrDoge: price,
+      feeRate,
+    });
+
+    if (!transferResult.success) {
+      const errorMsg = (transferResult as { success: false; error: string }).error || 'Payment failed';
+      injectDelegationSystemMessage(
+        sessionId,
+        `Delegation payment failed: ${errorMsg}. The delegation has been cancelled.`
+      );
+      emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment failed' });
+      return;
+    }
+
+    paymentTxid = (transferResult as { success: true; txId: string }).txId;
+    console.log(LOG_TAG, 'Payment successful, txid:', paymentTxid);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown payment error';
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation payment error: ${errorMsg}. The delegation has been cancelled.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment error' });
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 4: Build ORDER message, ECDH encrypt, send via createPin
+  // -----------------------------------------------------------------------
+  injectDelegationSystemMessage(
+    sessionId,
+    `Payment confirmed (tx: ${paymentTxid.slice(0, 12)}...). Sending service order to provider...`
+  );
+  emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
+
+  const orderPayload = buildDelegationOrderPayload({
+    taskContext: delegation.taskContext,
+    userTask: delegation.userTask,
+    serviceName: delegation.serviceName || service.serviceName || service.displayName,
+    providerSkill: toSafeString(service.providerSkill).trim(),
+    servicePinId: delegation.servicePinId,
+    paymentTxid,
+    price,
+    currency: normalizedCurrency,
+  });
+
+  let orderPinId: string | null = null;
+  try {
+    const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+      wallet.mnemonic,
+      wallet.path || "m/44'/10001'/0'/0/0"
+    );
+    const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey);
+    const encrypted = ecdhEncrypt(orderPayload, sharedSecret);
+    const payloadStr = buildPrivateMessagePayload(providerGlobalMetaId, encrypted, '');
+
+    const result = await createPin(metabotStore, metabotId, {
+      operation: 'create',
+      path: '/protocols/simplemsg',
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: payloadStr,
+    });
+
+    orderPinId = result.pinId ?? null;
+    console.log(LOG_TAG, 'ORDER message sent, pinId:', orderPinId, 'txids:', result.txids);
+  } catch (error) {
+    console.error(LOG_TAG, 'Failed to send ORDER message:', error);
+    injectDelegationSystemMessage(
+      sessionId,
+      `Failed to send order to provider. Payment was sent (tx: ${paymentTxid}). Please contact support if funds are not returned.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Order send failed' });
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Step 5: Create buyer order via ServiceOrderLifecycleService
+  // -----------------------------------------------------------------------
+    try {
+      const observerSession = await ensureBuyerOrderObserverSession(coworkStoreInst, {
+        metabotId,
+        peerGlobalMetaId: providerGlobalMetaId,
+        peerName: toSafeString(service.providerMetaBot || service.providerName).trim() || null,
+        peerAvatar: toSafeString(service.avatar).trim() || null,
+        serviceId: delegation.servicePinId,
+        servicePrice: price,
+        serviceCurrency: normalizedCurrency,
+        serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
+        serverBotGlobalMetaId: providerGlobalMetaId,
+        servicePaidTx: paymentTxid,
+        orderPayload,
+      });
+      if (observerSession.initialMessage) {
+        emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
+      }
+    } catch (error) {
+      console.warn(LOG_TAG, 'Failed to create buyer observer session:', error);
+    }
+
+    let orderId = '';
+    try {
+      const order = serviceOrderLifecycle.createBuyerOrder({
+        localMetabotId: metabotId,
+        counterpartyGlobalMetaId: providerGlobalMetaId,
+        servicePinId: delegation.servicePinId,
+        serviceName: delegation.serviceName || delegation.servicePinId,
+        paymentTxid,
+        paymentChain: normalizeServiceOrderPaymentChain(normalizedCurrency),
+        paymentAmount: price,
+        paymentCurrency: normalizedCurrency,
+        coworkSessionId: sessionId,
+        orderMessagePinId: orderPinId,
+      });
+      orderId = order.id;
+      console.log(LOG_TAG, 'Buyer order created, id:', orderId);
+    } catch (error) {
+      if (
+        error instanceof ServiceOrderOpenOrderExistsError ||
+        error instanceof ServiceOrderSelfOrderNotAllowedError
+      ) {
+        console.warn(LOG_TAG, 'Order creation blocked:', error.message);
+        injectDelegationSystemMessage(
+          sessionId,
+          `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
+        );
+        emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
+        return;
+      }
+      console.error(LOG_TAG, 'Failed to create buyer order:', error);
+      injectDelegationSystemMessage(
+        sessionId,
+        `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
+      );
+      // Continue to blocking mode even if order tracking failed — the order was sent
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 6: Enter delegation blocking mode
+    // -----------------------------------------------------------------------
+    coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
+
+    const txLink = `https://whatsonchain.com/tx/${paymentTxid}`;
+    injectDelegationSystemMessage(
+      sessionId,
+      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\nPayment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
+    );
+
+    emitDelegationStateChange({
+      sessionId,
+      blocking: true,
+      orderId: orderId || paymentTxid,
+      message: `Waiting for delivery from "${delegation.serviceName}"`,
+    });
+
+    console.log(LOG_TAG, 'Delegation pipeline complete, session is now in blocking mode', {
+      sessionId,
+      orderId,
+      paymentTxid,
+    });
+  } finally {
+    releaseBuyerOrderCreation?.();
+  }
 };
 
 const getCoworkRunner = () => {
@@ -1907,6 +2410,12 @@ const getCoworkRunner = () => {
         }
         return overrides;
       },
+      getRemoteServicesPrompt: () => {
+        try {
+          const services = getHeartbeatPollingService().availableServices;
+          return getSkillManager().buildRemoteServicesPrompt(services);
+        } catch { return null; }
+      },
       getMetabotById: (id: number) => {
         const m = getMetabotStore().getMetabotById(id);
         return m ? { name: m.name, role: m.role, soul: m.soul, background: m.background ?? null, goal: m.goal ?? null } : null;
@@ -1991,6 +2500,21 @@ const getCoworkRunner = () => {
         if (!win.isDestroyed()) {
           win.webContents.send('cowork:stream:error', { sessionId, error });
         }
+      });
+    });
+
+    // Handle delegation requests from the LLM
+    coworkRunner.on('delegation:requested', (sessionId: string, delegation: DelegationRequest) => {
+      console.log('[CoworkRunner] Delegation requested:', { sessionId, delegation });
+      // Execute the full delegation pipeline asynchronously.
+      // Errors are handled inside the pipeline; we catch here as a safety net.
+      executeDelegationPipeline(sessionId, delegation).catch((error) => {
+        console.error('[CoworkRunner] Delegation pipeline unhandled error:', error);
+        injectDelegationSystemMessage(
+          sessionId,
+          `Delegation pipeline encountered an unexpected error: ${error instanceof Error ? error.message : String(error)}`
+        );
+        emitDelegationStateChange({ sessionId, blocking: false, message: 'Pipeline error' });
       });
     });
   }
@@ -2105,6 +2629,25 @@ const getMetabotStore = () => {
   }
   return metabotStore;
 };
+
+function getHeartbeatService(): HeartbeatService {
+  if (!heartbeatService) {
+    heartbeatService = new HeartbeatService({
+      createPin,
+      getMetabotStore: () => getMetabotStore(),
+    });
+  }
+  return heartbeatService;
+}
+
+function getHeartbeatPollingService(): HeartbeatPollingService {
+  if (!heartbeatPollingService) {
+    heartbeatPollingService = new HeartbeatPollingService({
+      fetchHeartbeat: fetchHeartbeatFromChain,
+    });
+  }
+  return heartbeatPollingService;
+}
 
 const getServiceOrderStore = () => {
   if (!serviceOrderStore) {
@@ -3263,6 +3806,23 @@ if (!gotTheLock) {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get config',
       };
+    }
+  });
+
+  // --- Delegation blocking IPC handlers ---
+  ipcMain.handle('cowork:isDelegationBlocking', async (_event, sessionId: string) => {
+    try {
+      return getCoworkStore().isDelegationBlocking(sessionId);
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('cowork:getDelegationInfo', async (_event, sessionId: string) => {
+    try {
+      return getCoworkStore().getDelegationInfo(sessionId);
+    } catch {
+      return null;
     }
   });
 
@@ -4903,72 +5463,24 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         payload: payloadStr,
       });
 
-      // Create buyer-side observer session so MetaBot A can watch the conversation.
-      // Each order gets its own session (keyed by txid so retries don't duplicate).
       let coworkSessionId: string | null = null;
       try {
-        const coworkStoreInst = getCoworkStore();
-        const txidForKey = (result.txids?.[0] || '').slice(0, 16) || String(Date.now());
-        const externalConversationId = `metaweb_order:buyer:${metabotId}:${toGlobalMetaId}:${txidForKey}`;
-        const existing = coworkStoreInst.getConversationMapping('metaweb_order', externalConversationId, metabotId);
-        if (!existing) {
-          const config = coworkStoreInst.getConfig();
-          const fallbackTitle = orderPayload.split('\n')[0].slice(0, 50)
-            || `Order-${(peerName || toGlobalMetaId).slice(0, 20)}`;
-          const generatedTitle = await generateSessionTitle(orderPayload).catch(() => null);
-          const sessionTitle = generatedTitle?.trim() || fallbackTitle;
-          const session = coworkStoreInst.createSession(
-            sessionTitle,
-            config.workingDirectory,
-            '',
-            'local',
-            [],
-            metabotId,
-            'a2a',
-            toGlobalMetaId,
-            peerName,
-            peerAvatar
-          );
-          coworkStoreInst.upsertConversationMapping({
-            channel: 'metaweb_order',
-            externalConversationId,
-            metabotId,
-            coworkSessionId: session.id,
-            metadataJson: JSON.stringify({
-              role: 'buyer',
-              peerGlobalMetaId: toGlobalMetaId,
-              peerName,
-              peerAvatar,
-              serviceId,
-              servicePrice,
-              serviceCurrency,
-              serviceSkill,
-              serverBotGlobalMetaId,
-              servicePaidTx: servicePaidTx || null,
-            }),
-          });
-          // Add the order message as the first message — direction:'outgoing' so it shows on the right.
-          // Do NOT set senderName/senderAvatar here: those fields identify the *peer* sender.
-          // The local MetaBot's name/avatar come from the session's metabotName/metabotAvatar.
-          const initialMessage = coworkStoreInst.addMessage(session.id, {
-            type: 'user',
-            content: orderPayload,
-            metadata: {
-              sourceChannel: 'metaweb_order',
-              externalConversationId,
-              direction: 'outgoing',
-            },
-          });
-          // Notify renderer immediately so the session appears without restart
-          const safeMsg = sanitizeCoworkMessageForIpc(initialMessage);
-          BrowserWindow.getAllWindows().forEach(win => {
-            if (!win.isDestroyed()) {
-              try { win.webContents.send('cowork:stream:message', { sessionId: session.id, message: safeMsg }); } catch { /* ignore */ }
-            }
-          });
-          coworkSessionId = session.id;
-        } else {
-          coworkSessionId = existing.coworkSessionId;
+        const observerSession = await ensureBuyerOrderObserverSession(getCoworkStore(), {
+          metabotId,
+          peerGlobalMetaId: toGlobalMetaId,
+          peerName,
+          peerAvatar,
+          serviceId,
+          servicePrice,
+          serviceCurrency,
+          serviceSkill,
+          serverBotGlobalMetaId,
+          servicePaidTx,
+          orderPayload,
+        });
+        coworkSessionId = observerSession.coworkSessionId;
+        if (observerSession.initialMessage) {
+          emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
         }
       } catch (sessionErr) {
         console.warn('[GigSquare] Failed to create buyer observer session:', sessionErr);
@@ -5118,6 +5630,54 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       return { success: pongReceived };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Ping failed' };
+    }
+  });
+
+  // --- Heartbeat IPC handlers ---
+
+  ipcMain.handle('heartbeat:toggle', async (_event, params: { metabotId: number; enabled: boolean }) => {
+    try {
+      const db = getStore().getDatabase();
+      const save = getStore().getSaveFunction();
+      db.run('UPDATE metabots SET heartbeat_enabled = ? WHERE id = ?', [params.enabled ? 1 : 0, params.metabotId]);
+      save();
+
+      if (params.enabled) {
+        getHeartbeatService().startHeartbeat(params.metabotId);
+      } else {
+        getHeartbeatService().stopHeartbeat(params.metabotId);
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to toggle heartbeat' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getStatus', async (_event, metabotId: number) => {
+    try {
+      const active = getHeartbeatService().isActive(metabotId);
+      return { success: true, active };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat status' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getOnlineServices', async () => {
+    try {
+      const services = getHeartbeatPollingService().availableServices;
+      return { success: true, services };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get online services' };
+    }
+  });
+
+  ipcMain.handle('heartbeat:getOnlineBots', async () => {
+    try {
+      const bots = Object.fromEntries(getHeartbeatPollingService().onlineBots);
+      return { success: true, bots };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get online bots' };
     }
   });
 
@@ -6016,6 +6576,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       },
       stopCognitiveOrchestrator,
       stopP2P: () => p2pIndexerService.stop(),
+      stopHeartbeatServices: () => {
+        if (heartbeatService) {
+          heartbeatService.stopAll();
+          heartbeatService = null;
+        }
+        if (heartbeatPollingService) {
+          heartbeatPollingService.stopPolling();
+          heartbeatPollingService = null;
+        }
+      },
       deactivateGroupChatTasks: () => {
         try {
           const db = getStore().getDatabase();
@@ -6161,6 +6731,27 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     setInterval(() => {
       void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
     }, 10 * 60 * 1000);
+
+    // Start heartbeats for MetaBots with heartbeat_enabled = 1
+    try {
+      const allBots = getMetabotStore().listMetabots();
+      for (const bot of allBots) {
+        if (bot.heartbeat_enabled) {
+          getHeartbeatService().startHeartbeat(bot.id);
+        }
+      }
+    } catch (e) { console.warn('[Heartbeat] Failed to start heartbeats:', e); }
+
+    // Start heartbeat polling for online service discovery
+    try {
+      getHeartbeatPollingService().startPolling(() => {
+        try {
+          return listRemoteSkillServicesFromDb().filter(
+            (s) => s.available !== 0 && (s.status ?? 0) >= 0
+          );
+        } catch { return []; }
+      });
+    } catch (e) { console.warn('[Heartbeat] Failed to start heartbeat polling:', e); }
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
     // Local skills (Cowork / Read-Bash) only when trigger is Boss (supervisor or metabot owner GlobalMetaID).

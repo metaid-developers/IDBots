@@ -53,6 +53,7 @@ interface MetabotRow {
   llm_id: string | null;
   tools: string;
   skills: string;
+  heartbeat_enabled: number;
   created_at: number;
   updated_at: number;
 }
@@ -113,6 +114,7 @@ function rowToMetabot(row: MetabotRow): Metabot {
     llm_id: row.llm_id ?? null,
     tools: parseJsonArray(row.tools),
     skills: parseJsonArray(row.skills),
+    heartbeat_enabled: (row.heartbeat_enabled ?? 0) === 1,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -322,6 +324,7 @@ export class MetabotStore {
       llm_id: input.llm_id ?? null,
       tools: input.tools ?? [],
       skills: input.skills ?? [],
+      heartbeat_enabled: false,
       created_at: now,
       updated_at: now,
     };

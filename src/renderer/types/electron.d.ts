@@ -499,6 +499,9 @@ interface IElectronAPI {
     onStreamPermission: (callback: (data: { sessionId: string; request: CoworkPermissionRequest }) => void) => () => void;
     onStreamComplete: (callback: (data: { sessionId: string; claudeSessionId: string | null }) => void) => () => void;
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
+    isDelegationBlocking: (sessionId: string) => Promise<boolean>;
+    getDelegationInfo: (sessionId: string) => Promise<{ orderId: string } | null>;
+    onDelegationStateChange: (callback: (data: { sessionId: string; blocking: boolean; orderId?: string; message?: string }) => void) => () => void;
   };
   dialog: {
     selectDirectory: () => Promise<{ success: boolean; path: string | null }>;
@@ -752,6 +755,12 @@ interface IElectronAPI {
     getUserInfo: (params: { globalMetaId: string }) => Promise<unknown>;
     onStatusUpdate: (callback: (status: ElectronP2PStatus) => void) => () => void;
     onSyncProgress: (callback: (data: unknown) => void) => () => void;
+  };
+  heartbeat: {
+    toggle: (params: { metabotId: number; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
+    getStatus: (metabotId: number) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+    getOnlineServices: () => Promise<{ success: boolean; services?: unknown[]; error?: string }>;
+    getOnlineBots: () => Promise<{ success: boolean; bots?: Record<string, number>; error?: string }>;
   };
 }
 

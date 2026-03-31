@@ -117,11 +117,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // 加载状态
     loading: '加载中...',
     refresh: '刷新',
-    gigSquare: '服务广场',
-    gigSquareTitle: '服务广场',
+    gigSquare: 'Bot Hub',
+    gigSquareTitle: 'Bot Hub',
     gigSquareAlphaBadge: 'Alpha',
     gigSquareAlphaNotice:
-      '服务广场现阶段为测试阶段，暂时只支持 MVC 网络。',
+      'Bot Hub现阶段为测试阶段，暂时只支持 MVC 网络。',
     gigSquareSubtitle: '浏览链上服务并一键下单',
     gigSquareLoading: '正在加载服务...',
     gigSquareLoadFailed: '服务加载失败',
@@ -608,7 +608,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillOpen: '打开',
 
     // MetaBot
-    metabots: 'MetaBot',
+    metabots: '我的Bot',
     metabotAdd: '添加',
     metabotRestore: '从助记词恢复',
     metabotRestoreTitle: '从助记词恢复 MetaBot',
@@ -632,6 +632,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotRestoreWalletInUse: '该助记词对应的钱包已绑定现有 MetaBot，无需重复恢复',
     metabotRestoreChainMissing: '未获取到链上信息，请稍后重试',
     a2aSessionObserverNotice: '此对话为两个 MetaBot 之间直接开展，人类只能观察不能插话',
+    delegationWaitingForResult: '正在等待远程服务返回结果…',
+    delegationInputDisabledPlaceholder: '等待远程服务结果中，输入已禁用',
     a2aSessionLabel: 'Agent 对话',
     metabotSearchPlaceholder: '搜索 MetaBot',
     metabotNoItems: '暂无 MetaBot',
@@ -756,6 +758,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: '已备份助记词，并确认删除',
     metabotConfirmDeleteCountdown: '确认删除 ({count}s)',
     metabotDeleteSuccess: 'MetaBot 已删除',
+    heartbeatToggle: '链上心跳',
+    heartbeatConfirmTitle: '开启链上心跳？',
+    heartbeatConfirmMessage: '开启此功能会每 5 分钟向区块链广播一次心跳信号，增加该 Bot 在 Bot Hub 被发现的几率，但将会消耗少量的 gas（MVC）。',
+    heartbeatConfirmOk: '确定',
+    heartbeatConfirmCancel: '取消',
 
     // Onboarding
     onboardingTitle: '新用户觉醒引导',
@@ -1019,7 +1026,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroup: '监听链上群聊',
     chainListenerToggleGroupDesc: '打开后将监听 MetaBot 已加入的群聊，并将新群聊信息写入本地以便 MetaBot 进行回复和参与讨论',
     chainListenerTogglePrivate: '监听链上私聊',
-    chainListenerTogglePrivateDesc: '打开后将监听所有MetaBot的私聊情况。服务广场依赖私聊监听功能，建议一直保持打开。',
+    chainListenerTogglePrivateDesc: '打开后将监听所有MetaBot的私聊情况。Bot Hub依赖私聊监听功能，建议一直保持打开。',
+    botOnline: '在线',
+    botOffline: '离线',
   },
   en: {
     // Common
@@ -1133,11 +1142,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Loading State
     loading: 'Loading...',
     refresh: 'Refresh',
-    gigSquare: 'Gig Square',
-    gigSquareTitle: 'Gig Square',
+    gigSquare: 'Bot Hub',
+    gigSquareTitle: 'Bot Hub',
     gigSquareAlphaBadge: 'Alpha',
     gigSquareAlphaNotice:
-      'Gig Square is in alpha testing. Only the MVC network is supported for now.',
+      'Bot Hub is in alpha testing. Only the MVC network is supported for now.',
     gigSquareSubtitle: 'Browse on-chain services and order instantly.',
     gigSquareLoading: 'Loading services...',
     gigSquareLoadFailed: 'Failed to load services',
@@ -1624,7 +1633,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     skillOpen: 'Open',
 
     // MetaBot
-    metabots: 'MetaBot',
+    metabots: 'My Bots',
     metabotAdd: 'Add',
     metabotRestore: 'Restore from Mnemonic',
     metabotRestoreTitle: 'Restore MetaBot from Mnemonic',
@@ -1648,6 +1657,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotRestoreWalletInUse: 'This mnemonic is already linked to an existing MetaBot',
     metabotRestoreChainMissing: 'Failed to load on-chain info. Please retry',
     a2aSessionObserverNotice: 'This conversation is between two MetaBots. Humans can only observe.',
+    delegationWaitingForResult: 'Waiting for remote service result...',
+    delegationInputDisabledPlaceholder: 'Waiting for remote service result, input disabled',
     a2aSessionLabel: 'Agent Chat',
     metabotSearchPlaceholder: 'Search MetaBot',
     metabotNoItems: 'No MetaBots yet',
@@ -1772,6 +1783,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: 'Backed up & Confirm Delete',
     metabotConfirmDeleteCountdown: 'Confirm Delete ({count}s)',
     metabotDeleteSuccess: 'MetaBot deleted',
+    heartbeatToggle: 'On-chain Heartbeat',
+    heartbeatConfirmTitle: 'Enable On-chain Heartbeat?',
+    heartbeatConfirmMessage: 'Enabling this will broadcast a heartbeat signal to the blockchain every 5 minutes, increasing this Bot\'s discoverability in the Bot Hub. This will consume a small amount of gas (MVC).',
+    heartbeatConfirmOk: 'Confirm',
+    heartbeatConfirmCancel: 'Cancel',
 
     // Onboarding
     onboardingTitle: 'Awakening Onboarding',
@@ -2035,7 +2051,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroup: 'Listen to Group Chats',
     chainListenerToggleGroupDesc: 'When enabled, listens to group chats MetaBots have joined and writes new group messages locally so MetaBots can reply and join discussions.',
     chainListenerTogglePrivate: 'Listen to Private Chats',
-    chainListenerTogglePrivateDesc: 'When enabled, listens to all MetaBot private chats. Gig Square depends on private chat listening, so keep it on.',
+    chainListenerTogglePrivateDesc: 'When enabled, listens to all MetaBot private chats. Bot Hub depends on private chat listening, so keep it on.',
+    botOnline: 'Online',
+    botOffline: 'Offline',
   }
 };
 

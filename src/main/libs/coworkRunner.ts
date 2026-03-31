@@ -366,6 +366,74 @@ function mergeNoProxyList(currentValue: string | undefined, requiredHosts: strin
   return items.join(',');
 }
 
+// ---------------------------------------------------------------------------
+// Delegation pattern detection
+// ---------------------------------------------------------------------------
+
+export interface DelegationRequest {
+  servicePinId: string;
+  serviceName: string;
+  providerGlobalMetaid: string;
+  price: string;
+  currency: string;
+  userTask: string;
+  taskContext: string;
+}
+
+const DELEGATE_REMOTE_SERVICE_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
+
+export function containsDelegationControlPrefix(content: string): boolean {
+  return typeof content === 'string' && content.includes(DELEGATE_REMOTE_SERVICE_PREFIX);
+}
+
+/**
+ * Detects and parses a `[DELEGATE_REMOTE_SERVICE]` message emitted by the LLM.
+ *
+ * Returns a validated {@link DelegationRequest} when all required fields are
+ * present, or `null` when the content does not match the expected pattern.
+ */
+export function parseDelegationMessage(content: string): DelegationRequest | null {
+  const idx = content.indexOf(DELEGATE_REMOTE_SERVICE_PREFIX);
+  if (idx === -1) return null;
+
+  const afterPrefix = content.slice(idx + DELEGATE_REMOTE_SERVICE_PREFIX.length);
+  const firstBrace = afterPrefix.indexOf('{');
+  const lastBrace = afterPrefix.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
+
+  const jsonStr = afterPrefix.slice(firstBrace, lastBrace + 1);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) return null;
+
+  const obj = parsed as Record<string, unknown>;
+
+  // Validate required fields
+  if (
+    typeof obj.servicePinId !== 'string' || !obj.servicePinId ||
+    typeof obj.serviceName !== 'string' || !obj.serviceName ||
+    typeof obj.providerGlobalMetaid !== 'string' || !obj.providerGlobalMetaid
+  ) {
+    return null;
+  }
+
+  return {
+    servicePinId: obj.servicePinId,
+    serviceName: obj.serviceName,
+    providerGlobalMetaid: obj.providerGlobalMetaid,
+    price: typeof obj.price === 'string' ? obj.price : '',
+    currency: typeof obj.currency === 'string' ? obj.currency : '',
+    userTask: typeof obj.userTask === 'string' ? obj.userTask : '',
+    taskContext: typeof obj.taskContext === 'string' ? obj.taskContext : '',
+  };
+}
+
 // Event types emitted by the runner
 export interface CoworkRunnerEvents {
   message: (sessionId: string, message: CoworkMessage) => void;
@@ -373,6 +441,7 @@ export interface CoworkRunnerEvents {
   permissionRequest: (sessionId: string, request: PermissionRequest) => void;
   complete: (sessionId: string, claudeSessionId: string | null) => void;
   error: (sessionId: string, error: string) => void;
+  'delegation:requested': (sessionId: string, delegation: DelegationRequest) => void;
 }
 
 export interface PermissionRequest {
@@ -396,15 +465,18 @@ interface ActiveSession {
   currentStreamingThinking: string;
   // Track which block type is currently streaming (to distinguish on content_block_stop)
   currentStreamingBlockType: 'thinking' | 'text' | null;
+  currentStreamingTextSuppressed: boolean;
   currentStreamingTextTruncated: boolean;
   currentStreamingThinkingTruncated: boolean;
   lastStreamingTextUpdateAt: number;
   lastStreamingThinkingUpdateAt: number;
   hasAssistantTextOutput: boolean;
   hasAssistantThinkingOutput: boolean;
+  delegationRequestEmitted: boolean;
   staleResumeDetected: boolean;
   staleResumeRetryAllowed: boolean;
   executionMode: CoworkExecutionMode;
+  disableRemoteServicesPrompt: boolean;
   sandboxProcess?: ChildProcessByStdio<null, Readable, Readable>;
   sandboxIpcDir?: string;
   ipcBridge?: VirtioSerialBridge;
@@ -463,6 +535,8 @@ export interface CoworkRunnerOptions {
   /** When set, env overrides (e.g. Twin wallet for metabot-basic) are merged into session env for tool execution. */
   getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   /** When set, fetches MetaBot by id for persona injection into system prompt. */
+  /** When set, returns the XML block for available remote services to inject into the system prompt. */
+  getRemoteServicesPrompt?: () => string | null;
   getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
   /** When set, opens a local MetaApp and returns the resolved local URL. */
   openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
@@ -473,6 +547,7 @@ export interface CoworkRunnerOptions {
 export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
+  private getRemoteServicesPrompt?: () => string | null;
   private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
   private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
@@ -489,6 +564,7 @@ export class CoworkRunner extends EventEmitter {
     super();
     this.store = store;
     this.getSkillSessionEnvOverrides = options?.getSkillSessionEnvOverrides;
+    this.getRemoteServicesPrompt = options?.getRemoteServicesPrompt;
     this.getMetabotById = options?.getMetabotById;
     this.openMetaApp = options?.openMetaApp;
     this.resolveMetaAppUrl = options?.resolveMetaAppUrl;
@@ -2174,6 +2250,7 @@ export class CoworkRunner extends EventEmitter {
     confirmationMode: 'modal' | 'text',
     memoryPromptBlocksXml: string,
     memoryEnabled: boolean,
+    disableRemoteServicesPrompt: boolean,
     personaBlock?: string
   ): string {
     const safetyPrompt = this.buildWorkspaceSafetyPrompt(workspaceRoot, cwd, confirmationMode);
@@ -2201,6 +2278,7 @@ export class CoworkRunner extends EventEmitter {
       memoryPromptBlocksXml,
       memoryRecallPrompt.join('\n'),
       trimmedBasePrompt,
+      disableRemoteServicesPrompt ? null : (this.getRemoteServicesPrompt?.() ?? null),
     ];
     return sections.filter((section): section is string => Boolean(section?.trim())).join('\n\n');
   }
@@ -2417,6 +2495,7 @@ export class CoworkRunner extends EventEmitter {
       systemPrompt?: string;
       autoApprove?: boolean;
       disableMemoryUpdates?: boolean;
+      disableRemoteServicesPrompt?: boolean;
       workspaceRoot?: string;
       confirmationMode?: 'modal' | 'text';
     } = {}
@@ -2479,15 +2558,18 @@ export class CoworkRunner extends EventEmitter {
       currentStreamingThinkingMessageId: null,
       currentStreamingThinking: '',
       currentStreamingBlockType: null,
+      currentStreamingTextSuppressed: false,
       currentStreamingTextTruncated: false,
       currentStreamingThinkingTruncated: false,
       lastStreamingTextUpdateAt: 0,
       lastStreamingThinkingUpdateAt: 0,
       hasAssistantTextOutput: false,
       hasAssistantThinkingOutput: false,
+      delegationRequestEmitted: false,
       staleResumeDetected: false,
       staleResumeRetryAllowed: true,
       executionMode: 'local',
+      disableRemoteServicesPrompt: Boolean(options.disableRemoteServicesPrompt),
       autoApprove: options.autoApprove ?? false,
       disableMemoryUpdates: Boolean(options.disableMemoryUpdates),
     };
@@ -2506,6 +2588,7 @@ export class CoworkRunner extends EventEmitter {
       activeSession.confirmationMode,
       this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled }),
       sessionMemoryEnabled,
+      activeSession.disableRemoteServicesPrompt,
       personaBlock
     );
 
@@ -2577,6 +2660,7 @@ export class CoworkRunner extends EventEmitter {
       activeSession.confirmationMode,
       this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled }),
       sessionMemoryEnabled,
+      activeSession.disableRemoteServicesPrompt,
       personaBlock
     );
 
@@ -2783,10 +2867,12 @@ export class CoworkRunner extends EventEmitter {
     // Reset per-turn output dedupe flags.
     activeSession.hasAssistantTextOutput = false;
     activeSession.hasAssistantThinkingOutput = false;
+    activeSession.currentStreamingTextSuppressed = false;
     activeSession.currentStreamingTextTruncated = false;
     activeSession.currentStreamingThinkingTruncated = false;
     activeSession.lastStreamingTextUpdateAt = 0;
     activeSession.lastStreamingThinkingUpdateAt = 0;
+    activeSession.delegationRequestEmitted = false;
     activeSession.staleResumeDetected = false;
     activeSession.staleResumeRetryAllowed = !isRetry;
 
@@ -4002,10 +4088,12 @@ export class CoworkRunner extends EventEmitter {
     // Reset per-turn output dedupe flags
     activeSession.hasAssistantTextOutput = false;
     activeSession.hasAssistantThinkingOutput = false;
+    activeSession.currentStreamingTextSuppressed = false;
     activeSession.currentStreamingTextTruncated = false;
     activeSession.currentStreamingThinkingTruncated = false;
     activeSession.lastStreamingTextUpdateAt = 0;
     activeSession.lastStreamingThinkingUpdateAt = 0;
+    activeSession.delegationRequestEmitted = false;
 
     const apiConfig = getCurrentApiConfig('sandbox');
     if (!apiConfig) {
@@ -4571,6 +4659,9 @@ export class CoworkRunner extends EventEmitter {
       if (hasStreamedText || hadPendingTextStreaming) return;
       const content = this.extractText(messagePayload);
       if (content) {
+        if (this.handleDelegationControlText(sessionId, activeSession, content)) {
+          return;
+        }
         const message = this.store.addMessage(sessionId, {
           type: 'assistant',
           content,
@@ -4587,6 +4678,9 @@ export class CoworkRunner extends EventEmitter {
       if (hasStreamedText || hadPendingTextStreaming) return;
       const content = this.extractText(contentBlocks ?? messagePayload);
       if (!content) return;
+      if (this.handleDelegationControlText(sessionId, activeSession, content)) {
+        return;
+      }
       const message = this.store.addMessage(sessionId, {
         type: 'assistant',
         content,
@@ -4600,9 +4694,14 @@ export class CoworkRunner extends EventEmitter {
     const flushTextParts = () => {
       // Skip text messages if we already have streamed text output
       if (hasStreamedText || hadPendingTextStreaming || textParts.length === 0) return;
+      const content = textParts.join('');
+      if (this.handleDelegationControlText(sessionId, activeSession, content)) {
+        textParts.length = 0;
+        return;
+      }
       const message = this.store.addMessage(sessionId, {
         type: 'assistant',
-        content: textParts.join(''),
+        content,
       });
       markAssistantTextOutput();
       this.emit('message', sessionId, message);
@@ -4725,11 +4824,12 @@ export class CoworkRunner extends EventEmitter {
         const initialTextRaw = typeof contentBlock.text === 'string' ? contentBlock.text : '';
         const initialText = this.truncateLargeContent(initialTextRaw, STREAMING_TEXT_MAX_CHARS);
         activeSession.currentStreamingContent = initialText;
+        activeSession.currentStreamingTextSuppressed = containsDelegationControlPrefix(initialText);
         activeSession.currentStreamingTextTruncated = initialText.length < initialTextRaw.length;
         activeSession.lastStreamingTextUpdateAt = 0;
         activeSession.currentStreamingBlockType = 'text';
 
-        if (initialText.length > 0) {
+        if (initialText.length > 0 && !activeSession.currentStreamingTextSuppressed) {
           const message = this.store.addMessage(sessionId, {
             type: 'assistant',
             content: initialText,
@@ -4798,6 +4898,20 @@ export class CoworkRunner extends EventEmitter {
         activeSession.currentStreamingContent = next.content;
         activeSession.currentStreamingTextTruncated = next.truncated;
 
+        if (containsDelegationControlPrefix(activeSession.currentStreamingContent)) {
+          activeSession.currentStreamingTextSuppressed = true;
+          if (activeSession.currentStreamingMessageId) {
+            this.store.deleteMessage(sessionId, activeSession.currentStreamingMessageId);
+            activeSession.currentStreamingMessageId = null;
+          }
+          activeSession.hasAssistantTextOutput = false;
+          return;
+        }
+
+        if (activeSession.currentStreamingTextSuppressed) {
+          return;
+        }
+
         // If we have a streaming message, emit update; otherwise create one
         if (activeSession.currentStreamingMessageId) {
           activeSession.hasAssistantTextOutput = true;
@@ -4844,17 +4958,7 @@ export class CoworkRunner extends EventEmitter {
         activeSession.lastStreamingThinkingUpdateAt = 0;
       } else {
         // Finalize text message (existing behavior)
-        if (activeSession.currentStreamingMessageId && activeSession.currentStreamingContent) {
-          this.updateMessageMerged(sessionId, activeSession.currentStreamingMessageId, {
-            content: activeSession.currentStreamingContent,
-            metadata: { isStreaming: false },
-          });
-          this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, activeSession.currentStreamingContent);
-        }
-        activeSession.currentStreamingMessageId = null;
-        activeSession.currentStreamingContent = '';
-        activeSession.currentStreamingTextTruncated = false;
-        activeSession.lastStreamingTextUpdateAt = 0;
+        this.finalizeStreamingTextMessage(activeSession);
       }
 
       activeSession.currentStreamingBlockType = null;
@@ -4877,17 +4981,7 @@ export class CoworkRunner extends EventEmitter {
       activeSession.lastStreamingThinkingUpdateAt = 0;
 
       // Finalize any pending text message
-      if (activeSession.currentStreamingMessageId && activeSession.currentStreamingContent) {
-        this.updateMessageMerged(sessionId, activeSession.currentStreamingMessageId, {
-          content: activeSession.currentStreamingContent,
-          metadata: { isStreaming: false },
-        });
-        this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, activeSession.currentStreamingContent);
-      }
-      activeSession.currentStreamingMessageId = null;
-      activeSession.currentStreamingContent = '';
-      activeSession.currentStreamingTextTruncated = false;
-      activeSession.lastStreamingTextUpdateAt = 0;
+      this.finalizeStreamingTextMessage(activeSession);
       activeSession.currentStreamingBlockType = null;
       return;
     }
@@ -4910,19 +5004,74 @@ export class CoworkRunner extends EventEmitter {
     activeSession.lastStreamingThinkingUpdateAt = 0;
 
     // Finalize any pending text message
-    const { currentStreamingMessageId, currentStreamingContent } = activeSession;
-    if (currentStreamingMessageId) {
+    this.finalizeStreamingTextMessage(activeSession);
+    activeSession.currentStreamingBlockType = null;
+  }
+
+  private emitDelegationRequestIfPresent(
+    sessionId: string,
+    activeSession: ActiveSession,
+    content: string
+  ): boolean {
+    const delegation = parseDelegationMessage(content);
+    if (!delegation) {
+      return false;
+    }
+    if (!activeSession.delegationRequestEmitted) {
+      activeSession.delegationRequestEmitted = true;
+      this.emit('delegation:requested', sessionId, delegation);
+    }
+    return true;
+  }
+
+  private handleDelegationControlText(
+    sessionId: string,
+    activeSession: ActiveSession,
+    content: string,
+    existingMessageId?: string | null
+  ): boolean {
+    if (!containsDelegationControlPrefix(content)) {
+      return false;
+    }
+    if (existingMessageId) {
+      this.store.deleteMessage(sessionId, existingMessageId);
+    }
+    this.emitDelegationRequestIfPresent(sessionId, activeSession, content);
+    return true;
+  }
+
+  private finalizeStreamingTextMessage(activeSession: ActiveSession): void {
+    const { sessionId, currentStreamingMessageId, currentStreamingContent } = activeSession;
+
+    if (
+      activeSession.currentStreamingTextSuppressed
+      || containsDelegationControlPrefix(currentStreamingContent)
+    ) {
+      if (currentStreamingMessageId) {
+        this.store.deleteMessage(sessionId, currentStreamingMessageId);
+      }
+      this.emitDelegationRequestIfPresent(sessionId, activeSession, currentStreamingContent);
+      activeSession.currentStreamingMessageId = null;
+      activeSession.currentStreamingContent = '';
+      activeSession.currentStreamingTextSuppressed = false;
+      activeSession.currentStreamingTextTruncated = false;
+      activeSession.lastStreamingTextUpdateAt = 0;
+      return;
+    }
+
+    if (currentStreamingMessageId && currentStreamingContent) {
       this.updateMessageMerged(sessionId, currentStreamingMessageId, {
         content: currentStreamingContent,
         metadata: { isStreaming: false },
       });
       this.emit('messageUpdate', sessionId, currentStreamingMessageId, currentStreamingContent);
     }
+
     activeSession.currentStreamingMessageId = null;
     activeSession.currentStreamingContent = '';
+    activeSession.currentStreamingTextSuppressed = false;
     activeSession.currentStreamingTextTruncated = false;
     activeSession.lastStreamingTextUpdateAt = 0;
-    activeSession.currentStreamingBlockType = null;
   }
 
   private waitForPermissionResponse(
@@ -5157,6 +5306,20 @@ export class CoworkRunner extends EventEmitter {
         ? activeSession.currentStreamingContent
         : safeResultText;
 
+      if (
+        this.handleDelegationControlText(
+          sessionId,
+          activeSession,
+          finalContent,
+          activeSession.currentStreamingMessageId
+        )
+      ) {
+        activeSession.currentStreamingMessageId = null;
+        activeSession.currentStreamingContent = '';
+        activeSession.currentStreamingTextSuppressed = false;
+        return;
+      }
+
       this.updateMessageMerged(sessionId, activeSession.currentStreamingMessageId, {
         content: finalContent,
         metadata: { isFinal: true, isStreaming: false },
@@ -5166,6 +5329,10 @@ export class CoworkRunner extends EventEmitter {
       // 更新后立即重置状态，防止被后续事件重复处理
       activeSession.currentStreamingMessageId = null;
       activeSession.currentStreamingContent = '';
+      return;
+    }
+
+    if (this.handleDelegationControlText(sessionId, activeSession, safeResultText)) {
       return;
     }
 

@@ -54,3 +54,25 @@ test('order prompt instructions reference scoped memory blocks instead of generi
   assert.match(systemPrompt, /ownerMemories|contactMemories|conversationMemories|ownerOperationalPreferences/);
   assert.doesNotMatch(systemPrompt, /<userMemories>/);
 });
+
+test('order prompt strips remote delegation instructions from injected skills prompt', () => {
+  const { systemPrompt } = buildOrderPrompts({
+    plaintext: 'Please deliver the result',
+    source: 'metaweb_private',
+    metabotName: 'OrderBot',
+    peerName: 'Client',
+    skillsPrompt: [
+      '## Skill Routing',
+      '- Use the local weather skill when relevant.',
+      '<available_remote_services>',
+      '  <notice>',
+      '    After the user confirms, output [DELEGATE_REMOTE_SERVICE] followed by JSON.',
+      '  </notice>',
+      '</available_remote_services>',
+    ].join('\n'),
+  });
+
+  assert.match(systemPrompt, /Use the local weather skill/);
+  assert.doesNotMatch(systemPrompt, /<available_remote_services>/);
+  assert.doesNotMatch(systemPrompt, /\[DELEGATE_REMOTE_SERVICE\]/);
+});

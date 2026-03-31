@@ -138,6 +138,16 @@ contextBridge.exposeInMainWorld('electron', {
       timeoutMs?: number;
     }) => ipcRenderer.invoke('gigSquare:pingProvider', params),
   },
+  heartbeat: {
+    toggle: (params: { metabotId: number; enabled: boolean }) =>
+      ipcRenderer.invoke('heartbeat:toggle', params),
+    getStatus: (metabotId: number) =>
+      ipcRenderer.invoke('heartbeat:getStatus', metabotId),
+    getOnlineServices: () =>
+      ipcRenderer.invoke('heartbeat:getOnlineServices'),
+    getOnlineBots: () =>
+      ipcRenderer.invoke('heartbeat:getOnlineBots'),
+  },
   appEvents: {
     onOpenSettings: (callback: () => void) => {
       const handler = () => callback();
@@ -259,6 +269,10 @@ contextBridge.exposeInMainWorld('electron', {
       memoryUserMemoriesMaxItems?: number;
     }) =>
       ipcRenderer.invoke('cowork:memory:setPolicy', input),
+    isDelegationBlocking: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:isDelegationBlocking', sessionId) as Promise<boolean>,
+    getDelegationInfo: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:getDelegationInfo', sessionId) as Promise<{ orderId: string } | null>,
     getSandboxStatus: () =>
       ipcRenderer.invoke('cowork:sandbox:status'),
     installSandbox: () =>
@@ -293,6 +307,11 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: { sessionId: string; error: string }) => callback(data);
       ipcRenderer.on('cowork:stream:error', handler);
       return () => ipcRenderer.removeListener('cowork:stream:error', handler);
+    },
+    onDelegationStateChange: (callback: (data: { sessionId: string; blocking: boolean; orderId?: string; message?: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; blocking: boolean; orderId?: string; message?: string }) => callback(data);
+      ipcRenderer.on('cowork:delegation:stateChange', handler);
+      return () => ipcRenderer.removeListener('cowork:delegation:stateChange', handler);
     },
   },
   dialog: {

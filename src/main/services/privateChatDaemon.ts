@@ -284,6 +284,61 @@ function completeBuyerOrderObserverSession(
   }
 }
 
+/**
+ * Handle delivery of a result for an auto-delegated order.
+ * Injects the delivery result into the original cowork session,
+ * exits delegation blocking mode, and notifies the renderer.
+ */
+function handleAutoDeliveryResult(
+  coworkStore: CoworkStore,
+  sourceCoworkSessionId: string,
+  deliveryContent: string,
+  serviceName: string,
+  paymentAmount: string,
+  paymentCurrency: string,
+  paymentTxid: string,
+  orderId: string,
+  emitLog: (msg: string) => void,
+  emitToRenderer?: (channel: string, data: unknown) => void
+): void {
+  emitLog(`[AutoDelivery] Injecting delivery result into source cowork session ${sourceCoworkSessionId.slice(0, 8)}… from order ${orderId.slice(0, 8)}…`);
+
+  // 1. Exit delegation blocking mode
+  coworkStore.setDelegationBlocking(sourceCoworkSessionId, false);
+
+  // 2. Extract the actual result text from the delivery message if possible
+  const parsedContent = parseDeliveryMessage(deliveryContent);
+  const resultText = parsedContent && typeof parsedContent.result === 'string'
+    ? parsedContent.result
+    : deliveryContent;
+
+  // 3. Inject delivery result as assistant message into original cowork session
+  const resultMsg = coworkStore.addMessage(sourceCoworkSessionId, {
+    type: 'assistant',
+    content: `Remote service "${serviceName}" has delivered the result.\n\n---\n\n${resultText}\n\n---\n\nService: ${serviceName}\nPayment: ${paymentAmount} ${paymentCurrency}\nTX: ${paymentTxid}`,
+    metadata: {
+      delegationDelivery: true,
+      orderId,
+      paymentTxid,
+    },
+  });
+
+  // 4. Emit result message to renderer
+  if (emitToRenderer) {
+    emitToRenderer('cowork:stream:message', { sessionId: sourceCoworkSessionId, message: resultMsg });
+  }
+
+  // 5. Notify renderer that delegation is unblocked
+  if (emitToRenderer) {
+    emitToRenderer('cowork:delegation:stateChange', {
+      sessionId: sourceCoworkSessionId,
+      blocking: false,
+    });
+  }
+
+  emitLog(`[AutoDelivery] Delegation unblocked for session ${sourceCoworkSessionId.slice(0, 8)}…`);
+}
+
 async function resolvePrivateConversationSession(
   coworkStore: CoworkStore,
   metabotId: number,
@@ -823,7 +878,7 @@ async function processOne(
 
         if (serviceOrderLifecycle && paymentTxid) {
           if (delivery && typeof delivery.paymentTxid === 'string') {
-            serviceOrderLifecycle.markBuyerOrderDelivered({
+            const deliveredOrder = serviceOrderLifecycle.markBuyerOrderDelivered({
               localMetabotId: metabot.id,
               counterpartyGlobalMetaId: fromGlobalMetaId,
               paymentTxid: delivery.paymentTxid,
@@ -833,6 +888,26 @@ async function processOne(
                   ? delivery.deliveredAt * 1000
                   : Date.now(),
             });
+
+            // Check if this is an auto-delegated order (has a source cowork session in blocking mode)
+            if (
+              deliveredOrder &&
+              deliveredOrder.coworkSessionId &&
+              coworkStore.isDelegationBlocking(deliveredOrder.coworkSessionId)
+            ) {
+              handleAutoDeliveryResult(
+                coworkStore,
+                deliveredOrder.coworkSessionId,
+                plaintext,
+                deliveredOrder.serviceName,
+                deliveredOrder.paymentAmount,
+                deliveredOrder.paymentCurrency,
+                deliveredOrder.paymentTxid,
+                deliveredOrder.id,
+                emitLog,
+                emitToRenderer,
+              );
+            }
           } else if (!isNeedsRatingMessage(plaintext)) {
             serviceOrderLifecycle.markBuyerOrderFirstResponseReceived({
               localMetabotId: metabot.id,

@@ -61,6 +61,8 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
   const [walletAssetsError, setWalletAssetsError] = useState('');
   const [tokenTransferAsset, setTokenTransferAsset] = useState<TokenTransferAsset | null>(null);
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState(metabot.heartbeat_enabled || false);
+  const [showHeartbeatConfirm, setShowHeartbeatConfirm] = useState(false);
 
   const refreshAllBalances = useCallback(() => {
     setBalance((prev) => ({ ...prev, loading: true }));
@@ -221,6 +223,53 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
           <div
             className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
               metabot.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+            }`}
+          />
+        </div>
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-2 mt-2"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        role="presentation"
+      >
+        <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary flex items-center gap-1">
+          <span>💓</span>
+          <span>{i18nService.t('heartbeatToggle')}</span>
+        </span>
+        <div
+          className={`w-9 h-5 rounded-full flex items-center transition-colors cursor-pointer flex-shrink-0 ${
+            heartbeatEnabled ? 'bg-claude-accent' : 'dark:bg-claude-darkBorder bg-claude-border'
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!heartbeatEnabled) {
+              setShowHeartbeatConfirm(true);
+              return;
+            }
+            // Toggling OFF — no confirmation needed
+            setHeartbeatEnabled(false);
+            window.electron.heartbeat
+              .toggle({ metabotId: metabot.id, enabled: false })
+              .then((res: any) => {
+                if (!res?.success) {
+                  console.error('[HeartbeatToggle] failed:', res?.error);
+                  setHeartbeatEnabled(true);
+                }
+              })
+              .catch((err: any) => {
+                console.error('[HeartbeatToggle] error:', err);
+                setHeartbeatEnabled(true);
+              });
+          }}
+          role="switch"
+          aria-checked={heartbeatEnabled}
+          title={i18nService.t('heartbeatToggle')}
+        >
+          <div
+            className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
+              heartbeatEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
             }`}
           />
         </div>
@@ -454,6 +503,58 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
             void refreshWalletAssets();
           }}
         />
+      )}
+      {showHeartbeatConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={(e) => { e.stopPropagation(); setShowHeartbeatConfirm(false); }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold dark:text-claude-darkText text-claude-text mb-2">
+              {i18nService.t('heartbeatConfirmTitle')}
+            </p>
+            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mb-4 leading-relaxed">
+              {i18nService.t('heartbeatConfirmMessage')}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowHeartbeatConfirm(false); }}
+                className="px-3 py-1.5 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+              >
+                {i18nService.t('heartbeatConfirmCancel')}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowHeartbeatConfirm(false);
+                  setHeartbeatEnabled(true);
+                  window.electron.heartbeat
+                    .toggle({ metabotId: metabot.id, enabled: true })
+                    .then((res: any) => {
+                      if (!res?.success) {
+                        console.error('[HeartbeatToggle] failed:', res?.error);
+                        setHeartbeatEnabled(false);
+                      }
+                    })
+                    .catch((err: any) => {
+                      console.error('[HeartbeatToggle] error:', err);
+                      setHeartbeatEnabled(false);
+                    });
+                }}
+                className="btn-idchat-primary-filled px-3 py-1.5 text-sm font-medium"
+              >
+                {i18nService.t('heartbeatConfirmOk')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

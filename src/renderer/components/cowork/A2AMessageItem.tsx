@@ -51,6 +51,14 @@ const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
   }
 };
 
+const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.startsWith('data:')
+    || normalized.startsWith('http://')
+    || normalized.startsWith('https://')
+    || normalized.startsWith('blob:');
+};
+
 const Avatar: React.FC<{ src?: string | null; name?: string | null; size?: number }> = ({
   src,
   name,
@@ -159,9 +167,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const fromName = isLocal
     ? (metabotName || 'MetaBot')
     : ((message.metadata?.senderName as string | undefined) || peerName || 'Peer');
+  const senderAvatar = message.metadata?.senderAvatar as string | undefined;
   const fromAvatar = isLocal
     ? metabotAvatar
-    : (peerAvatar || (message.metadata?.senderAvatar as string | undefined));
+    : (isRenderableAvatarSource(peerAvatar) ? peerAvatar : senderAvatar);
   const deliveryPayload = parseDeliveryPayload(message.content);
   const deliveryResult = typeof deliveryPayload?.result === 'string'
     ? deliveryPayload.result.trim()

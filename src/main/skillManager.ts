@@ -1005,6 +1005,49 @@ export class SkillManager {
     });
   }
 
+  buildRemoteServicesPrompt(availableServices: any[]): string | null {
+    if (!availableServices || availableServices.length === 0) return null;
+
+    const entries = availableServices
+      .map(
+        (svc) =>
+          `  <remote_service>` +
+          `<service_pin_id>${svc.pinId || svc.servicePinId || ''}</service_pin_id>` +
+          `<service_name>${svc.displayName || svc.serviceName || ''}</service_name>` +
+          `<description>${svc.description || ''}</description>` +
+          `<price>${svc.price || ''} ${svc.currency || ''}</price>` +
+          `<rating_avg>${svc.ratingAvg ?? 'N/A'}</rating_avg>` +
+          `<rating_count>${svc.ratingCount ?? 0}</rating_count>` +
+          `<provider_name>${svc.providerMetaBot || svc.providerName || ''}</provider_name>` +
+          `<provider_global_metaid>${svc.providerGlobalMetaId || ''}</provider_global_metaid>` +
+          `</remote_service>`,
+      )
+      .join('\n');
+
+    return (
+      `\n<available_remote_services>\n` +
+      `  <notice>\n` +
+      `    The following are on-chain services provided by remote MetaBots on the\n` +
+      `    permissionless agent collaboration network.\n\n` +
+      `    RULES:\n` +
+      `    1. ONLY consider these when NO local skill can fulfill the user's request.\n` +
+      `    2. When you find a matching remote service, present it to the user in\n` +
+      `       natural language with: service name, description, price, rating, and\n` +
+      `       provider Bot name. Ask the user to confirm before delegating.\n` +
+      `    3. After the user confirms, output [DELEGATE_REMOTE_SERVICE] followed by\n` +
+      `       a JSON object on the next line. This message will be intercepted by\n` +
+      `       the system — do NOT show it to the user.\n` +
+      `    4. Do NOT attempt to read SKILL.md files for remote services.\n\n` +
+      `    [DELEGATE_REMOTE_SERVICE] JSON format:\n` +
+      `    {"servicePinId":"...","serviceName":"...","providerGlobalMetaid":"...","price":"...","currency":"...","userTask":"summary","taskContext":"full context"}\n` +
+      `    Note: providerAddress is resolved by the system using servicePinId.\n` +
+      `  </notice>\n` +
+      entries +
+      '\n' +
+      `</available_remote_services>\n`
+    );
+  }
+
   /**
    * Same format as buildAutoRoutingPrompt but restricted to skills whose id is in skillIds.
    * Used by cognitive orchestrator for allowed_skills (no enabled/prompt filter).

@@ -125,6 +125,7 @@ const getStringArray = (value: unknown): string | null => {
 
 const ORDER_PREFIX = '[ORDER]';
 const DELIVERY_PREFIX = '[DELIVERY]';
+const DELEGATION_CONTROL_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
 
 type GigSquareOrderPayload = {
   txid?: string;
@@ -155,6 +156,14 @@ const formatShortHash = (value: string): string => {
   if (!value) return '';
   if (value.length <= 20) return value;
   return `${value.slice(0, 8)}...${value.slice(-8)}`;
+};
+
+const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.startsWith('data:')
+    || normalized.startsWith('http://')
+    || normalized.startsWith('https://')
+    || normalized.startsWith('blob:');
 };
 
 const getRefundFailureReasonLabel = (failureReason?: string | null): string | null => {
@@ -670,12 +679,23 @@ type ConversationTurn = {
   assistantItems: AssistantTurnItem[];
 };
 
+const shouldHideControlMessage = (message: CoworkMessage): boolean => {
+  if (message.metadata?.isDelegationInternal) {
+    return true;
+  }
+  return typeof message.content === 'string' && message.content.includes(DELEGATION_CONTROL_PREFIX);
+};
+
 const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
   const items: DisplayItem[] = [];
   const groupsByToolUseId = new Map<string, ToolGroupItem>();
   let pendingAdjacentGroup: ToolGroupItem | null = null;
 
   for (const message of messages) {
+    if (shouldHideControlMessage(message)) {
+      continue;
+    }
+
     if (message.type === 'tool_use') {
       const group: ToolGroupItem = { type: 'tool_group', toolUse: message };
       items.push(group);
@@ -1647,6 +1667,32 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundActionError, setRefundActionError] = useState<string | null>(null);
+  const [delegationBlocking, setDelegationBlocking] = useState(false);
+
+  // Fetch initial delegation blocking state when session changes
+  useEffect(() => {
+    if (!currentSession?.id) {
+      setDelegationBlocking(false);
+      return;
+    }
+    let cancelled = false;
+    window.electron?.cowork?.isDelegationBlocking?.(currentSession.id)
+      .then((blocking: boolean) => {
+        if (!cancelled) setDelegationBlocking(!!blocking);
+      })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, [currentSession?.id]);
+
+  // Listen for delegation state changes from the main process
+  useEffect(() => {
+    const cleanup = window.electron?.cowork?.onDelegationStateChange?.((data) => {
+      if (data.sessionId === currentSession?.id) {
+        setDelegationBlocking(data.blocking);
+      }
+    });
+    return () => { cleanup?.(); };
+  }, [currentSession?.id]);
 
   // Fetch MetaBot when session has metabotId (for avatar/name and llm_id for model restriction)
   useEffect(() => {
@@ -1669,14 +1715,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return () => { cancelled = true; };
   }, [currentSession?.metabotId]);
 
-  // Fetch peer avatar for A2A sessions when peerAvatar is not stored in the session.
+  // Fetch peer avatar for A2A sessions when peerAvatar is missing or not directly renderable.
   // Falls back to senderGlobalMetaId from the first incoming message if peerGlobalMetaId is missing.
   useEffect(() => {
     if (currentSession?.sessionType !== 'a2a') {
       setFetchedPeerAvatar(null);
       return;
     }
-    if (currentSession.peerAvatar) {
+    if (isRenderableAvatarSource(currentSession.peerAvatar)) {
       setFetchedPeerAvatar(null);
       return;
     }
@@ -1698,6 +1744,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
   }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar, currentSession?.sessionType, currentSession?.messages]);
+
+  const resolvedPeerAvatar = isRenderableAvatarSource(currentSession?.peerAvatar)
+    ? currentSession?.peerAvatar ?? null
+    : fetchedPeerAvatar;
 
   useEffect(() => {
     setIsProcessingRefund(false);
@@ -2393,12 +2443,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         className="flex-1 overflow-y-auto min-h-0 pt-3"
       >
         {isA2ASession ? (
-          currentSession.messages.map((msg) => (
+          currentSession.messages.filter((msg) => !shouldHideControlMessage(msg)).map((msg) => (
             <A2AMessageItem
               key={msg.id}
               message={msg}
               peerName={currentSession.peerName}
-              peerAvatar={currentSession.peerAvatar || fetchedPeerAvatar}
+              peerAvatar={resolvedPeerAvatar}
               metabotName={currentSession.metabotName}
               metabotAvatar={currentSession.metabotAvatar}
             />
@@ -2430,13 +2480,26 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         </div>
       ) : (
         <div className="p-4 shrink-0">
+          {delegationBlocking && (
+            <div className="max-w-3xl mx-auto mb-2">
+              <div className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                <svg className="animate-spin h-4 w-4 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span className="text-xs text-amber-700 dark:text-amber-300">
+                  {i18nService.t('delegationWaitingForResult')}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="max-w-3xl mx-auto">
             <CoworkPromptInput
               onSubmit={onContinue}
               onStop={onStop}
               isStreaming={isStreaming}
-              placeholder={i18nService.t('coworkContinuePlaceholder')}
-              disabled={false}
+              placeholder={delegationBlocking ? i18nService.t('delegationInputDisabledPlaceholder') : i18nService.t('coworkContinuePlaceholder')}
+              disabled={delegationBlocking}
               onManageSkills={onManageSkills}
               size="large"
               showModelSelector={true}

@@ -76,6 +76,7 @@ const GigSquareView: React.FC = () => {
   const [currencyFilter, setCurrencyFilter] = useState<'all' | 'BTC' | 'SPACE' | 'DOGE'>('all');
   const [sortOrder, setSortOrder] = useState<'rating' | 'updated'>('rating');
   const [providerInfoMap, setProviderInfoMap] = useState<Record<string, MetaidInfoResult>>({});
+  const [onlineBots, setOnlineBots] = useState<Record<string, number>>({});
 
   const loadServices = useCallback(async () => {
     setIsLoading(true);
@@ -122,6 +123,17 @@ const GigSquareView: React.FC = () => {
     loadServices();
     loadMetabot();
   }, [loadServices, loadMetabot]);
+
+  useEffect(() => {
+    const fetchOnline = () => {
+      window.electron.heartbeat.getOnlineBots().then((res: any) => {
+        if (res.success) setOnlineBots(res.bots);
+      });
+    };
+    fetchOnline();
+    const interval = setInterval(fetchOnline, 60_000); // refresh every minute
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const providerIds = Array.from(new Set(
@@ -189,12 +201,22 @@ const GigSquareView: React.FC = () => {
       list = list.filter((s) => s.displayName.toLowerCase().includes(q));
     }
     if (sortOrder === 'rating') {
-      list = [...list].sort((a, b) => (b.ratingCount ?? 0) - (a.ratingCount ?? 0));
+      list = [...list].sort((a, b) => {
+        const isOnlineA = onlineBots[a.providerGlobalMetaId] ? 1 : 0;
+        const isOnlineB = onlineBots[b.providerGlobalMetaId] ? 1 : 0;
+        if (isOnlineB !== isOnlineA) return isOnlineB - isOnlineA;
+        return (b.ratingCount ?? 0) - (a.ratingCount ?? 0);
+      });
     } else {
-      list = [...list].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      list = [...list].sort((a, b) => {
+        const isOnlineA = onlineBots[a.providerGlobalMetaId] ? 1 : 0;
+        const isOnlineB = onlineBots[b.providerGlobalMetaId] ? 1 : 0;
+        if (isOnlineB !== isOnlineA) return isOnlineB - isOnlineA;
+        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+      });
     }
     return list;
-  }, [visibleServices, searchQuery, currencyFilter, sortOrder]);
+  }, [visibleServices, searchQuery, currencyFilter, sortOrder, onlineBots]);
 
   return (
     <div className="h-full flex flex-col">
@@ -320,6 +342,7 @@ const GigSquareView: React.FC = () => {
               const providerAvatarSrc = getGigSquareProviderAvatarSrc(providerInfo);
               const refundRiskBadge = getGigSquareRefundRiskBadge(service.refundRisk);
               const hasRefundRisk = Boolean(refundRiskBadge);
+              const isOnline = Boolean(onlineBots[service.providerGlobalMetaId]);
               return (
                 <div
                   key={service.id}
@@ -336,7 +359,7 @@ const GigSquareView: React.FC = () => {
                     hasRefundRisk
                       ? 'border-amber-400/60 bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
                       : 'dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
-                  }`}
+                  } ${''}`}
                 >
                   <div className="flex items-start gap-3">
                     {iconSrc ? (
@@ -388,6 +411,9 @@ const GigSquareView: React.FC = () => {
                   </div>
                   <div className="mt-4 flex items-center justify-between gap-3 border-t border-claude-border/70 pt-3 dark:border-claude-darkBorder/70">
                     <div className="min-w-0 flex items-center gap-2">
+                      {isOnline && (
+                        <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title={i18nService.t('botOnline')} />
+                      )}
                       <img
                         src={providerAvatarSrc}
                         alt={providerName}

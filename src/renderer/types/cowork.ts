@@ -21,6 +21,7 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   isThinking?: boolean;
+  isDelegationInternal?: boolean;
   skillIds?: string[];
   /**
    * Prevent renderer stream listeners from treating this message as a new active run.

@@ -414,6 +414,7 @@ export interface CoworkMessageMetadata {
   isError?: boolean;
   isStreaming?: boolean;
   isFinal?: boolean;
+  isDelegationInternal?: boolean;
   skillIds?: string[];
   suppressRunningStatus?: boolean;
   [key: string]: unknown;
@@ -678,6 +679,9 @@ export class CoworkStore implements MemoryBackend {
   private saveDb: () => void;
   private memoryBackend: MemoryBackend | null = null;
 
+  // In-memory tracking of delegation-blocked sessions
+  private delegationBlockedSessions: Map<string, { orderId: string }> = new Map();
+
   constructor(db: Database, saveDb: () => void) {
     this.db = db;
     this.saveDb = saveDb;
@@ -690,6 +694,35 @@ export class CoworkStore implements MemoryBackend {
 
   setMemoryBackend(backend: MemoryBackend | null): void {
     this.memoryBackend = backend;
+  }
+
+  /**
+   * Set or clear delegation-blocking state for a cowork session.
+   * When a delegation pipeline is in progress (waiting for remote service delivery),
+   * the session is blocked to prevent user interaction.
+   */
+  setDelegationBlocking(sessionId: string, blocking: boolean, orderId?: string): void {
+    if (blocking && orderId) {
+      this.delegationBlockedSessions.set(sessionId, { orderId });
+    } else {
+      this.delegationBlockedSessions.delete(sessionId);
+    }
+  }
+
+  /**
+   * Returns true if the session is currently blocked waiting for a delegated
+   * remote service to deliver its result.
+   */
+  isDelegationBlocking(sessionId: string): boolean {
+    return this.delegationBlockedSessions.has(sessionId);
+  }
+
+  /**
+   * Returns the delegation blocking info (orderId) for a session, or null
+   * if the session is not in delegation-blocking mode.
+   */
+  getDelegationInfo(sessionId: string): { orderId: string } | null {
+    return this.delegationBlockedSessions.get(sessionId) || null;
   }
 
   private ensureSchemaCompatibility(): void {
@@ -1988,6 +2021,17 @@ export class CoworkStore implements MemoryBackend {
     `, values);
 
     this.saveDb();
+  }
+
+  deleteMessage(sessionId: string, messageId: string): void {
+    this.db.run(`
+      DELETE FROM cowork_messages
+      WHERE id = ? AND session_id = ?
+    `, [messageId, sessionId]);
+
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
   }
 
   // Config operations
