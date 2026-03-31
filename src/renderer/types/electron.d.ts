@@ -710,6 +710,8 @@ interface IElectronAPI {
   heartbeat: {
     toggle: (params: { metabotId: number; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
     getStatus: (metabotId: number) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+    getOnlineServices: () => Promise<{ success: boolean; services?: unknown[]; error?: string }>;
+    getOnlineBots: () => Promise<{ success: boolean; bots?: Record<string, number>; error?: string }>;
   };
 }
 
