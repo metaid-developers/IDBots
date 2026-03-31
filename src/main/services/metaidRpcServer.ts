@@ -21,6 +21,7 @@ import { listenWithRetry } from './httpListenWithRetry';
 import { DEFAULT_METAID_RPC_HOST, getMetaidRpcBase, resolveMetaidRpcPort } from './metaidRpcEndpoint';
 import { getMetabotAccountSummary } from './metabotAccountService';
 import { buildMvcFtTransferRawTx, buildMvcOrderedRawTxBundle, buildMvcTransferRawTx } from './walletRawTxService';
+import { executeTransfer } from './transferService';
 
 const RPC_HOST = DEFAULT_METAID_RPC_HOST;
 
@@ -33,6 +34,7 @@ const FEE_RATE_SUMMARY_PATH = '/api/idbots/fee-rate-summary';
 const BUILD_MVC_TRANSFER_RAW_TX_PATH = '/api/idbots/wallet/mvc/build-transfer-rawtx';
 const BUILD_MVC_FT_TRANSFER_RAW_TX_PATH = '/api/idbots/wallet/mvc-ft/build-transfer-rawtx';
 const BUILD_MVC_RAW_TX_BUNDLE_PATH = '/api/idbots/wallet/mvc/build-rawtx-bundle';
+const EXECUTE_TRANSFER_PATH = '/api/idbots/wallet/transfer';
 
 export function startMetaidRpcServer(
   getMetabotStore: () => MetabotStore,
@@ -243,6 +245,99 @@ export function startMetaidRpcServer(
           defaultFeeRate: getGlobalFeeRate(chain),
         }),
       );
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === EXECUTE_TRANSFER_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      let parsed: {
+        metabot_id?: number;
+        chain?: string;
+        to_address?: string;
+        amount?: string | number;
+        fee_rate?: number;
+      };
+      try {
+        parsed = JSON.parse(body) as {
+          metabot_id?: number;
+          chain?: string;
+          to_address?: string;
+          amount?: string | number;
+          fee_rate?: number;
+        };
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      const chainRaw = String(parsed.chain || '').toLowerCase().trim();
+      if (!chainRaw) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'chain is required' }));
+        return;
+      }
+      const chain = chainRaw === 'space' ? 'mvc' : chainRaw;
+      if (chain !== 'mvc' && chain !== 'btc' && chain !== 'doge') {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Unsupported chain' }));
+        return;
+      }
+      const metabotId = Number(parsed.metabot_id);
+      if (!Number.isFinite(metabotId) || metabotId <= 0) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'metabot_id is required' }));
+        return;
+      }
+      const toAddress = String(parsed.to_address || '').trim();
+      if (!toAddress) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'to_address is required' }));
+        return;
+      }
+      const amountRaw = parsed.amount ?? '';
+      const amount = typeof amountRaw === 'number' ? String(amountRaw) : String(amountRaw || '').trim();
+      const amountValue = Number(amount);
+      if (!amount || !Number.isFinite(amountValue) || amountValue <= 0) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'amount must be positive' }));
+        return;
+      }
+      let feeRate: number;
+      if (parsed.fee_rate != null) {
+        const feeRateValue = Number(parsed.fee_rate);
+        if (!Number.isFinite(feeRateValue) || feeRateValue <= 0) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'fee_rate must be positive' }));
+          return;
+        }
+        feeRate = feeRateValue;
+      } else {
+        feeRate = getGlobalFeeRate(chain);
+      }
+
+      try {
+        const result = await executeTransfer(getMetabotStore(), {
+          metabotId,
+          chain,
+          toAddress,
+          amountSpaceOrDoge: amount,
+          feeRate,
+        });
+        if (!result.success) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: result.error || 'Transfer failed' }));
+          return;
+        }
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, txid: result.txId }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
       return;
     }
 

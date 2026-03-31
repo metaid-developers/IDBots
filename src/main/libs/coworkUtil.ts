@@ -1071,6 +1071,8 @@ export async function getEnhancedEnv(target: OpenAICompatProxyTarget = 'local'):
   env.SKILLS_ROOT = skillsRoot;
   env.IDBOTS_SKILLS_ROOT = skillsRoot; // Alternative name for clarity
   env.IDBOTS_ELECTRON_PATH = resolveElectronExecutablePath();
+  env.IDBOTS_APP_DATA_PATH = app.getPath('appData');
+  env.IDBOTS_USER_DATA_PATH = app.getPath('userData');
 
   // Inject internal API base URL for skill scripts (e.g. scheduled-task creation)
   const internalApiBaseURL = getInternalApiBaseURL();
