@@ -9,13 +9,13 @@ const {
   fetchHeartbeatFromChain,
 } = require('../dist-electron/services/heartbeatPollingService.js');
 
-const ONLINE_WINDOW_SEC = 6 * 60; // 6 minutes
+const ONLINE_WINDOW_SEC = 10 * 60; // 10 minutes
 
 // ---------------------------------------------------------------------------
 // checkOnlineStatus
 // ---------------------------------------------------------------------------
 
-test('checkOnlineStatus returns true when timestamp is within 6 minutes', () => {
+test('checkOnlineStatus returns true when timestamp is within 10 minutes', () => {
   const svc = new HeartbeatPollingService({ fetchHeartbeat: async () => null });
   const nowSec = Date.now() / 1000;
   assert.equal(svc.checkOnlineStatus(nowSec - 60), true);   // 1 minute ago
@@ -23,13 +23,13 @@ test('checkOnlineStatus returns true when timestamp is within 6 minutes', () => 
   assert.equal(svc.checkOnlineStatus(nowSec), true);        // right now
 });
 
-test('checkOnlineStatus returns true for timestamp exactly at 6-minute boundary', () => {
+test('checkOnlineStatus returns true for timestamp exactly at 10-minute boundary', () => {
   const svc = new HeartbeatPollingService({ fetchHeartbeat: async () => null });
   const nowSec = Date.now() / 1000;
   assert.equal(svc.checkOnlineStatus(nowSec - ONLINE_WINDOW_SEC), true);
 });
 
-test('checkOnlineStatus returns false when timestamp is older than 6 minutes', () => {
+test('checkOnlineStatus returns false when timestamp is older than 10 minutes', () => {
   const svc = new HeartbeatPollingService({ fetchHeartbeat: async () => null });
   const nowSec = Date.now() / 1000;
   assert.equal(svc.checkOnlineStatus(nowSec - ONLINE_WINDOW_SEC - 1), false); // 1 second past
@@ -201,6 +201,56 @@ test('pollAll gracefully handles fetchHeartbeat throwing', async () => {
     { providerGlobalMetaId: 'bot-err', providerAddress: '1err', serviceName: 'err-svc' },
   ]);
 
+  assert.equal(svc.onlineBots.size, 0);
+  assert.equal(svc.availableServices.length, 0);
+});
+
+test('pollAll ignores revoked services with status -1 even if heartbeat is fresh', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  let fetchCount = 0;
+
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async () => {
+      fetchCount += 1;
+      return { timestamp: nowSec - 10 };
+    },
+  });
+
+  await svc.pollAll([
+    {
+      providerGlobalMetaId: 'bot-revoked',
+      providerAddress: '1revoked',
+      serviceName: 'revoked-svc',
+      status: -1,
+    },
+  ]);
+
+  assert.equal(fetchCount, 0);
+  assert.equal(svc.onlineBots.size, 0);
+  assert.equal(svc.availableServices.length, 0);
+});
+
+test('pollAll ignores services explicitly marked unavailable even if heartbeat is fresh', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  let fetchCount = 0;
+
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async () => {
+      fetchCount += 1;
+      return { timestamp: nowSec - 10 };
+    },
+  });
+
+  await svc.pollAll([
+    {
+      providerGlobalMetaId: 'bot-hidden',
+      providerAddress: '1hidden',
+      serviceName: 'hidden-svc',
+      available: 0,
+    },
+  ]);
+
+  assert.equal(fetchCount, 0);
   assert.equal(svc.onlineBots.size, 0);
   assert.equal(svc.availableServices.length, 0);
 });

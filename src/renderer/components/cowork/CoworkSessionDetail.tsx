@@ -158,6 +158,14 @@ const formatShortHash = (value: string): string => {
   return `${value.slice(0, 8)}...${value.slice(-8)}`;
 };
 
+const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.startsWith('data:')
+    || normalized.startsWith('http://')
+    || normalized.startsWith('https://')
+    || normalized.startsWith('blob:');
+};
+
 const getRefundFailureReasonLabel = (failureReason?: string | null): string | null => {
   if (failureReason === 'first_response_timeout') {
     return i18nService.t('coworkRefundReasonFirstResponseTimeout');
@@ -1707,14 +1715,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return () => { cancelled = true; };
   }, [currentSession?.metabotId]);
 
-  // Fetch peer avatar for A2A sessions when peerAvatar is not stored in the session.
+  // Fetch peer avatar for A2A sessions when peerAvatar is missing or not directly renderable.
   // Falls back to senderGlobalMetaId from the first incoming message if peerGlobalMetaId is missing.
   useEffect(() => {
     if (currentSession?.sessionType !== 'a2a') {
       setFetchedPeerAvatar(null);
       return;
     }
-    if (currentSession.peerAvatar) {
+    if (isRenderableAvatarSource(currentSession.peerAvatar)) {
       setFetchedPeerAvatar(null);
       return;
     }
@@ -1736,6 +1744,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
   }, [currentSession?.id, currentSession?.peerGlobalMetaId, currentSession?.peerAvatar, currentSession?.sessionType, currentSession?.messages]);
+
+  const resolvedPeerAvatar = isRenderableAvatarSource(currentSession?.peerAvatar)
+    ? currentSession?.peerAvatar ?? null
+    : fetchedPeerAvatar;
 
   useEffect(() => {
     setIsProcessingRefund(false);
@@ -2436,7 +2448,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               key={msg.id}
               message={msg}
               peerName={currentSession.peerName}
-              peerAvatar={currentSession.peerAvatar || fetchedPeerAvatar}
+              peerAvatar={resolvedPeerAvatar}
               metabotName={currentSession.metabotName}
               metabotAvatar={currentSession.metabotAvatar}
             />

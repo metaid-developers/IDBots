@@ -1,4 +1,4 @@
-const HEARTBEAT_ONLINE_WINDOW_SEC = 6 * 60; // 6 minutes
+const HEARTBEAT_ONLINE_WINDOW_SEC = 10 * 60; // 10 minutes
 const HEARTBEAT_POLL_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
 const MANAPI_HOST = 'https://manapi.metaid.io';
 
@@ -26,7 +26,7 @@ export class HeartbeatPollingService {
 
   checkOnlineStatus(timestampSec: number | null): boolean {
     if (timestampSec == null) return false;
-    const nowSec = Date.now() / 1000;
+    const nowSec = Math.floor(Date.now() / 1000);
     return nowSec - timestampSec <= HEARTBEAT_ONLINE_WINDOW_SEC;
   }
 
@@ -37,6 +37,18 @@ export class HeartbeatPollingService {
 
     for (const service of services) {
       const globalMetaId: string = service.providerGlobalMetaId || service.globalMetaId || '';
+      const status = Number(service?.status ?? 0);
+      if (Number.isFinite(status) && status < 0) {
+        console.log(`[HeartbeatPolling] skip revoked service "${service.displayName || service.serviceName}" status=${status}`);
+        continue;
+      }
+
+      const available = Number(service?.available ?? 1);
+      if (Number.isFinite(available) && available === 0) {
+        console.log(`[HeartbeatPolling] skip unavailable service "${service.displayName || service.serviceName}" available=${available}`);
+        continue;
+      }
+
       const mvcAddress: string = service.providerAddress || service.paymentAddress || service.address || '';
       if (!mvcAddress) {
         console.log(`[HeartbeatPolling] skip service "${service.displayName || service.serviceName}" — no address`);
