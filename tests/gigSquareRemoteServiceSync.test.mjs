@@ -9,6 +9,8 @@ const {
   syncRemoteSkillServicesWithCursor,
   parseRemoteSkillServiceItem,
   parseRemoteSkillServiceRow,
+  REMOTE_SKILL_SERVICE_UPSERT_SQL,
+  buildRemoteSkillServiceUpsertParams,
 } = require('../dist-electron/services/gigSquareRemoteServiceSync.js');
 
 const makeRemoteItem = (id, overrides = {}) => ({
@@ -230,6 +232,35 @@ test('parseRemoteSkillServiceRow preserves createAddress and paymentAddress inde
   assert.equal(row.providerAddress, 'mvc-provider-address');
   assert.equal(row.createAddress, 'mvc-provider-address');
   assert.equal(row.paymentAddress, 'btc-payment-address');
+});
+
+test('remote skill service upsert SQL matches parameter count', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-upsert-1',
+    status: 0,
+    operation: 'create',
+    address: 'mvc-provider-address',
+    create_address: 'mvc-provider-address',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    timestamp: 1_773_514_700,
+    contentSummary: {
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      price: '0.0001',
+      currency: 'SPACE',
+      paymentAddress: 'mvc-payment-address',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(typeof REMOTE_SKILL_SERVICE_UPSERT_SQL, 'string');
+  assert.equal(typeof buildRemoteSkillServiceUpsertParams, 'function');
+
+  const params = buildRemoteSkillServiceUpsertParams(row);
+  const placeholderCount = (REMOTE_SKILL_SERVICE_UPSERT_SQL.match(/\?/g) || []).length;
+  assert.equal(params.length, placeholderCount);
 });
 
 test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutation metadata', () => {
