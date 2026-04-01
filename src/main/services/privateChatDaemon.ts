@@ -36,6 +36,7 @@ import {
   isNeedsRatingMessage,
   shouldCompleteBuyerOrderObserverSession,
 } from './privateChatOrderObserverState';
+import { ensureServiceOrderObserverSession } from './serviceOrderObserverSession';
 import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -712,23 +713,71 @@ async function processOne(
         return;
       }
       emitLog(`[Order] Payment verified: txid=${txid} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`);
+      const serviceId = extractOrderSkillId(plaintext);
+      const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
+      const paymentAmount = formatPaymentAmountFromSats(payment.amountSats);
+      const paymentCurrency = getCurrencyFromChain(payment.chain);
+      let sellerOrderSessionId: string | null = null;
+      let sellerOrderConversationId: string | null = null;
       if (serviceOrderLifecycle && txid) {
         try {
           serviceOrderLifecycle.createSellerOrder({
             localMetabotId: metabot.id,
             counterpartyGlobalMetaId: fromGlobalMetaId,
-            servicePinId: extractOrderSkillId(plaintext),
-            serviceName: extractOrderSkillName(plaintext) || 'Service Order',
+            servicePinId: serviceId,
+            serviceName,
             paymentTxid: txid,
             paymentChain: payment.chain || 'mvc',
-            paymentAmount: formatPaymentAmountFromSats(payment.amountSats),
-            paymentCurrency: getCurrencyFromChain(payment.chain),
+            paymentAmount,
+            paymentCurrency,
             orderMessagePinId: row.pin_id,
           });
         } catch (error) {
           emitLog(`[Order] Failed to create seller order row: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
+
+      if (txid) {
+        try {
+          const ensuredObserverSession = await ensureServiceOrderObserverSession(coworkStore, {
+            role: 'seller',
+            metabotId: metabot.id,
+            peerGlobalMetaId: fromGlobalMetaId || normalizePrivateConversationPeerId(row),
+            peerName: (row.from_name as string | null) ?? null,
+            peerAvatar: (row.from_avatar as string | null) ?? null,
+            serviceId,
+            servicePrice: paymentAmount,
+            serviceCurrency: paymentCurrency,
+            serviceSkill: serviceName,
+            serverBotGlobalMetaId: localGlobalMetaId || null,
+            servicePaidTx: txid,
+            orderPayload: plaintext,
+          });
+          sellerOrderSessionId = ensuredObserverSession.coworkSessionId;
+          sellerOrderConversationId = ensuredObserverSession.externalConversationId;
+          if (serviceOrderLifecycle) {
+            try {
+              serviceOrderLifecycle.attachCoworkSessionToSellerOrder({
+                localMetabotId: metabot.id,
+                counterpartyGlobalMetaId: fromGlobalMetaId,
+                paymentTxid: txid,
+                coworkSessionId: ensuredObserverSession.coworkSessionId,
+              });
+            } catch (error) {
+              emitLog(`[Order] Failed to persist seller session link: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+          if (ensuredObserverSession.initialMessage && emitToRenderer) {
+            emitToRenderer('cowork:stream:message', {
+              sessionId: ensuredObserverSession.coworkSessionId,
+              message: ensuredObserverSession.initialMessage,
+            });
+          }
+        } catch (error) {
+          emitLog(`[Order] Failed to ensure seller order session: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
       if (!orderCoworkHandler) {
         emitLog('[Order] Cowork handler not initialized; skipping order.');
         markProcessed(db, row.id, saveDb);
@@ -742,10 +791,10 @@ async function processOne(
         metabotName: metabot.name,
         skillsPrompt,
         peerName: (row.from_name as string | null) ?? null,
-        skillId: extractOrderSkillId(plaintext),
-        skillName: extractOrderSkillName(plaintext),
+        skillId: serviceId,
+        skillName: serviceName,
       });
-      const externalConversationId = buildOrderExternalConversationId(row, source, txid);
+      const externalConversationId = sellerOrderConversationId || buildOrderExternalConversationId(row, source, txid);
 
       let orderResult: { serviceReply: string; ratingInvite: string };
       try {
@@ -753,6 +802,7 @@ async function processOne(
           metabotId: metabot.id,
           source,
           externalConversationId,
+          existingSessionId: sellerOrderSessionId,
           prompt: prompts.userPrompt,
           systemPrompt: prompts.systemPrompt,
           peerGlobalMetaId: fromGlobalMetaId || null,
@@ -765,21 +815,10 @@ async function processOne(
         return;
       }
 
-      const sellerOrderSessionId = resolveOrderSessionId({
+      sellerOrderSessionId = resolveOrderSessionId({
+        directSessionId: sellerOrderSessionId,
         fallbackSessionId: coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id)?.coworkSessionId,
       });
-      if (serviceOrderLifecycle && txid && sellerOrderSessionId) {
-        try {
-          serviceOrderLifecycle.attachCoworkSessionToSellerOrder({
-            localMetabotId: metabot.id,
-            counterpartyGlobalMetaId: fromGlobalMetaId,
-            paymentTxid: txid,
-            coworkSessionId: sellerOrderSessionId,
-          });
-        } catch (error) {
-          emitLog(`[Order] Failed to persist seller session link: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
 
       const sendEncryptedMsg = async (text: string) => {
         const encrypted = ecdhEncrypt(text, sharedSecretForReply);
@@ -801,8 +840,8 @@ async function processOne(
           const deliverySentAtSec = Math.floor(Date.now() / 1000);
           const deliveryText = buildDeliveryMessage({
             paymentTxid: txid,
-            servicePinId: extractOrderSkillId(plaintext),
-            serviceName: extractOrderSkillName(plaintext) || 'Service Order',
+            servicePinId: serviceId,
+            serviceName,
             result: trimmedReply,
             deliveredAt: deliverySentAtSec,
           });
@@ -826,9 +865,8 @@ async function processOne(
           await sendEncryptedMsg(trimmedInvite);
           emitLog(`[Order] Rating invite sent to ${fromGlobalMetaId.slice(0, 12)}…`);
           // Add [NeedsRating] to B's own session so it appears in B's UI
-          const bMapping = coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id);
-          if (bMapping && emitToRenderer) {
-            const inviteMsg = coworkStore.addMessage(bMapping.coworkSessionId, {
+          if (sellerOrderSessionId && emitToRenderer) {
+            const inviteMsg = coworkStore.addMessage(sellerOrderSessionId, {
               type: 'assistant',
               content: trimmedInvite,
               metadata: {
@@ -837,7 +875,7 @@ async function processOne(
                 direction: 'outgoing',
               },
             });
-            emitToRenderer('cowork:stream:message', { sessionId: bMapping.coworkSessionId, message: inviteMsg });
+            emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: inviteMsg });
           }
         } catch (error) {
           emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);

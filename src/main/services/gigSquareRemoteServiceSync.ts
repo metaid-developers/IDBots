@@ -35,6 +35,11 @@ export type ParsedRemoteSkillServiceRow = {
   ratingCount?: number;
 };
 
+export type RemoteSkillServiceUpsertStatement = {
+  sql: string;
+  params: Array<string | number | null>;
+};
+
 const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value == null) return '';
@@ -277,6 +282,77 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     updatedAt: updatedAtRaw == null ? undefined : normalizeTimestampMs(updatedAtRaw),
   };
 };
+
+export const REMOTE_SKILL_SERVICE_UPSERT_SQL = `INSERT INTO remote_skill_service (
+  id, pin_id, metaid, global_metaid, address, create_address, service_name, display_name, description,
+  price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
+  skill_document, input_type, output_type, endpoint, status, operation, path,
+  original_id, source_service_pin_id, available, content_summary_json, payment_address, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  pin_id = excluded.pin_id,
+  metaid = excluded.metaid,
+  global_metaid = excluded.global_metaid,
+  address = excluded.address,
+  create_address = excluded.create_address,
+  service_name = excluded.service_name,
+  display_name = excluded.display_name,
+  description = excluded.description,
+  price = excluded.price,
+  currency = excluded.currency,
+  avatar = excluded.avatar,
+  service_icon = excluded.service_icon,
+  provider_meta_bot = excluded.provider_meta_bot,
+  provider_skill = excluded.provider_skill,
+  skill_document = excluded.skill_document,
+  input_type = excluded.input_type,
+  output_type = excluded.output_type,
+  endpoint = excluded.endpoint,
+  status = excluded.status,
+  operation = excluded.operation,
+  path = excluded.path,
+  original_id = excluded.original_id,
+  source_service_pin_id = excluded.source_service_pin_id,
+  available = excluded.available,
+  content_summary_json = excluded.content_summary_json,
+  payment_address = excluded.payment_address,
+  updated_at = excluded.updated_at`;
+
+export const buildRemoteSkillServiceUpsertStatement = (
+  parsed: ParsedRemoteSkillServiceRow
+): RemoteSkillServiceUpsertStatement => ({
+  sql: REMOTE_SKILL_SERVICE_UPSERT_SQL,
+  params: [
+    parsed.id,
+    parsed.pinId,
+    parsed.providerMetaId,
+    parsed.providerGlobalMetaId,
+    parsed.providerAddress,
+    parsed.createAddress || parsed.providerAddress,
+    parsed.serviceName,
+    parsed.displayName,
+    parsed.description,
+    parsed.price,
+    parsed.currency,
+    parsed.avatar ?? null,
+    parsed.serviceIcon ?? null,
+    parsed.providerMetaBot || null,
+    parsed.providerSkill || null,
+    parsed.skillDocument || null,
+    parsed.inputType || null,
+    parsed.outputType || null,
+    parsed.endpoint || null,
+    parsed.status,
+    parsed.operation,
+    parsed.path || null,
+    parsed.originalId || null,
+    parsed.sourceServicePinId,
+    parsed.available,
+    parsed.contentSummaryJson || null,
+    parsed.paymentAddress || parsed.providerAddress,
+    parsed.updatedAt || Date.now(),
+  ],
+});
 
 export async function syncRemoteSkillServicesWithCursor(input: {
   pageSize: number;

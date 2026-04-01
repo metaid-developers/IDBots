@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const {
+  buildRemoteSkillServiceUpsertStatement,
   isRemoteSkillServiceListSemanticMiss,
   syncRemoteSkillServicesWithCursor,
   parseRemoteSkillServiceItem,
@@ -256,4 +257,33 @@ test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutat
       }],
     },
   }), false);
+});
+
+test('buildRemoteSkillServiceUpsertStatement emits one placeholder per remote_skill_service column', () => {
+  assert.equal(typeof buildRemoteSkillServiceUpsertStatement, 'function');
+
+  const parsed = parseRemoteSkillServiceItem({
+    id: 'svc-upsert-1',
+    status: 0,
+    operation: 'create',
+    address: '1abc',
+    create_address: '1abc',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    timestamp: 1_773_514_700,
+    contentSummary: {
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      price: '0.0001',
+      currency: 'SPACE',
+      providerMetaBot: 'global-1',
+      providerSkill: 'weather',
+    },
+  });
+
+  assert.ok(parsed);
+  const statement = buildRemoteSkillServiceUpsertStatement(parsed);
+  assert.equal((statement.sql.match(/\?/g) || []).length, statement.params.length);
+  assert.equal(statement.params.length, 28);
 });
