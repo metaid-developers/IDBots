@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { SqliteStore } from '../sqliteStore';
 import { getP2PLocalBase } from './p2pLocalEndpoint';
+import { validateGlobalMetaId } from './globalMetaid';
 
 export interface P2PConfig {
   p2p_sync_mode: 'self' | 'selective' | 'full';
@@ -15,6 +16,7 @@ export interface P2PConfig {
   p2p_storage_limit_gb: number;
   p2p_enable_chain_source: boolean;
   p2p_own_addresses: string[];
+  p2p_presence_global_metaids?: string[];
 }
 
 export const DEFAULT_P2P_CONFIG: P2PConfig = {
@@ -24,6 +26,7 @@ export const DEFAULT_P2P_CONFIG: P2PConfig = {
   p2p_storage_limit_gb: 10,
   p2p_enable_chain_source: false,
   p2p_own_addresses: [],
+  p2p_presence_global_metaids: [],
 };
 
 type OwnAddressSource = {
@@ -31,6 +34,14 @@ type OwnAddressSource = {
   btc_address?: string | null;
   doge_address?: string | null;
 };
+
+type PresenceGlobalMetaIdSource = {
+  heartbeat_enabled?: unknown;
+  globalmetaid?: string | null;
+  globalMetaId?: string | null;
+};
+
+export type RuntimeConfigMetabotSource = OwnAddressSource & PresenceGlobalMetaIdSource;
 
 export function collectOwnAddresses(metabots: OwnAddressSource[]): string[] {
   const seen = new Set<string>();
@@ -48,15 +59,51 @@ export function collectOwnAddresses(metabots: OwnAddressSource[]): string[] {
   return collected;
 }
 
-export function buildRuntimeConfig(config: P2PConfig, ownAddresses: string[]): P2PConfig {
+function normalizePresenceGlobalMetaId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.startsWith('metaid:')) return null;
+  if (!validateGlobalMetaId(normalized)) return null;
+  return normalized;
+}
+
+export function collectPresenceGlobalMetaIds(metabots: PresenceGlobalMetaIdSource[]): string[] {
+  const seen = new Set<string>();
+  const collected: string[] = [];
+
+  for (const metabot of metabots) {
+    if (!metabot?.heartbeat_enabled) continue;
+
+    const normalized = normalizePresenceGlobalMetaId(metabot.globalmetaid ?? metabot.globalMetaId);
+    if (!normalized || seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    collected.push(normalized);
+  }
+
+  return collected;
+}
+
+export function buildRuntimeConfig(
+  config: P2PConfig,
+  ownAddresses: string[],
+  metabots?: PresenceGlobalMetaIdSource[],
+): P2PConfig {
   const merged = [...(config.p2p_own_addresses || []), ...ownAddresses]
     .map((value) => value.trim())
     .filter(Boolean);
 
-  return {
+  const runtimeConfig: P2PConfig = {
     ...config,
     p2p_own_addresses: Array.from(new Set(merged)),
   };
+
+  if (Array.isArray(metabots)) {
+    runtimeConfig.p2p_presence_global_metaids = collectPresenceGlobalMetaIds(metabots);
+  }
+
+  return runtimeConfig;
 }
 
 function normalizeStoredConfig(raw: unknown): Partial<P2PConfig> | undefined {
