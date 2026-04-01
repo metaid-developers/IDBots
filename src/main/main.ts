@@ -76,6 +76,8 @@ import {
   fetchHeartbeatFromChain,
   type HeartbeatDiscoverySnapshot,
 } from './services/heartbeatPollingService';
+import { ProviderDiscoveryService } from './services/providerDiscoveryService';
+import { fetchLocalPresenceSnapshot } from './services/p2pPresenceClient';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -1777,6 +1779,7 @@ let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
 let heartbeatService: HeartbeatService | null = null;
 let heartbeatPollingService: HeartbeatPollingService | null = null;
+let providerDiscoveryService: ProviderDiscoveryService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -1950,7 +1953,7 @@ const executeDelegationPipeline = async (
   // -----------------------------------------------------------------------
   // Step 1: Resolve service from heartbeat polling's available services
   // -----------------------------------------------------------------------
-  const pollingService = getHeartbeatPollingService();
+  const pollingService = getProviderDiscoveryService();
   const service = pollingService.availableServices.find(
     (s: any) =>
       (s.pinId === delegation.servicePinId || s.sourceServicePinId === delegation.servicePinId) &&
@@ -2413,7 +2416,7 @@ const getCoworkRunner = () => {
       },
       getRemoteServicesPrompt: () => {
         try {
-          const services = getHeartbeatPollingService().getDiscoverySnapshot().availableServices;
+          const services = getProviderDiscoveryService().getDiscoverySnapshot().availableServices;
           return getSkillManager().buildRemoteServicesPrompt(services);
         } catch { return null; }
       },
@@ -2636,12 +2639,12 @@ function recordLocalHeartbeatDiscovery(metabotId: number, timestampSec: number):
     if (!metabot) return;
     const providerAddress = toSafeString(metabot.mvc_address).trim();
     if (!providerAddress) return;
-    getHeartbeatPollingService().recordLocalHeartbeat({
+    getProviderDiscoveryService().recordLocalHeartbeat({
       globalMetaId: toSafeString(metabot.globalmetaid).trim() || null,
       address: providerAddress,
       timestampSec,
     });
-    void getHeartbeatPollingService().refreshNow().catch((error) => {
+    void getProviderDiscoveryService().refreshNow().catch((error) => {
       console.warn('[Heartbeat] Refresh after local heartbeat failed:', error);
     });
   } catch (error) {
@@ -2667,11 +2670,21 @@ function getHeartbeatPollingService(): HeartbeatPollingService {
     heartbeatPollingService = new HeartbeatPollingService({
       fetchHeartbeat: fetchHeartbeatFromChain,
     });
-    heartbeatPollingService.subscribe((snapshot) => {
+  }
+  return heartbeatPollingService;
+}
+
+function getProviderDiscoveryService(): ProviderDiscoveryService {
+  if (!providerDiscoveryService) {
+    providerDiscoveryService = new ProviderDiscoveryService({
+      heartbeat: getHeartbeatPollingService(),
+      fetchPresence: () => fetchLocalPresenceSnapshot(getP2PLocalBase()),
+    });
+    providerDiscoveryService.subscribe((snapshot) => {
       emitHeartbeatDiscoveryChanged(snapshot);
     });
   }
-  return heartbeatPollingService;
+  return providerDiscoveryService;
 }
 
 const getServiceOrderStore = () => {
@@ -5700,7 +5713,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
       if (params.enabled) {
         getHeartbeatService().startHeartbeat(params.metabotId);
-        void getHeartbeatPollingService().refreshNow().catch((error) => {
+        void getProviderDiscoveryService().refreshNow().catch((error) => {
           console.warn('[Heartbeat] Refresh after toggle-on failed:', error);
         });
       } else {
@@ -5708,9 +5721,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         const metabot = getMetabotStore().getMetabotById(params.metabotId);
         const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
         if (globalMetaId) {
-          getHeartbeatPollingService().forceOffline(globalMetaId);
+          getProviderDiscoveryService().forceOffline(globalMetaId);
         }
-        void getHeartbeatPollingService().refreshNow().catch((error) => {
+        void getProviderDiscoveryService().refreshNow().catch((error) => {
           console.warn('[Heartbeat] Refresh after toggle-off failed:', error);
         });
       }
@@ -5732,7 +5745,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getOnlineServices', async () => {
     try {
-      const services = getHeartbeatPollingService().getDiscoverySnapshot().availableServices;
+      const services = getProviderDiscoveryService().getDiscoverySnapshot().availableServices;
       return { success: true, services };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online services' };
@@ -5741,7 +5754,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getOnlineBots', async () => {
     try {
-      const bots = getHeartbeatPollingService().getDiscoverySnapshot().onlineBots;
+      const bots = getProviderDiscoveryService().getDiscoverySnapshot().onlineBots;
       return { success: true, bots };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online bots' };
@@ -5750,7 +5763,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getDiscoverySnapshot', async () => {
     try {
-      const snapshot = getHeartbeatPollingService().getDiscoverySnapshot();
+      const snapshot = getProviderDiscoveryService().getDiscoverySnapshot();
       return { success: true, snapshot };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat discovery snapshot' };
@@ -6655,6 +6668,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           heartbeatService.stopAll();
           heartbeatService = null;
         }
+        if (providerDiscoveryService) {
+          providerDiscoveryService.dispose();
+          providerDiscoveryService = null;
+        }
         if (heartbeatPollingService) {
           heartbeatPollingService.stopPolling();
           heartbeatPollingService = null;
@@ -6818,7 +6835,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
     // Start heartbeat polling for online service discovery
     try {
-      getHeartbeatPollingService().startPolling(() => {
+      getProviderDiscoveryService().startPolling(() => {
         try {
           return listCurrentRemoteGigSquareServices();
         } catch { return []; }
