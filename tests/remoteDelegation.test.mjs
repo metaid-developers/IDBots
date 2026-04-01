@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
   it('detects delegation control prefix anywhere in assistant content', async () => {
@@ -65,5 +68,24 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     const { parseDelegationMessage } = await import('../dist-electron/libs/coworkRunner.js');
     const content = `[DELEGATE_REMOTE_SERVICE]\n{"price":"200","currency":"SPACE"}`;
     assert.equal(parseDelegationMessage(content), null);
+  });
+
+  it('treats a service missing from availableServices as offline even when it still exists in the DB list', () => {
+    const { resolveDelegationOrderability } = require('../dist-electron/services/providerPingService.js');
+    const result = resolveDelegationOrderability({
+      availableServices: [
+        { pinId: 'other-pin', providerGlobalMetaId: 'idq1other' },
+      ],
+      allServices: [
+        { pinId: 'pin123', providerGlobalMetaId: 'idq1provider', serviceName: 'Test Service' },
+      ],
+      servicePinId: 'pin123',
+      providerGlobalMetaId: 'idq1provider',
+    });
+
+    assert.deepEqual(result, {
+      status: 'offline',
+      service: null,
+    });
   });
 });
