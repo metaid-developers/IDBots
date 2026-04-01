@@ -155,13 +155,9 @@ export class HeartbeatPollingService {
   }): void {
     const address = toSafeString(input.address);
     if (!address) return;
-    const globalMetaId = toSafeString(input.globalMetaId);
-    if (globalMetaId) {
-      this._forcedOfflineGlobalMetaIds.delete(globalMetaId);
-    }
     const timestampSec = toNumberOrNull(input.timestampSec) ?? Math.floor(this.nowMs() / 1000);
     this._localHeartbeatsByAddress.set(address, {
-      globalMetaId,
+      globalMetaId: toSafeString(input.globalMetaId),
       lastSeenSec: timestampSec,
     });
   }
@@ -265,6 +261,12 @@ export class HeartbeatPollingService {
     if (!normalizedGlobalMetaId) return;
     this._forcedOfflineGlobalMetaIds.add(normalizedGlobalMetaId);
     this.markOffline(normalizedGlobalMetaId);
+  }
+
+  clearForceOffline(globalMetaId: string): void {
+    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    if (!normalizedGlobalMetaId) return;
+    this._forcedOfflineGlobalMetaIds.delete(normalizedGlobalMetaId);
   }
 
   private nowMs(): number {

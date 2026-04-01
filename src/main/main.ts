@@ -5713,6 +5713,11 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
       if (params.enabled) {
         getHeartbeatService().startHeartbeat(params.metabotId);
+        const metabot = getMetabotStore().getMetabotById(params.metabotId);
+        const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
+        if (globalMetaId) {
+          getProviderDiscoveryService().clearForceOffline(globalMetaId);
+        }
         void getProviderDiscoveryService().refreshNow().catch((error) => {
           console.warn('[Heartbeat] Refresh after toggle-on failed:', error);
         });

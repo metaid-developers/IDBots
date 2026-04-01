@@ -353,6 +353,34 @@ test('markOffline is a no-op for a bot that is not online', () => {
   assert.equal(svc.onlineBots.size, 0);
 });
 
+test('forceOffline survives local heartbeat updates until clearForceOffline is called', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const svc = new HeartbeatPollingService({
+    now: () => nowSec * 1000,
+    fetchHeartbeat: async () => null,
+  });
+
+  const services = [
+    { providerGlobalMetaId: 'bot-force', providerAddress: '1force', serviceName: 'force-svc' },
+  ];
+
+  svc.recordLocalHeartbeat({ globalMetaId: 'bot-force', address: '1force', timestampSec: nowSec - 5 });
+  await svc.pollAll(services);
+  assert.ok(svc.onlineBots.has('bot-force'));
+
+  svc.forceOffline('bot-force');
+  await svc.pollAll(services);
+  assert.ok(!svc.onlineBots.has('bot-force'));
+
+  svc.recordLocalHeartbeat({ globalMetaId: 'bot-force', address: '1force', timestampSec: nowSec });
+  await svc.pollAll(services);
+  assert.ok(!svc.onlineBots.has('bot-force'));
+
+  svc.clearForceOffline('bot-force');
+  await svc.pollAll(services);
+  assert.ok(svc.onlineBots.has('bot-force'));
+});
+
 // ---------------------------------------------------------------------------
 // startPolling / stopPolling
 // ---------------------------------------------------------------------------

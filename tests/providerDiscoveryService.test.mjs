@@ -29,6 +29,7 @@ function createHeartbeatStub(snapshotOverrides = {}) {
     recordLocalHeartbeatCalls: [],
     markOfflineCalls: [],
     forceOfflineCalls: [],
+    clearForceOfflineCalls: [],
     startPolling(getServices) {
       this.startPollingCount += 1;
       this.getServices = getServices;
@@ -48,6 +49,9 @@ function createHeartbeatStub(snapshotOverrides = {}) {
     },
     forceOffline(globalMetaId) {
       this.forceOfflineCalls.push(globalMetaId);
+    },
+    clearForceOffline(globalMetaId) {
+      this.clearForceOfflineCalls.push(globalMetaId);
     },
     getDiscoverySnapshot() {
       return structuredClone(snapshot);
@@ -239,8 +243,141 @@ test('provider discovery preserves the control surface main still uses', async (
   service.recordLocalHeartbeat({ globalMetaId: 'idq1alpha', address: 'mvc-a', timestampSec: 1 });
   service.markOffline('idq1beta');
   service.forceOffline('idq1gamma');
+  service.clearForceOffline('idq1gamma');
 
   assert.deepEqual(heartbeat.recordLocalHeartbeatCalls, [{ globalMetaId: 'idq1alpha', address: 'mvc-a', timestampSec: 1 }]);
   assert.deepEqual(heartbeat.markOfflineCalls, ['idq1beta']);
   assert.deepEqual(heartbeat.forceOfflineCalls, ['idq1gamma']);
+  assert.deepEqual(heartbeat.clearForceOfflineCalls, ['idq1gamma']);
+});
+
+test('provider discovery markOffline removes a presence-backed provider from the active snapshot immediately', async () => {
+  const { ProviderDiscoveryService } = loadProviderDiscoveryService();
+  const heartbeat = createHeartbeatStub();
+  const service = new ProviderDiscoveryService({
+    heartbeat,
+    fetchPresence: async () => ({
+      healthy: true,
+      peerCount: 2,
+      onlineBots: {
+        idq1providera: {
+          lastSeenSec: 123,
+          expiresAtSec: 178,
+          peerIds: ['peer-a'],
+        },
+      },
+      unhealthyReason: null,
+      lastConfigReloadError: null,
+      nowSec: 170,
+    }),
+    now: () => 170_000,
+  });
+
+  service.startPolling(() => [
+    { providerGlobalMetaId: 'idq1providera', providerAddress: 'mvc-a', serviceName: 'alpha' },
+  ]);
+  await service.refreshNow();
+
+  service.markOffline('idq1providera');
+
+  const snapshot = service.getDiscoverySnapshot();
+  assert.deepEqual(snapshot.onlineBots, {});
+  assert.deepEqual(snapshot.availableServices, []);
+  assert.equal(snapshot.providers['idq1providera::mvc-a'].online, false);
+});
+
+test('provider discovery forceOffline survives stale local heartbeat records until explicitly cleared', async () => {
+  const { ProviderDiscoveryService } = loadProviderDiscoveryService();
+  const heartbeat = createHeartbeatStub();
+  const service = new ProviderDiscoveryService({
+    heartbeat,
+    fetchPresence: async () => ({
+      healthy: true,
+      peerCount: 2,
+      onlineBots: {
+        idq1providera: {
+          lastSeenSec: 123,
+          expiresAtSec: 178,
+          peerIds: ['peer-a'],
+        },
+      },
+      unhealthyReason: null,
+      lastConfigReloadError: null,
+      nowSec: 170,
+    }),
+    now: () => 170_000,
+  });
+
+  service.startPolling(() => [
+    { providerGlobalMetaId: 'idq1providera', providerAddress: 'mvc-a', serviceName: 'alpha' },
+  ]);
+  await service.refreshNow();
+
+  service.forceOffline('idq1providera');
+  await service.refreshNow();
+
+  let snapshot = service.getDiscoverySnapshot();
+  assert.deepEqual(snapshot.onlineBots, {});
+  assert.deepEqual(snapshot.availableServices, []);
+  assert.equal(snapshot.providers['idq1providera::mvc-a'].online, false);
+
+  service.recordLocalHeartbeat({ globalMetaId: 'idq1providera', address: 'mvc-a', timestampSec: 171 });
+  await service.refreshNow();
+
+  snapshot = service.getDiscoverySnapshot();
+  assert.deepEqual(snapshot.onlineBots, {});
+  assert.deepEqual(snapshot.availableServices, []);
+  assert.equal(snapshot.providers['idq1providera::mvc-a'].online, false);
+
+  service.clearForceOffline('idq1providera');
+  await service.refreshNow();
+
+  snapshot = service.getDiscoverySnapshot();
+  assert.deepEqual(snapshot.onlineBots, { idq1providera: 123 });
+  assert.equal(snapshot.availableServices.length, 1);
+  assert.equal(snapshot.providers['idq1providera::mvc-a'].online, true);
+});
+
+test('provider discovery keeps a forced-offline provider suppressed while presence is unhealthy until explicitly cleared', async () => {
+  const { ProviderDiscoveryService } = loadProviderDiscoveryService();
+  const { HeartbeatPollingService } = require('../dist-electron/services/heartbeatPollingService.js');
+
+  const heartbeat = new HeartbeatPollingService({
+    now: () => 170_000,
+    fetchHeartbeat: async () => null,
+  });
+
+  const service = new ProviderDiscoveryService({
+    heartbeat,
+    fetchPresence: async () => ({
+      healthy: false,
+      peerCount: 0,
+      onlineBots: {},
+      unhealthyReason: 'no_active_peers',
+      lastConfigReloadError: null,
+      nowSec: 170,
+    }),
+    now: () => 170_000,
+  });
+
+  service.startPolling(() => [
+    { providerGlobalMetaId: 'idq1providera', providerAddress: 'mvc-a', serviceName: 'alpha' },
+  ]);
+
+  service.recordLocalHeartbeat({ globalMetaId: 'idq1providera', address: 'mvc-a', timestampSec: 123 });
+  await service.refreshNow();
+  assert.deepEqual(service.getDiscoverySnapshot().onlineBots, { idq1providera: 123 });
+
+  service.forceOffline('idq1providera');
+  await service.refreshNow();
+  assert.deepEqual(service.getDiscoverySnapshot().onlineBots, {});
+
+  service.recordLocalHeartbeat({ globalMetaId: 'idq1providera', address: 'mvc-a', timestampSec: 171 });
+  await service.refreshNow();
+  assert.deepEqual(service.getDiscoverySnapshot().onlineBots, {});
+
+  service.clearForceOffline('idq1providera');
+  await service.refreshNow();
+  assert.deepEqual(service.getDiscoverySnapshot().onlineBots, { idq1providera: 171 });
+  service.dispose();
 });

@@ -34,6 +34,7 @@ export interface ProviderDiscoveryHeartbeatBackend {
   }): void;
   markOffline(globalMetaId: string): void;
   forceOffline(globalMetaId: string): void;
+  clearForceOffline(globalMetaId: string): void;
   getDiscoverySnapshot(): HeartbeatDiscoverySnapshot;
   subscribe(listener: (snapshot: HeartbeatDiscoverySnapshot) => void): () => void;
 }
@@ -151,16 +152,22 @@ const buildPresenceSnapshot = (
   services: any[],
   presence: LocalPresenceSnapshot,
   fallbackNowSec: number,
+  forcedOfflineGlobalMetaIds: ReadonlySet<string>,
 ): DiscoverySnapshot => {
   const onlineBots = Object.fromEntries(
-    Object.entries(presence.onlineBots).map(([globalMetaId, state]) => [globalMetaId, state.lastSeenSec]),
+    Object.entries(presence.onlineBots)
+      .filter(([globalMetaId]) => !forcedOfflineGlobalMetaIds.has(globalMetaId))
+      .map(([globalMetaId, state]) => [globalMetaId, state.lastSeenSec]),
   );
   const availableServices: any[] = [];
   const providers: Record<string, HeartbeatProviderState> = {};
   const lastCheckAt = resolvePresenceCheckAtSec(presence, fallbackNowSec);
 
   for (const group of buildProviderGroups(services)) {
-    const presenceState = group.globalMetaId ? presence.onlineBots[group.globalMetaId] : undefined;
+    const forcedOffline =
+      Boolean(group.globalMetaId) && forcedOfflineGlobalMetaIds.has(group.globalMetaId);
+    const presenceState =
+      !forcedOffline && group.globalMetaId ? presence.onlineBots[group.globalMetaId] : undefined;
     const online = Boolean(presenceState);
 
     providers[group.key] = {
@@ -170,7 +177,7 @@ const buildPresenceSnapshot = (
       lastSeenSec: presenceState?.lastSeenSec ?? null,
       lastCheckAt,
       lastSource: 'presence',
-      lastError: null,
+      lastError: forcedOffline ? 'locally_disabled' : null,
       online,
       optimisticLocal: false,
     };
@@ -213,6 +220,7 @@ export class ProviderDiscoveryService {
   private readonly deps: ProviderDiscoveryServiceDeps;
   private readonly listeners: Set<DiscoveryListener> = new Set();
   private readonly unsubscribeHeartbeat: () => void;
+  private readonly forcedOfflineGlobalMetaIds: Set<string> = new Set();
   private snapshot: DiscoverySnapshot = cloneDiscoverySnapshot(EMPTY_SNAPSHOT);
   private snapshotSignature = serializeSnapshot(EMPTY_SNAPSHOT);
   private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -284,11 +292,25 @@ export class ProviderDiscoveryService {
   }
 
   markOffline(globalMetaId: string): void {
-    this.deps.heartbeat.markOffline(globalMetaId);
+    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    if (!normalizedGlobalMetaId) return;
+    this.deps.heartbeat.markOffline(normalizedGlobalMetaId);
+    this.applyPresenceOfflineMutation(normalizedGlobalMetaId, 'manually_marked_offline');
   }
 
   forceOffline(globalMetaId: string): void {
-    this.deps.heartbeat.forceOffline(globalMetaId);
+    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    if (!normalizedGlobalMetaId) return;
+    this.forcedOfflineGlobalMetaIds.add(normalizedGlobalMetaId);
+    this.deps.heartbeat.forceOffline(normalizedGlobalMetaId);
+    this.applyPresenceOfflineMutation(normalizedGlobalMetaId, 'locally_disabled');
+  }
+
+  clearForceOffline(globalMetaId: string): void {
+    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    if (!normalizedGlobalMetaId) return;
+    this.forcedOfflineGlobalMetaIds.delete(normalizedGlobalMetaId);
+    this.deps.heartbeat.clearForceOffline(normalizedGlobalMetaId);
   }
 
   async refreshNow(options?: RefreshOptions): Promise<void> {
@@ -336,7 +358,12 @@ export class ProviderDiscoveryService {
     if (presence.healthy) {
       this.activeSource = 'presence';
       const services = this.getServices ? this.getServices() : [];
-      const snapshot = buildPresenceSnapshot(services, presence, this.nowSec());
+      const snapshot = buildPresenceSnapshot(
+        services,
+        presence,
+        this.nowSec(),
+        this.forcedOfflineGlobalMetaIds,
+      );
       this.applySnapshot(snapshot, options.rebroadcast);
       return;
     }
@@ -378,5 +405,28 @@ export class ProviderDiscoveryService {
         console.warn('[ProviderDiscovery] change listener failed:', error);
       }
     }
+  }
+
+  private applyPresenceOfflineMutation(globalMetaId: string, reason: string): void {
+    if (this.activeSource !== 'presence') {
+      return;
+    }
+
+    const nextSnapshot = this.getDiscoverySnapshot();
+    delete nextSnapshot.onlineBots[globalMetaId];
+    nextSnapshot.availableServices = nextSnapshot.availableServices.filter(
+      (service) => resolveServiceGlobalMetaId(service) !== globalMetaId,
+    );
+
+    for (const state of Object.values(nextSnapshot.providers)) {
+      if (state.globalMetaId !== globalMetaId) {
+        continue;
+      }
+      state.online = false;
+      state.lastError = reason;
+      state.optimisticLocal = false;
+    }
+
+    this.applySnapshot(nextSnapshot, false);
   }
 }
