@@ -2329,21 +2329,6 @@ const getCoworkRunner = () => {
           overrides.IDBOTS_SKILLS_ROOT = session.cwd;
         }
         const skillIds = session?.activeSkillIds ?? [];
-        const normalizedSkillIds = new Set(
-          skillIds
-            .map((id) => String(id || '').trim())
-            .filter(Boolean)
-            .flatMap((id) => [id, id.replace(/_/g, '-'), id.replace(/-/g, '_')])
-        );
-        // Inject MetaBot wallet when on-chain skills are selected, or when no skills selected (default, e.g. orchestrator)
-        const shouldInject =
-          skillIds.length === 0 ||
-          normalizedSkillIds.has('metabot-basic') ||
-          normalizedSkillIds.has('metabot-post-buzz') ||
-          normalizedSkillIds.has('metabot-omni-caster') ||
-          normalizedSkillIds.has('metabot-post-skillservice') ||
-          normalizedSkillIds.has('metabot-chat-privatechat') ||
-          normalizedSkillIds.has('metabot-check-payment');
         const metabotStore = getMetabotStore();
         const metabotId = session?.metabotId;
         const metabot =
@@ -2359,7 +2344,6 @@ const getCoworkRunner = () => {
             processEnv: process.env,
           })
         );
-        if (!shouldInject && Object.keys(overrides).length === 0) return overrides;
         if (metabotId != null && typeof metabotId === 'number') {
           const wallet = metabot ? metabotStore.getMetabotWalletByMetabotId(metabotId) : null;
           if (metabot && wallet) {
