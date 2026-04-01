@@ -14,18 +14,50 @@ type ChangePayload<T = unknown> = {
 };
 
 const USER_MEMORIES_MIGRATION_KEY = 'userMemories.migration.v1.completed';
+const SQL_JS_WASM_RELATIVE_PATH = path.join('node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+
+function findNearestExistingFile(startDir: string, relativeFilePath: string): string | null {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const candidate = path.join(currentDir, relativeFilePath);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
 
 // Get the path to sql.js WASM file
-function getWasmPath(): string {
-  if (app.isPackaged) {
+export function resolveSqlJsWasmPath(input?: {
+  isPackaged?: boolean;
+  appPath?: string;
+  resourcesPath?: string;
+}): string {
+  const packaged = input?.isPackaged ?? app.isPackaged;
+  if (packaged) {
     // In production, the wasm file is in the unpacked resources
     return path.join(
-      process.resourcesPath,
+      input?.resourcesPath ?? process.resourcesPath,
       'app.asar.unpacked/node_modules/sql.js/dist/sql-wasm.wasm'
     );
   }
-  // In development, use node_modules directly
-  return path.join(app.getAppPath(), 'node_modules/sql.js/dist/sql-wasm.wasm');
+
+  const appPath = input?.appPath ?? app.getAppPath();
+  const resolvedFromAncestors = findNearestExistingFile(appPath, SQL_JS_WASM_RELATIVE_PATH);
+  if (resolvedFromAncestors) {
+    return resolvedFromAncestors;
+  }
+
+  return path.join(path.resolve(appPath), SQL_JS_WASM_RELATIVE_PATH);
+}
+
+function getWasmPath(): string {
+  return resolveSqlJsWasmPath();
 }
 
 export class SqliteStore {

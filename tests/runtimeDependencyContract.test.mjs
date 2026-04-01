@@ -21,3 +21,21 @@ test('skillManager runtime YAML parser must be declared as production dependency
     'js-yaml must be in dependencies so packaged app can load skillManager at runtime',
   );
 });
+
+test('web-search skill build must go through the runtime bootstrap wrapper', () => {
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  const buildScript = packageJson.scripts?.['build:skill:web-search'] || '';
+  const aggregateBuildScript = packageJson.scripts?.['build:skills'] || '';
+
+  assert.match(
+    buildScript,
+    /node\s+scripts\/build-web-search-skill\.js/,
+    'build:skill:web-search should use the web-search bootstrap script so fresh worktrees can install missing skill deps before tsc',
+  );
+
+  assert.match(
+    aggregateBuildScript,
+    /node\s+scripts\/build-web-search-skill\.js/,
+    'build:skills should use the same web-search bootstrap script so electron:dev works in fresh worktrees',
+  );
+});

@@ -96,7 +96,8 @@ export const isServiceRowVisible = (row: ServiceLike): boolean => {
   if (normalizeOperation(row) === 'revoke') return false;
   const available = row.available == null ? 1 : toSafeNumber(row.available);
   if (available === 0) return false;
-  return Math.trunc(toSafeNumber(row.status)) === 0;
+  const normalizedStatus = Math.trunc(toSafeNumber(row.status));
+  return normalizedStatus === 0 || normalizedStatus === 1;
 };
 
 const resolveCanonicalSourcePinId = <T extends ServiceLike>(

@@ -67,6 +67,12 @@ node --test tests/*.test.mjs
 - If the task changes `man-p2p` behavior, make and verify the runtime change in the `man-p2p` repo first.
 - After rebuilding the relevant binary, run `npm run sync:man-p2p` here to refresh `resources/man-p2p/`.
 - Use `npm run electron:dev` for fast integration iteration.
+- Fresh git worktrees do not inherit ignored `node_modules` directories. In this repo that especially affects `SKILLs/web-search/node_modules`.
+- If `npm run electron:dev` or `npm run build:skills` fails in a fresh worktree with `TS2307` for `express` / `playwright-core` under `SKILLs/web-search`, treat it as a missing skill-runtime install in the current worktree first, not as a source-level TypeScript regression.
+- `npm run build:skill:web-search` and `npm run build:skills` are expected to bootstrap missing `SKILLs/web-search` dependencies for the current worktree before compiling; if that bootstrap is ever removed or broken, fix it rather than repeatedly hand-installing in each new worktree.
+- Fresh nested worktrees can also hit `sql.js` startup failures even when the app compiles: `sql-wasm.wasm` may be missing under the worktree-local path while Node actually resolved `sql.js` from a parent repo `node_modules`.
+- If `electron:dev` logs `ENOENT ... node_modules/sql.js/dist/sql-wasm.wasm` under a worktree path, the root cause is usually incorrect wasm path resolution from `app.getAppPath()`, not a broken `sql.js` install in the shared parent repo.
+- Keep `src/main/sqliteStore.ts` resolving the wasm file from the nearest real ancestor `node_modules/sql.js/dist/sql-wasm.wasm` in development, so fresh worktrees reuse the parent repo dependency tree without needing a duplicated root `node_modules`.
 - Use packaged app builds for alpha acceptance and release validation. Do not treat dev runtime behavior as sufficient release evidence.
 - `electron:dev` assumes Vite owns port `5175`. If another repo already has that port open, Electron may load the wrong frontend.
 - Before any commit intended to be kept or pushed, run `npm run lint` and do not submit changes while lint is failing.
