@@ -40,6 +40,9 @@ const HEALTH_TIMEOUT_MS = 2000;
 const STATUS_POLL_INTERVAL_MS = 30_000;
 const STARTUP_HEALTH_ATTEMPTS = 20;
 const STARTUP_HEALTH_DELAY_MS = 250;
+const STARTUP_LOG_LINE_LIMIT = 200;
+const PEBBLE_DATA_DIR_NAME = 'man_base_data_pebble';
+const PEBBLE_RECOVERY_PREFIX = `${PEBBLE_DATA_DIR_NAME}.corrupt`;
 
 let childProcess: ChildProcess | null = null;
 let retryCount = 0;
@@ -48,8 +51,23 @@ let statusPollTimer: ReturnType<typeof setInterval> | null = null;
 let quitListenerRegistered = false;
 let lastStartArgs: { dataDir: string; configPath: string } | null = null;
 let stopping = false;
+let startupInProgressCount = 0;
+let recentProcessLogLines: string[] = [];
+let lastProcessFailure: StartupFailureSnapshot | null = null;
 
 let cachedStatus: P2PStatus = { running: false };
+
+export interface StartupFailureSnapshot {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  logLines: string[];
+}
+
+export interface StartupFailureAnalysis {
+  likelyDataCorruption: boolean;
+  likelyPortConflict: boolean;
+  summary: string | null;
+}
 
 function getStatusUrl(): string {
   return `${getP2PLocalBase()}/api/p2p/status`;
@@ -61,6 +79,125 @@ function getHealthUrl(): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pushStartupLogLine(line: string): void {
+  recentProcessLogLines.push(line);
+  if (recentProcessLogLines.length > STARTUP_LOG_LINE_LIMIT) {
+    recentProcessLogLines = recentProcessLogLines.slice(recentProcessLogLines.length - STARTUP_LOG_LINE_LIMIT);
+  }
+}
+
+function resetStartupDiagnostics(): void {
+  recentProcessLogLines = [];
+  lastProcessFailure = null;
+}
+
+function getStartupFailureSnapshot(): StartupFailureSnapshot {
+  if (lastProcessFailure) {
+    return {
+      exitCode: lastProcessFailure.exitCode,
+      signal: lastProcessFailure.signal,
+      logLines: [...lastProcessFailure.logLines],
+    };
+  }
+  return {
+    exitCode: null,
+    signal: null,
+    logLines: [...recentProcessLogLines],
+  };
+}
+
+function formatRecoveryTimestamp(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return [
+    date.getUTCFullYear(),
+    pad(date.getUTCMonth() + 1),
+    pad(date.getUTCDate()),
+    '-',
+    pad(date.getUTCHours()),
+    pad(date.getUTCMinutes()),
+    pad(date.getUTCSeconds()),
+  ].join('');
+}
+
+export function analyzeStartupFailure(snapshot: StartupFailureSnapshot): StartupFailureAnalysis {
+  const joined = snapshot.logLines.join('\n').toLowerCase();
+  const hasPebble = joined.includes('pebble');
+  const hasWalReplayIssue = /wal file .*stopped reading at offset/.test(joined);
+  const hasPanic = joined.includes('panic:');
+  const hasNilPointer = joined.includes('invalid memory address or nil pointer dereference');
+  const likelyDataCorruption = hasPebble && (hasWalReplayIssue || hasNilPointer) && hasPanic;
+  const likelyPortConflict = joined.includes('address already in use')
+    || joined.includes('only one usage of each socket address');
+
+  if (likelyDataCorruption) {
+    return {
+      likelyDataCorruption: true,
+      likelyPortConflict,
+      summary: 'man-p2p crashed while replaying local Pebble WAL (likely corrupted local p2p data)',
+    };
+  }
+
+  if (likelyPortConflict) {
+    return {
+      likelyDataCorruption: false,
+      likelyPortConflict: true,
+      summary: `man-p2p could not bind ${P2P_LOCAL_PORT} (address already in use)`,
+    };
+  }
+
+  if (snapshot.exitCode !== null) {
+    return {
+      likelyDataCorruption: false,
+      likelyPortConflict: false,
+      summary: `man-p2p exited early with code ${snapshot.exitCode}`,
+    };
+  }
+
+  if (snapshot.signal) {
+    return {
+      likelyDataCorruption: false,
+      likelyPortConflict: false,
+      summary: `man-p2p exited early with signal ${snapshot.signal}`,
+    };
+  }
+
+  return {
+    likelyDataCorruption: false,
+    likelyPortConflict: false,
+    summary: null,
+  };
+}
+
+export function recoverCorruptedPebbleDataDir(
+  dataDir: string,
+  now: Date = new Date(),
+): { recovered: boolean; backupPath?: string; reason?: string } {
+  const source = path.join(dataDir, PEBBLE_DATA_DIR_NAME);
+  if (!fs.existsSync(source)) {
+    return { recovered: false, reason: `missing ${source}` };
+  }
+
+  const stat = fs.statSync(source);
+  if (!stat.isDirectory()) {
+    return { recovered: false, reason: `${source} is not a directory` };
+  }
+
+  const stamp = formatRecoveryTimestamp(now);
+  let attempt = 0;
+  let backupPath = '';
+  while (true) {
+    const suffix = attempt === 0 ? '' : `.${attempt}`;
+    backupPath = path.join(dataDir, `${PEBBLE_RECOVERY_PREFIX}.${stamp}${suffix}`);
+    if (!fs.existsSync(backupPath)) {
+      break;
+    }
+    attempt += 1;
+  }
+
+  fs.renameSync(source, backupPath);
+  return { recovered: true, backupPath };
 }
 
 function hasElectronAppRuntime(): boolean {
@@ -291,7 +428,10 @@ function spawnProcess(dataDir: string, configPath: string): Promise<void> {
 
     proc.stdout?.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n').filter(l => l.trim());
-      lines.forEach(line => console.log(`[p2p] ${line}`));
+      lines.forEach(line => {
+        pushStartupLogLine(`[stdout] ${line}`);
+        console.log(`[p2p] ${line}`);
+      });
       if (!started) {
         started = true;
         resolve();
@@ -300,7 +440,10 @@ function spawnProcess(dataDir: string, configPath: string): Promise<void> {
 
     proc.stderr?.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n').filter(l => l.trim());
-      lines.forEach(line => console.error(`[p2p] ${line}`));
+      lines.forEach(line => {
+        pushStartupLogLine(`[stderr] ${line}`);
+        console.error(`[p2p] ${line}`);
+      });
       if (!started) {
         started = true;
         resolve();
@@ -321,13 +464,18 @@ function spawnProcess(dataDir: string, configPath: string): Promise<void> {
 
     proc.on('exit', (code, signal) => {
       console.log(`[p2p] Process exited (code=${code}, signal=${signal})`);
+      lastProcessFailure = {
+        exitCode: code,
+        signal,
+        logLines: [...recentProcessLogLines],
+      };
       childProcess = null;
       clearStatusPoll();
       if (!started) {
         started = true;
         resolve();
       }
-      if (!stopping) {
+      if (!stopping && startupInProgressCount === 0) {
         scheduleRestart();
       }
     });
@@ -342,7 +490,12 @@ function spawnProcess(dataDir: string, configPath: string): Promise<void> {
   });
 }
 
-export async function start(dataDir: string, configPath: string): Promise<void> {
+export async function start(
+  dataDir: string,
+  configPath: string,
+  options?: { allowCorruptionRecovery?: boolean },
+): Promise<void> {
+  const allowCorruptionRecovery = options?.allowCorruptionRecovery ?? true;
   // Validate binary exists before doing anything else
   const binaryPath = resolveBinaryPath();
   if (!fs.existsSync(binaryPath)) {
@@ -361,6 +514,8 @@ export async function start(dataDir: string, configPath: string): Promise<void> 
     restartTimer = null;
   }
 
+  resetStartupDiagnostics();
+
   if (!quitListenerRegistered) {
     quitListenerRegistered = true;
     app?.on('before-quit', () => {
@@ -368,21 +523,39 @@ export async function start(dataDir: string, configPath: string): Promise<void> 
     });
   }
 
-  await spawnProcess(dataDir, configPath);
-  emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
-  const healthy = await waitForHealthyLocalApi();
-  if (!healthy) {
-    await stop();
-    const error = 'man-p2p health check did not become ready after startup';
-    setOfflineStatus(error);
-    throw new Error(error);
-  }
+  startupInProgressCount += 1;
   try {
-    await refreshStatusFromLocalApi();
-  } catch {
+    await spawnProcess(dataDir, configPath);
     emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
+    const healthy = await waitForHealthyLocalApi();
+    if (!healthy) {
+      const startupFailure = analyzeStartupFailure(getStartupFailureSnapshot());
+      await stop();
+
+      if (allowCorruptionRecovery && startupFailure.likelyDataCorruption) {
+        const recovered = recoverCorruptedPebbleDataDir(dataDir);
+        if (recovered.recovered) {
+          console.warn(`[p2p] Recovered corrupted Pebble data directory -> ${recovered.backupPath}`);
+          await start(dataDir, configPath, { allowCorruptionRecovery: false });
+          return;
+        }
+        console.warn(`[p2p] Startup recovery skipped: ${recovered.reason ?? 'unknown reason'}`);
+      }
+
+      const detail = startupFailure.summary ? ` (${startupFailure.summary})` : '';
+      const error = `man-p2p health check did not become ready after startup${detail}`;
+      setOfflineStatus(error);
+      throw new Error(error);
+    }
+    try {
+      await refreshStatusFromLocalApi();
+    } catch {
+      emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
+    }
+    startStatusPoll();
+  } finally {
+    startupInProgressCount = Math.max(0, startupInProgressCount - 1);
   }
-  startStatusPoll();
 }
 
 export async function stop(): Promise<void> {
@@ -445,3 +618,8 @@ export async function healthCheck(): Promise<boolean> {
 export function getP2PStatus(): P2PStatus {
   return cachedStatus;
 }
+
+export const __p2pIndexerServiceTestUtils = {
+  analyzeStartupFailure,
+  recoverCorruptedPebbleDataDir,
+};

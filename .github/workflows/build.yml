@@ -71,7 +71,7 @@ jobs:
         run: npm run compile:electron
 
       - name: Validate runtime dependency contracts
-        run: node --test tests/runtimeDependencyContract.test.mjs
+        run: node --test tests/runtimeDependencyContract.test.mjs tests/p2pIndexerServiceRecovery.test.mjs
 
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search

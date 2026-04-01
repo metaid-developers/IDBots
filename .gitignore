@@ -21,7 +21,9 @@ Dev-docs/
 CLAUDE.md
 localdocs/
 docs/
-tests/
+tests/*
+!tests/runtimeDependencyContract.test.mjs
+!tests/p2pIndexerServiceRecovery.test.mjs
 
 # Local DB (never commit)
 *.sqlite
