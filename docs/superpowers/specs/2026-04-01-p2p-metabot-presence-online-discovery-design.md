@@ -11,7 +11,7 @@
 Replace Bot Hub and remote-service online discovery's current chain-heartbeat-first model with a `man-p2p` presence-first model, while keeping:
 
 - `PING/PONG` as the final service-availability confirmation before payment/order
-- existing on-chain `/protocols/metabot-heartbeat` as fallback when local P2P presence is unhealthy or unavailable
+- existing on-chain `/protocols/metabot-heartbeat` as fallback for the discovery read path when local P2P presence is unhealthy or unavailable
 
 This design targets faster and more stable online-state detection for remote services and later MetaBot private-chat online filtering.
 
@@ -135,8 +135,8 @@ The exact string is implementation-defined, but it must be versioned from day 1.
   "ttlSec": 55,
   "runtimeMode": "p2p-only",
   "globalMetaIds": [
-    "metaid:xxx",
-    "metaid:yyy"
+    "idq1provideraaa...",
+    "idq1providerbbb..."
   ]
 }
 ```
@@ -153,12 +153,34 @@ Optional debug field:
 
 - `runtimeMode`
 
+Canonicalization rule:
+
+- phase 1 canonical `globalMetaId` is the existing raw MetaID string form, for example `idq1provideraaa...`
+- do **not** wrap it in a URI-style prefix such as `metaid:`
+- before broadcasting, caching, or joining, implementations must normalize by `trim()` + lowercase
+- presence payload `globalMetaIds[]`, local MetaBot `globalmetaid`, and synced service-row `providerGlobalMetaId` / legacy `globalMetaId` must all use this same canonical string form
+
+Examples:
+
+- valid canonical form: `idq1provideraaa...`
+- invalid for phase 1 join/broadcast: `metaid:idq1provideraaa...`
+
+Receiver trust rules:
+
+- receiver must derive the sending peer from the pubsub transport metadata, not from the payload body
+- payload `peerId` is debug-only and may be logged or compared for diagnostics, but must not be used as the authoritative cache key
+- receiver must compute expiry from local receive time, not from sender `sentAt`, so normal clock skew does not flap online state
+- payload `sentAt` remains useful for debugging only
+- phase 1 does **not** cryptographically prove that a peer is authorized to announce every `globalMetaId` it lists
+- therefore presence is an advisory discovery signal, not a final trust signal for payment/order or identity-sensitive actions
+
 Phase 1 deliberately excludes:
 
 - `servicePinIds`
 - service names
 - chat pubkeys
 - profile metadata
+- per-MetaBot signatures or other cryptographic ownership proofs for announced `globalMetaIds`
 
 Those can be derived elsewhere if needed.
 
@@ -166,10 +188,12 @@ Those can be derived elsewhere if needed.
 
 Recommended defaults:
 
-- broadcast immediately after runtime startup becomes healthy
+- start the local broadcast loop immediately after the presence subsystem is initialized
+- publish the first announcement immediately after the broadcast loop starts; do not wait for `healthy = true`
 - rebroadcast every `20s`
 - use `ttlSec = 55`
 - add small random jitter such as `+/- 3s`
+- IDBots presence API request timeout: `2s`
 
 This gives:
 
@@ -190,8 +214,8 @@ Add a generated runtime config field such as:
 ```json
 {
   "p2p_presence_global_metaids": [
-    "metaid:xxx",
-    "metaid:yyy"
+    "idq1provideraaa...",
+    "idq1providerbbb..."
   ]
 }
 ```
@@ -201,6 +225,37 @@ This field:
 - is written by IDBots
 - is not a user-facing manual config field
 - is derived from local MetaBots with `heartbeat_enabled = 1` and valid `globalMetaId`
+
+For phase 1, a valid `globalMetaId` means:
+
+- non-empty after `trim()`
+- canonicalized to lowercase
+- matches the existing raw MetaID string form validated by current IDBots rules, for example `idq1...`, not `metaid:idq1...`
+
+### 7.1.1 Config Write Path And Lifecycle
+
+Phase 1 reuses the existing IDBots-generated runtime config file:
+
+- config file path remains `app.getPath('userData')/man-p2p-config.json`
+- IDBots writes the full merged runtime JSON, including existing P2P config plus `p2p_presence_global_metaids`
+- after writing the file, IDBots calls `POST /api/config/reload`
+- presence membership must hot-reload without requiring a `man-p2p` process restart
+
+IDBots must recompute and rewrite `p2p_presence_global_metaids` at least on:
+
+- app startup before spawning local `man-p2p`
+- `heartbeat_enabled` toggle
+- local MetaBot create / import / restore / delete
+- any local MetaBot `globalMetaId` change that affects discoverability
+
+If file write succeeds but reload fails:
+
+- IDBots logs the failure
+- the existing `man-p2p` in-memory presence membership remains authoritative until the next successful reload or process restart
+- `man-p2p` retains the last successfully loaded presence membership
+- this does **not** by itself force presence `healthy = false`
+- the presence API should surface the problem through an optional diagnostic field such as `lastConfigReloadError`
+- IDBots must not silently fall back to chain heartbeat solely because of this write/reload failure while the presence read path still reports `healthy = true`
 
 ### 7.2 Presence Cache
 
@@ -212,6 +267,13 @@ Each record stores at least:
 
 - `lastSeenSec`
 - `expiresAtSec`
+
+Cache timing semantics:
+
+- `lastSeenSec` means local receive time, not sender `sentAt`
+- `expiresAtSec = lastSeenSec + effectiveTtlSec`
+- `effectiveTtlSec` comes from payload `ttlSec`, but receiver must clamp it to `1..120` seconds so one bad payload cannot create near-permanent liveness
+- phase 1 default sender value is `55`
 
 Aggregation rule:
 
@@ -225,17 +287,38 @@ The aggregated response should also preserve:
 
 This keeps the cache debuggable and future-proof if one MetaBot is later announced from more than one peer.
 
+Expected scale for phase 1:
+
+- desktop nodes usually announce only a small set of local MetaBots
+- remote cache size is expected to stay in the tens to low hundreds of active `(peerId, globalMetaId)` records in normal operation
+- cache must be TTL-pruned and memory-only; do not persist historical presence records to disk in phase 1
+
 ### 7.3 Runtime Health
 
 Presence health should be reported separately from simple process liveness.
+
+Phase 1 distinguishes:
+
+- presence subsystem ready: local broadcaster, subscriber, and TTL cache loop are initialized and may already send/receive announcements
+- discovery healthy: local node is currently capable of remote discovery and may suppress heartbeat fallback
 
 The presence API should only report `healthy = true` when:
 
 - `man-p2p` process is up
 - host/pubsub presence subsystem initialized successfully
 - local time-based cache and periodic broadcast loop are running
+- the local discovery overlay is currently usable for remote discovery, meaning `peerCount >= 1`
 
 If the presence subsystem is not initialized, the API should report `healthy = false`.
+
+Phase 1 discovery-health rule:
+
+- `peerCount` means the current count of active libp2p peer connections as observed by the local host network; bootstrap peers count like any other connected peer
+- `peerCount = 0` means presence discovery is currently unhealthy, even if the broader P2P runtime is otherwise alive
+- this is intentionally narrower than the existing `/api/p2p/status` runtime truth model, where `0 peers` may still be a healthy peerless runtime state
+- reason: provider discovery must fall back when the overlay is disconnected and cannot observe remote announcements
+- phase 1 does not require a separate "connected bootstrap" test beyond `peerCount >= 1`; any active libp2p peer connection is sufficient to treat the overlay as usable for discovery
+- IDBots must not reuse the renderer P2P badge truth model as the discovery fallback gate; discovery health is a separate contract
 
 ---
 
@@ -254,8 +337,11 @@ Suggested response:
   "data": {
     "healthy": true,
     "nowSec": 1760000000,
+    "peerCount": 2,
+    "unhealthyReason": null,
+    "lastConfigReloadError": null,
     "onlineBots": {
-      "metaid:xxx": {
+      "idq1provideraaa...": {
         "lastSeenSec": 1759999988,
         "expiresAtSec": 1760000043,
         "peerIds": ["12D3KooW..."]
@@ -270,7 +356,11 @@ Required response semantics:
 - success envelope remains `{ code: 1, message: "ok", data: ... }`
 - `healthy` is mandatory in `data`
 - `onlineBots` is mandatory in `data`
+- `peerCount` is mandatory in `data` and uses the phase 1 definition from Section 7.3
+- each `onlineBots` key must be the canonical lowercase raw `globalMetaId` string, for example `idq1provideraaa...`
 - a healthy empty set is valid and authoritative
+- when `healthy = false`, `unhealthyReason` should be populated with a short machine-readable reason such as `presence_not_initialized` or `no_active_peers`
+- optional diagnostics such as `lastConfigReloadError` may be included without changing the fallback rule
 
 ---
 
@@ -308,6 +398,12 @@ The current outputs remain:
 
 The implementation changes underneath, but the business outputs should remain stable so renderer churn stays low.
 
+For phase 1, the stable snapshot contract remains equivalent to the current IDBots discovery snapshot:
+
+- `onlineBots: Record<string, number>`
+- `availableServices: any[]`
+- `providers: Record<string, ProviderState>`
+
 ### 10.2 Discovery Flow
 
 Recommended provider discovery order:
@@ -319,6 +415,18 @@ Recommended provider discovery order:
 3. if presence API is unhealthy:
    - fall back to the existing chain-heartbeat polling logic
 
+IDBots should keep the current snapshot-plus-event model, but the presence-first backend refresh cadence should be tighter than the legacy heartbeat cadence:
+
+- poll `GET /api/p2p/presence` every `10s`
+- continue emitting the same discovery snapshot shape to renderer listeners only when the snapshot materially changes or a manual refresh is requested
+- renderer subscription semantics stay unchanged in phase 1
+
+Fallback path retention rule:
+
+- in phase 1, MetaBots with `heartbeat_enabled = 1` continue publishing the existing on-chain `/protocols/metabot-heartbeat`
+- therefore chain-heartbeat fallback remains functionally armed after the discovery path switches to presence-first
+- this means phase 1 improves discovery correctness first, but does **not** yet eliminate heartbeat gas cost
+
 ### 10.3 Service Availability Rule
 
 For Bot Hub and remote-service selection:
@@ -327,6 +435,27 @@ For Bot Hub and remote-service selection:
 - service availability becomes:
   - service row exists and is current
   - provider `globalMetaId` is online according to discovery
+
+### 10.3.1 Provider Identity Join Source
+
+IDBots should reuse the provider identity already normalized into synced remote service rows.
+
+Phase 1 join order is:
+
+1. prefer `service.providerGlobalMetaId`
+2. if absent, allow the current in-memory compatibility alias `service.globalMetaId`
+3. do **not** add a new address-to-`globalMetaId` lookup step in discovery
+
+Remote service sync already derives `providerGlobalMetaId` from:
+
+- chain item `globalMetaId`, when present
+- otherwise parsed content-summary field `providerMetaBot`, when present
+
+Planning assumption for phase 1:
+
+- presence-first availability filtering joins against the existing normalized `providerGlobalMetaId` field already stored on synced service rows
+- service rows lacking both `providerGlobalMetaId` and legacy `globalMetaId` are not eligible to become online via P2P presence and should not appear in `availableServices`
+- therefore this feature does not require a new provider-identity database migration solely for the join
 
 ### 10.4 Pre-Order Confirmation Rule
 
@@ -376,6 +505,8 @@ IDBots should fall back to chain heartbeat only when:
 - request fails at transport level
 - HTTP status is non-`2xx`
 - JSON envelope is invalid
+- JSON envelope `code != 1`
+- required `data.healthy` or `data.onlineBots` fields are missing or malformed
 - `healthy = false`
 
 ### 12.3 Presence/Heartbeat Conflict
@@ -396,6 +527,17 @@ This preserves the distinction between:
 
 - online discovery
 - transactional availability at this instant
+
+### 12.5 Presence Spoofing Limitation
+
+Phase 1 presence announcements are not cryptographically bound to ownership of every announced `globalMetaId`.
+
+Result:
+
+- a malicious peer may falsely announce another provider as online
+- this may pollute discovery visibility, but it must not bypass the existing `PING/PONG` gate before payment/order
+- this limitation is accepted in phase 1 so the rollout can prioritize stable discovery plumbing first
+- stronger authenticity proof is deferred to a later phase
 
 ---
 
@@ -515,4 +657,3 @@ Once this phase is stable, later phases may add:
 - private-chat UX that filters candidate MetaBots by presence
 - richer presence diagnostics in renderer
 - optional de-emphasis or retirement of chain heartbeat in product UI
-
