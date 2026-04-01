@@ -8,7 +8,12 @@ import os from 'os';
 import { SqliteStore } from './sqliteStore';
 import { CoworkStore } from './coworkStore';
 import type { MemoryBackend } from './memory/memoryBackend';
-import { CoworkRunner, type DelegationRequest } from './libs/coworkRunner';
+import {
+  CoworkRunner,
+  isDelegationPriceNumeric,
+  normalizeDelegationPaymentTerms,
+  type DelegationRequest,
+} from './libs/coworkRunner';
 import { SkillManager } from './skillManager';
 import { MetaAppManager } from './metaAppManager';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
@@ -2101,13 +2106,25 @@ const executeDelegationPipeline = async (
   // -----------------------------------------------------------------------
   // Step 3: Execute payment
   // -----------------------------------------------------------------------
-  const price = delegation.price || service.price || '0';
-  const currency = delegation.currency || service.currency || 'SPACE';
+  const rawPrice = delegation.price || service.price || '0';
+  const rawCurrency = delegation.currency || service.currency || 'SPACE';
+  const normalizedTerms = normalizeDelegationPaymentTerms(rawPrice, rawCurrency);
+  const price = normalizedTerms.price || '0';
+  const currency = normalizedTerms.currency || 'SPACE';
   const normalizedCurrency = currency.toUpperCase() === 'MVC' ? 'SPACE' : currency.toUpperCase();
   const paymentAddress = toSafeString(service.paymentAddress || service.providerAddress || service.address).trim();
 
   if (!paymentAddress) {
     injectDelegationSystemMessage(sessionId, `Delegation failed: No payment address found for provider.`);
+    return;
+  }
+
+  if (!isDelegationPriceNumeric(price)) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation payment failed before broadcast: invalid amount format "${rawPrice}". No payment was sent, and the delegation has been cancelled.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Invalid payment amount' });
     return;
   }
 
@@ -2119,6 +2136,11 @@ const executeDelegationPipeline = async (
 
   const paymentChain: TransferChain = normalizedCurrency === 'DOGE' ? 'doge' : 'mvc';
   let paymentTxid = '';
+  const formatPaymentFailureMessage = (errorMsg: string): string => (
+    /decimalerror|invalid argument/i.test(errorMsg)
+      ? `Delegation payment failed before broadcast: ${errorMsg}. No payment was sent, and the delegation has been cancelled.`
+      : `Delegation payment failed: ${errorMsg}. The delegation has been cancelled before the service order was sent.`
+  );
 
   try {
     const feeRate = await resolveTransferFeeRate(paymentChain);
@@ -2134,7 +2156,7 @@ const executeDelegationPipeline = async (
       const errorMsg = (transferResult as { success: false; error: string }).error || 'Payment failed';
       injectDelegationSystemMessage(
         sessionId,
-        `Delegation payment failed: ${errorMsg}. The delegation has been cancelled.`
+        formatPaymentFailureMessage(errorMsg)
       );
       emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment failed' });
       return;
@@ -2145,7 +2167,7 @@ const executeDelegationPipeline = async (
     const errorMsg = error instanceof Error ? error.message : 'Unknown payment error';
     injectDelegationSystemMessage(
       sessionId,
-      `Delegation payment error: ${errorMsg}. The delegation has been cancelled.`
+      formatPaymentFailureMessage(errorMsg)
     );
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment error' });
     return;

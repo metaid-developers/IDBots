@@ -381,9 +381,33 @@ export interface DelegationRequest {
 }
 
 const DELEGATE_REMOTE_SERVICE_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
+const NUMERIC_DELEGATION_PRICE_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/;
+const DECORATED_DELEGATION_PRICE_RE = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:\s+([A-Za-z]+))$/;
 
 export function containsDelegationControlPrefix(content: string): boolean {
   return typeof content === 'string' && content.includes(DELEGATE_REMOTE_SERVICE_PREFIX);
+}
+
+export function normalizeDelegationPaymentTerms(
+  rawPrice: unknown,
+  rawCurrency: unknown,
+): { price: string; currency: string } {
+  let price = typeof rawPrice === 'string' ? rawPrice.trim() : '';
+  let currency = typeof rawCurrency === 'string' ? rawCurrency.trim() : '';
+
+  const decoratedMatch = price.match(DECORATED_DELEGATION_PRICE_RE);
+  if (decoratedMatch) {
+    price = decoratedMatch[1];
+    if (!currency && decoratedMatch[2]) {
+      currency = decoratedMatch[2];
+    }
+  }
+
+  return { price, currency };
+}
+
+export function isDelegationPriceNumeric(value: string): boolean {
+  return NUMERIC_DELEGATION_PRICE_RE.test(value.trim());
 }
 
 /**
@@ -423,12 +447,14 @@ export function parseDelegationMessage(content: string): DelegationRequest | nul
     return null;
   }
 
+  const normalizedTerms = normalizeDelegationPaymentTerms(obj.price, obj.currency);
+
   return {
     servicePinId: obj.servicePinId,
     serviceName: obj.serviceName,
     providerGlobalMetaid: obj.providerGlobalMetaid,
-    price: typeof obj.price === 'string' ? obj.price : '',
-    currency: typeof obj.currency === 'string' ? obj.currency : '',
+    price: normalizedTerms.price,
+    currency: normalizedTerms.currency,
     userTask: typeof obj.userTask === 'string' ? obj.userTask : '',
     taskContext: typeof obj.taskContext === 'string' ? obj.taskContext : '',
   };

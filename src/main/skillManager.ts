@@ -1015,7 +1015,8 @@ export class SkillManager {
           `<service_pin_id>${svc.pinId || svc.servicePinId || ''}</service_pin_id>` +
           `<service_name>${svc.displayName || svc.serviceName || ''}</service_name>` +
           `<description>${svc.description || ''}</description>` +
-          `<price>${svc.price || ''} ${svc.currency || ''}</price>` +
+          `<price_amount>${svc.price || ''}</price_amount>` +
+          `<price_currency>${svc.currency || ''}</price_currency>` +
           `<rating_avg>${svc.ratingAvg ?? 'N/A'}</rating_avg>` +
           `<rating_count>${svc.ratingCount ?? 0}</rating_count>` +
           `<provider_name>${svc.providerMetaBot || svc.providerName || ''}</provider_name>` +
@@ -1040,6 +1041,7 @@ export class SkillManager {
       `    4. Do NOT attempt to read SKILL.md files for remote services.\n\n` +
       `    [DELEGATE_REMOTE_SERVICE] JSON format:\n` +
       `    {"servicePinId":"...","serviceName":"...","providerGlobalMetaid":"...","price":"...","currency":"...","userTask":"summary","taskContext":"full context"}\n` +
+      `    Note: "price" must be numeric only, without the currency/unit suffix.\n` +
       `    Note: providerAddress is resolved by the system using servicePinId.\n` +
       `  </notice>\n` +
       entries +

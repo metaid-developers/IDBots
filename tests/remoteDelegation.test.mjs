@@ -23,6 +23,24 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     assert.equal(result.userTask, 'translate article');
   });
 
+  it('normalizes decorated price strings before payment', async () => {
+    const { parseDelegationMessage } = await import('../dist-electron/libs/coworkRunner.js');
+    const content = `[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"pin123","serviceName":"Test Service","providerGlobalMetaid":"gm456","price":"0.00001 SPACE","currency":"SPACE","userTask":"translate article","taskContext":"article text"}`;
+    const result = parseDelegationMessage(content);
+    assert.ok(result);
+    assert.equal(result.price, '0.00001');
+    assert.equal(result.currency, 'SPACE');
+  });
+
+  it('backfills currency from decorated price when currency field is blank', async () => {
+    const { parseDelegationMessage } = await import('../dist-electron/libs/coworkRunner.js');
+    const content = `[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"pin123","serviceName":"Test Service","providerGlobalMetaid":"gm456","price":"0.01 DOGE","currency":"","userTask":"translate article","taskContext":"article text"}`;
+    const result = parseDelegationMessage(content);
+    assert.ok(result);
+    assert.equal(result.price, '0.01');
+    assert.equal(result.currency, 'DOGE');
+  });
+
   it('returns null for non-delegation messages', async () => {
     const { parseDelegationMessage } = await import('../dist-electron/libs/coworkRunner.js');
     assert.equal(parseDelegationMessage('Hello, how are you?'), null);
