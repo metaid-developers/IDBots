@@ -68,12 +68,18 @@ function normalizePresenceGlobalMetaId(value: unknown): string | null {
   return normalized;
 }
 
+function isHeartbeatEnabled(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value !== 'string') return false;
+  return value.trim() === '1';
+}
+
 export function collectPresenceGlobalMetaIds(metabots: PresenceGlobalMetaIdSource[]): string[] {
   const seen = new Set<string>();
   const collected: string[] = [];
 
   for (const metabot of metabots) {
-    if (!metabot?.heartbeat_enabled) continue;
+    if (!isHeartbeatEnabled(metabot?.heartbeat_enabled)) continue;
 
     const normalized = normalizePresenceGlobalMetaId(metabot.globalmetaid ?? metabot.globalMetaId);
     if (!normalized || seen.has(normalized)) continue;

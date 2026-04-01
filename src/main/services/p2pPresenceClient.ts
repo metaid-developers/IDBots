@@ -19,6 +19,10 @@ function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function toNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
 function toOptionalNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
@@ -127,7 +131,7 @@ export async function fetchLocalPresenceSnapshot(baseUrl: string): Promise<Local
       return unhealthySnapshot('malformed_healthy');
     }
 
-    const peerCount = toFiniteNumber(data.peerCount);
+    const peerCount = toNonNegativeInteger(data.peerCount);
     if (peerCount == null) {
       return unhealthySnapshot('malformed_peer_count');
     }
@@ -141,12 +145,12 @@ export async function fetchLocalPresenceSnapshot(baseUrl: string): Promise<Local
     const lastConfigReloadError = toOptionalNonEmptyString(data.lastConfigReloadError);
     const nowSec = toFiniteNumber(data.nowSec);
 
-    if (!data.healthy) {
+    if (!data.healthy || peerCount < 1) {
       return {
         healthy: false,
         peerCount,
         onlineBots,
-        unhealthyReason: unhealthyReason ?? 'presence_unhealthy',
+        unhealthyReason: unhealthyReason ?? (peerCount < 1 ? 'no_active_peers' : 'presence_unhealthy'),
         lastConfigReloadError,
         nowSec,
       };

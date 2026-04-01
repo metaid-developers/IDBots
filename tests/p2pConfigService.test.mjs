@@ -42,3 +42,20 @@ test('buildRuntimeConfig derives canonical p2p_presence_global_metaids from hear
 
   assert.deepEqual(runtime.p2p_presence_global_metaids, ['idq1alpha', 'idq1beta']);
 });
+
+test('buildRuntimeConfig ignores falsey string heartbeat_enabled values', () => {
+  const runtime = buildRuntimeConfig(
+    {
+      ...DEFAULT_P2P_CONFIG,
+    },
+    [],
+    [
+      { heartbeat_enabled: '0', globalmetaid: 'idq1zero' },
+      { heartbeat_enabled: 'false', globalmetaid: 'idq1false' },
+      { heartbeat_enabled: '1', globalmetaid: 'idq1one' },
+      { heartbeat_enabled: true, globalmetaid: 'idq1true' },
+    ],
+  );
+
+  assert.deepEqual(runtime.p2p_presence_global_metaids, ['idq1one', 'idq1true']);
+});

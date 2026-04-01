@@ -18,7 +18,33 @@ async function withMockedFetch(mock, run) {
   }
 }
 
-test('fetchLocalPresenceSnapshot keeps healthy empty onlineBots snapshot authoritative', async () => {
+test('fetchLocalPresenceSnapshot keeps healthy empty onlineBots snapshot authoritative when peerCount is positive', async () => {
+  const { fetchLocalPresenceSnapshot } = loadPresenceClient();
+
+  await withMockedFetch(async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        code: 1,
+        message: 'ok',
+        data: {
+          healthy: true,
+          peerCount: 2,
+          onlineBots: {},
+        },
+      };
+    },
+  }), async () => {
+    const snapshot = await fetchLocalPresenceSnapshot('http://localhost:7281');
+    assert.equal(snapshot.healthy, true);
+    assert.equal(snapshot.peerCount, 2);
+    assert.deepEqual(snapshot.onlineBots, {});
+    assert.equal(snapshot.unhealthyReason, null);
+  });
+});
+
+test('fetchLocalPresenceSnapshot rejects healthy=true when peerCount is zero', async () => {
   const { fetchLocalPresenceSnapshot } = loadPresenceClient();
 
   await withMockedFetch(async () => ({
@@ -37,11 +63,37 @@ test('fetchLocalPresenceSnapshot keeps healthy empty onlineBots snapshot authori
     },
   }), async () => {
     const snapshot = await fetchLocalPresenceSnapshot('http://localhost:7281');
-    assert.equal(snapshot.healthy, true);
+    assert.equal(snapshot.healthy, false);
     assert.equal(snapshot.peerCount, 0);
     assert.deepEqual(snapshot.onlineBots, {});
-    assert.equal(snapshot.unhealthyReason, null);
+    assert.equal(snapshot.unhealthyReason, 'no_active_peers');
   });
+});
+
+test('fetchLocalPresenceSnapshot marks impossible peerCount values as malformed', async () => {
+  const { fetchLocalPresenceSnapshot } = loadPresenceClient();
+
+  for (const peerCount of [-1, 1.5]) {
+    await withMockedFetch(async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          code: 1,
+          message: 'ok',
+          data: {
+            healthy: true,
+            peerCount,
+            onlineBots: {},
+          },
+        };
+      },
+    }), async () => {
+      const snapshot = await fetchLocalPresenceSnapshot('http://localhost:7281');
+      assert.equal(snapshot.healthy, false);
+      assert.equal(snapshot.unhealthyReason, 'malformed_peer_count');
+    });
+  }
 });
 
 test('fetchLocalPresenceSnapshot marks code != 1 envelope as unhealthy', async () => {
