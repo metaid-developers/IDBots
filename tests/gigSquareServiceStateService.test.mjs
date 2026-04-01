@@ -30,9 +30,9 @@ test('resolveCurrentServiceChains keeps create row when no modify exists', () =>
 
 test('resolveCurrentServiceChains keeps only the newest visible modify pin', () => {
   const view = resolveCurrentServiceChains([
-    { id: 'svc-root', pinId: 'svc-root', sourceServicePinId: 'svc-root', operation: 'create', status: 1, updatedAt: 1_000 },
+    { id: 'svc-root', pinId: 'svc-root', sourceServicePinId: 'svc-root', operation: 'create', status: 0, updatedAt: 1_000 },
     { id: 'svc-m1', pinId: 'svc-m1', sourceServicePinId: 'svc-root', operation: 'modify', status: 1, updatedAt: 2_000 },
-    { id: 'svc-m2', pinId: 'svc-m2', sourceServicePinId: 'svc-root', operation: 'modify', status: 0, updatedAt: 3_000 },
+    { id: 'svc-m2', pinId: 'svc-m2', sourceServicePinId: 'svc-root', operation: 'modify', status: 1, updatedAt: 3_000 },
   ]);
 
   assert.deepEqual(view.map((item) => item.currentPinId), ['svc-m2']);
@@ -41,7 +41,7 @@ test('resolveCurrentServiceChains keeps only the newest visible modify pin', () 
 
 test('resolveCurrentServiceChains hides revoked chains', () => {
   const view = resolveCurrentServiceChains([
-    { id: 'svc-root', pinId: 'svc-root', sourceServicePinId: 'svc-root', operation: 'create', status: 1, updatedAt: 1_000 },
+    { id: 'svc-root', pinId: 'svc-root', sourceServicePinId: 'svc-root', operation: 'create', status: 0, updatedAt: 1_000 },
     { id: 'svc-m1', pinId: 'svc-m1', sourceServicePinId: 'svc-root', operation: 'modify', status: 1, updatedAt: 2_000 },
     { id: 'svc-r1', pinId: 'svc-r1', sourceServicePinId: 'svc-root', operation: 'revoke', status: 0, updatedAt: 3_000 },
   ]);
@@ -49,12 +49,14 @@ test('resolveCurrentServiceChains hides revoked chains', () => {
   assert.deepEqual(view, []);
 });
 
-test('isServiceRowVisible rejects status 1, revoked, and invalid negative rows', () => {
-  assert.equal(isServiceRowVisible({ status: 1, operation: 'create' }), false);
+test('isServiceRowVisible accepts modified services with status 1 and rejects revoked rows', () => {
+  assert.equal(isServiceRowVisible({ status: 1, operation: 'create' }), true);
+  assert.equal(isServiceRowVisible({ status: 1, operation: 'modify' }), true);
+  assert.equal(isServiceRowVisible({ status: 0, operation: 'create' }), true);
   assert.equal(isServiceRowVisible({ status: -1, operation: 'create' }), false);
   assert.equal(isServiceRowVisible({ status: -2, operation: 'modify' }), false);
   assert.equal(isServiceRowVisible({ status: 0, operation: 'revoke' }), false);
-  assert.equal(isServiceRowVisible({ status: 0, operation: 'modify' }), true);
+  assert.equal(isServiceRowVisible({ status: 2, operation: 'modify' }), false);
 });
 
 test('resolveServiceActionAvailability blocks services with active seller orders', () => {
@@ -161,7 +163,7 @@ test('resolveCurrentMarketplaceServices keeps only the latest visible modified r
         pinId: 'svc-modify',
         sourceServicePinId: 'svc-root',
         operation: 'modify',
-        status: 0,
+        status: 1,
         updatedAt: 2_000,
         displayName: 'Weather V2',
         description: 'new',
@@ -177,6 +179,34 @@ test('resolveCurrentMarketplaceServices keeps only the latest visible modified r
   assert.equal(visible.length, 1);
   assert.equal(visible[0].currentPinId, 'svc-modify');
   assert.equal(visible[0].sourceServicePinId, 'svc-root');
+  assert.equal(visible[0].displayName, 'Weather V2');
+  assert.equal(visible[0].description, 'new');
+  assert.equal(visible[0].price, '2');
+});
+
+test('resolveCurrentMarketplaceServices keeps a modified service visible when the latest on-chain row is status 1', () => {
+  const visible = resolveCurrentMarketplaceServices(
+    [
+      {
+        id: 'svc-root',
+        pinId: 'svc-root',
+        sourceServicePinId: 'svc-root',
+        operation: 'create',
+        status: 1,
+        updatedAt: 2_000,
+        displayName: 'Weather V2',
+        description: 'new',
+        price: '2',
+        currency: 'SPACE',
+        providerGlobalMetaId: 'provider-1',
+        providerAddress: 'addr-1',
+      },
+    ],
+    []
+  );
+
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].currentPinId, 'svc-root');
   assert.equal(visible[0].displayName, 'Weather V2');
   assert.equal(visible[0].description, 'new');
   assert.equal(visible[0].price, '2');

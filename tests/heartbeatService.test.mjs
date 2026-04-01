@@ -26,14 +26,14 @@ function resolveRepoRoot() {
 
 const repoRoot = resolveRepoRoot();
 
-function patchElectron(userDataPath) {
+function patchElectron(userDataPath, appPath = repoRoot) {
   const originalLoad = Module._load;
   Module._load = function patchedModuleLoad(request, parent, isMain) {
     if (request === 'electron') {
       return {
         app: {
           isPackaged: false,
-          getAppPath: () => repoRoot,
+          getAppPath: () => appPath,
           getPath: () => userDataPath,
         },
       };
@@ -41,6 +41,12 @@ function patchElectron(userDataPath) {
     return originalLoad(request, parent, isMain);
   };
   return originalLoad;
+}
+
+function loadSqliteStoreFresh() {
+  const sqliteStorePath = require.resolve('../dist-electron/sqliteStore.js');
+  delete require.cache[sqliteStorePath];
+  return require('../dist-electron/sqliteStore.js').SqliteStore;
 }
 
 function getColumns(db, tableName) {
@@ -52,7 +58,7 @@ test('SqliteStore adds heartbeat_enabled column to metabots table on initializat
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-heartbeat-migration-'));
   const originalLoad = patchElectron(userDataPath);
   try {
-    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const SqliteStore = loadSqliteStoreFresh();
     const sqliteStore = await SqliteStore.create(userDataPath);
     const db = sqliteStore.getDatabase();
 
@@ -71,7 +77,7 @@ test('heartbeat_enabled column defaults to 0 in metabots table', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-heartbeat-default-'));
   const originalLoad = patchElectron(userDataPath);
   try {
-    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const SqliteStore = loadSqliteStoreFresh();
     const sqliteStore = await SqliteStore.create(userDataPath);
     const db = sqliteStore.getDatabase();
 
@@ -98,7 +104,7 @@ test('heartbeat_enabled migration is idempotent — second SqliteStore.create do
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-heartbeat-idempotent-'));
   const originalLoad = patchElectron(userDataPath);
   try {
-    const { SqliteStore } = require('../dist-electron/sqliteStore.js');
+    const SqliteStore = loadSqliteStoreFresh();
 
     // First init
     const store1 = await SqliteStore.create(userDataPath);
@@ -108,6 +114,23 @@ test('heartbeat_enabled migration is idempotent — second SqliteStore.create do
     await assert.doesNotReject(
       () => SqliteStore.create(userDataPath),
       'Second SqliteStore.create should not throw when heartbeat_enabled already exists'
+    );
+  } finally {
+    Module._load = originalLoad;
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
+test('SqliteStore.create resolves sql-wasm.wasm from the nearest installed node_modules when appPath is a fresh nested worktree', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-heartbeat-nested-worktree-'));
+  const nestedWorktreePath = path.join(repoRoot, '.worktrees', 'simulated-fresh-worktree');
+  const originalLoad = patchElectron(userDataPath, nestedWorktreePath);
+  try {
+    const SqliteStore = loadSqliteStoreFresh();
+
+    await assert.doesNotReject(
+      () => SqliteStore.create(userDataPath),
+      'SqliteStore.create should not assume sql-wasm.wasm exists under the current worktree path',
     );
   } finally {
     Module._load = originalLoad;
