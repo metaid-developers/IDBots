@@ -83,7 +83,37 @@ jobs:
       # Windows: 下载捆绑的 PortableGit
       - name: Setup MinGit (Windows)
         if: runner.os == 'Windows'
-        run: node scripts/setup-mingit.js
+        shell: powershell
+        run: |
+          $archiveDir = 'C:\actions-runner\_cache'
+          $archivePath = Join-Path $archiveDir 'PortableGit-2.47.1-64-bit.7z.exe'
+          $downloadUrl = 'https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/PortableGit-2.47.1-64-bit.7z.exe'
+
+          New-Item -Path $archiveDir -ItemType Directory -Force | Out-Null
+          $archiveValid = (Test-Path $archivePath) -and ((Get-Item $archivePath).Length -ge 1048576)
+
+          if (-not $archiveValid) {
+            Write-Host "PortableGit cache miss. Downloading: $downloadUrl"
+            $downloaded = $false
+            foreach ($attempt in 1..5) {
+              try {
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing -TimeoutSec 300
+                if ((Get-Item $archivePath).Length -ge 1048576) {
+                  $downloaded = $true
+                  break
+                }
+              } catch {
+                Write-Warning ("PortableGit download attempt {0} failed: {1}" -f $attempt, $_.Exception.Message)
+              }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+            if (-not $downloaded) {
+              throw "Failed to obtain PortableGit archive for Windows packaging."
+            }
+          }
+
+          $env:IDBOTS_PORTABLE_GIT_ARCHIVE = $archivePath
+          node scripts/setup-mingit.js --required
 
       # 非 Windows: 创建 mingit 占位目录，避免 electron-builder 报"file source doesn't exist"错误
       - name: Create mingit placeholder (non-Windows)
