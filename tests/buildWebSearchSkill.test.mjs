@@ -9,6 +9,7 @@ const {
   REQUIRED_WEB_SEARCH_PACKAGES,
   resolveMissingWebSearchPackages,
   ensureWebSearchDependencies,
+  compileWebSearchSkill,
 } = require('../scripts/build-web-search-skill.js');
 
 test('resolveMissingWebSearchPackages reports fresh-worktree runtime packages that are absent', () => {
@@ -55,4 +56,21 @@ test('ensureWebSearchDependencies skips npm ci when required runtime packages al
 
   assert.equal(installed, false);
   assert.deepEqual(calls, []);
+});
+
+test('compileWebSearchSkill uses npm exec for cross-platform TypeScript invocation', () => {
+  const calls = [];
+
+  compileWebSearchSkill({
+    rootDir: '/tmp/repo',
+    execFileSyncImpl: (cmd, args, options) => {
+      calls.push({ cmd, args, options });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].cmd, /^npm(\.cmd)?$/);
+  assert.deepEqual(calls[0].args, ['exec', '--', 'tsc', '-p', 'SKILLs/web-search/tsconfig.json']);
+  assert.equal(calls[0].options.cwd, '/tmp/repo');
+  assert.equal(calls[0].options.stdio, 'inherit');
 });

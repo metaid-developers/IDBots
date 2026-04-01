@@ -14,7 +14,6 @@ const REQUIRED_WEB_SEARCH_PACKAGES = [
 ];
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
 function resolveMissingWebSearchPackages(skillDir = WEB_SEARCH_SKILL_DIR, existsSyncImpl = fs.existsSync) {
   return REQUIRED_WEB_SEARCH_PACKAGES
@@ -45,7 +44,7 @@ function ensureWebSearchDependencies(input = {}) {
 function compileWebSearchSkill(input = {}) {
   const rootDir = input.rootDir || ROOT;
   const execFileSyncImpl = input.execFileSyncImpl || execFileSync;
-  execFileSyncImpl(npxCmd, ['tsc', '-p', 'SKILLs/web-search/tsconfig.json'], {
+  execFileSyncImpl(npmCmd, ['exec', '--', 'tsc', '-p', 'SKILLs/web-search/tsconfig.json'], {
     cwd: rootDir,
     stdio: 'inherit',
   });
