@@ -15,6 +15,31 @@ const REQUIRED_WEB_SEARCH_PACKAGES = [
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
+function quoteCmdArg(value) {
+  const stringValue = String(value);
+  if (!/[\s"]/u.test(stringValue)) {
+    return stringValue;
+  }
+  return `"${stringValue.replace(/"/g, '\\"')}"`;
+}
+
+function runCommand(command, args, options = {}) {
+  const platform = options.platform || process.platform;
+  const execFileSyncImpl = options.execFileSyncImpl || execFileSync;
+  const execOptions = {
+    cwd: options.cwd,
+    stdio: options.stdio || 'inherit',
+  };
+
+  if (platform === 'win32') {
+    const commandLine = [command, ...args].map(quoteCmdArg).join(' ');
+    execFileSyncImpl('cmd.exe', ['/d', '/s', '/c', commandLine], execOptions);
+    return;
+  }
+
+  execFileSyncImpl(command, args, execOptions);
+}
+
 function resolveMissingWebSearchPackages(skillDir = WEB_SEARCH_SKILL_DIR, existsSyncImpl = fs.existsSync) {
   return REQUIRED_WEB_SEARCH_PACKAGES
     .filter((pkg) => !existsSyncImpl(path.join(skillDir, pkg.marker)))
@@ -25,6 +50,7 @@ function ensureWebSearchDependencies(input = {}) {
   const skillDir = input.skillDir || WEB_SEARCH_SKILL_DIR;
   const existsSyncImpl = input.existsSyncImpl || fs.existsSync;
   const execFileSyncImpl = input.execFileSyncImpl || execFileSync;
+  const platform = input.platform || process.platform;
   const log = input.log || console.log;
   const missingPackages = resolveMissingWebSearchPackages(skillDir, existsSyncImpl);
   if (missingPackages.length === 0) {
@@ -34,7 +60,9 @@ function ensureWebSearchDependencies(input = {}) {
   log(
     `[skills] Missing web-search dependencies in current worktree: ${missingPackages.join(', ')}. Running npm ci...`
   );
-  execFileSyncImpl(npmCmd, ['ci'], {
+  runCommand(npmCmd, ['ci'], {
+    platform,
+    execFileSyncImpl,
     cwd: skillDir,
     stdio: 'inherit',
   });
@@ -44,7 +72,10 @@ function ensureWebSearchDependencies(input = {}) {
 function compileWebSearchSkill(input = {}) {
   const rootDir = input.rootDir || ROOT;
   const execFileSyncImpl = input.execFileSyncImpl || execFileSync;
-  execFileSyncImpl(npmCmd, ['exec', '--', 'tsc', '-p', 'SKILLs/web-search/tsconfig.json'], {
+  const platform = input.platform || process.platform;
+  runCommand(npmCmd, ['exec', '--', 'tsc', '-p', 'SKILLs/web-search/tsconfig.json'], {
+    platform,
+    execFileSyncImpl,
     cwd: rootDir,
     stdio: 'inherit',
   });

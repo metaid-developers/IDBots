@@ -74,3 +74,22 @@ test('compileWebSearchSkill uses npm exec for cross-platform TypeScript invocati
   assert.equal(calls[0].options.cwd, '/tmp/repo');
   assert.equal(calls[0].options.stdio, 'inherit');
 });
+
+test('compileWebSearchSkill routes through cmd.exe on win32 to avoid .cmd spawn EINVAL', () => {
+  const calls = [];
+
+  compileWebSearchSkill({
+    rootDir: '/tmp/repo',
+    platform: 'win32',
+    execFileSyncImpl: (cmd, args, options) => {
+      calls.push({ cmd, args, options });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, 'cmd.exe');
+  assert.deepEqual(calls[0].args.slice(0, 3), ['/d', '/s', '/c']);
+  assert.match(calls[0].args[3], /^npm(\.cmd)? exec -- tsc -p SKILLs\/web-search\/tsconfig\.json$/);
+  assert.equal(calls[0].options.cwd, '/tmp/repo');
+  assert.equal(calls[0].options.stdio, 'inherit');
+});
