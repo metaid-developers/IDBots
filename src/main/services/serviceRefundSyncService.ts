@@ -38,6 +38,7 @@ interface ServiceRefundSyncServiceOptions {
   fetchRefundRequestPins?: () => Promise<RefundRequestPinRecord[]>;
   fetchRefundFinalizePins?: () => Promise<RefundFinalizePinRecord[]>;
   resolveLocalMetabotGlobalMetaId?: (localMetabotId: number) => string | null | undefined;
+  resolveLocalMetabotIdByGlobalMetaId?: (globalMetaId: string) => number | null | undefined;
   buildRefundVerificationInput?: (
     order: ServiceOrderRecord,
     payload: Record<string, any>
@@ -57,6 +58,7 @@ export class ServiceRefundSyncService {
   private fetchRefundRequestPins: () => Promise<RefundRequestPinRecord[]>;
   private fetchRefundFinalizePins: () => Promise<RefundFinalizePinRecord[]>;
   private resolveLocalMetabotGlobalMetaId: (localMetabotId: number) => string | null | undefined;
+  private resolveLocalMetabotIdByGlobalMetaId: (globalMetaId: string) => number | null | undefined;
   private buildRefundVerificationInput: (
     order: ServiceOrderRecord,
     payload: Record<string, any>
@@ -79,6 +81,8 @@ export class ServiceRefundSyncService {
     this.fetchRefundFinalizePins = options.fetchRefundFinalizePins ?? (async () => []);
     this.resolveLocalMetabotGlobalMetaId =
       options.resolveLocalMetabotGlobalMetaId ?? (() => null);
+    this.resolveLocalMetabotIdByGlobalMetaId =
+      options.resolveLocalMetabotIdByGlobalMetaId ?? (() => null);
     this.buildRefundVerificationInput =
       options.buildRefundVerificationInput ?? ((order, payload) => this.buildDefaultVerificationInput(order, payload));
     this.verifyTransferToRecipient =
@@ -92,10 +96,16 @@ export class ServiceRefundSyncService {
       const payload = parseRefundRequestPayload(pin.content);
       if (!payload) continue;
 
-      const matchingOrders = this.store
+      let matchingOrders = this.store
         .listOrdersByPaymentTxid(String(payload.paymentTxid || ''))
         .filter((order) => this.matchesRefundRequestPayload(order, payload))
         .filter((order) => this.shouldApplyRefundRequest(order, pin.pinId));
+      if (matchingOrders.length === 0) {
+        const synthesized = this.synthesizeSellerOrderForRefundRequest(payload);
+        if (synthesized && this.shouldApplyRefundRequest(synthesized, pin.pinId)) {
+          matchingOrders = [synthesized];
+        }
+      }
       if (matchingOrders.length === 0) continue;
 
       const requestedAt = this.resolveRefundRequestedAt(pin, payload);
@@ -321,6 +331,50 @@ export class ServiceRefundSyncService {
   private resolveFailureReason(payload: Record<string, any>): string {
     const failureReason = String(payload.failureReason || '').trim();
     return failureReason || 'delivery_timeout';
+  }
+
+  private synthesizeSellerOrderForRefundRequest(
+    payload: Record<string, any>
+  ): ServiceOrderRecord | null {
+    const sellerGlobalMetaId = String(payload.sellerGlobalMetaId || '').trim();
+    const buyerGlobalMetaId = String(payload.buyerGlobalMetaId || '').trim();
+    const paymentTxid = String(payload.paymentTxid || '').trim();
+    if (!sellerGlobalMetaId || !buyerGlobalMetaId || !paymentTxid) {
+      return null;
+    }
+
+    const localMetabotId = this.resolveLocalMetabotIdByGlobalMetaId(sellerGlobalMetaId);
+    if (typeof localMetabotId !== 'number' || !Number.isFinite(localMetabotId)) {
+      return null;
+    }
+
+    const paymentChain = this.resolvePaymentChainFromRefundCurrency(payload.refundCurrency);
+    const paymentAmount = String(payload.refundAmount || '').trim() || '0';
+    const serviceName = String(payload.serviceName || '').trim() || 'Service Order';
+    const servicePinId = String(payload.servicePinId || '').trim() || null;
+    const orderMessagePinId = String(payload.orderMessagePinId || '').trim() || null;
+
+    return this.store.createOrder({
+      role: 'seller',
+      localMetabotId,
+      counterpartyGlobalMetaid: buyerGlobalMetaId,
+      servicePinId,
+      serviceName,
+      paymentTxid,
+      paymentChain,
+      paymentAmount,
+      paymentCurrency: String(payload.refundCurrency || '').trim() || undefined,
+      orderMessagePinId,
+      status: 'failed',
+      now: this.resolveFailureDetectedAt(payload) ?? this.resolveRefundRequestedAt({ pinId: '', content: payload }, payload),
+    });
+  }
+
+  private resolvePaymentChainFromRefundCurrency(refundCurrency: unknown): string {
+    const normalized = String(refundCurrency || '').trim().toUpperCase();
+    if (normalized === 'BTC') return 'btc';
+    if (normalized === 'DOGE') return 'doge';
+    return 'mvc';
   }
 
   private resolveProviderGlobalMetaId(order: ServiceOrderRecord): string | null {

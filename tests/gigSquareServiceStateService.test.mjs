@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const {
   applyLocalServiceState,
   isServiceRowVisible,
+  resolveCurrentMarketplaceServices,
   resolveCurrentServiceChains,
   resolveServiceActionAvailability,
 } = require('../dist-electron/services/gigSquareServiceStateService.js');
@@ -134,4 +135,49 @@ test('applyLocalServiceState exposes locally modified current pin and content fo
   assert.equal(visible[0].price, '2');
   assert.equal(visible[0].providerSkill, 'weather-pro');
   assert.deepEqual(visible[0].chainPinIds, ['svc-root', 'svc-modify-local']);
+});
+
+test('resolveCurrentMarketplaceServices keeps only the latest visible modified row for discovery and prompt data', () => {
+  assert.equal(typeof resolveCurrentMarketplaceServices, 'function');
+
+  const visible = resolveCurrentMarketplaceServices(
+    [
+      {
+        id: 'svc-root',
+        pinId: 'svc-root',
+        sourceServicePinId: 'svc-root',
+        operation: 'create',
+        status: 1,
+        updatedAt: 1_000,
+        displayName: 'Weather V1',
+        description: 'old',
+        price: '1',
+        currency: 'SPACE',
+        providerGlobalMetaId: 'provider-1',
+        providerAddress: 'addr-1',
+      },
+      {
+        id: 'svc-modify',
+        pinId: 'svc-modify',
+        sourceServicePinId: 'svc-root',
+        operation: 'modify',
+        status: 0,
+        updatedAt: 2_000,
+        displayName: 'Weather V2',
+        description: 'new',
+        price: '2',
+        currency: 'SPACE',
+        providerGlobalMetaId: 'provider-1',
+        providerAddress: 'addr-1',
+      },
+    ],
+    []
+  );
+
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].currentPinId, 'svc-modify');
+  assert.equal(visible[0].sourceServicePinId, 'svc-root');
+  assert.equal(visible[0].displayName, 'Weather V2');
+  assert.equal(visible[0].description, 'new');
+  assert.equal(visible[0].price, '2');
 });

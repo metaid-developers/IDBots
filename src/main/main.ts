@@ -93,8 +93,10 @@ import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
+import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
 import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
+import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
 import {
   extractSessionOrderTxid,
   findMatchingOrderSessionId,
@@ -103,6 +105,7 @@ import {
 } from './services/serviceOrderSessionResolution.js';
 import { publishServiceOrderEventToCowork as publishServiceOrderEventToCoworkStore } from './services/serviceOrderCoworkBridge';
 import {
+  buildRemoteSkillServiceUpsertStatement,
   isRemoteSkillServiceListSemanticMiss,
   parseRemoteSkillServiceRow,
   syncRemoteSkillServicesWithCursor,
@@ -119,8 +122,7 @@ import {
 } from './services/gigSquareMyServicesService';
 import { resolveSellerOrderServiceMatch } from './services/gigSquareMyServicesRepairService';
 import {
-  applyLocalServiceState,
-  resolveCurrentServiceChains,
+  resolveCurrentMarketplaceServices,
   resolveServiceActionAvailability,
   type GigSquareResolvedCurrentService,
 } from './services/gigSquareServiceStateService';
@@ -914,73 +916,8 @@ async function syncRemoteSkillServices(): Promise<void> {
         };
       },
       upsertService: (parsed) => {
-        const params = sanitizeDbParams([
-          parsed.id,
-          parsed.pinId,
-          parsed.providerMetaId,
-          parsed.providerGlobalMetaId,
-          parsed.providerAddress,
-          parsed.createAddress || parsed.providerAddress,
-          parsed.serviceName,
-          parsed.displayName,
-          parsed.description,
-          parsed.price,
-          parsed.currency,
-          parsed.avatar,
-          parsed.serviceIcon,
-          parsed.providerMetaBot || null,
-          parsed.providerSkill || null,
-          parsed.skillDocument || null,
-          parsed.inputType || null,
-          parsed.outputType || null,
-          parsed.endpoint || null,
-          parsed.status,
-          parsed.operation,
-          parsed.path || null,
-          parsed.originalId || null,
-          parsed.sourceServicePinId,
-          parsed.available,
-          parsed.contentSummaryJson || null,
-          parsed.paymentAddress || parsed.providerAddress,
-          parsed.updatedAt || Date.now(),
-        ]);
-        db.run(
-          `INSERT INTO remote_skill_service (
-            id, pin_id, metaid, global_metaid, address, create_address, service_name, display_name, description,
-            price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
-            skill_document, input_type, output_type, endpoint, status, operation, path,
-            original_id, source_service_pin_id, available, content_summary_json, payment_address, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            pin_id = excluded.pin_id,
-            metaid = excluded.metaid,
-            global_metaid = excluded.global_metaid,
-            address = excluded.address,
-            create_address = excluded.create_address,
-            service_name = excluded.service_name,
-            display_name = excluded.display_name,
-            description = excluded.description,
-            price = excluded.price,
-            currency = excluded.currency,
-            avatar = excluded.avatar,
-            service_icon = excluded.service_icon,
-            provider_meta_bot = excluded.provider_meta_bot,
-            provider_skill = excluded.provider_skill,
-            skill_document = excluded.skill_document,
-            input_type = excluded.input_type,
-            output_type = excluded.output_type,
-            endpoint = excluded.endpoint,
-            status = excluded.status,
-            operation = excluded.operation,
-            path = excluded.path,
-            original_id = excluded.original_id,
-            source_service_pin_id = excluded.source_service_pin_id,
-            available = excluded.available,
-            content_summary_json = excluded.content_summary_json,
-            payment_address = excluded.payment_address,
-            updated_at = excluded.updated_at`,
-          params
-        );
+        const statement = buildRemoteSkillServiceUpsertStatement(parsed);
+        db.run(statement.sql, sanitizeDbParams(statement.params));
         repairServiceRatingAggregate(db, parsed.id);
       },
     });
@@ -1090,6 +1027,13 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   });
 }
 
+function listCurrentRemoteGigSquareServices(): Array<GigSquareResolvedCurrentService<GigSquareService>> {
+  return resolveCurrentMarketplaceServices(
+    listRemoteSkillServicesFromDb(),
+    listGigSquareLocalServiceRecords(),
+  );
+}
+
 function listGigSquareRatingsFromDb(serviceId?: string): GigSquareMyServiceRating[] {
   const db = getStore().getDatabase();
   const trimmedServiceId = typeof serviceId === 'string' ? serviceId.trim() : '';
@@ -1183,11 +1127,9 @@ const resolveGigSquareServiceCreatorMetabot = (
 const listCurrentMyGigSquareServices = (): GigSquareCurrentMyService[] => {
   const ownedGlobalMetaIds = listOwnedGigSquareProviderGlobalMetaIds();
   const sellerOrders = getServiceOrderStore().listOrdersByRole('seller');
-  const resolvedCurrentRows = applyLocalServiceState(
-    resolveCurrentServiceChains(
-      listRemoteSkillServicesFromDb().filter((service) =>
-        ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())
-      ),
+  const resolvedCurrentRows = resolveCurrentMarketplaceServices(
+    listRemoteSkillServicesFromDb().filter((service) =>
+      ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())
     ),
     listGigSquareLocalServiceRecords(),
   );
@@ -1290,6 +1232,47 @@ const getCoworkOrderText = (
   );
   const content = toSafeString(result[0]?.values?.[0]?.[0]).trim();
   return content || null;
+};
+
+const looksLikeRecoveredServiceOrderText = (value: string | null): boolean => {
+  const normalized = toSafeString(value).trim();
+  if (!normalized) return false;
+  return normalized.startsWith('[ORDER]') || /txid\s*[:：=]?\s*[0-9a-fA-F]{64}/.test(normalized);
+};
+
+const recoverMissingRefundPendingOrderObserverSessions = async (): Promise<void> => {
+  const db = getStore().getDatabase();
+  const metabotStore = getMetabotStore();
+  const recovered = await recoverMissingRefundPendingOrderSessions({
+    coworkStore: getCoworkStore(),
+    orderStore: getServiceOrderStore(),
+    resolveOrderText: (order) => {
+      const privateOrderText = getPrivateChatOrderText(db, toSafeString(order.orderMessagePinId).trim());
+      if (looksLikeRecoveredServiceOrderText(privateOrderText)) {
+        return privateOrderText;
+      }
+      const coworkOrderText = getCoworkOrderText(db, toSafeString(order.coworkSessionId).trim());
+      return looksLikeRecoveredServiceOrderText(coworkOrderText) ? coworkOrderText : null;
+    },
+    resolvePeerInfo: (order) => {
+      const peerMetabot = metabotStore.getMetabotByGlobalMetaId(order.counterpartyGlobalMetaid);
+      const localMetabot = metabotStore.getMetabotById(order.localMetabotId);
+      return {
+        peerName: peerMetabot?.name ?? null,
+        peerAvatar: typeof peerMetabot?.avatar === 'string' ? peerMetabot.avatar : null,
+        serverBotGlobalMetaId: localMetabot?.globalmetaid ?? null,
+      };
+    },
+  });
+
+  for (const session of recovered) {
+    if (session.initialMessage) {
+      emitCoworkStreamMessage(session.coworkSessionId, session.initialMessage);
+    }
+    if (session.recoveryMessage) {
+      emitCoworkStreamMessage(session.coworkSessionId, session.recoveryMessage);
+    }
+  }
 };
 
 function listGigSquareRatingServiceIdByTxid(): Map<string, string> {
@@ -1972,7 +1955,7 @@ const executeDelegationPipeline = async (
   if (!service) {
     console.warn(LOG_TAG, 'Service not found in available services, looking up from DB');
     // Fall back to DB lookup
-    const allServices = listRemoteSkillServicesFromDb();
+    const allServices = listCurrentRemoteGigSquareServices();
     const dbService = allServices.find(
       (s) =>
         (s.pinId === delegation.servicePinId || s.sourceServicePinId === delegation.servicePinId) &&
@@ -2188,6 +2171,29 @@ const executeDelegationPipeline = async (
     currency: normalizedCurrency,
   });
 
+  let buyerObserverSessionId: string | null = null;
+  try {
+    const observerSession = await ensureBuyerOrderObserverSession(coworkStoreInst, {
+      metabotId,
+      peerGlobalMetaId: providerGlobalMetaId,
+      peerName: toSafeString(service.providerMetaBot || service.providerName).trim() || null,
+      peerAvatar: toSafeString(service.avatar).trim() || null,
+      serviceId: delegation.servicePinId,
+      servicePrice: price,
+      serviceCurrency: normalizedCurrency,
+      serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
+      serverBotGlobalMetaId: providerGlobalMetaId,
+      servicePaidTx: paymentTxid,
+      orderPayload,
+    });
+    buyerObserverSessionId = observerSession.coworkSessionId;
+    if (observerSession.initialMessage) {
+      emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
+    }
+  } catch (error) {
+    console.warn(LOG_TAG, 'Failed to create buyer observer session:', error);
+  }
+
   let orderPinId: string | null = null;
   try {
     const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
@@ -2210,6 +2216,17 @@ const executeDelegationPipeline = async (
     orderPinId = result.pinId ?? null;
   } catch (error) {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
+    if (buyerObserverSessionId) {
+      const failureMessage = coworkStoreInst.addMessage(buyerObserverSessionId, {
+        type: 'system',
+        content: `系统提示：支付已完成，但服务订单发送失败。付款 txid：${paymentTxid}。请稍后重试或联系服务方处理退款。`,
+        metadata: {
+          sourceChannel: 'metaweb_order',
+          refreshSessionSummary: true,
+        },
+      });
+      emitCoworkStreamMessage(buyerObserverSessionId, failureMessage);
+    }
     injectDelegationSystemMessage(
       sessionId,
       `Failed to send order to provider. Payment was sent (tx: ${paymentTxid}). Please contact support if funds are not returned.`
@@ -2221,27 +2238,6 @@ const executeDelegationPipeline = async (
   // -----------------------------------------------------------------------
   // Step 5: Create buyer order via ServiceOrderLifecycleService
   // -----------------------------------------------------------------------
-    try {
-      const observerSession = await ensureBuyerOrderObserverSession(coworkStoreInst, {
-        metabotId,
-        peerGlobalMetaId: providerGlobalMetaId,
-        peerName: toSafeString(service.providerMetaBot || service.providerName).trim() || null,
-        peerAvatar: toSafeString(service.avatar).trim() || null,
-        serviceId: delegation.servicePinId,
-        servicePrice: price,
-        serviceCurrency: normalizedCurrency,
-        serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
-        serverBotGlobalMetaId: providerGlobalMetaId,
-        servicePaidTx: paymentTxid,
-        orderPayload,
-      });
-      if (observerSession.initialMessage) {
-        emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
-      }
-    } catch (error) {
-      console.warn(LOG_TAG, 'Failed to create buyer observer session:', error);
-    }
-
     let orderId = '';
     try {
       const order = serviceOrderLifecycle.createBuyerOrder({
@@ -2719,7 +2715,12 @@ const getServiceOrderLifecycleService = () => {
             txid: result.txids?.[0] ?? null,
           };
         },
-        onOrderEvent: ({ type, order }) => {
+        onOrderEvent: async ({ type, order }) => {
+          if (type === 'refund_requested') {
+            await recoverMissingRefundPendingOrderObserverSessions().catch((error) => {
+              console.warn('[ServiceOrder] Failed to recover refund observer sessions', error);
+            });
+          }
           publishServiceOrderEventToCowork(type, order);
         },
       }
@@ -2793,6 +2794,10 @@ const getServiceRefundSyncService = () => {
           const metabot = getMetabotStore().getMetabotById(localMetabotId);
           return metabot?.globalmetaid ?? null;
         },
+        resolveLocalMetabotIdByGlobalMetaId: (globalMetaId) => {
+          const metabot = getMetabotStore().getMetabotByGlobalMetaId(globalMetaId);
+          return metabot?.id ?? null;
+        },
         buildRefundVerificationInput: (order, payload) => {
           const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
           if (!metabot) {
@@ -2809,7 +2814,12 @@ const getServiceRefundSyncService = () => {
             expectedAmountSats: Math.floor(Number(order.paymentAmount) * 100_000_000),
           };
         },
-        onOrderEvent: ({ type, order }) => {
+        onOrderEvent: async ({ type, order }) => {
+          if (type === 'refund_requested') {
+            await recoverMissingRefundPendingOrderObserverSessions().catch((error) => {
+              console.warn('[ServiceOrder] Failed to recover refund observer sessions', error);
+            });
+          }
           publishServiceOrderEventToCowork(type, order);
         },
       }
@@ -2883,6 +2893,12 @@ const syncServiceRefundProtocols = async (): Promise<void> => {
     await service.syncRequestPins();
   } catch (error) {
     console.warn('[ServiceOrder] Refund request sync failed', error);
+  }
+
+  try {
+    await recoverMissingRefundPendingOrderObserverSessions();
+  } catch (error) {
+    console.warn('[ServiceOrder] Refund session recovery scan failed', error);
   }
 
   try {
@@ -4741,10 +4757,7 @@ if (!gotTheLock) {
           .listProviderRefundRiskSummaries()
           .map((summary) => [summary.providerGlobalMetaId, summary] as const)
       );
-      const currentServices = applyLocalServiceState(
-        resolveCurrentServiceChains(listRemoteSkillServicesFromDb()),
-        listGigSquareLocalServiceRecords(),
-      );
+      const currentServices = listCurrentRemoteGigSquareServices();
       const list = await Promise.all(
         currentServices.map(async (item) => ({
           ...item,
@@ -5400,6 +5413,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     servicePaidTx?: string | null;
   }) => {
     let releaseBuyerOrderCreation: (() => void) | null = null;
+    let coworkSessionId: string | null = null;
+    let attemptedPaymentTxid: string | null = null;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
@@ -5413,6 +5428,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
       const servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
+      attemptedPaymentTxid = servicePaidTx;
 
       if (!metabotId || metabotId < 0) {
         return { success: false, error: 'metabotId is required' };
@@ -5454,24 +5470,6 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         return { success: false, error: 'MetaBot wallet mnemonic is missing' };
       }
 
-      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
-        wallet.mnemonic,
-        wallet.path || "m/44'/10001'/0'/0/0"
-      );
-      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
-      const encrypted = ecdhEncrypt(orderPayload, sharedSecret);
-      const payloadStr = buildPrivateMessagePayload(toGlobalMetaId, encrypted, '');
-
-      const result = await createPin(store, metabotId, {
-        operation: 'create',
-        path: '/protocols/simplemsg',
-        encryption: '0',
-        version: '1.0.0',
-        contentType: 'application/json',
-        payload: payloadStr,
-      });
-
-      let coworkSessionId: string | null = null;
       try {
         const observerSession = await ensureBuyerOrderObserverSession(getCoworkStore(), {
           metabotId,
@@ -5493,6 +5491,23 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       } catch (sessionErr) {
         console.warn('[GigSquare] Failed to create buyer observer session:', sessionErr);
       }
+
+      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+        wallet.mnemonic,
+        wallet.path || "m/44'/10001'/0'/0/0"
+      );
+      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
+      const encrypted = ecdhEncrypt(orderPayload, sharedSecret);
+      const payloadStr = buildPrivateMessagePayload(toGlobalMetaId, encrypted, '');
+
+      const result = await createPin(store, metabotId, {
+        operation: 'create',
+        path: '/protocols/simplemsg',
+        encryption: '0',
+        version: '1.0.0',
+        contentType: 'application/json',
+        payload: payloadStr,
+      });
 
       try {
         serviceOrderLifecycle.createBuyerOrder({
@@ -5523,6 +5538,17 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
       return { success: true, txids: result.txids };
     } catch (error) {
+      if (coworkSessionId) {
+        const failureMessage = getCoworkStore().addMessage(coworkSessionId, {
+          type: 'system',
+          content: `系统提示：支付已完成，但服务订单发送失败。付款 txid：${attemptedPaymentTxid || 'unknown'}。请稍后重试或联系服务方处理退款。`,
+          metadata: {
+            sourceChannel: 'metaweb_order',
+            refreshSessionSummary: true,
+          },
+        });
+        emitCoworkStreamMessage(coworkSessionId, failureMessage);
+      }
       return { success: false, error: error instanceof Error ? error.message : 'Failed to send order' };
     } finally {
       releaseBuyerOrderCreation?.();
@@ -6772,9 +6798,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     try {
       getHeartbeatPollingService().startPolling(() => {
         try {
-          return listRemoteSkillServicesFromDb().filter(
-            (s) => s.available !== 0 && (s.status ?? 0) >= 0
-          );
+          return listCurrentRemoteGigSquareServices();
         } catch { return []; }
       });
     } catch (e) { console.warn('[Heartbeat] Failed to start heartbeat polling:', e); }

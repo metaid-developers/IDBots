@@ -35,6 +35,7 @@ export interface OrderCoworkRequest {
   metabotId: number;
   source: OrderSource;
   externalConversationId: string;
+  existingSessionId?: string | null;
   prompt: string;
   systemPrompt: string;
   title?: string;
@@ -74,7 +75,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
   }
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
-    const sessionId = await this.createOrderSession(request);
+    const sessionId = request.existingSessionId?.trim()
+      || await this.createOrderSession(request);
     this.injectProcessingNotice(sessionId, request);
     this.sessionIds.add(sessionId);
     const responsePromise = this.createAccumulatorPromise(sessionId, request);

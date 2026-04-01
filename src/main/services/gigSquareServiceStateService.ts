@@ -236,6 +236,19 @@ export const applyLocalServiceState = <
     .sort(compareRowsDesc);
 };
 
+export const resolveCurrentMarketplaceServices = <
+  T extends ServicePresentationLike,
+  L extends LocalServiceStateRecordLike,
+>(
+  services: T[],
+  localRecords: L[],
+): Array<GigSquareResolvedCurrentService<T>> => (
+  applyLocalServiceState(
+    resolveCurrentServiceChains(services),
+    localRecords,
+  )
+);
+
 export const resolveServiceActionAvailability = (input: {
   currentService?: {
     currentPinId?: string;

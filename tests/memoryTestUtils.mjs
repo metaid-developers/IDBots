@@ -10,6 +10,22 @@ let sqlPromise = null;
 let mockedUserDataPath = process.cwd();
 let compiledModules = null;
 
+function findNearestNodeModules(startDir = process.cwd()) {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const candidate = path.join(currentDir, 'node_modules');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      throw new Error(`Unable to locate node_modules from ${startDir}`);
+    }
+    currentDir = parentDir;
+  }
+}
+
 function loadCompiledModule(modulePath) {
   const originalLoad = Module._load;
   Module._load = function patchedLoad(request, parent, isMain) {
@@ -34,8 +50,9 @@ function loadCompiledModule(modulePath) {
 
 export async function getSqlJs() {
   if (!sqlPromise) {
+    const nodeModulesDir = findNearestNodeModules();
     sqlPromise = initSqlJs({
-      locateFile: (file) => path.join(process.cwd(), 'node_modules/sql.js/dist', file),
+      locateFile: (file) => path.join(nodeModulesDir, 'sql.js/dist', file),
     });
   }
   return sqlPromise;
