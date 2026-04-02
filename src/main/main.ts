@@ -76,6 +76,13 @@ import {
   fetchHeartbeatFromChain,
   type HeartbeatDiscoverySnapshot,
 } from './services/heartbeatPollingService';
+import { ProviderDiscoveryService } from './services/providerDiscoveryService';
+import { fetchLocalPresenceSnapshot } from './services/p2pPresenceClient';
+import {
+  ProviderPingService,
+  resolveDelegationOrderability,
+} from './services/providerPingService';
+import { syncP2PRuntimeConfig } from './services/p2pRuntimeConfigSync';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -1777,6 +1784,42 @@ let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
 let heartbeatService: HeartbeatService | null = null;
 let heartbeatPollingService: HeartbeatPollingService | null = null;
+let providerDiscoveryService: ProviderDiscoveryService | null = null;
+let providerPingService: ProviderPingService | null = null;
+
+const listPendingPrivateMessages = (): Array<Record<string, unknown>> => {
+  const db = getStore().getDatabase();
+  try {
+    const result = db.exec(
+      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+       FROM private_chat_messages
+       WHERE is_processed = 0
+       ORDER BY id DESC
+       LIMIT 50`
+    );
+    if (!result[0]?.values?.length) {
+      return [];
+    }
+
+    const columns = result[0].columns as string[];
+    return (result[0].values as unknown[][]).map((row) => (
+      columns.reduce((acc: Record<string, unknown>, column, index) => {
+        acc[column] = row[index];
+        return acc;
+      }, {})
+    ));
+  } catch {
+    return [];
+  }
+};
+
+const syncP2PRuntimeConfigForCurrentMetabots = async (): Promise<void> => {
+  await syncP2PRuntimeConfig({
+    store: getStore(),
+    metabots: getMetabotStore().listMetabots(),
+    configPath: path.join(app.getPath('userData'), 'man-p2p-config.json'),
+  });
+};
 let storeInitPromise: Promise<SqliteStore> | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
@@ -1950,34 +1993,34 @@ const executeDelegationPipeline = async (
   // -----------------------------------------------------------------------
   // Step 1: Resolve service from heartbeat polling's available services
   // -----------------------------------------------------------------------
-  const pollingService = getHeartbeatPollingService();
-  const service = pollingService.availableServices.find(
-    (s: any) =>
-      (s.pinId === delegation.servicePinId || s.sourceServicePinId === delegation.servicePinId) &&
-      (s.providerGlobalMetaId || s.globalMetaId) === delegation.providerGlobalMetaid
-  );
+  const pollingService = getProviderDiscoveryService();
+  const orderability = resolveDelegationOrderability({
+    availableServices: pollingService.availableServices,
+    allServices: listCurrentRemoteGigSquareServices(),
+    servicePinId: delegation.servicePinId,
+    providerGlobalMetaId: delegation.providerGlobalMetaid,
+  });
 
-  if (!service) {
-    console.warn(LOG_TAG, 'Service not found in available services, looking up from DB');
-    // Fall back to DB lookup
-    const allServices = listCurrentRemoteGigSquareServices();
-    const dbService = allServices.find(
-      (s) =>
-        (s.pinId === delegation.servicePinId || s.sourceServicePinId === delegation.servicePinId) &&
-        s.providerGlobalMetaId === delegation.providerGlobalMetaid
+  if (orderability.status === 'missing') {
+    console.warn(LOG_TAG, 'Service not found in available services or DB');
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation failed: Service "${delegation.serviceName}" (${delegation.servicePinId}) not found.`
     );
-    if (!dbService) {
-      injectDelegationSystemMessage(
-        sessionId,
-        `Delegation failed: Service "${delegation.serviceName}" (${delegation.servicePinId}) not found.`
-      );
-      return;
-    }
-    // Service exists but is not in the online list — treat as potentially offline
+    return;
+  }
+
+  if (orderability.status === 'offline' || !orderability.service) {
+    console.warn(LOG_TAG, 'Service exists in DB but is not currently orderable');
     injectDelegationSystemMessage(
       sessionId,
       `Provider for "${delegation.serviceName}" appears offline. The service was not found in available online services. Please try again later.`
     );
+    return;
+  }
+
+  const service = orderability.service;
+  if (!service) {
     return;
   }
 
@@ -2025,68 +2068,13 @@ const executeDelegationPipeline = async (
     return;
   }
 
-  // Send PING and wait for PONG
   let pongReceived = false;
   try {
-    const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
-      wallet.mnemonic,
-      wallet.path || "m/44'/10001'/0'/0/0"
-    );
-    const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey);
-    const encryptedPing = ecdhEncrypt('ping', sharedSecret);
-    const pingPayload = buildPrivateMessagePayload(providerGlobalMetaId, encryptedPing, '');
-    await createPin(metabotStore, metabotId, {
-      operation: 'create',
-      path: '/protocols/simplemsg',
-      encryption: '0',
-      version: '1.0.0',
-      contentType: 'application/json',
-      payload: pingPayload,
-    });
-
-    // Poll for PONG (reuse pattern from gigSquare:pingProvider)
-    const db = getStore().getDatabase();
-    const timeoutMs = 15000;
-    const deadline = Date.now() + timeoutMs;
-    const normalizeWord = (v: string) => v.toLowerCase().replace(/[^a-z]/g, '');
-    const myGlobalMetaId = metabot.globalmetaid?.trim() ?? '';
-
-    pongReceived = await new Promise<boolean>((resolve) => {
-      const check = () => {
-        try {
-          const result = db.exec(
-            `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
-             FROM private_chat_messages
-             WHERE is_processed = 0
-             ORDER BY id DESC
-             LIMIT 50`
-          );
-          if (result[0]?.values?.length) {
-            const cols = result[0].columns as string[];
-            for (const row of result[0].values as unknown[][]) {
-              const r = cols.reduce((acc: Record<string, unknown>, c, i) => { acc[c] = row[i]; return acc; }, {});
-              const fromGlobal = ((r.from_global_metaid as string) || (r.from_metaid as string) || '').trim();
-              const toGlobal = ((r.to_global_metaid as string) || '').trim();
-              if (fromGlobal !== providerGlobalMetaId) continue;
-              if (myGlobalMetaId && toGlobal && toGlobal !== myGlobalMetaId) continue;
-              const cipherText = (r.content as string) || '';
-              const peerPubkey = (r.from_chat_pubkey as string) || chatPubkey;
-              try {
-                const peerShared = computeEcdhSharedSecretSha256(privateKeyBuffer, peerPubkey);
-                const plain = ecdhDecrypt(cipherText, peerShared);
-                if (plain && normalizeWord(plain.trim()) === 'pong') { resolve(true); return; }
-              } catch { /* try raw */ }
-              try {
-                const peerSharedRaw = computeEcdhSharedSecret(privateKeyBuffer, peerPubkey);
-                const plain = ecdhDecrypt(cipherText, peerSharedRaw);
-                if (plain && normalizeWord(plain.trim()) === 'pong') { resolve(true); return; }
-              } catch { /* ignore */ }
-            }
-          }
-        } catch { /* ignore db errors */ }
-        if (Date.now() >= deadline) { resolve(false); } else { setTimeout(check, 1000); }
-      };
-      check();
+    pongReceived = await getProviderPingService().pingProvider({
+      metabotId,
+      toGlobalMetaId: providerGlobalMetaId,
+      toChatPubkey: chatPubkey,
+      timeoutMs: 15000,
     });
   } catch (error) {
     console.error(LOG_TAG, 'PING/PONG handshake failed:', error);
@@ -2397,7 +2385,7 @@ const getCoworkRunner = () => {
       },
       getRemoteServicesPrompt: () => {
         try {
-          const services = getHeartbeatPollingService().getDiscoverySnapshot().availableServices;
+          const services = getProviderDiscoveryService().getDiscoverySnapshot().availableServices;
           return getSkillManager().buildRemoteServicesPrompt(services);
         } catch { return null; }
       },
@@ -2620,12 +2608,12 @@ function recordLocalHeartbeatDiscovery(metabotId: number, timestampSec: number):
     if (!metabot) return;
     const providerAddress = toSafeString(metabot.mvc_address).trim();
     if (!providerAddress) return;
-    getHeartbeatPollingService().recordLocalHeartbeat({
+    getProviderDiscoveryService().recordLocalHeartbeat({
       globalMetaId: toSafeString(metabot.globalmetaid).trim() || null,
       address: providerAddress,
       timestampSec,
     });
-    void getHeartbeatPollingService().refreshNow().catch((error) => {
+    void getProviderDiscoveryService().refreshNow().catch((error) => {
       console.warn('[Heartbeat] Refresh after local heartbeat failed:', error);
     });
   } catch (error) {
@@ -2651,11 +2639,48 @@ function getHeartbeatPollingService(): HeartbeatPollingService {
     heartbeatPollingService = new HeartbeatPollingService({
       fetchHeartbeat: fetchHeartbeatFromChain,
     });
-    heartbeatPollingService.subscribe((snapshot) => {
+  }
+  return heartbeatPollingService;
+}
+
+function getProviderDiscoveryService(): ProviderDiscoveryService {
+  if (!providerDiscoveryService) {
+    providerDiscoveryService = new ProviderDiscoveryService({
+      heartbeat: getHeartbeatPollingService(),
+      fetchPresence: () => fetchLocalPresenceSnapshot(getP2PLocalBase()),
+    });
+    providerDiscoveryService.subscribe((snapshot) => {
       emitHeartbeatDiscoveryChanged(snapshot);
     });
   }
-  return heartbeatPollingService;
+  return providerDiscoveryService;
+}
+
+function getProviderPingService(): ProviderPingService {
+  if (!providerPingService) {
+    providerPingService = new ProviderPingService({
+      getWallet: (metabotId) => getMetabotStore().getMetabotWalletByMetabotId(metabotId),
+      getLocalGlobalMetaId: (metabotId) => getMetabotStore().getMetabotById(metabotId)?.globalmetaid ?? null,
+      derivePrivateKeyBuffer: (mnemonic, derivationPath) => getPrivateKeyBufferForEcdh(mnemonic, derivationPath),
+      computeSharedSecretSha256: (privateKeyBuffer, peerPubkey) => computeEcdhSharedSecretSha256(privateKeyBuffer, peerPubkey),
+      computeSharedSecret: (privateKeyBuffer, peerPubkey) => computeEcdhSharedSecret(privateKeyBuffer, peerPubkey),
+      encrypt: (plainText, sharedSecret) => ecdhEncrypt(plainText, sharedSecret),
+      decrypt: (cipherText, sharedSecret) => ecdhDecrypt(cipherText, sharedSecret),
+      buildPrivateMessagePayload,
+      createPin: async (metabotId, payload) => {
+        await createPin(getMetabotStore(), metabotId, {
+          operation: 'create',
+          path: '/protocols/simplemsg',
+          encryption: '0',
+          version: '1.0.0',
+          contentType: 'application/json',
+          payload,
+        });
+      },
+      listPendingMessages: () => listPendingPrivateMessages(),
+    });
+  }
+  return providerPingService;
 }
 
 const getServiceOrderStore = () => {
@@ -4393,6 +4418,7 @@ if (!gotTheLock) {
         tools: [],
         skills: [],
       });
+      await syncP2PRuntimeConfigForCurrentMetabots();
       return { success: true, metabot };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to create metabot' };
@@ -4480,6 +4506,7 @@ if (!gotTheLock) {
         mnemonic: walletResult.mnemonic,
         path: walletResult.path,
       });
+      await syncP2PRuntimeConfigForCurrentMetabots();
       return { success: true, metabot, subsidy: subsidyResult };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -4571,6 +4598,7 @@ if (!gotTheLock) {
 
       // 5. Chain succeeded (or partial with canSkip) — reload metabot with updated pinIds
       const updatedMetabot = store.getMetabotById(metabot.id) ?? metabot;
+      await syncP2PRuntimeConfigForCurrentMetabots();
       return {
         success: true,
         metabot: updatedMetabot,
@@ -4680,6 +4708,7 @@ if (!gotTheLock) {
       });
 
       console.log('[MetaBot] restore success', { id: metabot.id, name: metabot.name });
+      await syncP2PRuntimeConfigForCurrentMetabots();
       return { success: true, metabot };
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -4748,6 +4777,9 @@ if (!gotTheLock) {
     try {
       const store = getMetabotStore();
       const ok = store.deleteMetabot(metabotId);
+      if (ok) {
+        await syncP2PRuntimeConfigForCurrentMetabots();
+      }
       return { success: ok };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to delete MetaBot' };
@@ -5585,88 +5617,12 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         await startListenerWithConfig(next);
       }
 
-      // Send encrypted ping
-      const store = getMetabotStore();
-      const wallet = store.getMetabotWalletByMetabotId(metabotId);
-      if (!wallet?.mnemonic?.trim()) {
-        return { success: false, error: 'MetaBot wallet mnemonic is missing' };
-      }
-      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
-        wallet.mnemonic,
-        wallet.path || "m/44'/10001'/0'/0/0"
-      );
-      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
-      const encryptedPing = ecdhEncrypt('ping', sharedSecret);
-      const pingPayload = buildPrivateMessagePayload(toGlobalMetaId, encryptedPing, '');
-      await createPin(store, metabotId, {
-        operation: 'create',
-        path: '/protocols/simplemsg',
-        encryption: '0',
-        version: '1.0.0',
-        contentType: 'application/json',
-        payload: pingPayload,
+      const pongReceived = await getProviderPingService().pingProvider({
+        metabotId,
+        toGlobalMetaId,
+        toChatPubkey,
+        timeoutMs,
       });
-
-      // Poll SQLite for pong reply from provider (max timeoutMs)
-      const db = getStore().getDatabase();
-      const deadline = Date.now() + timeoutMs;
-      const normalizeWord = (v: string) => v.toLowerCase().replace(/[^a-z]/g, '');
-      const myMetabot = store.getMetabotById(metabotId);
-      const myGlobalMetaId = myMetabot?.globalmetaid?.trim() ?? '';
-
-      const waitForPong = (): Promise<boolean> =>
-        new Promise((resolve) => {
-          const check = () => {
-            try {
-              // Look for unprocessed messages from the provider addressed to our metabot
-              const result = db.exec(
-                `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
-                 FROM private_chat_messages
-                 WHERE is_processed = 0
-                 ORDER BY id DESC
-                 LIMIT 50`
-              );
-              if (result[0]?.values?.length) {
-                const cols = result[0].columns as string[];
-                for (const row of result[0].values as unknown[][]) {
-                  const r = cols.reduce((acc: Record<string, unknown>, c, i) => { acc[c] = row[i]; return acc; }, {});
-                  const fromGlobal = ((r.from_global_metaid as string) || (r.from_metaid as string) || '').trim();
-                  const toGlobal = ((r.to_global_metaid as string) || '').trim();
-                  // Must be from the provider, to our metabot
-                  if (fromGlobal !== toGlobalMetaId) continue;
-                  if (myGlobalMetaId && toGlobal && toGlobal !== myGlobalMetaId) continue;
-                  // Try to decrypt
-                  const cipherText = (r.content as string) || '';
-                  const peerPubkey = (r.from_chat_pubkey as string) || toChatPubkey;
-                  try {
-                    const peerShared = computeEcdhSharedSecretSha256(privateKeyBuffer, peerPubkey);
-                    const plain = ecdhDecrypt(cipherText, peerShared);
-                    if (plain && normalizeWord(plain.trim()) === 'pong') {
-                      resolve(true);
-                      return;
-                    }
-                  } catch { /* try raw */ }
-                  try {
-                    const peerSharedRaw = computeEcdhSharedSecret(privateKeyBuffer, peerPubkey);
-                    const plain = ecdhDecrypt(cipherText, peerSharedRaw);
-                    if (plain && normalizeWord(plain.trim()) === 'pong') {
-                      resolve(true);
-                      return;
-                    }
-                  } catch { /* ignore */ }
-                }
-              }
-            } catch { /* ignore db errors */ }
-            if (Date.now() >= deadline) {
-              resolve(false);
-            } else {
-              setTimeout(check, 1000);
-            }
-          };
-          check();
-        });
-
-      const pongReceived = await waitForPong();
       return { success: pongReceived };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Ping failed' };
@@ -5681,10 +5637,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const save = getStore().getSaveFunction();
       db.run('UPDATE metabots SET heartbeat_enabled = ? WHERE id = ?', [params.enabled ? 1 : 0, params.metabotId]);
       save();
+      await syncP2PRuntimeConfigForCurrentMetabots();
 
       if (params.enabled) {
         getHeartbeatService().startHeartbeat(params.metabotId);
-        void getHeartbeatPollingService().refreshNow().catch((error) => {
+        const metabot = getMetabotStore().getMetabotById(params.metabotId);
+        const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
+        if (globalMetaId) {
+          getProviderDiscoveryService().clearForceOffline(globalMetaId);
+        }
+        void getProviderDiscoveryService().refreshNow().catch((error) => {
           console.warn('[Heartbeat] Refresh after toggle-on failed:', error);
         });
       } else {
@@ -5692,9 +5654,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         const metabot = getMetabotStore().getMetabotById(params.metabotId);
         const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
         if (globalMetaId) {
-          getHeartbeatPollingService().forceOffline(globalMetaId);
+          getProviderDiscoveryService().forceOffline(globalMetaId);
         }
-        void getHeartbeatPollingService().refreshNow().catch((error) => {
+        void getProviderDiscoveryService().refreshNow().catch((error) => {
           console.warn('[Heartbeat] Refresh after toggle-off failed:', error);
         });
       }
@@ -5716,7 +5678,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getOnlineServices', async () => {
     try {
-      const services = getHeartbeatPollingService().getDiscoverySnapshot().availableServices;
+      const services = getProviderDiscoveryService().getDiscoverySnapshot().availableServices;
       return { success: true, services };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online services' };
@@ -5725,7 +5687,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getOnlineBots', async () => {
     try {
-      const bots = getHeartbeatPollingService().getDiscoverySnapshot().onlineBots;
+      const bots = getProviderDiscoveryService().getDiscoverySnapshot().onlineBots;
       return { success: true, bots };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online bots' };
@@ -5734,7 +5696,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('heartbeat:getDiscoverySnapshot', async () => {
     try {
-      const snapshot = getHeartbeatPollingService().getDiscoverySnapshot();
+      const snapshot = getProviderDiscoveryService().getDiscoverySnapshot();
       return { success: true, snapshot };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat discovery snapshot' };
@@ -6341,11 +6303,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
   ipcMain.handle('p2p:setConfig', async (_e: Electron.IpcMainInvokeEvent, config: unknown) => {
     const updated = p2pConfigService.setConfig(getStore(), config as Partial<import('./services/p2pConfigService').P2PConfig>);
-    const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
-    const ownAddresses = p2pConfigService.collectOwnAddresses(getMetabotStore().listMetabots());
-    const runtimeConfig = p2pConfigService.buildRuntimeConfig(updated, ownAddresses);
-    p2pConfigService.writeConfigFile(runtimeConfig, configPath);
-    await p2pConfigService.reloadConfig();
+    await syncP2PRuntimeConfigForCurrentMetabots();
     return updated;
   });
 
@@ -6639,6 +6597,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           heartbeatService.stopAll();
           heartbeatService = null;
         }
+        if (providerDiscoveryService) {
+          providerDiscoveryService.dispose();
+          providerDiscoveryService = null;
+        }
         if (heartbeatPollingService) {
           heartbeatPollingService.stopPolling();
           heartbeatPollingService = null;
@@ -6722,13 +6684,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
     // Start man-p2p local indexer (non-fatal if binary not present)
     try {
-      const p2pConfig = p2pConfigService.getConfig(getStore());
       const dataDir = path.join(app.getPath('userData'), 'man-p2p');
       const configPath = path.join(app.getPath('userData'), 'man-p2p-config.json');
-      const ownAddresses = p2pConfigService.collectOwnAddresses(getMetabotStore().listMetabots());
-      const runtimeConfig = p2pConfigService.buildRuntimeConfig(p2pConfig, ownAddresses);
       fs.mkdirSync(dataDir, { recursive: true });
-      p2pConfigService.writeConfigFile(runtimeConfig, configPath);
+      await syncP2PRuntimeConfigForCurrentMetabots();
       await p2pIndexerService.start(dataDir, configPath);
       console.log('[p2p] man-p2p started');
     } catch (err) {
@@ -6802,7 +6761,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
     // Start heartbeat polling for online service discovery
     try {
-      getHeartbeatPollingService().startPolling(() => {
+      getProviderDiscoveryService().startPolling(() => {
         try {
           return listCurrentRemoteGigSquareServices();
         } catch { return []; }

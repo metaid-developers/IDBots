@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'crypto';
+import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 
 // ============= Address Version Types =============
 
@@ -380,24 +381,5 @@ export function convertToGlobalMetaId(address: string): string {
  * @returns true if valid format
  */
 export function validateGlobalMetaId(globalMetaId: string): boolean {
-  try {
-    const addr = globalMetaId.toLowerCase();
-
-    if (!addr.startsWith('id')) {
-      return false;
-    }
-
-    const versionChar = addr[2];
-    if (!VERSION_CHARS.includes(versionChar)) {
-      return false;
-    }
-
-    if (addr[3] !== '1') {
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
+  return normalizeRawGlobalMetaId(globalMetaId) !== null;
 }

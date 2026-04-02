@@ -1,19 +1,19 @@
 {
   "binary": "man-p2p-darwin-arm64",
-  "binarySha256": "527aa4789fe583ef0c3f3eb9a5eaa019c82b6d32b692e88b642a7ef9ccd09d83",
+  "binarySha256": "beef204fe42474bcd2c71d132dcf078d0c2855140a2d1269614a8a91d8382f39",
   "artifacts": {
     "man-p2p-darwin-arm64": {
       "makeTarget": "build-darwin-arm64",
-      "sha256": "527aa4789fe583ef0c3f3eb9a5eaa019c82b6d32b692e88b642a7ef9ccd09d83"
+      "sha256": "beef204fe42474bcd2c71d132dcf078d0c2855140a2d1269614a8a91d8382f39"
     },
     "man-p2p-win32-x64.exe": {
       "makeTarget": "build-windows-amd64",
-      "sha256": "dad941aa267bd0eb3e825ec44b11675241f44d4839c9e3f9979707fcb11e3f24"
+      "sha256": "e72d0eff32189c1cf813e2ee25816b9065958d605aaa0f7a5c659286215f64f8"
     }
   },
-  "sourcePath": "/Users/tusm/.config/superpowers/worktrees/man-p2p/codex/bootstrap-reload-reconnect",
-  "sourceBranch": "codex/bootstrap-reload-reconnect",
-  "sourceCommit": "fd81303",
-  "sourceVersion": "alpha-2026-03-22-local-first-1-gfd81303",
-  "syncedAt": "2026-03-22T16:53:29.068Z"
+  "sourcePath": "/Users/tusm/Documents/MetaID_Projects/man-p2p/.worktrees/codex/p2p-presence-online",
+  "sourceBranch": "codex/p2p-presence-online",
+  "sourceCommit": "c3239c7",
+  "sourceVersion": "c3239c7",
+  "syncedAt": "2026-04-02T04:20:26.094Z"
 }

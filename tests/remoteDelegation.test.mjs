@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
   it('detects delegation control prefix anywhere in assistant content', async () => {
@@ -103,5 +106,39 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     assert.equal(isExplicitMetaAppUserRequest('打开 buzz app', 'buzz'), true);
     assert.equal(isExplicitMetaAppUserRequest('请使用 buzz 这个 MetaApp', 'buzz'), true);
     assert.equal(isExplicitMetaAppUserRequest('帮我查一下东京天气', 'buzz'), false);
+  });
+
+  it('treats a service missing from availableServices as offline even when it still exists in the DB list', () => {
+    const { resolveDelegationOrderability } = require('../dist-electron/services/providerPingService.js');
+    const result = resolveDelegationOrderability({
+      availableServices: [
+        { pinId: 'other-pin', providerGlobalMetaId: 'idq1other' },
+      ],
+      allServices: [
+        { pinId: 'pin123', providerGlobalMetaId: 'idq1provider', serviceName: 'Test Service' },
+      ],
+      servicePinId: 'pin123',
+      providerGlobalMetaId: 'idq1provider',
+    });
+
+    assert.deepEqual(result, {
+      status: 'offline',
+      service: null,
+    });
+  });
+
+  it('matches providerGlobalMetaId case-insensitively for orderability checks', () => {
+    const { resolveDelegationOrderability } = require('../dist-electron/services/providerPingService.js');
+    const result = resolveDelegationOrderability({
+      availableServices: [
+        { pinId: 'pin123', providerGlobalMetaId: ' IDQ1Provider ', serviceName: 'Test Service' },
+      ],
+      allServices: [],
+      servicePinId: 'pin123',
+      providerGlobalMetaId: 'idq1provider',
+    });
+
+    assert.equal(result.status, 'available');
+    assert.equal(result.service?.serviceName, 'Test Service');
   });
 });

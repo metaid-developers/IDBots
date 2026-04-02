@@ -167,6 +167,26 @@ test('pollAll queries heartbeat once per provider and keeps all active services 
   assert.equal(svc.availableServices.length, 2);
 });
 
+test('pollAll canonicalizes valid raw providerGlobalMetaIds in the fallback snapshot', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async () => ({ timestamp: nowSec - 15 }),
+  });
+
+  await svc.pollAll([
+    {
+      providerGlobalMetaId: ' IDQ1ProviderA ',
+      providerAddress: 'mvc-provider-address',
+      serviceName: 'svc-canonical',
+    },
+  ]);
+
+  const snapshot = svc.getDiscoverySnapshot();
+  assert.equal(snapshot.onlineBots.idq1providera, nowSec - 15);
+  assert.equal(snapshot.availableServices.length, 1);
+  assert.equal(snapshot.providers['idq1providera::mvc-provider-address']?.online, true);
+});
+
 test('pollAll keeps provider online through a transient semantic miss while cached heartbeat is still fresh', async () => {
   const nowSec = Math.floor(Date.now() / 1000);
   let callCount = 0;
@@ -351,6 +371,57 @@ test('markOffline is a no-op for a bot that is not online', () => {
   // Should not throw
   svc.markOffline('nonexistent-bot');
   assert.equal(svc.onlineBots.size, 0);
+});
+
+test('forceOffline survives local heartbeat updates until clearForceOffline is called', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const svc = new HeartbeatPollingService({
+    now: () => nowSec * 1000,
+    fetchHeartbeat: async () => null,
+  });
+
+  const services = [
+    { providerGlobalMetaId: 'bot-force', providerAddress: '1force', serviceName: 'force-svc' },
+  ];
+
+  svc.recordLocalHeartbeat({ globalMetaId: 'bot-force', address: '1force', timestampSec: nowSec - 5 });
+  await svc.pollAll(services);
+  assert.ok(svc.onlineBots.has('bot-force'));
+
+  svc.forceOffline('bot-force');
+  await svc.pollAll(services);
+  assert.ok(!svc.onlineBots.has('bot-force'));
+
+  svc.recordLocalHeartbeat({ globalMetaId: 'bot-force', address: '1force', timestampSec: nowSec });
+  await svc.pollAll(services);
+  assert.ok(!svc.onlineBots.has('bot-force'));
+
+  svc.clearForceOffline('bot-force');
+  await svc.pollAll(services);
+  assert.ok(svc.onlineBots.has('bot-force'));
+});
+
+test('forceOffline matches canonicalized raw providerGlobalMetaIds against mixed-case service rows', async () => {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const svc = new HeartbeatPollingService({
+    fetchHeartbeat: async () => ({ timestamp: nowSec - 10 }),
+  });
+
+  await svc.pollAll([
+    {
+      providerGlobalMetaId: ' IDQ1ProviderA ',
+      providerAddress: 'mvc-provider-address',
+      serviceName: 'svc-force-offline',
+    },
+  ]);
+
+  assert.equal(svc.onlineBots.get('idq1providera'), nowSec - 10);
+
+  svc.forceOffline('idq1providera');
+
+  assert.equal(svc.onlineBots.has('idq1providera'), false);
+  assert.equal(svc.availableServices.length, 0);
+  assert.equal(svc.getDiscoverySnapshot().providers['idq1providera::mvc-provider-address']?.online, undefined);
 });
 
 // ---------------------------------------------------------------------------
