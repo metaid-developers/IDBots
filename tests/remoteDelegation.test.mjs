@@ -76,6 +76,12 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     );
   });
 
+  it('hides very short delegation prefix fragments before they reach the UI', async () => {
+    const { getDelegationDisplayText } = await import('../dist-electron/libs/coworkRunner.js');
+    assert.equal(getDelegationDisplayText('['), '');
+    assert.equal(getDelegationDisplayText('[DELE'), '');
+  });
+
   it('keeps only the natural-language preamble when the full delegation control block is present', async () => {
     const { getDelegationDisplayText } = await import('../dist-electron/libs/coworkRunner.js');
     const content = '好的，我现在为你委托这个塔罗牌占卜服务。\n\n[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"p1","serviceName":"塔罗牌占卜","providerGlobalMetaid":"gm","price":"0.00005","currency":"SPACE","userTask":"塔罗牌占卜","taskContext":"塔罗牌占卜"}';
