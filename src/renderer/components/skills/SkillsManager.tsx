@@ -384,7 +384,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
                           type="button"
                           onClick={() => handleInstallOfficialSkill(skill)}
                           disabled={installingSkillName !== null || isSyncingAll}
-                          className="px-2.5 py-1 text-xs rounded-lg bg-blue-500 text-gray-900 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
@@ -395,7 +395,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
                           type="button"
                           onClick={() => handleInstallOfficialSkill(skill)}
                           disabled={installingSkillName !== null || isSyncingAll}
-                          className="px-2.5 py-1 text-xs rounded-lg bg-green-600 text-gray-900 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                           {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
