@@ -176,7 +176,7 @@ const validateModifyDraft = (draft: ModifyDraft): string | null => {
   if (!draft.price.trim()) return i18nService.t('gigSquarePublishPriceRequired');
   if (!NUMBER_PATTERN.test(draft.price.trim())) return i18nService.t('gigSquarePublishPriceInvalid');
   const numericPrice = Number(draft.price.trim());
-  if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+  if (!Number.isFinite(numericPrice) || numericPrice < 0) {
     return i18nService.t('gigSquarePublishPriceInvalid');
   }
   if (numericPrice > getGigSquarePublishPriceLimit(draft.currency)) {

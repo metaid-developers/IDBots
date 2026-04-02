@@ -99,7 +99,7 @@ function extractOrderAmount(
   if (!match) return null;
   const amount = parseFloat(match[1]);
   const currency = match[2].toUpperCase();
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (!Number.isFinite(amount) || amount < 0) return null;
   const chain: TransferChain =
     currency === 'BTC' ? 'btc' : currency === 'DOGE' ? 'doge' : 'mvc';
   return { amount, currency, chain };
@@ -141,10 +141,6 @@ export async function checkOrderPaymentStatus(params: {
 }): Promise<OrderPaymentCheckResult> {
   const { txid, plaintext, metabotId, metabotStore } = params;
 
-  if (!txid || !/^[0-9a-fA-F]{64}$/.test(txid)) {
-    return { paid: false, txid: txid || null, reason: 'invalid_or_missing_txid' };
-  }
-
   const parsed = extractOrderAmount(plaintext);
   if (!parsed) {
     return { paid: false, txid, reason: 'cannot_parse_amount_or_currency' };
@@ -152,8 +148,21 @@ export async function checkOrderPaymentStatus(params: {
 
   const { amount, currency, chain } = parsed;
   const expectedSats = Math.floor(amount * SATOSHI_PER_UNIT);
-  if (expectedSats <= 0) {
+  if (expectedSats < 0) {
     return { paid: false, txid, reason: 'invalid_amount' };
+  }
+  if (expectedSats === 0) {
+    return {
+      paid: true,
+      txid: txid || null,
+      reason: 'free_order_no_payment_required',
+      chain,
+      amountSats: 0,
+    };
+  }
+
+  if (!txid || !/^[0-9a-fA-F]{64}$/.test(txid)) {
+    return { paid: false, txid: txid || null, reason: 'invalid_or_missing_txid' };
   }
 
   const recipientAddress = getMetabotAddressForChain(metabotStore, metabotId, chain);

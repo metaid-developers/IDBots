@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativ
 import type { WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { randomBytes } from 'crypto';
 import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
@@ -225,6 +226,17 @@ const normalizeServiceOrderPaymentChain = (currency?: string | null): 'mvc' | 'b
   if (normalized === 'BTC') return 'btc';
   if (normalized === 'DOGE') return 'doge';
   return 'mvc';
+};
+
+const isFreeServicePrice = (value: unknown): boolean => {
+  const raw = toSafeString(value).trim();
+  if (!raw) return false;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) && numeric === 0;
+};
+
+const generateSyntheticOrderTxid = (): string => {
+  return randomBytes(32).toString('hex');
 };
 
 const getRefundAddressForOrder = (
@@ -2100,12 +2112,6 @@ const executeDelegationPipeline = async (
   const price = normalizedTerms.price || '0';
   const currency = normalizedTerms.currency || 'SPACE';
   const normalizedCurrency = currency.toUpperCase() === 'MVC' ? 'SPACE' : currency.toUpperCase();
-  const paymentAddress = toSafeString(service.paymentAddress || service.providerAddress || service.address).trim();
-
-  if (!paymentAddress) {
-    injectDelegationSystemMessage(sessionId, `Delegation failed: No payment address found for provider.`);
-    return;
-  }
 
   if (!isDelegationPriceNumeric(price)) {
     injectDelegationSystemMessage(
@@ -2116,59 +2122,86 @@ const executeDelegationPipeline = async (
     return;
   }
 
-  injectDelegationSystemMessage(
-    sessionId,
-    `Sending payment of ${price} ${normalizedCurrency} to provider...`
-  );
-  emitDelegationStateChange({ sessionId, blocking: false, message: 'Processing payment...' });
+  const numericPrice = Number(price);
+  if (!Number.isFinite(numericPrice) || numericPrice < 0) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation payment failed before broadcast: invalid amount format "${rawPrice}". No payment was sent, and the delegation has been cancelled.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Invalid payment amount' });
+    return;
+  }
 
+  const isFreeDelegation = numericPrice === 0;
   const paymentChain: TransferChain = normalizedCurrency === 'DOGE' ? 'doge' : 'mvc';
-  let paymentTxid = '';
+  let paymentTxid = isFreeDelegation ? generateSyntheticOrderTxid() : '';
   const formatPaymentFailureMessage = (errorMsg: string): string => (
     /decimalerror|invalid argument/i.test(errorMsg)
       ? `Delegation payment failed before broadcast: ${errorMsg}. No payment was sent, and the delegation has been cancelled.`
       : `Delegation payment failed: ${errorMsg}. The delegation has been cancelled before the service order was sent.`
   );
 
-  try {
-    const feeRate = await resolveTransferFeeRate(paymentChain);
-    const transferResult = await executeTransfer(metabotStore, {
-      metabotId,
-      chain: paymentChain,
-      toAddress: paymentAddress,
-      amountSpaceOrDoge: price,
-      feeRate,
-    });
+  if (isFreeDelegation) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Free service detected (${price} ${normalizedCurrency}). Skipping payment and sending service order...`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
+  } else {
+    const paymentAddress = toSafeString(service.paymentAddress || service.providerAddress || service.address).trim();
+    if (!paymentAddress) {
+      injectDelegationSystemMessage(sessionId, `Delegation failed: No payment address found for provider.`);
+      return;
+    }
 
-    if (!transferResult.success) {
-      const errorMsg = (transferResult as { success: false; error: string }).error || 'Payment failed';
+    injectDelegationSystemMessage(
+      sessionId,
+      `Sending payment of ${price} ${normalizedCurrency} to provider...`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Processing payment...' });
+
+    try {
+      const feeRate = await resolveTransferFeeRate(paymentChain);
+      const transferResult = await executeTransfer(metabotStore, {
+        metabotId,
+        chain: paymentChain,
+        toAddress: paymentAddress,
+        amountSpaceOrDoge: price,
+        feeRate,
+      });
+
+      if (!transferResult.success) {
+        const errorMsg = (transferResult as { success: false; error: string }).error || 'Payment failed';
+        injectDelegationSystemMessage(
+          sessionId,
+          formatPaymentFailureMessage(errorMsg)
+        );
+        emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment failed' });
+        return;
+      }
+
+      paymentTxid = (transferResult as { success: true; txId: string }).txId;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown payment error';
       injectDelegationSystemMessage(
         sessionId,
         formatPaymentFailureMessage(errorMsg)
       );
-      emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment failed' });
+      emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment error' });
       return;
     }
-
-    paymentTxid = (transferResult as { success: true; txId: string }).txId;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown payment error';
-    injectDelegationSystemMessage(
-      sessionId,
-      formatPaymentFailureMessage(errorMsg)
-    );
-    emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment error' });
-    return;
   }
 
   // -----------------------------------------------------------------------
   // Step 4: Build ORDER message, ECDH encrypt, send via createPin
   // -----------------------------------------------------------------------
-  injectDelegationSystemMessage(
-    sessionId,
-    `Payment confirmed (tx: ${paymentTxid.slice(0, 12)}...). Sending service order to provider...`
-  );
-  emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
+  if (!isFreeDelegation) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Payment confirmed (tx: ${paymentTxid.slice(0, 12)}...). Sending service order to provider...`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
+  }
 
   const orderPayload = buildDelegationOrderPayload({
     taskContext: delegation.taskContext,
@@ -2229,7 +2262,9 @@ const executeDelegationPipeline = async (
     if (buyerObserverSessionId) {
       const failureMessage = coworkStoreInst.addMessage(buyerObserverSessionId, {
         type: 'system',
-        content: `系统提示：支付已完成，但服务订单发送失败。付款 txid：${paymentTxid}。请稍后重试或联系服务方处理退款。`,
+        content: isFreeDelegation
+          ? `系统提示：免费服务订单发送失败。订单标识：${paymentTxid}。请稍后重试。`
+          : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${paymentTxid}。请稍后重试或联系服务方处理退款。`,
         metadata: {
           sourceChannel: 'metaweb_order',
           refreshSessionSummary: true,
@@ -2239,7 +2274,9 @@ const executeDelegationPipeline = async (
     }
     injectDelegationSystemMessage(
       sessionId,
-      `Failed to send order to provider. Payment was sent (tx: ${paymentTxid}). Please contact support if funds are not returned.`
+      isFreeDelegation
+        ? `Failed to send free order to provider. No payment transaction was required.`
+        : `Failed to send order to provider. Payment was sent (tx: ${paymentTxid}). Please contact support if funds are not returned.`
     );
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Order send failed' });
     return;
@@ -2271,7 +2308,9 @@ const executeDelegationPipeline = async (
         console.warn(LOG_TAG, 'Order creation blocked:', error.message);
         injectDelegationSystemMessage(
           sessionId,
-          `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
+          isFreeDelegation
+            ? `Order creation failed: ${error.message}. Free order id: ${paymentTxid}`
+            : `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
         );
         emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
         return;
@@ -2279,7 +2318,9 @@ const executeDelegationPipeline = async (
       console.error(LOG_TAG, 'Failed to create buyer order:', error);
       injectDelegationSystemMessage(
         sessionId,
-        `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
+        isFreeDelegation
+          ? `Order tracking failed for free order (${paymentTxid}). Service should still be delivered.`
+          : `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
       );
       // Continue to blocking mode even if order tracking failed — the order was sent
     }
@@ -2289,10 +2330,14 @@ const executeDelegationPipeline = async (
     // -----------------------------------------------------------------------
     coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
 
-    const txLink = buildTransactionExplorerUrl(paymentChain, paymentTxid);
-    const paymentLine = txLink
-      ? `Payment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
-      : `Payment: ${paymentTxid.slice(0, 16)}...`;
+    const paymentLine = isFreeDelegation
+      ? `Payment: free service (${price} ${normalizedCurrency}), no transaction required.`
+      : (() => {
+        const txLink = buildTransactionExplorerUrl(paymentChain, paymentTxid);
+        return txLink
+          ? `Payment: ${paymentTxid.slice(0, 16)}... | [View transaction](${txLink})`
+          : `Payment: ${paymentTxid.slice(0, 16)}...`;
+      })();
     injectDelegationSystemMessage(
       sessionId,
       `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\n${paymentLine}`
@@ -5130,7 +5175,7 @@ if (!gotTheLock) {
         return { success: false, error: 'price is invalid' };
       }
       const priceNumber = Number(price);
-      if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+      if (!Number.isFinite(priceNumber) || priceNumber < 0) {
         return { success: false, error: 'price is invalid' };
       }
       const normalizedCurrency = normalizeGigSquareCurrency(currencyRaw);
@@ -5453,6 +5498,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     let releaseBuyerOrderCreation: (() => void) | null = null;
     let coworkSessionId: string | null = null;
     let attemptedPaymentTxid: string | null = null;
+    let isFreeServiceOrder = false;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
@@ -5465,7 +5511,11 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const serviceCurrency = typeof params?.serviceCurrency === 'string' ? params.serviceCurrency.trim() || null : null;
       const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
-      const servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
+      let servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
+      isFreeServiceOrder = isFreeServicePrice(servicePrice);
+      if (isFreeServiceOrder && !servicePaidTx) {
+        servicePaidTx = generateSyntheticOrderTxid();
+      }
       attemptedPaymentTxid = servicePaidTx;
 
       if (!metabotId || metabotId < 0) {
@@ -5579,7 +5629,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       if (coworkSessionId) {
         const failureMessage = getCoworkStore().addMessage(coworkSessionId, {
           type: 'system',
-          content: `系统提示：支付已完成，但服务订单发送失败。付款 txid：${attemptedPaymentTxid || 'unknown'}。请稍后重试或联系服务方处理退款。`,
+          content: isFreeServiceOrder
+            ? `系统提示：免费服务订单发送失败。订单标识：${attemptedPaymentTxid || 'unknown'}。请稍后重试。`
+            : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${attemptedPaymentTxid || 'unknown'}。请稍后重试或联系服务方处理退款。`,
           metadata: {
             sourceChannel: 'metaweb_order',
             refreshSessionSummary: true,

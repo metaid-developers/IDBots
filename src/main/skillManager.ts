@@ -1055,8 +1055,12 @@ export class SkillManager {
       `    1. ONLY consider these when NO local skill can fulfill the user's request.\n` +
       `    2. When you find a matching remote service, present it to the user in\n` +
       `       natural language with: service name, description, price, rating, and\n` +
-      `       provider Bot name. Ask the user to confirm before delegating.\n` +
-      `    3. After the user confirms, output [DELEGATE_REMOTE_SERVICE] followed by\n` +
+      `       provider Bot name.\n` +
+      `       - If price > 0, ask the user to confirm before delegating.\n` +
+      `       - If price = 0, it is free and you may delegate directly without\n` +
+      `         extra user confirmation.\n` +
+      `    3. After confirmation (for paid) or directly (for free), output\n` +
+      `       [DELEGATE_REMOTE_SERVICE] followed by\n` +
       `       a JSON object on the next line. This message will be intercepted by\n` +
       `       the system — do NOT show it to the user.\n` +
       `    4. Do NOT attempt to read SKILL.md files for remote services.\n\n` +

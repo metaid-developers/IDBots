@@ -87,6 +87,20 @@ test('validateGigSquareModifyDraft rejects price beyond currency limit', () => {
   assert.equal(result.errorCode, 'price_limit_exceeded');
 });
 
+test('validateGigSquareModifyDraft accepts zero price for free services', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  assert.equal(result.ok, true);
+});
+
 test('buildGigSquareServicePayload and pin payload helpers produce metaid-compliant structures', () => {
   const payload = buildGigSquareServicePayload({
     draft: {

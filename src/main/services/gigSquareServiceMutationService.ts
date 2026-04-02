@@ -255,7 +255,7 @@ export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSq
   }
 
   const priceNumber = Number(normalized.price);
-  if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+  if (!Number.isFinite(priceNumber) || priceNumber < 0) {
     return { ok: false, error: 'price is invalid', errorCode: 'price_invalid' };
   }
   if (priceNumber > getGigSquarePriceLimit(normalized.currency)) {

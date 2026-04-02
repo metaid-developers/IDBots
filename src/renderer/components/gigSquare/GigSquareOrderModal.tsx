@@ -50,6 +50,23 @@ function formatBalance(
   return `${balance.value.toFixed(8)} ${balance.unit}`;
 }
 
+function isFreeServicePrice(value: string): boolean {
+  const numeric = Number(String(value || '').trim());
+  return Number.isFinite(numeric) && numeric === 0;
+}
+
+function generateSyntheticOrderTxid(): string {
+  const bytes = new Uint8Array(32);
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
   service,
   isOpen,
@@ -178,6 +195,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     if (!service) return '0';
     return getGigSquarePaymentAmount(service.price);
   }, [service]);
+  const isFreeService = useMemo(() => isFreeServicePrice(paymentAmount), [paymentAmount]);
 
   const chain = useMemo(
     () => (service ? currencyToChain(service.currency) : 'mvc'),
@@ -304,30 +322,36 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     }
 
     setShowConfirmModal(false);
-    setStatus('paying');
     const trimmedPrompt = prompt.trim();
     const amount = paymentAmount;
     const paymentAddress = service.paymentAddress || service.providerAddress;
 
     try {
-      const payment = await window.electron.idbots.executeTransfer({
-        metabotId: selectedMetabotId,
-        chain,
-        toAddress: paymentAddress,
-        amountSpaceOrDoge: amount,
-        feeRate,
-      });
+      let txId = '';
+      if (isFreeService) {
+        txId = generateSyntheticOrderTxid();
+        setStatus('sending');
+      } else {
+        setStatus('paying');
+        const payment = await window.electron.idbots.executeTransfer({
+          metabotId: selectedMetabotId,
+          chain,
+          toAddress: paymentAddress,
+          amountSpaceOrDoge: amount,
+          feeRate,
+        });
 
-      if (!payment?.success) {
-        throw new Error(payment?.error || i18nService.t('gigSquarePaymentFailed'));
+        if (!payment?.success) {
+          throw new Error(payment?.error || i18nService.t('gigSquarePaymentFailed'));
+        }
+
+        txId = typeof payment.txId === 'string' ? payment.txId : '';
+        if (!txId) {
+          throw new Error(i18nService.t('gigSquarePaymentFailed'));
+        }
+
+        setStatus('sending');
       }
-
-      const txId = typeof payment.txId === 'string' ? payment.txId : '';
-      if (!txId) {
-        throw new Error(i18nService.t('gigSquarePaymentFailed'));
-      }
-
-      setStatus('sending');
 
       let chatPubkey = providerInfo.chatpubkey ?? null;
       if (!chatPubkey) {
@@ -423,6 +447,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     selectedMetabotId,
     prompt,
     paymentAmount,
+    isFreeService,
     chain,
     feeRate,
     providerInfo.chatpubkey,

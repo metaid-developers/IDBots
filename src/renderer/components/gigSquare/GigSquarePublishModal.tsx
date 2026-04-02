@@ -182,8 +182,8 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       setError(i18nService.t('gigSquarePublishPriceInvalid'));
       return false;
     }
-    const numericPrice = Number(price);
-    if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+    const numericPrice = Number(price.trim());
+    if (!Number.isFinite(numericPrice) || numericPrice < 0) {
       setError(i18nService.t('gigSquarePublishPriceInvalid'));
       return false;
     }
