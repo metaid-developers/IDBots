@@ -18,6 +18,10 @@ import {
   getGigSquareRefundRiskBadge,
   shouldHideRiskyGigSquareService,
 } from './gigSquareRefundRiskPresentation.js';
+import {
+  isGigSquareProviderOnline,
+  sortGigSquareServicesByOnline,
+} from '../../../main/shared/gigSquareOnlineState';
 
 const showToastMessage = (message: string): void => {
   if (typeof window === 'undefined') return;
@@ -213,22 +217,7 @@ const GigSquareView: React.FC = () => {
       const q = searchQuery.trim().toLowerCase();
       list = list.filter((s) => s.displayName.toLowerCase().includes(q));
     }
-    if (sortOrder === 'rating') {
-      list = [...list].sort((a, b) => {
-        const isOnlineA = onlineBots[a.providerGlobalMetaId] ? 1 : 0;
-        const isOnlineB = onlineBots[b.providerGlobalMetaId] ? 1 : 0;
-        if (isOnlineB !== isOnlineA) return isOnlineB - isOnlineA;
-        return (b.ratingCount ?? 0) - (a.ratingCount ?? 0);
-      });
-    } else {
-      list = [...list].sort((a, b) => {
-        const isOnlineA = onlineBots[a.providerGlobalMetaId] ? 1 : 0;
-        const isOnlineB = onlineBots[b.providerGlobalMetaId] ? 1 : 0;
-        if (isOnlineB !== isOnlineA) return isOnlineB - isOnlineA;
-        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
-      });
-    }
-    return list;
+    return sortGigSquareServicesByOnline(list, onlineBots, sortOrder);
   }, [visibleServices, searchQuery, currencyFilter, sortOrder, onlineBots]);
 
   return (
@@ -355,7 +344,7 @@ const GigSquareView: React.FC = () => {
               const providerAvatarSrc = getGigSquareProviderAvatarSrc(providerInfo);
               const refundRiskBadge = getGigSquareRefundRiskBadge(service.refundRisk);
               const hasRefundRisk = Boolean(refundRiskBadge);
-              const isOnline = Boolean(onlineBots[service.providerGlobalMetaId]);
+              const isOnline = isGigSquareProviderOnline(onlineBots, service.providerGlobalMetaId);
               return (
                 <div
                   key={service.id}

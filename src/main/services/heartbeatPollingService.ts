@@ -1,3 +1,4 @@
+import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 import { fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
 import { getP2PLocalBase } from './p2pLocalEndpoint';
 
@@ -51,6 +52,10 @@ const toSafeString = (value: unknown): string => {
   return String(value).trim();
 };
 
+const normalizeComparableGlobalMetaId = (value: unknown): string => {
+  return normalizeRawGlobalMetaId(value) ?? toSafeString(value);
+};
+
 const toNumberOrNull = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -60,7 +65,7 @@ const toNumberOrNull = (value: unknown): number | null => {
 };
 
 const resolveServiceGlobalMetaId = (service: any): string => {
-  return toSafeString(service?.providerGlobalMetaId || service?.globalMetaId);
+  return normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId);
 };
 
 const resolveServiceProviderAddress = (service: any): string => {
@@ -157,7 +162,7 @@ export class HeartbeatPollingService {
     if (!address) return;
     const timestampSec = toNumberOrNull(input.timestampSec) ?? Math.floor(this.nowMs() / 1000);
     this._localHeartbeatsByAddress.set(address, {
-      globalMetaId: toSafeString(input.globalMetaId),
+      globalMetaId: normalizeComparableGlobalMetaId(input.globalMetaId),
       lastSeenSec: timestampSec,
     });
   }
@@ -238,7 +243,7 @@ export class HeartbeatPollingService {
   }
 
   markOffline(globalMetaId: string): void {
-    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    const normalizedGlobalMetaId = normalizeComparableGlobalMetaId(globalMetaId);
     if (!normalizedGlobalMetaId) return;
 
     this._onlineBots.delete(normalizedGlobalMetaId);
@@ -257,14 +262,14 @@ export class HeartbeatPollingService {
   }
 
   forceOffline(globalMetaId: string): void {
-    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    const normalizedGlobalMetaId = normalizeComparableGlobalMetaId(globalMetaId);
     if (!normalizedGlobalMetaId) return;
     this._forcedOfflineGlobalMetaIds.add(normalizedGlobalMetaId);
     this.markOffline(normalizedGlobalMetaId);
   }
 
   clearForceOffline(globalMetaId: string): void {
-    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    const normalizedGlobalMetaId = normalizeComparableGlobalMetaId(globalMetaId);
     if (!normalizedGlobalMetaId) return;
     this._forcedOfflineGlobalMetaIds.delete(normalizedGlobalMetaId);
   }

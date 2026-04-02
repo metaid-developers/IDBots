@@ -1,4 +1,4 @@
-import { validateGlobalMetaId } from './globalMetaid';
+import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 
 export interface LocalPresenceBotState {
   lastSeenSec: number;
@@ -30,13 +30,7 @@ function toOptionalNonEmptyString(value: unknown): string | null {
 }
 
 function normalizePresenceGlobalMetaId(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized.startsWith('metaid:')) return null;
-  if (!validateGlobalMetaId(normalized)) return null;
-  return normalized;
+  return normalizeRawGlobalMetaId(value);
 }
 
 function unhealthySnapshot(reason: string): LocalPresenceSnapshot {

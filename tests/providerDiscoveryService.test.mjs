@@ -113,6 +113,39 @@ test('provider discovery uses presence onlineBots when presence is healthy', asy
   assert.equal(heartbeat.refreshCount, 0);
 });
 
+test('provider discovery matches services case-insensitively against lowercase presence onlineBots', async () => {
+  const { ProviderDiscoveryService } = loadProviderDiscoveryService();
+  const heartbeat = createHeartbeatStub();
+  const service = new ProviderDiscoveryService({
+    heartbeat,
+    fetchPresence: async () => ({
+      healthy: true,
+      peerCount: 2,
+      onlineBots: {
+        idq1providera: {
+          lastSeenSec: 123,
+          expiresAtSec: 178,
+          peerIds: ['peer-a'],
+        },
+      },
+      unhealthyReason: null,
+      lastConfigReloadError: null,
+      nowSec: 170,
+    }),
+    now: () => 170_000,
+  });
+
+  service.startPolling(() => [
+    { providerGlobalMetaId: ' IDQ1ProviderA ', providerAddress: 'mvc-a', serviceName: 'alpha' },
+  ]);
+  await service.refreshNow();
+
+  const snapshot = service.getDiscoverySnapshot();
+  assert.equal(snapshot.availableServices.length, 1);
+  assert.equal(snapshot.providers['idq1providera::mvc-a'].online, true);
+  assert.deepEqual(snapshot.onlineBots, { idq1providera: 123 });
+});
+
 test('provider discovery does not fall back when presence is healthy and empty', async () => {
   const { ProviderDiscoveryService } = loadProviderDiscoveryService();
   const heartbeat = createHeartbeatStub({

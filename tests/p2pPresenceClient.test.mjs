@@ -171,3 +171,31 @@ test('fetchLocalPresenceSnapshot normalizes onlineBots keys to lowercase raw id 
     assert.deepEqual(snapshot.onlineBots.idq1alpha.peerIds, ['peer-a']);
   });
 });
+
+test('fetchLocalPresenceSnapshot preserves lastConfigReloadError from the presence contract', async () => {
+  const { fetchLocalPresenceSnapshot } = loadPresenceClient();
+
+  await withMockedFetch(async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        code: 1,
+        message: 'ok',
+        data: {
+          healthy: false,
+          peerCount: 0,
+          onlineBots: {},
+          unhealthyReason: 'presence_not_initialized',
+          lastConfigReloadError: 'malformed runtime config',
+          nowSec: 170,
+        },
+      };
+    },
+  }), async () => {
+    const snapshot = await fetchLocalPresenceSnapshot('http://localhost:7281');
+    assert.equal(snapshot.healthy, false);
+    assert.equal(snapshot.lastConfigReloadError, 'malformed runtime config');
+    assert.equal(snapshot.unhealthyReason, 'presence_not_initialized');
+  });
+});

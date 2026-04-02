@@ -1,3 +1,5 @@
+import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
+
 type PendingPrivateMessage = {
   from_global_metaid?: string | null;
   from_metaid?: string | null;
@@ -58,12 +60,17 @@ const toSafeString = (value: unknown): string => {
   return String(value).trim();
 };
 
+const normalizeComparableGlobalMetaId = (value: unknown): string => {
+  return normalizeRawGlobalMetaId(value) ?? toSafeString(value);
+};
+
 const normalizeWord = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '');
 
 const serviceMatches = (service: any, servicePinId: string, providerGlobalMetaId: string): boolean => {
   return (
     (service?.pinId === servicePinId || service?.sourceServicePinId === servicePinId) &&
-    toSafeString(service?.providerGlobalMetaId || service?.globalMetaId) === providerGlobalMetaId
+    normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId)
+      === normalizeComparableGlobalMetaId(providerGlobalMetaId)
   );
 };
 
@@ -101,7 +108,7 @@ export class ProviderPingService {
 
   async pingProvider(params: PingProviderParams): Promise<boolean> {
     const metabotId = typeof params.metabotId === 'number' ? params.metabotId : -1;
-    const toGlobalMetaId = toSafeString(params.toGlobalMetaId);
+    const toGlobalMetaId = normalizeComparableGlobalMetaId(params.toGlobalMetaId);
     const toChatPubkey = toSafeString(params.toChatPubkey);
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
 
@@ -125,13 +132,13 @@ export class ProviderPingService {
     await this.deps.createPin(metabotId, pingPayload);
 
     const deadline = this.deps.now() + timeoutMs;
-    const myGlobalMetaId = toSafeString(this.deps.getLocalGlobalMetaId(metabotId));
+    const myGlobalMetaId = normalizeComparableGlobalMetaId(this.deps.getLocalGlobalMetaId(metabotId));
 
     while (true) {
       const messages = this.deps.listPendingMessages();
       for (const message of messages) {
-        const fromGlobal = toSafeString(message.from_global_metaid || message.from_metaid);
-        const toGlobal = toSafeString(message.to_global_metaid);
+        const fromGlobal = normalizeComparableGlobalMetaId(message.from_global_metaid || message.from_metaid);
+        const toGlobal = normalizeComparableGlobalMetaId(message.to_global_metaid);
         if (fromGlobal !== toGlobalMetaId) continue;
         if (myGlobalMetaId && toGlobal && toGlobal !== myGlobalMetaId) continue;
 

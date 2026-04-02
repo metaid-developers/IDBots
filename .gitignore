@@ -24,6 +24,7 @@ docs/
 tests/*
 !tests/runtimeDependencyContract.test.mjs
 !tests/p2pIndexerServiceRecovery.test.mjs
+!tests/gigSquareOnlineState.test.mjs
 
 # Local DB (never commit)
 *.sqlite

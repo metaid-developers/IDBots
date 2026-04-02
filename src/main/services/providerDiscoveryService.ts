@@ -3,6 +3,7 @@ import type {
   HeartbeatProviderState,
 } from './heartbeatPollingService';
 import type { LocalPresenceSnapshot } from './p2pPresenceClient';
+import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 
 const PRESENCE_POLL_INTERVAL_MS = 10 * 1000;
 
@@ -61,8 +62,12 @@ const toSafeString = (value: unknown): string => {
   return String(value).trim();
 };
 
+const normalizeComparableGlobalMetaId = (value: unknown): string => {
+  return normalizeRawGlobalMetaId(value) ?? toSafeString(value);
+};
+
 const resolveServiceGlobalMetaId = (service: any): string => {
-  return toSafeString(service?.providerGlobalMetaId || service?.globalMetaId);
+  return normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId);
 };
 
 const resolveServiceProviderAddress = (service: any): string => {
@@ -292,14 +297,14 @@ export class ProviderDiscoveryService {
   }
 
   markOffline(globalMetaId: string): void {
-    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    const normalizedGlobalMetaId = normalizeComparableGlobalMetaId(globalMetaId);
     if (!normalizedGlobalMetaId) return;
     this.deps.heartbeat.markOffline(normalizedGlobalMetaId);
     this.applyPresenceOfflineMutation(normalizedGlobalMetaId, 'manually_marked_offline');
   }
 
   forceOffline(globalMetaId: string): void {
-    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    const normalizedGlobalMetaId = normalizeComparableGlobalMetaId(globalMetaId);
     if (!normalizedGlobalMetaId) return;
     this.forcedOfflineGlobalMetaIds.add(normalizedGlobalMetaId);
     this.deps.heartbeat.forceOffline(normalizedGlobalMetaId);
@@ -307,7 +312,7 @@ export class ProviderDiscoveryService {
   }
 
   clearForceOffline(globalMetaId: string): void {
-    const normalizedGlobalMetaId = toSafeString(globalMetaId);
+    const normalizedGlobalMetaId = normalizeComparableGlobalMetaId(globalMetaId);
     if (!normalizedGlobalMetaId) return;
     this.forcedOfflineGlobalMetaIds.delete(normalizedGlobalMetaId);
     this.deps.heartbeat.clearForceOffline(normalizedGlobalMetaId);

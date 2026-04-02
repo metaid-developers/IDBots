@@ -88,4 +88,19 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
       service: null,
     });
   });
+
+  it('matches providerGlobalMetaId case-insensitively for orderability checks', () => {
+    const { resolveDelegationOrderability } = require('../dist-electron/services/providerPingService.js');
+    const result = resolveDelegationOrderability({
+      availableServices: [
+        { pinId: 'pin123', providerGlobalMetaId: ' IDQ1Provider ', serviceName: 'Test Service' },
+      ],
+      allServices: [],
+      servicePinId: 'pin123',
+      providerGlobalMetaId: 'idq1provider',
+    });
+
+    assert.equal(result.status, 'available');
+    assert.equal(result.service?.serviceName, 'Test Service');
+  });
 });

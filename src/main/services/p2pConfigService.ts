@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import type { SqliteStore } from '../sqliteStore';
+import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 import { getP2PLocalBase } from './p2pLocalEndpoint';
-import { validateGlobalMetaId } from './globalMetaid';
 
 export interface P2PConfig {
   p2p_sync_mode: 'self' | 'selective' | 'full';
@@ -60,12 +60,7 @@ export function collectOwnAddresses(metabots: OwnAddressSource[]): string[] {
 }
 
 function normalizePresenceGlobalMetaId(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return null;
-  if (normalized.startsWith('metaid:')) return null;
-  if (!validateGlobalMetaId(normalized)) return null;
-  return normalized;
+  return normalizeRawGlobalMetaId(value);
 }
 
 function isHeartbeatEnabled(value: unknown): boolean {
