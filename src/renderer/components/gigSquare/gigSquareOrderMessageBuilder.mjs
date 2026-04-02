@@ -2,6 +2,8 @@ function normalizeText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const DEFAULT_BUYER_ORDER_CHAT_TIMEOUT_MS = 8000;
+
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
 const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
 const FORBIDDEN_ORDER_CHATTER_PATTERNS = [
@@ -40,6 +42,16 @@ export function buildBuyerOrderNaturalFallback(requestText) {
     : '想请你帮我处理一个需求。';
 }
 
+function normalizeTimeoutMs(timeoutMs) {
+  return Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? Number(timeoutMs)
+    : DEFAULT_BUYER_ORDER_CHAT_TIMEOUT_MS;
+}
+
+function resolveBuyerOrderFallback(requestText) {
+  return buildBuyerOrderNaturalFallback(requestText);
+}
+
 export function normalizeBuyerOrderNaturalText(text, requestText) {
   const source = String(text || '').replace(/\r\n?/g, '\n');
   const lines = [];
@@ -60,6 +72,59 @@ export function normalizeBuyerOrderNaturalText(text, requestText) {
     return buildBuyerOrderNaturalFallback(requestText);
   }
   return compact;
+}
+
+async function waitForBuyerOrderChatResult(chatPromise, timeoutMs, cancel) {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        cancel?.();
+      } catch {}
+      reject(new Error('buyer_order_chat_timeout'));
+    }, normalizeTimeoutMs(timeoutMs));
+
+    Promise.resolve(chatPromise).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+export async function generateBuyerOrderNaturalText(input, deps = {}) {
+  const requestText = normalizeText(input?.requestText);
+  const fallback = resolveBuyerOrderFallback(requestText);
+  if (typeof deps.chat !== 'function') {
+    return fallback;
+  }
+
+  try {
+    const systemMsg = buildBuyerOrderMessageSystemPrompt(input);
+    const result = await waitForBuyerOrderChatResult(
+      deps.chat(
+        'Write the natural-language request now.',
+        undefined,
+        [{ role: 'system', content: systemMsg }]
+      ),
+      deps.timeoutMs,
+      deps.cancel
+    );
+    return normalizeBuyerOrderNaturalText(result?.content, requestText);
+  } catch {
+    return fallback;
+  }
 }
 
 export function buildBuyerOrderMessageSystemPrompt(input) {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildBuyerOrderMessageSystemPrompt,
   buildBuyerOrderNaturalFallback,
+  generateBuyerOrderNaturalText,
   normalizeBuyerOrderNaturalText,
 } from '../src/renderer/components/gigSquare/gigSquareOrderMessageBuilder.mjs';
 
@@ -59,4 +60,56 @@ test('normalizeBuyerOrderNaturalText keeps a clean request-focused sentence inta
   );
 
   assert.equal(normalized, '想请你帮我查询一下东京现在的天气。');
+});
+
+test('generateBuyerOrderNaturalText uses the LLM response when it resolves before the timeout', async () => {
+  let cancelCalls = 0;
+
+  const naturalText = await generateBuyerOrderNaturalText({
+    buyerPersona: {
+      name: 'Sky',
+      role: 'Travel concierge',
+    },
+    price: '0.00005',
+    currency: 'SPACE',
+    txid: 'a'.repeat(64),
+    serviceId: 'service-weather',
+    skillName: 'weather',
+    requestText: '查询东京现在的天气',
+  }, {
+    timeoutMs: 30,
+    cancel: () => {
+      cancelCalls += 1;
+    },
+    chat: async () => ({ content: '想请你帮我查询一下东京现在的天气。' }),
+  });
+
+  assert.equal(naturalText, '想请你帮我查询一下东京现在的天气。');
+  assert.equal(cancelCalls, 0);
+});
+
+test('generateBuyerOrderNaturalText falls back and cancels when the LLM call hangs past timeout', async () => {
+  let cancelCalls = 0;
+  const requestText = '查询东京现在的天气';
+
+  const naturalText = await generateBuyerOrderNaturalText({
+    buyerPersona: {
+      name: 'Sky',
+    },
+    price: '0.00005',
+    currency: 'SPACE',
+    txid: 'b'.repeat(64),
+    serviceId: 'service-weather',
+    skillName: 'weather',
+    requestText,
+  }, {
+    timeoutMs: 20,
+    cancel: () => {
+      cancelCalls += 1;
+    },
+    chat: async () => new Promise(() => {}),
+  });
+
+  assert.equal(naturalText, buildBuyerOrderNaturalFallback(requestText));
+  assert.equal(cancelCalls, 1);
 });

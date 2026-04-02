@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { i18nService } from '../../services/i18n';
+import type { ChatMessagePayload } from '../../types/chat';
 import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice, getGigSquarePaymentAmount } from '../../utils/gigSquare';
 import { fetchMetaidInfoByGlobalId } from '../../services/metabotInfoService';
@@ -16,9 +17,8 @@ import {
   isGigSquarePayActionEnabled,
 } from './gigSquareOrderPresentation.js';
 import {
-  buildBuyerOrderMessageSystemPrompt,
   buildBuyerOrderNaturalFallback,
-  normalizeBuyerOrderNaturalText,
+  generateBuyerOrderNaturalText,
 } from './gigSquareOrderMessageBuilder.mjs';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
@@ -357,7 +357,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         const buyerMetabot = selectedMetabotId
           ? (await window.electron.metabot.get(selectedMetabotId))?.metabot
           : null;
-        const systemMsg = buildBuyerOrderMessageSystemPrompt({
+        naturalOrderText = await generateBuyerOrderNaturalText({
           buyerPersona: buyerMetabot ? {
             name: buyerMetabot.name,
             role: buyerMetabot.role,
@@ -370,14 +370,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
           serviceId: service.id,
           skillName: service.providerSkill || service.serviceName,
           requestText: trimmedPrompt,
+        }, {
+          timeoutMs: 8000,
+          chat: (message: string, onProgress: undefined, history: ChatMessagePayload[]) =>
+            apiService.chat(message, onProgress, history),
+          cancel: () => {
+            apiService.cancelOngoingRequest();
+          },
         });
-
-        const result = await apiService.chat(
-          'Write the natural-language request now.',
-          undefined,
-          [{ role: 'system', content: systemMsg }]
-        );
-        naturalOrderText = normalizeBuyerOrderNaturalText(result.content, trimmedPrompt);
       } catch {
         naturalOrderText = buildBuyerOrderNaturalFallback(trimmedPrompt);
       }
