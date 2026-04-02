@@ -12,12 +12,23 @@ function loadRuntimeConfigSync() {
 }
 
 function makeStore(config) {
+  const state = {
+    config,
+    kv: {},
+  };
+
   return {
     getP2PConfig() {
-      return config;
+      return state.config;
     },
-    get() {
-      return undefined;
+    get(key) {
+      return state.kv[key];
+    },
+    set(key, value) {
+      state.kv[key] = value;
+    },
+    setP2PConfig(nextConfig) {
+      state.config = nextConfig;
     },
   };
 }

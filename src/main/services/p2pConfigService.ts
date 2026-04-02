@@ -19,9 +19,16 @@ export interface P2PConfig {
   p2p_presence_global_metaids?: string[];
 }
 
+export const OFFICIAL_P2P_BOOTSTRAP_NODES = [
+  '/ip4/8.217.14.206/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
+  '/dns4/manapi.metaid.io/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
+] as const;
+
+export const P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v1';
+
 export const DEFAULT_P2P_CONFIG: P2PConfig = {
   p2p_sync_mode: 'self',
-  p2p_bootstrap_nodes: [],
+  p2p_bootstrap_nodes: [...OFFICIAL_P2P_BOOTSTRAP_NODES],
   p2p_enable_relay: true,
   p2p_storage_limit_gb: 10,
   p2p_enable_chain_source: false,
@@ -122,16 +129,76 @@ function normalizeStoredConfig(raw: unknown): Partial<P2PConfig> | undefined {
   return raw && typeof raw === 'object' ? raw as Partial<P2PConfig> : undefined;
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalStringList(value: unknown): string[] | undefined {
+  if (typeof value === 'undefined') return undefined;
+  return normalizeStringList(value);
+}
+
+function applyListNormalization(config: P2PConfig): P2PConfig {
+  return {
+    ...config,
+    p2p_bootstrap_nodes: normalizeStringList(config.p2p_bootstrap_nodes),
+    p2p_own_addresses: normalizeStringList(config.p2p_own_addresses),
+    p2p_presence_global_metaids: normalizeStringList(config.p2p_presence_global_metaids),
+    p2p_selective_addresses: normalizeOptionalStringList(config.p2p_selective_addresses),
+    p2p_selective_paths: normalizeOptionalStringList(config.p2p_selective_paths),
+    p2p_block_addresses: normalizeOptionalStringList(config.p2p_block_addresses),
+    p2p_block_paths: normalizeOptionalStringList(config.p2p_block_paths),
+  };
+}
+
+function hasBootstrapDefaultsMigration(store: SqliteStore): boolean {
+  return store.get<boolean>(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY) === true;
+}
+
+function shouldMigrateLegacyBootstrapDefaults(stored: Partial<P2PConfig> | undefined): boolean {
+  if (!stored) return false;
+  if (!Object.prototype.hasOwnProperty.call(stored, 'p2p_bootstrap_nodes')) return true;
+  return normalizeStringList(stored.p2p_bootstrap_nodes).length === 0;
+}
+
 export function getConfig(store: SqliteStore): P2PConfig {
   const stored = normalizeStoredConfig(store.getP2PConfig())
     ?? normalizeStoredConfig(store.get('p2p_config'));
-  return { ...DEFAULT_P2P_CONFIG, ...(stored ?? {}) };
+  const normalized = applyListNormalization({ ...DEFAULT_P2P_CONFIG, ...(stored ?? {}) });
+
+  if (!hasBootstrapDefaultsMigration(store) && shouldMigrateLegacyBootstrapDefaults(stored)) {
+    const migrated = {
+      ...normalized,
+      p2p_bootstrap_nodes: [...OFFICIAL_P2P_BOOTSTRAP_NODES],
+    };
+    store.setP2PConfig(migrated as unknown as Record<string, unknown>);
+    store.set(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, true);
+    return migrated;
+  }
+
+  return normalized;
 }
 
 export function setConfig(store: SqliteStore, config: Partial<P2PConfig>): P2PConfig {
   const existing = getConfig(store);
-  const updated: P2PConfig = { ...existing, ...config };
+  const updated = applyListNormalization({ ...existing, ...config });
   store.setP2PConfig(updated as unknown as Record<string, unknown>);
+  store.set(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, true);
   return updated;
 }
 

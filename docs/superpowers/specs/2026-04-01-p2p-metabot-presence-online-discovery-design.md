@@ -236,10 +236,22 @@ For phase 1, a valid `globalMetaId` means:
 
 Phase 1 reuses the existing IDBots-generated runtime config file:
 
+- IDBots treats persisted `p2p_config` in SQLite `kv.p2p_config` as the source of truth for user-editable P2P settings
 - config file path remains `app.getPath('userData')/man-p2p-config.json`
-- IDBots writes the full merged runtime JSON, including existing P2P config plus `p2p_presence_global_metaids`
+- IDBots writes the full merged runtime JSON from that persisted source of truth, including existing P2P config plus `p2p_presence_global_metaids`
+- IDBots must also seed the official public bootstrap nodes as the default `p2p_bootstrap_nodes` value for new profiles in persisted `p2p_config`
 - after writing the file, IDBots calls `POST /api/config/reload`
 - presence membership must hot-reload without requiring a `man-p2p` process restart
+
+Bootstrap defaulting and migration rules:
+
+- the official public bootstrap list is a user-visible default, not a hidden hard-coded override
+- new profiles start with the official bootstrap list populated
+- legacy profiles that still carry the historical empty default must be migrated one time to the official bootstrap list
+- the one-time migration must record a durable migration marker outside the editable bootstrap array itself, for example `p2p.bootstrap_defaults_migrated.v1`
+- after that migration has run once, later user edits are authoritative
+- if a user intentionally clears `p2p_bootstrap_nodes` to an empty array, IDBots must respect that empty value and must not silently repopulate the official nodes on next launch
+- if a user replaces the list with custom bootstrap nodes, IDBots must preserve those custom nodes unchanged
 
 IDBots must recompute and rewrite `p2p_presence_global_metaids` at least on:
 

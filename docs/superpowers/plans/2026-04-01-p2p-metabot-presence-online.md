@@ -378,6 +378,19 @@ const malformed = { code: 1, message: 'ok', data: { healthy: true, peerCount: 2 
 
 - [ ] **Step 4: Run the presence client tests to verify they fail**
 
+- [ ] **Step 4A: Extend runtime-config tests for official bootstrap defaults and one-time migration semantics**
+
+Add tests covering:
+- new/empty config reads return the official bootstrap node list by default
+- a legacy stored config with `p2p_bootstrap_nodes: []` is upgraded once to the official bootstrap list when the migration marker is absent
+- once the migration marker exists, an explicit empty `p2p_bootstrap_nodes: []` remains empty and is treated as a user-authored choice
+- custom bootstrap node lists survive reads and writes unchanged
+
+Expected implementation shape:
+- use persisted SQLite `kv.p2p_config` as the source of truth, then let runtime-config rewrite mirror it into `man-p2p-config.json`
+- store the migration marker under a separate KV key, not inside the editable bootstrap array, for example `p2p.bootstrap_defaults_migrated.v1`
+- keep the renderer-facing config shape unchanged except for the effective defaulted `p2p_bootstrap_nodes`
+
 Run: `npm run compile:electron && node --test tests/p2pPresenceClient.test.mjs`
 
 Expected: FAIL because the client module does not exist yet.
