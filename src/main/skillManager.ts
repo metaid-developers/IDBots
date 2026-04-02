@@ -1063,9 +1063,12 @@ export class SkillManager {
       `       [DELEGATE_REMOTE_SERVICE] followed by\n` +
       `       a JSON object on the next line. This message will be intercepted by\n` +
       `       the system — do NOT show it to the user.\n` +
+      `       - "rawRequest" MUST contain the user's original request verbatim.\n` +
+      `       - "userTask" is a short summary only.\n` +
+      `       - "taskContext" may add concise routing context, but must not replace "rawRequest".\n` +
       `    4. Do NOT attempt to read SKILL.md files for remote services.\n\n` +
       `    [DELEGATE_REMOTE_SERVICE] JSON format:\n` +
-      `    {"servicePinId":"...","serviceName":"...","providerGlobalMetaid":"...","price":"...","currency":"...","userTask":"summary","taskContext":"full context"}\n` +
+      `    {"servicePinId":"...","serviceName":"...","providerGlobalMetaid":"...","price":"...","currency":"...","rawRequest":"verbatim original request","userTask":"summary","taskContext":"routing context"}\n` +
       `    Note: "price" must be numeric only, without the currency/unit suffix.\n` +
       `    Note: providerAddress is resolved by the system using servicePinId.\n` +
       `  </notice>\n` +

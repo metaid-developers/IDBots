@@ -7,6 +7,10 @@ import {
   generateBuyerOrderNaturalText,
   normalizeBuyerOrderNaturalText,
 } from '../src/renderer/components/gigSquare/gigSquareOrderMessageBuilder.mjs';
+import {
+  buildGigSquareOrderPayload,
+  validateGigSquareOrderPrompt,
+} from '../src/renderer/components/gigSquare/gigSquareOrderPayloadBuilder.mjs';
 
 test('buildBuyerOrderMessageSystemPrompt keeps the LLM in buyer perspective and pushes transport metadata into structured fields only', () => {
   const prompt = buildBuyerOrderMessageSystemPrompt({
@@ -112,4 +116,36 @@ test('generateBuyerOrderNaturalText falls back and cancels when the LLM call han
 
   assert.equal(naturalText, buildBuyerOrderNaturalFallback(requestText));
   assert.equal(cancelCalls, 1);
+});
+
+test('buildGigSquareOrderPayload keeps the buyer-facing natural sentence and preserves the exact raw request block', () => {
+  const payload = buildGigSquareOrderPayload({
+    naturalOrderText: '想请你帮我查询一下东京今晚到明早的天气。',
+    rawRequest: '请帮我查询东京今晚到明早的天气，并告诉我是否需要带伞和外套。',
+    price: '0.00005',
+    currency: 'SPACE',
+    txid: 'a'.repeat(64),
+    serviceId: 'service-weather',
+    skillName: 'weather',
+  });
+
+  assert.match(payload, /^\[ORDER\] 想请你帮我查询一下东京今晚到明早的天气。/);
+  assert.match(
+    payload,
+    /<raw_request>\n请帮我查询东京今晚到明早的天气，并告诉我是否需要带伞和外套。\n<\/raw_request>/
+  );
+  assert.match(payload, /支付金额 0\.00005 SPACE/);
+  assert.match(payload, /service id: service-weather/);
+  assert.match(payload, /skill name: weather/);
+});
+
+test('validateGigSquareOrderPrompt rejects requests longer than 4000 characters', () => {
+  const valid = validateGigSquareOrderPrompt('x'.repeat(4000));
+  const invalid = validateGigSquareOrderPrompt('x'.repeat(4001));
+
+  assert.equal(valid.ok, true);
+  assert.equal(valid.rawRequest.length, 4000);
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.reason, 'too_long');
+  assert.equal(invalid.maxChars, 4000);
 });

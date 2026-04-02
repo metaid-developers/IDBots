@@ -378,6 +378,7 @@ export interface DelegationRequest {
   currency: string;
   userTask: string;
   taskContext: string;
+  rawRequest: string;
 }
 
 const DELEGATE_REMOTE_SERVICE_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
@@ -518,6 +519,7 @@ export function parseDelegationMessage(content: string): DelegationRequest | nul
     currency: normalizedTerms.currency,
     userTask: typeof obj.userTask === 'string' ? obj.userTask : '',
     taskContext: typeof obj.taskContext === 'string' ? obj.taskContext : '',
+    rawRequest: typeof obj.rawRequest === 'string' ? obj.rawRequest : '',
   };
 }
 

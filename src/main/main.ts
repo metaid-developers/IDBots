@@ -108,6 +108,12 @@ import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
 import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
+import { extractOrderRequestText } from './services/orderPayment';
+import {
+  ORDER_RAW_REQUEST_MAX_CHARS,
+  extractOrderRawRequest,
+  normalizeOrderRawRequest,
+} from './shared/orderMessage.js';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
 import {
@@ -2036,6 +2042,18 @@ const executeDelegationPipeline = async (
     return;
   }
 
+  const rawOrderRequest = normalizeOrderRawRequest(delegation.rawRequest)
+    || normalizeOrderRawRequest(delegation.taskContext)
+    || normalizeOrderRawRequest(delegation.userTask);
+  if (rawOrderRequest.length > ORDER_RAW_REQUEST_MAX_CHARS) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation cancelled: the request is too long. Keep it within ${ORDER_RAW_REQUEST_MAX_CHARS} characters, or use an attachment/file-based input instead.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Request too long' });
+    return;
+  }
+
   const providerGlobalMetaId = toSafeString(service.providerGlobalMetaId || service.globalMetaId).trim();
 
   // -----------------------------------------------------------------------
@@ -2204,6 +2222,7 @@ const executeDelegationPipeline = async (
   }
 
   const orderPayload = buildDelegationOrderPayload({
+    rawRequest: rawOrderRequest,
     taskContext: delegation.taskContext,
     userTask: delegation.userTask,
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
@@ -5529,6 +5548,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       }
       if (!orderPayload) {
         return { success: false, error: 'orderPayload is required' };
+      }
+
+      const rawRequest = extractOrderRawRequest(orderPayload)
+        || normalizeOrderRawRequest(extractOrderRequestText(orderPayload));
+      if (rawRequest.length > ORDER_RAW_REQUEST_MAX_CHARS) {
+        return {
+          success: false,
+          errorCode: 'order_request_too_long',
+          error: `Request is too long. Keep it within ${ORDER_RAW_REQUEST_MAX_CHARS} characters.`,
+        };
       }
 
       const serviceOrderLifecycle = getServiceOrderLifecycleService();

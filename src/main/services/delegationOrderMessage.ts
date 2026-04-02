@@ -1,4 +1,10 @@
+import {
+  buildOrderPayload,
+  normalizeOrderRawRequest,
+} from '../shared/orderMessage.js';
+
 export interface BuildDelegationOrderPayloadInput {
+  rawRequest?: string | null;
   taskContext?: string | null;
   userTask?: string | null;
   serviceName?: string | null;
@@ -56,6 +62,20 @@ function buildDelegationOrderNaturalText(input: BuildDelegationOrderPayloadInput
   return (
     sanitizeDelegationOrderNaturalText(input.taskContext)
     || sanitizeDelegationOrderNaturalText(input.userTask)
+    || sanitizeDelegationOrderNaturalText(input.rawRequest)
+    || normalizeText(input.serviceName)
+    || resolveDelegationOrderSkillName(input)
+  );
+}
+
+function buildDelegationOrderRawRequest(input: BuildDelegationOrderPayloadInput): string {
+  const explicitRawRequest = normalizeOrderRawRequest(input.rawRequest);
+  if (explicitRawRequest) {
+    return explicitRawRequest;
+  }
+  return (
+    sanitizeDelegationOrderNaturalText(input.taskContext)
+    || sanitizeDelegationOrderNaturalText(input.userTask)
     || normalizeText(input.serviceName)
     || resolveDelegationOrderSkillName(input)
   );
@@ -73,12 +93,16 @@ export function buildDelegationOrderPayload(
 ): string {
   const naturalText = buildDelegationOrderNaturalText(input);
   const skillName = resolveDelegationOrderSkillName(input);
-  const structuredFields = [
-    `支付金额 ${normalizeText(input.price)} ${normalizeText(input.currency)}`,
-    `txid: ${normalizeText(input.paymentTxid)}`,
-    `service id: ${normalizeText(input.servicePinId)}`,
-    `skill name: ${skillName}`,
-  ].join('\n');
+  const rawRequest = buildDelegationOrderRawRequest(input);
 
-  return `[ORDER] ${naturalText}\n${structuredFields}`;
+  return buildOrderPayload({
+    displayText: naturalText,
+    rawRequest,
+    price: normalizeText(input.price),
+    currency: normalizeText(input.currency),
+    paymentTxid: normalizeText(input.paymentTxid),
+    serviceId: normalizeText(input.servicePinId),
+    skillName,
+    serviceName: normalizeText(input.serviceName),
+  });
 }

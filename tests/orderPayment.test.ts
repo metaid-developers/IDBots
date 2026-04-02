@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   checkOrderPaymentStatus,
+  extractOrderRequestText,
   extractOrderSkillId,
   extractOrderSkillName,
 } from '../src/main/services/orderPayment';
@@ -30,6 +31,25 @@ test('extractOrderSkillId tolerates service pin id labels and Chinese punctuatio
 
   assert.equal(extractOrderSkillId(text), 'svc-post-buzz');
   assert.equal(extractOrderSkillName(text), 'metabot-post-buzz');
+});
+
+test('extractOrderRequestText prefers the explicit raw_request block over the display summary line', () => {
+  const rawRequest = [
+    '请帮我查询一下东京今天从早到晚的天气变化，并告诉我是否适合晚上外出散步。',
+    '如果会下雨，也请补充携带雨具的建议。',
+  ].join('\n');
+  const text = [
+    '[ORDER] 想请你帮我处理这个天气需求。',
+    '<raw_request>',
+    rawRequest,
+    '</raw_request>',
+    '支付金额 0.0001 SPACE',
+    `txid: ${'c'.repeat(64)}`,
+    'service id: svc-weather-v3',
+    'skill name: weather',
+  ].join('\n');
+
+  assert.equal(extractOrderRequestText(text), rawRequest);
 });
 
 test('checkOrderPaymentStatus allows free order messages without on-chain txid', async () => {

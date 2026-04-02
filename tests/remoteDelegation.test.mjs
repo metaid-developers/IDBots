@@ -16,7 +16,7 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
 
   it('parses valid delegation message', async () => {
     const { parseDelegationMessage } = await import('../dist-electron/libs/coworkRunner.js');
-    const content = `[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"pin123","serviceName":"Test Service","providerGlobalMetaid":"gm456","price":"200","currency":"SPACE","userTask":"translate article","taskContext":"article text"}`;
+    const content = `[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"pin123","serviceName":"Test Service","providerGlobalMetaid":"gm456","price":"200","currency":"SPACE","userTask":"translate article","taskContext":"article text","rawRequest":"translate the full article and keep the tone intact"}`;
     const result = parseDelegationMessage(content);
     assert.ok(result);
     assert.equal(result.servicePinId, 'pin123');
@@ -24,6 +24,7 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     assert.equal(result.price, '200');
     assert.equal(result.currency, 'SPACE');
     assert.equal(result.userTask, 'translate article');
+    assert.equal(result.rawRequest, 'translate the full article and keep the tone intact');
   });
 
   it('normalizes decorated price strings before payment', async () => {

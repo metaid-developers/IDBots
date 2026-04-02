@@ -1,4 +1,5 @@
 import { extractOrderRequestText, type OrderSource } from './orderPayment';
+import { extractOrderDisplaySummary } from '../shared/orderMessage.js';
 
 export interface OrderPromptBuildResult {
   systemPrompt: string;
@@ -28,7 +29,15 @@ export function buildOrderPrompts(params: {
   const clientName = params.peerName?.trim() || 'the client';
   const resolvedSkill = params.skillName?.trim() || params.skillId?.trim() || null;
   const requestText = extractOrderRequestText(params.plaintext) || String(params.plaintext || '').trim();
-  const base = `有个服务订单需要处理：${requestText}`;
+  const displaySummary = extractOrderDisplaySummary(params.plaintext)
+    || requestText.split('\n')[0]?.trim()
+    || requestText;
+  const base = [
+    'A paid service order is ready for execution.',
+    displaySummary ? `Display summary: ${displaySummary}` : '',
+    'Execution request:',
+    requestText,
+  ].filter(Boolean).join('\n');
 
   const orderContextBlock = [
     '## Current Service Order Context',

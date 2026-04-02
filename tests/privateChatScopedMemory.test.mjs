@@ -149,7 +149,11 @@ test('order prompt requires pure deliverable output without order chatter', () =
 test('order prompt user message strips order transport metadata and keeps only the actual request', () => {
   const { userPrompt } = buildOrderPrompts({
     plaintext: [
-      '[ORDER] 请帮我查询上海天气，并告诉我今天是否适合出门。',
+      '[ORDER] 想请你帮我处理这个天气需求。',
+      '<raw_request>',
+      '请帮我查询上海天气，并告诉我今天是否适合出门。',
+      '如果晚上会下雨，也请提醒我带伞。',
+      '</raw_request>',
       '支付金额 0.0001 SPACE',
       `txid: ${'a'.repeat(64)}`,
       'service id: service-pin-weather',
@@ -162,7 +166,10 @@ test('order prompt user message strips order transport metadata and keeps only t
   });
 
   assert.match(userPrompt, /查询上海天气/);
-  assert.doesNotMatch(userPrompt, /\[ORDER\]/);
+  assert.match(userPrompt, /Execution request:/i);
+  assert.match(userPrompt, /Display summary:/i);
+  assert.match(userPrompt, /带伞/);
+  assert.doesNotMatch(userPrompt, /\[ORDER\]|<raw_request>|<\/raw_request>/);
   assert.doesNotMatch(userPrompt, /支付金额|txid|service id|skill name/i);
 });
 
@@ -194,13 +201,23 @@ test('sendSellerOrderAcknowledgement sends a private acknowledgement and marks t
     },
     peerGlobalMetaId: 'buyer-global-metaid',
     peerName: 'Client',
-    plaintext: '[ORDER] Please check the Shanghai weather',
+    plaintext: [
+      '[ORDER] Please help with this weather request.',
+      '<raw_request>',
+      'Please check the Shanghai weather and tell me whether I need an umbrella tonight.',
+      '</raw_request>',
+      '支付金额 0.0001 SPACE',
+      `txid: ${'a'.repeat(64)}`,
+      'service id: service-pin-weather',
+      'skill name: weather',
+    ].join('\n'),
     skillName: 'weather',
     paymentTxid: 'a'.repeat(64),
     now: () => 1_770_123_456_000,
     performChat: async (_systemPrompt, userPrompt, llmId) => {
       assert.match(userPrompt, /Shanghai weather/);
-      assert.doesNotMatch(userPrompt, /\[ORDER\]|支付金额|txid|service id|skill name/i);
+      assert.match(userPrompt, /umbrella tonight/);
+      assert.doesNotMatch(userPrompt, /\[ORDER\]|<raw_request>|<\/raw_request>|支付金额|txid|service id|skill name/i);
       assert.equal(llmId, 'llm-1');
       return '我已明确你的需求，正在处理中，请稍候。';
     },

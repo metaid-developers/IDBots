@@ -9,6 +9,7 @@ import {
   verifyTransferToRecipient,
   type TransferChain,
 } from './txTransferVerification';
+import { extractOrderRawRequest } from '../shared/orderMessage.js';
 
 export type OrderSource = 'metaweb_private' | 'metaweb_group';
 
@@ -24,6 +25,7 @@ const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*(SPACE|BTC|DOGE)/i;
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
 const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const RAW_REQUEST_TAG_LINE_RE = /^\s*<\/?raw_request>\s*$/i;
 const SKILL_ID_PATTERNS = [
   /(?:skill(?:\s+service)?\s+id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID))\s*[:：=]?\s*([^\s,，。]+)/i,
 ];
@@ -62,6 +64,11 @@ export function extractOrderTxid(plaintext: string): string | null {
 }
 
 export function extractOrderRequestText(plaintext: string): string {
+  const explicitRawRequest = extractOrderRawRequest(plaintext);
+  if (explicitRawRequest) {
+    return explicitRawRequest;
+  }
+
   const source = String(plaintext || '').replace(/\r\n?/g, '\n');
   if (!source.trim()) return '';
 
@@ -73,6 +80,9 @@ export function extractOrderRequestText(plaintext: string): string {
       if (keptLines.length > 0 && keptLines[keptLines.length - 1] !== '') {
         keptLines.push('');
       }
+      return;
+    }
+    if (RAW_REQUEST_TAG_LINE_RE.test(trimmed)) {
       return;
     }
     if (STRUCTURED_ORDER_METADATA_LINE_RE.test(trimmed)) {

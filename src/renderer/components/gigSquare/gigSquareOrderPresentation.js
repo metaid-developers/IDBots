@@ -25,5 +25,8 @@ export function getGigSquareOrderErrorMessageKey(errorCode) {
   if (errorCode === 'self_order_not_allowed') {
     return 'gigSquareSelfOrderNotAllowed';
   }
+  if (errorCode === 'order_request_too_long') {
+    return 'gigSquarePromptTooLong';
+  }
   return null;
 }

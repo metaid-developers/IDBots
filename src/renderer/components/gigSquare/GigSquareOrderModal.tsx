@@ -20,6 +20,10 @@ import {
   buildBuyerOrderNaturalFallback,
   generateBuyerOrderNaturalText,
 } from './gigSquareOrderMessageBuilder.mjs';
+import {
+  buildGigSquareOrderPayload,
+  validateGigSquareOrderPrompt,
+} from './gigSquareOrderPayloadBuilder.mjs';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -290,9 +294,13 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       setError(i18nService.t('gigSquareNoTwin'));
       return;
     }
-    const trimmed = prompt.trim();
-    if (!trimmed) {
-      setError(i18nService.t('gigSquarePromptRequired'));
+    const promptValidation = validateGigSquareOrderPrompt(prompt);
+    if (!promptValidation.ok) {
+      setError(
+        promptValidation.reason === 'too_long'
+          ? i18nService.t('gigSquarePromptTooLong')
+          : i18nService.t('gigSquarePromptRequired')
+      );
       return;
     }
     const paymentAddress = service?.paymentAddress || service?.providerAddress;
@@ -314,6 +322,17 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
   const handleConfirmPayment = useCallback(async () => {
     if (!service || !selectedMetabotId) return;
     setError(null);
+    const promptValidation = validateGigSquareOrderPrompt(prompt);
+    if (!promptValidation.ok) {
+      setShowConfirmModal(false);
+      setError(
+        promptValidation.reason === 'too_long'
+          ? i18nService.t('gigSquarePromptTooLong')
+          : i18nService.t('gigSquarePromptRequired')
+      );
+      setStatus('idle');
+      return;
+    }
     const preflight = await runOrderPreflight();
     if (!preflight.success) {
       setShowConfirmModal(false);
@@ -322,7 +341,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     }
 
     setShowConfirmModal(false);
-    const trimmedPrompt = prompt.trim();
+      const trimmedPrompt = promptValidation.rawRequest;
     const amount = paymentAmount;
     const paymentAddress = service.paymentAddress || service.providerAddress;
 
@@ -407,13 +426,16 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       }
 
       // Always append structured fields so B-side regex can reliably parse txid and amount.
-      const structuredFields = [
-        `支付金额 ${service.price} ${service.currency}`,
-        `txid: ${txId}`,
-        `service id: ${service.id}`,
-        `skill name: ${service.providerSkill || service.serviceName}`,
-      ].join('\n');
-      const orderPayload = `[ORDER] ${naturalOrderText}\n${structuredFields}`;
+      const orderPayload = buildGigSquareOrderPayload({
+        naturalOrderText,
+        rawRequest: trimmedPrompt,
+        price: service.price,
+        currency: service.currency,
+        txid: txId,
+        serviceId: service.id,
+        skillName: service.providerSkill || service.serviceName,
+        serviceName: service.serviceName,
+      });
 
       const sendResult = await window.electron.gigSquare.sendOrder({
         metabotId: selectedMetabotId,
