@@ -1,19 +1,19 @@
 {
   "binary": "man-p2p-darwin-arm64",
-  "binarySha256": "787131668573d410de967d1df504ac7776a5440e18005b02eb5721b0f3bce5cf",
+  "binarySha256": "beef204fe42474bcd2c71d132dcf078d0c2855140a2d1269614a8a91d8382f39",
   "artifacts": {
     "man-p2p-darwin-arm64": {
       "makeTarget": "build-darwin-arm64",
-      "sha256": "787131668573d410de967d1df504ac7776a5440e18005b02eb5721b0f3bce5cf"
+      "sha256": "beef204fe42474bcd2c71d132dcf078d0c2855140a2d1269614a8a91d8382f39"
     },
     "man-p2p-win32-x64.exe": {
       "makeTarget": "build-windows-amd64",
-      "sha256": "13f06352c3e02a698de8bf1e1851999111ff34f447bb4b8efe4dcd445f2c514a"
+      "sha256": "e72d0eff32189c1cf813e2ee25816b9065958d605aaa0f7a5c659286215f64f8"
     }
   },
   "sourcePath": "/Users/tusm/Documents/MetaID_Projects/man-p2p/.worktrees/codex/p2p-presence-online",
   "sourceBranch": "codex/p2p-presence-online",
-  "sourceCommit": "77eca5c",
-  "sourceVersion": "77eca5c",
-  "syncedAt": "2026-04-02T00:39:47.205Z"
+  "sourceCommit": "c3239c7",
+  "sourceVersion": "c3239c7",
+  "syncedAt": "2026-04-02T04:20:26.094Z"
 }
