@@ -25,6 +25,7 @@ tests/*
 !tests/runtimeDependencyContract.test.mjs
 !tests/p2pIndexerServiceRecovery.test.mjs
 !tests/skillManagerOrderSkillPrompt.test.mjs
+!tests/gigSquareOrderMessageBuilder.test.mjs
 
 # Local DB (never commit)
 *.sqlite

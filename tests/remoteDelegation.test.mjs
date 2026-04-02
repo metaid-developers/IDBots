@@ -66,4 +66,36 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     const content = `[DELEGATE_REMOTE_SERVICE]\n{"price":"200","currency":"SPACE"}`;
     assert.equal(parseDelegationMessage(content), null);
   });
+
+  it('hides a trailing partial delegation control prefix from the displayed assistant text', async () => {
+    const { getDelegationDisplayText } = await import('../dist-electron/libs/coworkRunner.js');
+    const content = '好的，我现在为你委托这个塔罗牌占卜服务。\n\n[DELEGATE_REMOTE_S';
+    assert.equal(
+      getDelegationDisplayText(content),
+      '好的，我现在为你委托这个塔罗牌占卜服务。'
+    );
+  });
+
+  it('keeps only the natural-language preamble when the full delegation control block is present', async () => {
+    const { getDelegationDisplayText } = await import('../dist-electron/libs/coworkRunner.js');
+    const content = '好的，我现在为你委托这个塔罗牌占卜服务。\n\n[DELEGATE_REMOTE_SERVICE]\n{"servicePinId":"p1","serviceName":"塔罗牌占卜","providerGlobalMetaid":"gm","price":"0.00005","currency":"SPACE","userTask":"塔罗牌占卜","taskContext":"塔罗牌占卜"}';
+    assert.equal(
+      getDelegationDisplayText(content),
+      '好的，我现在为你委托这个塔罗牌占卜服务。'
+    );
+  });
+
+  it('treats generic confirmations as non-metaapp requests', async () => {
+    const { isExplicitMetaAppUserRequest } = await import('../dist-electron/libs/coworkRunner.js');
+    assert.equal(isExplicitMetaAppUserRequest('好的', 'buzz'), false);
+    assert.equal(isExplicitMetaAppUserRequest('确定', 'buzz'), false);
+    assert.equal(isExplicitMetaAppUserRequest('继续', 'buzz'), false);
+  });
+
+  it('allows metaapp routing only for explicit app-opening requests', async () => {
+    const { isExplicitMetaAppUserRequest } = await import('../dist-electron/libs/coworkRunner.js');
+    assert.equal(isExplicitMetaAppUserRequest('打开 buzz app', 'buzz'), true);
+    assert.equal(isExplicitMetaAppUserRequest('请使用 buzz 这个 MetaApp', 'buzz'), true);
+    assert.equal(isExplicitMetaAppUserRequest('帮我查一下东京天气', 'buzz'), false);
+  });
 });

@@ -15,6 +15,11 @@ import {
   getGigSquarePayActionClassName,
   isGigSquarePayActionEnabled,
 } from './gigSquareOrderPresentation.js';
+import {
+  buildBuyerOrderMessageSystemPrompt,
+  buildBuyerOrderNaturalFallback,
+  normalizeBuyerOrderNaturalText,
+} from './gigSquareOrderMessageBuilder.mjs';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -345,45 +350,39 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         throw new Error(i18nService.t('gigSquareOrderFailed'));
       }
 
-      // Build order message: let A's LLM express it in A's own voice,
-      // but the message must contain the four required fields.
-      // Fall back to a plain template if LLM is unavailable.
+      // Generate only the buyer-side natural request sentence here.
+      // Payment/txid/service metadata stays in the structured block below.
       let naturalOrderText: string;
       try {
         const buyerMetabot = selectedMetabotId
           ? (await window.electron.metabot.get(selectedMetabotId))?.metabot
           : null;
-        const personaLines = buyerMetabot ? [
-          buyerMetabot.name ? `Your name is ${buyerMetabot.name}.` : '',
-          buyerMetabot.role ? `Your role: ${buyerMetabot.role}.` : '',
-          buyerMetabot.soul ? `Your personality: ${buyerMetabot.soul}.` : '',
-          buyerMetabot.background ? `Background: ${buyerMetabot.background}.` : '',
-        ].filter(Boolean).join(' ') : '';
-
-        const systemMsg = [
-          personaLines,
-          'You are sending a paid service order to another MetaBot. Write a natural, conversational message in your own voice.',
-          'The message MUST include all four of these facts (you may phrase them naturally):',
-          `1. Payment amount: ${service.price} ${service.currency}`,
-          `2. Transaction ID (txid): ${txId}`,
-          `3. Skill name requested: ${service.providerSkill || service.serviceName}`,
-          `4. The user's specific request: "${trimmedPrompt}"`,
-          'Keep it concise (2-4 sentences). Do not add greetings like "Hello" unless it fits your persona.',
-        ].filter(Boolean).join('\n');
+        const systemMsg = buildBuyerOrderMessageSystemPrompt({
+          buyerPersona: buyerMetabot ? {
+            name: buyerMetabot.name,
+            role: buyerMetabot.role,
+            soul: buyerMetabot.soul,
+            background: buyerMetabot.background,
+          } : null,
+          price: service.price,
+          currency: service.currency,
+          txid: txId,
+          serviceId: service.id,
+          skillName: service.providerSkill || service.serviceName,
+          requestText: trimmedPrompt,
+        });
 
         const result = await apiService.chat(
-          'Write the order message now.',
+          'Write the natural-language request now.',
           undefined,
           [{ role: 'system', content: systemMsg }]
         );
-        naturalOrderText = result.content.trim();
+        naturalOrderText = normalizeBuyerOrderNaturalText(result.content, trimmedPrompt);
       } catch {
-        // LLM unavailable — fall back to plain template
-        naturalOrderText = `已支付 ${service.price} ${service.currency}，txid: ${txId}，请求技能 ${service.providerSkill || service.serviceName}。需求："${trimmedPrompt}"`;
+        naturalOrderText = buildBuyerOrderNaturalFallback(trimmedPrompt);
       }
 
-      // Always append structured fields so B-side regex can reliably parse txid and amount,
-      // regardless of how the LLM phrased the natural text.
+      // Always append structured fields so B-side regex can reliably parse txid and amount.
       const structuredFields = [
         `支付金额 ${service.price} ${service.currency}`,
         `txid: ${txId}`,

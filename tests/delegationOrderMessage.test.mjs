@@ -19,6 +19,7 @@ test('buildDelegationOrderPayload emits an [ORDER] message that preserves provid
 
   assert.match(payload, /^\[ORDER\]\s+/);
   assert.match(payload, /用户请求查询北京天气/);
+  assert.doesNotMatch(payload, /\[ORDER\][^\n]*支付0\.0001 SPACE费用/);
   assert.match(payload, /支付金额 0\.0001 SPACE/);
   assert.match(payload, new RegExp(`txid: ${'a'.repeat(64)}`));
   assert.match(payload, /service id: service-pin-weather/);

@@ -383,9 +383,70 @@ export interface DelegationRequest {
 const DELEGATE_REMOTE_SERVICE_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
 const NUMERIC_DELEGATION_PRICE_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/;
 const DECORATED_DELEGATION_PRICE_RE = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:\s+([A-Za-z]+))$/;
+const DELEGATION_PARTIAL_PREFIX_MIN_CHARS = 6;
+const METAAPP_GENERIC_CONFIRMATION_RE = /^(?:好|好的|好呀|好哒|行|可以|确定|确认|继续|开始吧|请开始|没问题|嗯|嗯嗯|ok|okay|yes|yep|sure)[!！。.\s]*$/i;
+const METAAPP_EXPLICIT_INTENT_RE = /\b(?:open|launch|start|use|run)\b|(?:打开|开启|启动|运行|使用|进入)/i;
+const METAAPP_CONTEXT_WORD_RE = /\b(?:metaapp|app|application)\b|(?:应用|应用页|本地应用|本地app|本地 App|MetaApp)/i;
 
 export function containsDelegationControlPrefix(content: string): boolean {
   return typeof content === 'string' && content.includes(DELEGATE_REMOTE_SERVICE_PREFIX);
+}
+
+function findTrailingDelegationPrefixFragmentStart(content: string): number {
+  if (typeof content !== 'string' || content.length === 0) {
+    return -1;
+  }
+
+  const maxFragmentLength = Math.min(DELEGATE_REMOTE_SERVICE_PREFIX.length - 1, content.length);
+  for (let length = maxFragmentLength; length >= DELEGATION_PARTIAL_PREFIX_MIN_CHARS; length -= 1) {
+    if (DELEGATE_REMOTE_SERVICE_PREFIX.startsWith(content.slice(-length))) {
+      return content.length - length;
+    }
+  }
+  return -1;
+}
+
+export function getDelegationDisplayText(content: string): string {
+  if (typeof content !== 'string' || !content) {
+    return '';
+  }
+
+  const fullPrefixIndex = content.indexOf(DELEGATE_REMOTE_SERVICE_PREFIX);
+  if (fullPrefixIndex >= 0) {
+    return content.slice(0, fullPrefixIndex).trimEnd();
+  }
+
+  const partialPrefixStart = findTrailingDelegationPrefixFragmentStart(content);
+  if (partialPrefixStart >= 0) {
+    return content.slice(0, partialPrefixStart).trimEnd();
+  }
+
+  return content;
+}
+
+function normalizeMetaAppIntentText(text: string): string {
+  return String(text || '').trim().toLowerCase();
+}
+
+export function isExplicitMetaAppUserRequest(userText: string, appId?: string): boolean {
+  const normalizedText = normalizeMetaAppIntentText(userText);
+  if (!normalizedText) {
+    return false;
+  }
+  if (METAAPP_GENERIC_CONFIRMATION_RE.test(normalizedText)) {
+    return false;
+  }
+
+  const normalizedAppId = normalizeMetaAppIntentText(appId || '');
+  const mentionsAppId = normalizedAppId.length > 0 && normalizedText.includes(normalizedAppId);
+  const hasIntentVerb = METAAPP_EXPLICIT_INTENT_RE.test(userText);
+  const hasMetaAppContext = METAAPP_CONTEXT_WORD_RE.test(userText);
+
+  if (mentionsAppId && (hasIntentVerb || hasMetaAppContext)) {
+    return true;
+  }
+
+  return hasIntentVerb && hasMetaAppContext;
 }
 
 export function normalizeDelegationPaymentTerms(
@@ -486,6 +547,7 @@ interface ActiveSession {
   // Track the current streaming message for incremental updates
   currentStreamingMessageId: string | null;
   currentStreamingContent: string;
+  currentStreamingDisplayContent: string;
   // Track thinking block streaming
   currentStreamingThinkingMessageId: string | null;
   currentStreamingThinking: string;
@@ -2647,6 +2709,7 @@ export class CoworkRunner extends EventEmitter {
       abortController,
       currentStreamingMessageId: null,
       currentStreamingContent: '',
+      currentStreamingDisplayContent: '',
       currentStreamingThinkingMessageId: null,
       currentStreamingThinking: '',
       currentStreamingBlockType: null,
@@ -2972,6 +3035,7 @@ export class CoworkRunner extends EventEmitter {
     activeSession.currentStreamingTextSuppressed = false;
     activeSession.currentStreamingTextTruncated = false;
     activeSession.currentStreamingThinkingTruncated = false;
+    activeSession.currentStreamingDisplayContent = '';
     activeSession.lastStreamingTextUpdateAt = 0;
     activeSession.lastStreamingThinkingUpdateAt = 0;
     activeSession.delegationRequestEmitted = false;
@@ -3321,17 +3385,28 @@ export class CoworkRunner extends EventEmitter {
               targetPath: z.string().optional(),
             },
             async (args: { appId: string; targetPath?: string }) => {
+              const displayName = String(args.appId || '').trim() || 'unknown';
+              const latestUserText = this.getLatestUserMessageText(sessionId);
+              if (!isExplicitMetaAppUserRequest(latestUserText, displayName)) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: this.buildMetaAppGuardRejectionText('open_metaapp', displayName),
+                  }],
+                  isError: true,
+                } as any;
+              }
               try {
                 const result = await this.openMetaApp?.({
                   appId: args.appId,
                   targetPath: args.targetPath,
                 });
-                const displayName = String(result?.name || args.appId).trim() || args.appId;
+                const resolvedDisplayName = String(result?.name || args.appId).trim() || args.appId;
                 const text = result?.success
                   ? (result.url
-                    ? `Opened metaapp "${displayName}" at ${result.url}`
-                    : `Opened metaapp "${displayName}"`)
-                  : `Failed to open metaapp "${displayName}": ${result?.error || 'Unknown error'}`;
+                    ? `Opened metaapp "${resolvedDisplayName}" at ${result.url}`
+                    : `Opened metaapp "${resolvedDisplayName}"`)
+                  : `Failed to open metaapp "${resolvedDisplayName}": ${result?.error || 'Unknown error'}`;
                 const response: any = {
                   content: [{ type: 'text', text }],
                 };
@@ -3362,17 +3437,28 @@ export class CoworkRunner extends EventEmitter {
               targetPath: z.string().optional(),
             },
             async (args: { appId: string; targetPath?: string }) => {
+              const displayName = String(args.appId || '').trim() || 'unknown';
+              const latestUserText = this.getLatestUserMessageText(sessionId);
+              if (!isExplicitMetaAppUserRequest(latestUserText, displayName)) {
+                return {
+                  content: [{
+                    type: 'text',
+                    text: this.buildMetaAppGuardRejectionText('resolve_metaapp_url', displayName),
+                  }],
+                  isError: true,
+                } as any;
+              }
               try {
                 const result = await this.resolveMetaAppUrl?.({
                   appId: args.appId,
                   targetPath: args.targetPath,
                 });
-                const displayName = String(result?.name || args.appId).trim() || args.appId;
+                const resolvedDisplayName = String(result?.name || args.appId).trim() || args.appId;
                 const text = result?.success
                   ? (result.url
-                    ? `Resolved metaapp "${displayName}" to ${result.url}`
-                    : `Resolved metaapp "${displayName}"`)
-                  : `Failed to resolve metaapp "${displayName}": ${result?.error || 'Unknown error'}`;
+                    ? `Resolved metaapp "${resolvedDisplayName}" to ${result.url}`
+                    : `Resolved metaapp "${resolvedDisplayName}"`)
+                  : `Failed to resolve metaapp "${resolvedDisplayName}": ${result?.error || 'Unknown error'}`;
                 const response: any = {
                   content: [{ type: 'text', text }],
                 };
@@ -4193,6 +4279,7 @@ export class CoworkRunner extends EventEmitter {
     activeSession.currentStreamingTextSuppressed = false;
     activeSession.currentStreamingTextTruncated = false;
     activeSession.currentStreamingThinkingTruncated = false;
+    activeSession.currentStreamingDisplayContent = '';
     activeSession.lastStreamingTextUpdateAt = 0;
     activeSession.lastStreamingThinkingUpdateAt = 0;
     activeSession.delegationRequestEmitted = false;
@@ -4925,16 +5012,19 @@ export class CoworkRunner extends EventEmitter {
         // Start a new assistant message for streaming
         const initialTextRaw = typeof contentBlock.text === 'string' ? contentBlock.text : '';
         const initialText = this.truncateLargeContent(initialTextRaw, STREAMING_TEXT_MAX_CHARS);
+        const initialDisplayText = getDelegationDisplayText(initialText);
         activeSession.currentStreamingContent = initialText;
-        activeSession.currentStreamingTextSuppressed = containsDelegationControlPrefix(initialText);
+        activeSession.currentStreamingDisplayContent = initialDisplayText;
+        activeSession.currentStreamingTextSuppressed =
+          initialDisplayText.length === 0 && initialDisplayText !== initialText;
         activeSession.currentStreamingTextTruncated = initialText.length < initialTextRaw.length;
         activeSession.lastStreamingTextUpdateAt = 0;
         activeSession.currentStreamingBlockType = 'text';
 
-        if (initialText.length > 0 && !activeSession.currentStreamingTextSuppressed) {
+        if (initialDisplayText.length > 0) {
           const message = this.store.addMessage(sessionId, {
             type: 'assistant',
-            content: initialText,
+            content: initialDisplayText,
             metadata: { isStreaming: true },
           });
           activeSession.hasAssistantTextOutput = true;
@@ -4991,6 +5081,7 @@ export class CoworkRunner extends EventEmitter {
 
       if (deltaType === 'text_delta' && typeof delta.text === 'string') {
         if (delta.text.length === 0) return;
+        const previousDisplayText = activeSession.currentStreamingDisplayContent;
         const next = this.appendStreamingDelta(
           activeSession.currentStreamingContent,
           delta.text,
@@ -4999,37 +5090,62 @@ export class CoworkRunner extends EventEmitter {
         );
         activeSession.currentStreamingContent = next.content;
         activeSession.currentStreamingTextTruncated = next.truncated;
+        const nextDisplayText = getDelegationDisplayText(activeSession.currentStreamingContent);
 
         if (containsDelegationControlPrefix(activeSession.currentStreamingContent)) {
-          activeSession.currentStreamingTextSuppressed = true;
+          activeSession.currentStreamingDisplayContent = nextDisplayText;
+          activeSession.currentStreamingTextSuppressed = nextDisplayText.length === 0;
           if (activeSession.currentStreamingMessageId) {
-            this.store.deleteMessage(sessionId, activeSession.currentStreamingMessageId);
-            activeSession.currentStreamingMessageId = null;
+            if (previousDisplayText !== nextDisplayText) {
+              this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, nextDisplayText);
+            }
+            if (!nextDisplayText.trim()) {
+              this.store.deleteMessage(sessionId, activeSession.currentStreamingMessageId);
+              activeSession.currentStreamingMessageId = null;
+            }
+          } else if (nextDisplayText.length > 0) {
+            const message = this.store.addMessage(sessionId, {
+              type: 'assistant',
+              content: nextDisplayText,
+              metadata: { isStreaming: true },
+            });
+            activeSession.hasAssistantTextOutput = true;
+            activeSession.currentStreamingMessageId = message.id;
+            activeSession.lastStreamingTextUpdateAt = Date.now();
+            this.emit('message', sessionId, message);
           }
-          activeSession.hasAssistantTextOutput = false;
+          this.emitDelegationRequestIfPresent(sessionId, activeSession, activeSession.currentStreamingContent);
           return;
         }
-
-        if (activeSession.currentStreamingTextSuppressed) {
-          return;
-        }
+        activeSession.currentStreamingDisplayContent = nextDisplayText;
+        activeSession.currentStreamingTextSuppressed =
+          nextDisplayText.length === 0 && nextDisplayText !== activeSession.currentStreamingContent;
 
         // If we have a streaming message, emit update; otherwise create one
         if (activeSession.currentStreamingMessageId) {
+          if (!nextDisplayText.length) {
+            this.store.deleteMessage(sessionId, activeSession.currentStreamingMessageId);
+            activeSession.currentStreamingMessageId = null;
+            activeSession.hasAssistantTextOutput = false;
+            return;
+          }
           activeSession.hasAssistantTextOutput = true;
-          if (!next.changed) {
+          if (!next.changed || previousDisplayText === nextDisplayText) {
             return;
           }
           const streamTick = this.shouldEmitStreamingUpdate(activeSession.lastStreamingTextUpdateAt);
           if (streamTick.emit) {
             activeSession.lastStreamingTextUpdateAt = streamTick.now;
-            this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, activeSession.currentStreamingContent);
+            this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, nextDisplayText);
           }
         } else {
+          if (!nextDisplayText.length) {
+            return;
+          }
           // No message yet, create one
           const message = this.store.addMessage(sessionId, {
             type: 'assistant',
-            content: activeSession.currentStreamingContent,
+            content: nextDisplayText,
             metadata: { isStreaming: true },
           });
           activeSession.hasAssistantTextOutput = true;
@@ -5126,6 +5242,25 @@ export class CoworkRunner extends EventEmitter {
     return true;
   }
 
+  private getLatestUserMessageText(sessionId: string): string {
+    const session = this.store.getSession(sessionId);
+    if (!session?.messages?.length) {
+      return '';
+    }
+    for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+      const message = session.messages[index];
+      if (message.type === 'user' && typeof message.content === 'string' && message.content.trim()) {
+        return message.content.trim();
+      }
+    }
+    return '';
+  }
+
+  private buildMetaAppGuardRejectionText(toolName: 'open_metaapp' | 'resolve_metaapp_url', appId: string): string {
+    const action = toolName === 'open_metaapp' ? 'open' : 'resolve';
+    return `Blocked ${toolName}: the current user turn did not explicitly ask to ${action} the local MetaApp "${appId}". Generic confirmations like "好的" or "确定" are not MetaApp requests.`;
+  }
+
   private handleDelegationControlText(
     sessionId: string,
     activeSession: ActiveSession,
@@ -5135,42 +5270,68 @@ export class CoworkRunner extends EventEmitter {
     if (!containsDelegationControlPrefix(content)) {
       return false;
     }
+    const visibleText = getDelegationDisplayText(content);
     if (existingMessageId) {
-      this.store.deleteMessage(sessionId, existingMessageId);
+      if (visibleText.trim()) {
+        this.updateMessageMerged(sessionId, existingMessageId, {
+          content: visibleText,
+          metadata: { isStreaming: false },
+        });
+        this.emit('messageUpdate', sessionId, existingMessageId, visibleText);
+      } else {
+        this.store.deleteMessage(sessionId, existingMessageId);
+      }
+    } else if (visibleText.trim()) {
+      const message = this.store.addMessage(sessionId, {
+        type: 'assistant',
+        content: visibleText,
+      });
+      activeSession.hasAssistantTextOutput = true;
+      this.emit('message', sessionId, message);
     }
     this.emitDelegationRequestIfPresent(sessionId, activeSession, content);
     return true;
   }
 
   private finalizeStreamingTextMessage(activeSession: ActiveSession): void {
-    const { sessionId, currentStreamingMessageId, currentStreamingContent } = activeSession;
+    const { sessionId, currentStreamingMessageId, currentStreamingContent, currentStreamingDisplayContent } = activeSession;
 
     if (
       activeSession.currentStreamingTextSuppressed
       || containsDelegationControlPrefix(currentStreamingContent)
     ) {
       if (currentStreamingMessageId) {
-        this.store.deleteMessage(sessionId, currentStreamingMessageId);
+        if (currentStreamingDisplayContent.trim()) {
+          this.updateMessageMerged(sessionId, currentStreamingMessageId, {
+            content: currentStreamingDisplayContent,
+            metadata: { isStreaming: false },
+          });
+          this.emit('messageUpdate', sessionId, currentStreamingMessageId, currentStreamingDisplayContent);
+        } else {
+          this.store.deleteMessage(sessionId, currentStreamingMessageId);
+        }
       }
       this.emitDelegationRequestIfPresent(sessionId, activeSession, currentStreamingContent);
       activeSession.currentStreamingMessageId = null;
       activeSession.currentStreamingContent = '';
+      activeSession.currentStreamingDisplayContent = '';
       activeSession.currentStreamingTextSuppressed = false;
       activeSession.currentStreamingTextTruncated = false;
       activeSession.lastStreamingTextUpdateAt = 0;
       return;
     }
 
-    if (currentStreamingMessageId && currentStreamingContent) {
+    if (currentStreamingMessageId && currentStreamingDisplayContent) {
       this.updateMessageMerged(sessionId, currentStreamingMessageId, {
-        content: currentStreamingContent,
+        content: currentStreamingDisplayContent,
         metadata: { isStreaming: false },
       });
-      this.emit('messageUpdate', sessionId, currentStreamingMessageId, currentStreamingContent);
+      this.emit('messageUpdate', sessionId, currentStreamingMessageId, currentStreamingDisplayContent);
     }
 
     activeSession.currentStreamingMessageId = null;
     activeSession.currentStreamingContent = '';
+    activeSession.currentStreamingDisplayContent = '';
     activeSession.currentStreamingTextSuppressed = false;
     activeSession.currentStreamingTextTruncated = false;
     activeSession.lastStreamingTextUpdateAt = 0;
@@ -5407,6 +5568,7 @@ export class CoworkRunner extends EventEmitter {
       const finalContent = activeSession.currentStreamingContent.trim()
         ? activeSession.currentStreamingContent
         : safeResultText;
+      const finalDisplayContent = getDelegationDisplayText(finalContent);
 
       if (
         this.handleDelegationControlText(
@@ -5423,14 +5585,15 @@ export class CoworkRunner extends EventEmitter {
       }
 
       this.updateMessageMerged(sessionId, activeSession.currentStreamingMessageId, {
-        content: finalContent,
+        content: finalDisplayContent,
         metadata: { isFinal: true, isStreaming: false },
       });
-      this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, finalContent);
+      this.emit('messageUpdate', sessionId, activeSession.currentStreamingMessageId, finalDisplayContent);
 
       // 更新后立即重置状态，防止被后续事件重复处理
       activeSession.currentStreamingMessageId = null;
       activeSession.currentStreamingContent = '';
+      activeSession.currentStreamingDisplayContent = '';
       return;
     }
 
