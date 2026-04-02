@@ -751,6 +751,13 @@ export class SkillManager {
     return null;
   }
 
+  private resolveSkillByName(skillName: string, skills: SkillRecord[] = this.listSkills()): SkillRecord | null {
+    const trimmed = String(skillName || '').trim();
+    if (!trimmed) return null;
+    const normalized = trimmed.toLowerCase();
+    return skills.find((skill) => skill.name.trim().toLowerCase() === normalized) ?? null;
+  }
+
   getSkillsRoot(): string {
     const envOverride = process.env.IDBOTS_SKILLS_ROOT?.trim() || process.env.SKILLS_ROOT?.trim();
     if (envOverride) {
@@ -997,6 +1004,18 @@ export class SkillManager {
     return this.buildRoutingPromptFromSkills(enabled);
   }
 
+  private buildScopedRoutingPrompt(skills: SkillRecord[]): string | null {
+    if (skills.length === 0) return null;
+    const uniqueSkills = Array.from(new Map(skills.map((skill) => [skill.id, skill])).values());
+    const skillIds = new Set(uniqueSkills.map((skill) => skill.id));
+    const omniCasterConstraint = skillIds.has('metabot-omni-caster')
+      ? '- For metabot-omni-caster: path and payload must come from SKILL.md and references (e.g. buzz uses /protocols/simplebuzz); do not guess.'
+      : '';
+    return this.buildRoutingPromptFromSkills(uniqueSkills, {
+      extraRules: [omniCasterConstraint],
+    });
+  }
+
   buildCoworkAutoRoutingPrompt(): string | null {
     const skills = this.listSkills();
     const enabled = skills.filter((skill) => skill.enabled && skill.prompt);
@@ -1062,12 +1081,29 @@ export class SkillManager {
         .filter(Boolean)
     );
     const skills = this.listSkills().filter((s) => set.has(s.id));
-    const omniCasterConstraint = set.has('metabot-omni-caster')
-      ? '- For metabot-omni-caster: path and payload must come from SKILL.md and references (e.g. buzz uses /protocols/simplebuzz); do not guess.'
-      : '';
-    return this.buildRoutingPromptFromSkills(skills, {
-      extraRules: [omniCasterConstraint],
-    });
+    return this.buildScopedRoutingPrompt(skills);
+  }
+
+  /**
+   * Seller order execution should prefer the single explicitly ordered local skill.
+   * Resolution order: skillId -> skillName treated as id -> exact skill display name.
+   * Falls back to the full auto-routing prompt when no local skill can be resolved.
+   */
+  buildAutoRoutingPromptForOrderSkill(params: {
+    skillId?: string | null;
+    skillName?: string | null;
+  }): string | null {
+    const skills = this.listSkills();
+    const resolvedSkill =
+      this.resolveSkillById(params.skillId || '', skills)
+      || this.resolveSkillById(params.skillName || '', skills)
+      || this.resolveSkillByName(params.skillName || '', skills);
+
+    if (resolvedSkill) {
+      return this.buildScopedRoutingPrompt([resolvedSkill]);
+    }
+
+    return this.buildAutoRoutingPrompt();
   }
 
   setSkillEnabled(id: string, enabled: boolean): SkillRecord[] {

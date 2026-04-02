@@ -6867,7 +6867,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       createPin,
       (msg) => console.log(msg),
       getServiceOrderLifecycleService(),
-      async () => skillMgr.buildAutoRoutingPrompt(),
+      async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
       (channel, data) => {
         BrowserWindow.getAllWindows().forEach(win => {
           if (!win.isDestroyed()) {

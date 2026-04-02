@@ -3,12 +3,69 @@ import assert from 'node:assert/strict';
 
 let buildPrivateReplyMemoryPromptBlocks;
 let buildOrderPrompts;
+let sendSellerOrderAcknowledgement;
+let CoworkRunner;
 try {
-  ({ buildPrivateReplyMemoryPromptBlocks } = await import('../dist-electron/main/services/privateChatDaemon.js'));
+  ({ buildPrivateReplyMemoryPromptBlocks, sendSellerOrderAcknowledgement } = await import('../dist-electron/main/services/privateChatDaemon.js'));
   ({ buildOrderPrompts } = await import('../dist-electron/main/services/orderPromptBuilder.js'));
+  ({ CoworkRunner } = await import('../dist-electron/main/libs/coworkRunner.js'));
 } catch {
-  ({ buildPrivateReplyMemoryPromptBlocks } = await import('../dist-electron/services/privateChatDaemon.js'));
+  ({ buildPrivateReplyMemoryPromptBlocks, sendSellerOrderAcknowledgement } = await import('../dist-electron/services/privateChatDaemon.js'));
   ({ buildOrderPrompts } = await import('../dist-electron/services/orderPromptBuilder.js'));
+  ({ CoworkRunner } = await import('../dist-electron/libs/coworkRunner.js'));
+}
+
+function createCoworkRunnerPromptHarness({
+  sessionType = 'standard',
+  sourceChannel = 'cowork_ui',
+  memoryEnabled = true,
+} = {}) {
+  const session = {
+    id: 'session-1',
+    sessionType,
+    metabotId: 7,
+    peerGlobalMetaId: 'peer-global-metaid',
+    messages: [],
+  };
+  const store = {
+    getMemoryBackend() {
+      return {
+        getEffectiveMemoryPolicyForSession() {
+          return {
+            memoryEnabled,
+            memoryImplicitUpdateEnabled: memoryEnabled,
+            memoryLlmJudgeEnabled: memoryEnabled,
+            memoryGuardLevel: 'strict',
+            memoryUserMemoriesMaxItems: 12,
+          };
+        },
+        resolveMetabotIdForMemory() {
+          return 7;
+        },
+      };
+    },
+    getSession() {
+      return session;
+    },
+    getConversationSourceContextBySession() {
+      return {
+        sourceChannel,
+        externalConversationId: 'conversation-1',
+      };
+    },
+  };
+  const runner = new CoworkRunner(store, {
+    getMetabotById() {
+      return {
+        name: 'SellerBot',
+        role: 'Weather assistant',
+        soul: 'Warm and practical',
+        background: 'Built for paid weather tasks',
+        goal: 'Deliver useful service results',
+      };
+    },
+  });
+  return { runner, session };
 }
 
 test('private chat prompt does not inject owner profile facts', () => {
@@ -43,7 +100,7 @@ test('private chat prompt does not inject owner profile facts', () => {
   assert.doesNotMatch(xml, /Alice/);
 });
 
-test('order prompt instructions reference scoped memory blocks instead of generic owner userMemories', () => {
+test('order prompt keeps the owner-vs-client memory boundary without generic userMemories wording', () => {
   const { systemPrompt } = buildOrderPrompts({
     plaintext: 'Please deliver the result',
     source: 'metaweb',
@@ -51,7 +108,7 @@ test('order prompt instructions reference scoped memory blocks instead of generi
     peerName: 'Client',
   });
 
-  assert.match(systemPrompt, /ownerMemories|contactMemories|conversationMemories|ownerOperationalPreferences/);
+  assert.match(systemPrompt, /owner-scoped memory block/i);
   assert.doesNotMatch(systemPrompt, /<userMemories>/);
 });
 
@@ -87,6 +144,147 @@ test('order prompt requires pure deliverable output without order chatter', () =
 
   assert.match(systemPrompt, /Return only the substantive deliverable/i);
   assert.match(systemPrompt, /Do not repeat greetings, self-introduction, payment amount, txid, service id, skill name, order confirmation/i);
+});
+
+test('order prompt user message strips order transport metadata and keeps only the actual request', () => {
+  const { userPrompt } = buildOrderPrompts({
+    plaintext: [
+      '[ORDER] 请帮我查询上海天气，并告诉我今天是否适合出门。',
+      '支付金额 0.0001 SPACE',
+      `txid: ${'a'.repeat(64)}`,
+      'service id: service-pin-weather',
+      'skill name: weather',
+    ].join('\n'),
+    source: 'metaweb_private',
+    metabotName: 'OrderBot',
+    peerName: 'Client',
+    skillName: 'weather',
+  });
+
+  assert.match(userPrompt, /查询上海天气/);
+  assert.doesNotMatch(userPrompt, /\[ORDER\]/);
+  assert.doesNotMatch(userPrompt, /支付金额|txid|service id|skill name/i);
+});
+
+test('order prompt tells seller that acknowledgement is sent before execution and final result must arrive within fifteen minutes', () => {
+  const { systemPrompt } = buildOrderPrompts({
+    plaintext: 'Please deliver the result',
+    source: 'metaweb_private',
+    metabotName: 'OrderBot',
+    peerName: 'Client',
+    skillName: 'weather',
+  });
+
+  assert.match(systemPrompt, /acknowledgement/i);
+  assert.match(systemPrompt, /15 minutes/i);
+  assert.match(systemPrompt, /Do not repeat that acknowledgement/i);
+});
+
+test('sendSellerOrderAcknowledgement sends a private acknowledgement and marks the seller order first response', async () => {
+  const sentMessages = [];
+  const lifecycleCalls = [];
+
+  const result = await sendSellerOrderAcknowledgement({
+    metabot: {
+      id: 7,
+      name: 'SellerBot',
+      role: 'Weather assistant',
+      soul: 'Helpful and calm',
+      llm_id: 'llm-1',
+    },
+    peerGlobalMetaId: 'buyer-global-metaid',
+    peerName: 'Client',
+    plaintext: '[ORDER] Please check the Shanghai weather',
+    skillName: 'weather',
+    paymentTxid: 'a'.repeat(64),
+    now: () => 1_770_123_456_000,
+    performChat: async (_systemPrompt, userPrompt, llmId) => {
+      assert.match(userPrompt, /Shanghai weather/);
+      assert.doesNotMatch(userPrompt, /\[ORDER\]|支付金额|txid|service id|skill name/i);
+      assert.equal(llmId, 'llm-1');
+      return '我已明确你的需求，正在处理中，请稍候。';
+    },
+    sendEncryptedMsg: async (text) => {
+      sentMessages.push(text);
+      return { pinId: 'ack-pin-id' };
+    },
+    serviceOrderLifecycle: {
+      markSellerOrderFirstResponseSent(input) {
+        lifecycleCalls.push(input);
+        return { id: 'seller-order-id' };
+      },
+    },
+    emitLog: () => {},
+  });
+
+  assert.equal(result?.text, '我已明确你的需求，正在处理中，请稍候。');
+  assert.deepEqual(sentMessages, ['我已明确你的需求，正在处理中，请稍候。']);
+  assert.deepEqual(lifecycleCalls, [{
+    localMetabotId: 7,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    paymentTxid: 'a'.repeat(64),
+    sentAt: 1_770_123_456_000,
+  }]);
+});
+
+test('CoworkRunner uses a compact outer prompt profile for seller metaweb_order a2a sessions', () => {
+  const { runner } = createCoworkRunnerPromptHarness({
+    sessionType: 'a2a',
+    sourceChannel: 'metaweb_order',
+    memoryEnabled: true,
+  });
+
+  const profile = runner.getSystemPromptProfileForSession('session-1');
+  const personaBlock = runner.buildMetabotPersonaBlock('session-1');
+  const systemPrompt = runner.composeEffectiveSystemPrompt(
+    'BASE ORDER PROMPT',
+    '/tmp/idbots-order',
+    '/tmp/idbots-order',
+    'text',
+    '<ownerMemories><memory>hidden</memory></ownerMemories>',
+    true,
+    true,
+    personaBlock,
+    profile
+  );
+
+  assert.equal(profile.id, 'service_order_a2a');
+  assert.match(systemPrompt, /<metabot_identity>/);
+  assert.match(systemPrompt, /## Workspace Safety Policy/);
+  assert.match(systemPrompt, /## Local Time Context/);
+  assert.match(systemPrompt, /BASE ORDER PROMPT/);
+  assert.doesNotMatch(systemPrompt, /## Memory Strategy/);
+  assert.doesNotMatch(systemPrompt, /<ownerMemories>/);
+  assert.doesNotMatch(systemPrompt, /schedule\.type = "at"|one-time scheduled tasks/i);
+  assert.doesNotMatch(systemPrompt, /AskUserQuestion/);
+});
+
+test('CoworkRunner keeps the full common outer prompt for standard cowork sessions', () => {
+  const { runner } = createCoworkRunnerPromptHarness({
+    sessionType: 'standard',
+    sourceChannel: 'cowork_ui',
+    memoryEnabled: true,
+  });
+
+  const profile = runner.getSystemPromptProfileForSession('session-1');
+  const personaBlock = runner.buildMetabotPersonaBlock('session-1');
+  const systemPrompt = runner.composeEffectiveSystemPrompt(
+    'BASE STANDARD PROMPT',
+    '/tmp/idbots-standard',
+    '/tmp/idbots-standard',
+    'text',
+    '<ownerMemories><memory>visible</memory></ownerMemories>',
+    true,
+    true,
+    personaBlock,
+    profile
+  );
+
+  assert.equal(profile.id, 'default');
+  assert.match(systemPrompt, /## Memory Strategy/);
+  assert.match(systemPrompt, /<ownerMemories>/);
+  assert.match(systemPrompt, /schedule\.type = "at"|one-time scheduled tasks/i);
+  assert.match(systemPrompt, /Do not use AskUserQuestion in this session/);
 });
 
 test('cleanServiceResultText strips bot-to-bot wrapper and order metadata from mixed replies', async () => {

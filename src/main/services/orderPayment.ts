@@ -22,6 +22,8 @@ export interface OrderPaymentCheckResult {
 
 const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*(SPACE|BTC|DOGE)/i;
+const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
 const SKILL_ID_PATTERNS = [
   /(?:skill(?:\s+service)?\s+id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID))\s*[:：=]?\s*([^\s,，。]+)/i,
 ];
@@ -57,6 +59,37 @@ export function extractOrderTxid(plaintext: string): string | null {
   const match = plaintext.match(TXID_RE);
   if (!match) return null;
   return match[1] || null;
+}
+
+export function extractOrderRequestText(plaintext: string): string {
+  const source = String(plaintext || '').replace(/\r\n?/g, '\n');
+  if (!source.trim()) return '';
+
+  const keptLines: string[] = [];
+  source.split('\n').forEach((line, index) => {
+    const withoutPrefix = index === 0 ? line.replace(ORDER_PREFIX_RE, '') : line;
+    const trimmed = withoutPrefix.trim();
+    if (!trimmed) {
+      if (keptLines.length > 0 && keptLines[keptLines.length - 1] !== '') {
+        keptLines.push('');
+      }
+      return;
+    }
+    if (STRUCTURED_ORDER_METADATA_LINE_RE.test(trimmed)) {
+      return;
+    }
+    keptLines.push(withoutPrefix.trimEnd());
+  });
+
+  while (keptLines[0] === '') keptLines.shift();
+  while (keptLines[keptLines.length - 1] === '') keptLines.pop();
+
+  const cleaned = keptLines.join('\n').trim();
+  if (cleaned) {
+    return cleaned;
+  }
+
+  return source.replace(ORDER_PREFIX_RE, '').trim();
 }
 
 function extractOrderAmount(

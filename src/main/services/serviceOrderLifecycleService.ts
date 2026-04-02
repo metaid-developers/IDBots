@@ -55,6 +55,10 @@ export interface MarkBuyerOrderFirstResponseReceivedInput extends ServiceOrderPa
   receivedAt?: number;
 }
 
+export interface MarkSellerOrderFirstResponseSentInput extends ServiceOrderPaymentMatchInput {
+  sentAt?: number;
+}
+
 export interface AttachSellerCoworkSessionInput extends ServiceOrderPaymentMatchInput {
   coworkSessionId: string;
 }
@@ -243,6 +247,22 @@ export class ServiceOrderLifecycleService {
     return this.store.markFirstResponseReceived(
       order.id,
       input.receivedAt ?? this.now()
+    );
+  }
+
+  markSellerOrderFirstResponseSent(
+    input: MarkSellerOrderFirstResponseSentInput
+  ): ServiceOrderRecord | null {
+    const order = this.store.findOrderByPayment({
+      role: 'seller',
+      localMetabotId: input.localMetabotId,
+      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+      paymentTxid: input.paymentTxid,
+    });
+    if (!order) return null;
+    return this.store.markFirstResponseReceived(
+      order.id,
+      input.sentAt ?? this.now()
     );
   }
 

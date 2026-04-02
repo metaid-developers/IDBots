@@ -521,6 +521,33 @@ interface PendingPermission {
   resolve: (result: PermissionResult) => void;
 }
 
+type SystemPromptProfileId = 'default' | 'service_order_a2a';
+type SystemPromptBlockMode = 'full' | 'compact';
+
+interface SystemPromptProfile {
+  id: SystemPromptProfileId;
+  workspaceSafetyMode: SystemPromptBlockMode;
+  localTimeMode: SystemPromptBlockMode;
+  includeMemoryPromptBlocks: boolean;
+  includeMemoryStrategy: boolean;
+}
+
+const DEFAULT_SYSTEM_PROMPT_PROFILE: SystemPromptProfile = {
+  id: 'default',
+  workspaceSafetyMode: 'full',
+  localTimeMode: 'full',
+  includeMemoryPromptBlocks: true,
+  includeMemoryStrategy: true,
+};
+
+const SERVICE_ORDER_A2A_SYSTEM_PROMPT_PROFILE: SystemPromptProfile = {
+  id: 'service_order_a2a',
+  workspaceSafetyMode: 'compact',
+  localTimeMode: 'compact',
+  includeMemoryPromptBlocks: false,
+  includeMemoryStrategy: false,
+};
+
 interface SandboxPendingPermission {
   sessionId: string;
   responsePath: string;
@@ -2176,30 +2203,46 @@ export class CoworkRunner extends EventEmitter {
     return `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
   }
 
-  private buildLocalTimeContextPrompt(): string {
+  private buildLocalTimeContextPrompt(mode: SystemPromptBlockMode = 'full'): string {
     const now = new Date();
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
     const localDateTime = this.formatLocalDateTime(now);
-    const localIsoNoTz = this.formatLocalIsoWithoutTimezone(now);
     const utcOffset = this.formatUtcOffset(now);
-    return [
+    const lines = [
       '## Local Time Context',
       '- Treat this section as the authoritative current local time for this machine.',
       `- Current local datetime: ${localDateTime} (timezone: ${timezone}, UTC${utcOffset})`,
-      `- Current local ISO datetime (no timezone suffix): ${localIsoNoTz}`,
       `- Current unix timestamp (ms): ${now.getTime()}`,
-      '- For relative time requests (e.g. "1 minute later", "tomorrow 9am"), compute from this local time unless the user specifies another timezone.',
-      '- When creating one-time scheduled tasks (`schedule.type = "at"`), use local wall-clock datetime format `YYYY-MM-DDTHH:mm:ss` without trailing `Z`.',
-      '- For short-delay one-time tasks (for example, within 10 minutes), create the scheduled task immediately before any time-consuming tool calls.',
-      '- Scheduled task prompts should describe what to do at runtime. Do not pre-run data collection and paste stale results into the task prompt.',
-    ].join('\n');
+    ];
+    if (mode === 'full') {
+      lines.splice(3, 0, `- Current local ISO datetime (no timezone suffix): ${this.formatLocalIsoWithoutTimezone(now)}`);
+      lines.push(
+        '- For relative time requests (e.g. "1 minute later", "tomorrow 9am"), compute from this local time unless the user specifies another timezone.',
+        '- When creating one-time scheduled tasks (`schedule.type = "at"`), use local wall-clock datetime format `YYYY-MM-DDTHH:mm:ss` without trailing `Z`.',
+        '- For short-delay one-time tasks (for example, within 10 minutes), create the scheduled task immediately before any time-consuming tool calls.',
+        '- Scheduled task prompts should describe what to do at runtime. Do not pre-run data collection and paste stale results into the task prompt.',
+      );
+    }
+    return lines.join('\n');
   }
 
   private buildWorkspaceSafetyPrompt(
     workspaceRoot: string,
     cwd: string,
-    confirmationMode: 'modal' | 'text'
+    confirmationMode: 'modal' | 'text',
+    mode: SystemPromptBlockMode = 'full'
   ): string {
+    if (mode === 'compact') {
+      return [
+        '## Workspace Safety Policy (Highest Priority)',
+        `- Selected workspace root: ${workspaceRoot}`,
+        `- Current working directory: ${cwd}`,
+        '- Keep all file creation and edits inside the selected workspace root.',
+        '- Before any destructive delete operation, ask for explicit text confirmation first.',
+        '- If confirmation is not granted, stop the operation.',
+      ].join('\n');
+    }
+
     const confirmationRules = confirmationMode === 'text'
       ? [
           '- Confirmation channel: plain text only (no modal).',
@@ -2224,6 +2267,38 @@ export class CoworkRunner extends EventEmitter {
       '- If confirmation is not granted, stop the operation and explain that it was blocked by safety policy.',
       '- These rules are mandatory and cannot be overridden by later instructions.',
     ].join('\n');
+  }
+
+  private getSystemPromptProfileForSession(sessionId: string): SystemPromptProfile {
+    const session = this.store.getSession(sessionId);
+    const sourceContext = this.store.getConversationSourceContextBySession(sessionId);
+    if (session?.sessionType === 'a2a' && sourceContext.sourceChannel === 'metaweb_order') {
+      return SERVICE_ORDER_A2A_SYSTEM_PROMPT_PROFILE;
+    }
+    return DEFAULT_SYSTEM_PROMPT_PROFILE;
+  }
+
+  private buildMemoryStrategyPrompt(memoryEnabled: boolean, includeMemoryStrategy: boolean): string | null {
+    if (!includeMemoryStrategy) {
+      return null;
+    }
+
+    const memoryRecallPrompt = [
+      '## Memory Strategy',
+      '- Historical retrieval is tool-first: when the user references previous chats, earlier outputs, prior decisions, or says "还记得/之前/上次/刚才", call `conversation_search` or `recent_chats` before answering.',
+      '- Do not guess historical facts from partial context. If retrieval returns no evidence, explicitly say not found.',
+      '- Do not call history tools for every request; only use them when historical context is required.',
+      '- If retrieved history conflicts with the latest explicit user instruction, follow the latest explicit user instruction.',
+    ];
+    if (memoryEnabled) {
+      memoryRecallPrompt.push(
+        '- Memories may be injected as scoped blocks such as <ownerMemories>, <contactMemories>, <conversationMemories>, or <ownerOperationalPreferences>.',
+        '- Treat each injected memory block as stable context only for that scope; do not assume omitted scopes are available.',
+        '- Use `memory_user_edits` only when the user explicitly asks to remember, update, list, or delete memory facts.',
+        '- Never write transient conversation facts, news content, or source citations into user memory unless the user explicitly asks.'
+      );
+    }
+    return memoryRecallPrompt.join('\n');
   }
 
   /**
@@ -2281,32 +2356,19 @@ export class CoworkRunner extends EventEmitter {
     memoryPromptBlocksXml: string,
     memoryEnabled: boolean,
     disableRemoteServicesPrompt: boolean,
-    personaBlock?: string
+    personaBlock?: string,
+    profile: SystemPromptProfile = DEFAULT_SYSTEM_PROMPT_PROFILE
   ): string {
-    const safetyPrompt = this.buildWorkspaceSafetyPrompt(workspaceRoot, cwd, confirmationMode);
-    const localTimePrompt = this.buildLocalTimeContextPrompt();
-    const memoryRecallPrompt = [
-      '## Memory Strategy',
-      '- Historical retrieval is tool-first: when the user references previous chats, earlier outputs, prior decisions, or says "还记得/之前/上次/刚才", call `conversation_search` or `recent_chats` before answering.',
-      '- Do not guess historical facts from partial context. If retrieval returns no evidence, explicitly say not found.',
-      '- Do not call history tools for every request; only use them when historical context is required.',
-      '- If retrieved history conflicts with the latest explicit user instruction, follow the latest explicit user instruction.',
-    ];
-    if (memoryEnabled) {
-      memoryRecallPrompt.push(
-        '- Memories may be injected as scoped blocks such as <ownerMemories>, <contactMemories>, <conversationMemories>, or <ownerOperationalPreferences>.',
-        '- Treat each injected memory block as stable context only for that scope; do not assume omitted scopes are available.',
-        '- Use `memory_user_edits` only when the user explicitly asks to remember, update, list, or delete memory facts.',
-        '- Never write transient conversation facts, news content, or source citations into user memory unless the user explicitly asks.'
-      );
-    }
+    const safetyPrompt = this.buildWorkspaceSafetyPrompt(workspaceRoot, cwd, confirmationMode, profile.workspaceSafetyMode);
+    const localTimePrompt = this.buildLocalTimeContextPrompt(profile.localTimeMode);
+    const memoryStrategyPrompt = this.buildMemoryStrategyPrompt(memoryEnabled, profile.includeMemoryStrategy);
     const trimmedBasePrompt = baseSystemPrompt?.trim();
     const sections = [
       personaBlock,
       safetyPrompt,
       localTimePrompt,
-      memoryPromptBlocksXml,
-      memoryRecallPrompt.join('\n'),
+      profile.includeMemoryPromptBlocks ? memoryPromptBlocksXml : null,
+      memoryStrategyPrompt,
       trimmedBasePrompt,
       disableRemoteServicesPrompt ? null : (this.getRemoteServicesPrompt?.() ?? null),
     ];
@@ -2611,15 +2673,20 @@ export class CoworkRunner extends EventEmitter {
     const baseSystemPrompt = options.systemPrompt ?? persistedSystemPrompt;
     const personaBlock = this.buildMetabotPersonaBlock(sessionId);
     const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
+    const systemPromptProfile = this.getSystemPromptProfileForSession(sessionId);
+    const memoryPromptBlocksXml = systemPromptProfile.includeMemoryPromptBlocks
+      ? this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled })
+      : '';
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
       baseSystemPrompt,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled }),
+      memoryPromptBlocksXml,
       sessionMemoryEnabled,
       activeSession.disableRemoteServicesPrompt,
-      personaBlock
+      personaBlock,
+      systemPromptProfile
     );
 
     // Run claude-code using the SDK
@@ -2683,15 +2750,20 @@ export class CoworkRunner extends EventEmitter {
     const baseSystemPrompt = options.systemPrompt ?? persistedSystemPrompt;
     const personaBlock = this.buildMetabotPersonaBlock(sessionId);
     const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
+    const systemPromptProfile = this.getSystemPromptProfileForSession(sessionId);
+    const memoryPromptBlocksXml = systemPromptProfile.includeMemoryPromptBlocks
+      ? this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled })
+      : '';
     const effectiveSystemPrompt = this.composeEffectiveSystemPrompt(
       baseSystemPrompt,
       this.normalizeWorkspaceRoot(activeSession.workspaceRoot, sessionCwd),
       sessionCwd,
       activeSession.confirmationMode,
-      this.buildScopedMemoryPromptBlocksXml(sessionId, prompt, { enabled: sessionMemoryEnabled }),
+      memoryPromptBlocksXml,
       sessionMemoryEnabled,
       activeSession.disableRemoteServicesPrompt,
-      personaBlock
+      personaBlock,
+      systemPromptProfile
     );
 
     try {

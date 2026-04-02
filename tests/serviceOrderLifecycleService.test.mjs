@@ -215,6 +215,24 @@ test('markBuyerOrderFirstResponseReceived moves awaiting orders into in_progress
   assert.equal(updated?.firstResponseAt, now);
 });
 
+test('markSellerOrderFirstResponseSent moves awaiting seller orders into in_progress', async () => {
+  const now = 1_770_000_111_500;
+  const { service } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const order = service.createSellerOrder(baseOrderInput());
+
+  const updated = service.markSellerOrderFirstResponseSent({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    sentAt: now,
+  });
+
+  assert.equal(updated?.status, 'in_progress');
+  assert.equal(updated?.firstResponseAt, now);
+});
+
 test('markBuyerOrderDelivered completes the buyer order and stores the delivery message pin', async () => {
   const now = 1_770_000_222_000;
   const { service } = await createLifecycleServiceForTest({
