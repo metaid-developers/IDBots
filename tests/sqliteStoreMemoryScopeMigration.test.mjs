@@ -11,7 +11,23 @@ const Module = require('node:module');
 const { DB_FILENAME } = require('../dist-electron/appConstants.js');
 
 const worktreeRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const repoRoot = path.resolve(worktreeRoot, '..', '..');
+
+function resolveRepoRoot() {
+  let current = worktreeRoot;
+  while (true) {
+    const candidateWasm = path.join(current, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+    if (fs.existsSync(candidateWasm)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error('Failed to resolve repo root for sqliteStore memory migration test');
+    }
+    current = parent;
+  }
+}
+
+const repoRoot = resolveRepoRoot();
 const sqlWasmPath = path.join(repoRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
 
 async function createSqlDatabase() {
