@@ -1276,6 +1276,14 @@ const recoverMissingRefundPendingOrderObserverSessions = async (): Promise<void>
   const recovered = await recoverMissingRefundPendingOrderSessions({
     coworkStore: getCoworkStore(),
     orderStore: getServiceOrderStore(),
+    resolveLocalMetabotIdByGlobalMetaId: (globalMetaId) => {
+      const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
+      return metabot?.id ?? null;
+    },
+    resolveLocalMetabotGlobalMetaId: (localMetabotId) => {
+      const metabot = metabotStore.getMetabotById(localMetabotId);
+      return metabot?.globalmetaid ?? null;
+    },
     resolveOrderText: (order) => {
       const privateOrderText = getPrivateChatOrderText(db, toSafeString(order.orderMessagePinId).trim());
       if (looksLikeRecoveredServiceOrderText(privateOrderText)) {

@@ -11,6 +11,12 @@ import {
 export interface RecoverMissingRefundPendingOrderSessionsInput {
   coworkStore: CoworkStore;
   orderStore: ServiceOrderStore;
+  resolveLocalMetabotIdByGlobalMetaId?: (
+    globalMetaId: string
+  ) => number | null | undefined;
+  resolveLocalMetabotGlobalMetaId?: (
+    localMetabotId: number
+  ) => string | null | undefined;
   resolveOrderText?: (
     order: ServiceOrderRecord
   ) => string | null | undefined | Promise<string | null | undefined>;
@@ -65,9 +71,73 @@ function orderNeedsRecoveredSession(
   return coworkStore.getSession(observerSessionId) == null;
 }
 
+function synthesizeMissingLocalSellerRefundPendingOrders(
+  input: RecoverMissingRefundPendingOrderSessionsInput
+): ServiceOrderRecord[] {
+  const resolveSellerLocalMetabotId = input.resolveLocalMetabotIdByGlobalMetaId;
+  const resolveBuyerGlobalMetaId = input.resolveLocalMetabotGlobalMetaId;
+  if (!resolveSellerLocalMetabotId || !resolveBuyerGlobalMetaId) {
+    return [];
+  }
+
+  const synthesized: ServiceOrderRecord[] = [];
+  const buyerRefundPendingOrders = input.orderStore.listOrdersByStatuses('buyer', ['refund_pending']);
+  for (const buyerOrder of buyerRefundPendingOrders) {
+    const sellerLocalMetabotId = resolveSellerLocalMetabotId(buyerOrder.counterpartyGlobalMetaid);
+    if (typeof sellerLocalMetabotId !== 'number' || !Number.isFinite(sellerLocalMetabotId)) {
+      continue;
+    }
+
+    const buyerGlobalMetaId = normalizeText(resolveBuyerGlobalMetaId(buyerOrder.localMetabotId));
+    if (!buyerGlobalMetaId) {
+      continue;
+    }
+
+    const existingSellerOrder = input.orderStore.findOrderByPayment({
+      role: 'seller',
+      localMetabotId: sellerLocalMetabotId,
+      counterpartyGlobalMetaid: buyerGlobalMetaId,
+      paymentTxid: buyerOrder.paymentTxid,
+    });
+    if (existingSellerOrder) {
+      continue;
+    }
+
+    const failedAt = buyerOrder.failedAt ?? buyerOrder.refundRequestedAt ?? buyerOrder.updatedAt;
+    const created = input.orderStore.createOrder({
+      role: 'seller',
+      localMetabotId: sellerLocalMetabotId,
+      counterpartyGlobalMetaid: buyerGlobalMetaId,
+      servicePinId: buyerOrder.servicePinId,
+      serviceName: buyerOrder.serviceName,
+      paymentTxid: buyerOrder.paymentTxid,
+      paymentChain: buyerOrder.paymentChain,
+      paymentAmount: buyerOrder.paymentAmount,
+      paymentCurrency: buyerOrder.paymentCurrency,
+      orderMessagePinId: buyerOrder.orderMessagePinId,
+      status: 'failed',
+      now: failedAt,
+    });
+    const failedOrder = input.orderStore.markFailed(
+      created.id,
+      buyerOrder.failureReason ?? 'delivery_timeout',
+      failedAt
+    ) ?? created;
+    const refundPendingOrder = input.orderStore.markRefundPending(
+      failedOrder.id,
+      buyerOrder.refundRequestPinId,
+      buyerOrder.refundRequestedAt ?? failedAt
+    );
+    synthesized.push(refundPendingOrder ?? failedOrder);
+  }
+
+  return synthesized;
+}
+
 export async function recoverMissingRefundPendingOrderSessions(
   input: RecoverMissingRefundPendingOrderSessionsInput
 ): Promise<RecoveredRefundPendingOrderSession[]> {
+  synthesizeMissingLocalSellerRefundPendingOrders(input);
   const refundPendingOrders = [
     ...input.orderStore.listOrdersByStatuses('buyer', ['refund_pending']),
     ...input.orderStore.listOrdersByStatuses('seller', ['refund_pending']),

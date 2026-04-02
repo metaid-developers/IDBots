@@ -168,6 +168,68 @@ test('recoverMissingRefundPendingOrderSessions falls back to a structured order 
   }
 });
 
+test('recoverMissingRefundPendingOrderSessions synthesizes a missing local seller refund session from a buyer refund request', async () => {
+  assert.equal(typeof recoverMissingRefundPendingOrderSessions, 'function');
+  const sqlite = await createSqliteStore();
+
+  try {
+    const coworkStore = createCoworkStore(sqlite.db);
+    const orderStore = new ServiceOrderStore(sqlite.db, () => {});
+    const buyerOrder = createRefundPendingOrder(orderStore, {
+      role: 'buyer',
+      localMetabotId: 7,
+      counterpartyGlobalMetaid: 'seller-global-metaid',
+      paymentTxid: 'e'.repeat(64),
+      servicePinId: 'service-weather',
+      serviceName: 'Weather Pro',
+      paymentAmount: '0.00005',
+      paymentCurrency: 'SPACE',
+    });
+
+    const recovered = await recoverMissingRefundPendingOrderSessions({
+      coworkStore,
+      orderStore,
+      resolveLocalMetabotIdByGlobalMetaId: (globalMetaId) => (
+        globalMetaId === 'seller-global-metaid' ? 8 : null
+      ),
+      resolveLocalMetabotGlobalMetaId: (localMetabotId) => (
+        localMetabotId === 7 ? 'buyer-global-metaid' : null
+      ),
+      resolvePeerInfo: (order) => ({
+        peerName: order.role === 'seller' ? 'Buyer Bot' : 'Seller Bot',
+        peerAvatar: null,
+      }),
+      resolveOrderText: () => (
+        `[ORDER] 请根据以下长文本天气需求进行处理\n支付金额 0.00005 SPACE\ntxid: ${'e'.repeat(64)}`
+      ),
+    });
+
+    assert.ok(recovered.length >= 1);
+
+    const sellerOrder = orderStore.findOrderByPayment({
+      role: 'seller',
+      localMetabotId: 8,
+      counterpartyGlobalMetaid: 'buyer-global-metaid',
+      paymentTxid: buyerOrder.paymentTxid,
+    });
+    assert.ok(sellerOrder);
+    assert.equal(sellerOrder?.status, 'refund_pending');
+    assert.equal(sellerOrder?.refundRequestPinId, 'refund-request-pin-id');
+    assert.ok(sellerOrder?.coworkSessionId);
+    assert.ok(recovered.some((entry) => entry.coworkSessionId === sellerOrder?.coworkSessionId));
+
+    const sellerSession = coworkStore.getSession(sellerOrder?.coworkSessionId || '');
+    assert.ok(sellerSession);
+    assert.equal(sellerSession?.sessionType, 'a2a');
+    assert.equal(sellerSession?.peerGlobalMetaId, 'buyer-global-metaid');
+    assert.equal(sellerSession?.messages?.[0]?.metadata?.direction, 'incoming');
+    assert.match(sellerSession?.messages?.[0]?.content || '', /^\[ORDER\]/);
+    assert.match(sellerSession?.messages?.[1]?.content || '', /自动恢复/i);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
 test('recoverMissingRefundPendingOrderSessions recreates an observer session without overwriting a live source session link', async () => {
   assert.equal(typeof recoverMissingRefundPendingOrderSessions, 'function');
   const sqlite = await createSqliteStore();
