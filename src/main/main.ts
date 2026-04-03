@@ -730,6 +730,31 @@ const hasGigSquareLocalServiceRecord = (servicePinId: string): boolean => {
   return Boolean(result[0]?.values?.length);
 };
 
+const resolveGigSquareLocalServiceMetabotId = (servicePinId: string): number | null => {
+  ensureGigSquareSchema();
+  const normalizedServicePinId = toSafeString(servicePinId).trim();
+  if (!normalizedServicePinId) return null;
+  const result = getStore().getDatabase().exec(
+    `SELECT metabot_id
+     FROM gig_square_services
+     WHERE id = ?
+        OR pin_id = ?
+        OR source_service_pin_id = ?
+        OR current_pin_id = ?
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    sanitizeDbParams([
+      normalizedServicePinId,
+      normalizedServicePinId,
+      normalizedServicePinId,
+      normalizedServicePinId,
+    ]),
+  );
+  const raw = result[0]?.values?.[0]?.[0];
+  const metabotId = Math.trunc(toSafeNumber(raw));
+  return Number.isFinite(metabotId) && metabotId > 0 ? metabotId : null;
+};
+
 const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
   ensureGigSquareSchema();
   const db = getStore().getDatabase();
@@ -2902,6 +2927,9 @@ const getServiceRefundSyncService = () => {
           const metabot = getMetabotStore().getMetabotByGlobalMetaId(globalMetaId);
           return metabot?.id ?? null;
         },
+        resolveLocalMetabotIdByServicePinId: (servicePinId) => (
+          resolveGigSquareLocalServiceMetabotId(servicePinId)
+        ),
         buildRefundVerificationInput: (order, payload) => {
           const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
           if (!metabot) {

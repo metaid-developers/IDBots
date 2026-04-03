@@ -39,6 +39,7 @@ interface ServiceRefundSyncServiceOptions {
   fetchRefundFinalizePins?: () => Promise<RefundFinalizePinRecord[]>;
   resolveLocalMetabotGlobalMetaId?: (localMetabotId: number) => string | null | undefined;
   resolveLocalMetabotIdByGlobalMetaId?: (globalMetaId: string) => number | null | undefined;
+  resolveLocalMetabotIdByServicePinId?: (servicePinId: string) => number | null | undefined;
   buildRefundVerificationInput?: (
     order: ServiceOrderRecord,
     payload: Record<string, any>
@@ -59,6 +60,7 @@ export class ServiceRefundSyncService {
   private fetchRefundFinalizePins: () => Promise<RefundFinalizePinRecord[]>;
   private resolveLocalMetabotGlobalMetaId: (localMetabotId: number) => string | null | undefined;
   private resolveLocalMetabotIdByGlobalMetaId: (globalMetaId: string) => number | null | undefined;
+  private resolveLocalMetabotIdByServicePinId: (servicePinId: string) => number | null | undefined;
   private buildRefundVerificationInput: (
     order: ServiceOrderRecord,
     payload: Record<string, any>
@@ -83,6 +85,8 @@ export class ServiceRefundSyncService {
       options.resolveLocalMetabotGlobalMetaId ?? (() => null);
     this.resolveLocalMetabotIdByGlobalMetaId =
       options.resolveLocalMetabotIdByGlobalMetaId ?? (() => null);
+    this.resolveLocalMetabotIdByServicePinId =
+      options.resolveLocalMetabotIdByServicePinId ?? (() => null);
     this.buildRefundVerificationInput =
       options.buildRefundVerificationInput ?? ((order, payload) => this.buildDefaultVerificationInput(order, payload));
     this.verifyTransferToRecipient =
@@ -339,11 +343,15 @@ export class ServiceRefundSyncService {
     const sellerGlobalMetaId = String(payload.sellerGlobalMetaId || '').trim();
     const buyerGlobalMetaId = String(payload.buyerGlobalMetaId || '').trim();
     const paymentTxid = String(payload.paymentTxid || '').trim();
+    const servicePinId = String(payload.servicePinId || '').trim() || null;
     if (!sellerGlobalMetaId || !buyerGlobalMetaId || !paymentTxid) {
       return null;
     }
 
-    const localMetabotId = this.resolveLocalMetabotIdByGlobalMetaId(sellerGlobalMetaId);
+    const localMetabotId = this.resolveLocalMetabotIdForRefundRequest(
+      sellerGlobalMetaId,
+      servicePinId
+    );
     if (typeof localMetabotId !== 'number' || !Number.isFinite(localMetabotId)) {
       return null;
     }
@@ -351,7 +359,6 @@ export class ServiceRefundSyncService {
     const paymentChain = this.resolvePaymentChainFromRefundCurrency(payload.refundCurrency);
     const paymentAmount = String(payload.refundAmount || '').trim() || '0';
     const serviceName = String(payload.serviceName || '').trim() || 'Service Order';
-    const servicePinId = String(payload.servicePinId || '').trim() || null;
     const orderMessagePinId = String(payload.orderMessagePinId || '').trim() || null;
 
     return this.store.createOrder({
@@ -368,6 +375,25 @@ export class ServiceRefundSyncService {
       status: 'failed',
       now: this.resolveFailureDetectedAt(payload) ?? this.resolveRefundRequestedAt({ pinId: '', content: payload }, payload),
     });
+  }
+
+  private resolveLocalMetabotIdForRefundRequest(
+    sellerGlobalMetaId: string,
+    servicePinId: string | null
+  ): number | null {
+    const byGlobalMetaId = this.resolveLocalMetabotIdByGlobalMetaId(sellerGlobalMetaId);
+    if (typeof byGlobalMetaId === 'number' && Number.isFinite(byGlobalMetaId)) {
+      return byGlobalMetaId;
+    }
+
+    if (servicePinId) {
+      const byServicePinId = this.resolveLocalMetabotIdByServicePinId(servicePinId);
+      if (typeof byServicePinId === 'number' && Number.isFinite(byServicePinId)) {
+        return byServicePinId;
+      }
+    }
+
+    return null;
   }
 
   private resolvePaymentChainFromRefundCurrency(refundCurrency: unknown): string {

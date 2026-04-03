@@ -55,6 +55,7 @@ async function createRefundSyncServiceForTest(options = {}) {
     fetchRefundFinalizePins: options.fetchRefundFinalizePins,
     resolveLocalMetabotGlobalMetaId: options.resolveLocalMetabotGlobalMetaId,
     resolveLocalMetabotIdByGlobalMetaId: options.resolveLocalMetabotIdByGlobalMetaId,
+    resolveLocalMetabotIdByServicePinId: options.resolveLocalMetabotIdByServicePinId,
     onOrderEvent: options.onOrderEvent,
   });
   return { db, store, service };
@@ -112,4 +113,50 @@ test('syncRequestPins synthesizes a seller refund_pending order when the refund 
 
   await service.syncRequestPins();
   assert.equal(store.listOrdersByRole('seller').length, 1);
+});
+
+test('syncRequestPins falls back to service pin ownership when seller global meta id cannot be resolved locally', async () => {
+  const seenEvents = [];
+  const { store, service } = await createRefundSyncServiceForTest({
+    fetchRefundRequestPins: async () => [{
+      pinId: 'refund-request-pin-fallback',
+      timestampMs: 1_770_000_710_000,
+      content: JSON.stringify({
+        paymentTxid: 'e'.repeat(64),
+        servicePinId: 'service-owned-locally',
+        serviceName: 'Daily Headlines',
+        refundAmount: '0.00001',
+        refundCurrency: 'SPACE',
+        refundToAddress: 'buyer-refund-address',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid-missing',
+        orderMessagePinId: 'order-pin-id',
+        failureReason: 'delivery_timeout',
+        failureDetectedAt: 1_770_000_701,
+      }),
+    }],
+    resolveLocalMetabotIdByGlobalMetaId: () => null,
+    resolveLocalMetabotIdByServicePinId: (servicePinId) => (
+      servicePinId === 'service-owned-locally' ? 15 : null
+    ),
+    resolveLocalMetabotGlobalMetaId: (localMetabotId) => (
+      localMetabotId === 15 ? 'seller-global-metaid-actual' : null
+    ),
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}`);
+    },
+  });
+
+  await service.syncRequestPins();
+
+  const sellerOrders = store.listOrdersByRole('seller');
+  assert.equal(sellerOrders.length, 1);
+  const order = sellerOrders[0];
+  assert.equal(order.localMetabotId, 15);
+  assert.equal(order.counterpartyGlobalMetaid, 'buyer-global-metaid');
+  assert.equal(order.servicePinId, 'service-owned-locally');
+  assert.equal(order.status, 'refund_pending');
+  assert.equal(order.refundRequestPinId, 'refund-request-pin-fallback');
+  assert.equal(order.failureReason, 'delivery_timeout');
+  assert.deepEqual(seenEvents, ['refund_requested:seller']);
 });
