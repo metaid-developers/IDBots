@@ -94,6 +94,7 @@ node --test tests/*.test.mjs
   - startup failure should render offline with error detail
 - Keep packaged runtime paths isolated from dev/runtime temp paths.
 - Do not remove checked-in `resources/man-p2p/*` assets unless the packaging strategy is intentionally changed.
+- Windows NSIS uninstall policy is to preserve user data (`electron-builder.json` -> `nsis.deleteAppDataOnUninstall=false`); do not flip this unless a release explicitly requires destructive uninstall behavior.
 - The team preference is `main` as the only long-lived shared branch. Temporary branches should be short-lived and deleted after merge.
 
 ## Database Upgrade Safety
