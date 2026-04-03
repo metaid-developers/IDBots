@@ -8,6 +8,7 @@ const initSqlJs = require('sql.js');
 const { ServiceOrderStore } = require('../dist-electron/serviceOrderStore.js');
 const {
   DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS,
+  SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON,
   SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
   ServiceOrderLifecycleService,
 } = require('../dist-electron/services/serviceOrderLifecycleService.js');
@@ -345,6 +346,54 @@ test('scanTimedOutOrders records retry metadata when refund request broadcast fa
   assert.equal(updated?.refundApplyRetryCount, 1);
   assert.equal(updated?.nextRetryAt, currentNow + DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS);
   assert.equal(updated?.refundRequestPinId, null);
+});
+
+test('scanTimedOutOrders auto-resolves free timed-out orders without creating refund requests', async () => {
+  let currentNow = 1_770_000_000_000;
+  let refundRequestCalls = 0;
+  const seenEvents = [];
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async () => {
+      refundRequestCalls += 1;
+      return { pinId: 'refund-request-pin-id' };
+    },
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}`);
+    },
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    paymentTxid: '0'.repeat(64),
+    paymentAmount: '0',
+    coworkSessionId: 'buyer-session-id',
+  }));
+  const sellerOrder = service.createSellerOrder(baseOrderInput({
+    paymentTxid: '0'.repeat(64),
+    paymentAmount: '0',
+    coworkSessionId: 'seller-session-id',
+  }));
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  assert.equal(refundRequestCalls, 0);
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'refunded');
+  assert.equal(store.getOrderById(sellerOrder.id)?.status, 'refunded');
+  assert.equal(store.getOrderById(buyerOrder.id)?.refundRequestPinId, null);
+  assert.equal(store.getOrderById(sellerOrder.id)?.refundRequestPinId, null);
+  assert.equal(
+    store.getOrderById(buyerOrder.id)?.failureReason,
+    'first_response_timeout'
+  );
+  assert.equal(
+    store.getOrderById(sellerOrder.id)?.failureReason,
+    SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON
+  );
+  assert.deepEqual(
+    seenEvents.map((event) => event).sort(),
+    ['refunded:buyer', 'refunded:seller']
+  );
 });
 
 test('scanTimedOutOrders retries failed refund requests once nextRetryAt is due', async () => {

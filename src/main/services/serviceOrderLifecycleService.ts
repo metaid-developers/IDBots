@@ -8,6 +8,7 @@ import { buildRefundRequestPayload } from './serviceOrderProtocols.js';
 export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
 export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = 'self_order_not_allowed';
 export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = 60_000;
+export const SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON = 'free_order_no_refund_required';
 
 export interface CreateBuyerOrderInput {
   localMetabotId: number;
@@ -73,7 +74,7 @@ interface ServiceOrderLifecycleServiceOptions {
   }) => Promise<{ pinId?: string | null; txid?: string | null }>;
   refundRequestRetryDelayMs?: number;
   onOrderEvent?: (event: {
-    type: 'refund_requested';
+    type: 'refund_requested' | 'refunded';
     order: ServiceOrderRecord;
   }) => void | Promise<void>;
 }
@@ -112,7 +113,7 @@ export class ServiceOrderLifecycleService {
   }) => Promise<{ pinId?: string | null; txid?: string | null }>;
   private refundRequestRetryDelayMs: number;
   private onOrderEvent?: (event: {
-    type: 'refund_requested';
+    type: 'refund_requested' | 'refunded';
     order: ServiceOrderRecord;
   }) => void | Promise<void>;
 
@@ -379,6 +380,18 @@ export class ServiceOrderLifecycleService {
     if (order.status === 'refund_pending' || order.status === 'refunded' || order.refundRequestPinId) {
       return order;
     }
+    if (this.isZeroAmount(order.paymentAmount)) {
+      const updatedOrders = this.store
+        .listOrdersByPaymentTxid(order.paymentTxid)
+        .map((candidate) => this.store.markRefundedLocally(candidate.id, {
+          resolvedAt: attemptedAt,
+          failureReason: SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON,
+        }))
+        .filter(Boolean) as ServiceOrderRecord[];
+      await this.emitRefundResolvedEvents(updatedOrders);
+      return updatedOrders.find((candidate) => candidate.id === order.id)
+        ?? this.store.getOrderById(order.id);
+    }
 
     try {
       if (!this.createRefundRequestPin) {
@@ -500,5 +513,20 @@ export class ServiceOrderLifecycleService {
         order,
       });
     }
+  }
+
+  private async emitRefundResolvedEvents(orders: ServiceOrderRecord[]): Promise<void> {
+    if (!this.onOrderEvent) return;
+    for (const order of orders) {
+      await this.onOrderEvent({
+        type: 'refunded',
+        order,
+      });
+    }
+  }
+
+  private isZeroAmount(value: string): boolean {
+    const numeric = Number(String(value || '').trim());
+    return Number.isFinite(numeric) && numeric === 0;
   }
 }

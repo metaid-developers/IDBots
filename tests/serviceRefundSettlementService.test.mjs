@@ -201,6 +201,107 @@ test('processSellerRefundForSession reuses a previously recorded refund txid ins
   assert.equal(store.getOrderById('seller-order')?.status, 'refunded');
 });
 
+test('processSellerRefundForSession resolves free refunds locally without transfer or finalize proof', async () => {
+  const seenEvents = [];
+  let transferCalls = 0;
+  let finalizeCalls = 0;
+  const { db, store, service } = await createRefundSettlementServiceForTest({
+    fetchRefundRequestPin: async () => ({
+      pinId: 'refund-request-pin-id',
+      content: JSON.stringify({
+        paymentTxid: '0'.repeat(64),
+        servicePinId: 'service-pin-id',
+        serviceName: 'Weather Pro',
+        refundAmount: '0',
+        refundCurrency: 'SPACE',
+        refundToAddress: '',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }),
+    executeRefundTransfer: async () => {
+      transferCalls += 1;
+      return { success: true, txId: 'b'.repeat(64) };
+    },
+    createRefundFinalizePin: async () => {
+      finalizeCalls += 1;
+      return { pinId: 'refund-finalize-pin-id' };
+    },
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 8 ? 'seller-global-metaid' : null
+    ),
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}`);
+    },
+  });
+  insertRefundPendingOrder(db, {
+    id: 'free-buyer-order',
+    role: 'buyer',
+    localMetabotId: 7,
+    counterpartyGlobalMetaId: 'seller-global-metaid',
+    coworkSessionId: 'buyer-session-id',
+    paymentTxid: '0'.repeat(64),
+    paymentAmount: '0',
+    refundRequestPinId: 'refund-request-pin-id',
+  });
+  insertRefundPendingOrder(db, {
+    id: 'free-seller-order',
+    role: 'seller',
+    localMetabotId: 8,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: '0'.repeat(64),
+    paymentAmount: '0',
+    refundRequestPinId: 'refund-request-pin-id',
+  });
+
+  const result = await service.processSellerRefundForSession('seller-session-id');
+
+  assert.equal(result.refundTxid, undefined);
+  assert.equal(result.refundFinalizePinId, undefined);
+  assert.equal(transferCalls, 0);
+  assert.equal(finalizeCalls, 0);
+  assert.equal(store.getOrderById('free-buyer-order')?.status, 'refunded');
+  assert.equal(store.getOrderById('free-seller-order')?.status, 'refunded');
+  assert.deepEqual(seenEvents.sort(), ['refunded:buyer', 'refunded:seller']);
+});
+
+test('processSellerRefundForSession surfaces transfer errors from executeRefundTransfer', async () => {
+  const { db, service } = await createRefundSettlementServiceForTest({
+    fetchRefundRequestPin: async () => ({
+      pinId: 'refund-request-pin-id',
+      content: JSON.stringify({
+        paymentTxid: '9'.repeat(64),
+        servicePinId: 'service-pin-id',
+        serviceName: 'Weather Pro',
+        refundAmount: '12.34',
+        refundCurrency: 'SPACE',
+        refundToAddress: '1refund-address',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }),
+    executeRefundTransfer: async () => ({ success: false, error: 'insufficient funds' }),
+    createRefundFinalizePin: async () => ({ pinId: 'refund-finalize-pin-id' }),
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 8 ? 'seller-global-metaid' : null
+    ),
+  });
+  insertRefundPendingOrder(db, {
+    id: 'failed-seller-order',
+    role: 'seller',
+    localMetabotId: 8,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: '9'.repeat(64),
+  });
+
+  await assert.rejects(
+    () => service.processSellerRefundForSession('seller-session-id'),
+    /insufficient funds/
+  );
+});
+
 test('processSellerRefundForSession preserves BTC refund chain and currency semantics', async () => {
   const transferInputs = [];
   const { db, service } = await createRefundSettlementServiceForTest({

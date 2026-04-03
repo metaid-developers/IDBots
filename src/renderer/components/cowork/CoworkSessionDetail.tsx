@@ -17,6 +17,7 @@ import {
   PuzzlePieceIcon,
   EllipsisHorizontalIcon,
   PencilSquareIcon,
+  DocumentDuplicateIcon,
   ShareIcon,
   TrashIcon,
   ExclamationTriangleIcon,
@@ -187,6 +188,12 @@ const RefundStatusCard: React.FC<{
   isProcessingRefund = false,
   refundActionError = null,
 }) => {
+  const handleCopyValue = useCallback((value: string) => {
+    if (!value || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      return;
+    }
+    void navigator.clipboard.writeText(value).catch(() => {});
+  }, []);
   const variant = getRefundCardVariant(summary);
   if (!variant) return null;
 
@@ -236,13 +243,31 @@ const RefundStatusCard: React.FC<{
                 </span>
               )}
               {summary.refundRequestPinId && (
-                <span>
+                <span className="inline-flex items-center gap-1">
                   {i18nService.t('coworkRefundCardRequestPin')}: {formatShortHash(summary.refundRequestPinId)}
+                  <button
+                    type="button"
+                    onClick={() => handleCopyValue(summary.refundRequestPinId!)}
+                    className="inline-flex h-4 w-4 items-center justify-center rounded text-current hover:bg-black/10 dark:hover:bg-white/10"
+                    title={i18nService.t('copyToClipboard')}
+                    aria-label={i18nService.t('copyToClipboard')}
+                  >
+                    <DocumentDuplicateIcon className="h-3 w-3" />
+                  </button>
                 </span>
               )}
               {summary.refundTxid && (
-                <span>
+                <span className="inline-flex items-center gap-1">
                   {i18nService.t('coworkRefundCardRefundTx')}: {formatShortHash(summary.refundTxid)}
+                  <button
+                    type="button"
+                    onClick={() => handleCopyValue(summary.refundTxid!)}
+                    className="inline-flex h-4 w-4 items-center justify-center rounded text-current hover:bg-black/10 dark:hover:bg-white/10"
+                    title={i18nService.t('copyToClipboard')}
+                    aria-label={i18nService.t('copyToClipboard')}
+                  >
+                    <DocumentDuplicateIcon className="h-3 w-3" />
+                  </button>
                 </span>
               )}
             </div>

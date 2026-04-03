@@ -27,7 +27,11 @@ interface ServiceRefundSettlementServiceOptions {
   fetchRefundRequestPin: (pinId: string) => Promise<RefundRequestPinDetail>;
   executeRefundTransfer: (
     input: ProcessSellerRefundTransferInput
-  ) => Promise<{ txId?: string | null }>;
+  ) => Promise<{
+    success?: boolean;
+    txId?: string | null;
+    error?: string | null;
+  }>;
   createRefundFinalizePin: (input: {
     order: ServiceOrderRecord;
     payload: Record<string, unknown>;
@@ -52,7 +56,11 @@ export class ServiceRefundSettlementService {
   private fetchRefundRequestPin: (pinId: string) => Promise<RefundRequestPinDetail>;
   private executeRefundTransfer: (
     input: ProcessSellerRefundTransferInput
-  ) => Promise<{ txId?: string | null }>;
+  ) => Promise<{
+    success?: boolean;
+    txId?: string | null;
+    error?: string | null;
+  }>;
   private createRefundFinalizePin: (input: {
     order: ServiceOrderRecord;
     payload: Record<string, unknown>;
@@ -112,6 +120,9 @@ export class ServiceRefundSettlementService {
     const refundRequestPayload = await this.loadAndValidateRefundRequestPayload(order);
     const refundAmount = this.resolveRefundAmount(order, refundRequestPayload);
     const refundCurrency = this.resolveRefundCurrency(order, refundRequestPayload);
+    if (this.isZeroAmount(refundAmount)) {
+      return this.resolveNoTransferRefund(order, 'free_order_no_refund_required');
+    }
     const refundToAddress = String(refundRequestPayload.refundToAddress || '').trim();
     if (!refundToAddress) {
       throw new Error('Refund request is missing the refund destination address');
@@ -175,6 +186,41 @@ export class ServiceRefundSettlementService {
       order: sellerOrder,
       refundTxid,
       refundFinalizePinId,
+    };
+  }
+
+  private async resolveNoTransferRefund(
+    order: ServiceOrderRecord,
+    failureReason: string
+  ): Promise<ProcessSellerRefundResult> {
+    const resolvedAt = this.now();
+    const updatedOrders = this.store
+      .listOrdersByPaymentTxid(order.paymentTxid)
+      .map((candidate) => this.store.markRefundedLocally(candidate.id, {
+        resolvedAt,
+        failureReason,
+      }))
+      .filter(Boolean) as ServiceOrderRecord[];
+
+    if (this.onOrderEvent) {
+      for (const updatedOrder of updatedOrders) {
+        await this.onOrderEvent({
+          type: 'refunded',
+          order: updatedOrder,
+        });
+      }
+    }
+
+    const sellerOrder = updatedOrders.find((candidate) => candidate.id === order.id)
+      ?? this.store.getOrderById(order.id);
+    if (!sellerOrder) {
+      throw new Error('Failed to reload refunded seller order');
+    }
+
+    return {
+      order: sellerOrder,
+      refundTxid: sellerOrder.refundTxid ?? undefined,
+      refundFinalizePinId: sellerOrder.refundFinalizePinId ?? undefined,
     };
   }
 
@@ -281,6 +327,9 @@ export class ServiceRefundSettlementService {
     }
 
     const result = await this.executeRefundTransfer(input);
+    if (result && typeof result.success === 'boolean' && !result.success) {
+      throw new Error(String(result.error || 'Refund transfer failed'));
+    }
     const refundTxid = String(result.txId || '').trim();
     if (!refundTxid) {
       throw new Error('Refund transfer did not return a transaction id');
@@ -302,5 +351,10 @@ export class ServiceRefundSettlementService {
       return false;
     }
     return localGlobalMetaId.trim() === String(order.counterpartyGlobalMetaid || '').trim();
+  }
+
+  private isZeroAmount(value: string): boolean {
+    const numeric = Number(String(value || '').trim());
+    return Number.isFinite(numeric) && numeric === 0;
   }
 }
