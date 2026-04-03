@@ -1,4 +1,4 @@
-const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
+const TXID_RE = /(?:txid|order(?:\s+id|\s+ref(?:erence)?))\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 
 function extractOrderTxid(plaintext) {
   const match = String(plaintext || '').match(TXID_RE);

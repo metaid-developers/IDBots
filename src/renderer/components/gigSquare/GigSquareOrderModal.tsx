@@ -400,6 +400,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         const buyerMetabot = selectedMetabotId
           ? (await window.electron.metabot.get(selectedMetabotId))?.metabot
           : null;
+        const orderMessageTxid = isFreeService ? '' : txId;
         naturalOrderText = await generateBuyerOrderNaturalText({
           buyerPersona: buyerMetabot ? {
             name: buyerMetabot.name,
@@ -409,7 +410,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
           } : null,
           price: service.price,
           currency: service.currency,
-          txid: txId,
+          txid: orderMessageTxid,
+          orderReference: isFreeService ? txId : '',
           serviceId: service.id,
           skillName: service.providerSkill || service.serviceName,
           requestText: trimmedPrompt,
@@ -425,13 +427,15 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         naturalOrderText = buildBuyerOrderNaturalFallback(trimmedPrompt);
       }
 
-      // Always append structured fields so B-side regex can reliably parse txid and amount.
+      // Always append structured fields so B-side regex can reliably parse payment metadata.
+      const orderMessageTxid = isFreeService ? '' : txId;
       const orderPayload = buildGigSquareOrderPayload({
         naturalOrderText,
         rawRequest: trimmedPrompt,
         price: service.price,
         currency: service.currency,
-        txid: txId,
+        txid: orderMessageTxid,
+        orderReference: isFreeService ? txId : '',
         serviceId: service.id,
         skillName: service.providerSkill || service.serviceName,
         serviceName: service.serviceName,

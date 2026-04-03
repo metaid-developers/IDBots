@@ -84,13 +84,25 @@ export function buildOrderPayload(input) {
     || normalizeSingleLineText(input?.serviceName)
     || normalizeSingleLineText(input?.skillName)
     || 'Service Order';
+  const paymentTxid = normalizeSingleLineText(input?.paymentTxid);
+  const orderReference = normalizeSingleLineText(input?.orderReference);
+
+  const metadataLines = [
+    `支付金额 ${String(input?.price || '').trim()} ${String(input?.currency || '').trim()}`,
+  ];
+  if (paymentTxid) {
+    metadataLines.push(`txid: ${paymentTxid}`);
+  } else if (orderReference) {
+    metadataLines.push(`order id: ${orderReference}`);
+  }
+  metadataLines.push(
+    `service id: ${String(input?.serviceId || '').trim()}`,
+    `skill name: ${String(input?.skillName || '').trim()}`,
+  );
 
   return [
     `${ORDER_PREFIX} ${displaySummary}`,
     buildOrderRawRequestBlock(effectiveRawRequest),
-    `支付金额 ${String(input?.price || '').trim()} ${String(input?.currency || '').trim()}`,
-    `txid: ${String(input?.paymentTxid || '').trim()}`,
-    `service id: ${String(input?.serviceId || '').trim()}`,
-    `skill name: ${String(input?.skillName || '').trim()}`,
+    ...metadataLines,
   ].join('\n');
 }

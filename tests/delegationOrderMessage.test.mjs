@@ -32,6 +32,27 @@ test('buildDelegationOrderPayload emits an [ORDER] message that preserves provid
   assert.doesNotMatch(payload, /skill name: 获取天气服务/);
 });
 
+test('buildDelegationOrderPayload omits txid for free orders and keeps an order id reference', () => {
+  const orderId = 'f'.repeat(64);
+  const payload = buildDelegationOrderPayload({
+    rawRequest: '帮我查询北京天气',
+    taskContext: '查询北京天气',
+    userTask: '查询北京天气',
+    serviceName: '获取天气服务',
+    providerSkill: 'weather',
+    servicePinId: 'service-pin-weather',
+    paymentTxid: '',
+    orderReference: orderId,
+    price: '0',
+    currency: 'SPACE',
+  });
+
+  assert.match(payload, /^\[ORDER\]\s+/);
+  assert.match(payload, /支付金额 0 SPACE/);
+  assert.match(payload, new RegExp(`order id: ${orderId}`));
+  assert.doesNotMatch(payload, /txid:/i);
+});
+
 test('buildDelegationOrderPayload falls back to the service name when providerSkill is unavailable', () => {
   const payload = buildDelegationOrderPayload({
     taskContext: '',

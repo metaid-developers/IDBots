@@ -22,9 +22,10 @@ export interface OrderPaymentCheckResult {
 }
 
 const TXID_RE = /txid\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
+const ORDER_REFERENCE_RE = /order(?:\s+id|\s+ref(?:erence)?)\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*(SPACE|BTC|DOGE)/i;
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
-const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
 const RAW_REQUEST_TAG_LINE_RE = /^\s*<\/?raw_request>\s*$/i;
 const SKILL_ID_PATTERNS = [
   /(?:skill(?:\s+service)?\s+id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID))\s*[:：=]?\s*([^\s,，。]+)/i,
@@ -59,6 +60,12 @@ export function extractOrderSkillName(plaintext: string): string | null {
 
 export function extractOrderTxid(plaintext: string): string | null {
   const match = plaintext.match(TXID_RE);
+  if (!match) return null;
+  return match[1] || null;
+}
+
+export function extractOrderReferenceId(plaintext: string): string | null {
+  const match = plaintext.match(ORDER_REFERENCE_RE);
   if (!match) return null;
   return match[1] || null;
 }

@@ -14,6 +14,7 @@ export function buildGigSquareOrderPayload(input) {
     price: input.price,
     currency: input.currency,
     paymentTxid: input.txid,
+    orderReference: input.orderReference,
     serviceId: input.serviceId,
     skillName: input.skillName,
     serviceName: input.serviceName,

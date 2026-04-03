@@ -20,6 +20,7 @@ import {
   checkOrderPaymentStatus,
   extractOrderRequestText,
   extractOrderTxid,
+  extractOrderReferenceId,
   extractOrderSkillId,
   extractOrderSkillName,
   OrderSource,
@@ -80,6 +81,16 @@ type GetSellerOrderSkillsPromptFn = (params: {
 /** In-flight task keys to avoid duplicate processing */
 const thinkingTasks = new Set<string>();
 let orderCowork: PrivateChatOrderCowork | null = null;
+const sentOrderDeliveryKeys = new Set<string>();
+const sentOrderRatingInviteKeys = new Set<string>();
+
+function buildOrderDispatchKey(
+  localMetabotId: number,
+  peerGlobalMetaId: string,
+  orderTrackingId: string
+): string {
+  return `${localMetabotId}:${peerGlobalMetaId}:${orderTrackingId}`;
+}
 
 function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
   const result = db.exec(
@@ -180,11 +191,11 @@ function parseConversationMappingMetadata(json: string | null | undefined): Reco
 function buildOrderExternalConversationId(
   row: PrivateChatMessageRow,
   source: OrderSource,
-  txid: string | null
+  orderTrackingId: string | null
 ): string {
   const peerId = normalizePrivateConversationPeerId(row);
   const pinId = (row.pin_id || '').trim();
-  const txidPart = txid ? txid.slice(0, 12) : 'no-txid';
+  const txidPart = orderTrackingId ? orderTrackingId.slice(0, 12) : 'no-txid';
   const suffix = pinId || String(Date.now());
   return `${source}:order:${peerId}:${txidPart}:${suffix}`;
 }
@@ -784,6 +795,7 @@ async function processOne(
     if (isOrderMessage(plaintext)) {
       const source: OrderSource = 'metaweb_private';
       const txid = extractOrderTxid(plaintext);
+      const orderReferenceId = extractOrderReferenceId(plaintext);
       const localGlobalMetaId = (metabot.globalmetaid || '').trim();
       if (
         source === 'metaweb_private'
@@ -803,26 +815,31 @@ async function processOne(
         metabotId: metabot.id,
         metabotStore,
       });
+      const isFreeOrder = payment.reason === 'free_order_no_payment_required';
+      const orderTrackingId = txid || (isFreeOrder ? orderReferenceId : null);
+      const orderPeerGlobalMetaId = fromGlobalMetaId || normalizePrivateConversationPeerId(row);
       if (!payment.paid) {
-        emitLog(`[Order] Payment not confirmed for txid=${txid || 'n/a'} (reason=${payment.reason})`);
+        emitLog(`[Order] Payment not confirmed for txid=${txid || orderReferenceId || 'n/a'} (reason=${payment.reason})`);
         markProcessed(db, row.id, saveDb);
         return;
       }
-      emitLog(`[Order] Payment verified: txid=${txid} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`);
+      emitLog(
+        `[Order] Payment verified: ref=${orderTrackingId || 'n/a'} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`
+      );
       const serviceId = extractOrderSkillId(plaintext);
       const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
       const paymentAmount = formatPaymentAmountFromSats(payment.amountSats);
       const paymentCurrency = getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
       let sellerOrderConversationId: string | null = null;
-      if (serviceOrderLifecycle && txid) {
+      if (serviceOrderLifecycle && orderTrackingId) {
         try {
           serviceOrderLifecycle.createSellerOrder({
             localMetabotId: metabot.id,
-            counterpartyGlobalMetaId: fromGlobalMetaId,
+            counterpartyGlobalMetaId: orderPeerGlobalMetaId,
             servicePinId: serviceId,
             serviceName,
-            paymentTxid: txid,
+            paymentTxid: orderTrackingId,
             paymentChain: payment.chain || 'mvc',
             paymentAmount,
             paymentCurrency,
@@ -833,12 +850,12 @@ async function processOne(
         }
       }
 
-      if (txid) {
+      if (orderTrackingId) {
         try {
           const ensuredObserverSession = await ensureServiceOrderObserverSession(coworkStore, {
             role: 'seller',
             metabotId: metabot.id,
-            peerGlobalMetaId: fromGlobalMetaId || normalizePrivateConversationPeerId(row),
+            peerGlobalMetaId: orderPeerGlobalMetaId,
             peerName: (row.from_name as string | null) ?? null,
             peerAvatar: (row.from_avatar as string | null) ?? null,
             serviceId,
@@ -846,7 +863,7 @@ async function processOne(
             serviceCurrency: paymentCurrency,
             serviceSkill: serviceName,
             serverBotGlobalMetaId: localGlobalMetaId || null,
-            servicePaidTx: txid,
+            servicePaidTx: orderTrackingId,
             orderPayload: plaintext,
           });
           sellerOrderSessionId = ensuredObserverSession.coworkSessionId;
@@ -855,8 +872,8 @@ async function processOne(
             try {
               serviceOrderLifecycle.attachCoworkSessionToSellerOrder({
                 localMetabotId: metabot.id,
-                counterpartyGlobalMetaId: fromGlobalMetaId,
-                paymentTxid: txid,
+                counterpartyGlobalMetaId: orderPeerGlobalMetaId,
+                paymentTxid: orderTrackingId,
                 coworkSessionId: ensuredObserverSession.coworkSessionId,
               });
             } catch (error) {
@@ -901,7 +918,7 @@ async function processOne(
             peerName: (row.from_name as string | null) ?? null,
             plaintext,
             skillName: serviceName,
-            paymentTxid: txid,
+            paymentTxid: orderTrackingId,
             performChat,
             sendEncryptedMsg,
             serviceOrderLifecycle,
@@ -927,7 +944,10 @@ async function processOne(
         skillId: serviceId,
         skillName: serviceName,
       });
-      const externalConversationId = sellerOrderConversationId || buildOrderExternalConversationId(row, source, txid);
+      const externalConversationId = sellerOrderConversationId || buildOrderExternalConversationId(row, source, orderTrackingId);
+      const orderDispatchKey = orderTrackingId
+        ? buildOrderDispatchKey(metabot.id, orderPeerGlobalMetaId, orderTrackingId)
+        : null;
 
       let orderResult: { serviceReply: string; ratingInvite: string };
       try {
@@ -956,49 +976,63 @@ async function processOne(
       const trimmedReply = (orderResult.serviceReply || '').trim();
       const trimmedInvite = (orderResult.ratingInvite || '').trim();
       if (trimmedReply && source === 'metaweb_private') {
-        try {
-          const deliverySentAtSec = Math.floor(Date.now() / 1000);
-          const deliveryText = buildDeliveryMessage({
-            paymentTxid: txid,
-            servicePinId: serviceId,
-            serviceName,
-            result: trimmedReply,
-            deliveredAt: deliverySentAtSec,
-          });
-          const deliveryResult = await sendEncryptedMsg(deliveryText);
-          if (serviceOrderLifecycle && txid) {
-            serviceOrderLifecycle.markSellerOrderDelivered({
-              localMetabotId: metabot.id,
-              counterpartyGlobalMetaId: fromGlobalMetaId,
-              paymentTxid: txid,
-              deliveryMessagePinId: deliveryResult.pinId ?? null,
-              deliveredAt: deliverySentAtSec * 1000,
+        if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
+          emitLog(`[Order] Delivery already sent for order ${orderTrackingId}, skipping duplicate send.`);
+        } else {
+          try {
+            const deliverySentAtSec = Math.floor(Date.now() / 1000);
+            const deliveryText = buildDeliveryMessage({
+              paymentTxid: orderTrackingId,
+              servicePinId: serviceId,
+              serviceName,
+              result: trimmedReply,
+              deliveredAt: deliverySentAtSec,
             });
+            const deliveryResult = await sendEncryptedMsg(deliveryText);
+            if (serviceOrderLifecycle && orderTrackingId) {
+              serviceOrderLifecycle.markSellerOrderDelivered({
+                localMetabotId: metabot.id,
+                counterpartyGlobalMetaId: orderPeerGlobalMetaId,
+                paymentTxid: orderTrackingId,
+                deliveryMessagePinId: deliveryResult.pinId ?? null,
+                deliveredAt: deliverySentAtSec * 1000,
+              });
+            }
+            if (orderDispatchKey) {
+              sentOrderDeliveryKeys.add(orderDispatchKey);
+            }
+            emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+          } catch (error) {
+            emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
           }
-          emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
-        } catch (error) {
-          emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       if (trimmedInvite && source === 'metaweb_private') {
-        try {
-          await sendEncryptedMsg(trimmedInvite);
-          emitLog(`[Order] Rating invite sent to ${fromGlobalMetaId.slice(0, 12)}…`);
-          // Add [NeedsRating] to B's own session so it appears in B's UI
-          if (sellerOrderSessionId && emitToRenderer) {
-            const inviteMsg = coworkStore.addMessage(sellerOrderSessionId, {
-              type: 'assistant',
-              content: trimmedInvite,
-              metadata: {
-                sourceChannel: 'metaweb_order',
-                externalConversationId,
-                direction: 'outgoing',
-              },
-            });
-            emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: inviteMsg });
+        if (orderDispatchKey && sentOrderRatingInviteKeys.has(orderDispatchKey)) {
+          emitLog(`[Order] Rating invite already sent for order ${orderTrackingId}, skipping duplicate send.`);
+        } else {
+          try {
+            await sendEncryptedMsg(trimmedInvite);
+            if (orderDispatchKey) {
+              sentOrderRatingInviteKeys.add(orderDispatchKey);
+            }
+            emitLog(`[Order] Rating invite sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+            // Add [NeedsRating] to B's own session so it appears in B's UI
+            if (sellerOrderSessionId && emitToRenderer) {
+              const inviteMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: trimmedInvite,
+                metadata: {
+                  sourceChannel: 'metaweb_order',
+                  externalConversationId,
+                  direction: 'outgoing',
+                },
+              });
+              emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: inviteMsg });
+            }
+          } catch (error) {
+            emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
           }
-        } catch (error) {
-          emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       if (source !== 'metaweb_private') {
@@ -1017,6 +1051,12 @@ async function processOne(
       if (buyerOrderMapping) {
         emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
         const buyerOrderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
+        const isNeedsRating = isNeedsRatingMessage(plaintext);
+        if (isNeedsRating && buyerOrderMeta.needsRatingHandled === true) {
+          emitLog(`[Rating] Duplicate [NeedsRating] detected for session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…, skipping.`);
+          markProcessed(db, row.id, saveDb);
+          return;
+        }
         const paymentTxid =
           typeof buyerOrderMeta.servicePaidTx === 'string'
             ? buyerOrderMeta.servicePaidTx.trim()
@@ -1086,7 +1126,17 @@ async function processOne(
         }
 
         // If this is a [NeedsRating] message, trigger automatic rating flow
-        if (isNeedsRatingMessage(plaintext)) {
+        if (isNeedsRating) {
+          coworkStore.updateConversationMappingMetadata(
+            'metaweb_order',
+            buyerOrderMapping.externalConversationId,
+            metabot.id,
+            {
+              ...buyerOrderMeta,
+              needsRatingHandled: true,
+              needsRatingHandledAt: Date.now(),
+            },
+          );
           emitLog(`[Rating] Received [NeedsRating] from ${fromGlobalMetaId.slice(0, 12)}…, starting auto-rating flow`);
           handleRatingFlow({
             metabot,

@@ -2236,7 +2236,8 @@ const executeDelegationPipeline = async (
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
     providerSkill: toSafeString(service.providerSkill).trim(),
     servicePinId: delegation.servicePinId,
-    paymentTxid,
+    paymentTxid: isFreeDelegation ? '' : paymentTxid,
+    orderReference: isFreeDelegation ? paymentTxid : '',
     price,
     currency: normalizedCurrency,
   });
@@ -5530,7 +5531,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
       const toGlobalMetaId = typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '';
       const toChatPubkey = typeof params?.toChatPubkey === 'string' ? params.toChatPubkey.trim() : '';
-      const orderPayload = typeof params?.orderPayload === 'string' ? params.orderPayload.trim() : '';
+      let orderPayload = typeof params?.orderPayload === 'string' ? params.orderPayload.trim() : '';
       const peerName = typeof params?.peerName === 'string' ? params.peerName.trim() || null : null;
       const peerAvatar = typeof params?.peerAvatar === 'string' ? params.peerAvatar.trim() || null : null;
       const serviceId = typeof params?.serviceId === 'string' ? params.serviceId.trim() || null : null;
@@ -5542,6 +5543,13 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       isFreeServiceOrder = isFreeServicePrice(servicePrice);
       if (isFreeServiceOrder && !servicePaidTx) {
         servicePaidTx = generateSyntheticOrderTxid();
+      }
+      if (isFreeServiceOrder && servicePaidTx) {
+        const hasTxidLine = /(?:^|\n)\s*txid\s*[:：=]/i.test(orderPayload);
+        const hasOrderReferenceLine = /(?:^|\n)\s*order(?:\s+id|\s+ref(?:erence)?)\s*[:：=]/i.test(orderPayload);
+        if (!hasTxidLine && !hasOrderReferenceLine) {
+          orderPayload = `${orderPayload}\norder id: ${servicePaidTx}`;
+        }
       }
       attemptedPaymentTxid = servicePaidTx;
 

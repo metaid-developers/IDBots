@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   checkOrderPaymentStatus,
+  extractOrderReferenceId,
   extractOrderRequestText,
   extractOrderSkillId,
   extractOrderSkillName,
@@ -31,6 +32,18 @@ test('extractOrderSkillId tolerates service pin id labels and Chinese punctuatio
 
   assert.equal(extractOrderSkillId(text), 'svc-post-buzz');
   assert.equal(extractOrderSkillName(text), 'metabot-post-buzz');
+});
+
+test('extractOrderReferenceId parses free-order structured order id metadata', () => {
+  const text = [
+    '[ORDER] 帮我整理一段文本。',
+    '支付金额 0 SPACE',
+    `order id: ${'c'.repeat(64)}`,
+    'service id: svc-free-note',
+    'skill name: summarizer',
+  ].join('\n');
+
+  assert.equal(extractOrderReferenceId(text), 'c'.repeat(64));
 });
 
 test('extractOrderRequestText prefers the explicit raw_request block over the display summary line', () => {
@@ -70,6 +83,26 @@ test('checkOrderPaymentStatus allows free order messages without on-chain txid',
   assert.equal(result.reason, 'free_order_no_payment_required');
   assert.equal(result.amountSats, 0);
   assert.equal(result.chain, 'mvc');
+});
+
+test('checkOrderPaymentStatus allows free order messages with an order id but without txid', async () => {
+  const text = [
+    '[ORDER] 帮我整理一段文本。',
+    '支付金额 0 SPACE',
+    `order id: ${'d'.repeat(64)}`,
+  ].join('\n');
+
+  const result = await checkOrderPaymentStatus({
+    txid: null,
+    plaintext: text,
+    source: 'metaweb_private',
+    metabotId: 1,
+    metabotStore: {} as any,
+  });
+
+  assert.equal(result.paid, true);
+  assert.equal(result.reason, 'free_order_no_payment_required');
+  assert.equal(result.amountSats, 0);
 });
 
 test('checkOrderPaymentStatus still requires txid for paid orders', async () => {

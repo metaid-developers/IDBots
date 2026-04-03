@@ -5,7 +5,7 @@ function normalizeText(value) {
 const DEFAULT_BUYER_ORDER_CHAT_TIMEOUT_MS = 8000;
 
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
-const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
 const FORBIDDEN_ORDER_CHATTER_PATTERNS = [
   /已收到你.*付款/i,
   /收到你.*付款/i,
@@ -16,6 +16,7 @@ const FORBIDDEN_ORDER_CHATTER_PATTERNS = [
   /请求技能/i,
   /支付金额/i,
   /\btxid\b/i,
+  /\border\s+(?:id|ref(?:erence)?)\b/i,
   /transaction id/i,
   /交易id/i,
   /service id/i,
@@ -133,16 +134,22 @@ export function buildBuyerOrderMessageSystemPrompt(input) {
   const skillName = normalizeText(input?.skillName) || 'the requested skill';
   const price = normalizeText(input?.price) || 'the agreed price';
   const currency = normalizeText(input?.currency) || '';
+  const numericPrice = Number(normalizeText(input?.price));
+  const isFreeOrder = Number.isFinite(numericPrice) && numericPrice === 0;
   const txid = normalizeText(input?.txid) || 'the payment txid';
+  const orderReference = normalizeText(input?.orderReference) || 'the order id';
   const serviceId = normalizeText(input?.serviceId) || 'the service id';
+  const structuredMetadataSummary = isFreeOrder
+    ? `Structured metadata will be appended separately after your sentence: payment amount ${price} ${currency}, order id ${orderReference}, service id ${serviceId}, required skill ${skillName}. Do not restate any of those metadata fields.`
+    : `Structured metadata will be appended separately after your sentence: payment amount ${price} ${currency}, txid ${txid}, service id ${serviceId}, required skill ${skillName}. Do not restate any of those metadata fields.`;
 
   return [
     personaLine,
-    'You are the buyer MetaBot sending a paid service order to another MetaBot seller.',
+    'You are the buyer MetaBot sending a service order to another MetaBot seller.',
     'Write only the natural-language request that should appear before the structured order metadata.',
     'Stay strictly in the buyer role and speak in your own voice.',
     requestText ? `Actual user request: "${requestText}"` : '',
-    `Structured metadata will be appended separately after your sentence: payment amount ${price} ${currency}, txid ${txid}, service id ${serviceId}, required skill ${skillName}. Do not restate any of those metadata fields.`,
+    structuredMetadataSummary,
     'Do not say that you received payment, that the seller received an order, or that you are starting to process the task.',
     'Do not use phrases like "已收到你xx的付款", "你收到一笔订单", "马上处理", or "正在处理".',
     'Focus only on the task the seller should perform.',
