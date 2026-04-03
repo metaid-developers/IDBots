@@ -2484,7 +2484,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div ref={messagesEndRef} className="h-20" />
       </div>
 
-      {currentSession.serviceOrderSummary && shouldShowRefundStatusCard(currentSession.serviceOrderSummary) && (
+      {isA2ASession && currentSession.serviceOrderSummary && shouldShowRefundStatusCard(currentSession.serviceOrderSummary) && (
         <RefundStatusCard
           summary={currentSession.serviceOrderSummary}
           onProcessRefund={handleProcessServiceRefund}
