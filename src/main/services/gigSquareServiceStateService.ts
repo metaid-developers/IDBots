@@ -11,6 +11,7 @@ type ServiceLike = {
 type SellerOrderLike = {
   servicePinId?: string | null;
   status?: string | null;
+  paymentAmount?: string | null;
 };
 
 type LocalServiceStateRecordLike = {
@@ -66,6 +67,13 @@ const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const isFreeOrderPaymentAmount = (value: unknown): boolean => {
+  const normalized = toSafeString(value).trim();
+  if (!normalized) return false;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric === 0;
 };
 
 const normalizePinId = (row: ServiceLike): string => {
@@ -298,6 +306,7 @@ export const resolveServiceActionAvailability = (input: {
     const orderServicePinId = toSafeString(order.servicePinId).trim();
     const normalizedStatus = toSafeString(order.status).trim();
     if (!orderServicePinId || !chainPinIds.has(orderServicePinId)) return false;
+    if (isFreeOrderPaymentAmount(order.paymentAmount)) return false;
     return normalizedStatus !== COMPLETED_STATUS && normalizedStatus !== REFUNDED_STATUS;
   });
   if (hasActiveSellerOrder) {
