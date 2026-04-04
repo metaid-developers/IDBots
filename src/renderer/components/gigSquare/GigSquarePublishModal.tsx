@@ -7,6 +7,7 @@ import {
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
 } from './gigSquarePublishPresentation.js';
+import { getEnabledGigSquareSkills } from './gigSquareSkillOptions.js';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 
@@ -99,11 +100,12 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const loadSkills = useCallback(async () => {
     try {
       const res = await window.electron.skills.list();
-      if (res?.success && res.skills?.length) {
-        setSkills(res.skills);
+      const enabledSkills = getEnabledGigSquareSkills(res?.success ? res.skills : []);
+      if (enabledSkills.length) {
+        setSkills(enabledSkills);
         setSelectedSkillId((prev) => {
-          if (prev && res.skills.some((s) => s.id === prev)) return prev;
-          return res.skills[0].id;
+          if (prev && enabledSkills.some((skill) => skill.id === prev)) return prev;
+          return enabledSkills[0].id;
         });
       } else {
         setSkills([]);
@@ -307,6 +309,9 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 disabled={isFormDisabled}
               >
+                <option value="">
+                  {i18nService.t('gigSquarePublishSkillLabel')}
+                </option>
                 {skills.map((skill) => (
                   <option key={skill.id} value={skill.id}>
                     {skill.name}

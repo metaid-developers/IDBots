@@ -3,13 +3,12 @@ import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon, DocumentDuplicateI
 import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
 import { fetchMetaidInfoByGlobalId, type MetaidInfoResult } from '../../services/metabotInfoService';
-import { formatGigSquarePrice } from '../../utils/gigSquare';
 import GigSquareOrderModal from './GigSquareOrderModal';
 import GigSquareMyServicesModal from './GigSquareMyServicesModal';
 import GigSquarePublishModal from './GigSquarePublishModal';
+import GigSquareServiceCard from './GigSquareServiceCard';
 import {
   copyGigSquareProviderIdToClipboard,
-  DEFAULT_GIG_SQUARE_PROVIDER_AVATAR,
   getGigSquareProviderAvatarSrc,
   getGigSquareProviderDisplayName,
   shortenGigSquareProviderGlobalMetaId,
@@ -336,8 +335,6 @@ const GigSquareView: React.FC = () => {
         {!isLoading && !error && filteredServices.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filteredServices.map((service) => {
-              const price = formatGigSquarePrice(service.price, service.currency);
-              const iconSrc = service.serviceIcon || service.avatar || null;
               const providerLookupId = service.providerGlobalMetaId || service.providerMetaId;
               const providerInfo = providerInfoMap[service.providerGlobalMetaId] || {};
               const providerName = getGigSquareProviderDisplayName(providerInfo, providerLookupId);
@@ -346,103 +343,19 @@ const GigSquareView: React.FC = () => {
               const hasRefundRisk = Boolean(refundRiskBadge);
               const isOnline = isGigSquareProviderOnline(onlineBots, service.providerGlobalMetaId);
               return (
-                <div
+                <GigSquareServiceCard
                   key={service.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleOpenModal(service)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleOpenModal(service);
-                    }
-                  }}
-                  className={`cursor-pointer rounded-2xl border px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
-                    hasRefundRisk
-                      ? 'border-amber-400/60 bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
-                      : 'dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface'
-                  } ${''}`}
-                >
-                  <div className="flex items-start gap-3">
-                    {iconSrc ? (
-                      <img
-                        src={iconSrc}
-                        alt={service.displayName}
-                        className="h-14 w-14 flex-shrink-0 rounded-xl border border-claude-border object-cover dark:border-claude-darkBorder"
-                      />
-                    ) : (
-                      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl bg-claude-accent/20 text-sm font-semibold text-claude-accent">
-                        {service.displayName.slice(0, 1).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-[15px] font-semibold text-claude-text dark:text-claude-darkText">
-                            {service.displayName}
-                          </div>
-                          <div className="mt-1 truncate font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                            {service.serviceName}
-                          </div>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                            {price.unit}
-                          </div>
-                          <div className="text-base font-semibold text-claude-accent">
-                            {price.amount}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {service.providerSkill && (
-                          <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
-                            {service.providerSkill}
-                          </span>
-                        )}
-                        {refundRiskBadge && (
-                          <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                            {i18nService.t('gigSquareRefundRiskBadge')}
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-2 line-clamp-2 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                        {service.description}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex items-center justify-between gap-3 border-t border-claude-border/70 pt-3 dark:border-claude-darkBorder/70">
-                    <div className="min-w-0 flex items-center gap-2">
-                      {isOnline && (
-                        <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title={i18nService.t('botOnline')} />
-                      )}
-                      <img
-                        src={providerAvatarSrc}
-                        alt={providerName}
-                        className="h-7 w-7 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder flex-shrink-0"
-                        onError={(e) => { e.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
-                      />
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-medium text-claude-text dark:text-claude-darkText">
-                          {providerName}
-                        </div>
-                        {providerLookupId && (
-                          <GigSquareProviderIdRow providerId={providerLookupId} />
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenModal(service);
-                      }}
-                      className="btn-idchat-primary-filled shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium"
-                    >
-                      {i18nService.t('gigSquarePayAndRequest')}
-                    </button>
-                  </div>
-                </div>
+                  service={service}
+                  providerName={providerName}
+                  providerAvatarSrc={providerAvatarSrc}
+                  providerLookupId={providerLookupId}
+                  providerIdRow={providerLookupId ? <GigSquareProviderIdRow providerId={providerLookupId} /> : null}
+                  isOnline={isOnline}
+                  hasRefundRisk={hasRefundRisk}
+                  refundRiskLabel={refundRiskBadge ? i18nService.t('gigSquareRefundRiskBadge') : null}
+                  actionLabel={i18nService.t('gigSquarePayAndRequest')}
+                  onOpen={() => handleOpenModal(service)}
+                />
               );
             })}
           </div>

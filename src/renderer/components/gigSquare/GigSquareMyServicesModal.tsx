@@ -27,6 +27,10 @@ import {
   getMyServiceSessionActionState,
   shortenMyServiceHash,
 } from './gigSquareMyServicesPresentation.js';
+import {
+  buildGigSquareModifySkillOptions,
+  resolveGigSquareModifySkillSelection,
+} from './gigSquareSkillOptions.js';
 
 type GigSquareMyServicesView = 'list' | 'detail';
 
@@ -274,25 +278,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   const activeSelectedService = selectedService ?? internalSelectedService;
   const activeOrdersPage = ordersPage ?? internalOrdersPage;
   const detailServiceId = activeSelectedService?.id?.trim() || '';
-  const modifySkillOptions = useMemo(() => {
-    const currentSkillName = modifyDraft?.providerSkill?.trim() || '';
-    if (!currentSkillName) return skills;
-    if (skills.some((skill) => skill.name === currentSkillName)) return skills;
-    return [
-      {
-        id: `__current__:${currentSkillName}`,
-        name: currentSkillName,
-        description: '',
-        enabled: true,
-        isOfficial: false,
-        isBuiltIn: false,
-        updatedAt: 0,
-        prompt: '',
-        skillPath: '',
-      },
-      ...skills,
-    ];
-  }, [modifyDraft?.providerSkill, skills]);
+  const modifySkillOptions = useMemo(
+    () => buildGigSquareModifySkillOptions(skills, modifyDraft?.providerSkill),
+    [modifyDraft?.providerSkill, skills],
+  );
 
   const loadServicesPage = useCallback(async (
     pageNumber: number,
@@ -389,15 +378,17 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   }, [isOpen, loadSkills]);
 
   useEffect(() => {
-    if (!modifyDraft?.providerSkill) return;
-    const matchedSkill = modifySkillOptions.find((skill) => skill.name === modifyDraft.providerSkill);
-    if (!matchedSkill) return;
-    setModifySelectedSkillId((prev) => {
-      if (!prev) return matchedSkill.id;
-      if (!modifySkillOptions.some((skill) => skill.id === prev)) return matchedSkill.id;
-      return prev;
-    });
-  }, [modifyDraft?.providerSkill, modifySkillOptions]);
+    if (!modifyDraft) return;
+    const resolved = resolveGigSquareModifySkillSelection(skills, modifyDraft.providerSkill);
+    setModifySelectedSkillId((prev) => (
+      prev === resolved.selectedSkillId ? prev : resolved.selectedSkillId
+    ));
+    if (resolved.providerSkill !== modifyDraft.providerSkill) {
+      setModifyDraft((prev) => (
+        prev ? { ...prev, providerSkill: resolved.providerSkill } : prev
+      ));
+    }
+  }, [modifyDraft, skills]);
 
   useEffect(() => {
     if (!isOpen || servicesPage) return;
@@ -469,11 +460,14 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
 
   const handleOpenModify = useCallback((service: GigSquareMyServiceSummary) => {
     if (mutationBusyServiceId || !service.canModify) return;
+    const nextDraft = buildModifyDraftFromService(service);
+    const resolvedSelection = resolveGigSquareModifySkillSelection(skills, nextDraft.providerSkill);
     setModifyTargetService(service);
-    setModifyDraft(buildModifyDraftFromService(service));
-    const currentSkillName = (service.providerSkill || '').trim();
-    const matchedSkill = skills.find((skill) => skill.name === currentSkillName);
-    setModifySelectedSkillId(matchedSkill?.id || (currentSkillName ? `__current__:${currentSkillName}` : ''));
+    setModifyDraft({
+      ...nextDraft,
+      providerSkill: resolvedSelection.providerSkill,
+    });
+    setModifySelectedSkillId(resolvedSelection.selectedSkillId);
     setModifyError(null);
     if (modifyIconInputRef.current) {
       modifyIconInputRef.current.value = '';
@@ -1337,18 +1331,17 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                           const nextSkillId = event.target.value;
                           setModifySelectedSkillId(nextSkillId);
                           const selectedSkill = modifySkillOptions.find((skill) => skill.id === nextSkillId);
-                          setModifyDraft((prev) => (prev && selectedSkill
-                            ? { ...prev, providerSkill: selectedSkill.name }
-                            : prev));
+                          setModifyDraft((prev) => (prev ? {
+                            ...prev,
+                            providerSkill: selectedSkill?.name || '',
+                          } : prev));
                         }}
                         disabled={isModifySubmitting}
                         className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
                       >
-                        {modifySkillOptions.length === 0 && (
-                          <option value="">
-                            {i18nService.t('gigSquarePublishSkillLabel')}
-                          </option>
-                        )}
+                        <option value="">
+                          {i18nService.t('gigSquarePublishSkillLabel')}
+                        </option>
                         {modifySkillOptions.map((skill) => (
                           <option key={skill.id} value={skill.id}>
                             {skill.name}

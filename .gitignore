@@ -27,6 +27,8 @@ tests/*
 !tests/skillManagerOrderSkillPrompt.test.mjs
 !tests/gigSquareOrderMessageBuilder.test.mjs
 !tests/gigSquareOnlineState.test.mjs
+!tests/gigSquareSkillOptions.test.mjs
+!tests/gigSquareServiceCard.test.tsx
 
 # Local DB (never commit)
 *.sqlite
