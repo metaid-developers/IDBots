@@ -29,6 +29,7 @@ tests/*
 !tests/gigSquareOnlineState.test.mjs
 !tests/gigSquareSkillOptions.test.mjs
 !tests/gigSquareServiceCard.test.tsx
+!tests/a2aMessageItem.test.tsx
 
 # Local DB (never commit)
 *.sqlite
