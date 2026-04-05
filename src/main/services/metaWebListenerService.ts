@@ -451,3 +451,12 @@ export function stopMetaWebListener(): void {
 export function isListenerRunning(): boolean {
   return activeSockets.size > 0;
 }
+
+export function isListenerSocketConnected(globalMetaId?: string): boolean {
+  const normalizedGlobalMetaId = typeof globalMetaId === 'string' ? globalMetaId.trim() : '';
+  if (normalizedGlobalMetaId) {
+    return Boolean(activeSockets.get(normalizedGlobalMetaId)?.isConnected());
+  }
+
+  return activeSockets.size > 0 && [...activeSockets.values()].every((client) => client.isConnected());
+}

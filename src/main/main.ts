@@ -63,6 +63,7 @@ import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } 
 import {
   startMetaWebListener,
   isListenerRunning,
+  isListenerSocketConnected,
   stopMetaWebListener,
   type ListenerConfig,
 } from './services/metaWebListenerService';
@@ -1889,6 +1890,111 @@ const listRecentPrivateMessages = (): Array<Record<string, unknown>> => {
   }
 };
 
+const METAWEB_LISTENER_CONFIG_KEY = 'metaweb_listener_config';
+
+const normalizeListenerConfig = (stored?: Partial<ListenerConfig>): ListenerConfig => ({
+  enabled: stored?.enabled !== undefined ? stored.enabled : true,
+  groupChats: stored?.groupChats !== undefined ? stored.groupChats : false,
+  privateChats: stored?.privateChats !== undefined ? stored.privateChats : true,
+  serviceRequests: stored?.serviceRequests !== undefined ? stored.serviceRequests : false,
+});
+
+const getListenerConfigFromStore = (): ListenerConfig => {
+  const stored = getStore().get<ListenerConfig>(METAWEB_LISTENER_CONFIG_KEY);
+  return normalizeListenerConfig(stored);
+};
+
+const shouldRunListener = (config: ListenerConfig): boolean =>
+  config.enabled && (config.groupChats || config.privateChats || config.serviceRequests);
+
+const waitForListenerSocketConnection = async (
+  globalMetaId: string,
+  timeoutMs: number,
+): Promise<boolean> => {
+  const normalizedGlobalMetaId = globalMetaId.trim();
+  if (!normalizedGlobalMetaId) {
+    return false;
+  }
+
+  const deadline = Date.now() + Math.max(250, timeoutMs);
+  while (Date.now() <= deadline) {
+    if (isListenerSocketConnected(normalizedGlobalMetaId)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return isListenerSocketConnected(normalizedGlobalMetaId);
+};
+
+const startListenerWithConfig = async (config: ListenerConfig) => {
+  const sqliteStore = getStore();
+  const db = sqliteStore.getDatabase();
+  const saveDb = sqliteStore.getSaveFunction();
+  const getMetaBots = () =>
+    getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
+  const emitLog = (log: string) => {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('idbots:listener-log', log);
+      }
+    });
+  };
+  const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
+    const metabotStore = getMetabotStore();
+    const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
+    if (!metabot) return null;
+    const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
+    if (!wallet?.mnemonic?.trim()) return null;
+    return getPrivateKeyBufferForEcdh(
+      wallet.mnemonic,
+      wallet.path || "m/44'/10001'/0'/0/0"
+    );
+  };
+  await startMetaWebListener(
+    db,
+    getMetaBots,
+    config,
+    emitLog,
+    saveDb,
+    resolvePrivateKeyByGlobalMetaId
+  );
+};
+
+const ensurePrivateChatListenerReady = async (
+  metabotId: number,
+  timeoutMs = 5000,
+): Promise<{ success: boolean; error?: string }> => {
+  const metabot = getMetabotStore().getMetabotById(metabotId);
+  const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
+  if (!localGlobalMetaId) {
+    return { success: false, error: 'Local MetaBot globalMetaId is missing' };
+  }
+
+  let config = getListenerConfigFromStore();
+  if (!config.privateChats || !shouldRunListener(config)) {
+    const next = normalizeListenerConfig({ ...config, enabled: true, privateChats: true });
+    getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
+    config = next;
+    await startListenerWithConfig(next);
+  }
+
+  if (isListenerSocketConnected(localGlobalMetaId)) {
+    return { success: true };
+  }
+
+  await startListenerWithConfig(config);
+  const connected = await waitForListenerSocketConnection(
+    localGlobalMetaId,
+    Math.min(timeoutMs, 5000),
+  );
+  if (!connected) {
+    return { success: false, error: 'Local MetaWeb listener is not connected' };
+  }
+
+  return { success: true };
+};
+
 const syncP2PRuntimeConfigForCurrentMetabots = async (): Promise<void> => {
   await syncP2PRuntimeConfig({
     store: getStore(),
@@ -2136,6 +2242,16 @@ const executeDelegationPipeline = async (
     `Checking availability of "${delegation.serviceName}" provider...`
   );
   emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
+
+  const listenerReady = await ensurePrivateChatListenerReady(metabotId, 5000);
+  if (!listenerReady.success) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation failed: ${listenerReady.error || 'Local MetaWeb listener is not connected.'}`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Listener offline' });
+    return;
+  }
 
   let chatPubkey: string | null = null;
   try {
@@ -3526,59 +3642,11 @@ if (!gotTheLock) {
   });
 
   // MetaWebListener IPC (real WebSocket + DB; isolated from IM Gateway)
-  const METAWEB_LISTENER_CONFIG_KEY = 'metaweb_listener_config';
-  const normalizeListenerConfig = (stored?: Partial<ListenerConfig>): ListenerConfig => ({
-    enabled: stored?.enabled !== undefined ? stored.enabled : true,
-    groupChats: stored?.groupChats !== undefined ? stored.groupChats : false,
-    privateChats: stored?.privateChats !== undefined ? stored.privateChats : true,
-    serviceRequests: stored?.serviceRequests !== undefined ? stored.serviceRequests : false,
-  });
-  const getListenerConfigFromStore = (): ListenerConfig => {
-    const stored = getStore().get<ListenerConfig>(METAWEB_LISTENER_CONFIG_KEY);
-    return normalizeListenerConfig(stored);
-  };
-  const shouldRunListener = (config: ListenerConfig): boolean =>
-    config.enabled && (config.groupChats || config.privateChats || config.serviceRequests);
-
-  const startListenerWithConfig = async (config: ListenerConfig) => {
-    const sqliteStore = getStore();
-    const db = sqliteStore.getDatabase();
-    const saveDb = sqliteStore.getSaveFunction();
-    const getMetaBots = () =>
-      getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
-    const emitLog = (log: string) => {
-      BrowserWindow.getAllWindows().forEach((win) => {
-        if (!win.webContents.isDestroyed()) {
-          win.webContents.send('idbots:listener-log', log);
-        }
-      });
-    };
-    const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
-      const metabotStore = getMetabotStore();
-      const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
-      if (!metabot) return null;
-      const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
-      if (!wallet?.mnemonic?.trim()) return null;
-      return getPrivateKeyBufferForEcdh(
-        wallet.mnemonic,
-        wallet.path || "m/44'/10001'/0'/0/0"
-      );
-    };
-    await startMetaWebListener(
-      db,
-      getMetaBots,
-      config,
-      emitLog,
-      saveDb,
-      resolvePrivateKeyByGlobalMetaId
-    );
-  };
-
   ipcMain.handle('idbots:getListenerConfig', async () => {
     return { success: true, config: getListenerConfigFromStore() };
   });
   ipcMain.handle('idbots:getListenerStatus', async () => {
-    return { success: true, running: isListenerRunning() };
+    return { success: true, running: isListenerRunning(), connected: isListenerSocketConnected() };
   });
   ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
     const config = getListenerConfigFromStore();
@@ -5760,12 +5828,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         return { success: false, error: 'Missing required params' };
       }
 
-      // Ensure private chat listener is running
-      const config = getListenerConfigFromStore();
-      if (!config.privateChats || !shouldRunListener(config)) {
-        const next = normalizeListenerConfig({ ...config, enabled: true, privateChats: true });
-        getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
-        await startListenerWithConfig(next);
+      const listenerReady = await ensurePrivateChatListenerReady(metabotId, Math.min(timeoutMs, 5000));
+      if (!listenerReady.success) {
+        return { success: false, error: listenerReady.error || 'Local MetaWeb listener is not connected' };
       }
 
       const pongReceived = await getProviderPingService().pingProvider({
