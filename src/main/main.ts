@@ -84,6 +84,7 @@ import {
   resolveDelegationOrderability,
 } from './services/providerPingService';
 import { syncP2PRuntimeConfig } from './services/p2pRuntimeConfigSync';
+import { bootstrapMetabot } from './services/metabotBootstrapFacade';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
@@ -4615,6 +4616,49 @@ if (!gotTheLock) {
       console.error('[MetaBot] idbots:addMetaBot failed:', errMsg);
       if (errStack) console.error('[MetaBot] idbots:addMetaBot stack:', errStack);
       return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMain.handle('idbots:bootstrapMetaBot', async (_event, input: {
+    name: string;
+    avatar?: string | null;
+    role: string;
+    soul: string;
+    goal?: string | null;
+    background?: string | null;
+    boss_global_metaid?: string | null;
+    llm_id?: string | null;
+    metabot_type?: 'twin' | 'worker';
+  }) => {
+    try {
+      const llmId = requireMetabotLlmIdForCreate(input.llm_id);
+      return await bootstrapMetabot(
+        {
+          name: input.name,
+          avatar: input.avatar ?? null,
+          role: input.role,
+          soul: input.soul,
+          goal: input.goal ?? null,
+          background: input.background ?? null,
+          bossGlobalMetaId: (input.boss_global_metaid ?? '').trim() || null,
+          llmId,
+          metabotType: input.metabot_type === 'twin' ? 'twin' : 'worker'
+        },
+        {
+          store: getMetabotStore(),
+          syncP2PRuntimeConfig: syncP2PRuntimeConfigForCurrentMetabots
+        }
+      );
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[MetaBot] idbots:bootstrapMetaBot failed:', errMsg);
+      return {
+        success: false,
+        subsidy: { success: false, error: errMsg },
+        error: errMsg,
+        retryable: false,
+        manualActionRequired: false
+      };
     }
   });
 
