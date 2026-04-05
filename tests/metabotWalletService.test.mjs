@@ -1,17 +1,24 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-
-const { createMetaBotWallet } = require('../dist-electron/services/metabotWalletService.js');
-const { normalizeRawGlobalMetaId } = require('../dist-electron/shared/globalMetaId.js');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MAIN_ENTRY_PATH = path.join(__dirname, '..', 'dist-electron', 'main.js');
 
 const FIXTURE_MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const FIXTURE_PATH = "m/44'/10001'/0'/0/0";
 const FIXTURE_GLOBAL_META_ID = 'idq1970463ym8fqmgawe4lylktne97ahhw4kqehkch';
 
+test('compile:electron preserves the root Electron entry layout', () => {
+  assert.equal(existsSync(MAIN_ENTRY_PATH), true, `expected clean compile output at ${MAIN_ENTRY_PATH}`);
+});
+
 test('createMetaBotWallet preserves the extracted shared identity semantics', async () => {
+  const { createMetaBotWallet } = require('../dist-electron/services/metabotWalletService.js');
   const result = await createMetaBotWallet({
     mnemonic: FIXTURE_MNEMONIC,
     path: FIXTURE_PATH,
@@ -32,6 +39,7 @@ test('createMetaBotWallet preserves the extracted shared identity semantics', as
 });
 
 test('normalizeRawGlobalMetaId continues to use the shared normalization path', () => {
+  const { normalizeRawGlobalMetaId } = require('../dist-electron/shared/globalMetaId.js');
   assert.equal(normalizeRawGlobalMetaId(`  ${FIXTURE_GLOBAL_META_ID.toUpperCase()}  `), FIXTURE_GLOBAL_META_ID);
   assert.equal(normalizeRawGlobalMetaId(`metaid:${FIXTURE_GLOBAL_META_ID}`), null);
 });

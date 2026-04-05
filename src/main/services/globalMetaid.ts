@@ -3,12 +3,12 @@
  */
 
 import {
-  convertToGlobalMetaId as convertAddressToGlobalMetaId,
-  normalizeGlobalMetaId
-} from '../../../metabot/src/core/identity/deriveIdentity';
+  convertSharedAddressToGlobalMetaId,
+  normalizeSharedGlobalMetaId
+} from './metabotIdentityBridge';
 
-export const convertToGlobalMetaId = convertAddressToGlobalMetaId;
+export const convertToGlobalMetaId = convertSharedAddressToGlobalMetaId;
 
 export function validateGlobalMetaId(globalMetaId: string): boolean {
-  return normalizeGlobalMetaId(globalMetaId) !== null;
+  return normalizeSharedGlobalMetaId(globalMetaId) !== null;
 }

@@ -25,7 +25,7 @@
     "test:rpc": "npx ts-node test_rpc.ts",
     "test:read-pin": "npx ts-node -P electron-tsconfig.json test_read_pin.ts",
     "preview": "vite preview",
-    "compile:electron": "npx -p typescript@5 tsc --project electron-tsconfig.json",
+    "compile:electron": "npm --prefix metabot run build && npx -p typescript@5 tsc --project electron-tsconfig.json",
     "sync:man-p2p": "node scripts/sync-man-p2p-binary.mjs",
     "build:skills": "node scripts/build-skills.js && node scripts/build-web-search-skill.js",
     "build:skill:web-search": "node scripts/build-web-search-skill.js",

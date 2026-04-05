@@ -15,9 +15,9 @@ import {
 } from '@metalet/utxo-wallet-service';
 import { mvc } from 'meta-contract';
 import {
-  deriveIdentity,
-  DEFAULT_DERIVATION_PATH,
-} from '../../../metabot/src/core/identity/deriveIdentity';
+  deriveSharedIdentity,
+  getDefaultDerivationPath,
+} from './metabotIdentityBridge';
 
 const MAN_PUB_KEY =
   '048add0a6298f10a97785f7dd069eedb83d279a6f03e73deec0549e7d6fcaac4eef2c279cf7608be907a73c89eb44c28db084c27b588f1bd869321a6f104ec642d';
@@ -114,7 +114,7 @@ function deriveChatPublicKey(mnemonic: string, addressIndex: number): Promise<st
  * Same derivation as chat key: mnemonic + path -> MVC wallet -> raw private key.
  */
 export async function getPrivateKeyBufferForEcdh(mnemonic: string, pathStr: string): Promise<Buffer> {
-  const addressIndex = parseAddressIndexFromPath(pathStr || DEFAULT_DERIVATION_PATH);
+  const addressIndex = parseAddressIndexFromPath(pathStr || getDefaultDerivationPath());
   const wallet = await getMvcWallet(mnemonic, addressIndex);
   return getPrivateKeyBufferFromWallet(wallet);
 }
@@ -136,9 +136,9 @@ function getPrivateKeyBufferFromWallet(wallet: MvcWallet): Buffer {
 export async function createMetaBotWallet(
   options: CreateMetaBotWalletOptions = {}
 ): Promise<CreateMetaBotWalletResult> {
-  const identity = await deriveIdentity({
+  const identity = await deriveSharedIdentity({
     mnemonic: options.mnemonic,
-    path: options.path ?? DEFAULT_DERIVATION_PATH,
+    path: options.path ?? getDefaultDerivationPath(),
   });
 
   return {
