@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 
 type PendingPrivateMessage = {
@@ -66,32 +67,27 @@ const normalizeComparableGlobalMetaId = (value: unknown): string => {
 
 const normalizeWord = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '');
 
-const serviceMatches = (service: any, servicePinId: string, providerGlobalMetaId: string): boolean => {
-  return (
-    (service?.pinId === servicePinId || service?.sourceServicePinId === servicePinId) &&
-    normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId)
-      === normalizeComparableGlobalMetaId(providerGlobalMetaId)
-  );
+interface SharedOrderabilityModule {
+  resolveDelegationOrderability(
+    params: ResolveDelegationOrderabilityParams
+  ): ResolveDelegationOrderabilityResult;
+}
+
+let cachedSharedOrderabilityModule: SharedOrderabilityModule | null = null;
+
+const loadSharedOrderabilityModule = (): SharedOrderabilityModule => {
+  if (cachedSharedOrderabilityModule) {
+    return cachedSharedOrderabilityModule;
+  }
+  const modulePath = path.resolve(__dirname, '../../metabot/dist/core/discovery/orderability.js');
+  cachedSharedOrderabilityModule = require(modulePath) as SharedOrderabilityModule;
+  return cachedSharedOrderabilityModule;
 };
 
 export function resolveDelegationOrderability(
   params: ResolveDelegationOrderabilityParams,
 ): ResolveDelegationOrderabilityResult {
-  const availableService = params.availableServices.find((service) => (
-    serviceMatches(service, params.servicePinId, params.providerGlobalMetaId)
-  ));
-  if (availableService) {
-    return { status: 'available', service: availableService };
-  }
-
-  const dbService = params.allServices.find((service) => (
-    serviceMatches(service, params.servicePinId, params.providerGlobalMetaId)
-  ));
-  if (dbService) {
-    return { status: 'offline', service: null };
-  }
-
-  return { status: 'missing', service: null };
+  return loadSharedOrderabilityModule().resolveDelegationOrderability(params);
 }
 
 export class ProviderPingService {
