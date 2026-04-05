@@ -1033,7 +1033,7 @@ export class SkillManager {
       .map(
         (svc) =>
           `  <remote_service>` +
-          `<service_pin_id>${svc.pinId || svc.servicePinId || ''}</service_pin_id>` +
+          `<service_pin_id>${svc.currentPinId || svc.id || svc.pinId || svc.servicePinId || ''}</service_pin_id>` +
           `<service_name>${svc.displayName || svc.serviceName || ''}</service_name>` +
           `<description>${svc.description || ''}</description>` +
           `<price_amount>${svc.price || ''}</price_amount>` +

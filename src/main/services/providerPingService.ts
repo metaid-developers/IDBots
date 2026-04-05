@@ -66,9 +66,20 @@ const normalizeComparableGlobalMetaId = (value: unknown): string => {
 
 const normalizeWord = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '');
 
+const getServicePinCandidates = (service: any): string[] => (
+  [...new Set([
+    service?.id,
+    service?.pinId,
+    service?.servicePinId,
+    service?.currentPinId,
+    service?.sourceServicePinId,
+    ...(Array.isArray(service?.chainPinIds) ? service.chainPinIds : []),
+  ].map((value) => toSafeString(value)).filter(Boolean))]
+);
+
 const serviceMatches = (service: any, servicePinId: string, providerGlobalMetaId: string): boolean => {
   return (
-    (service?.pinId === servicePinId || service?.sourceServicePinId === servicePinId) &&
+    getServicePinCandidates(service).includes(toSafeString(servicePinId)) &&
     normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId)
       === normalizeComparableGlobalMetaId(providerGlobalMetaId)
   );
