@@ -1864,6 +1864,31 @@ const listPendingPrivateMessages = (): Array<Record<string, unknown>> => {
   }
 };
 
+const listRecentPrivateMessages = (): Array<Record<string, unknown>> => {
+  const db = getStore().getDatabase();
+  try {
+    const result = db.exec(
+      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+       FROM private_chat_messages
+       ORDER BY id DESC
+       LIMIT 200`
+    );
+    if (!result[0]?.values?.length) {
+      return [];
+    }
+
+    const columns = result[0].columns as string[];
+    return (result[0].values as unknown[][]).map((row) => (
+      columns.reduce((acc: Record<string, unknown>, column, index) => {
+        acc[column] = row[index];
+        return acc;
+      }, {})
+    ));
+  } catch {
+    return [];
+  }
+};
+
 const syncP2PRuntimeConfigForCurrentMetabots = async (): Promise<void> => {
   await syncP2PRuntimeConfig({
     store: getStore(),
@@ -2776,6 +2801,7 @@ function getProviderPingService(): ProviderPingService {
         });
       },
       listPendingMessages: () => listPendingPrivateMessages(),
+      listRecentMessages: () => listRecentPrivateMessages(),
     });
   }
   return providerPingService;
