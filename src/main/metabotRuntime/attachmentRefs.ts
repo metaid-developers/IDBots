@@ -1,4 +1,4 @@
-export const METAFILE_PREFIX = 'metafile://';
+const METAFILE_PREFIX = 'metafile://';
 
 export function normalizeAttachmentRefs(input: unknown[]): string[] {
   if (!Array.isArray(input)) return [];
