@@ -460,3 +460,12 @@ export function isListenerSocketConnected(globalMetaId?: string): boolean {
 
   return activeSockets.size > 0 && [...activeSockets.values()].every((client) => client.isConnected());
 }
+
+export function hasListenerSocket(globalMetaId: string): boolean {
+  const normalizedGlobalMetaId = typeof globalMetaId === 'string' ? globalMetaId.trim() : '';
+  if (!normalizedGlobalMetaId) {
+    return false;
+  }
+
+  return activeSockets.has(normalizedGlobalMetaId);
+}
