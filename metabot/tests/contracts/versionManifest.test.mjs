@@ -37,3 +37,29 @@ test('incompatible core range is rejected', () => {
     });
   });
 });
+
+test('caret ranges with 0.x reject next minor', () => {
+  const manifest = createVersionManifest('demo-skill-pack', '0.1.0', '^0.1.0', '^0.1.0');
+  assert.throws(() => {
+    assertVersionManifestCompatibility(manifest, {
+      coreVersion: '0.2.0',
+      adapterVersion: '0.1.4'
+    });
+  });
+  assert.throws(() => {
+    assertVersionManifestCompatibility(manifest, {
+      coreVersion: '0.1.4',
+      adapterVersion: '0.2.0'
+    });
+  });
+});
+
+test('caret ranges with 0.x allow same minor', () => {
+  const manifest = createVersionManifest('demo-skill-pack', '0.1.0', '^0.1.0', '^0.1.0');
+  assert.doesNotThrow(() => {
+    assertVersionManifestCompatibility(manifest, {
+      coreVersion: '0.1.9',
+      adapterVersion: '0.1.2'
+    });
+  });
+});

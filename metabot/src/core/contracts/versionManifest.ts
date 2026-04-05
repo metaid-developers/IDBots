@@ -52,20 +52,37 @@ const parseVersion = (version: string): ParsedVersion => {
   };
 };
 
+const compareVersions = (left: ParsedVersion, right: ParsedVersion): number => {
+  if (left.major !== right.major) {
+    return left.major - right.major;
+  }
+
+  if (left.minor !== right.minor) {
+    return left.minor - right.minor;
+  }
+
+  return left.patch - right.patch;
+};
+
+const caretUpperBound = (rangeBase: ParsedVersion): ParsedVersion => {
+  if (rangeBase.major > 0) {
+    return { major: rangeBase.major + 1, minor: 0, patch: 0 };
+  }
+
+  if (rangeBase.minor > 0) {
+    return { major: 0, minor: rangeBase.minor + 1, patch: 0 };
+  }
+
+  return { major: 0, minor: 0, patch: rangeBase.patch + 1 };
+};
+
 const satisfiesCaretRange = (rangeBase: ParsedVersion, actual: ParsedVersion): boolean => {
-  if (actual.major !== rangeBase.major) {
+  if (compareVersions(actual, rangeBase) < 0) {
     return false;
   }
 
-  if (actual.minor > rangeBase.minor) {
-    return true;
-  }
-
-  if (actual.minor < rangeBase.minor) {
-    return false;
-  }
-
-  return actual.patch >= rangeBase.patch;
+  const upperBound = caretUpperBound(rangeBase);
+  return compareVersions(actual, upperBound) < 0;
 };
 
 const assertRangeSatisfied = (label: 'core' | 'adapter', range: string, actualVersion: string): void => {
