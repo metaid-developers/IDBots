@@ -13,6 +13,7 @@ import {
   type VerifyTransferResult,
 } from './txTransferVerification';
 import { shouldHideProviderForUnresolvedRefund } from './serviceOrderState';
+import { resolveSharedManualRefundDecision } from '../shared/metabotServiceBridge';
 
 export interface RefundFinalizePinRecord {
   pinId: string;
@@ -301,6 +302,18 @@ export class ServiceRefundSyncService {
       return false;
     }
     if (order.refundRequestPinId === refundRequestPinId) {
+      return false;
+    }
+    if (
+      resolveSharedManualRefundDecision({
+        id: order.id,
+        role: order.role,
+        status: order.status,
+        refundRequestPinId: order.refundRequestPinId,
+        coworkSessionId: order.coworkSessionId,
+        paymentTxid: order.paymentTxid,
+      }).required
+    ) {
       return false;
     }
     if (order.status === 'refund_pending' && order.refundRequestPinId) {
