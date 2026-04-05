@@ -48,7 +48,9 @@
     "generate:tray-icons": "node scripts/generate-tray-icons.js",
     "setup:mingit": "node scripts/setup-mingit.js",
     "regenerate:icon": "bash scripts/regenerate-mac-icon.sh",
-    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh"
+    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh",
+    "metabot:build": "npm --prefix metabot run build",
+    "metabot:test": "npm --prefix metabot run test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.12",
