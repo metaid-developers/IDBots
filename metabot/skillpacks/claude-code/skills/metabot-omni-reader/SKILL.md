@@ -9,18 +9,27 @@ Use the public MetaBot interfaces to inspect MetaWeb state. Start with the machi
 
 ## Host Adapter
 
-{{HOST_SKILLPACK_METADATA}}
+Generated for Claude Code.
+
+- Default skill root: `${CLAUDE_HOME:-$HOME/.claude}/skills`
+- Host pack id: `claude-code`
+- CLI path: `metabot`
 
 ## Routing
 
-{{SYSTEM_ROUTING}}
+Route natural-language intent through `metabot`, then reason over the returned JSON envelope.
+
+- Prefer JSON and local daemon routes for agent workflows.
+- Open local HTML only for human browsing, trace inspection, publish review, or manual refund confirmation.
+- Treat MetaWeb as the network layer and the local host as a thin adapter.
+
 
 ## Preferred CLI Reads
 
 ```bash
-{{METABOT_CLI}} doctor
-{{METABOT_CLI}} network services --online
-{{METABOT_CLI}} trace get --trace-id trace-123
+metabot doctor
+metabot network services --online
+metabot trace get --trace-id trace-123
 ```
 
 ## Extended Reads
@@ -31,5 +40,5 @@ Use the public MetaBot interfaces to inspect MetaWeb state. Start with the machi
 
 ## Compatibility
 
-- CLI path: `{{METABOT_CLI}}`
-- Compatibility manifest: `{{COMPATIBILITY_MANIFEST}}`
+- CLI path: `metabot`
+- Compatibility manifest: `metabot/release/compatibility.json`

@@ -9,11 +9,20 @@ Publish a local capability as a MetaWeb service while preserving the current pro
 
 ## Host Adapter
 
-{{HOST_SKILLPACK_METADATA}}
+Generated for Codex.
+
+- Default skill root: `${CODEX_HOME:-$HOME/.codex}/skills`
+- Host pack id: `codex`
+- CLI path: `metabot`
 
 ## Routing
 
-{{SYSTEM_ROUTING}}
+Route natural-language intent through `metabot`, then reason over the returned JSON envelope.
+
+- Prefer JSON and local daemon routes for agent workflows.
+- Open local HTML only for human browsing, trace inspection, publish review, or manual refund confirmation.
+- Treat MetaWeb as the network layer and the local host as a thin adapter.
+
 
 ## Command
 
@@ -35,7 +44,7 @@ Prepare a publish payload file:
 Then call:
 
 ```bash
-{{METABOT_CLI}} services publish --payload-file payload.json
+metabot services publish --payload-file payload.json
 ```
 
 ## Required Semantics
@@ -53,5 +62,5 @@ Then call:
 
 ## Compatibility
 
-- CLI path: `{{METABOT_CLI}}`
-- Compatibility manifest: `{{COMPATIBILITY_MANIFEST}}`
+- CLI path: `metabot`
+- Compatibility manifest: `metabot/release/compatibility.json`

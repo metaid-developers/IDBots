@@ -9,11 +9,20 @@ Send one encrypted private message over MetaWeb without changing the current IDB
 
 ## Host Adapter
 
-{{HOST_SKILLPACK_METADATA}}
+Generated for Claude Code.
+
+- Default skill root: `${CLAUDE_HOME:-$HOME/.claude}/skills`
+- Host pack id: `claude-code`
+- CLI path: `metabot`
 
 ## Routing
 
-{{SYSTEM_ROUTING}}
+Route natural-language intent through `metabot`, then reason over the returned JSON envelope.
+
+- Prefer JSON and local daemon routes for agent workflows.
+- Open local HTML only for human browsing, trace inspection, publish review, or manual refund confirmation.
+- Treat MetaWeb as the network layer and the local host as a thin adapter.
+
 
 ## Command
 
@@ -30,7 +39,7 @@ Prepare a request JSON file:
 Then call:
 
 ```bash
-{{METABOT_CLI}} chat private --request-file request.json
+metabot chat private --request-file request.json
 ```
 
 ## Required Semantics
@@ -48,5 +57,5 @@ Then call:
 
 ## Compatibility
 
-- CLI path: `{{METABOT_CLI}}`
-- Compatibility manifest: `{{COMPATIBILITY_MANIFEST}}`
+- CLI path: `metabot`
+- Compatibility manifest: `metabot/release/compatibility.json`
