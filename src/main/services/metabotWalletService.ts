@@ -5,8 +5,6 @@
  */
 
 import * as crypto from 'crypto';
-import * as bip39 from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
 import {
   MvcWallet,
   BtcWallet,
@@ -16,9 +14,11 @@ import {
   type Net,
 } from '@metalet/utxo-wallet-service';
 import { mvc } from 'meta-contract';
-import { convertToGlobalMetaId } from './globalMetaid';
+import {
+  deriveIdentity,
+  DEFAULT_DERIVATION_PATH,
+} from '../../../metabot/src/core/identity/deriveIdentity';
 
-const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 const MAN_PUB_KEY =
   '048add0a6298f10a97785f7dd069eedb83d279a6f03e73deec0549e7d6fcaac4eef2c279cf7608be907a73c89eb44c28db084c27b588f1bd869321a6f104ec642d';
 
@@ -114,7 +114,7 @@ function deriveChatPublicKey(mnemonic: string, addressIndex: number): Promise<st
  * Same derivation as chat key: mnemonic + path -> MVC wallet -> raw private key.
  */
 export async function getPrivateKeyBufferForEcdh(mnemonic: string, pathStr: string): Promise<Buffer> {
-  const addressIndex = parseAddressIndexFromPath(pathStr || DEFAULT_PATH);
+  const addressIndex = parseAddressIndexFromPath(pathStr || DEFAULT_DERIVATION_PATH);
   const wallet = await getMvcWallet(mnemonic, addressIndex);
   return getPrivateKeyBufferFromWallet(wallet);
 }
@@ -123,11 +123,6 @@ function getPrivateKeyBufferFromWallet(wallet: MvcWallet): Buffer {
   const privateKeyWIF = wallet.getPrivateKey();
   const privKey = mvc.PrivateKey.fromWIF(privateKeyWIF);
   return Buffer.from((privKey as { bn: { toArray: (e: string, n: number) => number[] } }).bn.toArray('be', 32));
-}
-
-/** Compute metaid locally: SHA256(mvc_address) hex */
-function computeMetaId(mvcAddress: string): string {
-  return crypto.createHash('sha256').update(mvcAddress, 'utf8').digest('hex');
 }
 
 /**
@@ -141,38 +136,21 @@ function computeMetaId(mvcAddress: string): string {
 export async function createMetaBotWallet(
   options: CreateMetaBotWalletOptions = {}
 ): Promise<CreateMetaBotWalletResult> {
-  const path = options.path ?? DEFAULT_PATH;
-  let mnemonic = options.mnemonic?.trim();
-  if (!mnemonic) {
-    mnemonic = bip39.generateMnemonic(wordlist);
-  }
-
-  const addressIndex = parseAddressIndexFromPath(path);
-
-  const [mvcWallet, btcWallet, dogeWallet, chatPublicKey] = await Promise.all([
-    getMvcWallet(mnemonic, addressIndex),
-    getBtcWallet(mnemonic, addressIndex),
-    getDogeWallet(mnemonic, addressIndex),
-    deriveChatPublicKey(mnemonic, addressIndex),
-  ]);
-
-  const mvc_address = mvcWallet.getAddress();
-  const btc_address = btcWallet.getAddress();
-  const doge_address = dogeWallet.getAddress();
-  const public_key = mvcWallet.getPublicKey().toString('hex');
-  const metaid = computeMetaId(mvc_address);
-  const globalmetaid = convertToGlobalMetaId(mvc_address);
+  const identity = await deriveIdentity({
+    mnemonic: options.mnemonic,
+    path: options.path ?? DEFAULT_DERIVATION_PATH,
+  });
 
   return {
-    mnemonic,
-    path,
-    public_key,
-    chat_public_key: chatPublicKey,
-    mvc_address,
-    btc_address,
-    doge_address,
-    metaid,
-    globalmetaid,
+    mnemonic: identity.mnemonic,
+    path: identity.path,
+    public_key: identity.publicKey,
+    chat_public_key: identity.chatPublicKey,
+    mvc_address: identity.mvcAddress,
+    btc_address: identity.btcAddress,
+    doge_address: identity.dogeAddress,
+    metaid: identity.metaId,
+    globalmetaid: identity.globalMetaId,
     chat_public_key_pin_id: '',
   };
 }
