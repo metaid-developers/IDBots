@@ -158,13 +158,13 @@ This document inventories the current IDBots business-truth path that V1 must pr
   `handleAutoDeliveryResult(...)` in `src/main/services/privateChatDaemon.ts:1095-1112`
 - transport/protocol:
   trace state is persisted locally in service-order storage and cowork conversation mappings
-  observer-session conversation ids are deterministic from role + metabot id + peer globalmetaid + payment txid (`src/main/services/serviceOrderObserverSession.ts:39-47`)
+  observer-session conversation ids are deterministic from role + metabot id + peer globalmetaid + order correlation key (`payment_txid / order_reference_id`) (`src/main/services/serviceOrderObserverSession.ts:39-47`)
   the truth-layer pins (`orderMessagePinId`, `deliveryMessagePinId`) are attached to the lifecycle rows as the on-chain anchors (`src/main/services/serviceOrderLifecycleService.ts:199-213`, `src/main/services/serviceOrderLifecycleService.ts:278-295`)
 - business semantics to preserve:
   buyer and seller are two views over the same order lifecycle, not separate protocols
   first response and delivered transitions are distinct and preserved on both sides
   explicit GigSquare orders and automatic delegation orders both create the same buyer observer/buyer order artifacts; V1 must preserve this shared lifecycle even if host shells differ
-  requester-side reinjection today resolves the destination indirectly from buyer order/payment context and blocking cowork session state, not from an explicit request/session correlation field
+  requester-side reinjection today resolves the destination indirectly from buyer order/payment-or-order-reference context and blocking cowork session state, using bridge-local state such as `deliveredOrder.coworkSessionId`, not from an explicit request/session correlation field
   V1 must preserve traceability while adding explicit portable correlation fields where the current code only has implicit payment/session linkage
 - host/UI shell that may change:
   today's shells are observer sessions plus Electron cowork streams, regardless of whether the order was initiated from GigSquare or the cowork delegation flow
@@ -229,4 +229,3 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | `payment_txid / order_reference_id` | Current buyer-side link field in `src/main/services/privateChatDaemon.ts:1083-1093`, with free orders reusing the same slot through `orderTrackingId` | Legacy compatibility join key for the delivered buyer order | Yes, for compatibility |
 | `request_id` | Gap: current visible delivery has no explicit request correlation | V1 requester bridge must use it for host-safe reinjection | Yes |
 | `requester_session_id` | Gap: current buyer reinjection relies on local blocking state rather than an explicit field | V1 requester bridge must require it together with `request_id` | Yes |
-| `bridge_target_local_session` | Derived indirectly from `deliveredOrder.coworkSessionId` inside `handleAutoDeliveryResult(...)` | Bridge-only reinjection target in the requester host, not part of the visible payload shown to the user | Yes, but V1 should derive it from explicit pending-request correlation rather than only payment-state lookup |
