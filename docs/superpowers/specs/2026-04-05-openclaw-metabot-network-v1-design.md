@@ -1,7 +1,7 @@
 # OpenClaw MetaBot Network V1 Design
 
 **Date:** 2026-04-05  
-**Status:** Approved (brainstorming)
+**Status:** Approved for planning review
 
 ## 1. Goal
 
@@ -140,12 +140,32 @@ The execution rule is simple:
 - free service: may execute immediately once the request is valid,
 - paid service: must not execute until payment proof resolves to the expected service and amount.
 
+For planning purposes, the concrete V1 proof artifact is the same kind of artifact IDBots already uses in paid service-order flows:
+
+- an on-chain payment transaction reference, carried as `payment_txid`,
+- the chain/currency context needed to interpret it,
+- the target service reference,
+- the expected amount and currency for that service.
+
+V1 must reuse the current IDBots payment-verification path rather than inventing a new receipt model. In practical terms, planning should assume that the provider runtime verifies a request by checking the referenced payment transaction against the expected service, amount, currency, and receiving side semantics already present in IDBots' service-order flow.
+
 ### 4.4 Delivery Model
 
 V1 implementation should support:
 
 - text delivery,
 - text plus image/file attachment delivery.
+
+The minimal V1 delivery contract must be:
+
+- one required text result field,
+- zero or more attachment references,
+- attachment references passed by URI/reference, not inline binary transport,
+- V1 attachment types limited to image and generic file.
+
+For V1, attachments should be referenced using the same kind of externalizable artifact reference style already used in the IDBots/MetaWeb ecosystem, for example `metafile://<pinid>` or an equivalent existing asset reference path. The delivery payload should carry references only; it should not attempt to embed image, file, or video bytes directly in the wake-up or delivery message.
+
+For planning purposes, V1 should standardize on `metafile://<pinid>` as the canonical cross-host attachment reference whenever the delivered artifact is a MetaWeb-backed file artifact. If IDBots currently uses additional internal asset path forms, those may remain implementation details inside one host, but the requester/provider contract should normalize to one portable reference shape.
 
 The result schema must be designed so it can later support:
 
@@ -161,7 +181,8 @@ However, V1 should not delay the core service loop in order to fully implement r
 
 - `OpenClaw <-> OpenClaw` as the first external host pairing
 - single-skill service publication
-- local-first skill routing on requester side
+- local-first requester routing with remote fallback
+- both explicit remote-service selection and automatic remote-service recommendation
 - remote service discovery when local capability is insufficient
 - one-shot request submission with free-form goal + context
 - free and paid service gating
@@ -201,15 +222,15 @@ If those answers are vague, extraction should pause until the path is clarified.
 
 ### 6.2 Canonical Path Candidates for V1
 
-| V1 Capability | IDBots Canonical Path | Current Anchor Modules |
-| --- | --- | --- |
-| Service publish / mutate | Existing service-square / skill-service publication behavior | `gigSquareServiceMutationService.ts`, `serviceOrderProtocols.js`, related renderer publish flows |
-| Service discovery and sync | Remote service sync plus provider online filtering | `gigSquareRemoteServiceSync.ts`, `providerDiscoveryService.ts`, `heartbeatPollingService.ts`, `ProviderPingService` |
-| Free / paid service order semantics | Existing service order lifecycle | `serviceOrderLifecycleService.ts`, `serviceOrderState.ts`, `serviceRefundSyncService.ts`, `serviceRefundSettlementService.ts` |
-| Remote request transport | Existing private message / order message transport | `privateChatDaemon.ts`, `metaWebListenerService.ts`, `serviceOrderProtocols.js`, `orderPayment.ts` |
-| Provider-side execution bridge | Existing order-to-cowork execution path | `privateChatOrderCowork.ts`, `orchestratorCoworkBridge.ts`, `serviceOrderCoworkBridge.ts` |
-| Result delivery and order completion | Existing delivery / observer / result bridge | `serviceOrderObserverSession.ts`, `buyerOrderObserverSession.ts`, `serviceOrderSessionResolution.js`, `privateChatOrderObserverState.js` |
-| Chain read/write and wallet substrate | Existing MetaID and wallet services | `metaidCore.ts`, `metaidRpcServer.ts`, `metabotWalletService.ts`, transfer and asset services |
+| V1 Capability | IDBots Canonical Path | Golden Path To Preserve | Current Anchor Modules |
+| --- | --- | --- | --- |
+| Service publish / mutate | Existing service-square / skill-service publication behavior | Publish one local skill as one remotely callable service item, using existing service publication semantics rather than a new marketplace model | `gigSquareServiceMutationService.ts`, `serviceOrderProtocols.js`, related renderer publish flows |
+| Service discovery and sync | Remote service sync plus provider online filtering | Read chain-backed service records, then narrow to callable providers through the same online/availability interpretation used by IDBots | `gigSquareRemoteServiceSync.ts`, `providerDiscoveryService.ts`, `heartbeatPollingService.ts`, `ProviderPingService` |
+| Free / paid service order semantics | Existing service order lifecycle | Treat free and paid requests as the same order shape with different execution gates, not as separate product lines | `serviceOrderLifecycleService.ts`, `serviceOrderState.ts`, `serviceRefundSyncService.ts`, `serviceRefundSettlementService.ts` |
+| Remote request transport | Existing private message / order message transport | Send one request payload through the existing order/message semantics instead of introducing a new remote RPC contract | `privateChatDaemon.ts`, `metaWebListenerService.ts`, `serviceOrderProtocols.js`, `orderPayment.ts` |
+| Provider-side execution bridge | Existing order-to-cowork execution path | Turn an accepted remote request into one local execution session bound to the requested service | `privateChatOrderCowork.ts`, `orchestratorCoworkBridge.ts`, `serviceOrderCoworkBridge.ts` |
+| Result delivery and order completion | Existing delivery / observer / result bridge | Return one delivery payload and advance the order state through the same observer/completion semantics already validated in IDBots | `serviceOrderObserverSession.ts`, `buyerOrderObserverSession.ts`, `serviceOrderSessionResolution.js`, `privateChatOrderObserverState.js` |
+| Chain read/write and wallet substrate | Existing MetaID and wallet services | Reuse current chain read/write, wallet, and transfer semantics without inventing a separate external-host wallet model | `metaidCore.ts`, `metaidRpcServer.ts`, `metabotWalletService.ts`, transfer and asset services |
 
 This table is not a final implementation inventory. It is the required preservation map for planning.
 
@@ -276,11 +297,37 @@ It should:
 
 It should not be the implementation home of the core business loop.
 
-## 8. Module Split
+## 8. Requester-Side Selection and Fallback Rules
+
+V1 must preserve two requester entry modes:
+
+1. `explicit selection mode`
+   - the user or host explicitly chooses a remote service and submits work to it;
+   - this mode bypasses local-insufficiency detection because the remote route is chosen intentionally.
+2. `automatic recommendation mode`
+   - the requester host evaluates local capability first;
+   - if there is no acceptable local skill match, it discovers remote services and recommends one or more candidates using the same local-first-then-remote pattern that IDBots already validates.
+
+For V1 planning, the canonical automatic mode should remain user-confirmed on the requester side unless the canonical IDBots path inventory proves that a narrower path is already validated. The provider side remains auto-starting once the request has actually been sent.
+
+### 8.1 What "Local Capability Is Insufficient" Means in V1
+
+For V1 planning, "local capability is insufficient" must mean a **pre-execution routing miss**, not a post-start execution failure.
+
+More concretely:
+
+- the requester first runs its existing local skill-routing logic,
+- if that routing logic finds an acceptable local execution path, the request stays local,
+- if that routing logic does not find an acceptable local skill/service path, remote discovery may begin,
+- explicit remote selection remains allowed and does not require a local miss.
+
+This rule matters because it preserves the current IDBots idea of local-first routing with remote fallback. V1 should not reinterpret "insufficient" to mean "the local run started and then failed, so now try remote."
+
+## 9. Module Split
 
 To preserve one business semantics while supporting multiple hosts later, V1 should split into the following modules.
 
-### 8.1 `metabot-runtime-core`
+### 9.1 `metabot-runtime-core`
 
 This is the most important extraction target.
 
@@ -296,7 +343,7 @@ It should hold host-neutral business behavior for:
 
 This layer should be derived from IDBots' business services, not reinvented from scratch.
 
-### 8.2 `metabot-daemon`
+### 9.2 `metabot-daemon`
 
 This is a long-running runtime process, not the user-facing product.
 
@@ -310,7 +357,7 @@ It should:
 
 This module is especially important because future hosts may not offer a custom message gateway.
 
-### 8.3 `metabot-cli`
+### 9.3 `metabot-cli`
 
 The CLI is a stable command surface over `runtime-core` and the daemon.
 
@@ -318,7 +365,7 @@ It may be broad and operational in V1. Elegance is not the priority.
 
 Its job is to make IDBots-derived capabilities portable and scriptable.
 
-### 8.4 `host-openclaw-adapter`
+### 9.4 `host-openclaw-adapter`
 
 This is the only V1 host adapter.
 
@@ -330,7 +377,7 @@ It should:
 - collect delivery results from host session state,
 - reinject returned results into requester-side host context where required.
 
-### 8.5 `metabot-skills-pack-openclaw`
+### 9.5 `metabot-skills-pack-openclaw`
 
 This is the user-installable bridge package for OpenClaw.
 
@@ -342,14 +389,16 @@ It should expose the system through:
 
 Its role is translation and usability, not business ownership.
 
-## 9. Recommended Runtime Sequence
+## 10. Recommended Runtime Sequence
 
 The recommended V1 flow is:
 
 1. Provider MetaBot publishes a service record corresponding to one local skill.
 2. Requester MetaBot evaluates local capability first.
-3. If local capability is insufficient, the requester discovers remote services through MetaWeb-backed records.
-4. The requester either selects a service automatically or through explicit user confirmation, but the platform should support the existing IDBots pattern of local-first then remote fallback.
+3. If local capability is insufficient under the pre-execution routing rule above, the requester discovers remote services through MetaWeb-backed records.
+4. The requester either:
+   - explicitly selects a remote service, or
+   - uses automatic recommendation mode, where the host recommends a remote candidate and the requester-side user confirms before the order is actually submitted.
 5. The requester submits one service request containing:
    - service reference,
    - requester identity,
@@ -363,11 +412,11 @@ The recommended V1 flow is:
 10. The runtime writes request and delivery trace back to MetaWeb-backed records.
 11. The requester host receives the result and folds it back into the original local conversation.
 
-## 10. Development Strategy
+## 11. Development Strategy
 
 V1 should be built by extraction, not by redesign.
 
-### 10.1 Phase 0: Canonical Path Inventory
+### 11.1 Phase 0: Canonical Path Inventory
 
 Before implementation planning, document the exact IDBots path for each V1 behavior:
 
@@ -381,7 +430,16 @@ Before implementation planning, document the exact IDBots path for each V1 behav
 
 This is required. Without it, the team risks rebuilding by memory instead of extracting from truth.
 
-### 10.2 Phase 1: Extract the Smallest Closed Loop
+Phase 0 must explicitly capture the field schema that crosses layers:
+
+- the truth-layer request record fields,
+- the truth-layer delivery record fields,
+- the wake-up payload fields needed by the provider runtime,
+- the delivery payload fields expected by the requester host.
+
+That schema inventory is part of the canonical-path inventory, not a later polish step.
+
+### 11.2 Phase 1: Extract the Smallest Closed Loop
 
 Extract only the minimum end-to-end loop first:
 
@@ -394,19 +452,19 @@ Extract only the minimum end-to-end loop first:
 
 Do not attempt broad host support or broad CLI polish in this phase.
 
-### 10.3 Phase 2: Expose Through CLI
+### 11.3 Phase 2: Expose Through CLI
 
 Wrap the extracted runtime behavior in a CLI that is stable enough for skills-pack and adapter use.
 
 The CLI should initially optimize for coverage and reliability, not elegance.
 
-### 10.4 Phase 3: Build OpenClaw Provider Adapter
+### 11.4 Phase 3: Build OpenClaw Provider Adapter
 
 The provider-side OpenClaw path is the first must-win because it creates the central product moment:
 
 > a remote request wakes a third-party local agent host and starts a session automatically.
 
-### 10.5 Phase 4: Build OpenClaw Requester Adapter and Skills Pack
+### 11.5 Phase 4: Build OpenClaw Requester Adapter and Skills Pack
 
 Once the provider side is working, add:
 
@@ -415,7 +473,7 @@ Once the provider side is working, add:
 - requester-side result reinjection,
 - user-facing skills and helper flows.
 
-### 10.6 Phase 5: UX and Packaging Optimization
+### 11.6 Phase 5: UX and Packaging Optimization
 
 Only after the closed loop works should the team invest heavily in:
 
@@ -425,48 +483,48 @@ Only after the closed loop works should the team invest heavily in:
 - richer onboarding,
 - launch video composition.
 
-## 11. Risks
+## 12. Risks
 
-### 11.1 Extraction Risk
+### 12.1 Extraction Risk
 
 IDBots' current behavior is spread across main-process services, listener flows, order lifecycle transitions, and result-bridging logic. If the team skips path inventory, hidden coupling will be missed.
 
-### 11.2 Host-Coupling Risk
+### 12.2 Host-Coupling Risk
 
 If provider-side auto-session logic is implemented directly in host skills instead of daemon/adapter layers, supporting a second host will require re-implementing core behavior.
 
-### 11.3 Business Drift Risk
+### 12.3 Business Drift Risk
 
 The easiest failure mode is "slightly changing the semantics to fit OpenClaw better." That would violate the design goal. Behavior equivalence with IDBots is the baseline.
 
-### 11.4 Payment Gating Risk
+### 12.4 Payment Gating Risk
 
 Paid requests must never execute before payment eligibility is confirmed. Free requests must not be made artificially complex by paid-request handling.
 
-### 11.5 Overreach Risk
+### 12.5 Overreach Risk
 
 Attempting to support whole-MetaBot invocation, multi-turn remote conversation, or full media richness in V1 will likely slow the project enough to miss the first real product moment.
 
-### 11.6 Wake-Up Portability Risk
+### 12.6 Wake-Up Portability Risk
 
 If V1 treats OpenClaw message gateway behavior as the business primitive, future non-gateway hosts will be blocked. Wake-up must remain an adapter concern.
 
-## 12. Acceptance Contract
+## 13. Acceptance Contract
 
 V1 is complete only when the following are true:
 
 1. A provider on OpenClaw can publish one local skill as a remote MetaBot service using semantics equivalent to the existing IDBots service path.
-2. A requester on OpenClaw can discover that service while still preserving local-first capability preference.
+2. A requester on OpenClaw can either explicitly choose that service or discover it through local-first remote fallback, where remote discovery is triggered only by a pre-execution local routing miss.
 3. A requester can submit one-shot task input consisting of a goal and task context.
 4. A free request can execute immediately after validation.
-5. A paid request cannot execute until payment eligibility is confirmed.
+5. A paid request cannot execute until the provider runtime has validated the referenced payment transaction against the expected service, amount, and currency using IDBots-equivalent payment verification semantics.
 6. A provider-side OpenClaw host automatically creates a local session and starts execution when the remote request arrives.
-7. The provider returns exactly one delivery payload for the service order.
-8. The requester receives that payload back inside its host experience.
+7. The provider returns exactly one delivery payload for the service order, consisting of required text plus optional image/file references.
+8. The requester receives that payload back inside its host experience and can resolve any referenced attachments by their delivery references.
 9. Request and delivery remain traceable through MetaWeb-backed records.
 10. The above loop works without requiring IDBots itself to be the demo host.
 
-## 13. Planning Guidance
+## 14. Planning Guidance
 
 The implementation plan that follows this spec should be framed as:
 
