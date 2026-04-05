@@ -139,12 +139,12 @@ export async function fetchLocalPresenceSnapshot(baseUrl: string): Promise<Local
     const lastConfigReloadError = toOptionalNonEmptyString(data.lastConfigReloadError);
     const nowSec = toFiniteNumber(data.nowSec);
 
-    if (!data.healthy || peerCount < 1) {
+    if (!data.healthy) {
       return {
         healthy: false,
         peerCount,
         onlineBots,
-        unhealthyReason: unhealthyReason ?? (peerCount < 1 ? 'no_active_peers' : 'presence_unhealthy'),
+        unhealthyReason: unhealthyReason ?? 'presence_unhealthy',
         lastConfigReloadError,
         nowSec,
       };
