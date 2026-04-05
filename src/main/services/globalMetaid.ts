@@ -5,7 +5,7 @@
 import {
   convertSharedAddressToGlobalMetaId,
   normalizeSharedGlobalMetaId
-} from './metabotIdentityBridge';
+} from '../shared/metabotIdentityBridge';
 
 export const convertToGlobalMetaId = convertSharedAddressToGlobalMetaId;
 

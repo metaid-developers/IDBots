@@ -1,3 +1,3 @@
-import { normalizeSharedGlobalMetaId } from '../services/metabotIdentityBridge';
+import { normalizeSharedGlobalMetaId } from './metabotIdentityBridge';
 
 export const normalizeRawGlobalMetaId = normalizeSharedGlobalMetaId;
