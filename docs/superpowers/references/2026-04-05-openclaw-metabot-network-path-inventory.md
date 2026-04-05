@@ -40,18 +40,18 @@ This document inventories the current IDBots business-truth path that V1 must pr
 - transport/protocol:
   chain-backed service discovery fetches `pin/path/list` for `'/protocols/skill-service'` via local-first HTTP fallback (`src/main/main.ts:953-971`)
   synced rows are mirrored into `remote_skill_service`
-  callable providers are not determined by chain rows alone; they are filtered through presence/availability into `availableServices`
-  requester-side candidate exposure currently happens by injecting `<available_remote_services>` into the cowork routing prompt (`src/main/skillManager.ts:1035-1073`)
+  automatic recommendation candidate exposure currently happens by injecting availability-filtered `availableServices` into the cowork routing prompt (`src/main/skillManager.ts:1035-1073`)
+  explicit GigSquare browsing loads current remote service rows through `gigSquare:fetchServices`, then overlays heartbeat/discovery snapshot state for online display and later uses handshake gating before order send (`src/main/main.ts:4891-4909`, `src/renderer/components/gigSquare/GigSquareView.tsx:134-145`, `src/renderer/components/gigSquare/GigSquareOrderModal.tsx:224-289`, `src/renderer/components/gigSquare/gigSquareOrderPresentation.js:4-17`)
 - business semantics to preserve:
-  discovery is two-step: sync remote service records, then intersect with online/callable provider truth
+  automatic recommendation discovery is two-step: sync remote service records, then intersect with online/callable provider truth
   revoked or unavailable services stay mirrored but are not treated as callable (`src/main/services/gigSquareRemoteServiceSync.ts:163-194`, `src/main/services/providerDiscoveryService.ts:122-129`)
-  requester discovery has two already-validated shells: automatic recommendation through the cowork prompt and explicit browsing through GigSquare; they share the same synced/filtered service truth but not the same requester-side gating rule
+  requester discovery has two already-validated shells: automatic recommendation through the cowork prompt and explicit browsing through GigSquare; they share the same underlying mirrored service source, but only the automatic path filters to `availableServices` at discovery time
   automatic recommendation is local-first before it is remote-first: the cowork prompt explicitly says remote services may be considered only when no local skill can fulfill the request (`src/main/skillManager.ts:1053-1057`)
-  explicit browsing/selection intentionally bypasses local-insufficiency detection once the requester opens the GigSquare service browser and picks a service (`src/main/main.ts:4891-4909`, `src/renderer/components/gigSquare/GigSquareView.tsx:70-105`)
+  explicit browsing/selection intentionally bypasses local-insufficiency detection once the requester opens the GigSquare service browser and picks a service, and it relies on online display plus order-time handshake gating rather than discovery-time availability filtering (`src/main/main.ts:4891-4909`, `src/renderer/components/gigSquare/GigSquareView.tsx:70-105`, `src/renderer/components/gigSquare/GigSquareOrderModal.tsx:224-289`)
   candidate presentation and requester-side confirmation are already business rules in the automatic prompt contract: remote services are shown with name/description/price/rating/provider, paid services require confirmation before delegation, and free services may delegate directly (`src/main/skillManager.ts:1057-1071`)
 - host/UI shell that may change:
   today's shell is sidebar/service browser state in Electron
-  V1 may surface the same candidate set inside an OpenClaw skill, CLI prompt, or explicit chooser, but it must still be sourced from synced chain rows plus provider-availability filtering; automatic recommendation must preserve local-first-then-remote semantics, while explicit selection may intentionally bypass local-miss detection
+  V1 may surface remote-service candidates inside an OpenClaw skill, CLI prompt, or explicit chooser, but it must preserve the current split: automatic recommendation is local-first and availability-filtered before suggestion, while explicit selection may intentionally bypass local-miss detection and instead gate execution later
 
 ## 3. Request Path
 
@@ -96,7 +96,7 @@ This document inventories the current IDBots business-truth path that V1 must pr
   seller wake-up currently depends on the IM/private-chat daemon loop plus whichever upstream connectivity path delivered the private message
 - business semantics to preserve:
   remote wake-up is not a new business primitive; it is the adapter-specific way an inbound service order reaches the provider
-  paid orders must not continue until `checkOrderPaymentStatus(...)` confirms the expected amount to the provider wallet (`src/main/services/privateChatDaemon.ts:811-828`, `src/main/services/orderPayment.ts:161-236`)
+  paid orders first go through `checkOrderPaymentStatus(...)` for expected-amount verification against the provider wallet, but current IDBots also has a legacy network-unverifiable allow-through branch (`unverified_network_error`) when raw-tx lookup fails; this is current runtime truth and should be treated as a V1 compatibility risk rather than the ideal end-state (`src/main/services/privateChatDaemon.ts:811-828`, `src/main/services/orderPayment.ts:161-236`, `src/main/services/orderPayment.ts:216-226`)
   free orders are allowed through using the existing `free_order_no_payment_required` branch (`src/main/services/orderPayment.ts:171-178`)
   seller order rows are created as soon as an inbound order is accepted (`src/main/services/privateChatDaemon.ts:835-850`)
 - host/UI shell that may change:
