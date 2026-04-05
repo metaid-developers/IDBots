@@ -49,7 +49,7 @@ function loadSocketModuleWithFakeIo(fakeIo) {
   };
 }
 
-test('SocketIOClient reconnects when a heartbeat acknowledgement never arrives', async () => {
+test('SocketIOClient does not force reconnect before the server has ever proven heartbeat_ack support', async () => {
   const sockets = [];
   const loaded = loadSocketModuleWithFakeIo(() => {
     const socket = createFakeSocket();
@@ -73,6 +73,43 @@ test('SocketIOClient reconnects when a heartbeat acknowledgement never arrives',
 
     sockets[0].trigger('connect');
     await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0].disconnectCalls, 0);
+
+    client.disconnect();
+  } finally {
+    loaded.socketIo.io = loaded.originalIo;
+    delete require.cache[loaded.modulePath];
+  }
+});
+
+test('SocketIOClient reconnects on a later missed heartbeat after heartbeat_ack support has been observed', async () => {
+  const sockets = [];
+  const loaded = loadSocketModuleWithFakeIo(() => {
+    const socket = createFakeSocket();
+    sockets.push(socket);
+    return socket;
+  });
+
+  try {
+    const { SocketIOClient } = loaded.exports;
+    const client = new SocketIOClient({
+      url: 'wss://example.test',
+      path: '/socket/socket.io',
+      metaid: 'idq1bot',
+      type: 'pc',
+      heartbeatInterval: 100,
+      heartbeatTimeout: 20,
+    }, () => {});
+
+    client.connect();
+    assert.equal(sockets.length, 1);
+
+    sockets[0].trigger('connect');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    sockets[0].trigger('heartbeat_ack');
+    await new Promise((resolve) => setTimeout(resolve, 120));
 
     assert.equal(sockets.length, 2);
     assert.equal(sockets[0].disconnectCalls >= 1, true);
