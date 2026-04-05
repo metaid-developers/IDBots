@@ -96,7 +96,8 @@ This document inventories the current IDBots business-truth path that V1 must pr
   seller wake-up currently depends on the IM/private-chat daemon loop plus whichever upstream connectivity path delivered the private message
 - business semantics to preserve:
   remote wake-up is not a new business primitive; it is the adapter-specific way an inbound service order reaches the provider
-  paid orders first go through `checkOrderPaymentStatus(...)` for expected-amount verification against the provider wallet, but current IDBots also has a legacy network-unverifiable allow-through branch (`unverified_network_error`) when raw-tx lookup fails; this is current runtime truth and should be treated as a V1 compatibility risk rather than the ideal end-state (`src/main/services/privateChatDaemon.ts:811-828`, `src/main/services/orderPayment.ts:161-236`, `src/main/services/orderPayment.ts:216-226`)
+  paid orders first go through `checkOrderPaymentStatus(...)` for expected-amount / currency / recipient-wallet verification, but current IDBots also has a legacy network-unverifiable allow-through branch (`unverified_network_error`) when raw-tx lookup fails; this is current runtime truth and should be treated as a V1 compatibility risk rather than the ideal end-state (`src/main/services/privateChatDaemon.ts:811-828`, `src/main/services/orderPayment.ts:161-236`, `src/main/services/orderPayment.ts:216-226`)
+  current payment verification is not service-bound: `checkOrderPaymentStatus(...)` does not validate that the payment proof is tied to the parsed `service_pin_id`, so expected-service verification remains a V1 gap/risk
   free orders are allowed through using the existing `free_order_no_payment_required` branch (`src/main/services/orderPayment.ts:171-178`)
   seller order rows are created as soon as an inbound order is accepted (`src/main/services/privateChatDaemon.ts:835-850`)
 - host/UI shell that may change:
@@ -178,7 +179,7 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | `order_message_pin_id` | `createPin(... '/protocols/simplemsg')` send result in `src/main/main.ts:2303-2312`; persisted into buyer order at `src/main/main.ts:2343-2354` | The on-chain pin that carries the ORDER request | Yes |
 | `requester_global_metaid` | Not embedded in ORDER plaintext; recovered from the `'/protocols/simplemsg'` sender row as `from_global_metaid` / `from_metaid` in `src/main/services/privateChatDaemon.ts:758-820` | The requester identity bound to the truth-layer request pin | Yes |
 | `service_pin_id` | Embedded as `serviceId` in `buildDelegationOrderPayload(...)` at `src/main/services/delegationOrderMessage.ts:99-109`; recovered by provider with `extractOrderSkillId(...)` | The exact published service being invoked | Yes |
-| `payment_txid` | Paid path uses `paymentTxid` in `src/main/main.ts:2264`; free path falls back to `orderReference` in `src/main/main.ts:2265` | Payment proof or free-order tracking id used to bind buyer/seller order rows | Yes |
+| `payment_txid / order_reference_id` | Paid path uses `paymentTxid` in `src/main/main.ts:2264`; free path falls back to `orderReference` in `src/main/main.ts:2265` | Correlation key used to bind buyer/seller order rows, with free orders using `orderReferenceId` instead of a real txid | Yes |
 | `price` / `currency` | Added to ORDER payload in `src/main/services/delegationOrderMessage.ts:102-105` | The expected order amount for provider-side payment verification | Yes |
 | `raw_request` | Stored in the `<raw_request>...</raw_request>` block built by `buildOrderPayload(...)` in `src/main/shared/orderMessage.js:70-100`; fed from `rawRequest` in `buildDelegationOrderPayload(...)` at `src/main/services/delegationOrderMessage.ts:97-107` | The verbatim one-shot goal the provider executes | Yes |
 | `task_goal_summary` | Stored in the first `[ORDER] ...` line via `displayText` in `buildOrderPayload(...)`; currently derived by `buildDelegationOrderNaturalText(...)` from `taskContext`, `userTask`, then `rawRequest` in `src/main/services/delegationOrderMessage.ts:63-69` | Human-readable short goal summary shown to the provider side | Yes |
@@ -192,7 +193,7 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | Field | Source today | Meaning | Required in V1 |
 | --- | --- | --- | --- |
 | `requester_global_metaid` | Incoming row sender in `src/main/services/privateChatDaemon.ts:820` | Who submitted the order | Yes |
-| `service_pin_id` | Parsed from ORDER plaintext through `extractOrderSkillId(...)` in `src/main/services/privateChatDaemon.ts:829` | Which local service/skill to execute | Yes |
+| `service_pin_id` | Parsed from ORDER plaintext through `extractOrderSkillId(...)` in `src/main/services/privateChatDaemon.ts:829` | Which local service/skill to execute; current payment verification does not bind the payment proof to this service id | Yes |
 | `payment_txid` / `order_reference_id` | Parsed from ORDER plaintext in `src/main/services/privateChatDaemon.ts:797-819` | Which payment/free-order reference unlocks execution | Yes |
 | `payment_amount` | Parsed from the ORDER `支付金额 ...` metadata by `extractOrderAmount(...)` in `src/main/services/orderPayment.ts:103-115`; consumed by `checkOrderPaymentStatus(...)` in `src/main/services/orderPayment.ts:157-166` | Expected payment amount for provider-side verification | Yes |
 | `payment_currency` | Parsed from the ORDER `支付金额 ...` metadata by `extractOrderAmount(...)` in `src/main/services/orderPayment.ts:103-115`; consumed by `checkOrderPaymentStatus(...)` in `src/main/services/orderPayment.ts:157-166` | Expected payment currency for provider-side verification | Yes |
@@ -208,7 +209,7 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | Field | Source today | Meaning | Required in V1 |
 | --- | --- | --- | --- |
 | `delivery_message_pin_id` | Delivery send result in `src/main/services/privateChatDaemon.ts:991-999` | The on-chain pin that carries the provider result | Yes |
-| `payment_txid` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989`; used for buyer-side match in `src/main/services/privateChatDaemon.ts:1083-1093` | The order being completed | Yes |
+| `payment_txid / order_reference_id` | Delivery payload currently serializes `paymentTxid: orderTrackingId` in `src/main/services/privateChatDaemon.ts:984-989`; buyer-side matching uses the same correlation key in `src/main/services/privateChatDaemon.ts:1083-1093` | The order being completed, with free orders reusing the legacy `paymentTxid` slot for `orderReferenceId` compatibility | Yes |
 | `service_pin_id` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989` | The service that produced the result | Yes |
 | `service_name` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989` | Human-readable trace/debug field for the delivered service | Yes |
 | `result` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989` | Provider's one-shot text result | Yes |
@@ -225,7 +226,7 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | raw `[DELIVERY]` plaintext | Added as assistant message to the buyer observer session in `src/main/services/privateChatDaemon.ts:1064-1080` | The exact provider delivery as seen on the buyer side before normalization | No |
 | parsed `result` text | Extracted through `parseDeliveryMessage(...)` and eventually cleaned/injected by `handleAutoDeliveryResult(...)` | The user-visible service result | Yes |
 | `attachments` | Gap: current requester-visible flow has no portable attachment list | V1 requester bridge must surface attachment refs separately from text, limited to image/file references rather than inline binary or arbitrary media blobs | Yes |
-| `payment_txid` | Current buyer-side link field in `src/main/services/privateChatDaemon.ts:1083-1093` | Legacy join key for delivered buyer order | Yes, for compatibility |
+| `payment_txid / order_reference_id` | Current buyer-side link field in `src/main/services/privateChatDaemon.ts:1083-1093`, with free orders reusing the same slot through `orderTrackingId` | Legacy compatibility join key for the delivered buyer order | Yes, for compatibility |
 | `request_id` | Gap: current visible delivery has no explicit request correlation | V1 requester bridge must use it for host-safe reinjection | Yes |
 | `requester_session_id` | Gap: current buyer reinjection relies on local blocking state rather than an explicit field | V1 requester bridge must require it together with `request_id` | Yes |
-| `target local session` | Derived indirectly from `deliveredOrder.coworkSessionId` inside `handleAutoDeliveryResult(...)` | Where the remote result is finally reinjected in the requester host | Yes, but V1 should derive it from explicit pending-request correlation rather than only payment-state lookup |
+| `bridge_target_local_session` | Derived indirectly from `deliveredOrder.coworkSessionId` inside `handleAutoDeliveryResult(...)` | Bridge-only reinjection target in the requester host, not part of the visible payload shown to the user | Yes, but V1 should derive it from explicit pending-request correlation rather than only payment-state lookup |
