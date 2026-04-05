@@ -158,12 +158,15 @@ This document inventories the current IDBots business-truth path that V1 must pr
   `handleAutoDeliveryResult(...)` in `src/main/services/privateChatDaemon.ts:1095-1112`
 - transport/protocol:
   trace state is persisted locally in service-order storage and cowork conversation mappings
-  observer-session conversation ids are deterministic from role + metabot id + peer globalmetaid + order correlation key (`payment_txid / order_reference_id`) (`src/main/services/serviceOrderObserverSession.ts:39-47`)
+  conversation-id construction is deterministic from role + metabot id + peer globalmetaid + order correlation key (`payment_txid / order_reference_id`) (`src/main/services/serviceOrderObserverSession.ts:39-47`)
+  buyer-side incoming replies are first attached by peer only through `findOrderSessionByPeer(...)`, then refined through parsed delivery correlation when `markBuyerOrderDelivered(...)` runs (`src/main/coworkStore.ts:1519-1534`, `src/main/services/privateChatDaemon.ts:1046-1093`)
+  blocking-session reinjection happens only after the delivered buyer order has been resolved and `deliveredOrder.coworkSessionId` is known (`src/main/services/privateChatDaemon.ts:1095-1108`)
   the truth-layer pins (`orderMessagePinId`, `deliveryMessagePinId`) are attached to the lifecycle rows as the on-chain anchors (`src/main/services/serviceOrderLifecycleService.ts:199-213`, `src/main/services/serviceOrderLifecycleService.ts:278-295`)
 - business semantics to preserve:
   buyer and seller are two views over the same order lifecycle, not separate protocols
   first response and delivered transitions are distinct and preserved on both sides
   explicit GigSquare orders and automatic delegation orders both create the same buyer observer/buyer order artifacts; V1 must preserve this shared lifecycle even if host shells differ
+  current buyer-side incoming correlation is weaker than ideal when multiple open orders share one provider, because peer-based attachment runs before delivery-specific order resolution; V1 should treat that as current truth and harden it with explicit portable correlation fields
   requester-side reinjection today resolves the destination indirectly from buyer order/payment-or-order-reference context and blocking cowork session state, using bridge-local state such as `deliveredOrder.coworkSessionId`, not from an explicit request/session correlation field
   V1 must preserve traceability while adding explicit portable correlation fields where the current code only has implicit payment/session linkage
 - host/UI shell that may change:
@@ -200,6 +203,7 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | `payment_chain` | Derived from the parsed ORDER amount/currency inside `extractOrderAmount(...)` in `src/main/services/orderPayment.ts:103-115`; used by `checkOrderPaymentStatus(...)` to resolve the recipient wallet and verification chain in `src/main/services/orderPayment.ts:165-178` | Chain context the provider uses to validate payment and select the receiving wallet | Yes |
 | `order_message_pin_id` | `row.pin_id` saved into seller order at `src/main/services/privateChatDaemon.ts:835-847` | The truth-layer request anchor the provider is waking up for | Yes |
 | `user_task` / request text | Current provider prompt is derived from decrypted ORDER plaintext before `buildOrderPrompts(...)` in `src/main/services/privateChatDaemon.ts:938-946` | The provider-facing execution goal | Yes |
+| `task_context` | Gap: the current wake-up path does not receive a first-class task-context field; provider execution only sees ORDER plaintext-derived request text and summary | Separate provider-side task context that V1 must preserve alongside the goal | Yes |
 | `request_id` | Gap: current wake-up path is implicit inbound ORDER delivery, not an explicit envelope | Portable daemon/runtime correlation id | Yes |
 | `requester_session_id` | Gap: current provider wake-up knows nothing about the buyer's original local session | Needed so later delivery can reinject into the correct requester session | Yes |
 | `requester_conversation_id` | Gap: current provider path derives seller observer conversation locally | Portable host conversation correlation | Yes |
@@ -226,6 +230,9 @@ This document inventories the current IDBots business-truth path that V1 must pr
 | raw `[DELIVERY]` plaintext | Added as assistant message to the buyer observer session in `src/main/services/privateChatDaemon.ts:1064-1080` | The exact provider delivery as seen on the buyer side before normalization | No |
 | parsed `result` text | Extracted through `parseDeliveryMessage(...)` and eventually cleaned/injected by `handleAutoDeliveryResult(...)` | The user-visible service result | Yes |
 | `attachments` | Gap: current requester-visible flow has no portable attachment list | V1 requester bridge must surface attachment refs separately from text, limited to image/file references rather than inline binary or arbitrary media blobs | Yes |
+| `service_pin_id` | Parsed from the delivery payload built by `buildDeliveryMessage(...)` / `parseDeliveryMessage(...)` in `src/main/services/serviceOrderProtocols.js:8-10` and `src/main/services/serviceOrderProtocols.js:218-237` | Portable identifier for which published service produced the visible result | Yes |
 | `payment_txid / order_reference_id` | Current buyer-side link field in `src/main/services/privateChatDaemon.ts:1083-1093`, with free orders reusing the same slot through `orderTrackingId` | Legacy compatibility join key for the delivered buyer order | Yes, for compatibility |
+| `delivery_message_pin_id` | Buyer-side application uses the incoming row pin id as `deliveryMessagePinId` in `src/main/services/privateChatDaemon.ts:1083-1089` | Truth-layer anchor for the visible delivery payload | Yes |
 | `request_id` | Gap: current visible delivery has no explicit request correlation | V1 requester bridge must use it for host-safe reinjection | Yes |
 | `requester_session_id` | Gap: current buyer reinjection relies on local blocking state rather than an explicit field | V1 requester bridge must require it together with `request_id` | Yes |
+| `requester_conversation_id` | Gap: current visible delivery does not carry a portable requester conversation id | V1 requester bridge must preserve it so reinjection can target the right host conversation without host-specific lookup | Yes |
