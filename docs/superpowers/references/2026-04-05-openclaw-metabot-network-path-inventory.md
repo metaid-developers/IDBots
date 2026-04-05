@@ -1,0 +1,208 @@
+# OpenClaw MetaBot Network Path Inventory
+
+This document inventories the current IDBots business-truth path that V1 must preserve when extracting the OpenClaw-oriented runtime, CLI, daemon, and skills pack.
+
+## 1. Publish Path
+
+- entrypoint:
+  `ipcMain.handle('gigSquare:publishService', ...)` in `src/main/main.ts:5196`
+- main services:
+  `normalizeGigSquareCurrency(...)`, `getGigSquarePriceLimit(...)`, and `buildGigSquareServicePayload(...)` in `src/main/services/gigSquareServiceMutationService.ts:167-289`
+  `createPin(...)` write to `GIG_SQUARE_SERVICE_PATH` in `src/main/main.ts:5288-5296`
+  `insertGigSquareServiceRow(...)` mirror write in `src/main/main.ts:5298-5318`
+  optional service icon upload through `createPin(... path: '/file')` in `src/main/main.ts:5248-5264`
+- transport/protocol:
+  on-chain publish pin at `'/protocols/skill-service'` (`src/main/main.ts:392`, `src/main/main.ts:5289-5292`)
+  payload is JSON with `endpoint: 'simplemsg'`, `inputType: 'text'`, `outputType`, `providerSkill`, `paymentAddress`
+  file artifacts are externalized as `metafile://<pinid>` (`src/main/main.ts:5255-5264`)
+  local chain-write substrate remains the MetaID `createPin(...)` path exposed through `src/main/services/metaidRpcServer.ts:1-4` and `src/main/services/metaidRpcServer.ts:624-642`
+- business semantics to preserve:
+  one published local skill equals one remotely callable service item
+  provider-side wallet address is derived from the selected service currency before publish (`src/main/main.ts:5266-5270`)
+  service publish always writes the truth-layer pin first, then mirrors the local row, then schedules follow-up remote sync (`src/main/main.ts:5298-5327`)
+  no new marketplace semantics should be invented for V1; the existing GigSquare payload shape is the truth
+- host/UI shell that may change:
+  the current host shell is Electron renderer -> IPC
+  external hosts may call a CLI or local HTML page instead, but must still end at the same publish payload + `createPin('/protocols/skill-service')` path
+
+## 2. Discovery Path
+
+- entrypoint:
+  `syncRemoteSkillServices()` in `src/main/main.ts:947-980`
+  runtime consumers read the provider-availability snapshot from `ProviderDiscoveryService`
+- main services:
+  `syncRemoteSkillServicesWithCursor(...)` in `src/main/services/gigSquareRemoteServiceSync.ts:357-382`
+  `parseRemoteSkillServiceItem(...)` and `buildRemoteSkillServiceUpsertStatement(...)` in `src/main/services/gigSquareRemoteServiceSync.ts:135-355`
+  `buildProviderGroups(...)` and `buildPresenceSnapshot(...)` in `src/main/services/providerDiscoveryService.ts:118-199`
+- transport/protocol:
+  chain-backed service discovery fetches `pin/path/list` for `'/protocols/skill-service'` via local-first HTTP fallback (`src/main/main.ts:953-971`)
+  synced rows are mirrored into `remote_skill_service`
+  callable providers are not determined by chain rows alone; they are filtered through presence/availability into `availableServices`
+- business semantics to preserve:
+  discovery is two-step: sync remote service records, then intersect with online/callable provider truth
+  revoked or unavailable services stay mirrored but are not treated as callable (`src/main/services/gigSquareRemoteServiceSync.ts:163-194`, `src/main/services/providerDiscoveryService.ts:122-129`)
+  local-first read semantics matter: the code asks the local path first, then falls back to remote if the local semantic miss says it should (`src/main/main.ts:960-965`)
+- host/UI shell that may change:
+  today's shell is sidebar/service browser state in Electron
+  V1 may surface the same candidate set inside an OpenClaw skill or CLI prompt, but it must still be sourced from synced chain rows plus provider-availability filtering
+
+## 3. Request Path
+
+- entrypoint:
+  remote delegation send flow in `src/main/main.ts:2246-2405`
+- main services:
+  `buildDelegationOrderPayload(...)` in `src/main/services/delegationOrderMessage.ts:92-110`
+  `ensureBuyerOrderObserverSession(...)` in `src/main/services/buyerOrderObserverSession.ts:45-70`
+  `ensureServiceOrderObserverSession(...)` in `src/main/services/serviceOrderObserverSession.ts:71-177`
+  `serviceOrderLifecycle.createBuyerOrder(...)` in `src/main/services/serviceOrderLifecycleService.ts:193-214`
+- transport/protocol:
+  requester builds an `[ORDER]` payload that carries normalized task text, service id, price/currency, and either payment txid or free-order reference (`src/main/services/delegationOrderMessage.ts:99-109`)
+  requester ECDH-encrypts that order and writes it through `createPin(... path: '/protocols/simplemsg')` in `src/main/main.ts:2293-2312`
+  the buyer observer session stores order context under a deterministic `metaweb_order:buyer:...` conversation id (`src/main/services/serviceOrderObserverSession.ts:39-47`)
+- business semantics to preserve:
+  one request is one service order, not a multi-turn remote chat
+  buyer trace is created immediately after request write via `createBuyerOrder(...)`, using the order message pin id as the truth-layer request anchor (`src/main/main.ts:2338-2355`)
+  local blocking / waiting-for-delivery state is keyed off that buyer order (`src/main/main.ts:2381-2404`)
+- host/UI shell that may change:
+  today's shell is local cowork delegation UI
+  V1 requester hosts may use natural language or commands, but once the remote path is chosen they must still build the same ORDER payload and write it to `'/protocols/simplemsg'`
+
+## 4. Wake-Up Path
+
+- entrypoint:
+  inbound private message processing in `src/main/services/privateChatDaemon.ts:793-845`
+- main services:
+  `isOrderMessage(...)`, `extractOrderTxid(...)`, `extractOrderReferenceId(...)`, `extractOrderSkillId(...)`, and `extractOrderSkillName(...)`
+  `checkOrderPaymentStatus(...)` in `src/main/services/orderPayment.ts:152-236`
+  `ensureServiceOrderObserverSession(...)` seller-side attach in `src/main/services/privateChatDaemon.ts:853-891`
+- transport/protocol:
+  there is no standalone wake-up envelope today
+  the wake-up signal is the arrival of a private `'/protocols/simplemsg'` pin whose decrypted plaintext begins with `[ORDER]`
+  seller wake-up currently depends on the IM/private-chat daemon loop plus whichever upstream connectivity path delivered the private message
+- business semantics to preserve:
+  remote wake-up is not a new business primitive; it is the adapter-specific way an inbound service order reaches the provider
+  paid orders must not continue until `checkOrderPaymentStatus(...)` confirms the expected amount to the provider wallet (`src/main/services/privateChatDaemon.ts:811-828`, `src/main/services/orderPayment.ts:161-236`)
+  free orders are allowed through using the existing `free_order_no_payment_required` branch (`src/main/services/orderPayment.ts:171-178`)
+  seller order rows are created as soon as an inbound order is accepted (`src/main/services/privateChatDaemon.ts:835-850`)
+- host/UI shell that may change:
+  today's wake-up shell is the private-chat daemon plus the current socket/IM path
+  OpenClaw may replace that with a message-gateway wake-up event, but it must still hand the provider runtime the same order semantics recovered from the truth-layer request
+
+## 5. Execute Path
+
+- entrypoint:
+  `orderCoworkHandler.runOrder(...)` in `src/main/services/privateChatDaemon.ts:952-969`
+- main services:
+  `PrivateChatOrderCowork.runOrder(...)` in `src/main/services/privateChatOrderCowork.ts:77-101`
+  `PrivateChatOrderCowork.createOrderSession(...)` in `src/main/services/privateChatOrderCowork.ts:103-158`
+  seller observer-session linking in `src/main/services/privateChatDaemon.ts:853-891`
+- transport/protocol:
+  provider execution is local cowork session orchestration, not a remote RPC hop
+  the seller-side order session is stored under `metaweb_order:seller:...` conversation mapping (`src/main/services/serviceOrderObserverSession.ts:39-47`, `src/main/services/serviceOrderObserverSession.ts:127-144`)
+  execution auto-start uses `coworkRunner.startSession(... autoApprove: true ...)` (`src/main/services/privateChatOrderCowork.ts:89-98`)
+- business semantics to preserve:
+  once a valid order arrives, provider execution auto-starts with no human confirmation
+  the seller observer session is created before the run so the provider host already has order context and a stable conversation/session link (`src/main/services/privateChatDaemon.ts:853-891`)
+  processing notices and session creation are host shell details; the key semantic is “accepted order -> one local execution session”
+- host/UI shell that may change:
+  today's host shell is Electron cowork session creation
+  OpenClaw can replace session creation and prompt injection, but must still preserve one accepted order -> one auto-started local provider session
+
+## 6. Deliver Path
+
+- entrypoint:
+  provider delivery send in `src/main/services/privateChatDaemon.ts:976-1000`
+  buyer delivery apply in `src/main/services/privateChatDaemon.ts:1064-1112`
+- main services:
+  `buildDeliveryMessage(...)` and `parseDeliveryMessage(...)` in `src/main/services/serviceOrderProtocols.js:8-10` and `src/main/services/serviceOrderProtocols.js:218-237`
+  `serviceOrderLifecycle.markSellerOrderDelivered(...)` and `markBuyerOrderDelivered(...)` in `src/main/services/serviceOrderLifecycleService.ts:270-296`
+  `handleAutoDeliveryResult(...)` re-injection bridge in `src/main/services/privateChatDaemon.ts:1095-1112`
+- transport/protocol:
+  provider serializes a `[DELIVERY] { ... }` JSON payload and sends it via encrypted `createPin(... path: '/protocols/simplemsg')` (`src/main/services/privateChatDaemon.ts:983-991`)
+  buyer parses the delivery plaintext from the incoming simplemsg pin and marks the order delivered (`src/main/services/privateChatDaemon.ts:1064-1093`)
+- business semantics to preserve:
+  delivery is one-shot and ends the order loop
+  seller and buyer both persist the delivery message pin id as the truth anchor (`src/main/services/privateChatDaemon.ts:991-999`, `src/main/services/privateChatDaemon.ts:1083-1093`)
+  if the buyer order was auto-delegated from a blocking local cowork session, the delivery is reinjected into that original session (`src/main/services/privateChatDaemon.ts:1095-1112`)
+  current delivery contract is text-only JSON result payload; attachment refs are a V1 extension point that must stay reference-only, not inline binary
+- host/UI shell that may change:
+  today's shell is private chat + cowork message injection
+  V1 requester hosts may display a host-native result card or assistant message, but must still consume the same delivery semantics and preserve the underlying truth-layer delivery pin
+
+## 7. Trace Path
+
+- entrypoint:
+  buyer trace starts in `src/main/main.ts:2270-2288` and `src/main/main.ts:2341-2355`
+  seller trace starts in `src/main/services/privateChatDaemon.ts:835-891`
+- main services:
+  `createBuyerOrder(...)`, `createSellerOrder(...)`, `markBuyerOrderFirstResponseReceived(...)`, `markSellerOrderFirstResponseSent(...)`, `markBuyerOrderDelivered(...)`, `markSellerOrderDelivered(...)` in `src/main/services/serviceOrderLifecycleService.ts:193-296`
+  `ensureBuyerOrderObserverSession(...)` in `src/main/services/buyerOrderObserverSession.ts:45-70`
+  `ensureServiceOrderObserverSession(...)` in `src/main/services/serviceOrderObserverSession.ts:71-177`
+  `handleAutoDeliveryResult(...)` in `src/main/services/privateChatDaemon.ts:1095-1112`
+- transport/protocol:
+  trace state is persisted locally in service-order storage and cowork conversation mappings
+  observer-session conversation ids are deterministic from role + metabot id + peer globalmetaid + payment txid (`src/main/services/serviceOrderObserverSession.ts:39-47`)
+  the truth-layer pins (`orderMessagePinId`, `deliveryMessagePinId`) are attached to the lifecycle rows as the on-chain anchors (`src/main/services/serviceOrderLifecycleService.ts:199-213`, `src/main/services/serviceOrderLifecycleService.ts:278-295`)
+- business semantics to preserve:
+  buyer and seller are two views over the same order lifecycle, not separate protocols
+  first response and delivered transitions are distinct and preserved on both sides
+  requester-side reinjection today resolves the destination indirectly from buyer order/payment context and blocking cowork session state, not from an explicit request/session correlation field
+  V1 must preserve traceability while adding explicit portable correlation fields where the current code only has implicit payment/session linkage
+- host/UI shell that may change:
+  today's shell is observer sessions plus Electron cowork streams
+  external hosts may replace the viewer/session UI, but not the underlying buyer/seller lifecycle semantics or truth-layer pin references
+
+## 8. Cross-Layer Field Schemas
+
+### Truth-Layer Request Record
+
+| Field | Source today | Meaning | Required in V1 |
+| --- | --- | --- | --- |
+| `order_message_pin_id` | `createPin(... '/protocols/simplemsg')` send result in `src/main/main.ts:2303-2312`; persisted into buyer order at `src/main/main.ts:2343-2354` | The on-chain pin that carries the ORDER request | Yes |
+| `service_pin_id` | Embedded as `serviceId` in `buildDelegationOrderPayload(...)` at `src/main/services/delegationOrderMessage.ts:99-109`; recovered by provider with `extractOrderSkillId(...)` | The exact published service being invoked | Yes |
+| `payment_txid` | Paid path uses `paymentTxid` in `src/main/main.ts:2264`; free path falls back to `orderReference` in `src/main/main.ts:2265` | Payment proof or free-order tracking id used to bind buyer/seller order rows | Yes |
+| `price` / `currency` | Added to ORDER payload in `src/main/services/delegationOrderMessage.ts:102-105` | The expected order amount for provider-side payment verification | Yes |
+| `raw_request` / natural task text | `buildOrderPayload(...)` input from `buildDelegationOrderPayload(...)` | The one-shot goal/context the provider executes | Yes |
+| `request_id` | Gap: not persisted in current ORDER payload or buyer order row | Portable cross-host correlation id for one service request | Yes |
+| `requester_session_id` | Gap: buyer reinjection currently resolves through payment/order state, not an explicit field | Portable requester-side reinjection target key | Yes |
+| `requester_conversation_id` | Gap: observer conversation ids are derived locally, not carried cross-host | Portable host-side conversation correlation | Yes |
+
+### Wake-Up Payload
+
+| Field | Source today | Meaning | Required in V1 |
+| --- | --- | --- | --- |
+| `requester_global_metaid` | Incoming row sender in `src/main/services/privateChatDaemon.ts:820` | Who submitted the order | Yes |
+| `service_pin_id` | Parsed from ORDER plaintext through `extractOrderSkillId(...)` in `src/main/services/privateChatDaemon.ts:829` | Which local service/skill to execute | Yes |
+| `payment_txid` / `order_reference_id` | Parsed from ORDER plaintext in `src/main/services/privateChatDaemon.ts:797-819` | Which payment/free-order reference unlocks execution | Yes |
+| `order_message_pin_id` | `row.pin_id` saved into seller order at `src/main/services/privateChatDaemon.ts:835-847` | The truth-layer request anchor the provider is waking up for | Yes |
+| `user_task` / request text | Current provider prompt is derived from decrypted ORDER plaintext before `buildOrderPrompts(...)` in `src/main/services/privateChatDaemon.ts:938-946` | The provider-facing execution goal | Yes |
+| `request_id` | Gap: current wake-up path is implicit inbound ORDER delivery, not an explicit envelope | Portable daemon/runtime correlation id | Yes |
+| `requester_session_id` | Gap: current provider wake-up knows nothing about the buyer's original local session | Needed so later delivery can reinject into the correct requester session | Yes |
+| `requester_conversation_id` | Gap: current provider path derives seller observer conversation locally | Portable host conversation correlation | Yes |
+
+### Truth-Layer Delivery Record
+
+| Field | Source today | Meaning | Required in V1 |
+| --- | --- | --- | --- |
+| `delivery_message_pin_id` | Delivery send result in `src/main/services/privateChatDaemon.ts:991-999` | The on-chain pin that carries the provider result | Yes |
+| `payment_txid` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989`; used for buyer-side match in `src/main/services/privateChatDaemon.ts:1083-1093` | The order being completed | Yes |
+| `service_pin_id` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989` | The service that produced the result | Yes |
+| `service_name` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989` | Human-readable trace/debug field for the delivered service | Yes |
+| `result` | Added to delivery payload in `src/main/services/privateChatDaemon.ts:984-989` | Provider's one-shot text result | Yes |
+| `delivered_at` | Added to delivery payload and persisted into lifecycle transitions in `src/main/services/privateChatDaemon.ts:983-999` and `src/main/services/privateChatDaemon.ts:1088-1092` | Delivery completion timestamp | Yes |
+| `attachments` | Gap: current `[DELIVERY]` payload has no portable attachment list | V1 must add reference-only attachments such as `metafile://<pinid>` | Yes |
+| `request_id` | Gap: current buyer matches delivery by payment txid only | Portable request correlation | Yes |
+| `requester_session_id` | Gap: current buyer reinjection target is indirect via blocking order/session state | Explicit requester-side result target key | Yes |
+| `requester_conversation_id` | Gap: current delivery does not carry host conversation correlation | Portable host conversation correlation | Yes |
+
+### Requester-Visible Delivery Payload
+
+| Field | Source today | Meaning | Required in V1 |
+| --- | --- | --- | --- |
+| raw `[DELIVERY]` plaintext | Added as assistant message to the buyer observer session in `src/main/services/privateChatDaemon.ts:1064-1080` | The exact provider delivery as seen on the buyer side before normalization | No |
+| parsed `result` text | Extracted through `parseDeliveryMessage(...)` and eventually cleaned/injected by `handleAutoDeliveryResult(...)` | The user-visible service result | Yes |
+| `attachments` | Gap: current requester-visible flow has no portable attachment list | V1 requester bridge must surface attachment refs separately from text | Yes |
+| `payment_txid` | Current buyer-side link field in `src/main/services/privateChatDaemon.ts:1083-1093` | Legacy join key for delivered buyer order | Yes, for compatibility |
+| `request_id` | Gap: current visible delivery has no explicit request correlation | V1 requester bridge must use it for host-safe reinjection | Yes |
+| `requester_session_id` | Gap: current buyer reinjection relies on local blocking state rather than an explicit field | V1 requester bridge must require it together with `request_id` | Yes |
+| `target local session` | Derived indirectly from `deliveredOrder.coworkSessionId` inside `handleAutoDeliveryResult(...)` | Where the remote result is finally reinjected in the requester host | Yes, but V1 should derive it from explicit pending-request correlation rather than only payment-state lookup |
