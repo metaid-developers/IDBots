@@ -7,11 +7,10 @@
 import type { Database } from 'sql.js';
 import { getPrivateKeyBufferForEcdh } from './metabotWalletService';
 import {
-  computeEcdhSharedSecret,
-  computeEcdhSharedSecretSha256,
-  ecdhDecrypt,
-  ecdhEncrypt,
-} from './metaWebCrypto';
+  receiveSharedPrivateChat,
+  sendSharedPrivateChat,
+  type SharedSendPrivateChatResult,
+} from '../shared/metabotChatBridge';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import type { CoworkRunner } from '../libs/coworkRunner';
 import { PrivateChatOrderCowork } from './privateChatOrderCowork';
@@ -108,56 +107,22 @@ function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
   ) as PrivateChatMessageRow[];
 }
 
-function getCipherTextFromRawData(rawData: string | null): string {
-  const raw = (rawData ?? '').trim();
-  if (!raw) return '';
-  try {
-    const obj = JSON.parse(raw) as {
-      content?: unknown;
-      data?: { content?: unknown };
-    };
-    const c1 = typeof obj.content === 'string' ? obj.content.trim() : '';
-    if (c1) return c1;
-    const c2 =
-      obj.data && typeof obj.data.content === 'string'
-        ? obj.data.content.trim()
-        : '';
-    return c2 || '';
-  } catch {
-    return '';
-  }
-}
-
-function looksLikeEncryptedPrivateContent(value: string): boolean {
-  const s = value.trim();
-  if (!s) return false;
-  if (s.startsWith('U2FsdGVkX1')) return true; // OpenSSL "Salted__" base64 prefix
-  if (/^[0-9a-fA-F]{32,}$/.test(s) && s.length % 2 === 0) return true;
-  return false;
-}
-
-function tryDecryptWithSecret(cipherText: string, secret: string): string | null {
-  if (!cipherText || !secret) return null;
-  const plain = ecdhDecrypt(cipherText, secret);
-  if (!plain || plain === cipherText) return null;
-  return plain;
-}
-
 function markProcessed(db: Database, id: number, saveDb: SaveDbFn): void {
   db.run('UPDATE private_chat_messages SET is_processed = 1 WHERE id = ?', [id]);
   saveDb();
 }
 
-function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin = ''): string {
-  const body = {
-    to,
-    timestamp: Math.floor(Date.now() / 1000),
-    content: encryptedContent,
-    contentType: 'text/plain',
-    encrypt: 'ecdh',
-    replyPin: replyPin || '',
+function buildPrivateChatCreatePinPayload(
+  outbound: SharedSendPrivateChatResult
+): MetaidDataPayload {
+  return {
+    operation: 'create',
+    path: outbound.path,
+    encryption: outbound.encryption,
+    version: outbound.version,
+    contentType: outbound.contentType,
+    payload: outbound.payload,
   };
-  return JSON.stringify(body);
 }
 
 const ORDER_PREFIX = '[ORDER]';
@@ -500,12 +465,15 @@ async function resolvePrivateConversationSession(
 }
 
 interface RatingFlowParams {
-  metabot: { id: number; name: string; llm_id?: string | null };
+  metabot: { id: number; name: string; llm_id?: string | null; globalmetaid?: string | null };
   metabotStore: MetabotStore;
   coworkStore: CoworkStore;
   buyerOrderMapping: import('../coworkStore').CoworkConversationMapping;
   sellerGlobalMetaId: string;
-  sharedSecretForReply: string;
+  peerChatPublicKey: string;
+  localPrivateKeyHex: string;
+  replySecretVariant: 'sha256' | 'raw';
+  sharedSecretForReply?: string;
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
   emitLog: (msg: string) => void;
@@ -514,6 +482,7 @@ interface RatingFlowParams {
 
 async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const { metabot, metabotStore, coworkStore, buyerOrderMapping, sellerGlobalMetaId,
+    peerChatPublicKey, localPrivateKeyHex, replySecretVariant,
     sharedSecretForReply, createPin, performChat, emitLog, emitToRenderer } = params;
 
   // Parse order metadata stored when buyer sent the order
@@ -614,16 +583,23 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
 
   // Send combined message to B via simplemsg
   try {
-    const encrypted = ecdhEncrypt(combinedMessage, sharedSecretForReply);
-    const payloadStr = buildPrivateMsgPayload(sellerGlobalMetaId, encrypted, '');
-    await createPin(metabotStore, metabot.id, {
-      operation: 'create',
-      path: '/protocols/simplemsg',
-      encryption: '0',
-      version: '1.0.0',
-      contentType: 'application/json',
-      payload: payloadStr,
+    const outbound = sendSharedPrivateChat({
+      fromIdentity: {
+        globalMetaId: metabot.globalmetaid ?? null,
+        privateKeyHex: localPrivateKeyHex,
+      },
+      toGlobalMetaId: sellerGlobalMetaId,
+      peerChatPublicKey,
+      content: combinedMessage,
+      replyPinId: '',
+      secretVariant: replySecretVariant,
+      sharedSecretOverride: sharedSecretForReply ?? null,
     });
+    await createPin(
+      metabotStore,
+      metabot.id,
+      buildPrivateChatCreatePinPayload(outbound)
+    );
     emitLog(`[Rating] Combined rating+farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
   } catch (e) {
     emitLog(`[Rating] Combined message send failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -700,53 +676,41 @@ async function processOne(
       return;
     }
 
-    let sharedSecretSha256: string;
-    let sharedSecretRaw: string;
-    try {
-      sharedSecretSha256 = computeEcdhSharedSecretSha256(privateKeyBuffer, fromChatPubkey);
-      sharedSecretRaw = computeEcdhSharedSecret(privateKeyBuffer, fromChatPubkey);
-    } catch (e) {
-      emitLog(`[PrivateChat] Skip message ${row.id}: invalid peer public key (${fromChatPubkey.slice(0, 16)}…): ${e instanceof Error ? e.message : e}`);
-      markProcessed(db, row.id, saveDb);
-      return;
-    }
-    emitLog(
-      `[PrivateChat] ECDH ready: from_chat_pubkey(first/last16)=${fromChatPubkey.slice(0, 16)}...${fromChatPubkey.slice(-16)} sha256Secret(first/last16)=${sharedSecretSha256.slice(0, 16)}...${sharedSecretSha256.slice(-16)}`
-    );
-
+    const localPrivateKeyHex = privateKeyBuffer.toString('hex');
     const contentInDb = (row.content ?? '').trim();
-    const contentInRawData = getCipherTextFromRawData(
-      typeof row.raw_data === 'string' ? row.raw_data : null
-    );
-    const cipherText = contentInRawData || contentInDb;
-    if (!cipherText && !contentInDb) {
+    const rawData = typeof row.raw_data === 'string' ? row.raw_data : null;
+    if (!contentInDb && !(rawData ?? '').trim()) {
       markProcessed(db, row.id, saveDb);
       return;
     }
 
-    const shouldDecrypt =
-      !!contentInRawData || looksLikeEncryptedPrivateContent(contentInDb);
     let plaintext = contentInDb;
-    let sharedSecretForReply = sharedSecretSha256;
-    if (shouldDecrypt) {
-      const plainBySha256 = tryDecryptWithSecret(cipherText, sharedSecretSha256);
-      if (plainBySha256 != null) {
-        plaintext = plainBySha256;
-        sharedSecretForReply = sharedSecretSha256;
-      } else {
-        const plainByRaw = tryDecryptWithSecret(cipherText, sharedSecretRaw);
-        if (plainByRaw != null) {
-          plaintext = plainByRaw;
-          sharedSecretForReply = sharedSecretRaw;
-          emitLog('[PrivateChat] Decrypt fallback: using raw shared secret for legacy payload.');
-        } else {
-          emitLog(
-            `[PrivateChat] Skip message ${row.id}: decrypt failed for both sha256/raw shared secret`
-          );
-          markProcessed(db, row.id, saveDb);
-          return;
-        }
+    let sharedSecretForReply: string | undefined;
+    let replySecretVariant: 'sha256' | 'raw' = 'sha256';
+    try {
+      const inbound = receiveSharedPrivateChat({
+        localIdentity: {
+          globalMetaId: metabot.globalmetaid ?? null,
+          privateKeyHex: localPrivateKeyHex,
+        },
+        peerChatPublicKey: fromChatPubkey,
+        payload: {
+          fromGlobalMetaId: (row.from_global_metaid || row.from_metaid || '').trim(),
+          content: row.content,
+          rawData,
+          replyPinId: row.reply_pin,
+        },
+      });
+      plaintext = inbound.plaintext;
+      sharedSecretForReply = inbound.sharedSecret || undefined;
+      replySecretVariant = inbound.secretVariant;
+      if (replySecretVariant === 'raw') {
+        emitLog('[PrivateChat] Decrypt fallback: using raw shared secret for legacy payload.');
       }
+    } catch (e) {
+      emitLog(`[PrivateChat] Skip message ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
+      markProcessed(db, row.id, saveDb);
+      return;
     }
     if (!plaintext.trim()) {
       emitLog(`[PrivateChat] Skip message ${row.id}: plaintext empty after decode`);
@@ -758,18 +722,24 @@ async function processOne(
     const fromGlobalMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
 
     if (handshakeWord === 'ping') {
-      const encryptedPong = ecdhEncrypt('pong', sharedSecretForReply);
-      emitLog(`[PrivateChat] Encrypt ping->pong: plaintext="pong" sharedSecretLen=${sharedSecretForReply.length} encryptedLen=${encryptedPong.length} encryptedPrefix=${encryptedPong.slice(0, 40)}...`);
-      const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedPong, row.reply_pin || '');
       try {
-        await createPin(metabotStore, metabot.id, {
-          operation: 'create',
-          path: '/protocols/simplemsg',
-          encryption: '0',
-          version: '1.0.0',
-          contentType: 'application/json',
-          payload: payloadStr,
+        const outbound = sendSharedPrivateChat({
+          fromIdentity: {
+            globalMetaId: metabot.globalmetaid ?? null,
+            privateKeyHex: localPrivateKeyHex,
+          },
+          toGlobalMetaId: fromGlobalMetaId,
+          peerChatPublicKey: fromChatPubkey,
+          content: 'pong',
+          replyPinId: row.reply_pin || '',
+          secretVariant: replySecretVariant,
+          sharedSecretOverride: sharedSecretForReply ?? null,
         });
+        await createPin(
+          metabotStore,
+          metabot.id,
+          buildPrivateChatCreatePinPayload(outbound)
+        );
         emitLog(`[PrivateChat] Ping -> Pong to ${fromGlobalMetaId.slice(0, 12)}…`);
       } catch (e) {
         emitLog(`[PrivateChat] Failed to send pong: ${e instanceof Error ? e.message : e}`);
@@ -898,16 +868,23 @@ async function processOne(
       }
 
       const sendEncryptedMsg = async (text: string) => {
-        const encrypted = ecdhEncrypt(text, sharedSecretForReply);
-        const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encrypted, row.reply_pin || '');
-        return await createPin(metabotStore, metabot.id, {
-          operation: 'create',
-          path: '/protocols/simplemsg',
-          encryption: '0',
-          version: '1.0.0',
-          contentType: 'application/json',
-          payload: payloadStr,
+        const outbound = sendSharedPrivateChat({
+          fromIdentity: {
+            globalMetaId: metabot.globalmetaid ?? null,
+            privateKeyHex: localPrivateKeyHex,
+          },
+          toGlobalMetaId: fromGlobalMetaId,
+          peerChatPublicKey: fromChatPubkey,
+          content: text,
+          replyPinId: row.reply_pin || '',
+          secretVariant: replySecretVariant,
+          sharedSecretOverride: sharedSecretForReply ?? null,
         });
+        return await createPin(
+          metabotStore,
+          metabot.id,
+          buildPrivateChatCreatePinPayload(outbound)
+        );
       };
 
       if (source === 'metaweb_private' && fromGlobalMetaId) {
@@ -1144,6 +1121,9 @@ async function processOne(
             coworkStore,
             buyerOrderMapping,
             sellerGlobalMetaId: fromGlobalMetaId,
+            peerChatPublicKey: fromChatPubkey,
+            localPrivateKeyHex,
+            replySecretVariant,
             sharedSecretForReply,
             createPin,
             performChat: performChatCompletionForOrchestrator,
@@ -1262,18 +1242,24 @@ async function processOne(
       }
     }
 
-    const encryptedReply = ecdhEncrypt(trimmed, sharedSecretForReply);
-    emitLog(`[PrivateChat] Encrypt reply: plaintextLen=${trimmed.length} sharedSecretLen=${sharedSecretForReply.length} encryptedLen=${encryptedReply.length} encryptedPrefix=${encryptedReply.slice(0, 40)}...`);
-    const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedReply, row.reply_pin ?? '');
     try {
-      await createPin(metabotStore, metabot.id, {
-        operation: 'create',
-        path: '/protocols/simplemsg',
-        encryption: '0',
-        version: '1.0.0',
-        contentType: 'application/json',
-        payload: payloadStr,
+      const outbound = sendSharedPrivateChat({
+        fromIdentity: {
+          globalMetaId: metabot.globalmetaid ?? null,
+          privateKeyHex: localPrivateKeyHex,
+        },
+        toGlobalMetaId: fromGlobalMetaId,
+        peerChatPublicKey: fromChatPubkey,
+        content: trimmed,
+        replyPinId: row.reply_pin ?? '',
+        secretVariant: replySecretVariant,
+        sharedSecretOverride: sharedSecretForReply ?? null,
       });
+      await createPin(
+        metabotStore,
+        metabot.id,
+        buildPrivateChatCreatePinPayload(outbound)
+      );
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
     } catch (e) {
       emitLog(`[PrivateChat] Failed to broadcast reply: ${e instanceof Error ? e.message : e}`);

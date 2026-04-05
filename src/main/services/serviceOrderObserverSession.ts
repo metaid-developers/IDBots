@@ -1,5 +1,9 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import {
+  buildSharedServiceOrderFallbackPayload,
+  buildSharedServiceOrderObserverConversationId,
+} from '../shared/metabotChatBridge';
 
 export type ServiceOrderObserverRole = 'buyer' | 'seller';
 
@@ -42,8 +46,7 @@ export function buildServiceOrderObserverConversationId(input: {
   peerGlobalMetaId: string;
   paymentTxid?: string | null;
 }): string {
-  const txidPart = normalizeText(input.paymentTxid).slice(0, 16) || 'pending';
-  return `metaweb_order:${input.role}:${input.metabotId}:${normalizeText(input.peerGlobalMetaId)}:${txidPart}`;
+  return buildSharedServiceOrderObserverConversationId(input);
 }
 
 export function buildServiceOrderFallbackPayload(input: {
@@ -54,18 +57,7 @@ export function buildServiceOrderFallbackPayload(input: {
   serviceSkill?: string | null;
   peerGlobalMetaId?: string | null;
 }): string {
-  const txid = normalizeText(input.servicePaidTx);
-  const lines = [
-    '[ORDER] Restored service order context.',
-    input.servicePrice || input.serviceCurrency
-      ? `支付金额 ${normalizeText(input.servicePrice) || '0'} ${normalizeText(input.serviceCurrency) || 'SPACE'}`
-      : '',
-    txid ? `txid: ${txid}` : 'txid: pending',
-    normalizeText(input.serviceId) ? `service id: ${normalizeText(input.serviceId)}` : '',
-    normalizeText(input.serviceSkill) ? `skill name: ${normalizeText(input.serviceSkill)}` : '',
-    normalizeText(input.peerGlobalMetaId) ? `peer globalmetaid: ${normalizeText(input.peerGlobalMetaId)}` : '',
-  ].filter(Boolean);
-  return lines.join('\n');
+  return buildSharedServiceOrderFallbackPayload(input);
 }
 
 export async function ensureServiceOrderObserverSession(
