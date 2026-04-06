@@ -159,6 +159,11 @@ import {
 } from './services/gigSquareServiceMutationService';
 import { publishPortableService } from './metabotRuntime/servicePublishRuntime';
 import { syncPortableServiceCatalog } from './metabotRuntime/serviceDiscoveryRuntime';
+import {
+  PortableRequestTraceWriteError,
+  resolveExecutionGate,
+  writePortableServiceRequest,
+} from './metabotRuntime/serviceRequestRuntime';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -2241,6 +2246,33 @@ const executeDelegationPipeline = async (
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
   }
 
+  const portableRequest = {
+    correlation: {
+      requestId: randomBytes(16).toString('hex'),
+      requesterSessionId: sessionId,
+      requesterConversationId: null,
+    },
+    servicePinId: delegation.servicePinId,
+    requesterGlobalMetaId: buyerGlobalMetaId,
+    price,
+    currency: normalizedCurrency,
+    paymentProof: {
+      txid: isFreeDelegation ? null : paymentTxid,
+      chain: paymentChain,
+      amount: price,
+      currency: normalizedCurrency,
+      orderMessage: '',
+      orderMessagePinId: null,
+    },
+    userTask: delegation.userTask,
+    taskContext: delegation.taskContext || rawOrderRequest,
+    executionMode: isFreeDelegation ? 'free' as const : 'paid' as const,
+  };
+  const executionGate = resolveExecutionGate({
+    request: portableRequest,
+    paymentTxid,
+    orderReferenceId: isFreeDelegation ? paymentTxid : null,
+  });
   const orderPayload = buildDelegationOrderPayload({
     rawRequest: rawOrderRequest,
     taskContext: delegation.taskContext,
@@ -2248,8 +2280,8 @@ const executeDelegationPipeline = async (
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
     providerSkill: toSafeString(service.providerSkill).trim(),
     servicePinId: delegation.servicePinId,
-    paymentTxid: isFreeDelegation ? '' : paymentTxid,
-    orderReference: isFreeDelegation ? paymentTxid : '',
+    paymentTxid: executionGate.executionMode === 'paid' ? executionGate.paymentTxid || '' : '',
+    orderReference: executionGate.executionMode === 'free' ? executionGate.orderReferenceId || '' : '',
     price,
     currency: normalizedCurrency,
   });
@@ -2278,26 +2310,67 @@ const executeDelegationPipeline = async (
   }
 
   let orderPinId: string | null = null;
+  let orderId = '';
   try {
-    const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
-      wallet.mnemonic,
-      wallet.path || "m/44'/10001'/0'/0/0"
-    );
-    const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey);
-    const encrypted = ecdhEncrypt(orderPayload, sharedSecret);
-    const payloadStr = buildPrivateMessagePayload(providerGlobalMetaId, encrypted, '');
-
-    const result = await createPin(metabotStore, metabotId, {
-      operation: 'create',
-      path: '/protocols/simplemsg',
-      encryption: '0',
-      version: '1.0.0',
-      contentType: 'application/json',
-      payload: payloadStr,
+    const requestResult = await writePortableServiceRequest({
+      store: metabotStore,
+      metabotId,
+      request: portableRequest,
+      paymentTxid: executionGate.paymentTxid,
+      orderReferenceId: executionGate.orderReferenceId,
+      counterpartyGlobalMetaId: providerGlobalMetaId,
+      serviceName: delegation.serviceName || service.serviceName || service.displayName,
+      providerSkill: toSafeString(service.providerSkill).trim(),
+      paymentChain,
+      coworkSessionId: sessionId,
+      trace: {
+        createBuyerOrder: (traceInput) => serviceOrderLifecycle.createBuyerOrder(traceInput),
+      },
+      deps: {
+        buildDelegationOrderPayload,
+        prepareSimpleMessagePayload: async (orderText) => {
+          const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+            wallet.mnemonic,
+            wallet.path || "m/44'/10001'/0'/0/0"
+          );
+          const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey);
+          const encrypted = ecdhEncrypt(orderText, sharedSecret);
+          return buildPrivateMessagePayload(providerGlobalMetaId, encrypted, '');
+        },
+        createPin,
+      },
     });
 
-    orderPinId = result.pinId ?? null;
+    orderPinId = requestResult.requestWrite.orderMessagePinId;
+    orderId = typeof (requestResult.buyerOrder as { id?: unknown })?.id === 'string'
+      ? (requestResult.buyerOrder as { id: string }).id
+      : '';
   } catch (error) {
+    if (error instanceof PortableRequestTraceWriteError) {
+      orderPinId = error.requestWrite.orderMessagePinId;
+      if (
+        error.cause instanceof ServiceOrderOpenOrderExistsError ||
+        error.cause instanceof ServiceOrderSelfOrderNotAllowedError
+      ) {
+        console.warn(LOG_TAG, 'Order creation blocked:', error.cause.message);
+        injectDelegationSystemMessage(
+          sessionId,
+          isFreeDelegation
+            ? `Order creation failed: ${error.cause.message}. Free order id: ${paymentTxid}`
+            : `Order creation failed: ${error.cause.message}. Payment tx: ${paymentTxid}`
+        );
+        emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
+        return;
+      }
+
+      console.error(LOG_TAG, 'Failed to create buyer order after request write:', error.cause);
+      injectDelegationSystemMessage(
+        sessionId,
+        isFreeDelegation
+          ? `Order tracking failed for free order (${paymentTxid}). Service should still be delivered.`
+          : `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
+      );
+    } else {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
     if (buyerObserverSessionId) {
       const failureMessage = coworkStoreInst.addMessage(buyerObserverSessionId, {
@@ -2320,50 +2393,8 @@ const executeDelegationPipeline = async (
     );
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Order send failed' });
     return;
-  }
-
-  // -----------------------------------------------------------------------
-  // Step 5: Create buyer order via ServiceOrderLifecycleService
-  // -----------------------------------------------------------------------
-    let orderId = '';
-    try {
-      const order = serviceOrderLifecycle.createBuyerOrder({
-        localMetabotId: metabotId,
-        counterpartyGlobalMetaId: providerGlobalMetaId,
-        servicePinId: delegation.servicePinId,
-        serviceName: delegation.serviceName || delegation.servicePinId,
-        paymentTxid,
-        paymentChain: normalizeServiceOrderPaymentChain(normalizedCurrency),
-        paymentAmount: price,
-        paymentCurrency: normalizedCurrency,
-        coworkSessionId: sessionId,
-        orderMessagePinId: orderPinId,
-      });
-      orderId = order.id;
-    } catch (error) {
-      if (
-        error instanceof ServiceOrderOpenOrderExistsError ||
-        error instanceof ServiceOrderSelfOrderNotAllowedError
-      ) {
-        console.warn(LOG_TAG, 'Order creation blocked:', error.message);
-        injectDelegationSystemMessage(
-          sessionId,
-          isFreeDelegation
-            ? `Order creation failed: ${error.message}. Free order id: ${paymentTxid}`
-            : `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
-        );
-        emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
-        return;
-      }
-      console.error(LOG_TAG, 'Failed to create buyer order:', error);
-      injectDelegationSystemMessage(
-        sessionId,
-        isFreeDelegation
-          ? `Order tracking failed for free order (${paymentTxid}). Service should still be delivered.`
-          : `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
-      );
-      // Continue to blocking mode even if order tracking failed — the order was sent
     }
+  }
 
     // -----------------------------------------------------------------------
     // Step 6: Enter delegation blocking mode
@@ -5613,53 +5644,75 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       } catch (sessionErr) {
         console.warn('[GigSquare] Failed to create buyer observer session:', sessionErr);
       }
-
-      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
-        wallet.mnemonic,
-        wallet.path || "m/44'/10001'/0'/0/0"
-      );
-      const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
-      const encrypted = ecdhEncrypt(orderPayload, sharedSecret);
-      const payloadStr = buildPrivateMessagePayload(toGlobalMetaId, encrypted, '');
-
-      const result = await createPin(store, metabotId, {
-        operation: 'create',
-        path: '/protocols/simplemsg',
-        encryption: '0',
-        version: '1.0.0',
-        contentType: 'application/json',
-        payload: payloadStr,
+      const requestId = randomBytes(16).toString('hex');
+      const requestResult = await writePortableServiceRequest({
+        store,
+        metabotId,
+        request: {
+          correlation: {
+            requestId,
+            requesterSessionId: coworkSessionId || requestId,
+            requesterConversationId: null,
+          },
+          servicePinId: serviceId || '',
+          requesterGlobalMetaId: store.getMetabotById(metabotId)?.globalmetaid || '',
+          price: servicePrice || '0',
+          currency: serviceCurrency || 'SPACE',
+          paymentProof: {
+            txid: isFreeServiceOrder ? null : servicePaidTx,
+            chain: normalizeServiceOrderPaymentChain(serviceCurrency),
+            amount: servicePrice || '0',
+            currency: serviceCurrency || 'SPACE',
+            orderMessage: orderPayload,
+            orderMessagePinId: null,
+          },
+          userTask: rawRequest,
+          taskContext: rawRequest,
+          executionMode: isFreeServiceOrder ? 'free' : 'paid',
+        },
+        paymentTxid: servicePaidTx,
+        orderReferenceId: isFreeServiceOrder ? servicePaidTx : null,
+        counterpartyGlobalMetaId: toGlobalMetaId,
+        serviceName: serviceSkill || serviceId || 'Service Order',
+        providerSkill: serviceSkill,
+        paymentChain: normalizeServiceOrderPaymentChain(serviceCurrency),
+        coworkSessionId,
+        trace: {
+          createBuyerOrder: (traceInput) => serviceOrderLifecycle.createBuyerOrder(traceInput),
+        },
+        deps: {
+          buildDelegationOrderPayload: () => orderPayload,
+          prepareSimpleMessagePayload: async (orderText) => {
+            const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+              wallet.mnemonic,
+              wallet.path || "m/44'/10001'/0'/0/0"
+            );
+            const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, toChatPubkey);
+            const encrypted = ecdhEncrypt(orderText, sharedSecret);
+            return buildPrivateMessagePayload(toGlobalMetaId, encrypted, '');
+          },
+          createPin,
+        },
       });
 
-      try {
-        serviceOrderLifecycle.createBuyerOrder({
-          localMetabotId: metabotId,
-          counterpartyGlobalMetaId: toGlobalMetaId,
-          servicePinId: serviceId,
-          serviceName: serviceSkill || serviceId || 'Service Order',
-          paymentTxid: servicePaidTx || result.txids?.[0] || result.pinId,
-          paymentChain: normalizeServiceOrderPaymentChain(serviceCurrency),
-          paymentAmount: servicePrice || '0',
-          paymentCurrency: serviceCurrency || 'SPACE',
-          coworkSessionId,
-          orderMessagePinId: result.pinId ?? null,
-        });
-      } catch (error) {
+      return { success: true, txids: requestResult.txids };
+    } catch (error) {
+      if (error instanceof PortableRequestTraceWriteError) {
         if (
-          error instanceof ServiceOrderOpenOrderExistsError
-          || error instanceof ServiceOrderSelfOrderNotAllowedError
+          error.cause instanceof ServiceOrderOpenOrderExistsError
+          || error.cause instanceof ServiceOrderSelfOrderNotAllowedError
         ) {
           return {
             success: false,
-            errorCode: error.code,
-            error: error.message,
+            errorCode: error.cause.code,
+            error: error.cause.message,
           };
         }
-        throw error;
+        console.error('[GigSquare] Failed to create buyer trace after order write:', error.cause);
       }
-
-      return { success: true, txids: result.txids };
-    } catch (error) {
+      const surfacedError = error instanceof PortableRequestTraceWriteError
+        ? error.cause
+        : error;
       if (coworkSessionId) {
         const failureMessage = getCoworkStore().addMessage(coworkSessionId, {
           type: 'system',
@@ -5673,7 +5726,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         });
         emitCoworkStreamMessage(coworkSessionId, failureMessage);
       }
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to send order' };
+      return {
+        success: false,
+        error: surfacedError instanceof Error ? surfacedError.message : 'Failed to send order',
+      };
     } finally {
       releaseBuyerOrderCreation?.();
     }

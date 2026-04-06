@@ -109,17 +109,18 @@ export function extractOrderRequestText(plaintext: string): string {
   return source.replace(ORDER_PREFIX_RE, '').trim();
 }
 
-function extractOrderAmount(
+export function extractOrderPaymentTerms(
   plaintext: string
-): { amount: number; currency: string; chain: TransferChain } | null {
+): { amount: string; currency: string; chain: TransferChain } | null {
   const match = plaintext.match(AMOUNT_RE);
   if (!match) return null;
-  const amount = parseFloat(match[1]);
+  const amountText = String(match[1] || '').trim();
+  const amount = parseFloat(amountText);
   const currency = match[2].toUpperCase();
   if (!Number.isFinite(amount) || amount < 0) return null;
   const chain: TransferChain =
     currency === 'BTC' ? 'btc' : currency === 'DOGE' ? 'doge' : 'mvc';
-  return { amount, currency, chain };
+  return { amount: amountText, currency, chain };
 }
 
 function getMetabotAddressForChain(
@@ -158,12 +159,13 @@ export async function checkOrderPaymentStatus(params: {
 }): Promise<OrderPaymentCheckResult> {
   const { txid, plaintext, metabotId, metabotStore } = params;
 
-  const parsed = extractOrderAmount(plaintext);
+  const parsed = extractOrderPaymentTerms(plaintext);
   if (!parsed) {
     return { paid: false, txid, reason: 'cannot_parse_amount_or_currency' };
   }
 
-  const { amount, currency, chain } = parsed;
+  const amount = parseFloat(parsed.amount);
+  const { currency, chain } = parsed;
   const expectedSats = Math.floor(amount * SATOSHI_PER_UNIT);
   if (expectedSats < 0) {
     return { paid: false, txid, reason: 'invalid_amount' };

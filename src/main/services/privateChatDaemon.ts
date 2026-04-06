@@ -18,6 +18,7 @@ import { PrivateChatOrderCowork } from './privateChatOrderCowork';
 import { buildOrderPrompts } from './orderPromptBuilder';
 import {
   checkOrderPaymentStatus,
+  extractOrderPaymentTerms,
   extractOrderRequestText,
   extractOrderTxid,
   extractOrderReferenceId,
@@ -26,6 +27,7 @@ import {
   OrderSource,
 } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
+import type { ServiceOrderRecord } from '../serviceOrderStore';
 import type { CoworkStore } from '../coworkStore';
 import type { MemoryBackend } from '../memory/memoryBackend';
 import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
@@ -46,6 +48,11 @@ import {
 } from './privateChatOrderObserverState';
 import { ensureServiceOrderObserverSession } from './serviceOrderObserverSession';
 import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
+import { verifyPortablePaymentEligibility } from '../metabotRuntime/paymentVerificationRuntime';
+import {
+  applyPortableBuyerDelivery,
+  writePortableDeliveryRecord,
+} from '../metabotRuntime/resultDeliveryRuntime';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -808,28 +815,61 @@ async function processOne(
         markProcessed(db, row.id, saveDb);
         return;
       }
-      const payment = await checkOrderPaymentStatus({
-        txid,
-        plaintext,
-        source,
-        metabotId: metabot.id,
-        metabotStore,
-      });
-      const isFreeOrder = payment.reason === 'free_order_no_payment_required';
-      const orderTrackingId = txid || (isFreeOrder ? orderReferenceId : null);
       const orderPeerGlobalMetaId = fromGlobalMetaId || normalizePrivateConversationPeerId(row);
-      if (!payment.paid) {
-        emitLog(`[Order] Payment not confirmed for txid=${txid || orderReferenceId || 'n/a'} (reason=${payment.reason})`);
+      const paymentTerms = extractOrderPaymentTerms(plaintext);
+      const isZeroAmountOrder = paymentTerms ? Number(paymentTerms.amount) === 0 : false;
+      const inferredExecutionMode: 'free' | 'paid' = paymentTerms
+        ? (isZeroAmountOrder ? 'free' : 'paid')
+        : (txid ? 'paid' : 'free');
+      const serviceId = extractOrderSkillId(plaintext);
+      const portableOrderRequest = {
+        correlation: {
+          requestId: orderReferenceId || txid || row.pin_id,
+          requesterSessionId: row.pin_id,
+          requesterConversationId: null,
+        },
+        servicePinId: serviceId || '',
+        requesterGlobalMetaId: orderPeerGlobalMetaId,
+        price: paymentTerms?.amount || (inferredExecutionMode === 'paid' ? '1' : '0'),
+        currency: paymentTerms?.currency || 'SPACE',
+        paymentProof: {
+          txid,
+          chain: paymentTerms?.chain || null,
+          amount: paymentTerms?.amount || (inferredExecutionMode === 'paid' ? '1' : '0'),
+          currency: paymentTerms?.currency || 'SPACE',
+          orderMessage: plaintext,
+          orderMessagePinId: row.pin_id,
+        },
+        userTask: extractOrderRequestText(plaintext),
+        taskContext: extractOrderRequestText(plaintext),
+        executionMode: inferredExecutionMode,
+      };
+      const verification = await verifyPortablePaymentEligibility({
+        request: portableOrderRequest,
+        providerContext: {
+          metabotId: metabot.id,
+          metabotStore,
+          source,
+        },
+        checkOrderPaymentStatusImpl: checkOrderPaymentStatus,
+      });
+      const payment = verification.payment;
+      const isFreeOrder = verification.reason === 'free_order_no_payment_required';
+      const orderTrackingId = payment.txid
+        || (isFreeOrder
+          ? verification.orderReferenceId || orderReferenceId || portableOrderRequest.correlation.requestId
+          : null);
+      if (!verification.executable) {
+        emitLog(`[Order] Payment not confirmed for txid=${txid || orderReferenceId || 'n/a'} (reason=${verification.reason})`);
         markProcessed(db, row.id, saveDb);
         return;
       }
       emitLog(
         `[Order] Payment verified: ref=${orderTrackingId || 'n/a'} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`
       );
-      const serviceId = extractOrderSkillId(plaintext);
       const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
-      const paymentAmount = formatPaymentAmountFromSats(payment.amountSats);
-      const paymentCurrency = getCurrencyFromChain(payment.chain);
+      const paymentAmount = paymentTerms?.amount || formatPaymentAmountFromSats(payment.amountSats);
+      const paymentCurrency = paymentTerms?.currency || getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
       let sellerOrderConversationId: string | null = null;
       if (serviceOrderLifecycle && orderTrackingId) {
@@ -981,23 +1021,32 @@ async function processOne(
         } else {
           try {
             const deliverySentAtSec = Math.floor(Date.now() / 1000);
-            const deliveryText = buildDeliveryMessage({
+            await writePortableDeliveryRecord({
+              store: metabotStore,
+              metabotId: metabot.id,
+              request: portableOrderRequest,
               paymentTxid: orderTrackingId,
-              servicePinId: serviceId,
+              counterpartyGlobalMetaId: orderPeerGlobalMetaId,
               serviceName,
-              result: trimmedReply,
+              delivery: {
+                text: trimmedReply,
+                attachments: [],
+              },
               deliveredAt: deliverySentAtSec,
+              trace: {
+                markSellerDelivered: (input) => (
+                  serviceOrderLifecycle?.markSellerOrderDelivered(input) ?? null
+                ),
+              },
+              deps: {
+                buildDeliveryMessage,
+                prepareSimpleMessagePayload: (deliveryText) => {
+                  const encrypted = ecdhEncrypt(deliveryText, sharedSecretForReply);
+                  return buildPrivateMsgPayload(fromGlobalMetaId, encrypted, row.reply_pin || '');
+                },
+                createPin,
+              },
             });
-            const deliveryResult = await sendEncryptedMsg(deliveryText);
-            if (serviceOrderLifecycle && orderTrackingId) {
-              serviceOrderLifecycle.markSellerOrderDelivered({
-                localMetabotId: metabot.id,
-                counterpartyGlobalMetaId: orderPeerGlobalMetaId,
-                paymentTxid: orderTrackingId,
-                deliveryMessagePinId: deliveryResult.pinId ?? null,
-                deliveredAt: deliverySentAtSec * 1000,
-              });
-            }
             if (orderDispatchKey) {
               sentOrderDeliveryKeys.add(orderDispatchKey);
             }
@@ -1081,16 +1130,39 @@ async function processOne(
 
         if (serviceOrderLifecycle && paymentTxid) {
           if (delivery && typeof delivery.paymentTxid === 'string') {
-            const deliveredOrder = serviceOrderLifecycle.markBuyerOrderDelivered({
+            const deliveredOrder = applyPortableBuyerDelivery({
+              request: {
+                correlation: {
+                  requestId: typeof delivery.requestId === 'string' ? delivery.requestId : paymentTxid,
+                  requesterSessionId: buyerOrderMapping.coworkSessionId,
+                  requesterConversationId: buyerOrderMapping.externalConversationId,
+                },
+                servicePinId: typeof delivery.servicePinId === 'string' ? delivery.servicePinId : '',
+                requesterGlobalMetaId: fromGlobalMetaId,
+                price: '',
+                currency: '',
+                paymentProof: {
+                  txid: paymentTxid,
+                  chain: null,
+                  amount: '',
+                  currency: '',
+                  orderMessage: '',
+                  orderMessagePinId: null,
+                },
+                userTask: '',
+                taskContext: '',
+              },
+              delivery,
               localMetabotId: metabot.id,
               counterpartyGlobalMetaId: fromGlobalMetaId,
-              paymentTxid: delivery.paymentTxid,
+              paymentTxid,
               deliveryMessagePinId: row.pin_id,
-              deliveredAt:
-                typeof delivery.deliveredAt === 'number'
-                  ? delivery.deliveredAt * 1000
-                  : Date.now(),
-            });
+              trace: {
+                markBuyerOrderDelivered: (input) => (
+                  serviceOrderLifecycle.markBuyerOrderDelivered(input)
+                ),
+              },
+            }) as ServiceOrderRecord | null;
 
             // Check if this is an auto-delegated order (has a source cowork session in blocking mode)
             if (
