@@ -30,6 +30,13 @@ npm --prefix metabot run test
 node scripts/build-metabot-skillpacks.mjs
 ```
 
+The generated host pack install scripts now do two things:
+
+- copy the thin host skills into the target host skill directory
+- install a local `metabot` shim under `$HOME/.metabot/bin` by default
+
+Override `METABOT_BIN_DIR`, `METABOT_SKILL_DEST`, or `METABOT_SOURCE_ROOT` when your local host layout differs from the defaults.
+
 ## Host Docs
 
 - `metabot/docs/hosts/codex.md`
