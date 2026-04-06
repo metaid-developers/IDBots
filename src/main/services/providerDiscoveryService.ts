@@ -47,6 +47,19 @@ export interface ProviderDiscoveryServiceDeps {
 }
 
 export type DiscoverySnapshot = HeartbeatDiscoverySnapshot;
+export type DiscoveryServiceCandidate = {
+  id?: string | null;
+  pinId?: string | null;
+  sourceServicePinId?: string | null;
+  currentPinId?: string | null;
+  serviceName?: string | null;
+  displayName?: string | null;
+  providerGlobalMetaId?: string | null;
+  globalMetaId?: string | null;
+  providerAddress?: string | null;
+  createAddress?: string | null;
+  address?: string | null;
+};
 
 type DiscoveryListener = (snapshot: DiscoverySnapshot) => void;
 
@@ -77,6 +90,50 @@ const resolveServiceProviderAddress = (service: any): string => {
 const buildProviderKey = (globalMetaId: string, address: string): string => {
   return `${globalMetaId}::${address}`;
 };
+
+const resolveServicePinCandidates = (service: DiscoveryServiceCandidate): string[] => (
+  [...new Set([
+    toSafeString(service.id),
+    toSafeString(service.pinId),
+    toSafeString(service.currentPinId),
+    toSafeString(service.sourceServicePinId),
+  ].filter(Boolean))]
+);
+
+const resolveServiceMatchKeys = (service: DiscoveryServiceCandidate): string[] => {
+  const globalMetaId = normalizeComparableGlobalMetaId(
+    service.providerGlobalMetaId || service.globalMetaId,
+  );
+  const address = toSafeString(service.providerAddress || service.createAddress || service.address);
+  const serviceName = toSafeString(service.serviceName || service.displayName).toLowerCase();
+  const keys = new Set<string>();
+
+  for (const pinId of resolveServicePinCandidates(service)) {
+    if (globalMetaId) keys.add(`pin:${globalMetaId}:${pinId}`);
+    if (address) keys.add(`pin-address:${address}:${pinId}`);
+  }
+
+  if (globalMetaId && address) keys.add(`provider:${globalMetaId}:${address}`);
+  if (globalMetaId && serviceName) keys.add(`name:${globalMetaId}:${serviceName}`);
+  if (address && serviceName) keys.add(`name-address:${address}:${serviceName}`);
+
+  return [...keys];
+};
+
+export const isServiceCallableInDiscoverySnapshot = (
+  service: DiscoveryServiceCandidate,
+  snapshot: Pick<DiscoverySnapshot, 'availableServices'>,
+): boolean => {
+  const availableKeys = new Set(
+    snapshot.availableServices.flatMap((candidate) => resolveServiceMatchKeys(candidate as DiscoveryServiceCandidate)),
+  );
+  return resolveServiceMatchKeys(service).some((key) => availableKeys.has(key));
+};
+
+export const filterServicesByDiscoverySnapshot = <T extends DiscoveryServiceCandidate>(
+  services: T[],
+  snapshot: Pick<DiscoverySnapshot, 'availableServices'>,
+): T[] => services.filter((service) => isServiceCallableInDiscoverySnapshot(service, snapshot));
 
 const cloneProviderState = (state: HeartbeatProviderState): HeartbeatProviderState => ({ ...state });
 

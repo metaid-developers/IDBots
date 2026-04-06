@@ -152,10 +152,13 @@ import {
   buildGigSquareModifyMetaidPayload,
   buildGigSquareRevokeMetaidPayload,
   buildGigSquareServicePayload,
+  type GigSquareLocalServiceMutationRecord,
   validateGigSquareModifyDraft,
   validateGigSquareServiceMutation,
   type GigSquareModifyDraft,
 } from './services/gigSquareServiceMutationService';
+import { publishPortableService } from './metabotRuntime/servicePublishRuntime';
+import { syncPortableServiceCatalog } from './metabotRuntime/serviceDiscoveryRuntime';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -454,29 +457,7 @@ type GigSquareCurrentMyService = GigSquareResolvedCurrentService<GigSquareServic
   blockedReason: string | null;
 };
 
-type GigSquareLocalServiceRecord = {
-  id: string;
-  pinId: string;
-  sourceServicePinId: string;
-  currentPinId: string;
-  txid: string;
-  metabotId: number;
-  providerGlobalMetaId: string;
-  providerSkill: string;
-  serviceName: string;
-  displayName: string;
-  description: string;
-  serviceIcon: string | null;
-  price: string;
-  currency: string;
-  skillDocument: string;
-  inputType: string;
-  outputType: string;
-  endpoint: string;
-  payloadJson: string;
-  revokedAt: number | null;
-  updatedAt: number;
-};
+type GigSquareLocalServiceRecord = GigSquareLocalServiceMutationRecord;
 
 const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -950,7 +931,7 @@ async function syncRemoteSkillServices(): Promise<void> {
   try {
     const sqliteStore = getStore();
     const db = sqliteStore.getDatabase();
-    await syncRemoteSkillServicesWithCursor({
+    await syncPortableServiceCatalog({
       pageSize: GIG_SQUARE_SYNC_SIZE,
       fetchPage: async (cursor?: string) => {
         const url = new URL('https://manapi.metaid.io/pin/path/list');
@@ -981,6 +962,12 @@ async function syncRemoteSkillServices(): Promise<void> {
     gigSquareSyncInProgress = false;
   }
 }
+
+const scheduleRemoteSkillServiceSync = (): void => {
+  setTimeout(() => {
+    void syncRemoteSkillServices().catch(() => {});
+  }, 10000);
+};
 
 const GIG_SQUARE_RATING_PATH = '/protocols/skill-service-rate';
 const GIG_SQUARE_RATING_SYNC_SIZE = 200;
@@ -5269,62 +5256,36 @@ if (!gotTheLock) {
         return metabot.mvc_address || '';
       })();
 
-      const payload = {
-        serviceName,
-        displayName,
-        description,
-        serviceIcon: serviceIconUri || '',
-        providerMetaBot: metabot.globalmetaid,
-        providerSkill,
-        price,
-        currency: normalizedCurrency,
-        skillDocument: '',
-        inputType: 'text',
-        outputType,
-        endpoint: 'simplemsg',
-        paymentAddress,
-      };
-
-      const payloadJson = JSON.stringify(payload);
-      const result = await createPin(store, metabotId, {
-        operation: 'create',
-        path: GIG_SQUARE_SERVICE_PATH,
-        encryption: '0',
-        version: '1.0.0',
-        contentType: 'application/json',
-        payload: payloadJson,
-      });
-
       let warning: string | undefined;
-      try {
-        insertGigSquareServiceRow({
-          id: result.pinId,
-          pinId: result.pinId,
-          txid: result.txids?.[0] || '',
-          metabotId,
-          providerGlobalMetaId: metabot.globalmetaid,
-          providerSkill,
+      const result = await publishPortableService({
+        store,
+        metabotId,
+        providerGlobalMetaId: metabot.globalmetaid,
+        paymentAddress,
+        serviceDraft: {
           serviceName,
           displayName,
           description,
-          serviceIcon: serviceIconUri || null,
+          providerSkill,
           price,
           currency: normalizedCurrency,
-          skillDocument: '',
-          inputType: 'text',
           outputType,
-          endpoint: 'simplemsg',
-          payloadJson,
-        });
-      } catch (err) {
-        warning = err instanceof Error ? err.message : 'Failed to save local record';
-        console.warn('[GigSquare] Failed to save local record', warning);
-      }
-
-      // Sync remote skill services 10s after broadcast so the new pin is indexed
-      setTimeout(() => {
-        void syncRemoteSkillServices().catch(() => {});
-      }, 10000);
+          serviceIconUri: serviceIconUri || null,
+        },
+        deps: {
+          buildGigSquareServicePayload,
+          createPin,
+          insertLocalServiceRow: (row) => {
+            try {
+              insertGigSquareServiceRow(row);
+            } catch (err) {
+              warning = err instanceof Error ? err.message : 'Failed to save local record';
+              console.warn('[GigSquare] Failed to save local record', warning);
+            }
+          },
+          scheduleRemoteSync: scheduleRemoteSkillServiceSync,
+        },
+      });
 
       return { success: true, txids: result.txids, pinId: result.pinId, warning };
     } catch (error) {
