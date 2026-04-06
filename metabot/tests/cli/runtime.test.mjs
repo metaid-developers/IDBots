@@ -192,6 +192,49 @@ test('network services merges remote demo directory seeds and returns provider d
   assert.equal(listed.payload.data.services[0].online, true);
 });
 
+test('network sources add/list/remove manages the local demo provider registry without manual file edits', async (t) => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-runtime-'));
+  t.after(async () => stopDaemon(homeDir));
+
+  const added = await runCommand(homeDir, [
+    'network',
+    'sources',
+    'add',
+    '--base-url',
+    'http://127.0.0.1:4827',
+    '--label',
+    'weather-demo',
+  ]);
+
+  assert.equal(added.exitCode, 0);
+  assert.equal(added.payload.ok, true);
+  assert.equal(added.payload.data.baseUrl, 'http://127.0.0.1:4827');
+  assert.equal(added.payload.data.label, 'weather-demo');
+
+  const listed = await runCommand(homeDir, ['network', 'sources', 'list']);
+
+  assert.equal(listed.exitCode, 0);
+  assert.equal(listed.payload.ok, true);
+  assert.equal(listed.payload.data.sources.length, 1);
+  assert.equal(listed.payload.data.sources[0].baseUrl, 'http://127.0.0.1:4827');
+  assert.equal(listed.payload.data.sources[0].label, 'weather-demo');
+
+  const seedsFile = JSON.parse(await readFile(path.join(homeDir, '.metabot', 'hot', 'directory-seeds.json'), 'utf8'));
+  assert.equal(seedsFile.providers.length, 1);
+  assert.equal(seedsFile.providers[0].baseUrl, 'http://127.0.0.1:4827');
+
+  const removed = await runCommand(homeDir, ['network', 'sources', 'remove', '--base-url', 'http://127.0.0.1:4827']);
+
+  assert.equal(removed.exitCode, 0);
+  assert.equal(removed.payload.ok, true);
+  assert.equal(removed.payload.data.removed, true);
+
+  const relisted = await runCommand(homeDir, ['network', 'sources', 'list']);
+  assert.equal(relisted.exitCode, 0);
+  assert.equal(relisted.payload.ok, true);
+  assert.equal(relisted.payload.data.sources.length, 0);
+});
+
 test('services call stores a trace that trace get can read back from the local runtime', async (t) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-runtime-'));
   t.after(async () => stopDaemon(homeDir));

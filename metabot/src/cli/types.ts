@@ -15,6 +15,9 @@ export interface CliDependencies {
   };
   network?: {
     listServices?: (input: { online?: boolean }) => Awaitable<MetabotCommandResult<unknown>>;
+    listSources?: () => Awaitable<MetabotCommandResult<unknown>>;
+    addSource?: (input: { baseUrl: string; label?: string }) => Awaitable<MetabotCommandResult<unknown>>;
+    removeSource?: (input: { baseUrl: string }) => Awaitable<MetabotCommandResult<unknown>>;
   };
   services?: {
     publish?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;

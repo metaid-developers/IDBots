@@ -257,6 +257,24 @@ async function readDirectorySeeds(hotRoot: string): Promise<Array<{ baseUrl: str
   return normalizedProviders;
 }
 
+async function writeDirectorySeeds(
+  hotRoot: string,
+  providers: Array<{ baseUrl: string; label: string | null }>
+): Promise<void> {
+  await fs.mkdir(hotRoot, { recursive: true });
+  await fs.writeFile(
+    path.join(hotRoot, DIRECTORY_SEEDS_FILE),
+    `${JSON.stringify({ providers }, null, 2)}\n`,
+    'utf8'
+  );
+}
+
+function sortDirectorySeeds(
+  providers: Array<{ baseUrl: string; label: string | null }>
+): Array<{ baseUrl: string; label: string | null }> {
+  return [...providers].sort((left, right) => left.baseUrl.localeCompare(right.baseUrl));
+}
+
 function dedupeServices(services: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   const deduped = new Map<string, Record<string, unknown>>();
 
@@ -489,6 +507,62 @@ export function createDefaultMetabotDaemonHandlers(input: {
 
         return commandSuccess({
           services: online === false ? [] : services,
+        });
+      },
+      listSources: async () => {
+        const sources = sortDirectorySeeds(await readDirectorySeeds(runtimeStateStore.paths.hotRoot));
+        return commandSuccess({ sources });
+      },
+      addSource: async ({ baseUrl, label }) => {
+        const normalizedBaseUrl = normalizeText(baseUrl);
+        if (!normalizedBaseUrl) {
+          return commandFailed('missing_base_url', 'Network source baseUrl is required.');
+        }
+
+        let parsed: URL;
+        try {
+          parsed = new URL(normalizedBaseUrl);
+        } catch {
+          return commandFailed('invalid_base_url', `Invalid network source URL: ${normalizedBaseUrl}`);
+        }
+        if (!/^https?:$/.test(parsed.protocol)) {
+          return commandFailed('invalid_base_url', `Network source URL must be http or https: ${normalizedBaseUrl}`);
+        }
+
+        const normalizedLabel = normalizeText(label) || null;
+        const currentSources = await readDirectorySeeds(runtimeStateStore.paths.hotRoot);
+        const nextSources = sortDirectorySeeds([
+          ...currentSources.filter((entry) => entry.baseUrl !== parsed.toString().replace(/\/$/, '')),
+          {
+            baseUrl: parsed.toString().replace(/\/$/, ''),
+            label: normalizedLabel,
+          },
+        ]);
+        await writeDirectorySeeds(runtimeStateStore.paths.hotRoot, nextSources);
+
+        return commandSuccess({
+          baseUrl: parsed.toString().replace(/\/$/, ''),
+          label: normalizedLabel,
+          totalSources: nextSources.length,
+        });
+      },
+      removeSource: async ({ baseUrl }) => {
+        const normalizedBaseUrl = normalizeText(baseUrl).replace(/\/$/, '');
+        if (!normalizedBaseUrl) {
+          return commandFailed('missing_base_url', 'Network source baseUrl is required.');
+        }
+
+        const currentSources = await readDirectorySeeds(runtimeStateStore.paths.hotRoot);
+        const nextSources = sortDirectorySeeds(
+          currentSources.filter((entry) => entry.baseUrl !== normalizedBaseUrl)
+        );
+        const removed = nextSources.length !== currentSources.length;
+        await writeDirectorySeeds(runtimeStateStore.paths.hotRoot, nextSources);
+
+        return commandSuccess({
+          removed,
+          baseUrl: normalizedBaseUrl,
+          totalSources: nextSources.length,
         });
       },
     },

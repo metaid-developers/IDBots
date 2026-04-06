@@ -18,6 +18,7 @@ Daemon-first package for machine-readable MetaBot contracts, local UI surfaces, 
 ```bash
 metabot doctor
 metabot identity create --name "Alice"
+metabot network sources add --base-url http://127.0.0.1:4827 --label weather-demo
 metabot network services --online
 metabot services call --request-file request.json
 metabot chat private --request-file request.json

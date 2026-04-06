@@ -18,6 +18,7 @@ const EXPECTED_SKILLS = [
   'metabot-omni-reader',
   'metabot-bootstrap',
   'metabot-network-directory',
+  'metabot-network-sources',
   'metabot-call-remote-service',
   'metabot-trace-inspector',
 ];
@@ -149,6 +150,26 @@ test('buildMetabotSkillpacks publishes the shared network-directory handoff fiel
     );
     assert.match(content, /providerDaemonBaseUrl/);
     assert.match(content, /metabot-call-remote-service/);
+  }
+});
+
+test('buildMetabotSkillpacks publishes the shared network-source registry skill across all host packs', async () => {
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'metabot-skillpacks-'));
+  const { buildMetabotSkillpacks } = await import(BUILD_SCRIPT_URL);
+
+  await buildMetabotSkillpacks({
+    repoRoot: REPO_ROOT,
+    outputRoot,
+  });
+
+  for (const host of HOSTS) {
+    const content = await readFile(
+      path.join(outputRoot, host, 'skills', 'metabot-network-sources', 'SKILL.md'),
+      'utf8'
+    );
+    assert.match(content, /network sources add/);
+    assert.match(content, /network sources list/);
+    assert.match(content, /network sources remove/);
   }
 });
 

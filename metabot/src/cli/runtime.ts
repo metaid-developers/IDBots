@@ -105,7 +105,7 @@ async function startDetachedDaemon(context: CliRuntimeContext): Promise<string> 
 
 async function requestJson<T>(
   context: CliRuntimeContext,
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   routePath: string,
   body?: Record<string, unknown>
 ): Promise<MetabotCommandResult<T>> {
@@ -144,6 +144,9 @@ export function createDefaultCliDependencies(context: CliRuntimeContext): CliDep
         const query = input.online === undefined ? '' : `?online=${input.online ? 'true' : 'false'}`;
         return requestJson(context, 'GET', `/api/network/services${query}`);
       },
+      listSources: async () => requestJson(context, 'GET', '/api/network/sources'),
+      addSource: async (input) => requestJson(context, 'POST', '/api/network/sources', input),
+      removeSource: async (input) => requestJson(context, 'DELETE', '/api/network/sources', input),
     },
     services: {
       publish: async (input) => requestJson(context, 'POST', '/api/services/publish', input),

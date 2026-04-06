@@ -14,6 +14,7 @@ const INCLUDED_SKILLS = [
   'metabot-omni-reader',
   'metabot-bootstrap',
   'metabot-network-directory',
+  'metabot-network-sources',
   'metabot-call-remote-service',
   'metabot-trace-inspector',
 ];
