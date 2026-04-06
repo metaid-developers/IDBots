@@ -29,6 +29,8 @@
     "sync:man-p2p": "node scripts/sync-man-p2p-binary.mjs",
     "build:skills": "node scripts/build-skills.js && node scripts/build-web-search-skill.js",
     "build:skill:web-search": "node scripts/build-web-search-skill.js",
+    "metabot:cli": "npm run compile:electron && node scripts/metabot-cli.mjs",
+    "metabot:daemon": "npm run compile:electron && node scripts/metabot-daemon.mjs",
     "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:5175 electron .",
     "electron:dev": "npx rimraf dist-electron && npm run compile:electron && npm run build:skills && concurrently \"vite --port 5175\" \"wait-on -v -t 120000 -d 10000 http://localhost:5175 && npm run start:electron\"",
     "postinstall": "patch-package && node scripts/patch-claude-sdk-cli.js && electron-builder install-app-deps && npm install --prefix SKILLs/web-search",
