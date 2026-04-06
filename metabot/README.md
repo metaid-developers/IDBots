@@ -25,6 +25,7 @@ metabot ui open --page hub
 ```
 
 These daemon-backed commands now autostart the local MetaBot daemon when `METABOT_DAEMON_BASE_URL` is not set and no daemon is already running for the current `METABOT_HOME` or `HOME`.
+If a remote demo provider exposes `providerDaemonBaseUrl`, `metabot services call` now performs the full caller-to-provider round-trip and returns `responseText` plus caller/provider trace paths in one machine-first envelope.
 
 ## Build And Verify
 

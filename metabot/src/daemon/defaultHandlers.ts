@@ -90,6 +90,7 @@ function readCallRequest(rawInput: Record<string, unknown>) {
   return {
     servicePinId: normalizeText(request.servicePinId),
     providerGlobalMetaId: normalizeText(request.providerGlobalMetaId),
+    providerDaemonBaseUrl: normalizeText(request.providerDaemonBaseUrl ?? rawInput.providerDaemonBaseUrl),
     userTask: normalizeText(request.userTask),
     taskContext: normalizeText(request.taskContext),
     rawRequest: normalizeText(request.rawRequest),
@@ -147,6 +148,134 @@ function renderDemoRemoteServiceResponse(input: {
 
   const contextSuffix = taskContext ? ` Context: ${taskContext}` : '';
   return `${displayName || 'Remote MetaBot'} completed the remote request: ${userTask}.${contextSuffix}`.trim();
+}
+
+function isSuccessfulCommandEnvelope(value: unknown): value is {
+  ok: true;
+  data: Record<string, unknown>;
+} {
+  return Boolean(value && typeof value === 'object' && (value as { ok?: unknown }).ok === true);
+}
+
+function isManualActionEnvelope(value: unknown): value is {
+  ok: false;
+  state: 'manual_action_required';
+  code?: unknown;
+  message?: unknown;
+  localUiUrl?: unknown;
+} {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && (value as { ok?: unknown }).ok === false
+    && (value as { state?: unknown }).state === 'manual_action_required'
+  );
+}
+
+function isFailedCommandEnvelope(value: unknown): value is {
+  ok: false;
+  code?: unknown;
+  message?: unknown;
+} {
+  return Boolean(value && typeof value === 'object' && (value as { ok?: unknown }).ok === false);
+}
+
+async function fetchRemoteAvailableServices(
+  providerDaemonBaseUrl: string
+): Promise<{ services: Array<Record<string, unknown>> } | MetabotCommandResult<unknown>> {
+  try {
+    const response = await fetch(`${providerDaemonBaseUrl}/api/network/services?online=true`);
+    const payload = await response.json() as unknown;
+    if (!response.ok) {
+      return commandFailed('remote_directory_unreachable', `Remote service directory returned HTTP ${response.status}.`);
+    }
+    if (!isSuccessfulCommandEnvelope(payload)) {
+      if (isManualActionEnvelope(payload)) {
+        return commandManualActionRequired(
+          normalizeText(payload.code) || 'remote_directory_manual_action_required',
+          normalizeText(payload.message) || 'Remote directory requires manual action.',
+          normalizeText(payload.localUiUrl) || undefined
+        );
+      }
+      if (isFailedCommandEnvelope(payload)) {
+        return commandFailed(
+          normalizeText(payload.code) || 'remote_directory_unavailable',
+          normalizeText(payload.message) || 'Remote directory is unavailable.'
+        );
+      }
+      return commandFailed('remote_directory_invalid_response', 'Remote directory returned an invalid command envelope.');
+    }
+
+    const services = Array.isArray(payload.data.services)
+      ? payload.data.services.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'))
+      : [];
+    return { services };
+  } catch (error) {
+    return commandFailed(
+      'remote_directory_unreachable',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
+async function executeRemoteServiceCall(input: {
+  providerDaemonBaseUrl: string;
+  traceId: string;
+  externalConversationId: string;
+  servicePinId: string;
+  providerGlobalMetaId: string;
+  buyer: RuntimeIdentityRecord;
+  request: {
+    userTask: string;
+    taskContext: string;
+  };
+}): Promise<MetabotCommandResult<Record<string, unknown>>> {
+  try {
+    const response = await fetch(`${input.providerDaemonBaseUrl}/api/services/execute`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        traceId: input.traceId,
+        externalConversationId: input.externalConversationId,
+        servicePinId: input.servicePinId,
+        providerGlobalMetaId: input.providerGlobalMetaId,
+        buyer: {
+          host: 'local-runtime',
+          globalMetaId: input.buyer.globalMetaId,
+          name: input.buyer.name,
+        },
+        request: input.request,
+      }),
+    });
+    const payload = await response.json() as unknown;
+    if (!response.ok) {
+      return commandFailed('remote_execution_failed', `Remote execution returned HTTP ${response.status}.`);
+    }
+    if (isSuccessfulCommandEnvelope(payload)) {
+      return commandSuccess(payload.data);
+    }
+    if (isManualActionEnvelope(payload)) {
+      return commandManualActionRequired(
+        normalizeText(payload.code) || 'remote_execution_manual_action_required',
+        normalizeText(payload.message) || 'Remote execution requires manual action.',
+        normalizeText(payload.localUiUrl) || undefined
+      );
+    }
+    if (isFailedCommandEnvelope(payload)) {
+      return commandFailed(
+        normalizeText(payload.code) || 'remote_execution_failed',
+        normalizeText(payload.message) || 'Remote execution failed.'
+      );
+    }
+    return commandFailed('remote_execution_invalid_response', 'Remote execution returned an invalid command envelope.');
+  } catch (error) {
+    return commandFailed(
+      'remote_execution_failed',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
 }
 
 async function fetchPeerChatPublicKey(globalMetaId: string): Promise<string | null> {
@@ -343,16 +472,18 @@ export function createDefaultMetabotDaemonHandlers(input: {
           );
         }
 
-        const plan = planRemoteCall({
-          request: {
-            servicePinId: request.servicePinId,
-            providerGlobalMetaId: request.providerGlobalMetaId,
-            userTask: request.userTask,
-            taskContext: request.taskContext,
-            rawRequest: request.rawRequest,
-            spendCap: request.spendCap as { amount: string; currency: 'SPACE' | 'BTC' | 'DOGE' } | null,
-          },
-          availableServices: state.services
+        let availableServices: Array<Record<string, unknown>>;
+        if (request.providerDaemonBaseUrl) {
+          const remoteDirectory = await fetchRemoteAvailableServices(request.providerDaemonBaseUrl);
+          if ('ok' in remoteDirectory) {
+            if (!remoteDirectory.ok && remoteDirectory.state === 'manual_action_required') {
+              return remoteDirectory;
+            }
+            return remoteDirectory;
+          }
+          availableServices = remoteDirectory.services;
+        } else {
+          availableServices = state.services
             .filter((service) => service.available === 1)
             .map((service) => ({
               servicePinId: service.currentPinId,
@@ -362,7 +493,19 @@ export function createDefaultMetabotDaemonHandlers(input: {
               description: service.description,
               price: service.price,
               currency: service.currency,
-            })),
+            }));
+        }
+
+        const plan = planRemoteCall({
+          request: {
+            servicePinId: request.servicePinId,
+            providerGlobalMetaId: request.providerGlobalMetaId,
+            userTask: request.userTask,
+            taskContext: request.taskContext,
+            rawRequest: request.rawRequest,
+            spendCap: request.spendCap as { amount: string; currency: 'SPACE' | 'BTC' | 'DOGE' } | null,
+          },
+          availableServices,
         });
 
         if (!plan.ok) {
@@ -372,29 +515,56 @@ export function createDefaultMetabotDaemonHandlers(input: {
           return commandFailed(plan.code, plan.message);
         }
 
-        const service = state.services.find((entry) => entry.currentPinId === plan.service.servicePinId);
+        const service = availableServices.find((entry) => (
+          normalizeText(entry.servicePinId) === plan.service.servicePinId
+          && normalizeText(entry.providerGlobalMetaId) === plan.service.providerGlobalMetaId
+        ));
         if (!service) {
-          return commandFailed('service_not_found', 'Published service was not found in the local runtime state.');
+          return commandFailed('service_not_found', 'Published service was not found in the available service directory.');
         }
 
+        let remoteExecution: Record<string, unknown> | null = null;
+        if (request.providerDaemonBaseUrl) {
+          const execution = await executeRemoteServiceCall({
+            providerDaemonBaseUrl: request.providerDaemonBaseUrl,
+            traceId: plan.traceId,
+            externalConversationId: plan.session.externalConversationId,
+            servicePinId: plan.service.servicePinId,
+            providerGlobalMetaId: plan.service.providerGlobalMetaId,
+            buyer: state.identity,
+            request: {
+              userTask: request.userTask,
+              taskContext: request.taskContext,
+            },
+          });
+          if (!execution.ok) {
+            if (execution.state === 'manual_action_required') {
+              return execution;
+            }
+            return execution;
+          }
+          remoteExecution = execution.data;
+        }
+
+        const serviceDisplayName = normalizeText(service.displayName) || normalizeText(service.serviceName);
         const trace = buildSessionTrace({
           traceId: plan.traceId,
           channel: 'metaweb_order',
           exportRoot: runtimeStateStore.paths.exportRoot,
           session: {
             id: `session-${plan.traceId}`,
-            title: `${service.displayName} Call`,
+            title: `${serviceDisplayName} Call`,
             type: 'a2a',
             metabotId: state.identity.metabotId,
-            peerGlobalMetaId: service.providerGlobalMetaId,
-            peerName: service.displayName,
+            peerGlobalMetaId: normalizeText(service.providerGlobalMetaId),
+            peerName: serviceDisplayName,
             externalConversationId: plan.session.externalConversationId,
           },
           order: {
             id: `order-${plan.traceId}`,
             role: 'buyer',
-            serviceId: service.currentPinId,
-            serviceName: service.displayName,
+            serviceId: plan.service.servicePinId,
+            serviceName: serviceDisplayName,
             paymentTxid: `payment-${plan.traceId}`,
             paymentCurrency: plan.payment.currency,
             paymentAmount: plan.payment.amount,
@@ -420,12 +590,27 @@ export function createDefaultMetabotDaemonHandlers(input: {
                 id: `${trace.traceId}-assistant`,
                 type: 'assistant',
                 timestamp: trace.createdAt,
-                content: `Local MetaBot runtime planned a remote call to ${service.displayName}.`,
+                content: remoteExecution
+                  ? `Local MetaBot runtime executed a remote call to ${serviceDisplayName}.`
+                  : `Local MetaBot runtime planned a remote call to ${serviceDisplayName}.`,
                 metadata: {
-                  servicePinId: service.currentPinId,
-                  providerGlobalMetaId: service.providerGlobalMetaId,
+                  servicePinId: plan.service.servicePinId,
+                  providerGlobalMetaId: normalizeText(service.providerGlobalMetaId),
+                  providerDaemonBaseUrl: request.providerDaemonBaseUrl || null,
                 },
               },
+              ...(remoteExecution && normalizeText(remoteExecution.responseText)
+                ? [{
+                    id: `${trace.traceId}-remote-result`,
+                    type: 'assistant',
+                    timestamp: trace.createdAt,
+                    content: normalizeText(remoteExecution.responseText),
+                    metadata: {
+                      providerTraceJsonPath: normalizeText(remoteExecution.traceJsonPath) || null,
+                      providerTraceMarkdownPath: normalizeText(remoteExecution.traceMarkdownPath) || null,
+                    },
+                  }]
+                : []),
             ],
           },
         });
@@ -444,6 +629,12 @@ export function createDefaultMetabotDaemonHandlers(input: {
           traceJsonPath: artifacts.traceJsonPath,
           traceMarkdownPath: artifacts.traceMarkdownPath,
           transcriptMarkdownPath: artifacts.transcriptMarkdownPath,
+          providerGlobalMetaId: plan.service.providerGlobalMetaId,
+          serviceName: serviceDisplayName,
+          responseText: remoteExecution ? normalizeText(remoteExecution.responseText) : '',
+          providerTraceJsonPath: remoteExecution ? normalizeText(remoteExecution.traceJsonPath) : '',
+          providerTraceMarkdownPath: remoteExecution ? normalizeText(remoteExecution.traceMarkdownPath) : '',
+          providerTranscriptMarkdownPath: remoteExecution ? normalizeText(remoteExecution.transcriptMarkdownPath) : '',
         });
       },
       execute: async (rawInput) => {

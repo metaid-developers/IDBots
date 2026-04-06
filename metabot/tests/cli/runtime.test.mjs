@@ -197,6 +197,77 @@ test('services call stores a trace that trace get can read back from the local r
   assert.match(traceMarkdown, /Weather Oracle/);
 });
 
+test('services call can execute a remote provider daemon and return the remote result to the caller runtime', async (t) => {
+  const callerHome = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-caller-'));
+  const providerHome = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-provider-'));
+  t.after(async () => stopDaemon(callerHome));
+  t.after(async () => stopDaemon(providerHome));
+
+  const providerIdentity = await runCommand(providerHome, ['identity', 'create', '--name', 'Weather Provider']);
+  assert.equal(providerIdentity.exitCode, 0);
+
+  const publishFile = path.join(providerHome, 'payload.json');
+  await writeFile(publishFile, JSON.stringify({
+    serviceName: 'weather-oracle',
+    displayName: 'Weather Oracle',
+    description: 'Returns tomorrow weather from the local MetaBot runtime.',
+    providerSkill: 'metabot-weather-oracle',
+    price: '0.00001',
+    currency: 'SPACE',
+    outputType: 'text',
+    skillDocument: '# Weather Oracle',
+  }), 'utf8');
+
+  const published = await runCommand(providerHome, ['services', 'publish', '--payload-file', publishFile]);
+  assert.equal(published.exitCode, 0);
+
+  const providerDaemon = await runCommand(providerHome, ['daemon', 'start']);
+  assert.equal(providerDaemon.exitCode, 0);
+  assert.equal(providerDaemon.payload.ok, true);
+
+  const callerIdentity = await runCommand(callerHome, ['identity', 'create', '--name', 'Caller Bot']);
+  assert.equal(callerIdentity.exitCode, 0);
+
+  const requestFile = path.join(callerHome, 'request.json');
+  await writeFile(requestFile, JSON.stringify({
+    request: {
+      servicePinId: published.payload.data.servicePinId,
+      providerGlobalMetaId: providerIdentity.payload.data.globalMetaId,
+      providerDaemonBaseUrl: providerDaemon.payload.data.baseUrl,
+      userTask: 'Tell me tomorrow weather',
+      taskContext: 'Shanghai tomorrow',
+    },
+  }), 'utf8');
+
+  const called = await runCommand(callerHome, ['services', 'call', '--request-file', requestFile]);
+
+  assert.equal(called.exitCode, 0);
+  assert.equal(called.payload.ok, true);
+  assert.match(called.payload.data.traceId, /^trace-/);
+  assert.equal(called.payload.data.providerGlobalMetaId, providerIdentity.payload.data.globalMetaId);
+  assert.equal(called.payload.data.serviceName, 'Weather Oracle');
+  assert.match(called.payload.data.responseText, /Tomorrow will be bright/i);
+  assert.match(called.payload.data.providerTraceJsonPath, /\/\.metabot\/exports\/traces\/.*\.json$/);
+  assert.match(called.payload.data.providerTraceMarkdownPath, /\/\.metabot\/exports\/traces\/.*\.md$/);
+  assert.match(called.payload.data.providerTranscriptMarkdownPath, /\/\.metabot\/exports\/chats\/.*\.md$/);
+
+  const callerTrace = await runCommand(callerHome, ['trace', 'get', '--trace-id', called.payload.data.traceId]);
+  assert.equal(callerTrace.exitCode, 0);
+  assert.equal(callerTrace.payload.ok, true);
+  assert.equal(callerTrace.payload.data.order.serviceName, 'Weather Oracle');
+  assert.equal(callerTrace.payload.data.session.peerGlobalMetaId, providerIdentity.payload.data.globalMetaId);
+
+  const callerTranscriptMarkdown = await readFile(called.payload.data.transcriptMarkdownPath, 'utf8');
+  assert.match(callerTranscriptMarkdown, /Tomorrow will be bright/i);
+
+  const providerTrace = await runCommand(providerHome, ['trace', 'get', '--trace-id', called.payload.data.traceId]);
+  assert.equal(providerTrace.exitCode, 0);
+  assert.equal(providerTrace.payload.ok, true);
+  assert.equal(providerTrace.payload.data.order.role, 'seller');
+  assert.equal(providerTrace.payload.data.order.serviceName, 'Weather Oracle');
+  assert.equal(providerTrace.payload.data.session.peerGlobalMetaId, callerIdentity.payload.data.globalMetaId);
+});
+
 test('chat private encrypts a loopback message and stores a chat trace in the local runtime', async (t) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-runtime-'));
   t.after(async () => stopDaemon(homeDir));

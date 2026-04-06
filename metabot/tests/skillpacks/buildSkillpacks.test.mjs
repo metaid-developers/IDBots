@@ -113,6 +113,26 @@ test('buildMetabotSkillpacks preserves one confirmation contract across all host
   assert.equal(new Set(renderedContracts).size, HOSTS.length, 'host packs may differ in metadata, but the confirmation contract text must remain intact in every host output');
 });
 
+test('buildMetabotSkillpacks publishes the shared remote-call demo transport contract across all host packs', async () => {
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'metabot-skillpacks-'));
+  const { buildMetabotSkillpacks } = await import(BUILD_SCRIPT_URL);
+
+  await buildMetabotSkillpacks({
+    repoRoot: REPO_ROOT,
+    outputRoot,
+  });
+
+  for (const host of HOSTS) {
+    const content = await readFile(
+      path.join(outputRoot, host, 'skills', 'metabot-call-remote-service', 'SKILL.md'),
+      'utf8'
+    );
+    assert.match(content, /providerDaemonBaseUrl/);
+    assert.match(content, /responseText/);
+    assert.match(content, /Demo Transport/);
+  }
+});
+
 test('install.sh copies skills and installs a runnable metabot shim from the source tree', async () => {
   const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'metabot-skillpacks-'));
   const skillDest = await mkdtemp(path.join(os.tmpdir(), 'metabot-skill-dest-'));
