@@ -222,15 +222,17 @@ If those answers are vague, extraction should pause until the path is clarified.
 
 ### 6.2 Canonical Path Candidates for V1
 
-| V1 Capability | IDBots Canonical Path | Golden Path To Preserve | Current Anchor Modules |
-| --- | --- | --- | --- |
-| Service publish / mutate | Existing service-square / skill-service publication behavior | Publish one local skill as one remotely callable service item, using existing service publication semantics rather than a new marketplace model | `gigSquareServiceMutationService.ts`, `serviceOrderProtocols.js`, related renderer publish flows |
-| Service discovery and sync | Remote service sync plus provider online filtering | Read chain-backed service records, then narrow to callable providers through the same online/availability interpretation used by IDBots | `gigSquareRemoteServiceSync.ts`, `providerDiscoveryService.ts`, `heartbeatPollingService.ts`, `ProviderPingService` |
-| Free / paid service order semantics | Existing service order lifecycle | Treat free and paid requests as the same order shape with different execution gates, not as separate product lines | `serviceOrderLifecycleService.ts`, `serviceOrderState.ts`, `serviceRefundSyncService.ts`, `serviceRefundSettlementService.ts` |
-| Remote request transport | Existing private message / order message transport | Send one request payload through the existing order/message semantics instead of introducing a new remote RPC contract | `privateChatDaemon.ts`, `metaWebListenerService.ts`, `serviceOrderProtocols.js`, `orderPayment.ts` |
-| Provider-side execution bridge | Existing order-to-cowork execution path | Turn an accepted remote request into one local execution session bound to the requested service | `privateChatOrderCowork.ts`, `orchestratorCoworkBridge.ts`, `serviceOrderCoworkBridge.ts` |
-| Result delivery and order completion | Existing delivery / observer / result bridge | Return one delivery payload and advance the order state through the same observer/completion semantics already validated in IDBots | `serviceOrderObserverSession.ts`, `buyerOrderObserverSession.ts`, `serviceOrderSessionResolution.js`, `privateChatOrderObserverState.js` |
-| Chain read/write and wallet substrate | Existing MetaID and wallet services | Reuse current chain read/write, wallet, and transfer semantics without inventing a separate external-host wallet model | `metaidCore.ts`, `metaidRpcServer.ts`, `metabotWalletService.ts`, transfer and asset services |
+
+| V1 Capability                         | IDBots Canonical Path                                        | Golden Path To Preserve                                                                                                                         | Current Anchor Modules                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Service publish / mutate              | Existing service-square / skill-service publication behavior | Publish one local skill as one remotely callable service item, using existing service publication semantics rather than a new marketplace model | `gigSquareServiceMutationService.ts`, `serviceOrderProtocols.js`, related renderer publish flows                                         |
+| Service discovery and sync            | Remote service sync plus provider online filtering           | Read chain-backed service records, then narrow to callable providers through the same online/availability interpretation used by IDBots         | `gigSquareRemoteServiceSync.ts`, `providerDiscoveryService.ts`, `heartbeatPollingService.ts`, `ProviderPingService`                      |
+| Free / paid service order semantics   | Existing service order lifecycle                             | Treat free and paid requests as the same order shape with different execution gates, not as separate product lines                              | `serviceOrderLifecycleService.ts`, `serviceOrderState.ts`, `serviceRefundSyncService.ts`, `serviceRefundSettlementService.ts`            |
+| Remote request transport              | Existing private message / order message transport           | Send one request payload through the existing order/message semantics instead of introducing a new remote RPC contract                          | `privateChatDaemon.ts`, `metaWebListenerService.ts`, `serviceOrderProtocols.js`, `orderPayment.ts`                                       |
+| Provider-side execution bridge        | Existing order-to-cowork execution path                      | Turn an accepted remote request into one local execution session bound to the requested service                                                 | `privateChatOrderCowork.ts`, `orchestratorCoworkBridge.ts`, `serviceOrderCoworkBridge.ts`                                                |
+| Result delivery and order completion  | Existing delivery / observer / result bridge                 | Return one delivery payload and advance the order state through the same observer/completion semantics already validated in IDBots              | `serviceOrderObserverSession.ts`, `buyerOrderObserverSession.ts`, `serviceOrderSessionResolution.js`, `privateChatOrderObserverState.js` |
+| Chain read/write and wallet substrate | Existing MetaID and wallet services                          | Reuse current chain read/write, wallet, and transfer semantics without inventing a separate external-host wallet model                          | `metaidCore.ts`, `metaidRpcServer.ts`, `metabotWalletService.ts`, transfer and asset services                                            |
+
 
 This table is not a final implementation inventory. It is the required preservation map for planning.
 
@@ -302,11 +304,11 @@ It should not be the implementation home of the core business loop.
 V1 must preserve two requester entry modes:
 
 1. `explicit selection mode`
-   - the user or host explicitly chooses a remote service and submits work to it;
-   - this mode bypasses local-insufficiency detection because the remote route is chosen intentionally.
+  - the user or host explicitly chooses a remote service and submits work to it;
+  - this mode bypasses local-insufficiency detection because the remote route is chosen intentionally.
 2. `automatic recommendation mode`
-   - the requester host evaluates local capability first;
-   - if there is no acceptable local skill match, it discovers remote services and recommends one or more candidates using the same local-first-then-remote pattern that IDBots already validates.
+  - the requester host evaluates local capability first;
+  - if there is no acceptable local skill match, it discovers remote services and recommends one or more candidates using the same local-first-then-remote pattern that IDBots already validates.
 
 For V1 planning, the canonical automatic mode should remain user-confirmed on the requester side unless the canonical IDBots path inventory proves that a narrower path is already validated. The provider side remains auto-starting once the request has actually been sent.
 
@@ -397,14 +399,14 @@ The recommended V1 flow is:
 2. Requester MetaBot evaluates local capability first.
 3. If local capability is insufficient under the pre-execution routing rule above, the requester discovers remote services through MetaWeb-backed records.
 4. The requester either:
-   - explicitly selects a remote service, or
-   - uses automatic recommendation mode, where the host recommends a remote candidate and the requester-side user confirms before the order is actually submitted.
+  - explicitly selects a remote service, or
+  - uses automatic recommendation mode, where the host recommends a remote candidate and the requester-side user confirms before the order is actually submitted.
 5. The requester submits one service request containing:
-   - service reference,
-   - requester identity,
-   - task goal,
-   - task context,
-   - free or paid execution metadata.
+  - service reference,
+  - requester identity,
+  - task goal,
+  - task context,
+  - free or paid execution metadata.
 6. The wake-up layer notifies the provider-side host immediately.
 7. The provider runtime validates the request and checks whether it is free or already paid.
 8. If valid, the provider-side OpenClaw host auto-creates a local session and starts execution with no human confirmation gate.
