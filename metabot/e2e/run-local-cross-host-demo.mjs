@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { runCli } = require('../dist/cli/main.js');
@@ -12,9 +12,6 @@ const { rankServicesForDirectory } = require('../dist/core/discovery/serviceRank
 const { planRemoteCall } = require('../dist/core/delegation/remoteCall.js');
 const { buildSessionTrace } = require('../dist/core/chat/sessionTrace.js');
 const { exportSessionArtifacts } = require('../dist/core/chat/transcriptExport.js');
-
-const THIS_FILE = fileURLToPath(import.meta.url);
-const E2E_ROOT = path.dirname(THIS_FILE);
 
 function parseLastJson(chunks) {
   return JSON.parse(chunks.join('').trim());
@@ -96,17 +93,31 @@ async function stopDaemon(homeDir) {
   await rm(daemonStatePath, { force: true });
 }
 
-function buildProviderDirectoryServices(providerState) {
-  if (!providerState.identity) {
-    throw new Error('Provider runtime identity is missing.');
+async function readSuccessJson(url, options) {
+  const response = await fetch(url, options);
+  const payload = await response.json();
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(`Request failed: ${url}\n${JSON.stringify(payload, null, 2)}`);
   }
+  return payload.data;
+}
 
-  return providerState.services.map((service) => ({
-    servicePinId: service.currentPinId,
-    sourceServicePinId: service.sourceServicePinId,
-    providerGlobalMetaId: service.providerGlobalMetaId,
-    providerAddress: providerState.identity.mvcAddress,
-    providerSkill: service.providerSkill,
+async function postSuccessJson(url, body) {
+  return readSuccessJson(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function buildProviderDirectoryServices(providerIdentity, services) {
+  return services.map((service) => ({
+    ...service,
+    sourceServicePinId: service.sourceServicePinId || service.servicePinId,
+    providerAddress: providerIdentity.mvcAddress,
+    providerSkill: service.providerSkill || 'metabot-remote-service',
     serviceName: service.serviceName,
     displayName: service.displayName,
     description: service.description,
@@ -145,7 +156,6 @@ export async function runLocalCrossHostDemo({
   const callerHome = await mkdtemp(path.join(os.tmpdir(), `metabot-${callerHost}-`));
   const providerHome = await mkdtemp(path.join(os.tmpdir(), `metabot-${providerHost}-`));
   const callerStore = createRuntimeStateStore(callerHome);
-  const providerStore = createRuntimeStateStore(providerHome);
 
   try {
     const providerIdentity = assertCommandSucceeded(
@@ -161,21 +171,31 @@ export async function runLocalCrossHostDemo({
       await runCommand(callerHome, ['identity', 'create', '--name', callerName]),
       ['identity', 'create', '--name', callerName]
     );
+    const providerDaemon = assertCommandSucceeded(
+      await runCommand(providerHome, ['daemon', 'start']),
+      ['daemon', 'start']
+    );
+    const callerDaemon = assertCommandSucceeded(
+      await runCommand(callerHome, ['daemon', 'start']),
+      ['daemon', 'start']
+    );
 
-    const providerState = await providerStore.readState();
     const callerState = await callerStore.readState();
-    if (!providerState.identity || !callerState.identity) {
-      throw new Error('Expected both local runtimes to persist identities.');
+    if (!callerState.identity) {
+      throw new Error('Expected the caller runtime to persist its identity.');
     }
 
+    const listedServices = await readSuccessJson(
+      `${providerDaemon.baseUrl}/api/network/services?online=true`
+    );
     const nowSec = Math.floor(Date.now() / 1000);
     const directorySnapshot = buildPresenceSnapshot(
-      buildProviderDirectoryServices(providerState),
+      buildProviderDirectoryServices(providerIdentity, listedServices.services),
       {
         healthy: true,
         peerCount: 1,
         onlineBots: {
-          [providerState.identity.globalMetaId]: {
+          [providerIdentity.globalMetaId]: {
             lastSeenSec: nowSec,
           },
         },
@@ -210,6 +230,28 @@ export async function runLocalCrossHostDemo({
       throw new Error(`Expected a ready remote call plan, received ${call.state}:${call.code}`);
     }
 
+    const remoteExecution = await postSuccessJson(
+      `${providerDaemon.baseUrl}/api/services/execute`,
+      {
+        traceId: call.traceId,
+        externalConversationId: call.session.externalConversationId,
+        servicePinId: call.service.servicePinId,
+        providerGlobalMetaId: call.service.providerGlobalMetaId,
+        buyer: {
+          host: callerHost,
+          globalMetaId: callerIdentity.globalMetaId,
+          name: callerName,
+        },
+        request: {
+          userTask: task,
+          taskContext,
+        },
+      }
+    );
+    const providerTrace = await readSuccessJson(
+      `${providerDaemon.baseUrl}/api/trace/${encodeURIComponent(call.traceId)}`
+    );
+
     const trace = buildSessionTrace({
       traceId: call.traceId,
       channel: `${callerHost}->${providerHost}`,
@@ -219,7 +261,7 @@ export async function runLocalCrossHostDemo({
         title: `${callerHost} to ${providerHost}`,
         type: 'remote_call',
         metabotId: callerState.identity.metabotId,
-        peerGlobalMetaId: providerState.identity.globalMetaId,
+        peerGlobalMetaId: providerIdentity.globalMetaId,
         peerName: providerService.displayName,
         externalConversationId: call.session.externalConversationId,
       },
@@ -252,10 +294,21 @@ export async function runLocalCrossHostDemo({
             id: `${trace.traceId}-assistant`,
             type: 'assistant',
             timestamp: trace.createdAt,
-            content: `${callerHost} discovered ${providerService.displayName} from ${providerHost} and prepared a remote call.`,
+            content: `${callerHost} discovered ${providerService.displayName} from ${providerHost} and opened a remote A2A session over daemon HTTP.`,
             metadata: {
-              providerGlobalMetaId: providerState.identity.globalMetaId,
+              providerGlobalMetaId: providerIdentity.globalMetaId,
               servicePinId: providerService.servicePinId,
+              providerDaemonBaseUrl: providerDaemon.baseUrl,
+            },
+          },
+          {
+            id: `${trace.traceId}-remote-result`,
+            type: 'assistant',
+            timestamp: trace.createdAt,
+            content: remoteExecution.responseText,
+            metadata: {
+              providerTraceId: remoteExecution.traceId,
+              providerGlobalMetaId: remoteExecution.providerGlobalMetaId,
             },
           },
         ],
@@ -278,15 +331,24 @@ export async function runLocalCrossHostDemo({
         host: callerHost,
         homeDir: callerHome,
         identity: callerIdentity,
+        daemon: callerDaemon,
       },
       provider: {
         host: providerHost,
         homeDir: providerHome,
         identity: providerIdentity,
+        daemon: providerDaemon,
         service: providerService,
+        trace: providerTrace,
       },
       directory,
+      transport: {
+        mode: 'daemon_http',
+        callerDaemonBaseUrl: callerDaemon.baseUrl,
+        providerDaemonBaseUrl: providerDaemon.baseUrl,
+      },
       call,
+      remoteExecution,
       trace,
       artifacts,
       cleanup: async () => {

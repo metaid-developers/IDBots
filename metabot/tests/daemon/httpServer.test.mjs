@@ -14,6 +14,7 @@ async function startServer() {
   const calls = {
     identity: [],
     services: [],
+    serviceExecutions: [],
     trace: [],
     network: [],
   };
@@ -73,6 +74,19 @@ async function startServer() {
         return commandSuccess({
           traceId: 'trace-weather-123',
           externalConversationId: 'metaweb_order:buyer:gm-weather-seller:trace-weather-1',
+        });
+      },
+      execute: async (input) => {
+        calls.serviceExecutions.push(input);
+        return commandSuccess({
+          traceId: input.traceId,
+          externalConversationId: input.externalConversationId,
+          responseText: 'Tomorrow will be bright with a light wind.',
+          providerGlobalMetaId: 'gm-weather-seller',
+          servicePinId: input.servicePinId,
+          traceJsonPath: '/tmp/provider-trace.json',
+          traceMarkdownPath: '/tmp/provider-trace.md',
+          transcriptMarkdownPath: '/tmp/provider-transcript.md',
         });
       },
     },
@@ -235,6 +249,53 @@ test('POST /api/services/call returns successful task-level call output', async 
     data: {
       traceId: 'trace-weather-123',
       externalConversationId: 'metaweb_order:buyer:gm-weather-seller:trace-weather-1',
+    },
+  });
+});
+
+test('POST /api/services/execute forwards remote execution payloads to services.execute', async (t) => {
+  const server = await startServer();
+  t.after(async () => server.close());
+
+  const request = {
+    traceId: 'trace-weather-123',
+    externalConversationId: 'metaweb_order:buyer:gm-weather-seller:trace-weather-1',
+    servicePinId: 'service-weather',
+    providerGlobalMetaId: 'gm-weather-seller',
+    buyer: {
+      host: 'codex',
+      globalMetaId: 'gm-caller',
+      name: 'Caller Bot',
+    },
+    request: {
+      userTask: 'tell me tomorrow weather',
+      taskContext: 'Shanghai tomorrow',
+    },
+  };
+
+  const response = await fetch(`${server.baseUrl}/api/services/execute`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(server.calls.serviceExecutions, [request]);
+  assert.deepEqual(payload, {
+    ok: true,
+    state: 'success',
+    data: {
+      traceId: 'trace-weather-123',
+      externalConversationId: 'metaweb_order:buyer:gm-weather-seller:trace-weather-1',
+      responseText: 'Tomorrow will be bright with a light wind.',
+      providerGlobalMetaId: 'gm-weather-seller',
+      servicePinId: 'service-weather',
+      traceJsonPath: '/tmp/provider-trace.json',
+      traceMarkdownPath: '/tmp/provider-trace.md',
+      transcriptMarkdownPath: '/tmp/provider-transcript.md',
     },
   });
 });

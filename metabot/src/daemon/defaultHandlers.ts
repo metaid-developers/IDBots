@@ -106,6 +106,49 @@ function readPrivateChatRequest(rawInput: Record<string, unknown>) {
   };
 }
 
+function readExecuteServiceRequest(rawInput: Record<string, unknown>) {
+  const buyer = readObject(rawInput.buyer) ?? {};
+  const request = readObject(rawInput.request) ?? {};
+  return {
+    traceId: normalizeText(rawInput.traceId),
+    externalConversationId: normalizeText(rawInput.externalConversationId),
+    servicePinId: normalizeText(rawInput.servicePinId),
+    providerGlobalMetaId: normalizeText(rawInput.providerGlobalMetaId),
+    buyer: {
+      host: normalizeText(buyer.host),
+      globalMetaId: normalizeText(buyer.globalMetaId),
+      name: normalizeText(buyer.name),
+    },
+    request: {
+      userTask: normalizeText(request.userTask),
+      taskContext: normalizeText(request.taskContext),
+    },
+  };
+}
+
+function renderDemoRemoteServiceResponse(input: {
+  serviceName: string;
+  displayName: string;
+  userTask: string;
+  taskContext: string;
+}): string {
+  const serviceName = normalizeText(input.serviceName).toLowerCase();
+  const displayName = normalizeText(input.displayName);
+  const userTask = normalizeText(input.userTask);
+  const taskContext = normalizeText(input.taskContext);
+  const weatherLike = serviceName.includes('weather')
+    || displayName.toLowerCase().includes('weather')
+    || /weather|天气/i.test(userTask)
+    || /weather|天气/i.test(taskContext);
+
+  if (weatherLike) {
+    return 'Tomorrow will be bright with a light wind.';
+  }
+
+  const contextSuffix = taskContext ? ` Context: ${taskContext}` : '';
+  return `${displayName || 'Remote MetaBot'} completed the remote request: ${userTask}.${contextSuffix}`.trim();
+}
+
 async function fetchPeerChatPublicKey(globalMetaId: string): Promise<string | null> {
   const normalized = normalizeText(globalMetaId);
   if (!normalized) return null;
@@ -398,6 +441,120 @@ export function createDefaultMetabotDaemonHandlers(input: {
         return commandSuccess({
           traceId: trace.traceId,
           externalConversationId: trace.session.externalConversationId,
+          traceJsonPath: artifacts.traceJsonPath,
+          traceMarkdownPath: artifacts.traceMarkdownPath,
+          transcriptMarkdownPath: artifacts.transcriptMarkdownPath,
+        });
+      },
+      execute: async (rawInput) => {
+        const state = await runtimeStateStore.readState();
+        if (!state.identity) {
+          return commandFailed('identity_missing', 'Create a local MetaBot identity before serving remote calls.');
+        }
+
+        const execution = readExecuteServiceRequest(rawInput);
+        if (
+          !execution.servicePinId
+          || !execution.providerGlobalMetaId
+          || !execution.request.userTask
+        ) {
+          return commandFailed(
+            'invalid_service_execution_request',
+            'Execution request must include servicePinId, providerGlobalMetaId, and request.userTask.'
+          );
+        }
+
+        if (execution.providerGlobalMetaId !== state.identity.globalMetaId) {
+          return commandFailed('provider_identity_mismatch', 'Execution request does not match the local provider identity.');
+        }
+
+        const service = state.services.find((entry) => (
+          entry.available === 1
+          && entry.currentPinId === execution.servicePinId
+          && entry.providerGlobalMetaId === execution.providerGlobalMetaId
+        ));
+        if (!service) {
+          return commandFailed('service_not_found', `Published service was not found: ${execution.servicePinId}`);
+        }
+
+        const traceId = execution.traceId || `trace-${sanitizeServiceSegment(service.serviceName)}-${Date.now().toString(36)}`;
+        const responseText = renderDemoRemoteServiceResponse({
+          serviceName: service.serviceName,
+          displayName: service.displayName,
+          userTask: execution.request.userTask,
+          taskContext: execution.request.taskContext,
+        });
+
+        const trace = buildSessionTrace({
+          traceId,
+          channel: 'metaweb_order',
+          exportRoot: runtimeStateStore.paths.exportRoot,
+          session: {
+            id: `session-${traceId}`,
+            title: `${service.displayName} Execution`,
+            type: 'a2a',
+            metabotId: state.identity.metabotId,
+            peerGlobalMetaId: execution.buyer.globalMetaId || null,
+            peerName: execution.buyer.name || execution.buyer.host || null,
+            externalConversationId: execution.externalConversationId || null,
+          },
+          order: {
+            id: `order-${traceId}`,
+            role: 'seller',
+            serviceId: service.currentPinId,
+            serviceName: service.displayName,
+            paymentTxid: null,
+            paymentCurrency: service.currency,
+            paymentAmount: service.price,
+          },
+        });
+
+        const artifacts = await exportSessionArtifacts({
+          trace,
+          transcript: {
+            sessionId: trace.session.id,
+            title: trace.session.title,
+            messages: [
+              {
+                id: `${trace.traceId}-buyer`,
+                type: 'user',
+                timestamp: trace.createdAt,
+                content: execution.request.userTask,
+                metadata: {
+                  taskContext: execution.request.taskContext || null,
+                  buyerHost: execution.buyer.host || null,
+                  buyerGlobalMetaId: execution.buyer.globalMetaId || null,
+                },
+              },
+              {
+                id: `${trace.traceId}-provider`,
+                type: 'assistant',
+                timestamp: trace.createdAt,
+                content: responseText,
+                metadata: {
+                  servicePinId: service.currentPinId,
+                  providerGlobalMetaId: state.identity.globalMetaId,
+                },
+              },
+            ],
+          },
+        });
+
+        await runtimeStateStore.writeState({
+          ...state,
+          traces: [
+            trace,
+            ...state.traces.filter((entry) => entry.traceId !== trace.traceId),
+          ],
+        });
+
+        return commandSuccess({
+          traceId: trace.traceId,
+          externalConversationId: trace.session.externalConversationId,
+          responseText,
+          providerGlobalMetaId: state.identity.globalMetaId,
+          servicePinId: service.currentPinId,
+          serviceName: service.displayName,
           traceJsonPath: artifacts.traceJsonPath,
           traceMarkdownPath: artifacts.traceMarkdownPath,
           transcriptMarkdownPath: artifacts.transcriptMarkdownPath,
