@@ -23,6 +23,8 @@ metabot services call --request-file request.json
 metabot ui open --page hub
 ```
 
+These daemon-backed commands now autostart the local MetaBot daemon when `METABOT_DAEMON_BASE_URL` is not set and no daemon is already running for the current `METABOT_HOME` or `HOME`.
+
 ## Build And Verify
 
 ```bash

@@ -11,6 +11,8 @@ test('resolveMetabotPaths splits hot state and exports under .metabot', () => {
     hotRoot: '/tmp/home/.metabot/hot',
     exportRoot: '/tmp/home/.metabot/exports',
     runtimeDbPath: '/tmp/home/.metabot/hot/runtime.sqlite',
+    runtimeStatePath: '/tmp/home/.metabot/hot/runtime-state.json',
+    daemonStatePath: '/tmp/home/.metabot/hot/daemon.json',
     secretsPath: '/tmp/home/.metabot/hot/secrets.json'
   });
 });

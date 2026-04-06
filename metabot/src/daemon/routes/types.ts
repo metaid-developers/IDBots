@@ -17,6 +17,7 @@ export interface MetabotDaemonHttpHandlers {
     listServices?: (input: { online?: boolean }) => Awaitable<MetabotCommandResult<unknown>>;
   };
   services?: {
+    publish?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
     call?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
   };
   trace?: {

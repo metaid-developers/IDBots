@@ -5,6 +5,8 @@ export interface MetabotPaths {
   hotRoot: string;
   exportRoot: string;
   runtimeDbPath: string;
+  runtimeStatePath: string;
+  daemonStatePath: string;
   secretsPath: string;
 }
 
@@ -22,6 +24,8 @@ export function resolveMetabotPaths(homeDir: string): MetabotPaths {
     hotRoot,
     exportRoot,
     runtimeDbPath: path.join(hotRoot, 'runtime.sqlite'),
+    runtimeStatePath: path.join(hotRoot, 'runtime-state.json'),
+    daemonStatePath: path.join(hotRoot, 'daemon.json'),
     secretsPath: path.join(hotRoot, 'secrets.json')
   };
 }

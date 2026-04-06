@@ -11,7 +11,7 @@ import { runTraceCommand } from './commands/trace';
 import { runUiCommand } from './commands/ui';
 import { commandUnknownSubcommand } from './commands/helpers';
 import { createCliRuntimeContext, type CliContext } from './types';
-import { mergeCliDependencies } from './runtime';
+import { mergeCliDependencies, serveCliDaemonProcess } from './runtime';
 
 function resolveExitCode(result: MetabotCommandResult<unknown>): number {
   if (result.ok) return 0;
@@ -75,7 +75,15 @@ export async function runCli(argv: string[], cliContext: CliContext = {}): Promi
 }
 
 if (require.main === module) {
-  void runCli(process.argv.slice(2)).then((exitCode) => {
-    process.exitCode = exitCode;
-  });
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'daemon' && argv[1] === 'serve') {
+    void serveCliDaemonProcess({
+      env: process.env,
+      cwd: process.cwd(),
+    });
+  } else {
+    void runCli(argv).then((exitCode) => {
+      process.exitCode = exitCode;
+    });
+  }
 }

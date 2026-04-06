@@ -239,6 +239,78 @@ test('POST /api/services/call returns successful task-level call output', async 
   });
 });
 
+test('POST /api/services/publish forwards the JSON payload to services.publish', async (t) => {
+  const calls = [];
+  const server = createHttpServer({
+    services: {
+      publish: async (input) => {
+        calls.push(input);
+        return commandSuccess({
+          servicePinId: 'service-weather',
+          displayName: 'Weather Oracle',
+        });
+      },
+    },
+  });
+
+  await new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Expected TCP server address');
+  }
+
+  t.after(async () => {
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+
+  const request = {
+    serviceName: 'weather-oracle',
+    displayName: 'Weather Oracle',
+    description: 'Weather',
+    providerSkill: 'metabot-weather-oracle',
+    price: '0.00001',
+    currency: 'SPACE',
+    outputType: 'text',
+  };
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/services/publish`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, [request]);
+  assert.deepEqual(payload, {
+    ok: true,
+    state: 'success',
+    data: {
+      servicePinId: 'service-weather',
+      displayName: 'Weather Oracle',
+    },
+  });
+});
+
 test('GET /api/trace/:traceId forwards the route parameter to trace.getTrace', async (t) => {
   const server = await startServer();
   t.after(async () => server.close());

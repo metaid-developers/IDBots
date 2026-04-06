@@ -4,6 +4,20 @@ import type { RouteHandler } from './types';
 export const handleServicesRoutes: RouteHandler = async (context) => {
   const { req, url, handlers } = context;
 
+  if (url.pathname === '/api/services/publish') {
+    if (req.method !== 'POST') {
+      context.sendMethodNotAllowed(['POST']);
+      return true;
+    }
+
+    const input = await context.readJsonBody();
+    const result = handlers.services?.publish
+      ? await handlers.services.publish(input)
+      : commandFailed('not_implemented', 'Services publish handler is not configured.');
+    context.sendJson(200, result);
+    return true;
+  }
+
   if (url.pathname !== '/api/services/call') {
     return false;
   }
