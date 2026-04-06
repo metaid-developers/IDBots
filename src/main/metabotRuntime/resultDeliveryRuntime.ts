@@ -1,5 +1,7 @@
 import { normalizeAttachmentRefs } from './attachmentRefs';
 import { normalizeServiceRequestContract, type ServiceRequestContract } from './contracts';
+import type { RequestTraceRuntime } from './requestTraceRuntime';
+import type { DeliveryWriteRecord } from './transportRuntime';
 
 const SIMPLEMSG_PATH = '/protocols/simplemsg';
 
@@ -33,37 +35,7 @@ export interface PortableDeliveryPayload {
   deliveredAt: number;
 }
 
-export interface PortableDeliveryWriteRecord {
-  requestId: string;
-  requesterSessionId: string;
-  requesterConversationId: string | null;
-  servicePinId: string;
-  paymentTxid: string | null;
-  deliveryMessagePinId: string | null;
-  text: string;
-  attachments: string[];
-  deliveredAt: number;
-}
-
-export interface WritePortableDeliveryTrace {
-  markSellerDelivered(input: {
-    localMetabotId: number;
-    counterpartyGlobalMetaId: string;
-    paymentTxid: string;
-    deliveryMessagePinId?: string | null;
-    deliveredAt?: number;
-  }): unknown;
-}
-
-export interface ApplyPortableBuyerDeliveryTrace {
-  markBuyerOrderDelivered(input: {
-    localMetabotId: number;
-    counterpartyGlobalMetaId: string;
-    paymentTxid: string;
-    deliveryMessagePinId?: string | null;
-    deliveredAt?: number;
-  }): unknown;
-}
+export type PortableDeliveryWriteRecord = DeliveryWriteRecord;
 
 export interface WritePortableDeliveryDeps {
   buildDeliveryMessage(payload: PortableDeliveryPayload): string;
@@ -91,7 +63,7 @@ export interface WritePortableDeliveryRecordInput {
   serviceName?: string | null;
   delivery: PortableDeliveryInput;
   deliveredAt?: number;
-  trace: WritePortableDeliveryTrace;
+  trace: Pick<RequestTraceRuntime, 'markSellerDelivered'>;
   deps: WritePortableDeliveryDeps;
 }
 
@@ -110,7 +82,7 @@ export interface ApplyPortableBuyerDeliveryInput {
   paymentTxid?: string | null;
   deliveryMessagePinId?: string | null;
   nowMs?: number;
-  trace: ApplyPortableBuyerDeliveryTrace;
+  trace: Pick<RequestTraceRuntime, 'markBuyerOrderDelivered'>;
 }
 
 export function buildPortableDeliveryPayload(input: {

@@ -27,10 +27,19 @@ export interface ServiceRequestContract {
   executionMode: ExecutionMode;
 }
 
+function isZeroLikeAmount(value: string): boolean {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed === 0;
+}
+
 export function normalizeServiceRequestContract(input: Partial<ServiceRequestContract>): ServiceRequestContract {
   const price = String(input.price ?? '').trim() || '0';
   const correlationInput = (input.correlation ?? {}) as Partial<RequestCorrelationContract>;
   const paymentProofInput = (input.paymentProof ?? {}) as Partial<PaymentProofContract>;
+  const normalizedExecutionMode: ExecutionMode =
+    input.executionMode === 'free' || input.executionMode === 'paid'
+      ? input.executionMode
+      : (isZeroLikeAmount(price) ? 'free' : 'paid');
   return {
     correlation: {
       requestId: String(correlationInput.requestId ?? '').trim(),
@@ -52,6 +61,6 @@ export function normalizeServiceRequestContract(input: Partial<ServiceRequestCon
     },
     userTask: String(input.userTask ?? '').trim(),
     taskContext: String(input.taskContext ?? '').trim(),
-    executionMode: price === '0' ? 'free' : 'paid',
+    executionMode: normalizedExecutionMode,
   };
 }

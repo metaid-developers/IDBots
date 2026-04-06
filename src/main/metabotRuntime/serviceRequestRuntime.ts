@@ -3,6 +3,8 @@ import {
   type ExecutionMode,
   type ServiceRequestContract,
 } from './contracts';
+import type { RequestTraceRuntime } from './requestTraceRuntime';
+import type { RequestWriteRecord } from './transportRuntime';
 
 const SIMPLEMSG_PATH = '/protocols/simplemsg';
 
@@ -21,16 +23,7 @@ const toPaymentChain = (value?: string | null): 'mvc' | 'btc' | 'doge' => {
   return 'mvc';
 };
 
-export interface PortableRequestWriteRecord {
-  requestId: string;
-  requesterSessionId: string;
-  requesterConversationId: string | null;
-  servicePinId: string;
-  paymentTxid: string | null;
-  orderReferenceId: string | null;
-  orderMessagePinId: string | null;
-  normalizedOrderText: string;
-}
+export type PortableRequestWriteRecord = RequestWriteRecord;
 
 export interface ResolveExecutionGateInput {
   request: Partial<ServiceRequestContract>;
@@ -42,21 +35,6 @@ export interface ResolveExecutionGateResult {
   executionMode: ExecutionMode;
   paymentTxid: string | null;
   orderReferenceId: string | null;
-}
-
-export interface WritePortableServiceRequestTrace {
-  createBuyerOrder(input: {
-    localMetabotId: number;
-    counterpartyGlobalMetaId: string;
-    servicePinId?: string | null;
-    serviceName: string;
-    paymentTxid: string;
-    paymentChain?: string;
-    paymentAmount: string;
-    paymentCurrency?: string;
-    coworkSessionId?: string | null;
-    orderMessagePinId?: string | null;
-  }): unknown;
 }
 
 export interface WritePortableServiceRequestDeps {
@@ -98,7 +76,7 @@ export interface WritePortableServiceRequestInput {
   providerSkill?: string | null;
   paymentChain?: string | null;
   coworkSessionId?: string | null;
-  trace: WritePortableServiceRequestTrace;
+  trace: Pick<RequestTraceRuntime, 'createBuyerOrder'>;
   deps: WritePortableServiceRequestDeps;
 }
 
