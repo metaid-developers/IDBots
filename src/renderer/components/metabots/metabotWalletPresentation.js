@@ -1,3 +1,5 @@
+import Decimal from 'decimal.js';
+
 const SECTION_DEFS = [
   { key: "nativeAssets", title: "原生币" },
   { key: "mrc20Assets", title: "MRC20 Token" },
@@ -25,12 +27,30 @@ export function buildWalletAssetsSectionsViewModel({ assets, loading, error }) {
   };
 }
 
-export function validateTokenTransferDraft({ amount, receiver }) {
+export function validateTokenTransferDraft({ amount, receiver, maxDisplayBalance }) {
   const to = String(receiver || "").trim();
   if (!to) return { valid: false, errorKey: "transferReceiverRequired" };
-  const amountNum = Number.parseFloat(String(amount || "").trim());
-  if (!Number.isFinite(amountNum) || amountNum <= 0) {
+
+  let amountValue;
+  try {
+    amountValue = new Decimal(String(amount || "").trim());
+  } catch {
     return { valid: false, errorKey: "transferAmountInvalid" };
+  }
+  if (!amountValue.isFinite() || amountValue.lte(0)) {
+    return { valid: false, errorKey: "transferAmountInvalid" };
+  }
+
+  const balanceText = String(maxDisplayBalance || "").trim();
+  if (balanceText) {
+    try {
+      const balanceValue = new Decimal(balanceText);
+      if (balanceValue.isFinite() && amountValue.gt(balanceValue)) {
+        return { valid: false, errorKey: "transferAmountExceedsBalance" };
+      }
+    } catch {
+      // Ignore malformed balance strings and fall back to amount-only validation.
+    }
   }
 
   return { valid: true };

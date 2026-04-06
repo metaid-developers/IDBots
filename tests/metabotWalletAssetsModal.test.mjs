@@ -34,14 +34,17 @@ test('wallet asset presentation helpers return error state labels for token sect
   assert.equal(viewModel.sections[2].state, 'error');
 });
 
-test('token transfer helpers allow building preview even when amount is greater than displayed max', () => {
+test('token transfer helpers reject preview validation when amount is greater than displayed max', () => {
   const validation = validateTokenTransferDraft({
     amount: '2.5',
     receiver: 'btc-dest',
     maxDisplayBalance: '2.0',
   });
 
-  assert.equal(validation.valid, true);
+  assert.deepEqual(validation, {
+    valid: false,
+    errorKey: 'transferAmountExceedsBalance',
+  });
 
   const asset = {
     kind: 'mrc20',

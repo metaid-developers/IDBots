@@ -7,6 +7,10 @@ import {
 } from '@metalet/utxo-wallet-service';
 import type { MetabotStore } from '../metabotStore';
 import { parseAddressIndexFromPath } from './metabotWalletService';
+import {
+  attachRawTxToMrc20Utxos,
+  buildMrc20TransferSignOptions,
+} from './tokenTransferAdapters';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -54,12 +58,18 @@ interface FundingUtxo {
   satoshis?: number;
   rawTx?: string;
   address?: string;
+  [key: string]: unknown;
 }
 
 interface Mrc20TokenUtxo {
   txId: string;
   outputIndex: number;
   rawTx?: string;
+  mrc20s?: Array<{
+    amount?: string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
 }
 
 interface WalletContext {
@@ -203,20 +213,16 @@ async function fetchFundingUtxosDefault(address: string): Promise<FundingUtxo[]>
 }
 
 async function fetchMrc20UtxosDefault(address: string, mrc20Id: string): Promise<Mrc20TokenUtxo[]> {
-  const response = await fetchJson<{ list: Array<{ txId: string; outputIndex: number }> }>(
+  const response = await fetchJson<{ list: Mrc20TokenUtxo[] }>(
     `${METALET_HOST}/wallet-api/v3/mrc20/address/utxo?net=${NET}&address=${encodeURIComponent(address)}&tickId=${encodeURIComponent(mrc20Id)}&source=mrc20-v2`,
   );
   const list = response?.list ?? [];
-  return await Promise.all(list.map(async (item) => {
+  return await attachRawTxToMrc20Utxos(list, async (txId) => {
     const raw = await fetchJson<{ rawTx?: string; hex?: string }>(
-      `${METALET_HOST}/wallet-api/v3/tx/raw?net=${NET}&txId=${encodeURIComponent(item.txId)}&chain=btc`,
+      `${METALET_HOST}/wallet-api/v3/tx/raw?net=${NET}&txId=${encodeURIComponent(txId)}&chain=btc`,
     );
-    return {
-      txId: item.txId,
-      outputIndex: item.outputIndex,
-      rawTx: raw.rawTx ?? raw.hex ?? '',
-    };
-  }));
+    return raw.rawTx ?? raw.hex ?? '';
+  });
 }
 
 async function deriveWalletContextDefault(store: MetabotStore, metabotId: number): Promise<WalletContext> {
@@ -249,17 +255,18 @@ async function signTransferDefault(params: {
   };
   amountAtomic: string;
 }): Promise<SignTransferResult> {
-  const signed = params.context.wallet.signTx(SignType.MRC20_TRANSFER, {
-    body: params.input.amount,
-    amount: params.amountAtomic,
-    mrc20TickId: params.input.asset.mrc20Id,
-    revealAddr: params.input.toAddress,
-    commitFeeRate: params.input.feeRate,
-    revealFeeRate: params.input.feeRate,
+  const signOptions = buildMrc20TransferSignOptions({
+    amount: params.input.amount,
+    decimal: params.input.asset.decimal,
+    mrc20Id: params.input.asset.mrc20Id,
+    toAddress: params.input.toAddress,
+    feeRate: params.input.feeRate,
     changeAddress: params.context.address,
-    utxos: params.fundingUtxos,
-    mrc20Utxos: params.tokenUtxos,
-  } as any) as {
+    fundingUtxos: params.fundingUtxos as Array<Record<string, unknown>>,
+    tokenUtxos: params.tokenUtxos,
+  });
+
+  const signed = params.context.wallet.signTx(SignType.MRC20_TRANSFER, signOptions as any) as {
     commitTx: { rawTx: string; fee?: number | string };
     revealTx: { rawTx: string; fee?: number | string };
   };

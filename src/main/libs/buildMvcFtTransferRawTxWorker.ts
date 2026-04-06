@@ -1,5 +1,9 @@
 import { API_NET, API_TARGET, FtManager, mvc } from 'meta-contract';
 import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import {
+  attachMvcFundingSignatureContext,
+  selectMvcFundingUtxos,
+} from '../services/tokenTransferAdapters';
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 
@@ -62,6 +66,7 @@ async function main(): Promise<void> {
   const addressIndex = parseAddressIndexFromPath(pathStr);
   const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
   const senderWif = mvcWallet.getPrivateKey();
+  const senderAddress = mvcWallet.getAddress();
   const ftManager = new FtManager({
     network: API_NET.MAIN,
     apiTarget: API_TARGET.APIMVC,
@@ -100,8 +105,7 @@ async function main(): Promise<void> {
       txId: fundingTxid,
       outputIndex: fundingVout,
       satoshis: Number(output.satoshis),
-      wif: senderWif,
-      address: mvcWallet.getAddress(),
+      address: senderAddress,
     }];
   } else {
     const allUtxos = await ftManager.api.getUnspents(mvcWallet.getAddress());
@@ -110,6 +114,11 @@ async function main(): Promise<void> {
       return !excludeOutpoints.has(key);
     });
   }
+  utxos = attachMvcFundingSignatureContext(utxos, {
+    senderWif,
+    senderAddress,
+  });
+  utxos = selectMvcFundingUtxos(utxos);
   if (utxos.length === 0) {
     console.log(JSON.stringify({ success: false, error: 'No spendable MVC UTXOs after exclusions' }));
     process.exit(1);

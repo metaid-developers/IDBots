@@ -119,6 +119,24 @@ const defaultDeps: MvcFtServiceDeps = {
   },
 };
 
+export async function broadcastMvcFtTransferBundle(
+  bundle: {
+    amountCheckRawTx: string;
+    rawTx: string;
+  },
+  broadcastTx: (rawTx: string) => Promise<string>,
+): Promise<{ amountCheckTxId: string; txId: string }> {
+  const amountCheckRawTx = String(bundle?.amountCheckRawTx || '').trim();
+  const rawTx = String(bundle?.rawTx || '').trim();
+  if (!amountCheckRawTx || !rawTx) {
+    throw new Error('amountCheckRawTx and rawTx are required');
+  }
+
+  const amountCheckTxId = await broadcastTx(amountCheckRawTx);
+  const txId = await broadcastTx(rawTx);
+  return { amountCheckTxId, txId };
+}
+
 export async function listMvcFtAssets(
   address: string,
   deps: Pick<MvcFtServiceDeps, 'fetchBalanceList'> = defaultDeps,
@@ -171,7 +189,7 @@ export async function executeMvcFtTransfer(
     feeRate: number;
   },
   deps: MvcFtServiceDeps = defaultDeps,
-): Promise<{ txId: string; rawTx: string }> {
+): Promise<{ txId: string; rawTx: string; amountCheckTxId: string }> {
   if (!Number.isInteger(input?.metabotId) || input.metabotId <= 0) {
     throw new Error('metabotId must be a positive integer');
   }
@@ -196,9 +214,13 @@ export async function executeMvcFtTransfer(
     feeRate: input.feeRate,
   });
 
-  const txId = await deps.broadcastTx(raw.raw_tx);
+  const { txId, amountCheckTxId } = await broadcastMvcFtTransferBundle({
+    amountCheckRawTx: raw.amount_check_raw_tx,
+    rawTx: raw.raw_tx,
+  }, deps.broadcastTx);
   return {
     txId,
     rawTx: raw.raw_tx,
+    amountCheckTxId,
   };
 }

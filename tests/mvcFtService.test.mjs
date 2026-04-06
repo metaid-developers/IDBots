@@ -99,6 +99,7 @@ test('executeMvcFtTransfer reuses walletRawTxService and broadcasts the returned
   );
 
   const calls = [];
+  const broadcasts = [];
 
   const result = await mvcFtService.executeMvcFtTransfer(createStore(), {
     metabotId: 1,
@@ -125,8 +126,8 @@ test('executeMvcFtTransfer reuses walletRawTxService and broadcasts the returned
       };
     },
     broadcastTx: async (rawTx) => {
-      assert.equal(rawTx, 'ft-raw');
-      return 'broadcast-txid';
+      broadcasts.push(rawTx);
+      return rawTx === 'amount-check' ? 'amount-check-txid' : 'broadcast-txid';
     },
   });
 
@@ -144,6 +145,8 @@ test('executeMvcFtTransfer reuses walletRawTxService and broadcasts the returned
     amount: '125000000',
     feeRate: 1,
   });
+  assert.deepEqual(broadcasts, ['amount-check', 'ft-raw']);
   assert.equal(result.txId, 'broadcast-txid');
   assert.equal(result.rawTx, 'ft-raw');
+  assert.equal(result.amountCheckTxId, 'amount-check-txid');
 });
