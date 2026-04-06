@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -77,6 +77,13 @@ async function stopDaemon(homeDir) {
   await rm(daemonStatePath, { force: true });
 }
 
+async function writeDirectorySeeds(homeDir, providers) {
+  const seedsPath = path.join(homeDir, '.metabot', 'hot', 'directory-seeds.json');
+  await mkdir(path.dirname(seedsPath), { recursive: true });
+  await writeFile(seedsPath, JSON.stringify({ providers }, null, 2), 'utf8');
+  return seedsPath;
+}
+
 test('identity create autostarts the local daemon and doctor reports the identity as loaded', async (t) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-runtime-'));
   t.after(async () => stopDaemon(homeDir));
@@ -138,6 +145,51 @@ test('services publish persists a local directory entry that network services --
   assert.equal(listed.payload.data.services[0].displayName, 'Weather Oracle');
   assert.equal(listed.payload.data.services[0].online, true);
   assert.equal(listed.payload.data.services[0].providerGlobalMetaId, created.payload.data.globalMetaId);
+});
+
+test('network services merges remote demo directory seeds and returns provider daemon base urls for agent-side invocation', async (t) => {
+  const callerHome = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-caller-'));
+  const providerHome = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-provider-'));
+  t.after(async () => stopDaemon(callerHome));
+  t.after(async () => stopDaemon(providerHome));
+
+  const providerIdentity = await runCommand(providerHome, ['identity', 'create', '--name', 'Weather Provider']);
+  assert.equal(providerIdentity.exitCode, 0);
+
+  const publishFile = path.join(providerHome, 'payload.json');
+  await writeFile(publishFile, JSON.stringify({
+    serviceName: 'weather-oracle',
+    displayName: 'Weather Oracle',
+    description: 'Returns tomorrow weather from the local MetaBot runtime.',
+    providerSkill: 'metabot-weather-oracle',
+    price: '0.00001',
+    currency: 'SPACE',
+    outputType: 'text',
+    skillDocument: '# Weather Oracle',
+  }), 'utf8');
+
+  const published = await runCommand(providerHome, ['services', 'publish', '--payload-file', publishFile]);
+  assert.equal(published.exitCode, 0);
+
+  const providerDaemon = await runCommand(providerHome, ['daemon', 'start']);
+  assert.equal(providerDaemon.exitCode, 0);
+  assert.equal(providerDaemon.payload.ok, true);
+
+  await writeDirectorySeeds(callerHome, [{
+    baseUrl: providerDaemon.payload.data.baseUrl,
+    label: 'weather-demo',
+  }]);
+
+  const listed = await runCommand(callerHome, ['network', 'services', '--online']);
+
+  assert.equal(listed.exitCode, 0);
+  assert.equal(listed.payload.ok, true);
+  assert.equal(Array.isArray(listed.payload.data.services), true);
+  assert.equal(listed.payload.data.services.length, 1);
+  assert.equal(listed.payload.data.services[0].displayName, 'Weather Oracle');
+  assert.equal(listed.payload.data.services[0].providerGlobalMetaId, providerIdentity.payload.data.globalMetaId);
+  assert.equal(listed.payload.data.services[0].providerDaemonBaseUrl, providerDaemon.payload.data.baseUrl);
+  assert.equal(listed.payload.data.services[0].online, true);
 });
 
 test('services call stores a trace that trace get can read back from the local runtime', async (t) => {

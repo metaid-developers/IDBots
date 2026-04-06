@@ -133,6 +133,25 @@ test('buildMetabotSkillpacks publishes the shared remote-call demo transport con
   }
 });
 
+test('buildMetabotSkillpacks publishes the shared network-directory handoff field across all host packs', async () => {
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'metabot-skillpacks-'));
+  const { buildMetabotSkillpacks } = await import(BUILD_SCRIPT_URL);
+
+  await buildMetabotSkillpacks({
+    repoRoot: REPO_ROOT,
+    outputRoot,
+  });
+
+  for (const host of HOSTS) {
+    const content = await readFile(
+      path.join(outputRoot, host, 'skills', 'metabot-network-directory', 'SKILL.md'),
+      'utf8'
+    );
+    assert.match(content, /providerDaemonBaseUrl/);
+    assert.match(content, /metabot-call-remote-service/);
+  }
+});
+
 test('install.sh copies skills and installs a runnable metabot shim from the source tree', async () => {
   const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'metabot-skillpacks-'));
   const skillDest = await mkdtemp(path.join(os.tmpdir(), 'metabot-skill-dest-'));

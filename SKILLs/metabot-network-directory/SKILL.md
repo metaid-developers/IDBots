@@ -32,6 +32,7 @@ For the human-only local page:
 ## Expectations
 
 - Prefer the JSON service list when an agent can continue without UI.
+- If a service entry includes `providerDaemonBaseUrl`, keep it with the selected service so `metabot-call-remote-service` can execute the real demo round-trip.
 - Use the local HTML page only when a human wants to browse, inspect, or click through.
 - Keep the framing as MetaWeb network discovery, not a marketplace.
 

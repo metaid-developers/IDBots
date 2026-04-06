@@ -1,3 +1,5 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import {
@@ -23,6 +25,8 @@ import { planRemoteCall } from '../core/delegation/remoteCall';
 import { buildSessionTrace } from '../core/chat/sessionTrace';
 import { exportSessionArtifacts } from '../core/chat/transcriptExport';
 import { sendPrivateChat } from '../core/chat/privateChat';
+
+const DIRECTORY_SEEDS_FILE = 'directory-seeds.json';
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -218,6 +222,85 @@ async function fetchRemoteAvailableServices(
   }
 }
 
+async function readDirectorySeeds(hotRoot: string): Promise<Array<{ baseUrl: string; label: string | null }>> {
+  const seedsPath = path.join(hotRoot, DIRECTORY_SEEDS_FILE);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(await fs.readFile(seedsPath, 'utf8')) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  const providers = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { providers?: unknown })?.providers)
+      ? (payload as { providers: unknown[] }).providers
+      : [];
+
+  const seen = new Set<string>();
+  const normalizedProviders = [];
+  for (const provider of providers) {
+    const entry = readObject(provider);
+    const baseUrl = normalizeText(entry?.baseUrl);
+    if (!baseUrl || seen.has(baseUrl)) {
+      continue;
+    }
+    seen.add(baseUrl);
+    normalizedProviders.push({
+      baseUrl,
+      label: normalizeText(entry?.label) || null,
+    });
+  }
+  return normalizedProviders;
+}
+
+function dedupeServices(services: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const deduped = new Map<string, Record<string, unknown>>();
+
+  for (const service of services) {
+    const key = [
+      normalizeText(service.providerGlobalMetaId),
+      normalizeText(service.servicePinId || service.sourceServicePinId),
+    ].join('::');
+    if (!key || deduped.has(key)) {
+      continue;
+    }
+    deduped.set(key, service);
+  }
+
+  return [...deduped.values()].sort((left, right) => {
+    const leftUpdatedAt = Number(left.updatedAt ?? 0);
+    const rightUpdatedAt = Number(right.updatedAt ?? 0);
+    return rightUpdatedAt - leftUpdatedAt;
+  });
+}
+
+async function fetchSeededDirectoryServices(hotRoot: string): Promise<Array<Record<string, unknown>>> {
+  const seeds = await readDirectorySeeds(hotRoot);
+  const mergedServices: Array<Record<string, unknown>> = [];
+
+  for (const seed of seeds) {
+    const remoteDirectory = await fetchRemoteAvailableServices(seed.baseUrl);
+    if ('ok' in remoteDirectory) {
+      continue;
+    }
+
+    for (const service of remoteDirectory.services) {
+      mergedServices.push({
+        ...service,
+        providerDaemonBaseUrl: normalizeText(service.providerDaemonBaseUrl) || seed.baseUrl,
+        directorySeedLabel: seed.label,
+        online: service.online !== false,
+      });
+    }
+  }
+
+  return dedupeServices(mergedServices);
+}
+
 async function executeRemoteServiceCall(input: {
   providerDaemonBaseUrl: string;
   traceId: string;
@@ -395,10 +478,14 @@ export function createDefaultMetabotDaemonHandlers(input: {
     network: {
       listServices: async ({ online }) => {
         const state = await runtimeStateStore.readState();
-        const services = state.services
+        const localServices = state.services
           .filter((service) => service.available === 1)
-          .map((service) => summarizeService(service))
-          .sort((left, right) => right.updatedAt - left.updatedAt);
+          .map((service) => summarizeService(service));
+        const seededServices = await fetchSeededDirectoryServices(runtimeStateStore.paths.hotRoot);
+        const services = dedupeServices([
+          ...seededServices,
+          ...localServices,
+        ]);
 
         return commandSuccess({
           services: online === false ? [] : services,
