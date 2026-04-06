@@ -951,7 +951,7 @@ async function syncRemoteSkillServices(): Promise<void> {
           nextCursor: typeof json?.data?.nextCursor === 'string' ? json.data.nextCursor : null,
         };
       },
-      upsertService: (parsed) => {
+      upsertMirroredService: (parsed) => {
         const statement = buildRemoteSkillServiceUpsertStatement(parsed);
         db.run(statement.sql, sanitizeDbParams(statement.params));
         repairServiceRatingAggregate(db, parsed.id);

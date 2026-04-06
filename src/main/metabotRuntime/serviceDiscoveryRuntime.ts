@@ -1,44 +1,56 @@
-import { filterServicesByDiscoverySnapshot } from '../services/providerDiscoveryService';
-import type { ParsedRemoteSkillServiceRow } from '../services/gigSquareRemoteServiceSync';
+import {
+  syncRemoteSkillServicesWithCursor,
+  type ParsedRemoteSkillServiceRow,
+  type RemoteSkillServicePage,
+} from '../services/gigSquareRemoteServiceSync';
+import {
+  filterServicesByDiscoverySnapshot,
+  type DiscoveryServiceCandidate,
+  type DiscoverySnapshot,
+} from '../services/providerDiscoveryService';
 
-export interface PortableServiceDiscoverySnapshot {
-  availableServices: Array<Record<string, unknown>>;
+export interface PortableServiceDiscoveryProvider {
+  getDiscoverySnapshot(): Pick<DiscoverySnapshot, 'availableServices'>;
 }
 
 export interface SyncPortableServiceCatalogInput {
-  syncRemoteServices(input: {
-    upsertService: (row: ParsedRemoteSkillServiceRow) => void;
-  }): Promise<void>;
-  upsertService?: (row: ParsedRemoteSkillServiceRow) => void;
+  pageSize: number;
+  maxPages?: number;
+  fetchPage: (cursor?: string) => Promise<RemoteSkillServicePage>;
+  upsertMirroredService: (row: ParsedRemoteSkillServiceRow) => void;
 }
 
-export interface ListCallablePortableServicesInput<T extends Record<string, unknown>> {
-  syncRemoteServices: SyncPortableServiceCatalogInput['syncRemoteServices'];
-  upsertService?: SyncPortableServiceCatalogInput['upsertService'];
-  listSyncedServices: () => T[];
-  getDiscoverySnapshot: () => PortableServiceDiscoverySnapshot;
+export interface ListCallablePortableServicesInput<T extends DiscoveryServiceCandidate>
+  extends SyncPortableServiceCatalogInput {
+  listMirroredServices: () => T[];
+  providerDiscovery: PortableServiceDiscoveryProvider;
 }
 
 export async function syncPortableServiceCatalog(
   input: SyncPortableServiceCatalogInput,
 ): Promise<void> {
-  await input.syncRemoteServices({
+  await syncRemoteSkillServicesWithCursor({
+    pageSize: input.pageSize,
+    maxPages: input.maxPages,
+    fetchPage: input.fetchPage,
     upsertService: (row) => {
-      input.upsertService?.(row);
+      input.upsertMirroredService(row);
     },
   });
 }
 
-export async function listCallablePortableServices<T extends Record<string, unknown>>(
+export async function listCallablePortableServices<T extends DiscoveryServiceCandidate>(
   input: ListCallablePortableServicesInput<T>,
 ): Promise<T[]> {
   await syncPortableServiceCatalog({
-    syncRemoteServices: input.syncRemoteServices,
-    upsertService: input.upsertService,
+    pageSize: input.pageSize,
+    maxPages: input.maxPages,
+    fetchPage: input.fetchPage,
+    upsertMirroredService: input.upsertMirroredService,
   });
 
   return filterServicesByDiscoverySnapshot(
-    input.listSyncedServices(),
-    input.getDiscoverySnapshot(),
+    input.listMirroredServices(),
+    input.providerDiscovery.getDiscoverySnapshot(),
   );
 }

@@ -2,6 +2,11 @@ type RemoteSkillServiceItem = Record<string, unknown>;
 const DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES = 1000;
 const UNIX_SECONDS_MAX = 10_000_000_000;
 
+export type RemoteSkillServicePage = {
+  list: RemoteSkillServiceItem[];
+  nextCursor?: string | null;
+};
+
 export type ParsedRemoteSkillServiceRow = {
   id: string;
   pinId: string;
@@ -39,6 +44,13 @@ export type RemoteSkillServiceUpsertStatement = {
   sql: string;
   params: Array<string | number | null>;
 };
+
+export interface SyncRemoteSkillServicesWithCursorInput {
+  pageSize: number;
+  maxPages?: number;
+  fetchPage: (cursor?: string) => Promise<RemoteSkillServicePage>;
+  upsertService: (row: ParsedRemoteSkillServiceRow) => void;
+}
 
 const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -354,12 +366,9 @@ export const buildRemoteSkillServiceUpsertStatement = (
   ],
 });
 
-export async function syncRemoteSkillServicesWithCursor(input: {
-  pageSize: number;
-  maxPages?: number;
-  fetchPage: (cursor?: string) => Promise<{ list: RemoteSkillServiceItem[]; nextCursor?: string | null }>;
-  upsertService: (row: ParsedRemoteSkillServiceRow) => void;
-}): Promise<void> {
+export async function syncRemoteSkillServicesWithCursor(
+  input: SyncRemoteSkillServicesWithCursorInput,
+): Promise<void> {
   const maxPages = Number.isFinite(input.maxPages) && (input.maxPages as number) > 0
     ? Math.floor(input.maxPages as number)
     : DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES;

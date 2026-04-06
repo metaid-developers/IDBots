@@ -47,3 +47,52 @@ test('publishPortableService writes /protocols/skill-service and mirrors the loc
   assert.equal(calls[1][1].path, '/protocols/skill-service');
   assert.equal(calls[2][1].pinId, 'service-pin-1');
 });
+
+test('buildPortableServicePublishRecord falls back to payload provider meta bot and rejects blank pin ids', async () => {
+  const { buildPortableServicePublishRecord } = await import('../dist-electron/metabotRuntime/servicePublishRuntime.js');
+
+  const record = buildPortableServicePublishRecord({
+    pinId: 'service-pin-2',
+    metabotId: 9,
+    providerGlobalMetaId: '',
+    payloadJson: '{"serviceName":"translator-pro"}',
+    payload: {
+      serviceName: 'translator-pro',
+      displayName: 'Translator Pro',
+      description: 'One-shot translation',
+      serviceIcon: '',
+      providerMetaBot: 'idq1provider',
+      providerSkill: 'translate-pro',
+      price: '9',
+      currency: 'SPACE',
+      skillDocument: '',
+      inputType: 'text',
+      outputType: 'text',
+      endpoint: 'simplemsg',
+      paymentAddress: '1abc',
+    },
+  });
+
+  assert.equal(record.providerGlobalMetaId, 'idq1provider');
+  assert.throws(() => buildPortableServicePublishRecord({
+    pinId: '   ',
+    metabotId: 9,
+    providerGlobalMetaId: 'idq1provider',
+    payloadJson: '{}',
+    payload: {
+      serviceName: 'translator-pro',
+      displayName: 'Translator Pro',
+      description: 'One-shot translation',
+      serviceIcon: '',
+      providerMetaBot: 'idq1provider',
+      providerSkill: 'translate-pro',
+      price: '9',
+      currency: 'SPACE',
+      skillDocument: '',
+      inputType: 'text',
+      outputType: 'text',
+      endpoint: 'simplemsg',
+      paymentAddress: '1abc',
+    },
+  }), /pin id is required/i);
+});

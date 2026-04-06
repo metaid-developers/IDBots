@@ -76,6 +76,22 @@ export interface GigSquareLocalServiceMutationRecord {
   updatedAt: number;
 }
 
+export interface GigSquareServicePayload {
+  serviceName: string;
+  displayName: string;
+  description: string;
+  serviceIcon: string;
+  providerMetaBot: string;
+  providerSkill: string;
+  price: string;
+  currency: string;
+  skillDocument: string;
+  inputType: string;
+  outputType: string;
+  endpoint: string;
+  paymentAddress: string;
+}
+
 const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
 const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
 const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
@@ -269,7 +285,7 @@ export const buildGigSquareServicePayload = (input: {
   draft: GigSquareModifyDraft;
   providerGlobalMetaId: string;
   paymentAddress: string;
-}): Record<string, string> => {
+}): GigSquareServicePayload => {
   const normalized = normalizeGigSquareModifyDraft(input.draft);
   return {
     serviceName: normalized.serviceName,
@@ -286,6 +302,58 @@ export const buildGigSquareServicePayload = (input: {
     endpoint: 'simplemsg',
     paymentAddress: toSafeString(input.paymentAddress).trim(),
   };
+};
+
+export const buildGigSquareLocalServiceRecordForPublish = (input: {
+  pinId: string;
+  txid?: string;
+  metabotId: number;
+  providerGlobalMetaId: string;
+  payload: GigSquareServicePayload;
+  payloadJson: string;
+  now?: number;
+}): GigSquareLocalServiceMutationRecord => {
+  const normalizedPinId = toSafeString(input.pinId).trim();
+  if (!normalizedPinId) {
+    throw new Error('Published service pin id is required to persist local service state');
+  }
+
+  const payload = input.payload;
+  const now = input.now ?? Date.now();
+
+  return createLocalMutationRecord({
+    service: {
+      id: normalizedPinId,
+      pinId: normalizedPinId,
+      sourceServicePinId: normalizedPinId,
+      currentPinId: normalizedPinId,
+      creatorMetabotId: input.metabotId,
+      providerGlobalMetaId: toSafeString(input.providerGlobalMetaId).trim()
+        || toSafeString(payload.providerMetaBot).trim(),
+      providerSkill: payload.providerSkill,
+      serviceName: payload.serviceName,
+      displayName: payload.displayName,
+      description: payload.description,
+      serviceIcon: payload.serviceIcon || null,
+      price: payload.price,
+      currency: payload.currency,
+      outputType: payload.outputType,
+      endpoint: payload.endpoint,
+    },
+    currentPinId: normalizedPinId,
+    providerSkill: payload.providerSkill,
+    serviceName: payload.serviceName,
+    displayName: payload.displayName,
+    description: payload.description,
+    serviceIcon: payload.serviceIcon || null,
+    price: payload.price,
+    currency: payload.currency,
+    outputType: payload.outputType,
+    endpoint: payload.endpoint,
+    payloadJson: input.payloadJson,
+    revokedAt: null,
+    now,
+  });
 };
 
 export const buildGigSquareRevokeMetaidPayload = (targetPinId: string): MetaidDataPayload => {
