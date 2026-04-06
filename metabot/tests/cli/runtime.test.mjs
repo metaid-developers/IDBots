@@ -139,3 +139,60 @@ test('services publish persists a local directory entry that network services --
   assert.equal(listed.payload.data.services[0].online, true);
   assert.equal(listed.payload.data.services[0].providerGlobalMetaId, created.payload.data.globalMetaId);
 });
+
+test('services call stores a trace that trace get can read back from the local runtime', async (t) => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-runtime-'));
+  t.after(async () => stopDaemon(homeDir));
+
+  const created = await runCommand(homeDir, ['identity', 'create', '--name', 'Alice']);
+  assert.equal(created.exitCode, 0);
+
+  const publishFile = path.join(homeDir, 'payload.json');
+  await writeFile(publishFile, JSON.stringify({
+    serviceName: 'weather-oracle',
+    displayName: 'Weather Oracle',
+    description: 'Returns tomorrow weather from the local MetaBot runtime.',
+    providerSkill: 'metabot-weather-oracle',
+    price: '0.00001',
+    currency: 'SPACE',
+    outputType: 'text',
+    skillDocument: '# Weather Oracle',
+  }), 'utf8');
+
+  const published = await runCommand(homeDir, ['services', 'publish', '--payload-file', publishFile]);
+  assert.equal(published.exitCode, 0);
+
+  const requestFile = path.join(homeDir, 'request.json');
+  await writeFile(requestFile, JSON.stringify({
+    request: {
+      servicePinId: published.payload.data.servicePinId,
+      providerGlobalMetaId: created.payload.data.globalMetaId,
+      userTask: 'Tell me tomorrow weather',
+      taskContext: 'Shanghai tomorrow',
+    },
+  }), 'utf8');
+
+  const called = await runCommand(homeDir, ['services', 'call', '--request-file', requestFile]);
+
+  assert.equal(called.exitCode, 0);
+  assert.equal(called.payload.ok, true);
+  assert.match(called.payload.data.traceId, /^trace-/);
+  assert.match(called.payload.data.externalConversationId, /^metaweb_order:buyer:/);
+  assert.match(called.payload.data.traceJsonPath, /\/\.metabot\/exports\/traces\/.*\.json$/);
+  assert.match(called.payload.data.traceMarkdownPath, /\/\.metabot\/exports\/traces\/.*\.md$/);
+
+  const trace = await runCommand(homeDir, ['trace', 'get', '--trace-id', called.payload.data.traceId]);
+
+  assert.equal(trace.exitCode, 0);
+  assert.equal(trace.payload.ok, true);
+  assert.equal(trace.payload.data.traceId, called.payload.data.traceId);
+  assert.equal(trace.payload.data.session.peerGlobalMetaId, created.payload.data.globalMetaId);
+  assert.equal(trace.payload.data.order.serviceId, published.payload.data.servicePinId);
+  assert.equal(trace.payload.data.order.serviceName, 'Weather Oracle');
+
+  const traceJson = JSON.parse(await readFile(called.payload.data.traceJsonPath, 'utf8'));
+  assert.equal(traceJson.traceId, called.payload.data.traceId);
+
+  const traceMarkdown = await readFile(called.payload.data.traceMarkdownPath, 'utf8');
+  assert.match(traceMarkdown, /Weather Oracle/);
+});

@@ -82,6 +82,9 @@ function renderTraceMarkdown(trace: SessionTraceRecord): string {
   if (trace.order?.id) {
     lines.push(`Order ID: ${trace.order.id}`);
   }
+  if (trace.order?.serviceName) {
+    lines.push(`Service: ${trace.order.serviceName}`);
+  }
   if (trace.order?.paymentTxid) {
     lines.push(`Payment TXID: ${trace.order.paymentTxid}`);
   }

@@ -6,6 +6,7 @@ import {
 } from '../core/identity/deriveIdentity';
 import {
   commandFailed,
+  commandManualActionRequired,
   commandSuccess,
   type MetabotCommandResult,
 } from '../core/contracts/commandResult';
@@ -17,6 +18,9 @@ import {
 } from '../core/state/runtimeStateStore';
 import type { MetabotDaemonHttpHandlers } from './routes/types';
 import { buildPublishedService } from '../core/services/publishService';
+import { planRemoteCall } from '../core/delegation/remoteCall';
+import { buildSessionTrace } from '../core/chat/sessionTrace';
+import { exportSessionArtifacts } from '../core/chat/transcriptExport';
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -69,6 +73,25 @@ function summarizeService(record: ReturnType<typeof buildPublishedService>['reco
     available: Boolean(record.available),
     online: true,
     updatedAt: record.updatedAt,
+  };
+}
+
+function readObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readCallRequest(rawInput: Record<string, unknown>) {
+  const request = readObject(rawInput.request) ?? rawInput;
+  return {
+    servicePinId: normalizeText(request.servicePinId),
+    providerGlobalMetaId: normalizeText(request.providerGlobalMetaId),
+    userTask: normalizeText(request.userTask),
+    taskContext: normalizeText(request.taskContext),
+    rawRequest: normalizeText(request.rawRequest),
+    spendCap: readObject(request.spendCap),
   };
 }
 
@@ -219,10 +242,123 @@ export function createDefaultMetabotDaemonHandlers(input: {
 
         return commandSuccess(summarizeService(published.record));
       },
-      call: async () => commandFailed(
-        'not_implemented',
-        'Remote service call execution is not wired in the local daemon runtime yet.'
-      ),
+      call: async (rawInput) => {
+        const state = await runtimeStateStore.readState();
+        if (!state.identity) {
+          return commandFailed('identity_missing', 'Create a local MetaBot identity before calling services.');
+        }
+
+        const request = readCallRequest(rawInput);
+        if (!request.servicePinId || !request.providerGlobalMetaId || !request.userTask) {
+          return commandFailed(
+            'invalid_call_request',
+            'Call request must include servicePinId, providerGlobalMetaId, and userTask.'
+          );
+        }
+
+        const plan = planRemoteCall({
+          request: {
+            servicePinId: request.servicePinId,
+            providerGlobalMetaId: request.providerGlobalMetaId,
+            userTask: request.userTask,
+            taskContext: request.taskContext,
+            rawRequest: request.rawRequest,
+            spendCap: request.spendCap as { amount: string; currency: 'SPACE' | 'BTC' | 'DOGE' } | null,
+          },
+          availableServices: state.services
+            .filter((service) => service.available === 1)
+            .map((service) => ({
+              servicePinId: service.currentPinId,
+              providerGlobalMetaId: service.providerGlobalMetaId,
+              serviceName: service.serviceName,
+              displayName: service.displayName,
+              description: service.description,
+              price: service.price,
+              currency: service.currency,
+            })),
+        });
+
+        if (!plan.ok) {
+          if (plan.state === 'manual_action_required') {
+            return commandManualActionRequired(plan.code, plan.message);
+          }
+          return commandFailed(plan.code, plan.message);
+        }
+
+        const service = state.services.find((entry) => entry.currentPinId === plan.service.servicePinId);
+        if (!service) {
+          return commandFailed('service_not_found', 'Published service was not found in the local runtime state.');
+        }
+
+        const trace = buildSessionTrace({
+          traceId: plan.traceId,
+          channel: 'metaweb_order',
+          exportRoot: runtimeStateStore.paths.exportRoot,
+          session: {
+            id: `session-${plan.traceId}`,
+            title: `${service.displayName} Call`,
+            type: 'a2a',
+            metabotId: state.identity.metabotId,
+            peerGlobalMetaId: service.providerGlobalMetaId,
+            peerName: service.displayName,
+            externalConversationId: plan.session.externalConversationId,
+          },
+          order: {
+            id: `order-${plan.traceId}`,
+            role: 'buyer',
+            serviceId: service.currentPinId,
+            serviceName: service.displayName,
+            paymentTxid: `payment-${plan.traceId}`,
+            paymentCurrency: plan.payment.currency,
+            paymentAmount: plan.payment.amount,
+          },
+        });
+
+        const artifacts = await exportSessionArtifacts({
+          trace,
+          transcript: {
+            sessionId: trace.session.id,
+            title: trace.session.title,
+            messages: [
+              {
+                id: `${trace.traceId}-user`,
+                type: 'user',
+                timestamp: trace.createdAt,
+                content: request.userTask,
+                metadata: {
+                  taskContext: request.taskContext || null,
+                },
+              },
+              {
+                id: `${trace.traceId}-assistant`,
+                type: 'assistant',
+                timestamp: trace.createdAt,
+                content: `Local MetaBot runtime planned a remote call to ${service.displayName}.`,
+                metadata: {
+                  servicePinId: service.currentPinId,
+                  providerGlobalMetaId: service.providerGlobalMetaId,
+                },
+              },
+            ],
+          },
+        });
+
+        await runtimeStateStore.writeState({
+          ...state,
+          traces: [
+            trace,
+            ...state.traces.filter((entry) => entry.traceId !== trace.traceId),
+          ],
+        });
+
+        return commandSuccess({
+          traceId: trace.traceId,
+          externalConversationId: trace.session.externalConversationId,
+          traceJsonPath: artifacts.traceJsonPath,
+          traceMarkdownPath: artifacts.traceMarkdownPath,
+          transcriptMarkdownPath: artifacts.transcriptMarkdownPath,
+        });
+      },
     },
     trace: {
       getTrace: async ({ traceId }) => {
