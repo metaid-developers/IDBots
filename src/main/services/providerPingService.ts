@@ -1,6 +1,7 @@
 import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 
 type PendingPrivateMessage = {
+  id?: number | null;
   from_global_metaid?: string | null;
   from_metaid?: string | null;
   to_global_metaid?: string | null;
@@ -24,6 +25,7 @@ export interface ProviderPingServiceDeps {
   buildPrivateMessagePayload(to: string, encryptedContent: string, replyPin?: string): string;
   createPin(metabotId: number, payload: string): Promise<void>;
   listPendingMessages(): PendingPrivateMessage[];
+  listRecentMessages?: () => PendingPrivateMessage[];
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
@@ -66,12 +68,36 @@ const normalizeComparableGlobalMetaId = (value: unknown): string => {
 
 const normalizeWord = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '');
 
+const getServicePinCandidates = (service: any): string[] => (
+  [...new Set([
+    service?.id,
+    service?.pinId,
+    service?.servicePinId,
+    service?.currentPinId,
+    service?.sourceServicePinId,
+    ...(Array.isArray(service?.chainPinIds) ? service.chainPinIds : []),
+  ].map((value) => toSafeString(value)).filter(Boolean))]
+);
+
 const serviceMatches = (service: any, servicePinId: string, providerGlobalMetaId: string): boolean => {
   return (
-    (service?.pinId === servicePinId || service?.sourceServicePinId === servicePinId) &&
+    getServicePinCandidates(service).includes(toSafeString(servicePinId)) &&
     normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId)
       === normalizeComparableGlobalMetaId(providerGlobalMetaId)
   );
+};
+
+const resolveMessageCursor = (messages: PendingPrivateMessage[]): number => {
+  let latestId = 0;
+  for (const message of messages) {
+    const messageId = typeof message?.id === 'number' && Number.isFinite(message.id)
+      ? Math.trunc(message.id)
+      : 0;
+    if (messageId > latestId) {
+      latestId = messageId;
+    }
+  }
+  return latestId;
 };
 
 export function resolveDelegationOrderability(
@@ -128,6 +154,8 @@ export class ProviderPingService {
     const sharedSecret = this.deps.computeSharedSecretSha256(privateKeyBuffer, toChatPubkey);
     const encryptedPing = this.deps.encrypt('ping', sharedSecret);
     const pingPayload = this.deps.buildPrivateMessagePayload(toGlobalMetaId, encryptedPing, '');
+    const listRecentMessages = this.deps.listRecentMessages ?? this.deps.listPendingMessages;
+    const initialMessageCursor = resolveMessageCursor(listRecentMessages());
 
     await this.deps.createPin(metabotId, pingPayload);
 
@@ -135,8 +163,13 @@ export class ProviderPingService {
     const myGlobalMetaId = normalizeComparableGlobalMetaId(this.deps.getLocalGlobalMetaId(metabotId));
 
     while (true) {
-      const messages = this.deps.listPendingMessages();
+      const messages = listRecentMessages();
       for (const message of messages) {
+        const messageId = typeof message?.id === 'number' && Number.isFinite(message.id)
+          ? Math.trunc(message.id)
+          : null;
+        if (messageId != null && messageId <= initialMessageCursor) continue;
+
         const fromGlobal = normalizeComparableGlobalMetaId(message.from_global_metaid || message.from_metaid);
         const toGlobal = normalizeComparableGlobalMetaId(message.to_global_metaid);
         if (fromGlobal !== toGlobalMetaId) continue;

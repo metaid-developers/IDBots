@@ -89,3 +89,28 @@ test('buildAutoRoutingPromptForOrderSkill falls back to the full seller skill li
   assert.ok(fullPrompt);
   assert.equal(prompt, fullPrompt);
 });
+
+test('buildRemoteServicesPrompt prefers currentPinId for delegated service identity', () => {
+  const { manager } = createManager();
+
+  const prompt = manager.buildRemoteServicesPrompt([
+    {
+      pinId: 'historical-pin',
+      currentPinId: 'current-pin',
+      sourceServicePinId: 'source-pin',
+      displayName: 'Current Service',
+      serviceName: 'Current Service',
+      description: 'A current service snapshot',
+      price: '0.01',
+      currency: 'SPACE',
+      providerMetaBot: 'Provider',
+      providerGlobalMetaId: 'idq1provider',
+      ratingAvg: 5,
+      ratingCount: 1,
+    },
+  ]);
+
+  assert.ok(prompt);
+  assert.match(prompt, /<service_pin_id>current-pin<\/service_pin_id>/);
+  assert.doesNotMatch(prompt, /<service_pin_id>historical-pin<\/service_pin_id>/);
+});

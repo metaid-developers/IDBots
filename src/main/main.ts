@@ -62,10 +62,17 @@ import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/me
 import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
 import {
   startMetaWebListener,
+  hasListenerSocket,
   isListenerRunning,
+  isListenerSocketConnected,
   stopMetaWebListener,
   type ListenerConfig,
 } from './services/metaWebListenerService';
+import {
+  normalizeListenerConfig,
+  planPrivateChatListenerReadiness,
+  shouldRunListener,
+} from './services/metaWebListenerReadiness';
 import { startOrchestrator as startCognitiveOrchestrator, stopOrchestrator as stopCognitiveOrchestrator } from './services/cognitiveOrchestrator';
 import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privateChatDaemon';
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
@@ -1864,6 +1871,133 @@ const listPendingPrivateMessages = (): Array<Record<string, unknown>> => {
   }
 };
 
+const listRecentPrivateMessages = (): Array<Record<string, unknown>> => {
+  const db = getStore().getDatabase();
+  try {
+    const result = db.exec(
+      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+       FROM private_chat_messages
+       ORDER BY id DESC
+       LIMIT 200`
+    );
+    if (!result[0]?.values?.length) {
+      return [];
+    }
+
+    const columns = result[0].columns as string[];
+    return (result[0].values as unknown[][]).map((row) => (
+      columns.reduce((acc: Record<string, unknown>, column, index) => {
+        acc[column] = row[index];
+        return acc;
+      }, {})
+    ));
+  } catch {
+    return [];
+  }
+};
+
+const METAWEB_LISTENER_CONFIG_KEY = 'metaweb_listener_config';
+
+const getListenerConfigFromStore = (): ListenerConfig => {
+  const stored = getStore().get<ListenerConfig>(METAWEB_LISTENER_CONFIG_KEY);
+  return normalizeListenerConfig(stored);
+};
+
+const waitForListenerSocketConnection = async (
+  globalMetaId: string,
+  timeoutMs: number,
+): Promise<boolean> => {
+  const normalizedGlobalMetaId = globalMetaId.trim();
+  if (!normalizedGlobalMetaId) {
+    return false;
+  }
+
+  const deadline = Date.now() + Math.max(250, timeoutMs);
+  while (Date.now() <= deadline) {
+    if (isListenerSocketConnected(normalizedGlobalMetaId)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return isListenerSocketConnected(normalizedGlobalMetaId);
+};
+
+const startListenerWithConfig = async (config: ListenerConfig) => {
+  const sqliteStore = getStore();
+  const db = sqliteStore.getDatabase();
+  const saveDb = sqliteStore.getSaveFunction();
+  const getMetaBots = () =>
+    getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
+  const emitLog = (log: string) => {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('idbots:listener-log', log);
+      }
+    });
+  };
+  const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
+    const metabotStore = getMetabotStore();
+    const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
+    if (!metabot) return null;
+    const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
+    if (!wallet?.mnemonic?.trim()) return null;
+    return getPrivateKeyBufferForEcdh(
+      wallet.mnemonic,
+      wallet.path || "m/44'/10001'/0'/0/0"
+    );
+  };
+  await startMetaWebListener(
+    db,
+    getMetaBots,
+    config,
+    emitLog,
+    saveDb,
+    resolvePrivateKeyByGlobalMetaId
+  );
+};
+
+const ensurePrivateChatListenerReady = async (
+  metabotId: number,
+  timeoutMs = 5000,
+): Promise<{ success: boolean; error?: string }> => {
+  const metabot = getMetabotStore().getMetabotById(metabotId);
+  const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
+  const plan = planPrivateChatListenerReadiness({
+    localGlobalMetaId,
+    config: getListenerConfigFromStore(),
+    hasSocket: hasListenerSocket(localGlobalMetaId),
+    isSocketConnected: isListenerSocketConnected(localGlobalMetaId),
+  });
+  if (!plan.success) {
+    return { success: false, error: plan.error };
+  }
+  if (plan.persistConfig) {
+    getStore().set(METAWEB_LISTENER_CONFIG_KEY, plan.config);
+  }
+  if (plan.shouldStartListener) {
+    await startListenerWithConfig(plan.config);
+  }
+  if (!plan.shouldWaitForConnection) {
+    return { success: true };
+  }
+
+  const connected = await waitForListenerSocketConnection(
+    localGlobalMetaId,
+    Math.min(timeoutMs, 5000),
+  );
+  if (!connected) {
+    return {
+      success: false,
+      error: plan.shouldStartListener
+        ? 'Local MetaWeb listener socket did not connect in time'
+        : 'Local MetaWeb listener socket is still disconnected',
+    };
+  }
+
+  return { success: true };
+};
+
 const syncP2PRuntimeConfigForCurrentMetabots = async (): Promise<void> => {
   await syncP2PRuntimeConfig({
     store: getStore(),
@@ -2111,6 +2245,16 @@ const executeDelegationPipeline = async (
     `Checking availability of "${delegation.serviceName}" provider...`
   );
   emitDelegationStateChange({ sessionId, blocking: false, message: 'Pinging provider...' });
+
+  const listenerReady = await ensurePrivateChatListenerReady(metabotId, 5000);
+  if (!listenerReady.success) {
+    injectDelegationSystemMessage(
+      sessionId,
+      `Delegation failed: ${listenerReady.error || 'Local MetaWeb listener is not connected.'}`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Listener offline' });
+    return;
+  }
 
   let chatPubkey: string | null = null;
   try {
@@ -2776,6 +2920,7 @@ function getProviderPingService(): ProviderPingService {
         });
       },
       listPendingMessages: () => listPendingPrivateMessages(),
+      listRecentMessages: () => listRecentPrivateMessages(),
     });
   }
   return providerPingService;
@@ -3500,59 +3645,11 @@ if (!gotTheLock) {
   });
 
   // MetaWebListener IPC (real WebSocket + DB; isolated from IM Gateway)
-  const METAWEB_LISTENER_CONFIG_KEY = 'metaweb_listener_config';
-  const normalizeListenerConfig = (stored?: Partial<ListenerConfig>): ListenerConfig => ({
-    enabled: stored?.enabled !== undefined ? stored.enabled : true,
-    groupChats: stored?.groupChats !== undefined ? stored.groupChats : false,
-    privateChats: stored?.privateChats !== undefined ? stored.privateChats : true,
-    serviceRequests: stored?.serviceRequests !== undefined ? stored.serviceRequests : false,
-  });
-  const getListenerConfigFromStore = (): ListenerConfig => {
-    const stored = getStore().get<ListenerConfig>(METAWEB_LISTENER_CONFIG_KEY);
-    return normalizeListenerConfig(stored);
-  };
-  const shouldRunListener = (config: ListenerConfig): boolean =>
-    config.enabled && (config.groupChats || config.privateChats || config.serviceRequests);
-
-  const startListenerWithConfig = async (config: ListenerConfig) => {
-    const sqliteStore = getStore();
-    const db = sqliteStore.getDatabase();
-    const saveDb = sqliteStore.getSaveFunction();
-    const getMetaBots = () =>
-      getMetabotStore().listMetabots().map((m) => ({ id: m.id, name: m.name, globalmetaid: m.globalmetaid }));
-    const emitLog = (log: string) => {
-      BrowserWindow.getAllWindows().forEach((win) => {
-        if (!win.webContents.isDestroyed()) {
-          win.webContents.send('idbots:listener-log', log);
-        }
-      });
-    };
-    const resolvePrivateKeyByGlobalMetaId = async (globalMetaId: string): Promise<Buffer | null> => {
-      const metabotStore = getMetabotStore();
-      const metabot = metabotStore.getMetabotByGlobalMetaId(globalMetaId);
-      if (!metabot) return null;
-      const wallet = metabotStore.getMetabotWalletByMetabotId(metabot.id);
-      if (!wallet?.mnemonic?.trim()) return null;
-      return getPrivateKeyBufferForEcdh(
-        wallet.mnemonic,
-        wallet.path || "m/44'/10001'/0'/0/0"
-      );
-    };
-    await startMetaWebListener(
-      db,
-      getMetaBots,
-      config,
-      emitLog,
-      saveDb,
-      resolvePrivateKeyByGlobalMetaId
-    );
-  };
-
   ipcMain.handle('idbots:getListenerConfig', async () => {
     return { success: true, config: getListenerConfigFromStore() };
   });
   ipcMain.handle('idbots:getListenerStatus', async () => {
-    return { success: true, running: isListenerRunning() };
+    return { success: true, running: isListenerRunning(), connected: isListenerSocketConnected() };
   });
   ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
     const config = getListenerConfigFromStore();
@@ -5734,12 +5831,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         return { success: false, error: 'Missing required params' };
       }
 
-      // Ensure private chat listener is running
-      const config = getListenerConfigFromStore();
-      if (!config.privateChats || !shouldRunListener(config)) {
-        const next = normalizeListenerConfig({ ...config, enabled: true, privateChats: true });
-        getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
-        await startListenerWithConfig(next);
+      const listenerReady = await ensurePrivateChatListenerReady(metabotId, Math.min(timeoutMs, 5000));
+      if (!listenerReady.success) {
+        return { success: false, error: listenerReady.error || 'Local MetaWeb listener is not connected' };
       }
 
       const pongReceived = await getProviderPingService().pingProvider({

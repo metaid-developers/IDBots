@@ -142,4 +142,47 @@ describe('[DELEGATE_REMOTE_SERVICE] pattern parsing', () => {
     assert.equal(result.status, 'available');
     assert.equal(result.service?.serviceName, 'Test Service');
   });
+
+  it('matches a delegated currentPinId when the resolved service chain keeps a historical source pin', () => {
+    const { resolveDelegationOrderability } = require('../dist-electron/services/providerPingService.js');
+    const result = resolveDelegationOrderability({
+      availableServices: [
+        {
+          pinId: 'pin123-old',
+          currentPinId: 'pin123-current',
+          sourceServicePinId: 'pin123-source',
+          providerGlobalMetaId: 'idq1provider',
+          serviceName: 'Test Service',
+        },
+      ],
+      allServices: [],
+      servicePinId: 'pin123-current',
+      providerGlobalMetaId: 'idq1provider',
+    });
+
+    assert.equal(result.status, 'available');
+    assert.equal(result.service?.serviceName, 'Test Service');
+  });
+
+  it('matches a delegated historical chain pin when the current service exposes chainPinIds', () => {
+    const { resolveDelegationOrderability } = require('../dist-electron/services/providerPingService.js');
+    const result = resolveDelegationOrderability({
+      availableServices: [
+        {
+          pinId: 'pin123-current',
+          currentPinId: 'pin123-current',
+          sourceServicePinId: 'pin123-source',
+          chainPinIds: ['pin123-source', 'pin123-mid', 'pin123-current'],
+          providerGlobalMetaId: 'idq1provider',
+          serviceName: 'Test Service',
+        },
+      ],
+      allServices: [],
+      servicePinId: 'pin123-mid',
+      providerGlobalMetaId: 'idq1provider',
+    });
+
+    assert.equal(result.status, 'available');
+    assert.equal(result.service?.serviceName, 'Test Service');
+  });
 });

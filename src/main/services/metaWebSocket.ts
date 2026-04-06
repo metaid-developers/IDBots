@@ -32,6 +32,7 @@ export class SocketIOClient {
   private endpoints: MetaWebSocketEndpoint[];
   private endpointIndex = 0;
   private hasConnected = false;
+  private hasObservedHeartbeatAck = false;
 
   constructor(config: MetaWebSocketConfig, onMessage: MessageHandler) {
     this.config = {
@@ -100,6 +101,7 @@ export class SocketIOClient {
     });
 
     this.socket.on('heartbeat_ack', () => {
+      this.hasObservedHeartbeatAck = true;
       if (this.heartbeatTimeoutId) {
         clearTimeout(this.heartbeatTimeoutId);
         this.heartbeatTimeoutId = null;
@@ -118,6 +120,16 @@ export class SocketIOClient {
     this.endpointIndex = currentIndex + 1;
     this.connectToEndpoint(this.endpointIndex);
     return true;
+  }
+
+  private reconnectAfterHeartbeatTimeout(): void {
+    const nextIndex = this.endpoints.length > 1
+      ? (this.endpointIndex + 1) % this.endpoints.length
+      : this.endpointIndex;
+
+    this.stopHeartbeat();
+    this.hasConnected = false;
+    this.connectToEndpoint(nextIndex);
   }
 
   private startHeartbeat(): void {
@@ -146,6 +158,15 @@ export class SocketIOClient {
   private sendHeartbeat(): void {
     if (!this.socket?.connected) return;
     try {
+      if (this.hasObservedHeartbeatAck) {
+        if (this.heartbeatTimeoutId) {
+          clearTimeout(this.heartbeatTimeoutId);
+        }
+        this.heartbeatTimeoutId = setTimeout(() => {
+          this.heartbeatTimeoutId = null;
+          this.reconnectAfterHeartbeatTimeout();
+        }, this.config.heartbeatTimeout!);
+      }
       this.socket.emit('ping');
     } catch (error) {
       console.error('[MetaWebSocket] heartbeat failed:', error);

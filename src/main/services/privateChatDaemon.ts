@@ -40,6 +40,7 @@ import {
   cleanServiceResultText,
   parseDeliveryMessage,
 } from './serviceOrderProtocols.js';
+import { createPinWithMvcSubsidyRetry, isMvcInsufficientBalanceError } from './privateChatSubsidizedPin';
 import {
   isNeedsRatingMessage,
   shouldCompleteBuyerOrderObserverSession,
@@ -756,23 +757,31 @@ async function processOne(
 
     const handshakeWord = normalizeHandshakeWord(plaintext.trim());
     const fromGlobalMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
+    const createSimpleMsgPin = async (payload: string) => createPinWithMvcSubsidyRetry({
+      metabot,
+      wallet,
+      createPin: async () => createPin(metabotStore, metabot.id, {
+        operation: 'create',
+        path: '/protocols/simplemsg',
+        encryption: '0',
+        version: '1.0.0',
+        contentType: 'application/json',
+        payload,
+      }),
+    });
 
     if (handshakeWord === 'ping') {
       const encryptedPong = ecdhEncrypt('pong', sharedSecretForReply);
       emitLog(`[PrivateChat] Encrypt ping->pong: plaintext="pong" sharedSecretLen=${sharedSecretForReply.length} encryptedLen=${encryptedPong.length} encryptedPrefix=${encryptedPong.slice(0, 40)}...`);
       const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedPong, row.reply_pin || '');
       try {
-        await createPin(metabotStore, metabot.id, {
-          operation: 'create',
-          path: '/protocols/simplemsg',
-          encryption: '0',
-          version: '1.0.0',
-          contentType: 'application/json',
-          payload: payloadStr,
-        });
+        await createSimpleMsgPin(payloadStr);
         emitLog(`[PrivateChat] Ping -> Pong to ${fromGlobalMetaId.slice(0, 12)}…`);
       } catch (e) {
-        emitLog(`[PrivateChat] Failed to send pong: ${e instanceof Error ? e.message : e}`);
+        const suffix = isMvcInsufficientBalanceError(e)
+          ? ' (auto-subsidy retry failed)'
+          : '';
+        emitLog(`[PrivateChat] Failed to send pong${suffix}: ${e instanceof Error ? e.message : e}`);
       }
       markProcessed(db, row.id, saveDb);
       return;
@@ -900,14 +909,7 @@ async function processOne(
       const sendEncryptedMsg = async (text: string) => {
         const encrypted = ecdhEncrypt(text, sharedSecretForReply);
         const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encrypted, row.reply_pin || '');
-        return await createPin(metabotStore, metabot.id, {
-          operation: 'create',
-          path: '/protocols/simplemsg',
-          encryption: '0',
-          version: '1.0.0',
-          contentType: 'application/json',
-          payload: payloadStr,
-        });
+        return await createSimpleMsgPin(payloadStr);
       };
 
       if (source === 'metaweb_private' && fromGlobalMetaId) {
@@ -1266,14 +1268,7 @@ async function processOne(
     emitLog(`[PrivateChat] Encrypt reply: plaintextLen=${trimmed.length} sharedSecretLen=${sharedSecretForReply.length} encryptedLen=${encryptedReply.length} encryptedPrefix=${encryptedReply.slice(0, 40)}...`);
     const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedReply, row.reply_pin ?? '');
     try {
-      await createPin(metabotStore, metabot.id, {
-        operation: 'create',
-        path: '/protocols/simplemsg',
-        encryption: '0',
-        version: '1.0.0',
-        contentType: 'application/json',
-        payload: payloadStr,
-      });
+      await createSimpleMsgPin(payloadStr);
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
     } catch (e) {
       emitLog(`[PrivateChat] Failed to broadcast reply: ${e instanceof Error ? e.message : e}`);

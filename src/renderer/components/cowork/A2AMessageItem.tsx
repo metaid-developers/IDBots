@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
+import MarkdownContent from '../MarkdownContent';
 
 interface A2AMessageItemProps {
   message: CoworkMessage;
@@ -72,6 +73,12 @@ const Avatar: React.FC<{ src?: string | null; name?: string | null; size?: numbe
     onError={(e) => { (e.currentTarget as HTMLImageElement).src = DEFAULT_METABOT_AVATAR; }}
   />
 );
+
+const getA2AMarkdownClassName = (isLocal: boolean): string => {
+  return isLocal
+    ? 'max-w-none whitespace-normal break-words text-white [&_a]:text-inherit [&_a]:underline [&_h1]:my-0 [&_h1]:text-inherit [&_h2]:my-0 [&_h2]:text-inherit [&_h3]:my-0 [&_h3]:text-inherit [&_h4]:my-0 [&_h4]:text-inherit [&_h5]:my-0 [&_h5]:text-inherit [&_h6]:my-0 [&_h6]:text-inherit [&_p]:my-0 [&_p]:text-inherit [&_ul]:my-1 [&_ul]:text-inherit [&_ol]:my-1 [&_ol]:text-inherit [&_li]:text-inherit [&_strong]:text-inherit [&_em]:text-inherit [&_pre]:my-2 [&_blockquote]:my-1 [&_blockquote]:text-inherit'
+    : 'max-w-none whitespace-normal break-words dark:text-claude-darkText text-claude-text [&_a]:text-inherit [&_a]:underline [&_h1]:my-0 [&_h1]:text-inherit [&_h2]:my-0 [&_h2]:text-inherit [&_h3]:my-0 [&_h3]:text-inherit [&_h4]:my-0 [&_h4]:text-inherit [&_h5]:my-0 [&_h5]:text-inherit [&_h6]:my-0 [&_h6]:text-inherit [&_p]:my-0 [&_p]:text-inherit [&_ul]:my-1 [&_ul]:text-inherit [&_ol]:my-1 [&_ol]:text-inherit [&_li]:text-inherit [&_strong]:text-inherit [&_em]:text-inherit [&_pre]:my-2 [&_blockquote]:my-1 [&_blockquote]:text-inherit';
+};
 
 /** Collapsible tool-call block — collapsed by default, compact single-line header */
 const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
@@ -176,6 +183,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? deliveryPayload.result.trim()
     : '';
   const shouldRenderDeliveryResult = deliveryResult.length > 0;
+  const markdownClassName = getA2AMarkdownClassName(isLocal);
 
   return (
     <div className={`flex items-end gap-2 px-4 py-1 ${isLocal ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -192,9 +200,9 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           }`}
         >
           {shouldRenderDeliveryResult ? (
-            deliveryResult
+            <MarkdownContent content={deliveryResult} className={markdownClassName} />
           ) : (
-            message.content
+            <MarkdownContent content={message.content} className={markdownClassName} />
           )}
         </div>
         <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5 px-1">
