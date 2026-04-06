@@ -14,7 +14,10 @@ import {
 } from './metaWebCrypto';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import type { CoworkRunner } from '../libs/coworkRunner';
-import { PrivateChatOrderCowork } from './privateChatOrderCowork';
+import {
+  createPrivateChatOrderCoworkHostAdapter,
+  PrivateChatOrderCowork,
+} from './privateChatOrderCowork';
 import { buildOrderPrompts } from './orderPromptBuilder';
 import {
   checkOrderPaymentStatus,
@@ -53,6 +56,8 @@ import {
   applyPortableBuyerDelivery,
   writePortableDeliveryRecord,
 } from '../metabotRuntime/resultDeliveryRuntime';
+import { createServiceOrderTraceWriter } from '../metabotRuntime/requestTraceRuntime';
+import { executeProviderRequest } from '../metabotRuntime/providerExecutionRuntime';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -278,7 +283,14 @@ export async function sendSellerOrderAcknowledgement(params: {
   paymentTxid?: string | null;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
   sendEncryptedMsg: (text: string) => Promise<{ pinId?: string | null }>;
-  serviceOrderLifecycle?: Pick<ServiceOrderLifecycleService, 'markSellerOrderFirstResponseSent'> | null;
+  serviceOrderLifecycle?: {
+    markSellerOrderFirstResponseSent(input: {
+      localMetabotId: number;
+      counterpartyGlobalMetaId: string;
+      paymentTxid: string;
+      sentAt?: number;
+    }): unknown;
+  } | null;
   emitLog?: (msg: string) => void;
   now?: () => number;
 }): Promise<{ text: string; pinId: string | null }> {
@@ -763,6 +775,7 @@ async function processOne(
 
     const handshakeWord = normalizeHandshakeWord(plaintext.trim());
     const fromGlobalMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
+    const serviceOrderTrace = createServiceOrderTraceWriter(serviceOrderLifecycle);
 
     if (handshakeWord === 'ping') {
       const encryptedPong = ecdhEncrypt('pong', sharedSecretForReply);
@@ -872,9 +885,9 @@ async function processOne(
       const paymentCurrency = paymentTerms?.currency || getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
       let sellerOrderConversationId: string | null = null;
-      if (serviceOrderLifecycle && orderTrackingId) {
+      if (orderTrackingId) {
         try {
-          serviceOrderLifecycle.createSellerOrder({
+          serviceOrderTrace.createSellerOrder({
             localMetabotId: metabot.id,
             counterpartyGlobalMetaId: orderPeerGlobalMetaId,
             servicePinId: serviceId,
@@ -961,7 +974,7 @@ async function processOne(
             paymentTxid: orderTrackingId,
             performChat,
             sendEncryptedMsg,
-            serviceOrderLifecycle,
+            serviceOrderLifecycle: serviceOrderTrace,
             emitLog,
           });
         } catch (error) {
@@ -988,19 +1001,34 @@ async function processOne(
       const orderDispatchKey = orderTrackingId
         ? buildOrderDispatchKey(metabot.id, orderPeerGlobalMetaId, orderTrackingId)
         : null;
+      const hostAdapter = createPrivateChatOrderCoworkHostAdapter(orderCoworkHandler);
 
-      let orderResult: { serviceReply: string; ratingInvite: string };
+      let orderExecution: Awaited<ReturnType<typeof executeProviderRequest>>;
       try {
-        orderResult = await orderCoworkHandler.runOrder({
-          metabotId: metabot.id,
-          source,
-          externalConversationId,
-          existingSessionId: sellerOrderSessionId,
-          prompt: prompts.userPrompt,
-          systemPrompt: prompts.systemPrompt,
-          peerGlobalMetaId: fromGlobalMetaId || null,
-          peerName: (row.from_name as string | null) ?? null,
-          peerAvatar: (row.from_avatar as string | null) ?? null,
+        orderExecution = await executeProviderRequest({
+          request: portableOrderRequest,
+          verification,
+          providerContext: {
+            metabotId: metabot.id,
+            source,
+            counterpartyGlobalMetaId: orderPeerGlobalMetaId,
+            serviceName,
+            paymentTxid: orderTrackingId,
+            paymentChain: payment.chain || 'mvc',
+            paymentAmount,
+            paymentCurrency,
+            orderMessagePinId: row.pin_id,
+            coworkSessionId: sellerOrderSessionId,
+            externalConversationId,
+            prompt: prompts.userPrompt,
+            systemPrompt: prompts.systemPrompt,
+            peerGlobalMetaId: fromGlobalMetaId || null,
+            peerName: (row.from_name as string | null) ?? null,
+            peerAvatar: (row.from_avatar as string | null) ?? null,
+            skipSellerTrace: true,
+          },
+          trace: serviceOrderTrace,
+          hostAdapter,
         });
       } catch (error) {
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1008,13 +1036,19 @@ async function processOne(
         return;
       }
 
+      if (!orderExecution.executable) {
+        emitLog(`[Order] Execution rejected before host start: ${orderExecution.reason}`);
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+
       sellerOrderSessionId = resolveOrderSessionId({
-        directSessionId: sellerOrderSessionId,
+        directSessionId: orderExecution.sessionId || sellerOrderSessionId,
         fallbackSessionId: coworkStore.getConversationMapping('metaweb_order', externalConversationId, metabot.id)?.coworkSessionId,
       });
 
-      const trimmedReply = (orderResult.serviceReply || '').trim();
-      const trimmedInvite = (orderResult.ratingInvite || '').trim();
+      const trimmedReply = (orderExecution.text || '').trim();
+      const trimmedInvite = (orderExecution.ratingInvite || '').trim();
       if (trimmedReply && source === 'metaweb_private') {
         if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
           emitLog(`[Order] Delivery already sent for order ${orderTrackingId}, skipping duplicate send.`);
@@ -1030,14 +1064,10 @@ async function processOne(
               serviceName,
               delivery: {
                 text: trimmedReply,
-                attachments: [],
+                attachments: orderExecution.attachments,
               },
               deliveredAt: deliverySentAtSec,
-              trace: {
-                markSellerDelivered: (input) => (
-                  serviceOrderLifecycle?.markSellerOrderDelivered(input) ?? null
-                ),
-              },
+              trace: serviceOrderTrace,
               deps: {
                 buildDeliveryMessage,
                 prepareSimpleMessagePayload: (deliveryText) => {
@@ -1134,8 +1164,12 @@ async function processOne(
               request: {
                 correlation: {
                   requestId: typeof delivery.requestId === 'string' ? delivery.requestId : paymentTxid,
-                  requesterSessionId: buyerOrderMapping.coworkSessionId,
-                  requesterConversationId: buyerOrderMapping.externalConversationId,
+                  requesterSessionId: typeof delivery.requesterSessionId === 'string'
+                    ? delivery.requesterSessionId
+                    : buyerOrderMapping.coworkSessionId,
+                  requesterConversationId: typeof delivery.requesterConversationId === 'string'
+                    ? delivery.requesterConversationId
+                    : buyerOrderMapping.externalConversationId,
                 },
                 servicePinId: typeof delivery.servicePinId === 'string' ? delivery.servicePinId : '',
                 requesterGlobalMetaId: fromGlobalMetaId,
@@ -1157,11 +1191,7 @@ async function processOne(
               counterpartyGlobalMetaId: fromGlobalMetaId,
               paymentTxid,
               deliveryMessagePinId: row.pin_id,
-              trace: {
-                markBuyerOrderDelivered: (input) => (
-                  serviceOrderLifecycle.markBuyerOrderDelivered(input)
-                ),
-              },
+              trace: serviceOrderTrace,
             }) as ServiceOrderRecord | null;
 
             // Check if this is an auto-delegated order (has a source cowork session in blocking mode)
@@ -1184,7 +1214,7 @@ async function processOne(
               );
             }
           } else if (!isNeedsRatingMessage(plaintext)) {
-            serviceOrderLifecycle.markBuyerOrderFirstResponseReceived({
+            serviceOrderTrace.markBuyerOrderFirstResponseReceived({
               localMetabotId: metabot.id,
               counterpartyGlobalMetaId: fromGlobalMetaId,
               paymentTxid,

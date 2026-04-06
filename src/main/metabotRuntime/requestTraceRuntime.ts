@@ -5,7 +5,7 @@ import type {
   MarkBuyerOrderFirstResponseReceivedInput,
   MarkSellerOrderDeliveredInput,
   MarkSellerOrderFirstResponseSentInput,
-  ServiceOrderLifecycleService,
+  ServiceOrderTraceLifecycle,
 } from '../services/serviceOrderLifecycleService';
 
 export interface RequestTraceRuntime {
@@ -19,18 +19,8 @@ export interface RequestTraceRuntime {
   markSellerOrderDelivered(input: MarkSellerOrderDeliveredInput): unknown;
 }
 
-type ServiceOrderLifecycleTrace = Pick<
-  ServiceOrderLifecycleService,
-  | 'createBuyerOrder'
-  | 'createSellerOrder'
-  | 'markBuyerOrderFirstResponseReceived'
-  | 'markSellerOrderFirstResponseSent'
-  | 'markBuyerOrderDelivered'
-  | 'markSellerOrderDelivered'
->;
-
-export function createRequestTraceRuntime(
-  lifecycle?: ServiceOrderLifecycleTrace | null,
+export function createServiceOrderTraceWriter(
+  lifecycle?: ServiceOrderTraceLifecycle | null,
 ): RequestTraceRuntime {
   return {
     createBuyerOrder(input) {
@@ -59,3 +49,5 @@ export function createRequestTraceRuntime(
     },
   };
 }
+
+export const createRequestTraceRuntime = createServiceOrderTraceWriter;

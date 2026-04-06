@@ -64,6 +64,15 @@ export interface AttachSellerCoworkSessionInput extends ServiceOrderPaymentMatch
   coworkSessionId: string;
 }
 
+export interface ServiceOrderTraceLifecycle {
+  createBuyerOrder(input: CreateBuyerOrderInput): ServiceOrderRecord;
+  createSellerOrder(input: CreateSellerOrderInput): ServiceOrderRecord;
+  markBuyerOrderFirstResponseReceived(input: MarkBuyerOrderFirstResponseReceivedInput): ServiceOrderRecord | null;
+  markSellerOrderFirstResponseSent(input: MarkSellerOrderFirstResponseSentInput): ServiceOrderRecord | null;
+  markBuyerOrderDelivered(input: MarkBuyerOrderDeliveredInput): ServiceOrderRecord | null;
+  markSellerOrderDelivered(input: MarkSellerOrderDeliveredInput): ServiceOrderRecord | null;
+}
+
 interface ServiceOrderLifecycleServiceOptions {
   now?: () => number;
   resolveLocalMetabotGlobalMetaId?: (localMetabotId: number) => string | null | undefined;

@@ -6,6 +6,7 @@ import type { CoworkRunner, PermissionRequest } from '../libs/coworkRunner';
 import type { CoworkStore, CoworkMessage } from '../coworkStore';
 import type { MetabotStore } from '../metabotStore';
 import type { OrderSource } from './orderPayment';
+import type { HostSessionAdapter } from '../metabotRuntime/hostSessionAdapter';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { generateSessionTitle } from '../libs/coworkUtil';
 import { cleanServiceResultText } from './serviceOrderProtocols.js';
@@ -55,6 +56,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   private sessionIds: Set<string> = new Set();
   private accumulators: Map<string, MessageAccumulator> = new Map();
+  private resultPromises: Map<string, Promise<OrderCoworkResult>> = new Map();
 
   constructor(options: PrivateChatOrderCoworkOptions) {
     super();
@@ -75,11 +77,22 @@ export class PrivateChatOrderCowork extends EventEmitter {
   }
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
+    const session = await this.startOrder(request);
+    return this.waitForOrderResult(session.sessionId);
+  }
+
+  async startOrder(request: OrderCoworkRequest): Promise<{ sessionId: string }> {
     const sessionId = request.existingSessionId?.trim()
       || await this.createOrderSession(request);
     this.injectProcessingNotice(sessionId, request);
     this.sessionIds.add(sessionId);
     const responsePromise = this.createAccumulatorPromise(sessionId, request);
+    this.resultPromises.set(
+      sessionId,
+      responsePromise.finally(() => {
+        this.resultPromises.delete(sessionId);
+      }),
+    );
 
     const session = this.coworkStore.getSession(sessionId);
     if (!session) {
@@ -97,6 +110,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
       this.rejectAccumulator(sessionId, error instanceof Error ? error : new Error(String(error)));
     });
 
+    return { sessionId };
+  }
+
+  async waitForOrderResult(sessionId: string): Promise<OrderCoworkResult> {
+    const responsePromise = this.resultPromises.get(sessionId);
+    if (!responsePromise) {
+      throw new Error(`Order cowork session ${sessionId} is not running`);
+    }
     return responsePromise;
   }
 
@@ -333,4 +354,34 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const text = await performChatCompletionForOrchestrator(systemPrompt, '请生成邀评消息。', llmId);
     return `[NeedsRating] ${text.trim()}`;
   }
+}
+
+export function createPrivateChatOrderCoworkHostAdapter(
+  orderCowork: PrivateChatOrderCowork,
+): HostSessionAdapter {
+  return {
+    async startProviderSession(input) {
+      return orderCowork.startOrder({
+        metabotId: input.metabotId,
+        source: input.source,
+        externalConversationId: input.externalConversationId,
+        existingSessionId: input.existingSessionId,
+        prompt: input.prompt,
+        systemPrompt: input.systemPrompt,
+        title: input.title,
+        peerGlobalMetaId: input.peerGlobalMetaId,
+        peerName: input.peerName,
+        peerAvatar: input.peerAvatar,
+      });
+    },
+    async waitForProviderResult(sessionId) {
+      const result = await orderCowork.waitForOrderResult(sessionId);
+      return {
+        sessionId,
+        text: result.serviceReply,
+        attachments: [],
+        ratingInvite: result.ratingInvite,
+      };
+    },
+  };
 }
