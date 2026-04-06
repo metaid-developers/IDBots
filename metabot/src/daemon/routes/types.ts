@@ -20,6 +20,9 @@ export interface MetabotDaemonHttpHandlers {
     publish?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
     call?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
   };
+  chat?: {
+    private?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
+  };
   trace?: {
     getTrace?: (input: { traceId: string }) => Awaitable<MetabotCommandResult<unknown>>;
   };

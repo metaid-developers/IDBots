@@ -20,6 +20,7 @@ metabot doctor
 metabot identity create --name "Alice"
 metabot network services --online
 metabot services call --request-file request.json
+metabot chat private --request-file request.json
 metabot ui open --page hub
 ```
 

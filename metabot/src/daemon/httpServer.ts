@@ -2,6 +2,7 @@ import http from 'node:http';
 import { Buffer } from 'node:buffer';
 import { commandFailed } from '../core/contracts/commandResult';
 import { handleDaemonRoutes } from './routes/daemon';
+import { handleChatRoutes } from './routes/chat';
 import { handleIdentityRoutes } from './routes/identity';
 import { handleNetworkRoutes } from './routes/network';
 import { handleServicesRoutes } from './routes/services';
@@ -13,6 +14,7 @@ const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 
 const ROUTES: RouteHandler[] = [
   handleDaemonRoutes,
+  handleChatRoutes,
   handleIdentityRoutes,
   handleNetworkRoutes,
   handleServicesRoutes,

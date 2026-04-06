@@ -150,7 +150,7 @@ export function createDefaultCliDependencies(context: CliRuntimeContext): CliDep
       call: async (input) => requestJson(context, 'POST', '/api/services/call', input),
     },
     chat: {
-      run: async () => commandFailed('not_implemented', 'Chat command is not implemented yet.'),
+      private: async (input) => requestJson(context, 'POST', '/api/chat/private', input),
     },
     trace: {
       get: async (input) => requestJson(context, 'GET', `/api/trace/${encodeURIComponent(input.traceId)}`),

@@ -132,6 +132,14 @@ function getPrivateKeyBufferFromWallet(wallet: MvcWallet): Buffer {
   );
 }
 
+export async function derivePrivateKeyHex(options: DeriveIdentityOptions = {}): Promise<string> {
+  const mnemonic = options.mnemonic?.trim() || bip39.generateMnemonic(wordlist);
+  const path = options.path?.trim() || DEFAULT_DERIVATION_PATH;
+  const addressIndex = parseAddressIndexFromPath(path);
+  const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
+  return getPrivateKeyBufferFromWallet(mvcWallet).toString('hex');
+}
+
 async function deriveChatPublicKey(mnemonic: string, addressIndex: number): Promise<string> {
   const wallet = await getMvcWallet(mnemonic, addressIndex);
   const ecdh = createECDH('prime256v1');

@@ -196,3 +196,40 @@ test('services call stores a trace that trace get can read back from the local r
   const traceMarkdown = await readFile(called.payload.data.traceMarkdownPath, 'utf8');
   assert.match(traceMarkdown, /Weather Oracle/);
 });
+
+test('chat private encrypts a loopback message and stores a chat trace in the local runtime', async (t) => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'metabot-cli-runtime-'));
+  t.after(async () => stopDaemon(homeDir));
+
+  const created = await runCommand(homeDir, ['identity', 'create', '--name', 'Alice']);
+  assert.equal(created.exitCode, 0);
+
+  const requestFile = path.join(homeDir, 'chat-request.json');
+  await writeFile(requestFile, JSON.stringify({
+    to: created.payload.data.globalMetaId,
+    content: 'hello from loopback',
+    replyPin: 'reply-pin-1',
+  }), 'utf8');
+
+  const sent = await runCommand(homeDir, ['chat', 'private', '--request-file', requestFile]);
+
+  assert.equal(sent.exitCode, 0);
+  assert.equal(sent.payload.ok, true);
+  assert.equal(sent.payload.data.to, created.payload.data.globalMetaId);
+  assert.equal(sent.payload.data.path, '/protocols/simplemsg');
+  assert.equal(sent.payload.data.deliveryMode, 'local_runtime');
+  assert.match(sent.payload.data.traceId, /^trace-private-/);
+  assert.match(sent.payload.data.payload, /"encrypt":"ecdh"/);
+  assert.match(sent.payload.data.traceJsonPath, /\/\.metabot\/exports\/traces\/.*\.json$/);
+
+  const trace = await runCommand(homeDir, ['trace', 'get', '--trace-id', sent.payload.data.traceId]);
+
+  assert.equal(trace.exitCode, 0);
+  assert.equal(trace.payload.ok, true);
+  assert.equal(trace.payload.data.traceId, sent.payload.data.traceId);
+  assert.equal(trace.payload.data.channel, 'simplemsg');
+  assert.equal(trace.payload.data.session.peerGlobalMetaId, created.payload.data.globalMetaId);
+
+  const transcriptMarkdown = await readFile(sent.payload.data.transcriptMarkdownPath, 'utf8');
+  assert.match(transcriptMarkdown, /hello from loopback/);
+});

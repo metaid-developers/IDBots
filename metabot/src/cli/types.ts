@@ -21,7 +21,7 @@ export interface CliDependencies {
     call?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
   };
   chat?: {
-    run?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
+    private?: (input: Record<string, unknown>) => Awaitable<MetabotCommandResult<unknown>>;
   };
   trace?: {
     get?: (input: { traceId: string }) => Awaitable<MetabotCommandResult<unknown>>;

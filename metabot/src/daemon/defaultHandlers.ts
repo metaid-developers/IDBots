@@ -3,6 +3,7 @@ import { wordlist } from '@scure/bip39/wordlists/english';
 import {
   DEFAULT_DERIVATION_PATH,
   deriveIdentity,
+  derivePrivateKeyHex,
 } from '../core/identity/deriveIdentity';
 import {
   commandFailed,
@@ -21,6 +22,7 @@ import { buildPublishedService } from '../core/services/publishService';
 import { planRemoteCall } from '../core/delegation/remoteCall';
 import { buildSessionTrace } from '../core/chat/sessionTrace';
 import { exportSessionArtifacts } from '../core/chat/transcriptExport';
+import { sendPrivateChat } from '../core/chat/privateChat';
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -95,6 +97,44 @@ function readCallRequest(rawInput: Record<string, unknown>) {
   };
 }
 
+function readPrivateChatRequest(rawInput: Record<string, unknown>) {
+  return {
+    to: normalizeText(rawInput.to),
+    content: normalizeText(rawInput.content),
+    replyPin: normalizeText(rawInput.replyPin),
+    peerChatPublicKey: normalizeText(rawInput.peerChatPublicKey),
+  };
+}
+
+async function fetchPeerChatPublicKey(globalMetaId: string): Promise<string | null> {
+  const normalized = normalizeText(globalMetaId);
+  if (!normalized) return null;
+
+  const urls = [
+    `https://file.metaid.io/metafile-indexer/api/v1/info/globalmetaid/${encodeURIComponent(normalized)}`,
+    `https://manapi.metaid.io/api/info/metaid/${encodeURIComponent(normalized)}`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const payload = await response.json() as {
+        data?: { chatpubkey?: unknown };
+        chatpubkey?: unknown;
+      };
+      const chatPublicKey = normalizeText(payload?.data?.chatpubkey ?? payload?.chatpubkey);
+      if (chatPublicKey) {
+        return chatPublicKey;
+      }
+    } catch {
+      // ignore and fall through
+    }
+  }
+
+  return null;
+}
+
 export function createDefaultMetabotDaemonHandlers(input: {
   homeDir: string;
   getDaemonRecord: () => RuntimeDaemonRecord | null;
@@ -160,6 +200,10 @@ export function createDefaultMetabotDaemonHandlers(input: {
         await hotStateStore.writeSecrets({
           mnemonic,
           path: identity.path,
+          privateKeyHex: await derivePrivateKeyHex({
+            mnemonic,
+            path: identity.path,
+          }),
           publicKey: identity.publicKey,
           chatPublicKey: identity.chatPublicKey,
           mvcAddress: identity.mvcAddress,
@@ -357,6 +401,117 @@ export function createDefaultMetabotDaemonHandlers(input: {
           traceJsonPath: artifacts.traceJsonPath,
           traceMarkdownPath: artifacts.traceMarkdownPath,
           transcriptMarkdownPath: artifacts.transcriptMarkdownPath,
+        });
+      },
+    },
+    chat: {
+      private: async (rawInput) => {
+        const state = await runtimeStateStore.readState();
+        if (!state.identity) {
+          return commandFailed('identity_missing', 'Create a local MetaBot identity before sending private chat.');
+        }
+
+        const request = readPrivateChatRequest(rawInput);
+        if (!request.to || !request.content) {
+          return commandFailed('invalid_chat_request', 'Private chat request must include to and content.');
+        }
+
+        const secrets = await hotStateStore.readSecrets<{
+          privateKeyHex?: string;
+          chatPublicKey?: string;
+        }>();
+        const localPrivateKeyHex = normalizeText(secrets?.privateKeyHex);
+        if (!localPrivateKeyHex) {
+          return commandFailed('identity_secret_missing', 'Local private chat key is missing from hot state.');
+        }
+
+        let peerChatPublicKey = request.peerChatPublicKey;
+        if (!peerChatPublicKey && request.to === state.identity.globalMetaId) {
+          peerChatPublicKey = state.identity.chatPublicKey;
+        }
+        if (!peerChatPublicKey) {
+          peerChatPublicKey = await fetchPeerChatPublicKey(request.to) ?? '';
+        }
+        if (!peerChatPublicKey) {
+          return commandFailed(
+            'peer_chat_public_key_missing',
+            'Target has no chat public key on chain and none was provided.'
+          );
+        }
+
+        const sent = sendPrivateChat({
+          fromIdentity: {
+            globalMetaId: state.identity.globalMetaId,
+            privateKeyHex: localPrivateKeyHex,
+          },
+          toGlobalMetaId: request.to,
+          peerChatPublicKey,
+          content: request.content,
+          replyPinId: request.replyPin,
+        });
+
+        const traceId = `trace-private-${Date.now().toString(36)}`;
+        const trace = buildSessionTrace({
+          traceId,
+          channel: 'simplemsg',
+          exportRoot: runtimeStateStore.paths.exportRoot,
+          session: {
+            id: `chat-${traceId}`,
+            title: 'Private Chat',
+            type: 'a2a',
+            metabotId: state.identity.metabotId,
+            peerGlobalMetaId: request.to,
+            peerName: null,
+            externalConversationId: `simplemsg:${state.identity.globalMetaId}:${request.to}:${traceId}`,
+          },
+        });
+
+        const artifacts = await exportSessionArtifacts({
+          trace,
+          transcript: {
+            sessionId: trace.session.id,
+            title: trace.session.title,
+            messages: [
+              {
+                id: `${trace.traceId}-user`,
+                type: 'user',
+                timestamp: trace.createdAt,
+                content: request.content,
+              },
+              {
+                id: `${trace.traceId}-assistant`,
+                type: 'assistant',
+                timestamp: trace.createdAt,
+                content: `Encrypted private message prepared for ${request.to}.`,
+                metadata: {
+                  path: sent.path,
+                  replyPin: request.replyPin || null,
+                },
+              },
+            ],
+          },
+        });
+
+        await runtimeStateStore.writeState({
+          ...state,
+          traces: [
+            trace,
+            ...state.traces.filter((entry) => entry.traceId !== trace.traceId),
+          ],
+        });
+
+        return commandSuccess({
+          to: request.to,
+          path: sent.path,
+          payload: sent.payload,
+          encryptedContent: sent.encryptedContent,
+          secretVariant: sent.secretVariant,
+          deliveryMode: 'local_runtime',
+          peerChatPublicKey,
+          traceId: trace.traceId,
+          transcriptMarkdownPath: artifacts.transcriptMarkdownPath,
+          traceMarkdownPath: artifacts.traceMarkdownPath,
+          traceJsonPath: artifacts.traceJsonPath,
         });
       },
     },
