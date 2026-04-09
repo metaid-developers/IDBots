@@ -221,6 +221,38 @@ test('parseRemoteSkillServiceItem keeps provider identity address separate from 
   assert.equal(row.paymentAddress, 'btc-payment-address');
 });
 
+test('parseRemoteSkillServiceItem preserves structured MRC20 settlement metadata from contentSummary', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-mrc20-1',
+    status: 0,
+    operation: 'create',
+    address: 'mvc-provider-address',
+    create_address: 'mvc-provider-address',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    contentSummary: {
+      serviceName: 'mrc20-service',
+      displayName: 'MRC20 Service',
+      description: 'desc',
+      price: '12',
+      currency: 'METAID-MRC20',
+      settlementKind: 'mrc20',
+      paymentChain: 'btc',
+      mrc20Ticker: 'METAID',
+      mrc20Id: 'tick-metaid',
+      paymentAddress: 'btc-provider-address',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(row.currency, 'METAID-MRC20');
+  assert.equal(row.paymentChain, 'btc');
+  assert.equal(row.settlementKind, 'mrc20');
+  assert.equal(row.mrc20Ticker, 'METAID');
+  assert.equal(row.mrc20Id, 'tick-metaid');
+  assert.equal(row.paymentAddress, 'btc-provider-address');
+});
+
 test('parseRemoteSkillServiceRow preserves createAddress and paymentAddress independently', () => {
   const row = parseRemoteSkillServiceRow({
     id: 'svc-row-1',
@@ -231,6 +263,25 @@ test('parseRemoteSkillServiceRow preserves createAddress and paymentAddress inde
   assert.equal(row.providerAddress, 'mvc-provider-address');
   assert.equal(row.createAddress, 'mvc-provider-address');
   assert.equal(row.paymentAddress, 'btc-payment-address');
+});
+
+test('parseRemoteSkillServiceRow preserves structured MRC20 settlement metadata from content_summary_json', () => {
+  const row = parseRemoteSkillServiceRow({
+    id: 'svc-row-mrc20',
+    currency: 'METAID-MRC20',
+    content_summary_json: JSON.stringify({
+      settlementKind: 'mrc20',
+      paymentChain: 'btc',
+      mrc20Ticker: 'METAID',
+      mrc20Id: 'tick-metaid',
+    }),
+  });
+
+  assert.equal(row.currency, 'METAID-MRC20');
+  assert.equal(row.paymentChain, 'btc');
+  assert.equal(row.settlementKind, 'mrc20');
+  assert.equal(row.mrc20Ticker, 'METAID');
+  assert.equal(row.mrc20Id, 'tick-metaid');
 });
 
 test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutation metadata', () => {

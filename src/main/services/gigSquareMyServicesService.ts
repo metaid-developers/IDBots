@@ -7,6 +7,10 @@ export interface GigSquareMyServiceSource {
   description?: string;
   price?: string;
   currency?: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   providerMetaId?: string;
   providerGlobalMetaId?: string;
   providerAddress?: string;
@@ -60,6 +64,10 @@ export interface GigSquareMyServiceSummary {
   description: string;
   price: string;
   currency: string;
+  settlementKind: string | null;
+  paymentChain: string | null;
+  mrc20Ticker: string | null;
+  mrc20Id: string | null;
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
@@ -295,6 +303,10 @@ export function buildMyServiceSummaries(input: {
         description: toSafeString(service.description).trim(),
         price: toSafeString(service.price).trim(),
         currency: toSafeString(service.currency).trim(),
+        settlementKind: toSafeString(service.settlementKind).trim() || null,
+        paymentChain: toSafeString(service.paymentChain).trim() || null,
+        mrc20Ticker: toSafeString(service.mrc20Ticker).trim() || null,
+        mrc20Id: toSafeString(service.mrc20Id).trim() || null,
         providerMetaId: toSafeString(service.providerMetaId).trim(),
         providerGlobalMetaId: toSafeString(service.providerGlobalMetaId).trim(),
         providerAddress: toSafeString(service.providerAddress).trim(),

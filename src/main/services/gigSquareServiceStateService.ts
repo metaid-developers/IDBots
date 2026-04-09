@@ -24,6 +24,10 @@ type LocalServiceStateRecordLike = {
   description?: string;
   price?: string;
   currency?: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   providerGlobalMetaId?: string;
   providerSkill?: string | null;
   serviceIcon?: string | null;
@@ -37,6 +41,10 @@ type ServicePresentationLike = ServiceLike & {
   description?: string;
   price?: string;
   currency?: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   providerGlobalMetaId?: string;
   providerSkill?: string | null;
   serviceIcon?: string | null;
@@ -235,6 +243,10 @@ export const applyLocalServiceState = <
         description: pickServiceOverrideString(localRecord.description, service.description),
         price: pickServiceOverrideString(localRecord.price, service.price),
         currency: pickServiceOverrideString(localRecord.currency, service.currency),
+        settlementKind: pickServiceOverrideString(localRecord.settlementKind, service.settlementKind),
+        paymentChain: pickServiceOverrideString(localRecord.paymentChain, service.paymentChain),
+        mrc20Ticker: pickServiceOverrideString(localRecord.mrc20Ticker, service.mrc20Ticker),
+        mrc20Id: pickServiceOverrideString(localRecord.mrc20Id, service.mrc20Id),
         providerGlobalMetaId: pickServiceOverrideString(localRecord.providerGlobalMetaId, service.providerGlobalMetaId),
         providerSkill: pickServiceOverrideString(localRecord.providerSkill, service.providerSkill),
         serviceIcon: localRecord.serviceIcon == null ? service.serviceIcon : localRecord.serviceIcon,

@@ -1,3 +1,5 @@
+import { parseGigSquareSettlementAsset } from '../shared/gigSquareSettlementAsset.js';
+
 type RemoteSkillServiceItem = Record<string, unknown>;
 const DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES = 1000;
 const UNIX_SECONDS_MAX = 10_000_000_000;
@@ -23,6 +25,10 @@ export type ParsedRemoteSkillServiceRow = {
   endpoint?: string | null;
   contentSummaryJson?: string | null;
   paymentAddress?: string | null;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   status: number;
   operation: string;
   path?: string | null;
@@ -197,7 +203,14 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
   const displayName = toSafeString(summary.displayName).trim() || serviceName || 'Service';
   const description = toSafeString(summary.description).trim();
   const price = toSafeString(summary.price).trim() || '0';
-  const currency = toSafeString(summary.currency || summary.priceUnit).trim();
+  const settlement = parseGigSquareSettlementAsset({
+    currency: toSafeString(summary.currency || summary.priceUnit).trim(),
+    settlementKind: toSafeString((summary as Record<string, unknown>).settlementKind).trim(),
+    paymentChain: toSafeString((summary as Record<string, unknown>).paymentChain).trim(),
+    mrc20Ticker: toSafeString((summary as Record<string, unknown>).mrc20Ticker).trim(),
+    mrc20Id: toSafeString((summary as Record<string, unknown>).mrc20Id).trim(),
+  });
+  const currency = settlement.protocolCurrency;
   const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
   const serviceIcon = typeof summary.serviceIcon === 'string' ? summary.serviceIcon.trim() || null : null;
   if (!serviceName || !providerMetaId || !providerAddress) return null;
@@ -229,6 +242,10 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
     endpoint: endpoint || null,
     contentSummaryJson: contentSummaryJson || null,
     paymentAddress: paymentAddress || null,
+    settlementKind: settlement.settlementKind,
+    paymentChain: settlement.paymentChain,
+    mrc20Ticker: settlement.mrc20Ticker,
+    mrc20Id: settlement.mrc20Id,
     status,
     operation,
     path,
@@ -244,13 +261,21 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
   const ratingAvgRaw = row.ratingAvg ?? row.rating_avg;
   const ratingCountRaw = row.ratingCount ?? row.rating_count;
   const updatedAtRaw = row.updatedAt ?? row.updated_at;
+  const contentSummary = parseGigSquareContentSummary(row.contentSummaryJson ?? row.content_summary_json);
+  const settlement = parseGigSquareSettlementAsset({
+    currency: toSafeString(row.currency).trim(),
+    settlementKind: toSafeString(row.settlementKind ?? row.settlement_kind ?? contentSummary?.settlementKind).trim(),
+    paymentChain: toSafeString(row.paymentChain ?? row.payment_chain ?? contentSummary?.paymentChain).trim(),
+    mrc20Ticker: toSafeString(row.mrc20Ticker ?? row.mrc20_ticker ?? contentSummary?.mrc20Ticker).trim(),
+    mrc20Id: toSafeString(row.mrc20Id ?? row.mrc20_id ?? contentSummary?.mrc20Id).trim(),
+  });
   return {
     id: toSafeString(row.id).trim(),
     serviceName: toSafeString(row.serviceName ?? row.service_name).trim(),
     displayName: toSafeString(row.displayName ?? row.display_name).trim(),
     description: toSafeString(row.description).trim(),
     price: toSafeString(row.price).trim(),
-    currency: toSafeString(row.currency).trim(),
+    currency: settlement.protocolCurrency,
     providerMetaId: toSafeString(row.providerMetaId ?? row.metaid).trim(),
     providerGlobalMetaId: toSafeString(row.providerGlobalMetaId ?? row.global_metaid).trim(),
     providerAddress: toSafeString(
@@ -269,6 +294,10 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     endpoint: toSafeString(row.endpoint).trim() || undefined,
     contentSummaryJson: toSafeString(row.contentSummaryJson ?? row.content_summary_json).trim() || undefined,
     paymentAddress: toSafeString(row.paymentAddress ?? row.payment_address).trim() || undefined,
+    settlementKind: settlement.settlementKind,
+    paymentChain: settlement.paymentChain,
+    mrc20Ticker: settlement.mrc20Ticker ?? undefined,
+    mrc20Id: settlement.mrc20Id ?? undefined,
     pinId: toSafeString(row.pinId ?? row.pin_id ?? row.id).trim(),
     status: Math.trunc(toSafeNumber(row.status)),
     operation: normalizeOperation(row.operation),

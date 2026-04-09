@@ -3,6 +3,7 @@ import {
   buildModifyMetaidPayload,
   buildRevokeMetaidPayload,
 } from './metaidPinMutationService';
+import { normalizeGigSquareSettlementDraft } from '../shared/gigSquareSettlementAsset.js';
 
 export const GIG_SQUARE_MUTATION_SYNC_DELAY_MS = 3000;
 
@@ -23,6 +24,8 @@ export interface GigSquareModifyDraft {
   providerSkill: string;
   price: string;
   currency: string;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   outputType: string;
   serviceIconUri?: string | null;
 }
@@ -48,6 +51,10 @@ export interface GigSquareLocalMutationServiceSeed {
   serviceIcon?: string | null;
   price?: string;
   currency?: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   outputType?: string | null;
   endpoint?: string | null;
 }
@@ -67,6 +74,10 @@ export interface GigSquareLocalServiceMutationRecord {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  settlementKind: string | null;
+  paymentChain: string | null;
+  mrc20Ticker: string | null;
+  mrc20Id: string | null;
   skillDocument: string;
   inputType: string;
   outputType: string;
@@ -76,7 +87,13 @@ export interface GigSquareLocalServiceMutationRecord {
   updatedAt: number;
 }
 
-const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
+export interface GigSquareSettlementAddressOwner {
+  mvc_address?: string | null;
+  btc_address?: string | null;
+  doge_address?: string | null;
+}
+
+const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE', 'MRC20']);
 const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
 const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
   BTC: 1,
@@ -123,6 +140,10 @@ const createLocalMutationRecord = (input: {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  settlementKind: string | null;
+  paymentChain: string | null;
+  mrc20Ticker: string | null;
+  mrc20Id: string | null;
   outputType: string;
   endpoint: string;
   payloadJson: string;
@@ -154,6 +175,10 @@ const createLocalMutationRecord = (input: {
     serviceIcon: toSafeString(input.serviceIcon).trim() || null,
     price: toSafeString(input.price).trim(),
     currency: toSafeString(input.currency).trim(),
+    settlementKind: toSafeString(input.settlementKind).trim() || null,
+    paymentChain: toSafeString(input.paymentChain).trim() || null,
+    mrc20Ticker: toSafeString(input.mrc20Ticker).trim() || null,
+    mrc20Id: toSafeString(input.mrc20Id).trim() || null,
     skillDocument: '',
     inputType: 'text',
     outputType: toSafeString(input.outputType).trim().toLowerCase() || 'text',
@@ -232,6 +257,8 @@ export const normalizeGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigS
   providerSkill: toSafeString(draft.providerSkill).trim(),
   price: toSafeString(draft.price).trim(),
   currency: normalizeGigSquareCurrency(draft.currency),
+  mrc20Ticker: toSafeString(draft.mrc20Ticker).trim() || null,
+  mrc20Id: toSafeString(draft.mrc20Id).trim() || null,
   outputType: toSafeString(draft.outputType).trim().toLowerCase(),
   serviceIconUri: toSafeString(draft.serviceIconUri).trim() || null,
 });
@@ -262,6 +289,20 @@ export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSq
     return { ok: false, error: 'price exceeds limit', errorCode: 'price_limit_exceeded' };
   }
 
+  try {
+    normalizeGigSquareSettlementDraft({
+      currency: normalized.currency,
+      mrc20Ticker: normalized.mrc20Ticker,
+      mrc20Id: normalized.mrc20Id,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'currency is invalid',
+      errorCode: 'currency_invalid',
+    };
+  }
+
   return { ok: true };
 };
 
@@ -269,8 +310,13 @@ export const buildGigSquareServicePayload = (input: {
   draft: GigSquareModifyDraft;
   providerGlobalMetaId: string;
   paymentAddress: string;
-}): Record<string, string> => {
+}): Record<string, string | null> => {
   const normalized = normalizeGigSquareModifyDraft(input.draft);
+  const settlement = normalizeGigSquareSettlementDraft({
+    currency: normalized.currency,
+    mrc20Ticker: normalized.mrc20Ticker,
+    mrc20Id: normalized.mrc20Id,
+  });
   return {
     serviceName: normalized.serviceName,
     displayName: normalized.displayName,
@@ -279,13 +325,28 @@ export const buildGigSquareServicePayload = (input: {
     providerMetaBot: toSafeString(input.providerGlobalMetaId).trim(),
     providerSkill: normalized.providerSkill,
     price: normalized.price,
-    currency: normalized.currency,
+    currency: settlement.protocolCurrency,
+    paymentChain: settlement.paymentChain,
+    settlementKind: settlement.settlementKind,
+    mrc20Ticker: settlement.mrc20Ticker,
+    mrc20Id: settlement.mrc20Id,
     skillDocument: '',
     inputType: 'text',
     outputType: normalized.outputType,
     endpoint: 'simplemsg',
     paymentAddress: toSafeString(input.paymentAddress).trim(),
   };
+};
+
+export const resolveGigSquareSettlementPaymentAddress = (input: {
+  owner?: GigSquareSettlementAddressOwner | null;
+  settlement: ReturnType<typeof normalizeGigSquareSettlementDraft>;
+}): string => {
+  const owner = input.owner;
+  if (!owner) return '';
+  if (input.settlement.paymentChain === 'btc') return toSafeString(owner.btc_address).trim();
+  if (input.settlement.paymentChain === 'doge') return toSafeString(owner.doge_address).trim();
+  return toSafeString(owner.mvc_address).trim();
 };
 
 export const buildGigSquareRevokeMetaidPayload = (targetPinId: string): MetaidDataPayload => {
@@ -321,6 +382,10 @@ export const buildGigSquareLocalServiceRecordForRevoke = (input: {
     serviceIcon: toSafeString(service.serviceIcon).trim() || null,
     price: toSafeString(service.price).trim(),
     currency: toSafeString(service.currency).trim(),
+    settlementKind: toSafeString(service.settlementKind).trim() || null,
+    paymentChain: toSafeString(service.paymentChain).trim() || null,
+    mrc20Ticker: toSafeString(service.mrc20Ticker).trim() || null,
+    mrc20Id: toSafeString(service.mrc20Id).trim() || null,
     outputType: toSafeString(service.outputType).trim().toLowerCase() || 'text',
     endpoint: toSafeString(service.endpoint).trim() || 'simplemsg',
     payloadJson: '',
@@ -339,6 +404,10 @@ export const buildGigSquareLocalServiceRecordForModify = (input: {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   outputType: string;
   endpoint: string;
   payloadJson: string;
@@ -354,6 +423,10 @@ export const buildGigSquareLocalServiceRecordForModify = (input: {
     serviceIcon: input.serviceIcon,
     price: input.price,
     currency: input.currency,
+    settlementKind: toSafeString(input.settlementKind).trim() || null,
+    paymentChain: toSafeString(input.paymentChain).trim() || null,
+    mrc20Ticker: toSafeString(input.mrc20Ticker).trim() || null,
+    mrc20Id: toSafeString(input.mrc20Id).trim() || null,
     outputType: input.outputType,
     endpoint: input.endpoint,
     payloadJson: input.payloadJson,

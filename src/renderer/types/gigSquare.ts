@@ -13,6 +13,10 @@ export type GigSquareService = {
   description: string;
   price: string;
   currency: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
@@ -53,6 +57,10 @@ export type GigSquareMyServiceSummary = {
   description: string;
   price: string;
   currency: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
@@ -111,6 +119,8 @@ export type GigSquareModifyServiceParams = {
   providerSkill?: string;
   price?: string;
   currency?: string;
+  mrc20Ticker?: string;
+  mrc20Id?: string;
   outputType?: string;
   serviceIconDataUrl?: string | null;
 };

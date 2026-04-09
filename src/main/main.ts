@@ -122,6 +122,10 @@ import {
   extractOrderRawRequest,
   normalizeOrderRawRequest,
 } from './shared/orderMessage.js';
+import {
+  normalizeGigSquareSettlementDraft,
+  parseGigSquareSettlementAsset,
+} from './shared/gigSquareSettlementAsset.js';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
 import {
@@ -160,6 +164,8 @@ import {
   buildGigSquareModifyMetaidPayload,
   buildGigSquareRevokeMetaidPayload,
   buildGigSquareServicePayload,
+  normalizeGigSquareModifyDraft,
+  resolveGigSquareSettlementPaymentAddress,
   validateGigSquareModifyDraft,
   validateGigSquareServiceMutation,
   type GigSquareModifyDraft,
@@ -403,14 +409,6 @@ const GIG_SQUARE_SERVICE_LIMIT = 10;
 const GIG_SQUARE_MY_SERVICES_PAGE_SIZE = 8;
 const GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE = 10;
 const GIG_SQUARE_SYNC_SIZE = 200;
-const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
-const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
-const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
-  BTC: 1,
-  MVC: 100000,
-  DOGE: 10000,
-  SPACE: 100000,
-};
 const GIG_SQUARE_IMAGE_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -429,6 +427,10 @@ type GigSquareService = {
   description: string;
   price: string;
   currency: string;
+  settlementKind?: string | null;
+  paymentChain?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
   providerMetaId: string;
   providerGlobalMetaId: string;
   providerAddress: string;
@@ -539,16 +541,6 @@ const sanitizeDbParams = (params: unknown[]): (string | number | null)[] => {
   return params.map((value) => (
     value == null || (typeof value === 'number' && Number.isNaN(value)) ? null : (value as string | number | null)
   ));
-};
-
-const normalizeGigSquareCurrency = (currency: string): string => {
-  const normalized = currency.toUpperCase();
-  return normalized === 'MVC' ? 'SPACE' : normalized;
-};
-
-const getGigSquarePriceLimit = (currency: string): number => {
-  const normalized = normalizeGigSquareCurrency(currency);
-  return normalized in GIG_SQUARE_PRICE_LIMITS ? GIG_SQUARE_PRICE_LIMITS[normalized] : GIG_SQUARE_PRICE_LIMITS.MVC;
 };
 
 const parseDataUrlImage = (dataUrl: string): { mime: string; buffer: Buffer } | null => {
@@ -781,6 +773,27 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       acc[col] = row[idx];
       return acc;
     }, {});
+    const payloadJson = toSafeString(raw.payload_json).trim();
+    let payloadSummary: Record<string, unknown> | null = null;
+    if (payloadJson) {
+      try {
+        const parsed = JSON.parse(payloadJson);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          payloadSummary = parsed as Record<string, unknown>;
+        }
+      } catch {
+        payloadSummary = null;
+      }
+    }
+    // Local service rows persist canonical currency plus payload_json; structured settlement
+    // metadata is rehydrated from the payload until later order-ledger schema work lands.
+    const settlement = parseGigSquareSettlementAsset({
+      currency: toSafeString(raw.currency).trim(),
+      settlementKind: toSafeString(payloadSummary?.settlementKind).trim(),
+      paymentChain: toSafeString(payloadSummary?.paymentChain).trim(),
+      mrc20Ticker: toSafeString(payloadSummary?.mrc20Ticker).trim(),
+      mrc20Id: toSafeString(payloadSummary?.mrc20Id).trim(),
+    });
     return {
       id: toSafeString(raw.id).trim(),
       pinId: toSafeString(raw.pin_id).trim(),
@@ -795,12 +808,16 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       description: toSafeString(raw.description).trim(),
       serviceIcon: toSafeString(raw.service_icon).trim() || null,
       price: toSafeString(raw.price).trim(),
-      currency: toSafeString(raw.currency).trim(),
+      currency: settlement.protocolCurrency,
+      settlementKind: settlement.settlementKind,
+      paymentChain: settlement.paymentChain,
+      mrc20Ticker: settlement.mrc20Ticker,
+      mrc20Id: settlement.mrc20Id,
       skillDocument: toSafeString(raw.skill_document).trim(),
       inputType: toSafeString(raw.input_type).trim(),
       outputType: toSafeString(raw.output_type).trim(),
       endpoint: toSafeString(raw.endpoint).trim(),
-      payloadJson: toSafeString(raw.payload_json).trim(),
+      payloadJson,
       revokedAt: raw.revoked_at == null ? null : Math.trunc(toSafeNumber(raw.revoked_at)),
       updatedAt: Math.trunc(toSafeNumber(raw.updated_at)),
     };
@@ -5309,6 +5326,8 @@ if (!gotTheLock) {
     providerSkill: string;
     price: string;
     currency: string;
+    mrc20Ticker?: string;
+    mrc20Id?: string;
     outputType: string;
     serviceIconDataUrl?: string | null;
   }) => {
@@ -5320,33 +5339,43 @@ if (!gotTheLock) {
       const providerSkill = toSafeString(params?.providerSkill).trim();
       const price = toSafeString(params?.price).trim();
       const currencyRaw = toSafeString(params?.currency).trim().toUpperCase();
+      const mrc20Ticker = toSafeString(params?.mrc20Ticker).trim();
+      const mrc20Id = toSafeString(params?.mrc20Id).trim();
       const outputType = toSafeString(params?.outputType).trim().toLowerCase();
       const serviceIconDataUrl = toSafeString(params?.serviceIconDataUrl).trim();
 
       if (!metabotId || metabotId < 0) return { success: false, error: 'metabotId is required' };
-      if (!serviceName) return { success: false, error: 'serviceName is required' };
-      if (!displayName) return { success: false, error: 'displayName is required' };
-      if (!description) return { success: false, error: 'description is required' };
-      if (!providerSkill) return { success: false, error: 'providerSkill is required' };
-      if (!price) return { success: false, error: 'price is required' };
-      if (!GIG_SQUARE_ALLOWED_CURRENCIES.has(currencyRaw)) {
-        return { success: false, error: 'currency is invalid' };
+      const draft: GigSquareModifyDraft = {
+        serviceName,
+        displayName,
+        description,
+        providerSkill,
+        price,
+        currency: currencyRaw,
+        mrc20Ticker,
+        mrc20Id,
+        outputType,
+      };
+      const draftValidation = validateGigSquareModifyDraft(draft);
+      if (!draftValidation.ok) {
+        return { success: false, error: draftValidation.error, errorCode: draftValidation.errorCode };
       }
-      if (!GIG_SQUARE_ALLOWED_OUTPUT_TYPES.has(outputType)) {
-        return { success: false, error: 'outputType is invalid' };
+      const normalizedDraft = normalizeGigSquareModifyDraft(draft);
+
+      let settlement;
+      try {
+        settlement = normalizeGigSquareSettlementDraft({
+          currency: normalizedDraft.currency,
+          mrc20Ticker: normalizedDraft.mrc20Ticker,
+          mrc20Id: normalizedDraft.mrc20Id,
+        });
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'currency is invalid',
+        };
       }
-      if (!/^\d+(\.\d+)?$/.test(price)) {
-        return { success: false, error: 'price is invalid' };
-      }
-      const priceNumber = Number(price);
-      if (!Number.isFinite(priceNumber) || priceNumber < 0) {
-        return { success: false, error: 'price is invalid' };
-      }
-      const normalizedCurrency = normalizeGigSquareCurrency(currencyRaw);
-      const priceLimit = getGigSquarePriceLimit(normalizedCurrency);
-      if (priceNumber > priceLimit) {
-        return { success: false, error: 'price exceeds limit' };
-      }
+      const normalizedCurrency = settlement.protocolCurrency;
 
       const store = getMetabotStore();
       const metabot = store.getMetabotById(metabotId);
@@ -5371,27 +5400,22 @@ if (!gotTheLock) {
         serviceIconUri = `metafile://${fileResult.pinId}`;
       }
 
-      const paymentAddress = (() => {
-        if (normalizedCurrency === 'BTC') return metabot.btc_address || '';
-        if (normalizedCurrency === 'DOGE') return metabot.doge_address || '';
-        return metabot.mvc_address || '';
-      })();
+      const paymentAddress = resolveGigSquareSettlementPaymentAddress({
+        owner: metabot,
+        settlement,
+      });
 
-      const payload = {
-        serviceName,
-        displayName,
-        description,
-        serviceIcon: serviceIconUri || '',
-        providerMetaBot: metabot.globalmetaid,
-        providerSkill,
-        price,
-        currency: normalizedCurrency,
-        skillDocument: '',
-        inputType: 'text',
-        outputType,
-        endpoint: 'simplemsg',
+      const payload = buildGigSquareServicePayload({
+        draft: {
+          ...normalizedDraft,
+          currency: settlement.selectorCurrency,
+          mrc20Ticker: settlement.mrc20Ticker,
+          mrc20Id: settlement.mrc20Id,
+          serviceIconUri: serviceIconUri || null,
+        },
+        providerGlobalMetaId: metabot.globalmetaid,
         paymentAddress,
-      };
+      });
 
       const payloadJson = JSON.stringify(payload);
       const result = await createPin(store, metabotId, {
@@ -5411,16 +5435,16 @@ if (!gotTheLock) {
           txid: result.txids?.[0] || '',
           metabotId,
           providerGlobalMetaId: metabot.globalmetaid,
-          providerSkill,
-          serviceName,
-          displayName,
-          description,
+          providerSkill: normalizedDraft.providerSkill,
+          serviceName: normalizedDraft.serviceName,
+          displayName: normalizedDraft.displayName,
+          description: normalizedDraft.description,
           serviceIcon: serviceIconUri || null,
-          price,
+          price: normalizedDraft.price,
           currency: normalizedCurrency,
           skillDocument: '',
           inputType: 'text',
-          outputType,
+          outputType: normalizedDraft.outputType,
           endpoint: 'simplemsg',
           payloadJson,
         });
@@ -5508,6 +5532,8 @@ if (!gotTheLock) {
     providerSkill?: string;
     price?: string;
     currency?: string;
+    mrc20Ticker?: string;
+    mrc20Id?: string;
     outputType?: string;
     serviceIconDataUrl?: string | null;
   }) => {
@@ -5547,13 +5573,17 @@ if (!gotTheLock) {
         description: toSafeString(params?.description).trim() || toSafeString(currentService.description).trim(),
         providerSkill: toSafeString(params?.providerSkill).trim() || toSafeString(currentService.providerSkill).trim(),
         price: toSafeString(params?.price).trim() || toSafeString(currentService.price).trim(),
-        currency: toSafeString(params?.currency).trim() || toSafeString(currentService.currency).trim(),
+        currency: toSafeString(params?.currency).trim()
+          || (toSafeString(currentService.settlementKind).trim().toLowerCase() === 'mrc20' ? 'MRC20' : toSafeString(currentService.currency).trim()),
+        mrc20Ticker: toSafeString(params?.mrc20Ticker).trim() || toSafeString(currentService.mrc20Ticker).trim(),
+        mrc20Id: toSafeString(params?.mrc20Id).trim() || toSafeString(currentService.mrc20Id).trim(),
         outputType: toSafeString(params?.outputType).trim() || 'text',
       };
       const draftValidation = validateGigSquareModifyDraft(draft);
       if (!draftValidation.ok) {
         return { success: false, error: draftValidation.error, errorCode: draftValidation.errorCode };
       }
+      const normalizedDraft = normalizeGigSquareModifyDraft(draft);
 
       const store = getMetabotStore();
       const creatorMetabot = store.getMetabotById(validation.creatorMetabotId);
@@ -5565,12 +5595,16 @@ if (!gotTheLock) {
         };
       }
 
-      const normalizedCurrency = normalizeGigSquareCurrency(draft.currency);
-      const paymentAddress = (() => {
-        if (normalizedCurrency === 'BTC') return creatorMetabot.btc_address || '';
-        if (normalizedCurrency === 'DOGE') return creatorMetabot.doge_address || '';
-        return creatorMetabot.mvc_address || '';
-      })();
+      const settlement = normalizeGigSquareSettlementDraft({
+        currency: normalizedDraft.currency,
+        mrc20Ticker: normalizedDraft.mrc20Ticker,
+        mrc20Id: normalizedDraft.mrc20Id,
+      });
+      const normalizedCurrency = settlement.protocolCurrency;
+      const paymentAddress = resolveGigSquareSettlementPaymentAddress({
+        owner: creatorMetabot,
+        settlement,
+      });
 
       let serviceIconUri = toSafeString(currentService.serviceIcon).trim();
       const serviceIconDataUrl = toSafeString(params?.serviceIconDataUrl).trim();
@@ -5595,8 +5629,10 @@ if (!gotTheLock) {
 
       const payload = buildGigSquareServicePayload({
         draft: {
-          ...draft,
-          currency: normalizedCurrency,
+          ...normalizedDraft,
+          currency: settlement.selectorCurrency,
+          mrc20Ticker: settlement.mrc20Ticker,
+          mrc20Id: settlement.mrc20Id,
           serviceIconUri: serviceIconUri || null,
         },
         providerGlobalMetaId: creatorMetabot.globalmetaid,
@@ -5610,14 +5646,14 @@ if (!gotTheLock) {
       updateGigSquareLocalServiceAfterModify({
         targetService: currentService,
         currentPinId: toSafeString(result.pinId).trim() || currentService.currentPinId,
-        providerSkill: draft.providerSkill,
-        serviceName: draft.serviceName,
-        displayName: draft.displayName,
-        description: draft.description,
+        providerSkill: normalizedDraft.providerSkill,
+        serviceName: normalizedDraft.serviceName,
+        displayName: normalizedDraft.displayName,
+        description: normalizedDraft.description,
         serviceIcon: serviceIconUri || null,
-        price: draft.price,
+        price: normalizedDraft.price,
         currency: normalizedCurrency,
-        outputType: draft.outputType,
+        outputType: normalizedDraft.outputType,
         endpoint: 'simplemsg',
         payloadJson,
       });

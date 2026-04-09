@@ -11,9 +11,13 @@ const {
   normalizeGigSquareModifyDraft,
   validateGigSquareModifyDraft,
   buildGigSquareServicePayload,
+  resolveGigSquareSettlementPaymentAddress,
   buildGigSquareRevokeMetaidPayload,
   buildGigSquareModifyMetaidPayload,
 } = require('../dist-electron/services/gigSquareServiceMutationService.js');
+const {
+  normalizeGigSquareSettlementDraft,
+} = require('../dist-electron/shared/gigSquareSettlementAsset.js');
 
 test('validateGigSquareServiceMutation rejects missing target service', () => {
   const result = validateGigSquareServiceMutation({
@@ -101,6 +105,24 @@ test('validateGigSquareModifyDraft accepts zero price for free services', () => 
   assert.equal(result.ok, true);
 });
 
+test('validateGigSquareModifyDraft rejects invalid MRC20 ticker formats', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    price: '1',
+    currency: 'MRC20',
+    mrc20Ticker: 'meta-id',
+    mrc20Id: 'tick-metaid',
+    outputType: 'text',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'currency_invalid');
+  assert.match(result.error || '', /MRC20 ticker is invalid/);
+});
+
 test('buildGigSquareServicePayload and pin payload helpers produce metaid-compliant structures', () => {
   const payload = buildGigSquareServicePayload({
     draft: {
@@ -133,6 +155,72 @@ test('buildGigSquareServicePayload and pin payload helpers produce metaid-compli
   assert.equal(modifyPayload.operation, 'modify');
   assert.equal(modifyPayload.path, '@pin-2');
   assert.equal(typeof modifyPayload.payload, 'string');
+});
+
+test('buildGigSquareServicePayload keeps native MVC behavior but writes MRC20 payment metadata', () => {
+  const payload = buildGigSquareServicePayload({
+    draft: {
+      serviceName: 'weather',
+      displayName: 'Weather',
+      description: 'desc',
+      providerSkill: 'forecast',
+      price: '12',
+      currency: 'MRC20',
+      mrc20Ticker: 'metaid',
+      mrc20Id: 'tick-metaid',
+      outputType: 'text',
+    },
+    providerGlobalMetaId: 'global-metaid-1',
+    paymentAddress: 'btc-provider-address',
+  });
+
+  assert.equal(payload.currency, 'METAID-MRC20');
+  assert.equal(payload.paymentChain, 'btc');
+  assert.equal(payload.settlementKind, 'mrc20');
+  assert.equal(payload.mrc20Ticker, 'METAID');
+  assert.equal(payload.mrc20Id, 'tick-metaid');
+  assert.equal(payload.paymentAddress, 'btc-provider-address');
+});
+
+test('resolveGigSquareSettlementPaymentAddress keeps native address routing and maps MRC20 to btc', () => {
+  const owner = {
+    mvc_address: 'mvc-owner-address',
+    btc_address: 'btc-owner-address',
+    doge_address: 'doge-owner-address',
+  };
+
+  assert.equal(
+    resolveGigSquareSettlementPaymentAddress({
+      owner,
+      settlement: normalizeGigSquareSettlementDraft({ currency: 'SPACE' }),
+    }),
+    'mvc-owner-address',
+  );
+  assert.equal(
+    resolveGigSquareSettlementPaymentAddress({
+      owner,
+      settlement: normalizeGigSquareSettlementDraft({ currency: 'BTC' }),
+    }),
+    'btc-owner-address',
+  );
+  assert.equal(
+    resolveGigSquareSettlementPaymentAddress({
+      owner,
+      settlement: normalizeGigSquareSettlementDraft({ currency: 'DOGE' }),
+    }),
+    'doge-owner-address',
+  );
+  assert.equal(
+    resolveGigSquareSettlementPaymentAddress({
+      owner,
+      settlement: normalizeGigSquareSettlementDraft({
+        currency: 'MRC20',
+        mrc20Ticker: 'metaid',
+        mrc20Id: 'tick-metaid',
+      }),
+    }),
+    'btc-owner-address',
+  );
 });
 
 test('buildGigSquareLocalServiceRecordForRevoke creates a local overlay row for a remotely discovered owned service', () => {
