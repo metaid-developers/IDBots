@@ -8,6 +8,7 @@ import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
 import { SqliteStore } from './sqliteStore';
 import { CoworkStore } from './coworkStore';
+import { McpStore, type McpServerFormData } from './mcpStore';
 import type { MemoryBackend } from './memory/memoryBackend';
 import {
   CoworkRunner,
@@ -1827,6 +1828,7 @@ process.on('unhandledRejection', (error) => {
 
 let store: SqliteStore | null = null;
 let coworkStore: CoworkStore | null = null;
+let mcpStore: McpStore | null = null;
 let coworkRunner: CoworkRunner | null = null;
 let skillManager: SkillManager | null = null;
 let metaAppManager: MetaAppManager | null = null;
@@ -2034,6 +2036,14 @@ const getCoworkStore = () => {
     }
   }
   return coworkStore;
+};
+
+const getMcpStore = () => {
+  if (!mcpStore) {
+    const sqliteStore = getStore();
+    mcpStore = new McpStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  }
+  return mcpStore;
 };
 
 // ---------------------------------------------------------------------------
@@ -2631,6 +2641,7 @@ const getCoworkRunner = () => {
           return getSkillManager().buildRemoteServicesPrompt(services);
         } catch { return null; }
       },
+      mcpServerProvider: () => getMcpStore().getEnabledServers(),
       getMetabotById: (id: number) => {
         const m = getMetabotStore().getMetabotById(id);
         return m ? { name: m.name, role: m.role, soul: m.soul, background: m.background ?? null, goal: m.goal ?? null } : null;
@@ -6541,7 +6552,58 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     return fetchMetaidUserInfoByGlobalMetaId(params.globalMetaId);
   });
 
-  // MCP is currently suspended and not exposed to renderer.
+  ipcMain.handle('mcp:list', () => {
+    try {
+      return { success: true, servers: getMcpStore().listServers() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list MCP servers' };
+    }
+  });
+
+  ipcMain.handle('mcp:create', (_event, data: McpServerFormData) => {
+    try {
+      getMcpStore().createServer(data);
+      return { success: true, servers: getMcpStore().listServers() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to create MCP server' };
+    }
+  });
+
+  ipcMain.handle('mcp:update', (_event, id: string, data: Partial<McpServerFormData>) => {
+    try {
+      const updated = getMcpStore().updateServer(id, data);
+      if (!updated) {
+        return { success: false, error: 'MCP server not found' };
+      }
+      return { success: true, servers: getMcpStore().listServers() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update MCP server' };
+    }
+  });
+
+  ipcMain.handle('mcp:delete', (_event, id: string) => {
+    try {
+      const deleted = getMcpStore().deleteServer(id);
+      if (!deleted) {
+        return { success: false, error: 'MCP server not found' };
+      }
+      return { success: true, servers: getMcpStore().listServers() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to delete MCP server' };
+    }
+  });
+
+  ipcMain.handle('mcp:setEnabled', (_event, options: { id: string; enabled: boolean }) => {
+    try {
+      const updated = getMcpStore().setEnabled(options.id, options.enabled);
+      if (!updated) {
+        return { success: false, error: 'MCP server not found' };
+      }
+      return { success: true, servers: getMcpStore().listServers() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update MCP server' };
+    }
+  });
 
   // 设置 Content Security Policy
   const setContentSecurityPolicy = () => {

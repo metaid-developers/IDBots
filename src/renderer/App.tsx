@@ -7,6 +7,7 @@ import Toast from './components/Toast';
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
 import { SkillsView } from './components/skills';
+import { McpView } from './components/mcp';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import MetabotsView from './components/metabots/MetabotsView';
 import GigSquareView from './components/gigSquare/GigSquareView';
@@ -36,7 +37,7 @@ import { normalizePreselectedSkillId } from './utils/newChatPreselect';
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'mcp' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -289,6 +290,10 @@ const App: React.FC = () => {
 
   const handleShowSkills = useCallback(() => {
     setMainView('skills');
+  }, []);
+
+  const handleShowMcp = useCallback(() => {
+    setMainView('mcp');
   }, []);
 
   const handleShowCowork = useCallback(() => {
@@ -696,6 +701,7 @@ const App: React.FC = () => {
           onShowSettings={handleShowSettings}
           activeView={mainView}
           onShowSkills={handleShowSkills}
+          onShowMcp={handleShowMcp}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowGigSquare={handleShowGigSquare}
@@ -715,6 +721,13 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleBlankNewChat}
                 onStartTaskWithSkill={(skillId) => handleNewChat(skillId)}
+                updateBadge={isSidebarCollapsed ? updateBadge : null}
+              />
+            ) : mainView === 'mcp' ? (
+              <McpView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleBlankNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
             ) : mainView === 'scheduledTasks' ? (

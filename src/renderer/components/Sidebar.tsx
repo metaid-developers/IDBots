@@ -7,14 +7,16 @@ import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import { MagnifyingGlassIcon, PuzzlePieceIcon, ClockIcon, CpuChipIcon, ShoppingBagIcon } from '@heroicons/react/24/outline';
 import ComposeIcon from './icons/ComposeIcon';
+import ConnectorIcon from './icons/ConnectorIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import { P2PStatusBadge } from './p2p/P2PStatusBadge';
 
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare';
+  activeView: 'cowork' | 'skills' | 'mcp' | 'scheduledTasks' | 'metabots' | 'gigSquare';
   onShowSkills: () => void;
+  onShowMcp: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowGigSquare: () => void;
@@ -29,6 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
   activeView,
   onShowSkills,
+  onShowMcp,
   onShowCowork,
   onShowScheduledTasks,
   onShowGigSquare,
@@ -182,6 +185,21 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <PuzzlePieceIcon className="h-4 w-4" />
             {i18nService.t('skills')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(false);
+              onShowMcp();
+            }}
+            className={`w-full inline-flex items-center gap-2 rounded-lg px-2.5 py-2 text-base font-medium transition-colors ${
+              activeView === 'mcp'
+                ? 'dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurfaceHover bg-claude-surfaceHover'
+                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+            }`}
+          >
+            <ConnectorIcon className="h-4 w-4" />
+            {i18nService.t('mcpServers')}
           </button>
           <button
             type="button"

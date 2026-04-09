@@ -166,6 +166,15 @@ export class McpStore {
       registryId: data.registryId !== undefined ? data.registryId : existing.registryId,
     };
 
+    if (merged.transportType === 'stdio') {
+      merged.url = undefined;
+      merged.headers = undefined;
+    } else {
+      merged.command = undefined;
+      merged.args = undefined;
+      merged.env = undefined;
+    }
+
     const configJson = this.serializeConfig(merged);
 
     this.db.run(

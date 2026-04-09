@@ -13,6 +13,10 @@ import { loadClaudeSdk } from './claudeSdk';
 import { getEnhancedEnv, getEnhancedEnvWithTmpdir, getSkillsRoot } from './coworkUtil';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
 import { isQuestionLikeMemoryText, type CoworkMemoryGuardLevel } from './coworkMemoryExtractor';
+import {
+  buildUserConfiguredMcpServerConfigs,
+  type UserConfiguredMcpServerDefinition,
+} from './mcpServerConfig';
 import { z } from 'zod';
 import { ensureSandboxReady, getSandboxRuntimeInfoIfReady, type SandboxRuntimeInfo } from './coworkSandboxRuntime';
 import { isPathWithin, resolveElectronExecutablePath } from './runtimePaths';
@@ -655,6 +659,8 @@ export interface CoworkRunnerOptions {
   /** When set, returns the XML block for available remote services to inject into the system prompt. */
   getRemoteServicesPrompt?: () => string | null;
   getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
+  /** When set, returns enabled user-configured MCP servers for local execution. */
+  mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   /** When set, opens a local MetaApp and returns the resolved local URL. */
   openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   /** When set, resolves a local MetaApp URL without opening it. */
@@ -666,6 +672,7 @@ export class CoworkRunner extends EventEmitter {
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   private getRemoteServicesPrompt?: () => string | null;
   private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
+  private mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private activeSessions: Map<string, ActiveSession> = new Map();
@@ -683,6 +690,7 @@ export class CoworkRunner extends EventEmitter {
     this.getSkillSessionEnvOverrides = options?.getSkillSessionEnvOverrides;
     this.getRemoteServicesPrompt = options?.getRemoteServicesPrompt;
     this.getMetabotById = options?.getMetabotById;
+    this.mcpServerProvider = options?.mcpServerProvider;
     this.openMetaApp = options?.openMetaApp;
     this.resolveMetaAppUrl = options?.resolveMetaAppUrl;
   }
@@ -3488,6 +3496,25 @@ export class CoworkRunner extends EventEmitter {
           tools: memoryTools,
         }),
       };
+
+      if (this.mcpServerProvider) {
+        try {
+          const configuredServers = buildUserConfiguredMcpServerConfigs(
+            this.mcpServerProvider(),
+            new Set(Object.keys(options.mcpServers as Record<string, unknown>)),
+          );
+          const configuredServerCount = Object.keys(configuredServers).length;
+          if (configuredServerCount > 0) {
+            options.mcpServers = {
+              ...(options.mcpServers as Record<string, unknown>),
+              ...configuredServers,
+            };
+          }
+          coworkLog('INFO', 'runClaudeCodeLocal', `Injected ${configuredServerCount} user-configured MCP servers`);
+        } catch (error) {
+          coworkLog('WARN', 'runClaudeCodeLocal', `Failed to load user MCP servers: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
 
       const result = await query({ prompt: promptForQuery, options } as any);
       coworkLog('INFO', 'runClaudeCodeLocal', 'Claude Code process started, iterating events');
