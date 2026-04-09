@@ -21,15 +21,25 @@ import { Skill, OfficialSkillItem } from '../../types/skill';
 import ErrorMessage from '../ErrorMessage';
 import Tooltip from '../ui/Tooltip';
 
+type SkillsTab = 'local' | 'official';
+
 interface SkillsManagerProps {
   onStartTaskWithSkill?: (skillId: string) => void;
+  activeTab?: SkillsTab;
+  hideTabBar?: boolean;
+  onTabChange?: (tab: SkillsTab) => void;
 }
 
-const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) => {
+const SkillsManager: React.FC<SkillsManagerProps> = ({
+  onStartTaskWithSkill,
+  activeTab,
+  hideTabBar = false,
+  onTabChange,
+}) => {
   const dispatch = useDispatch();
   const skills = useSelector((state: RootState) => state.skill.skills);
 
-  const [activeTab, setActiveTab] = useState<'local' | 'official'>('local');
+  const [internalActiveTab, setInternalActiveTab] = useState<SkillsTab>(activeTab ?? 'local');
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
   const [skillDownloadSource, setSkillDownloadSource] = useState('');
   const [skillActionError, setSkillActionError] = useState('');
@@ -47,6 +57,14 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
   const addSkillMenuRef = useRef<HTMLDivElement>(null);
   const addSkillButtonRef = useRef<HTMLButtonElement>(null);
   const githubImportInputRef = useRef<HTMLInputElement>(null);
+  const resolvedActiveTab = activeTab ?? internalActiveTab;
+
+  const setCurrentTab = (tab: SkillsTab) => {
+    if (activeTab === undefined) {
+      setInternalActiveTab(tab);
+    }
+    onTabChange?.(tab);
+  };
 
   useEffect(() => {
     let isActive = true;
@@ -112,7 +130,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
   }, [isGithubImportOpen]);
 
   useEffect(() => {
-    if (activeTab !== 'local') return;
+    if (resolvedActiveTab !== 'local') return;
     let isActive = true;
     const load = async () => {
       const loaded = await skillService.loadSkills();
@@ -120,10 +138,10 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
     };
     load();
     return () => { isActive = false; };
-  }, [activeTab, dispatch]);
+  }, [resolvedActiveTab, dispatch]);
 
   useEffect(() => {
-    if (activeTab !== 'official') return;
+    if (resolvedActiveTab !== 'official') return;
     let isActive = true;
     const fetchOfficial = async () => {
       setOfficialSkillsLoading(true);
@@ -140,7 +158,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
     };
     fetchOfficial();
     return () => { isActive = false; };
-  }, [activeTab]);
+  }, [resolvedActiveTab]);
 
   const handleInstallOfficialSkill = async (skill: OfficialSkillItem) => {
     if (installingSkillName || isSyncingAll) return;
@@ -159,7 +177,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
         if (updated.success && updated.skills) setOfficialSkills(updated.skills);
         const loaded = await skillService.loadSkills();
         dispatch(setSkills(loaded));
-        setActiveTab('local');
+        setCurrentTab('local');
       } else {
         setSkillActionError(result.error || i18nService.t('skillDownloadFailed'));
       }
@@ -179,7 +197,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
         if (updated.success && updated.skills) setOfficialSkills(updated.skills);
         const loaded = await skillService.loadSkills();
         dispatch(setSkills(loaded));
-        setActiveTab('local');
+        setCurrentTab('local');
       } else {
         setSkillActionError(result.error || i18nService.t('skillOfficialSyncFailed'));
       }
@@ -297,30 +315,32 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1">
-        <button
-          type="button"
-          onClick={() => setActiveTab('local')}
-          className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-            activeTab === 'local'
-              ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
-              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
-          }`}
-        >
-          {i18nService.t('localSkills')}
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('official')}
-          className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-            activeTab === 'official'
-              ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
-              : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
-          }`}
-        >
-          {i18nService.t('officialRecommended')}
-        </button>
-      </div>
+      {!hideTabBar && (
+        <div className="flex items-center gap-2 border-b dark:border-claude-darkBorder border-claude-border -mx-1 px-1">
+          <button
+            type="button"
+            onClick={() => setCurrentTab('local')}
+            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              resolvedActiveTab === 'local'
+                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
+            }`}
+          >
+            {i18nService.t('localSkills')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCurrentTab('official')}
+            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              resolvedActiveTab === 'official'
+                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
+            }`}
+          >
+            {i18nService.t('officialRecommended')}
+          </button>
+        </div>
+      )}
 
       <div>
         <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -335,7 +355,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ onStartTaskWithSkill }) =
         />
       )}
 
-      {activeTab === 'official' ? (
+      {resolvedActiveTab === 'official' ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <button

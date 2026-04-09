@@ -1,6 +1,6 @@
 import React from 'react';
 import { i18nService } from '../../services/i18n';
-import SkillsManager from './SkillsManager';
+import SkillMcpManager from './SkillMcpManager';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
@@ -39,7 +39,7 @@ const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSid
             </div>
           )}
           <h1 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
-            {i18nService.t('skills')}
+            {i18nService.t('skillsAndMcp')}
           </h1>
         </div>
         <WindowTitleBar inline />
@@ -47,7 +47,7 @@ const SkillsView: React.FC<SkillsViewProps> = ({ isSidebarCollapsed, onToggleSid
 
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="max-w-3xl mx-auto px-4 py-6">
-          <SkillsManager onStartTaskWithSkill={onStartTaskWithSkill} />
+          <SkillMcpManager onStartTaskWithSkill={onStartTaskWithSkill} />
         </div>
       </div>
     </div>

@@ -25,11 +25,23 @@ const TRANSPORT_BADGE_COLORS: Record<string, string> = {
 
 type McpTab = 'installed' | 'marketplace' | 'custom';
 
-const McpManager: React.FC = () => {
+interface McpManagerProps {
+  activeTab?: McpTab;
+  hideTabBar?: boolean;
+  hideSearch?: boolean;
+  onTabChange?: (tab: McpTab) => void;
+}
+
+const McpManager: React.FC<McpManagerProps> = ({
+  activeTab,
+  hideTabBar = false,
+  hideSearch = false,
+  onTabChange,
+}) => {
   const dispatch = useDispatch();
   const servers = useSelector((state: RootState) => state.mcp.servers);
 
-  const [activeTab, setActiveTab] = useState<McpTab>('installed');
+  const [internalActiveTab, setInternalActiveTab] = useState<McpTab>(activeTab ?? 'installed');
   const [searchQuery, setSearchQuery] = useState('');
   const [actionError, setActionError] = useState('');
   const [pendingDelete, setPendingDelete] = useState<McpServerConfig | null>(null);
@@ -38,6 +50,14 @@ const McpManager: React.FC = () => {
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
   const [activeCategory, setActiveCategory] = useState('all');
+  const resolvedActiveTab = activeTab ?? internalActiveTab;
+
+  const setCurrentTab = (tab: McpTab) => {
+    if (activeTab === undefined) {
+      setInternalActiveTab(tab);
+    }
+    onTabChange?.(tab);
+  };
 
   useEffect(() => {
     let isActive = true;
@@ -209,14 +229,14 @@ const McpManager: React.FC = () => {
 
   const tabClass = (tab: McpTab) =>
     `px-4 py-2 text-sm font-medium transition-colors relative ${
-      activeTab === tab
+      resolvedActiveTab === tab
         ? 'dark:text-claude-darkText text-claude-text'
         : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
     }`;
 
   const tabIndicatorClass = (tab: McpTab) =>
     `absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
-      activeTab === tab ? 'bg-claude-accent' : 'bg-transparent'
+      resolvedActiveTab === tab ? 'bg-claude-accent' : 'bg-transparent'
     }`;
 
   return (
@@ -233,56 +253,57 @@ const McpManager: React.FC = () => {
         />
       )}
 
-      {/* Tab bar + search */}
-      <div className="flex items-center gap-3">
-        {/* Tabs */}
-        <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border mr-auto">
-          <button type="button" onClick={() => setActiveTab('installed')} className={tabClass('installed')}>
-            {i18nService.t('mcpInstalled')}
-            {servers.length > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
-                {servers.length}
-              </span>
-            )}
-            <div className={tabIndicatorClass('installed')} />
-          </button>
-          <button type="button" onClick={() => setActiveTab('marketplace')} className={tabClass('marketplace')}>
-            {i18nService.t('mcpMarketplace')}
-            {marketplaceCount > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
-                {marketplaceCount}
-              </span>
-            )}
-            <div className={tabIndicatorClass('marketplace')} />
-          </button>
-          <button type="button" onClick={() => setActiveTab('custom')} className={tabClass('custom')}>
-            {i18nService.t('mcpCustom')}
-            {customCount > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
-                {customCount}
-              </span>
-            )}
-            <div className={tabIndicatorClass('custom')} />
-          </button>
-        </div>
+      {(!hideTabBar || !hideSearch) && (
+        <div className="flex items-center gap-3">
+          {!hideTabBar && (
+            <div className="flex items-center border-b dark:border-claude-darkBorder border-claude-border mr-auto">
+              <button type="button" onClick={() => setCurrentTab('installed')} className={tabClass('installed')}>
+                {i18nService.t('mcpInstalled')}
+                {servers.length > 0 && (
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
+                    {servers.length}
+                  </span>
+                )}
+                <div className={tabIndicatorClass('installed')} />
+              </button>
+              <button type="button" onClick={() => setCurrentTab('marketplace')} className={tabClass('marketplace')}>
+                {i18nService.t('mcpMarketplace')}
+                {marketplaceCount > 0 && (
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
+                    {marketplaceCount}
+                  </span>
+                )}
+                <div className={tabIndicatorClass('marketplace')} />
+              </button>
+              <button type="button" onClick={() => setCurrentTab('custom')} className={tabClass('custom')}>
+                {i18nService.t('mcpCustom')}
+                {customCount > 0 && (
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full dark:bg-claude-darkSurface bg-claude-surface">
+                    {customCount}
+                  </span>
+                )}
+                <div className={tabIndicatorClass('custom')} />
+              </button>
+            </div>
+          )}
 
-        {/* Search (shown on all tabs except when no servers) */}
-        {(
-          <div className="relative w-48">
-            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-            <input
-              type="text"
-              placeholder={i18nService.t('searchMcpServers')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
-            />
-          </div>
-        )}
-      </div>
+          {!hideSearch && (
+            <div className="relative w-48">
+              <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+              <input
+                type="text"
+                placeholder={i18nService.t('searchMcpServers')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text dark:placeholder-claude-darkTextSecondary placeholder-claude-textSecondary border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-1 focus:ring-claude-accent"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Tab: Installed ──────────────────────────────── */}
-      {activeTab === 'installed' && (
+      {resolvedActiveTab === 'installed' && (
         <div className="grid grid-cols-2 gap-3">
           {filteredInstalled.length === 0 ? (
             <div className="col-span-2 text-center py-12 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -380,7 +401,7 @@ const McpManager: React.FC = () => {
       )}
 
       {/* ── Tab: Marketplace ────────────────────────────── */}
-      {activeTab === 'marketplace' && (
+      {resolvedActiveTab === 'marketplace' && (
         <div>
           {/* Category filter pills */}
           <div className="flex items-center gap-1.5 mb-4 flex-wrap">
@@ -466,7 +487,7 @@ const McpManager: React.FC = () => {
       )}
 
       {/* ── Tab: Custom ─────────────────────────────────── */}
-      {activeTab === 'custom' && (
+      {resolvedActiveTab === 'custom' && (
         <div className="space-y-6">
           {/* Custom servers grid (add button + server cards) */}
           <div className="grid grid-cols-2 gap-3">

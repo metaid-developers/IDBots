@@ -562,6 +562,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Skills
     skills: '技能',
+    skillsAndMcp: '技能/MCP',
     searchSkills: '搜索技能',
     manageSkills: '管理技能',
     officialSkills: '官方技能',
@@ -597,6 +598,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     clearAllSkills: '清除所有已选技能',
     localSkills: '本地技能',
     officialRecommended: '精选第三方技能',
+    localMcp: '本地 MCP',
+    featuredMcp: '精选 MCP',
+    customMcp: '自定义 MCP',
     skillDownload: '下载',
     skillUpdate: '更新',
     skillInstalled: '已安装',
@@ -1652,6 +1656,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Skills
     skills: 'Skills',
+    skillsAndMcp: 'Skills/MCP',
     searchSkills: 'Search skills',
     manageSkills: 'Manage Skills',
     officialSkills: 'Official Skills',
@@ -1687,6 +1692,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     clearAllSkills: 'Clear all selected skills',
     localSkills: 'Local Skills',
     officialRecommended: 'Featured Third-Party Skills',
+    localMcp: 'Local MCP',
+    featuredMcp: 'Featured MCP',
+    customMcp: 'Custom MCP',
     skillDownload: 'Download',
     skillUpdate: 'Update',
     skillInstalled: 'Installed',
