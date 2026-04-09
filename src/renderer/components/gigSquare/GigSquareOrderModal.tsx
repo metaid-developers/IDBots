@@ -37,12 +37,82 @@ interface GigSquareOrderModalProps {
 
 type OrderStatus = 'idle' | 'paying' | 'sending' | 'success';
 type HandshakeStatus = 'idle' | 'checking' | 'online' | 'offline';
+type SettlementKind = 'native' | 'mrc20';
+
+interface ResolvedGigSquareSettlement {
+  kind: SettlementKind;
+  paymentChain: 'mvc' | 'btc' | 'doge';
+  currency: string;
+  mrc20Ticker: string | null;
+  mrc20Id: string | null;
+}
 
 function currencyToChain(currency: string): 'mvc' | 'btc' | 'doge' {
   const u = (currency || '').toUpperCase();
   if (u === 'BTC') return 'btc';
   if (u === 'DOGE') return 'doge';
   return 'mvc';
+}
+
+function parsePaymentChain(chain: string | null | undefined): 'mvc' | 'btc' | 'doge' | null {
+  const normalized = String(chain || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'btc') return 'btc';
+  if (normalized === 'doge') return 'doge';
+  if (normalized === 'mvc') return 'mvc';
+  return null;
+}
+
+function normalizeMrc20Ticker(ticker: string | null | undefined): string {
+  return String(ticker || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function resolveGigSquareSettlement(service: GigSquareService | null): ResolvedGigSquareSettlement {
+  if (!service) {
+    return {
+      kind: 'native',
+      paymentChain: 'mvc',
+      currency: 'SPACE',
+      mrc20Ticker: null,
+      mrc20Id: null,
+    };
+  }
+
+  const currency = String(service.currency || '').trim().toUpperCase();
+  const settlementKind = String(service.settlementKind || '').trim().toLowerCase();
+  const mrc20Id = String(service.mrc20Id || '').trim() || null;
+  const explicitTicker = normalizeMrc20Ticker(service.mrc20Ticker);
+  const tickerFromCurrency = (currency.match(/^([A-Z0-9]+)-MRC20$/) || [])[1] || '';
+  const isMrc20 = settlementKind === 'mrc20'
+    || Boolean(tickerFromCurrency)
+    || Boolean(explicitTicker)
+    || Boolean(mrc20Id);
+
+  if (!isMrc20) {
+    const paymentChain = parsePaymentChain(service.paymentChain) || currencyToChain(currency);
+    const normalizedCurrency = currency
+      || (paymentChain === 'btc' ? 'BTC' : paymentChain === 'doge' ? 'DOGE' : 'SPACE');
+    return {
+      kind: 'native',
+      paymentChain,
+      currency: normalizedCurrency,
+      mrc20Ticker: null,
+      mrc20Id: null,
+    };
+  }
+
+  const mrc20Ticker = explicitTicker || normalizeMrc20Ticker(tickerFromCurrency) || null;
+  const normalizedCurrency = mrc20Ticker ? `${mrc20Ticker}-MRC20` : (currency || 'MRC20');
+  return {
+    kind: 'mrc20',
+    paymentChain: 'btc',
+    currency: normalizedCurrency,
+    mrc20Ticker,
+    mrc20Id,
+  };
 }
 
 function formatBalance(
@@ -69,6 +139,17 @@ function generateSyntheticOrderTxid(): string {
     }
   }
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function resolveGigSquarePaymentAddress(
+  service: GigSquareService | null,
+  settlement: ResolvedGigSquareSettlement
+): string {
+  if (!service) return '';
+  if (settlement.kind === 'mrc20') {
+    return String(service.paymentAddress || '').trim();
+  }
+  return String(service.paymentAddress || service.providerAddress || '').trim();
 }
 
 const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
@@ -201,14 +282,26 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
   }, [service]);
   const isFreeService = useMemo(() => isFreeServicePrice(paymentAmount), [paymentAmount]);
 
-  const chain = useMemo(
-    () => (service ? currencyToChain(service.currency) : 'mvc'),
+  const settlement = useMemo(
+    () => resolveGigSquareSettlement(service),
     [service]
   );
+  const chain = settlement.paymentChain;
 
   // Fetch live fee rate for the payment chain
   useEffect(() => {
     if (!isOpen) return;
+    if (settlement.kind === 'mrc20') {
+      window.electron.idbots
+        .getTokenTransferFeeSummary({ kind: 'mrc20' })
+        .then((res) => {
+          if (res.success && res.defaultFeeRate != null) {
+            setFeeRate(res.defaultFeeRate);
+          }
+        })
+        .catch(() => setFeeRate(2));
+      return;
+    }
     if (chain !== 'btc') {
       setFeeRate(chain === 'doge' ? 200_000 : 1);
       return;
@@ -219,7 +312,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         if (res.success && res.defaultFeeRate != null) setFeeRate(res.defaultFeeRate);
       })
       .catch(() => setFeeRate(2));
-  }, [isOpen, chain]);
+  }, [isOpen, chain, settlement.kind]);
 
   // Trigger handshake once we have both chatpubkey and a selected metabot
   useEffect(() => {
@@ -303,8 +396,12 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       );
       return;
     }
-    const paymentAddress = service?.paymentAddress || service?.providerAddress;
+    const paymentAddress = resolveGigSquarePaymentAddress(service, settlement);
     if (!service?.providerAddress || !paymentAddress) {
+      setError(i18nService.t('gigSquareOrderFailed'));
+      return;
+    }
+    if (settlement.kind === 'mrc20' && !settlement.mrc20Id) {
       setError(i18nService.t('gigSquareOrderFailed'));
       return;
     }
@@ -343,12 +440,55 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     setShowConfirmModal(false);
       const trimmedPrompt = promptValidation.rawRequest;
     const amount = paymentAmount;
-    const paymentAddress = service.paymentAddress || service.providerAddress;
+    const paymentAddress = resolveGigSquarePaymentAddress(service, settlement);
+    if (!paymentAddress || (settlement.kind === 'mrc20' && !settlement.mrc20Id)) {
+      throw new Error(i18nService.t('gigSquareOrderFailed'));
+    }
 
     try {
       let txId = '';
+      let paymentCommitTxid = '';
       if (isFreeService) {
         txId = generateSyntheticOrderTxid();
+        setStatus('sending');
+      } else if (settlement.kind === 'mrc20') {
+        setStatus('paying');
+        const walletAssetsResult = await window.electron.idbots.getMetabotWalletAssets({
+          metabotId: selectedMetabotId,
+        });
+        if (!walletAssetsResult?.success || !walletAssetsResult.assets) {
+          throw new Error(walletAssetsResult?.error || i18nService.t('gigSquarePaymentFailed'));
+        }
+
+        const targetMrc20Id = String(settlement.mrc20Id || '').trim();
+        const asset = walletAssetsResult.assets.mrc20Assets.find((candidate) => (
+          String(candidate.mrc20Id || '').trim() === targetMrc20Id
+        ));
+        if (!asset) {
+          throw new Error(i18nService.t('gigSquarePaymentFailed'));
+        }
+
+        const payment = await window.electron.idbots.executeTokenTransfer({
+          kind: 'mrc20',
+          metabotId: selectedMetabotId,
+          asset,
+          toAddress: paymentAddress,
+          amount,
+          feeRate,
+        });
+        if (!payment?.success || !payment.result) {
+          throw new Error(payment?.error || i18nService.t('gigSquarePaymentFailed'));
+        }
+
+        paymentCommitTxid = typeof payment.result.commitTxId === 'string'
+          ? payment.result.commitTxId
+          : '';
+        txId = typeof payment.result.revealTxId === 'string' && payment.result.revealTxId.trim()
+          ? payment.result.revealTxId.trim()
+          : (typeof payment.result.txId === 'string' ? payment.result.txId.trim() : '');
+        if (!txId) {
+          throw new Error(i18nService.t('gigSquarePaymentFailed'));
+        }
         setStatus('sending');
       } else {
         setStatus('paying');
@@ -409,7 +549,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
             background: buyerMetabot.background,
           } : null,
           price: service.price,
-          currency: service.currency,
+          currency: settlement.currency,
           txid: orderMessageTxid,
           orderReference: isFreeService ? txId : '',
           serviceId: service.id,
@@ -433,9 +573,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         naturalOrderText,
         rawRequest: trimmedPrompt,
         price: service.price,
-        currency: service.currency,
+        currency: settlement.currency,
         txid: orderMessageTxid,
+        paymentCommitTxid: isFreeService ? '' : paymentCommitTxid,
         orderReference: isFreeService ? txId : '',
+        paymentChain: settlement.paymentChain,
+        settlementKind: settlement.kind,
+        mrc20Ticker: settlement.mrc20Ticker || '',
+        mrc20Id: settlement.mrc20Id || '',
         serviceId: service.id,
         skillName: service.providerSkill || service.serviceName,
         serviceName: service.serviceName,
@@ -450,7 +595,12 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         peerAvatar: providerInfo.avatarUrl || null,
         serviceId: service.id,
         servicePrice: service.price,
-        serviceCurrency: service.currency,
+        serviceCurrency: settlement.currency,
+        servicePaymentChain: settlement.paymentChain,
+        serviceSettlementKind: settlement.kind,
+        serviceMrc20Ticker: settlement.mrc20Ticker,
+        serviceMrc20Id: settlement.mrc20Id,
+        servicePaymentCommitTxid: isFreeService ? null : (paymentCommitTxid || null),
         serviceSkill: service.providerSkill || service.serviceName,
         serverBotGlobalMetaId: service.providerGlobalMetaId || null,
         servicePaidTx: txId,
@@ -474,6 +624,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     prompt,
     paymentAmount,
     isFreeService,
+    settlement,
     chain,
     feeRate,
     providerInfo.chatpubkey,

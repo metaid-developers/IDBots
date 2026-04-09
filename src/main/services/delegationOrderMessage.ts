@@ -11,9 +11,14 @@ export interface BuildDelegationOrderPayloadInput {
   providerSkill?: string | null;
   servicePinId?: string | null;
   paymentTxid: string;
+  paymentCommitTxid?: string | null;
   orderReference?: string | null;
   price: string;
   currency: string;
+  paymentChain?: string | null;
+  settlementKind?: string | null;
+  mrc20Ticker?: string | null;
+  mrc20Id?: string | null;
 }
 
 function normalizeText(value: unknown): string {
@@ -21,12 +26,13 @@ function normalizeText(value: unknown): string {
 }
 
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
-const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
 const TRANSPORT_CHATTER_FRAGMENT_PATTERNS = [
   /(?:^|[，,。；;])\s*已确认同意使用远程MetaBot服务[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*已支付\s*[0-9]+(?:\.[0-9]+)?\s*(?:SPACE|BTC|DOGE)[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*支付\s*[0-9]+(?:\.[0-9]+)?\s*(?:SPACE|BTC|DOGE)(?:费用|服务费|订单金额)?[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*txid\s*[:：=]?\s*[0-9a-fA-F]{6,64}[^，,。；;\n]*/gi,
+  /(?:^|[，,。；;])\s*commit\s+txid\s*[:：=]?\s*[0-9a-fA-F]{6,64}[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*你收到一笔[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*已收到你[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*(?:马上处理|正在处理|开始处理)[^，,。；;\n]*/gi,
@@ -102,7 +108,12 @@ export function buildDelegationOrderPayload(
     price: normalizeText(input.price),
     currency: normalizeText(input.currency),
     paymentTxid: normalizeText(input.paymentTxid),
+    paymentCommitTxid: normalizeText(input.paymentCommitTxid),
     orderReference: normalizeText(input.orderReference),
+    paymentChain: normalizeText(input.paymentChain),
+    settlementKind: normalizeText(input.settlementKind),
+    mrc20Ticker: normalizeText(input.mrc20Ticker),
+    mrc20Id: normalizeText(input.mrc20Id),
     serviceId: normalizeText(input.servicePinId),
     skillName,
     serviceName: normalizeText(input.serviceName),

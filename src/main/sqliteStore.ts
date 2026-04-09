@@ -60,6 +60,129 @@ function getWasmPath(): string {
   return resolveSqlJsWasmPath();
 }
 
+function listTableColumns(db: Database, tableName: string): string[] {
+  const result = db.exec(`PRAGMA table_info(${tableName});`);
+  if (!result[0]?.values) return [];
+  return result[0].values.map((row) => String(row[1] || ''));
+}
+
+const SERVICE_ORDER_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS service_orders (
+    id TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('buyer', 'seller')),
+    local_metabot_id INTEGER NOT NULL,
+    counterparty_global_metaid TEXT NOT NULL,
+    service_pin_id TEXT,
+    service_name TEXT NOT NULL,
+    payment_txid TEXT NOT NULL,
+    payment_chain TEXT NOT NULL CHECK (payment_chain IN ('mvc', 'btc', 'doge')),
+    payment_amount TEXT NOT NULL,
+    payment_currency TEXT NOT NULL,
+    settlement_kind TEXT NOT NULL DEFAULT 'native' CHECK (settlement_kind IN ('native', 'mrc20')),
+    mrc20_ticker TEXT,
+    mrc20_id TEXT,
+    payment_commit_txid TEXT,
+    order_message_pin_id TEXT,
+    cowork_session_id TEXT,
+    status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
+    first_response_deadline_at INTEGER NOT NULL,
+    delivery_deadline_at INTEGER NOT NULL,
+    first_response_at INTEGER,
+    delivery_message_pin_id TEXT,
+    delivered_at INTEGER,
+    failed_at INTEGER,
+    failure_reason TEXT,
+    refund_request_pin_id TEXT,
+    refund_finalize_pin_id TEXT,
+    refund_txid TEXT,
+    refund_requested_at INTEGER,
+    refund_completed_at INTEGER,
+    refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`;
+
+function migrateLegacyServiceOrdersTable(db: Database): void {
+  const columns = listTableColumns(db, 'service_orders');
+  if (columns.length === 0) return;
+  if (
+    columns.includes('settlement_kind')
+    && columns.includes('mrc20_ticker')
+    && columns.includes('mrc20_id')
+    && columns.includes('payment_commit_txid')
+  ) {
+    return;
+  }
+
+  db.run('BEGIN TRANSACTION;');
+  try {
+    db.run('ALTER TABLE service_orders RENAME TO service_orders_legacy_mrc20_migration;');
+    db.run(SERVICE_ORDER_TABLE_SQL);
+    db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
+        status, first_response_deadline_at, delivery_deadline_at, first_response_at,
+        delivery_message_pin_id, delivered_at, failed_at, failure_reason, refund_request_pin_id,
+        refund_finalize_pin_id, refund_txid, refund_requested_at, refund_completed_at,
+        refund_apply_retry_count, next_retry_at, created_at, updated_at
+      )
+      SELECT
+        id,
+        role,
+        local_metabot_id,
+        counterparty_global_metaid,
+        service_pin_id,
+        service_name,
+        payment_txid,
+        CASE
+          WHEN lower(trim(payment_chain)) IN ('mvc', 'btc', 'doge') THEN lower(trim(payment_chain))
+          WHEN upper(trim(payment_currency)) = 'BTC' THEN 'btc'
+          WHEN upper(trim(payment_currency)) = 'DOGE' THEN 'doge'
+          ELSE 'mvc'
+        END,
+        payment_amount,
+        CASE
+          WHEN lower(trim(payment_chain)) = 'btc' OR upper(trim(payment_currency)) = 'BTC' THEN 'BTC'
+          WHEN lower(trim(payment_chain)) = 'doge' OR upper(trim(payment_currency)) = 'DOGE' THEN 'DOGE'
+          ELSE 'SPACE'
+        END,
+        'native',
+        NULL,
+        NULL,
+        NULL,
+        order_message_pin_id,
+        cowork_session_id,
+        status,
+        first_response_deadline_at,
+        delivery_deadline_at,
+        first_response_at,
+        delivery_message_pin_id,
+        delivered_at,
+        failed_at,
+        failure_reason,
+        refund_request_pin_id,
+        refund_finalize_pin_id,
+        refund_txid,
+        refund_requested_at,
+        refund_completed_at,
+        refund_apply_retry_count,
+        next_retry_at,
+        created_at,
+        updated_at
+      FROM service_orders_legacy_mrc20_migration;
+    `);
+    db.run('DROP TABLE service_orders_legacy_mrc20_migration;');
+    db.run('COMMIT;');
+  } catch (error) {
+    db.run('ROLLBACK;');
+    throw error;
+  }
+}
+
 export class SqliteStore {
   private db: Database;
   private dbPath: string;
@@ -520,42 +643,23 @@ export class SqliteStore {
     `);
 
     // Service order ledger (buyer/seller local runtime truth)
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS service_orders (
-        id TEXT PRIMARY KEY,
-        role TEXT NOT NULL CHECK (role IN ('buyer', 'seller')),
-        local_metabot_id INTEGER NOT NULL,
-        counterparty_global_metaid TEXT NOT NULL,
-        service_pin_id TEXT,
-        service_name TEXT NOT NULL,
-        payment_txid TEXT NOT NULL,
-        payment_chain TEXT NOT NULL CHECK (payment_chain IN ('mvc', 'btc', 'doge')),
-        payment_amount TEXT NOT NULL,
-        payment_currency TEXT NOT NULL CHECK (payment_currency IN ('SPACE', 'BTC', 'DOGE')),
-        order_message_pin_id TEXT,
-        cowork_session_id TEXT,
-        status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
-        first_response_deadline_at INTEGER NOT NULL,
-        delivery_deadline_at INTEGER NOT NULL,
-        first_response_at INTEGER,
-        delivery_message_pin_id TEXT,
-        delivered_at INTEGER,
-        failed_at INTEGER,
-        failure_reason TEXT,
-        refund_request_pin_id TEXT,
-        refund_finalize_pin_id TEXT,
-        refund_txid TEXT,
-        refund_requested_at INTEGER,
-        refund_completed_at INTEGER,
-        refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
-        next_retry_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-    `);
+    migrateLegacyServiceOrdersTable(this.db);
+    this.db.run(SERVICE_ORDER_TABLE_SQL);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET settlement_kind = lower(trim(settlement_kind))
+      WHERE settlement_kind IS NOT NULL;
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET settlement_kind = 'native'
+      WHERE settlement_kind NOT IN ('native', 'mrc20')
+         OR settlement_kind IS NULL
+         OR trim(settlement_kind) = '';
     `);
     this.db.run(`
       UPDATE service_orders
@@ -564,8 +668,14 @@ export class SqliteStore {
     `);
     this.db.run(`
       UPDATE service_orders
+      SET payment_chain = 'btc'
+      WHERE settlement_kind = 'mrc20';
+    `);
+    this.db.run(`
+      UPDATE service_orders
       SET payment_chain = 'mvc'
-      WHERE payment_chain NOT IN ('mvc', 'btc', 'doge');
+      WHERE settlement_kind <> 'mrc20'
+        AND payment_chain NOT IN ('mvc', 'btc', 'doge');
     `);
     this.db.run(`
       UPDATE service_orders
@@ -574,13 +684,45 @@ export class SqliteStore {
     `);
     this.db.run(`
       UPDATE service_orders
+      SET mrc20_ticker = upper(trim(
+        COALESCE(
+          NULLIF(mrc20_ticker, ''),
+          CASE
+            WHEN upper(trim(payment_currency)) LIKE '%-MRC20'
+              THEN substr(upper(trim(payment_currency)), 1, length(upper(trim(payment_currency))) - 6)
+            ELSE ''
+          END
+        )
+      ))
+      WHERE settlement_kind = 'mrc20';
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET payment_currency = CASE
+        WHEN settlement_kind = 'mrc20' AND trim(COALESCE(mrc20_ticker, '')) <> ''
+          THEN upper(trim(mrc20_ticker)) || '-MRC20'
+        WHEN payment_chain = 'btc' THEN 'BTC'
+        WHEN payment_chain = 'doge' THEN 'DOGE'
+        ELSE 'SPACE'
+      END;
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET mrc20_ticker = NULL,
+          mrc20_id = NULL,
+          payment_commit_txid = NULL
+      WHERE settlement_kind <> 'mrc20';
+    `);
+    this.db.run(`
+      UPDATE service_orders
       SET payment_currency = CASE
         WHEN payment_chain = 'btc' THEN 'BTC'
         WHEN payment_chain = 'doge' THEN 'DOGE'
         ELSE 'SPACE'
       END
-      WHERE payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
-         OR (payment_chain = 'mvc' AND payment_currency = 'MVC');
+      WHERE settlement_kind <> 'mrc20'
+        AND (payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+          OR (payment_chain = 'mvc' AND payment_currency = 'MVC'));
     `);
     this.db.run(`
       WITH ranked AS (
@@ -644,7 +786,18 @@ export class SqliteStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_currency_insert
       BEFORE INSERT ON service_orders
-      WHEN NEW.payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+      WHEN NOT (
+        (NEW.settlement_kind = 'native' AND NEW.payment_currency IN ('SPACE', 'BTC', 'DOGE'))
+        OR (
+          NEW.settlement_kind = 'mrc20'
+          AND NEW.payment_chain = 'btc'
+          AND NEW.mrc20_ticker IS NOT NULL
+          AND trim(NEW.mrc20_ticker) <> ''
+          AND NEW.mrc20_id IS NOT NULL
+          AND trim(NEW.mrc20_id) <> ''
+          AND NEW.payment_currency = upper(trim(NEW.mrc20_ticker)) || '-MRC20'
+        )
+      )
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.payment_currency');
       END;
@@ -652,7 +805,18 @@ export class SqliteStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_currency_update
       BEFORE UPDATE OF payment_currency ON service_orders
-      WHEN NEW.payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+      WHEN NOT (
+        (NEW.settlement_kind = 'native' AND NEW.payment_currency IN ('SPACE', 'BTC', 'DOGE'))
+        OR (
+          NEW.settlement_kind = 'mrc20'
+          AND NEW.payment_chain = 'btc'
+          AND NEW.mrc20_ticker IS NOT NULL
+          AND trim(NEW.mrc20_ticker) <> ''
+          AND NEW.mrc20_id IS NOT NULL
+          AND trim(NEW.mrc20_id) <> ''
+          AND NEW.payment_currency = upper(trim(NEW.mrc20_ticker)) || '-MRC20'
+        )
+      )
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.payment_currency');
       END;

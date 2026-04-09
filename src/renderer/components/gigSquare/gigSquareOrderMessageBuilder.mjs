@@ -5,7 +5,7 @@ function normalizeText(value) {
 const DEFAULT_BUYER_ORDER_CHAT_TIMEOUT_MS = 8000;
 
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
-const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
 const FORBIDDEN_ORDER_CHATTER_PATTERNS = [
   /已收到你.*付款/i,
   /收到你.*付款/i,
@@ -16,8 +16,13 @@ const FORBIDDEN_ORDER_CHATTER_PATTERNS = [
   /请求技能/i,
   /支付金额/i,
   /\btxid\b/i,
+  /\bcommit\s+txid\b/i,
   /\border\s+(?:id|ref(?:erence)?)\b/i,
   /transaction id/i,
+  /payment chain/i,
+  /settlement kind/i,
+  /mrc20 ticker/i,
+  /mrc20 id/i,
   /交易id/i,
   /service id/i,
   /skill name/i,

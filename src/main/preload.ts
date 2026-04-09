@@ -138,6 +138,11 @@ contextBridge.exposeInMainWorld('electron', {
       serviceId?: string | null;
       servicePrice?: string | null;
       serviceCurrency?: string | null;
+      servicePaymentChain?: string | null;
+      serviceSettlementKind?: 'native' | 'mrc20' | string | null;
+      serviceMrc20Ticker?: string | null;
+      serviceMrc20Id?: string | null;
+      servicePaymentCommitTxid?: string | null;
       serviceSkill?: string | null;
       serverBotGlobalMetaId?: string | null;
       servicePaidTx?: string | null;

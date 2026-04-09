@@ -421,7 +421,25 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;
     revokeService: (params: { serviceId: string }) => Promise<GigSquareServiceMutationResult>;
     modifyService: (params: GigSquareModifyServiceParams) => Promise<GigSquareServiceMutationResult>;
-    sendOrder: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; orderPayload: string; peerName?: string | null; peerAvatar?: string | null; serviceId?: string | null; servicePrice?: string | null; serviceCurrency?: string | null; serviceSkill?: string | null; serverBotGlobalMetaId?: string | null; servicePaidTx?: string | null }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | 'order_request_too_long' | string }>;
+    sendOrder: (params: {
+      metabotId: number;
+      toGlobalMetaId: string;
+      toChatPubkey: string;
+      orderPayload: string;
+      peerName?: string | null;
+      peerAvatar?: string | null;
+      serviceId?: string | null;
+      servicePrice?: string | null;
+      serviceCurrency?: string | null;
+      servicePaymentChain?: string | null;
+      serviceSettlementKind?: 'native' | 'mrc20' | string | null;
+      serviceMrc20Ticker?: string | null;
+      serviceMrc20Id?: string | null;
+      servicePaymentCommitTxid?: string | null;
+      serviceSkill?: string | null;
+      serverBotGlobalMetaId?: string | null;
+      servicePaidTx?: string | null;
+    }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | 'order_request_too_long' | string }>;
     pingProvider: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string }>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;

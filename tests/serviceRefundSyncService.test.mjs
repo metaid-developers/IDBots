@@ -160,3 +160,63 @@ test('syncRequestPins falls back to service pin ownership when seller global met
   assert.equal(order.failureReason, 'delivery_timeout');
   assert.deepEqual(seenEvents, ['refund_requested:seller']);
 });
+
+test('syncRequestPins synthesizes seller MRC20 refund orders with structured settlement metadata', async () => {
+  const seenEvents = [];
+  const { store, service } = await createRefundSyncServiceForTest({
+    fetchRefundRequestPins: async () => [{
+      pinId: 'refund-request-mrc20-pin-id',
+      timestampMs: 1_770_000_720_000,
+      content: JSON.stringify({
+        paymentTxid: 'c'.repeat(64),
+        servicePinId: 'service-mrc20',
+        serviceName: 'Indexer Credits',
+        refundAmount: '12.50000000',
+        refundCurrency: 'metaid-mrc20',
+        settlementKind: 'mrc20',
+        mrc20Ticker: 'metaid',
+        mrc20Id: 'mrc20-token-id-009',
+        paymentCommitTxid: '7'.repeat(64),
+        refundToAddress: '1buyer-refund-address',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+        orderMessagePinId: 'mrc20-order-pin-id',
+        failureReason: 'delivery_timeout',
+        failureDetectedAt: 1_770_000_715,
+      }),
+    }],
+    resolveLocalMetabotGlobalMetaId: (localMetabotId) => (
+      localMetabotId === 21 ? 'seller-global-metaid' : null
+    ),
+    resolveLocalMetabotIdByGlobalMetaId: (globalMetaId) => (
+      globalMetaId === 'seller-global-metaid' ? 21 : null
+    ),
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}`);
+    },
+  });
+
+  await service.syncRequestPins();
+
+  const sellerOrders = store.listOrdersByRole('seller');
+  assert.equal(sellerOrders.length, 1);
+
+  const order = sellerOrders[0];
+  assert.equal(order.localMetabotId, 21);
+  assert.equal(order.counterpartyGlobalMetaid, 'buyer-global-metaid');
+  assert.equal(order.paymentTxid, 'c'.repeat(64));
+  assert.equal(order.paymentChain, 'btc');
+  assert.equal(order.paymentAmount, '12.50000000');
+  assert.equal(order.paymentCurrency, 'METAID-MRC20');
+  assert.equal(order.settlementKind, 'mrc20');
+  assert.equal(order.mrc20Ticker, 'METAID');
+  assert.equal(order.mrc20Id, 'mrc20-token-id-009');
+  assert.equal(order.paymentCommitTxid, '7'.repeat(64));
+  assert.equal(order.status, 'refund_pending');
+  assert.equal(order.orderMessagePinId, 'mrc20-order-pin-id');
+  assert.equal(order.refundRequestPinId, 'refund-request-mrc20-pin-id');
+  assert.equal(order.failureReason, 'delivery_timeout');
+  assert.equal(order.failedAt, 1_770_000_715_000);
+  assert.equal(order.refundRequestedAt, 1_770_000_720_000);
+  assert.deepEqual(seenEvents, ['refund_requested:seller']);
+});

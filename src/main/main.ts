@@ -3155,6 +3155,33 @@ const getServiceRefundSettlementService = () => {
           };
         },
         executeRefundTransfer: async (input) => {
+          if (input.order.settlementKind === 'mrc20') {
+            const mrc20Id = String(input.order.mrc20Id || '').trim();
+            if (!mrc20Id) {
+              throw new Error(`Missing mrc20Id for refund order=${input.order.id}`);
+            }
+            const assets = await getMetabotWalletAssets(getMetabotStore(), {
+              metabotId: input.order.localMetabotId,
+            });
+            const asset = assets.mrc20Assets.find((candidate) => candidate.mrc20Id === mrc20Id);
+            if (!asset) {
+              throw new Error(`Refund MRC20 asset is unavailable in wallet for order=${input.order.id}`);
+            }
+            const feeRate = await resolveTransferFeeRate('btc');
+            const result = await executeTokenTransferService(getMetabotStore(), {
+              kind: 'mrc20',
+              metabotId: input.order.localMetabotId,
+              asset,
+              toAddress: input.refundToAddress,
+              amount: input.refundAmount,
+              feeRate,
+            });
+            return {
+              success: true,
+              txId: result.revealTxId || result.txId || null,
+            };
+          }
+
           const feeRate = await resolveTransferFeeRate(input.order.paymentChain as TransferChain);
           return executeTransfer(getMetabotStore(), {
             metabotId: input.order.localMetabotId,
@@ -5691,6 +5718,11 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serviceId?: string | null;
     servicePrice?: string | null;
     serviceCurrency?: string | null;
+    servicePaymentChain?: string | null;
+    serviceSettlementKind?: string | null;
+    serviceMrc20Ticker?: string | null;
+    serviceMrc20Id?: string | null;
+    servicePaymentCommitTxid?: string | null;
     serviceSkill?: string | null;
     serverBotGlobalMetaId?: string | null;
     servicePaidTx?: string | null;
@@ -5708,7 +5740,28 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       const peerAvatar = typeof params?.peerAvatar === 'string' ? params.peerAvatar.trim() || null : null;
       const serviceId = typeof params?.serviceId === 'string' ? params.serviceId.trim() || null : null;
       const servicePrice = typeof params?.servicePrice === 'string' ? params.servicePrice.trim() || null : null;
-      const serviceCurrency = typeof params?.serviceCurrency === 'string' ? params.serviceCurrency.trim() || null : null;
+      const rawServiceCurrency = typeof params?.serviceCurrency === 'string' ? params.serviceCurrency.trim() || null : null;
+      const rawServicePaymentChain = typeof params?.servicePaymentChain === 'string' ? params.servicePaymentChain.trim() || null : null;
+      const rawServiceSettlementKind = typeof params?.serviceSettlementKind === 'string' ? params.serviceSettlementKind.trim() || null : null;
+      const rawServiceMrc20Ticker = typeof params?.serviceMrc20Ticker === 'string' ? params.serviceMrc20Ticker.trim() || null : null;
+      const rawServiceMrc20Id = typeof params?.serviceMrc20Id === 'string' ? params.serviceMrc20Id.trim() || null : null;
+      const rawServicePaymentCommitTxid = typeof params?.servicePaymentCommitTxid === 'string'
+        ? params.servicePaymentCommitTxid.trim() || null
+        : null;
+      const settlement = parseGigSquareSettlementAsset({
+        paymentCurrency: rawServiceCurrency || undefined,
+        settlementKind: rawServiceSettlementKind || undefined,
+        mrc20Ticker: rawServiceMrc20Ticker || undefined,
+        mrc20Id: rawServiceMrc20Id || undefined,
+      });
+      const serviceCurrency = settlement.protocolCurrency || rawServiceCurrency;
+      const servicePaymentChain = rawServicePaymentChain || settlement.paymentChain;
+      const serviceSettlementKind = settlement.settlementKind;
+      const serviceMrc20Ticker = settlement.mrc20Ticker;
+      const serviceMrc20Id = settlement.mrc20Id;
+      const servicePaymentCommitTxid = serviceSettlementKind === 'mrc20'
+        ? rawServicePaymentCommitTxid
+        : null;
       const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
       let servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
@@ -5821,9 +5874,13 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           servicePinId: serviceId,
           serviceName: serviceSkill || serviceId || 'Service Order',
           paymentTxid: servicePaidTx || result.txids?.[0] || result.pinId,
-          paymentChain: normalizeServiceOrderPaymentChain(serviceCurrency),
+          paymentChain: servicePaymentChain || normalizeServiceOrderPaymentChain(serviceCurrency),
           paymentAmount: servicePrice || '0',
           paymentCurrency: serviceCurrency || 'SPACE',
+          settlementKind: serviceSettlementKind,
+          mrc20Ticker: serviceMrc20Ticker || undefined,
+          mrc20Id: serviceMrc20Id || undefined,
+          paymentCommitTxid: servicePaymentCommitTxid || undefined,
           coworkSessionId,
           orderMessagePinId: result.pinId ?? null,
         });

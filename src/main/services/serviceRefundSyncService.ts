@@ -356,7 +356,7 @@ export class ServiceRefundSyncService {
       return null;
     }
 
-    const paymentChain = this.resolvePaymentChainFromRefundCurrency(payload.refundCurrency);
+    const paymentChain = this.resolvePaymentChainFromRefundPayload(payload);
     const paymentAmount = String(payload.refundAmount || '').trim() || '0';
     const serviceName = String(payload.serviceName || '').trim() || 'Service Order';
     const orderMessagePinId = String(payload.orderMessagePinId || '').trim() || null;
@@ -371,6 +371,10 @@ export class ServiceRefundSyncService {
       paymentChain,
       paymentAmount,
       paymentCurrency: String(payload.refundCurrency || '').trim() || undefined,
+      settlementKind: String(payload.settlementKind || '').trim() || undefined,
+      mrc20Ticker: String(payload.mrc20Ticker || '').trim() || undefined,
+      mrc20Id: String(payload.mrc20Id || '').trim() || undefined,
+      paymentCommitTxid: String(payload.paymentCommitTxid || '').trim() || undefined,
       orderMessagePinId,
       status: 'failed',
       now: this.resolveFailureDetectedAt(payload) ?? this.resolveRefundRequestedAt({ pinId: '', content: payload }, payload),
@@ -396,8 +400,15 @@ export class ServiceRefundSyncService {
     return null;
   }
 
-  private resolvePaymentChainFromRefundCurrency(refundCurrency: unknown): string {
-    const normalized = String(refundCurrency || '').trim().toUpperCase();
+  private resolvePaymentChainFromRefundPayload(payload: Record<string, any>): string {
+    const explicitChain = String(payload.paymentChain || '').trim().toLowerCase();
+    if (explicitChain === 'btc' || explicitChain === 'doge' || explicitChain === 'mvc') {
+      return explicitChain;
+    }
+
+    const settlementKind = String(payload.settlementKind || '').trim().toLowerCase();
+    const normalized = String(payload.refundCurrency || '').trim().toUpperCase();
+    if (settlementKind === 'mrc20' || normalized.endsWith('-MRC20')) return 'btc';
     if (normalized === 'BTC') return 'btc';
     if (normalized === 'DOGE') return 'doge';
     return 'mvc';
