@@ -6,10 +6,13 @@ import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
+  getSelectableGigSquareMrc20Assets,
 } from './gigSquarePublishPresentation.js';
 import { getEnabledGigSquareSkills } from './gigSquareSkillOptions.js';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
+type PublishCurrency = 'BTC' | 'SPACE' | 'DOGE' | 'MRC20';
+type SelectableMrc20Asset = Pick<ElectronMrc20Asset, 'symbol' | 'mrc20Id' | 'balance'>;
 
 interface GigSquarePublishModalProps {
   isOpen: boolean;
@@ -46,7 +49,9 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const [serviceNameDirty, setServiceNameDirty] = useState(false);
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
-  const [currency, setCurrency] = useState<'BTC' | 'SPACE' | 'DOGE'>('BTC');
+  const [currency, setCurrency] = useState<PublishCurrency>('BTC');
+  const [mrc20Assets, setMrc20Assets] = useState<SelectableMrc20Asset[]>([]);
+  const [selectedMrc20Id, setSelectedMrc20Id] = useState('');
   const [outputType, setOutputType] = useState<'text' | 'image' | 'video' | 'other'>('text');
   const [serviceIconDataUrl, setServiceIconDataUrl] = useState('');
   const [status, setStatus] = useState<PublishStatus>('idle');
@@ -60,8 +65,13 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     () => skills.find((skill) => skill.id === selectedSkillId) || null,
     [skills, selectedSkillId]
   );
+  const selectedMrc20Asset = useMemo(
+    () => mrc20Assets.find((asset) => asset.mrc20Id === selectedMrc20Id) || null,
+    [mrc20Assets, selectedMrc20Id]
+  );
 
   const priceLimit = getGigSquarePublishPriceLimit(currency);
+  const priceLimitText = getGigSquarePublishPriceLimitText(currency);
   const isFormDisabled = status === 'submitting' || statusPanelOpen;
 
   const loadMetabots = useCallback(async () => {
@@ -126,6 +136,8 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     setStatusPanelState('submitting');
     setServiceNameDirty(false);
     setServiceIconDataUrl('');
+    setMrc20Assets([]);
+    setSelectedMrc20Id('');
     loadMetabots();
     loadSkills();
   }, [isOpen, loadMetabots, loadSkills]);
@@ -134,6 +146,34 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     if (!selectedSkill || serviceNameDirty) return;
     setServiceName(selectedSkill.name + '-service');
   }, [selectedSkill, serviceNameDirty]);
+
+  useEffect(() => {
+    if (currency === 'MRC20') return;
+    setMrc20Assets([]);
+    setSelectedMrc20Id('');
+  }, [currency]);
+
+  useEffect(() => {
+    if (!isOpen || !selectedMetabotId || currency !== 'MRC20') return;
+    let isCancelled = false;
+    const loadMrc20Assets = async () => {
+      try {
+        const result = await window.electron.idbots.getMetabotWalletAssets({ metabotId: selectedMetabotId });
+        if (isCancelled) return;
+        const options = getSelectableGigSquareMrc20Assets(result?.assets?.mrc20Assets || []);
+        setMrc20Assets(options);
+        setSelectedMrc20Id((prev) => (options.some((item) => item.mrc20Id === prev) ? prev : ''));
+      } catch {
+        if (isCancelled) return;
+        setMrc20Assets([]);
+        setSelectedMrc20Id('');
+      }
+    };
+    void loadMrc20Assets();
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, selectedMetabotId, currency]);
 
   if (!isOpen) return null;
 
@@ -189,8 +229,12 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       setError(i18nService.t('gigSquarePublishPriceInvalid'));
       return false;
     }
-    if (numericPrice > priceLimit) {
+    if (priceLimit !== null && numericPrice > priceLimit) {
       setError(i18nService.t('gigSquarePublishPriceExceed'));
+      return false;
+    }
+    if (currency === 'MRC20' && !selectedMrc20Id) {
+      setError('Please select an MRC20 token');
       return false;
     }
     if (!outputType) {
@@ -218,6 +262,8 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       providerSkill: selectedSkill?.name || '',
       price: price.trim(),
       currency,
+      mrc20Ticker: currency === 'MRC20' ? selectedMrc20Asset?.symbol || '' : undefined,
+      mrc20Id: currency === 'MRC20' ? selectedMrc20Asset?.mrc20Id || '' : undefined,
       outputType,
       serviceIconDataUrl: serviceIconDataUrl || null,
     });
@@ -403,9 +449,11 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 disabled={isFormDisabled}
               />
-              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
-                {i18nService.t('gigSquarePublishPriceLimitPrefix')}{getGigSquarePublishPriceLimitText(currency)}
-              </p>
+              {priceLimitText && (
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                  {i18nService.t('gigSquarePublishPriceLimitPrefix')}{priceLimitText}
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
@@ -413,7 +461,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               </label>
               <select
                 value={currency}
-                onChange={(e) => setCurrency(e.target.value as 'BTC' | 'SPACE' | 'DOGE')}
+                onChange={(e) => setCurrency(e.target.value as PublishCurrency)}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 disabled={isFormDisabled}
               >
@@ -425,6 +473,28 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               </select>
             </div>
           </div>
+          {currency === 'MRC20' && (
+            <div>
+              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                MRC20 Token
+              </label>
+              <select
+                value={selectedMrc20Id}
+                onChange={(e) => setSelectedMrc20Id(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                disabled={isFormDisabled}
+              >
+                <option value="">
+                  {mrc20Assets.length > 0 ? 'Select token' : 'No available MRC20 token'}
+                </option>
+                {mrc20Assets.map((asset) => (
+                  <option key={asset.mrc20Id} value={asset.mrc20Id}>
+                    {asset.symbol} ({asset.balance.display})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

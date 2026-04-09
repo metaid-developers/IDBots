@@ -414,6 +414,8 @@ interface IElectronAPI {
       providerSkill: string;
       price: string;
       currency: string;
+      mrc20Ticker?: string;
+      mrc20Id?: string;
       outputType: string;
       serviceIconDataUrl?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;

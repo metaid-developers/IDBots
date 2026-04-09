@@ -108,6 +108,8 @@ contextBridge.exposeInMainWorld('electron', {
       providerSkill: string;
       price: string;
       currency: string;
+      mrc20Ticker?: string;
+      mrc20Id?: string;
       outputType: string;
       serviceIconDataUrl?: string | null;
     }) => ipcRenderer.invoke('gigSquare:publishService', params),
@@ -121,6 +123,8 @@ contextBridge.exposeInMainWorld('electron', {
       providerSkill?: string;
       price?: string;
       currency?: string;
+      mrc20Ticker?: string;
+      mrc20Id?: string;
       outputType?: string;
       serviceIconDataUrl?: string | null;
     }) => ipcRenderer.invoke('gigSquare:modifyService', params),

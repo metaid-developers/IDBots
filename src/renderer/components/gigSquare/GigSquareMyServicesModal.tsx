@@ -19,6 +19,7 @@ import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
+  getSelectableGigSquareMrc20Assets,
 } from './gigSquarePublishPresentation.js';
 import {
   getMyServiceMetricLabel,
@@ -33,6 +34,8 @@ import {
 } from './gigSquareSkillOptions.js';
 
 type GigSquareMyServicesView = 'list' | 'detail';
+type ModifyCurrency = 'BTC' | 'SPACE' | 'DOGE' | 'MRC20';
+type SelectableMrc20Asset = Pick<ElectronMrc20Asset, 'symbol' | 'mrc20Id' | 'balance'>;
 
 type SelectedServiceLike = Pick<GigSquareMyServiceSummary, 'id'> & Partial<GigSquareMyServiceSummary>;
 
@@ -42,7 +45,9 @@ type ModifyDraft = {
   description: string;
   providerSkill: string;
   price: string;
-  currency: 'BTC' | 'SPACE' | 'DOGE';
+  currency: ModifyCurrency;
+  mrc20Ticker: string;
+  mrc20Id: string;
   outputType: 'text' | 'image' | 'video' | 'other';
   serviceIconDataUrl: string;
 };
@@ -93,6 +98,7 @@ const normalizeTimestampMs = (value: number | null | undefined): number | null =
 
 const normalizeModifyCurrency = (value: string | null | undefined): ModifyDraft['currency'] => {
   const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'MRC20') return 'MRC20';
   if (normalized === 'BTC') return 'BTC';
   if (normalized === 'DOGE') return 'DOGE';
   return 'SPACE';
@@ -162,12 +168,17 @@ const normalizeMutationTxids = (value: string[] | undefined): string[] => {
 };
 
 const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): ModifyDraft => ({
+  // mrc20 services are represented by settlementKind + mrc20 identifiers.
+  currency: String(service.settlementKind || '').trim().toLowerCase() === 'mrc20'
+    ? 'MRC20'
+    : normalizeModifyCurrency(service.currency),
   serviceName: (service.serviceName || '').trim(),
   displayName: (service.displayName || '').trim(),
   description: (service.description || '').trim(),
   providerSkill: (service.providerSkill || '').trim(),
   price: (service.price || '').trim(),
-  currency: normalizeModifyCurrency(service.currency),
+  mrc20Ticker: (service.mrc20Ticker || '').trim(),
+  mrc20Id: (service.mrc20Id || '').trim(),
   outputType: normalizeModifyOutputType(service.outputType || null),
   serviceIconDataUrl: '',
 });
@@ -183,8 +194,12 @@ const validateModifyDraft = (draft: ModifyDraft): string | null => {
   if (!Number.isFinite(numericPrice) || numericPrice < 0) {
     return i18nService.t('gigSquarePublishPriceInvalid');
   }
-  if (numericPrice > getGigSquarePublishPriceLimit(draft.currency)) {
+  const priceLimit = getGigSquarePublishPriceLimit(draft.currency);
+  if (priceLimit !== null && numericPrice > priceLimit) {
     return i18nService.t('gigSquarePublishPriceExceed');
+  }
+  if (draft.currency === 'MRC20' && (!draft.mrc20Ticker.trim() || !draft.mrc20Id.trim())) {
+    return 'Please select an MRC20 token';
   }
   return null;
 };
@@ -269,6 +284,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   const [revokeTargetService, setRevokeTargetService] = useState<GigSquareMyServiceSummary | null>(null);
   const [modifyTargetService, setModifyTargetService] = useState<GigSquareMyServiceSummary | null>(null);
   const [modifyDraft, setModifyDraft] = useState<ModifyDraft | null>(null);
+  const [modifyMrc20Assets, setModifyMrc20Assets] = useState<SelectableMrc20Asset[]>([]);
   const [modifyError, setModifyError] = useState<string | null>(null);
   const [mutationNotice, setMutationNotice] = useState<MutationNotice | null>(null);
   const modifyIconInputRef = useRef<HTMLInputElement | null>(null);
@@ -282,6 +298,26 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     () => buildGigSquareModifySkillOptions(skills, modifyDraft?.providerSkill),
     [modifyDraft?.providerSkill, skills],
   );
+  const modifyMrc20Options = useMemo(() => {
+    if (!modifyDraft || modifyDraft.currency !== 'MRC20') return [];
+    const options = [...modifyMrc20Assets];
+    const currentMrc20Id = modifyDraft.mrc20Id.trim();
+    const currentTicker = modifyDraft.mrc20Ticker.trim();
+    if (currentMrc20Id && currentTicker && !options.some((item) => item.mrc20Id === currentMrc20Id)) {
+      options.unshift({
+        symbol: currentTicker,
+        mrc20Id: currentMrc20Id,
+        balance: {
+          confirmed: '0',
+          unconfirmed: '0',
+          pendingIn: '0',
+          pendingOut: '0',
+          display: '0',
+        },
+      });
+    }
+    return options;
+  }, [modifyDraft, modifyMrc20Assets]);
 
   const loadServicesPage = useCallback(async (
     pageNumber: number,
@@ -370,6 +406,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     setRevokeTargetService(null);
     setModifyTargetService(null);
     setModifyDraft(null);
+    setModifyMrc20Assets([]);
     setModifyError(null);
     setMutationNotice(null);
     if (modifyIconInputRef.current) {
@@ -389,6 +426,42 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
       ));
     }
   }, [modifyDraft, skills]);
+
+  useEffect(() => {
+    if (!modifyDraft || modifyDraft.currency === 'MRC20') return;
+    setModifyMrc20Assets([]);
+    if (!modifyDraft.mrc20Ticker && !modifyDraft.mrc20Id) return;
+    setModifyDraft((prev) => (prev ? {
+      ...prev,
+      mrc20Ticker: '',
+      mrc20Id: '',
+    } : prev));
+  }, [modifyDraft]);
+
+  useEffect(() => {
+    if (!isOpen || !modifyTargetService || !modifyDraft || modifyDraft.currency !== 'MRC20') return;
+    const creatorMetabotId = modifyTargetService.creatorMetabotId;
+    if (typeof creatorMetabotId !== 'number' || creatorMetabotId <= 0) {
+      setModifyMrc20Assets([]);
+      return;
+    }
+    let isCancelled = false;
+    const loadMrc20Assets = async () => {
+      try {
+        const result = await window.electron.idbots.getMetabotWalletAssets({ metabotId: creatorMetabotId });
+        if (isCancelled) return;
+        const options = getSelectableGigSquareMrc20Assets(result?.assets?.mrc20Assets || []);
+        setModifyMrc20Assets(options);
+      } catch {
+        if (isCancelled) return;
+        setModifyMrc20Assets([]);
+      }
+    };
+    void loadMrc20Assets();
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, modifyTargetService?.creatorMetabotId, modifyDraft?.currency]);
 
   useEffect(() => {
     if (!isOpen || servicesPage) return;
@@ -415,6 +488,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     if (mutationBusyServiceId) return;
     setModifyTargetService(null);
     setModifyDraft(null);
+    setModifyMrc20Assets([]);
     setModifySelectedSkillId('');
     setModifyError(null);
     if (modifyIconInputRef.current) {
@@ -467,6 +541,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
       ...nextDraft,
       providerSkill: resolvedSelection.providerSkill,
     });
+    setModifyMrc20Assets([]);
     setModifySelectedSkillId(resolvedSelection.selectedSkillId);
     setModifyError(null);
     if (modifyIconInputRef.current) {
@@ -572,6 +647,8 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
         providerSkill: modifyDraft.providerSkill.trim(),
         price: modifyDraft.price.trim(),
         currency: modifyDraft.currency,
+        mrc20Ticker: modifyDraft.currency === 'MRC20' ? modifyDraft.mrc20Ticker.trim() : undefined,
+        mrc20Id: modifyDraft.currency === 'MRC20' ? modifyDraft.mrc20Id.trim() : undefined,
         outputType: modifyDraft.outputType,
         serviceIconDataUrl: modifyDraft.serviceIconDataUrl || null,
       });
@@ -633,6 +710,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     && modifyTargetService
     && mutationBusyServiceId === modifyTargetService.id,
   );
+  const modifyPriceLimitText = modifyDraft ? getGigSquarePublishPriceLimitText(modifyDraft.currency) : '';
   const paginationStart = paginationPage.total > 0
     ? (paginationPage.page - 1) * paginationPage.pageSize + 1
     : 0;
@@ -1392,6 +1470,8 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                           onChange={(event) => setModifyDraft((prev) => (prev ? {
                             ...prev,
                             currency: normalizeModifyCurrency(event.target.value),
+                            mrc20Ticker: normalizeModifyCurrency(event.target.value) === 'MRC20' ? prev.mrc20Ticker : '',
+                            mrc20Id: normalizeModifyCurrency(event.target.value) === 'MRC20' ? prev.mrc20Id : '',
                           } : prev))}
                           disabled={isModifySubmitting}
                           className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
@@ -1404,9 +1484,41 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                         </select>
                       </div>
                     </div>
-                    <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                      {i18nService.t('gigSquarePublishPriceLimitPrefix')}{getGigSquarePublishPriceLimitText(modifyDraft.currency)}
-                    </p>
+                    {modifyDraft.currency === 'MRC20' && (
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                          MRC20 Token
+                        </label>
+                        <select
+                          value={modifyDraft.mrc20Id}
+                          onChange={(event) => {
+                            const nextMrc20Id = event.target.value;
+                            const selectedAsset = modifyMrc20Options.find((item) => item.mrc20Id === nextMrc20Id);
+                            setModifyDraft((prev) => (prev ? {
+                              ...prev,
+                              mrc20Id: nextMrc20Id,
+                              mrc20Ticker: selectedAsset?.symbol || '',
+                            } : prev));
+                          }}
+                          disabled={isModifySubmitting}
+                          className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
+                        >
+                          <option value="">
+                            {modifyMrc20Options.length > 0 ? 'Select token' : 'No available MRC20 token'}
+                          </option>
+                          {modifyMrc20Options.map((asset) => (
+                            <option key={asset.mrc20Id} value={asset.mrc20Id}>
+                              {asset.symbol} ({asset.balance.display})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {modifyPriceLimitText && (
+                      <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {i18nService.t('gigSquarePublishPriceLimitPrefix')}{modifyPriceLimitText}
+                      </p>
+                    )}
                     <div className="rounded-xl border border-dashed border-claude-border/80 bg-claude-surfaceMuted/60 p-3 dark:border-claude-darkBorder/80 dark:bg-claude-darkSurfaceMuted/60">
                       <label className="mb-3 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('gigSquarePublishIconLabel')}
