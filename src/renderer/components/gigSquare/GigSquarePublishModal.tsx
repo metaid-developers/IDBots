@@ -4,6 +4,7 @@ import { i18nService } from '../../services/i18n';
 import type { Skill } from '../../types/skill';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
+  getNextGigSquareSelectedMrc20Id,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
   getSelectableGigSquareMrc20Assets,
@@ -60,6 +61,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [statusPanelState, setStatusPanelState] = useState<StatusPanelState>('submitting');
   const iconInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedMrc20IdRef = useRef('');
 
   const selectedSkill = useMemo(
     () => skills.find((skill) => skill.id === selectedSkillId) || null,
@@ -148,6 +150,10 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   }, [selectedSkill, serviceNameDirty]);
 
   useEffect(() => {
+    selectedMrc20IdRef.current = selectedMrc20Id;
+  }, [selectedMrc20Id]);
+
+  useEffect(() => {
     if (currency === 'MRC20') return;
     setMrc20Assets([]);
     setSelectedMrc20Id('');
@@ -156,13 +162,16 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   useEffect(() => {
     if (!isOpen || !selectedMetabotId || currency !== 'MRC20') return;
     let isCancelled = false;
+    const previousSelectedMrc20Id = selectedMrc20IdRef.current;
+    setMrc20Assets([]);
+    setSelectedMrc20Id('');
     const loadMrc20Assets = async () => {
       try {
         const result = await window.electron.idbots.getMetabotWalletAssets({ metabotId: selectedMetabotId });
         if (isCancelled) return;
         const options = getSelectableGigSquareMrc20Assets(result?.assets?.mrc20Assets || []);
         setMrc20Assets(options);
-        setSelectedMrc20Id((prev) => (options.some((item) => item.mrc20Id === prev) ? prev : ''));
+        setSelectedMrc20Id(getNextGigSquareSelectedMrc20Id(options, previousSelectedMrc20Id));
       } catch {
         if (isCancelled) return;
         setMrc20Assets([]);

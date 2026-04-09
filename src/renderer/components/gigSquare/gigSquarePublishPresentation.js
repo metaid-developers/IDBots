@@ -27,6 +27,36 @@ export function getSelectableGigSquareMrc20Assets(assets) {
   return (Array.isArray(assets) ? assets : []).filter((asset) => Number(asset?.balance?.display || 0) > 0);
 }
 
+export function getNextGigSquareSelectedMrc20Id(assets, currentSelectedId) {
+  const normalizedCurrentSelectedId = typeof currentSelectedId === 'string' ? currentSelectedId.trim() : '';
+  if (!normalizedCurrentSelectedId) return '';
+  return getSelectableGigSquareMrc20Assets(assets)
+    .some((asset) => asset?.mrc20Id === normalizedCurrentSelectedId)
+    ? normalizedCurrentSelectedId
+    : '';
+}
+
+export function getSelectableGigSquareModifyMrc20Assets(assets, currentSelection) {
+  const options = [...getSelectableGigSquareMrc20Assets(assets)];
+  const currentMrc20Id = typeof currentSelection?.mrc20Id === 'string' ? currentSelection.mrc20Id.trim() : '';
+  const currentTicker = typeof currentSelection?.mrc20Ticker === 'string' ? currentSelection.mrc20Ticker.trim() : '';
+  if (!currentMrc20Id || !currentTicker || options.some((asset) => asset?.mrc20Id === currentMrc20Id)) {
+    return options;
+  }
+  options.unshift({
+    symbol: currentTicker,
+    mrc20Id: currentMrc20Id,
+    balance: {
+      confirmed: '0',
+      unconfirmed: '0',
+      pendingIn: '0',
+      pendingOut: '0',
+      display: '0',
+    },
+  });
+  return options;
+}
+
 export function getGigSquarePublishPriceLimitText(currency) {
   const limit = getGigSquarePublishPriceLimit(currency);
   if (limit === null) return '';

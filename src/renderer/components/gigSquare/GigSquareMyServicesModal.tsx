@@ -19,6 +19,7 @@ import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
+  getSelectableGigSquareModifyMrc20Assets,
   getSelectableGigSquareMrc20Assets,
 } from './gigSquarePublishPresentation.js';
 import {
@@ -300,23 +301,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   );
   const modifyMrc20Options = useMemo(() => {
     if (!modifyDraft || modifyDraft.currency !== 'MRC20') return [];
-    const options = [...modifyMrc20Assets];
-    const currentMrc20Id = modifyDraft.mrc20Id.trim();
-    const currentTicker = modifyDraft.mrc20Ticker.trim();
-    if (currentMrc20Id && currentTicker && !options.some((item) => item.mrc20Id === currentMrc20Id)) {
-      options.unshift({
-        symbol: currentTicker,
-        mrc20Id: currentMrc20Id,
-        balance: {
-          confirmed: '0',
-          unconfirmed: '0',
-          pendingIn: '0',
-          pendingOut: '0',
-          display: '0',
-        },
-      });
-    }
-    return options;
+    return getSelectableGigSquareModifyMrc20Assets(modifyMrc20Assets, {
+      mrc20Ticker: modifyDraft.mrc20Ticker,
+      mrc20Id: modifyDraft.mrc20Id,
+    });
   }, [modifyDraft, modifyMrc20Assets]);
 
   const loadServicesPage = useCallback(async (
@@ -436,7 +424,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
       mrc20Ticker: '',
       mrc20Id: '',
     } : prev));
-  }, [modifyDraft]);
+  }, [modifyDraft?.currency, modifyDraft?.mrc20Ticker, modifyDraft?.mrc20Id]);
 
   useEffect(() => {
     if (!isOpen || !modifyTargetService || !modifyDraft || modifyDraft.currency !== 'MRC20') return;
