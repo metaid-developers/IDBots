@@ -12,6 +12,11 @@ export interface EnsureBuyerOrderObserverSessionInput {
   serviceId?: string | null;
   servicePrice?: string | null;
   serviceCurrency?: string | null;
+  servicePaymentChain?: string | null;
+  serviceSettlementKind?: string | null;
+  serviceMrc20Ticker?: string | null;
+  serviceMrc20Id?: string | null;
+  servicePaymentCommitTxid?: string | null;
   serviceSkill?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
@@ -55,6 +60,11 @@ export async function ensureBuyerOrderObserverSession(
     serviceId: input.serviceId,
     servicePrice: input.servicePrice,
     serviceCurrency: input.serviceCurrency,
+    servicePaymentChain: input.servicePaymentChain,
+    serviceSettlementKind: input.serviceSettlementKind,
+    serviceMrc20Ticker: input.serviceMrc20Ticker,
+    serviceMrc20Id: input.serviceMrc20Id,
+    servicePaymentCommitTxid: input.servicePaymentCommitTxid,
     serviceSkill: input.serviceSkill,
     serverBotGlobalMetaId: input.serverBotGlobalMetaId,
     servicePaidTx: input.servicePaidTx,

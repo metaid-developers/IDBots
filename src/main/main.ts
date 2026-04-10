@@ -13,7 +13,6 @@ import type { MemoryBackend } from './memory/memoryBackend';
 import {
   CoworkRunner,
   isDelegationPriceNumeric,
-  normalizeDelegationPaymentTerms,
   type DelegationRequest,
 } from './libs/coworkRunner';
 import { SkillManager } from './skillManager';
@@ -115,7 +114,10 @@ import { ServiceRefundSettlementService } from './services/serviceRefundSettleme
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
-import { buildDelegationOrderPayload } from './services/delegationOrderMessage';
+import {
+  buildDelegationOrderPayloadFromSettlement,
+  resolveDelegationSettlement,
+} from './services/delegationSettlement';
 import { extractOrderRequestText } from './services/orderPayment';
 import {
   ORDER_RAW_REQUEST_MAX_CHARS,
@@ -2331,10 +2333,19 @@ const executeDelegationPipeline = async (
   // -----------------------------------------------------------------------
   const rawPrice = delegation.price || service.price || '0';
   const rawCurrency = delegation.currency || service.currency || 'SPACE';
-  const normalizedTerms = normalizeDelegationPaymentTerms(rawPrice, rawCurrency);
-  const price = normalizedTerms.price || '0';
-  const currency = normalizedTerms.currency || 'SPACE';
-  const normalizedCurrency = currency.toUpperCase() === 'MVC' ? 'SPACE' : currency.toUpperCase();
+  const delegationSettlement = resolveDelegationSettlement({
+    rawPrice,
+    rawCurrency,
+    service: {
+      currency: toSafeString(service.currency).trim(),
+      settlementKind: toSafeString(service.settlementKind).trim(),
+      paymentChain: toSafeString(service.paymentChain).trim(),
+      mrc20Ticker: toSafeString(service.mrc20Ticker).trim(),
+      mrc20Id: toSafeString(service.mrc20Id).trim(),
+    },
+  });
+  const price = delegationSettlement.price || '0';
+  const normalizedCurrency = delegationSettlement.displayCurrency;
 
   if (!isDelegationPriceNumeric(price)) {
     injectDelegationSystemMessage(
@@ -2356,8 +2367,9 @@ const executeDelegationPipeline = async (
   }
 
   const isFreeDelegation = numericPrice === 0;
-  const paymentChain: TransferChain = normalizedCurrency === 'DOGE' ? 'doge' : 'mvc';
+  const paymentChain = delegationSettlement.paymentChain as TransferChain;
   let paymentTxid = isFreeDelegation ? generateSyntheticOrderTxid() : '';
+  let paymentCommitTxid: string | null = null;
   const formatPaymentFailureMessage = (errorMsg: string): string => (
     /decimalerror|invalid argument/i.test(errorMsg)
       ? `Delegation payment failed before broadcast: ${errorMsg}. No payment was sent, and the delegation has been cancelled.`
@@ -2385,25 +2397,60 @@ const executeDelegationPipeline = async (
 
     try {
       const feeRate = await resolveTransferFeeRate(paymentChain);
-      const transferResult = await executeTransfer(metabotStore, {
-        metabotId,
-        chain: paymentChain,
-        toAddress: paymentAddress,
-        amountSpaceOrDoge: price,
-        feeRate,
-      });
+      if (delegationSettlement.paymentMode === 'mrc20') {
+        const mrc20Id = String(delegationSettlement.mrc20Id || '').trim();
+        if (!mrc20Id) {
+          injectDelegationSystemMessage(
+            sessionId,
+            'Delegation payment failed before broadcast: missing MRC20 asset identity. No payment was sent, and the delegation has been cancelled.'
+          );
+          emitDelegationStateChange({ sessionId, blocking: false, message: 'Missing MRC20 asset' });
+          return;
+        }
+        const assets = await getMetabotWalletAssets(metabotStore, {
+          metabotId,
+        });
+        const asset = assets.mrc20Assets.find((candidate) => candidate.mrc20Id === mrc20Id);
+        if (!asset) {
+          injectDelegationSystemMessage(
+            sessionId,
+            `Delegation payment failed before broadcast: MRC20 asset ${mrc20Id} is unavailable in the current wallet. No payment was sent, and the delegation has been cancelled.`
+          );
+          emitDelegationStateChange({ sessionId, blocking: false, message: 'MRC20 asset unavailable' });
+          return;
+        }
 
-      if (!transferResult.success) {
-        const errorMsg = (transferResult as { success: false; error: string }).error || 'Payment failed';
-        injectDelegationSystemMessage(
-          sessionId,
-          formatPaymentFailureMessage(errorMsg)
-        );
-        emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment failed' });
-        return;
+        const transferResult = await executeTokenTransferService(metabotStore, {
+          kind: 'mrc20',
+          metabotId,
+          asset,
+          toAddress: paymentAddress,
+          amount: price,
+          feeRate,
+        });
+        paymentTxid = transferResult.revealTxId || transferResult.txId || '';
+        paymentCommitTxid = transferResult.commitTxId || null;
+      } else {
+        const transferResult = await executeTransfer(metabotStore, {
+          metabotId,
+          chain: paymentChain,
+          toAddress: paymentAddress,
+          amountSpaceOrDoge: price,
+          feeRate,
+        });
+
+        if (!transferResult.success) {
+          const errorMsg = (transferResult as { success: false; error: string }).error || 'Payment failed';
+          injectDelegationSystemMessage(
+            sessionId,
+            formatPaymentFailureMessage(errorMsg)
+          );
+          emitDelegationStateChange({ sessionId, blocking: false, message: 'Payment failed' });
+          return;
+        }
+
+        paymentTxid = (transferResult as { success: true; txId: string }).txId;
       }
-
-      paymentTxid = (transferResult as { success: true; txId: string }).txId;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown payment error';
       injectDelegationSystemMessage(
@@ -2426,7 +2473,7 @@ const executeDelegationPipeline = async (
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
   }
 
-  const orderPayload = buildDelegationOrderPayload({
+  const orderPayload = buildDelegationOrderPayloadFromSettlement({
     rawRequest: rawOrderRequest,
     taskContext: delegation.taskContext,
     userTask: delegation.userTask,
@@ -2434,9 +2481,9 @@ const executeDelegationPipeline = async (
     providerSkill: toSafeString(service.providerSkill).trim(),
     servicePinId: delegation.servicePinId,
     paymentTxid: isFreeDelegation ? '' : paymentTxid,
+    paymentCommitTxid: isFreeDelegation ? null : paymentCommitTxid,
     orderReference: isFreeDelegation ? paymentTxid : '',
-    price,
-    currency: normalizedCurrency,
+    settlement: delegationSettlement,
   });
 
   let buyerObserverSessionId: string | null = null;
@@ -2449,6 +2496,11 @@ const executeDelegationPipeline = async (
       serviceId: delegation.servicePinId,
       servicePrice: price,
       serviceCurrency: normalizedCurrency,
+      servicePaymentChain: delegationSettlement.paymentChain,
+      serviceSettlementKind: delegationSettlement.settlementKind,
+      serviceMrc20Ticker: delegationSettlement.mrc20Ticker,
+      serviceMrc20Id: delegationSettlement.mrc20Id,
+      servicePaymentCommitTxid: paymentCommitTxid,
       serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
       serverBotGlobalMetaId: providerGlobalMetaId,
       servicePaidTx: paymentTxid,
@@ -2518,9 +2570,13 @@ const executeDelegationPipeline = async (
         servicePinId: delegation.servicePinId,
         serviceName: delegation.serviceName || delegation.servicePinId,
         paymentTxid,
-        paymentChain: normalizeServiceOrderPaymentChain(normalizedCurrency),
+        paymentChain: delegationSettlement.paymentChain,
         paymentAmount: price,
         paymentCurrency: normalizedCurrency,
+        settlementKind: delegationSettlement.settlementKind,
+        mrc20Ticker: delegationSettlement.mrc20Ticker || undefined,
+        mrc20Id: delegationSettlement.mrc20Id || undefined,
+        paymentCommitTxid: paymentCommitTxid || undefined,
         coworkSessionId: sessionId,
         orderMessagePinId: orderPinId,
       });
@@ -2991,6 +3047,11 @@ const getServiceOrderLifecycleService = () => {
             serviceName: order.serviceName,
             refundAmount: order.paymentAmount,
             refundCurrency: order.paymentCurrency,
+            paymentChain: order.paymentChain,
+            settlementKind: order.settlementKind,
+            mrc20Ticker: order.mrc20Ticker,
+            mrc20Id: order.mrc20Id,
+            paymentCommitTxid: order.paymentCommitTxid,
             refundToAddress,
             buyerGlobalMetaId: metabot.globalmetaid,
             sellerGlobalMetaId: order.counterpartyGlobalMetaid,
@@ -5850,6 +5911,11 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           serviceId,
           servicePrice,
           serviceCurrency,
+          servicePaymentChain,
+          serviceSettlementKind,
+          serviceMrc20Ticker,
+          serviceMrc20Id,
+          servicePaymentCommitTxid,
           serviceSkill,
           serverBotGlobalMetaId,
           servicePaidTx,

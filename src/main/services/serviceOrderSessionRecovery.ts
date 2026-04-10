@@ -169,6 +169,11 @@ export async function recoverMissingRefundPendingOrderSessions(
       serviceId: order.servicePinId,
       servicePrice: order.paymentAmount,
       serviceCurrency: order.paymentCurrency,
+      servicePaymentChain: order.paymentChain,
+      serviceSettlementKind: order.settlementKind,
+      serviceMrc20Ticker: order.mrc20Ticker,
+      serviceMrc20Id: order.mrc20Id,
+      servicePaymentCommitTxid: order.paymentCommitTxid,
       serviceSkill: order.serviceName,
       serverBotGlobalMetaId: normalizeText(peerInfo?.serverBotGlobalMetaId)
         || (order.role === 'buyer' ? order.counterpartyGlobalMetaid : ''),

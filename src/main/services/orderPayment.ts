@@ -380,7 +380,7 @@ export async function checkOrderPaymentStatus(params: {
       mrc20Verification.reason.startsWith('fetch_token_utxos_failed:')
     ) {
       return {
-        paid: true,
+        paid: false,
         txid,
         reason: `unverified_network_error: ${mrc20Verification.reason}`,
         ...baseResult,
@@ -395,7 +395,7 @@ export async function checkOrderPaymentStatus(params: {
       || mrc20Verification.reason === 'recipient_txid_not_found'
     ) {
       return {
-        paid: true,
+        paid: false,
         txid,
         reason: `unverified_state_gap: ${mrc20Verification.reason}`,
         ...baseResult,

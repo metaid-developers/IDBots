@@ -12,6 +12,11 @@ export interface EnsureServiceOrderObserverSessionInput {
   serviceId?: string | null;
   servicePrice?: string | null;
   serviceCurrency?: string | null;
+  servicePaymentChain?: string | null;
+  serviceSettlementKind?: string | null;
+  serviceMrc20Ticker?: string | null;
+  serviceMrc20Id?: string | null;
+  servicePaymentCommitTxid?: string | null;
   serviceSkill?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
@@ -26,6 +31,24 @@ export interface EnsureServiceOrderObserverSessionResult {
   externalConversationId: string;
   initialMessage: CoworkMessage | null;
   recoveryMessage: CoworkMessage | null;
+}
+
+export interface ServiceOrderObserverMetadata {
+  role: ServiceOrderObserverRole;
+  peerGlobalMetaId: string;
+  peerName: string | null;
+  peerAvatar: string | null;
+  serviceId: string | null;
+  servicePrice: string | null;
+  serviceCurrency: string | null;
+  servicePaymentChain: string | null;
+  serviceSettlementKind: string | null;
+  serviceMrc20Ticker: string | null;
+  serviceMrc20Id: string | null;
+  servicePaymentCommitTxid: string | null;
+  serviceSkill: string | null;
+  serverBotGlobalMetaId: string | null;
+  servicePaidTx: string | null;
 }
 
 function normalizeText(value: unknown): string {
@@ -50,6 +73,11 @@ export function buildServiceOrderFallbackPayload(input: {
   servicePaidTx?: string | null;
   servicePrice?: string | null;
   serviceCurrency?: string | null;
+  servicePaymentChain?: string | null;
+  serviceSettlementKind?: string | null;
+  serviceMrc20Ticker?: string | null;
+  serviceMrc20Id?: string | null;
+  servicePaymentCommitTxid?: string | null;
   serviceId?: string | null;
   serviceSkill?: string | null;
   peerGlobalMetaId?: string | null;
@@ -61,11 +89,38 @@ export function buildServiceOrderFallbackPayload(input: {
       ? `支付金额 ${normalizeText(input.servicePrice) || '0'} ${normalizeText(input.serviceCurrency) || 'SPACE'}`
       : '',
     txid ? `txid: ${txid}` : 'txid: pending',
+    normalizeText(input.servicePaymentCommitTxid) ? `commit txid: ${normalizeText(input.servicePaymentCommitTxid)}` : '',
+    normalizeText(input.servicePaymentChain) ? `payment chain: ${normalizeText(input.servicePaymentChain)}` : '',
+    normalizeText(input.serviceSettlementKind) ? `settlement kind: ${normalizeText(input.serviceSettlementKind)}` : '',
+    normalizeText(input.serviceMrc20Ticker) ? `mrc20 ticker: ${normalizeText(input.serviceMrc20Ticker)}` : '',
+    normalizeText(input.serviceMrc20Id) ? `mrc20 id: ${normalizeText(input.serviceMrc20Id)}` : '',
     normalizeText(input.serviceId) ? `service id: ${normalizeText(input.serviceId)}` : '',
     normalizeText(input.serviceSkill) ? `skill name: ${normalizeText(input.serviceSkill)}` : '',
     normalizeText(input.peerGlobalMetaId) ? `peer globalmetaid: ${normalizeText(input.peerGlobalMetaId)}` : '',
   ].filter(Boolean);
   return lines.join('\n');
+}
+
+export function buildServiceOrderObserverMetadata(
+  input: EnsureServiceOrderObserverSessionInput
+): ServiceOrderObserverMetadata {
+  return {
+    role: input.role,
+    peerGlobalMetaId: normalizeText(input.peerGlobalMetaId),
+    peerName: normalizeText(input.peerName) || null,
+    peerAvatar: normalizeText(input.peerAvatar) || null,
+    serviceId: normalizeText(input.serviceId) || null,
+    servicePrice: normalizeText(input.servicePrice) || null,
+    serviceCurrency: normalizeText(input.serviceCurrency) || null,
+    servicePaymentChain: normalizeText(input.servicePaymentChain) || null,
+    serviceSettlementKind: normalizeText(input.serviceSettlementKind) || null,
+    serviceMrc20Ticker: normalizeText(input.serviceMrc20Ticker) || null,
+    serviceMrc20Id: normalizeText(input.serviceMrc20Id) || null,
+    servicePaymentCommitTxid: normalizeText(input.servicePaymentCommitTxid) || null,
+    serviceSkill: normalizeText(input.serviceSkill) || null,
+    serverBotGlobalMetaId: normalizeText(input.serverBotGlobalMetaId) || null,
+    servicePaidTx: normalizeText(input.servicePaidTx) || null,
+  };
 }
 
 export async function ensureServiceOrderObserverSession(
@@ -100,6 +155,11 @@ export async function ensureServiceOrderObserverSession(
     servicePaidTx: input.servicePaidTx,
     servicePrice: input.servicePrice,
     serviceCurrency: input.serviceCurrency,
+    servicePaymentChain: input.servicePaymentChain,
+    serviceSettlementKind: input.serviceSettlementKind,
+    serviceMrc20Ticker: input.serviceMrc20Ticker,
+    serviceMrc20Id: input.serviceMrc20Id,
+    servicePaymentCommitTxid: input.servicePaymentCommitTxid,
     serviceId: input.serviceId,
     serviceSkill: input.serviceSkill,
     peerGlobalMetaId: input.peerGlobalMetaId,
@@ -129,18 +189,7 @@ export async function ensureServiceOrderObserverSession(
     externalConversationId,
     metabotId: input.metabotId,
     coworkSessionId: session.id,
-    metadataJson: JSON.stringify({
-      role: input.role,
-      peerGlobalMetaId: normalizeText(input.peerGlobalMetaId),
-      peerName: normalizeText(input.peerName) || null,
-      peerAvatar: normalizeText(input.peerAvatar) || null,
-      serviceId: normalizeText(input.serviceId) || null,
-      servicePrice: normalizeText(input.servicePrice) || null,
-      serviceCurrency: normalizeText(input.serviceCurrency) || null,
-      serviceSkill: normalizeText(input.serviceSkill) || null,
-      serverBotGlobalMetaId: normalizeText(input.serverBotGlobalMetaId) || null,
-      servicePaidTx: normalizeText(input.servicePaidTx) || null,
-    }),
+    metadataJson: JSON.stringify(buildServiceOrderObserverMetadata(input)),
   });
 
   const initialMessage = coworkStore.addMessage(session.id, {

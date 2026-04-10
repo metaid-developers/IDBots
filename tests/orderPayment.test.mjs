@@ -124,7 +124,7 @@ test('checkOrderPaymentStatus routes MRC20 orders through dedicated verifier and
   assert.equal(result.amountAtomic, '1250000000');
 });
 
-test('checkOrderPaymentStatus treats non-observable MRC20 recipient state as paid but unverifiable', async () => {
+test('checkOrderPaymentStatus rejects non-observable MRC20 recipient state until the transfer is verifiable', async () => {
   const txid = 'c'.repeat(64);
 
   const result = await checkOrderPaymentStatus({
@@ -151,8 +151,43 @@ test('checkOrderPaymentStatus treats non-observable MRC20 recipient state as pai
     }),
   });
 
-  assert.equal(result.paid, true);
+  assert.equal(result.paid, false);
   assert.equal(result.reason, 'unverified_state_gap: recipient_txid_not_observable');
+  assert.equal(result.settlementKind, 'mrc20');
+  assert.equal(result.currency, 'METAID-MRC20');
+  assert.equal(result.amountDisplay, '12.5');
+  assert.equal(result.amountAtomic, '0');
+});
+
+test('checkOrderPaymentStatus rejects MRC20 orders when verifier returns a network error', async () => {
+  const txid = 'd'.repeat(64);
+
+  const result = await checkOrderPaymentStatus({
+    txid,
+    plaintext: [
+      '[ORDER] 帮我查询东京天气',
+      '支付金额 12.5 METAID-MRC20',
+      'payment chain: btc',
+      'settlement kind: mrc20',
+      'mrc20 ticker: METAID',
+      'mrc20 id: tick-metaid',
+      `txid: ${txid}`,
+    ].join('\n'),
+    source: 'metaweb_private',
+    metabotId: 7,
+    metabotStore: createMetabotStore(),
+    verifyMrc20Payment: async () => ({
+      valid: false,
+      reason: 'fetch_token_utxos_failed: upstream timeout',
+      currency: 'METAID-MRC20',
+      amountDisplay: '12.5',
+      matchedAmountAtomic: '0',
+      expectedAmountAtomic: '1250000000',
+    }),
+  });
+
+  assert.equal(result.paid, false);
+  assert.equal(result.reason, 'unverified_network_error: fetch_token_utxos_failed: upstream timeout');
   assert.equal(result.settlementKind, 'mrc20');
   assert.equal(result.currency, 'METAID-MRC20');
   assert.equal(result.amountDisplay, '12.5');

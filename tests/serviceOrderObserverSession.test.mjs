@@ -11,13 +11,21 @@ const require = createRequire(import.meta.url);
 const { ServiceOrderStore } = require('../dist-electron/serviceOrderStore.js');
 
 let buildServiceOrderObserverConversationId;
+let buildServiceOrderFallbackPayload;
+let buildServiceOrderObserverMetadata;
 let recoverMissingRefundPendingOrderSessions;
 
 try {
-  ({ buildServiceOrderObserverConversationId } = await import('../dist-electron/services/serviceOrderObserverSession.js'));
+  ({
+    buildServiceOrderObserverConversationId,
+    buildServiceOrderFallbackPayload,
+    buildServiceOrderObserverMetadata,
+  } = await import('../dist-electron/services/serviceOrderObserverSession.js'));
   ({ recoverMissingRefundPendingOrderSessions } = await import('../dist-electron/services/serviceOrderSessionRecovery.js'));
 } catch {
   buildServiceOrderObserverConversationId = undefined;
+  buildServiceOrderFallbackPayload = undefined;
+  buildServiceOrderObserverMetadata = undefined;
   recoverMissingRefundPendingOrderSessions = undefined;
 }
 
@@ -288,4 +296,61 @@ test('recoverMissingRefundPendingOrderSessions recreates an observer session wit
   } finally {
     sqlite.cleanup();
   }
+});
+
+test('buildServiceOrderFallbackPayload includes structured MRC20 settlement lines for recovered order sessions', () => {
+  assert.equal(typeof buildServiceOrderFallbackPayload, 'function');
+
+  const payload = buildServiceOrderFallbackPayload({
+    servicePaidTx: 'a'.repeat(64),
+    servicePrice: '12.5',
+    serviceCurrency: 'METAID-MRC20',
+    servicePaymentChain: 'btc',
+    serviceSettlementKind: 'mrc20',
+    serviceMrc20Ticker: 'METAID',
+    serviceMrc20Id: 'tick-metaid',
+    servicePaymentCommitTxid: 'b'.repeat(64),
+    serviceId: 'service-mrc20',
+    serviceSkill: 'chain-analysis',
+    peerGlobalMetaId: 'peer-global-metaid',
+  });
+
+  assert.match(payload, /支付金额 12\.5 METAID-MRC20/);
+  assert.match(payload, /payment chain:\s*btc/i);
+  assert.match(payload, /settlement kind:\s*mrc20/i);
+  assert.match(payload, /mrc20 ticker:\s*METAID/);
+  assert.match(payload, /mrc20 id:\s*tick-metaid/i);
+  assert.match(payload, new RegExp(`commit txid:\\s*${'b'.repeat(64)}`, 'i'));
+});
+
+test('buildServiceOrderObserverMetadata preserves structured settlement identity for observer sessions', () => {
+  assert.equal(typeof buildServiceOrderObserverMetadata, 'function');
+
+  const metadata = buildServiceOrderObserverMetadata({
+    role: 'buyer',
+    metabotId: 7,
+    peerGlobalMetaId: 'peer-global-metaid',
+    peerName: 'Remote Bot',
+    peerAvatar: 'https://example.com/avatar.png',
+    serviceId: 'service-mrc20',
+    servicePrice: '12.5',
+    serviceCurrency: 'METAID-MRC20',
+    servicePaymentChain: 'btc',
+    serviceSettlementKind: 'mrc20',
+    serviceMrc20Ticker: 'METAID',
+    serviceMrc20Id: 'tick-metaid',
+    servicePaymentCommitTxid: 'b'.repeat(64),
+    serviceSkill: 'chain-analysis',
+    serverBotGlobalMetaId: 'server-global-metaid',
+    servicePaidTx: 'a'.repeat(64),
+  });
+
+  assert.equal(metadata.role, 'buyer');
+  assert.equal(metadata.serviceCurrency, 'METAID-MRC20');
+  assert.equal(metadata.servicePaymentChain, 'btc');
+  assert.equal(metadata.serviceSettlementKind, 'mrc20');
+  assert.equal(metadata.serviceMrc20Ticker, 'METAID');
+  assert.equal(metadata.serviceMrc20Id, 'tick-metaid');
+  assert.equal(metadata.servicePaymentCommitTxid, 'b'.repeat(64));
+  assert.equal(metadata.servicePaidTx, 'a'.repeat(64));
 });
