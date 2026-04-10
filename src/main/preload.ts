@@ -34,7 +34,17 @@ contextBridge.exposeInMainWorld('electron', {
     setEnabled: (options: { id: string; enabled: boolean }) => ipcRenderer.invoke('mcp:setEnabled', options),
   },
   metaapps: {
+    list: () => ipcRenderer.invoke('metaapps:list'),
+    listCommunity: (input?: { cursor?: string; size?: number }) => ipcRenderer.invoke('metaapps:listCommunity', input),
+    installCommunity: (input: { sourcePinId: string }) => ipcRenderer.invoke('metaapps:installCommunity', input),
+    open: (input: { appId: string; targetPath?: string }) => ipcRenderer.invoke('metaapps:open', input),
+    resolveUrl: (input: { appId: string; targetPath?: string }) => ipcRenderer.invoke('metaapps:resolveUrl', input),
     autoRoutingPrompt: () => ipcRenderer.invoke('metaapps:autoRoutingPrompt'),
+    onChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('metaapps:changed', handler);
+      return () => ipcRenderer.removeListener('metaapps:changed', handler);
+    },
   },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),

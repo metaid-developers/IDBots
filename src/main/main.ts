@@ -101,6 +101,7 @@ import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
 import { ensureMetaAppServerReady, stopMetaAppServer } from './services/metaAppLocalServer';
 import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
+import { installCommunityMetaApp, listCommunityMetaApps } from './services/metaAppChainService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -177,6 +178,29 @@ import {
 // 设置应用程序名称
 app.name = APP_NAME;
 app.setName(APP_NAME);
+
+const normalizeMetaAppVisualFallback = (value?: string): string | undefined => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.toLowerCase().startsWith('metafile://')) {
+    return undefined;
+  }
+  return normalized;
+};
+
+const resolveMetaAppVisualFields = async <T extends { icon?: string; cover?: string }>(record: T): Promise<T> => {
+  const [icon, cover] = await Promise.all([
+    record.icon ? resolvePinAssetSource(record.icon) : Promise.resolve(null),
+    record.cover ? resolvePinAssetSource(record.cover) : Promise.resolve(null),
+  ]);
+  return {
+    ...record,
+    icon: icon || normalizeMetaAppVisualFallback(record.icon),
+    cover: cover || normalizeMetaAppVisualFallback(record.cover),
+  };
+};
 
 const LEGACY_APP_NAMES = ['OctoBot', 'octobot'];
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
@@ -3703,6 +3727,79 @@ if (!gotTheLock) {
       return { success: true, prompt };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to build MetaApp auto-routing prompt' };
+    }
+  });
+
+  ipcMain.handle('metaapps:list', async () => {
+    try {
+      const apps = getMetaAppManager().listMetaApps();
+      const resolvedApps = await Promise.all(apps.map((app) => resolveMetaAppVisualFields(app)));
+      return { success: true, apps: resolvedApps };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list MetaApps' };
+    }
+  });
+
+  ipcMain.handle('metaapps:listCommunity', async (_event, input?: { cursor?: string; size?: number }) => {
+    try {
+      const result = await listCommunityMetaApps({
+        manager: getMetaAppManager(),
+        cursor: input?.cursor,
+        size: input?.size,
+      });
+      if (!result.success || !result.apps) {
+        return result;
+      }
+      const apps = await Promise.all(result.apps.map((app) => resolveMetaAppVisualFields(app)));
+      return { ...result, apps };
+    } catch (error) {
+      return { success: false, apps: [], error: error instanceof Error ? error.message : 'Failed to list community MetaApps' };
+    }
+  });
+
+  ipcMain.handle('metaapps:installCommunity', async (_event, input: { sourcePinId: string }) => {
+    try {
+      const result = await installCommunityMetaApp({
+        sourcePinId: String(input?.sourcePinId || ''),
+        manager: getMetaAppManager(),
+      });
+      if (result.success) {
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('metaapps:changed');
+          }
+        });
+      }
+      return result;
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to install community MetaApp' };
+    }
+  });
+
+  ipcMain.handle('metaapps:open', async (_event, input: { appId: string; targetPath?: string }) => {
+    try {
+      return await openMetaApp({
+        appId: String(input?.appId ?? ''),
+        targetPath: typeof input?.targetPath === 'string' ? input.targetPath : undefined,
+        manager: getMetaAppManager(),
+        ensureServerReady: ensureMetaAppServerReady,
+        shellOpenExternal: shell.openExternal,
+      });
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to open MetaApp' };
+    }
+  });
+
+  ipcMain.handle('metaapps:resolveUrl', async (_event, input: { appId: string; targetPath?: string }) => {
+    try {
+      return await resolveMetaAppUrl({
+        appId: String(input?.appId ?? ''),
+        targetPath: typeof input?.targetPath === 'string' ? input.targetPath : undefined,
+        manager: getMetaAppManager(),
+        ensureServerReady: ensureMetaAppServerReady,
+      });
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to resolve MetaApp URL' };
     }
   });
 

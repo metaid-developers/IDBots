@@ -1,5 +1,12 @@
 import type { McpServerConfig, McpServerFormData } from './mcp';
 import type {
+  CommunityMetaAppInstallResult,
+  CommunityMetaAppListParams,
+  CommunityMetaAppListResult,
+  MetaAppRecord,
+  MetaAppUrlResult,
+} from './metaApp';
+import type {
   GigSquareModifyServiceParams,
   GigSquareMyServiceOrderDetail,
   GigSquareMyServiceSummary,
@@ -369,7 +376,13 @@ interface IElectronAPI {
     onChanged: (callback: () => void) => () => void;
   };
   metaapps: {
+    list: () => Promise<{ success: boolean; apps?: MetaAppRecord[]; error?: string }>;
+    listCommunity: (input?: CommunityMetaAppListParams) => Promise<CommunityMetaAppListResult>;
+    installCommunity: (input: { sourcePinId: string }) => Promise<CommunityMetaAppInstallResult>;
+    open: (input: { appId: string; targetPath?: string }) => Promise<MetaAppUrlResult>;
+    resolveUrl: (input: { appId: string; targetPath?: string }) => Promise<MetaAppUrlResult>;
     autoRoutingPrompt: () => Promise<{ success: boolean; prompt?: string | null; error?: string }>;
+    onChanged: (callback: () => void) => () => void;
   };
   api: {
     fetch: (options: {

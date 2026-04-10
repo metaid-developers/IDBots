@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
 import WindowTitleBar from './components/window/WindowTitleBar';
 import { CoworkView } from './components/cowork';
+import { MetaAppsView } from './components/metaapps';
 import { SkillsView } from './components/skills';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import MetabotsView from './components/metabots/MetabotsView';
@@ -24,19 +25,22 @@ import { clearSelection } from './store/slices/quickActionSlice';
 import { setActiveSkillIds } from './store/slices/skillSlice';
 import type { ApiConfig } from './services/api';
 import type { CoworkPermissionResult } from './types/cowork';
+import type { MetaAppRecord } from './types/metaApp';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { i18nService } from './services/i18n';
 import { matchesShortcut } from './services/shortcuts';
+import { metaAppService } from './services/metaApp';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import Onboarding from './components/onboarding/Onboarding';
+import { openSelectedMetaApp } from './components/metaapps/metaAppLaunch.js';
 import { shouldShowInitialOnboarding } from './components/onboarding/onboardingGate.js';
 import { normalizePreselectedSkillId } from './utils/newChatPreselect';
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'metaapps' | 'skills' | 'scheduledTasks' | 'metabots' | 'gigSquare'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -291,6 +295,10 @@ const App: React.FC = () => {
     setMainView('skills');
   }, []);
 
+  const handleShowMetaApps = useCallback(() => {
+    setMainView('metaapps');
+  }, []);
+
   const handleShowCowork = useCallback(() => {
     setMainView('cowork');
   }, []);
@@ -330,6 +338,10 @@ const App: React.FC = () => {
   const handleBlankNewChat = useCallback(() => {
     handleNewChat();
   }, [handleNewChat]);
+
+  const handleStartTaskWithMetaApp = useCallback(async (app: MetaAppRecord) => {
+    await openSelectedMetaApp({ app, metaAppService });
+  }, [dispatch]);
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -695,6 +707,7 @@ const App: React.FC = () => {
           onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
           activeView={mainView}
+          onShowMetaApps={handleShowMetaApps}
           onShowSkills={handleShowSkills}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
@@ -709,6 +722,14 @@ const App: React.FC = () => {
           <div className="h-full rounded-xl dark:bg-claude-darkBg bg-claude-bg overflow-hidden">
             {mainView === 'gigSquare' ? (
               <GigSquareView />
+            ) : mainView === 'metaapps' ? (
+              <MetaAppsView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+                onStartTaskWithMetaApp={handleStartTaskWithMetaApp}
+                updateBadge={isSidebarCollapsed ? updateBadge : null}
+              />
             ) : mainView === 'skills' ? (
               <SkillsView
                 isSidebarCollapsed={isSidebarCollapsed}
