@@ -19,6 +19,10 @@ export interface CreateBuyerOrderInput {
   paymentChain?: string;
   paymentAmount: string;
   paymentCurrency?: string;
+  settlementKind?: string;
+  mrc20Ticker?: string;
+  mrc20Id?: string;
+  paymentCommitTxid?: string;
   coworkSessionId?: string | null;
   orderMessagePinId?: string | null;
 }
@@ -32,6 +36,10 @@ export interface CreateSellerOrderInput {
   paymentChain?: string;
   paymentAmount: string;
   paymentCurrency?: string;
+  settlementKind?: string;
+  mrc20Ticker?: string;
+  mrc20Id?: string;
+  paymentCommitTxid?: string;
   coworkSessionId?: string | null;
   orderMessagePinId?: string | null;
 }
@@ -206,6 +214,10 @@ export class ServiceOrderLifecycleService {
       paymentChain: input.paymentChain,
       paymentAmount: input.paymentAmount,
       paymentCurrency: input.paymentCurrency,
+      settlementKind: input.settlementKind,
+      mrc20Ticker: input.mrc20Ticker,
+      mrc20Id: input.mrc20Id,
+      paymentCommitTxid: input.paymentCommitTxid,
       coworkSessionId: input.coworkSessionId ?? null,
       orderMessagePinId: input.orderMessagePinId ?? null,
       status: 'awaiting_first_response',
@@ -228,6 +240,10 @@ export class ServiceOrderLifecycleService {
       paymentChain: input.paymentChain,
       paymentAmount: input.paymentAmount,
       paymentCurrency: input.paymentCurrency,
+      settlementKind: input.settlementKind,
+      mrc20Ticker: input.mrc20Ticker,
+      mrc20Id: input.mrc20Id,
+      paymentCommitTxid: input.paymentCommitTxid,
       coworkSessionId: input.coworkSessionId ?? null,
       orderMessagePinId: input.orderMessagePinId ?? null,
       status: 'awaiting_first_response',
@@ -429,6 +445,11 @@ export class ServiceOrderLifecycleService {
       serviceName: order.serviceName,
       refundAmount: order.paymentAmount,
       refundCurrency: order.paymentCurrency,
+      paymentChain: order.paymentChain,
+      settlementKind: order.settlementKind,
+      mrc20Ticker: order.mrc20Ticker,
+      mrc20Id: order.mrc20Id,
+      paymentCommitTxid: order.paymentCommitTxid,
       refundToAddress: '',
       buyerGlobalMetaId: '',
       sellerGlobalMetaId: order.counterpartyGlobalMetaid,

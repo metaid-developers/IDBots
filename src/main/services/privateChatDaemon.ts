@@ -833,12 +833,12 @@ async function processOne(
         return;
       }
       emitLog(
-        `[Order] Payment verified: ref=${orderTrackingId || 'n/a'} chain=${payment.chain || '?'} amount=${payment.amountSats ?? 0} sats`
+        `[Order] Payment verified: ref=${orderTrackingId || 'n/a'} chain=${payment.chain || '?'} amount=${payment.amountAtomic ?? payment.amountSats ?? 0} ${payment.settlementKind === 'mrc20' ? 'atomic' : 'sats'}`
       );
       const serviceId = extractOrderSkillId(plaintext);
       const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
-      const paymentAmount = formatPaymentAmountFromSats(payment.amountSats);
-      const paymentCurrency = getCurrencyFromChain(payment.chain);
+      const paymentAmount = payment.amountDisplay || formatPaymentAmountFromSats(payment.amountSats);
+      const paymentCurrency = payment.currency || getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
       let sellerOrderConversationId: string | null = null;
       if (serviceOrderLifecycle && orderTrackingId) {
@@ -852,6 +852,10 @@ async function processOne(
             paymentChain: payment.chain || 'mvc',
             paymentAmount,
             paymentCurrency,
+            settlementKind: payment.settlementKind,
+            mrc20Ticker: payment.mrc20Ticker,
+            mrc20Id: payment.mrc20Id,
+            paymentCommitTxid: payment.paymentCommitTxid,
             orderMessagePinId: row.pin_id,
           });
         } catch (error) {
@@ -870,6 +874,11 @@ async function processOne(
             serviceId,
             servicePrice: paymentAmount,
             serviceCurrency: paymentCurrency,
+            servicePaymentChain: payment.chain || 'mvc',
+            serviceSettlementKind: payment.settlementKind,
+            serviceMrc20Ticker: payment.mrc20Ticker,
+            serviceMrc20Id: payment.mrc20Id,
+            servicePaymentCommitTxid: payment.paymentCommitTxid,
             serviceSkill: serviceName,
             serverBotGlobalMetaId: localGlobalMetaId || null,
             servicePaidTx: orderTrackingId,

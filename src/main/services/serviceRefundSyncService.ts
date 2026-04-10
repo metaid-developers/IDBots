@@ -12,6 +12,11 @@ import {
   type VerifyTransferInput,
   type VerifyTransferResult,
 } from './txTransferVerification';
+import {
+  verifyMrc20Transfer,
+  type VerifyMrc20PaymentInput,
+  type VerifyMrc20PaymentResult,
+} from './mrc20PaymentVerification';
 import { shouldHideProviderForUnresolvedRefund } from './serviceOrderState';
 
 export interface RefundFinalizePinRecord {
@@ -47,6 +52,13 @@ interface ServiceRefundSyncServiceOptions {
   verifyTransferToRecipient?: (
     input: VerifyTransferInput
   ) => Promise<VerifyTransferResult>;
+  resolveRefundMrc20RecipientAddress?: (
+    order: ServiceOrderRecord,
+    payload: Record<string, any>
+  ) => string;
+  verifyMrc20Transfer?: (
+    input: VerifyMrc20PaymentInput
+  ) => Promise<VerifyMrc20PaymentResult>;
   onOrderEvent?: (event: {
     type: 'refund_requested' | 'refunded';
     order: ServiceOrderRecord;
@@ -68,6 +80,13 @@ export class ServiceRefundSyncService {
   private verifyTransferToRecipient: (
     input: VerifyTransferInput
   ) => Promise<VerifyTransferResult>;
+  private resolveRefundMrc20RecipientAddress: (
+    order: ServiceOrderRecord,
+    payload: Record<string, any>
+  ) => string;
+  private verifyMrc20Transfer: (
+    input: VerifyMrc20PaymentInput
+  ) => Promise<VerifyMrc20PaymentResult>;
   private onOrderEvent?: (event: {
     type: 'refund_requested' | 'refunded';
     order: ServiceOrderRecord;
@@ -91,6 +110,10 @@ export class ServiceRefundSyncService {
       options.buildRefundVerificationInput ?? ((order, payload) => this.buildDefaultVerificationInput(order, payload));
     this.verifyTransferToRecipient =
       options.verifyTransferToRecipient ?? verifyTransferToRecipient;
+    this.resolveRefundMrc20RecipientAddress =
+      options.resolveRefundMrc20RecipientAddress ?? (() => '');
+    this.verifyMrc20Transfer =
+      options.verifyMrc20Transfer ?? verifyMrc20Transfer;
     this.onOrderEvent = options.onOrderEvent;
   }
 
@@ -162,10 +185,16 @@ export class ServiceRefundSyncService {
         continue;
       }
 
-      const verification = await this.verifyTransferToRecipient(
-        this.buildRefundVerificationInput(verificationOrder, payload)
-      );
-      if (!verification.valid) continue;
+      if (this.shouldUseMrc20Verifier(verificationOrder, payload)) {
+        const input = this.buildMrc20RefundVerificationInput(verificationOrder, payload);
+        const verification = await this.verifyMrc20Transfer(input);
+        if (!verification.valid) continue;
+      } else {
+        const verification = await this.verifyTransferToRecipient(
+          this.buildRefundVerificationInput(verificationOrder, payload)
+        );
+        if (!verification.valid) continue;
+      }
 
       const refundCompletedAt = this.now();
       const updatedOrders: ServiceOrderRecord[] = [];
@@ -238,6 +267,33 @@ export class ServiceRefundSyncService {
       txid: payload.refundTxid,
       recipientAddress: '',
       expectedAmountSats: Math.floor(Number(order.paymentAmount) * 100_000_000),
+    };
+  }
+
+  private shouldUseMrc20Verifier(
+    order: ServiceOrderRecord,
+    payload: Record<string, any>
+  ): boolean {
+    const refundCurrency = String(payload.refundCurrency ?? '').trim().toUpperCase();
+    if (refundCurrency.endsWith('-MRC20')) return true;
+    return order.settlementKind === 'mrc20';
+  }
+
+  private buildMrc20RefundVerificationInput(
+    order: ServiceOrderRecord,
+    payload: Record<string, any>
+  ): VerifyMrc20PaymentInput {
+    const mrc20Id = String(payload.mrc20Id ?? order.mrc20Id ?? '').trim();
+    const mrc20Ticker = String(payload.mrc20Ticker ?? order.mrc20Ticker ?? '').trim();
+    const expectedAmountDisplay = String(payload.refundAmount ?? order.paymentAmount ?? '').trim();
+    const recipientAddress = String(this.resolveRefundMrc20RecipientAddress(order, payload) ?? '').trim();
+
+    return {
+      txid: String(payload.refundTxid ?? '').trim(),
+      recipientAddress,
+      expectedAmountDisplay,
+      mrc20Id,
+      mrc20Ticker,
     };
   }
 
@@ -356,7 +412,7 @@ export class ServiceRefundSyncService {
       return null;
     }
 
-    const paymentChain = this.resolvePaymentChainFromRefundCurrency(payload.refundCurrency);
+    const paymentChain = this.resolvePaymentChainFromRefundPayload(payload);
     const paymentAmount = String(payload.refundAmount || '').trim() || '0';
     const serviceName = String(payload.serviceName || '').trim() || 'Service Order';
     const orderMessagePinId = String(payload.orderMessagePinId || '').trim() || null;
@@ -371,6 +427,10 @@ export class ServiceRefundSyncService {
       paymentChain,
       paymentAmount,
       paymentCurrency: String(payload.refundCurrency || '').trim() || undefined,
+      settlementKind: String(payload.settlementKind || '').trim() || undefined,
+      mrc20Ticker: String(payload.mrc20Ticker || '').trim() || undefined,
+      mrc20Id: String(payload.mrc20Id || '').trim() || undefined,
+      paymentCommitTxid: String(payload.paymentCommitTxid || '').trim() || undefined,
       orderMessagePinId,
       status: 'failed',
       now: this.resolveFailureDetectedAt(payload) ?? this.resolveRefundRequestedAt({ pinId: '', content: payload }, payload),
@@ -396,8 +456,15 @@ export class ServiceRefundSyncService {
     return null;
   }
 
-  private resolvePaymentChainFromRefundCurrency(refundCurrency: unknown): string {
-    const normalized = String(refundCurrency || '').trim().toUpperCase();
+  private resolvePaymentChainFromRefundPayload(payload: Record<string, any>): string {
+    const explicitChain = String(payload.paymentChain || '').trim().toLowerCase();
+    if (explicitChain === 'btc' || explicitChain === 'doge' || explicitChain === 'mvc') {
+      return explicitChain;
+    }
+
+    const settlementKind = String(payload.settlementKind || '').trim().toLowerCase();
+    const normalized = String(payload.refundCurrency || '').trim().toUpperCase();
+    if (settlementKind === 'mrc20' || normalized.endsWith('-MRC20')) return 'btc';
     if (normalized === 'BTC') return 'btc';
     if (normalized === 'DOGE') return 'doge';
     return 'mvc';

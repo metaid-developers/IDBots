@@ -115,6 +115,29 @@ test('createBuyerOrder persists SLA deadlines and links the cowork session', asy
   assert.equal(order.deliveryDeadlineAt, now + 15 * 60_000);
 });
 
+test('createBuyerOrder persists structured MRC20 settlement metadata', async () => {
+  const { service } = await createLifecycleServiceForTest();
+
+  const order = service.createBuyerOrder(baseOrderInput({
+    paymentTxid: 'f'.repeat(64),
+    paymentCommitTxid: 'e'.repeat(64),
+    paymentChain: 'btc',
+    paymentAmount: '1.11',
+    paymentCurrency: 'TRAC-MRC20',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'trac',
+    mrc20Id: 'mrc20-token-id-003',
+  }));
+
+  assert.equal(order.paymentTxid, 'f'.repeat(64));
+  assert.equal(order.paymentCommitTxid, 'e'.repeat(64));
+  assert.equal(order.paymentChain, 'btc');
+  assert.equal(order.paymentCurrency, 'TRAC-MRC20');
+  assert.equal(order.settlementKind, 'mrc20');
+  assert.equal(order.mrc20Ticker, 'TRAC');
+  assert.equal(order.mrc20Id, 'mrc20-token-id-003');
+});
+
 test('reserveBuyerOrderCreation refuses concurrent in-flight creation for the same payment txid only', async () => {
   const { service } = await createLifecycleServiceForTest();
 
@@ -276,6 +299,41 @@ test('scanTimedOutOrders marks first-response timeout orders failed and moves th
   assert.equal(updated?.refundRequestPinId, 'refund-request-pin-id');
   assert.equal(updated?.refundRequestedAt, currentNow);
   assert.equal(refundRequestInput?.payload.paymentTxid, order.paymentTxid);
+});
+
+test('scanTimedOutOrders includes structured MRC20 settlement fields in the refund request payload', async () => {
+  let currentNow = 1_770_000_000_000;
+  let refundRequestInput = null;
+  const { service } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async (input) => {
+      refundRequestInput = input;
+      return { pinId: 'refund-request-mrc20-pin-id' };
+    },
+  });
+
+  service.createBuyerOrder(baseOrderInput({
+    paymentTxid: '1'.repeat(64),
+    paymentCommitTxid: '2'.repeat(64),
+    paymentChain: 'btc',
+    paymentAmount: '3.5',
+    paymentCurrency: 'METAID-MRC20',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'metaid',
+    mrc20Id: 'mrc20-token-id-101',
+  }));
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  assert.equal(refundRequestInput?.payload.paymentTxid, '1'.repeat(64));
+  assert.equal(refundRequestInput?.payload.paymentChain, 'btc');
+  assert.equal(refundRequestInput?.payload.refundAmount, '3.5');
+  assert.equal(refundRequestInput?.payload.refundCurrency, 'METAID-MRC20');
+  assert.equal(refundRequestInput?.payload.settlementKind, 'mrc20');
+  assert.equal(refundRequestInput?.payload.mrc20Ticker, 'METAID');
+  assert.equal(refundRequestInput?.payload.mrc20Id, 'mrc20-token-id-101');
+  assert.equal(refundRequestInput?.payload.paymentCommitTxid, '2'.repeat(64));
 });
 
 test('scanTimedOutOrders mirrors refund_pending onto the seller ledger row for the same order', async () => {

@@ -4,16 +4,24 @@ import { i18nService } from '../../services/i18n';
 import type { Skill } from '../../types/skill';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
+  getGigSquareMrc20SelectPlaceholder,
   getNextGigSquareSelectedMrc20Id,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
+  getGigSquareSettlementGridClassName,
   getSelectableGigSquareMrc20Assets,
 } from './gigSquarePublishPresentation.js';
 import { getEnabledGigSquareSkills } from './gigSquareSkillOptions.js';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 type PublishCurrency = 'BTC' | 'SPACE' | 'DOGE' | 'MRC20';
-type SelectableMrc20Asset = Pick<ElectronMrc20Asset, 'symbol' | 'mrc20Id' | 'balance'>;
+type SelectableMrc20Asset = {
+  symbol: string;
+  mrc20Id: string;
+  balance: {
+    display: string;
+  };
+};
 
 interface GigSquarePublishModalProps {
   isOpen: boolean;
@@ -445,7 +453,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={getGigSquareSettlementGridClassName(currency)}>
             <div>
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
                 {i18nService.t('gigSquarePublishPriceLabel')}
@@ -481,29 +489,31 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                 ))}
               </select>
             </div>
-          </div>
-          {currency === 'MRC20' && (
             <div>
-              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-                MRC20 Token
-              </label>
-              <select
-                value={selectedMrc20Id}
-                onChange={(e) => setSelectedMrc20Id(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={isFormDisabled}
-              >
-                <option value="">
-                  {mrc20Assets.length > 0 ? 'Select token' : 'No available MRC20 token'}
-                </option>
-                {mrc20Assets.map((asset) => (
-                  <option key={asset.mrc20Id} value={asset.mrc20Id}>
-                    {asset.symbol} ({asset.balance.display})
-                  </option>
-                ))}
-              </select>
+              {currency === 'MRC20' && (
+                <>
+                  <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                    MRC20 Token
+                  </label>
+                  <select
+                    value={selectedMrc20Id}
+                    onChange={(e) => setSelectedMrc20Id(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                    disabled={isFormDisabled}
+                  >
+                    <option value="">
+                      {getGigSquareMrc20SelectPlaceholder(mrc20Assets)}
+                    </option>
+                    {mrc20Assets.map((asset) => (
+                      <option key={asset.mrc20Id} value={asset.mrc20Id}>
+                        {asset.symbol} ({asset.balance.display})
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
             </div>
-          )}
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

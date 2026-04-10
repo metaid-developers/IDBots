@@ -139,6 +139,29 @@ test('buildGigSquareOrderPayload keeps the buyer-facing natural sentence and pre
   assert.match(payload, /skill name: weather/);
 });
 
+test('buildGigSquareOrderPayload appends structured MRC20 settlement metadata lines', () => {
+  const payload = buildGigSquareOrderPayload({
+    naturalOrderText: '请帮我分析这条链上数据。',
+    rawRequest: '请帮我分析这条链上数据，并给出结论。',
+    price: '15',
+    currency: 'trac-mrc20',
+    txid: 'r'.repeat(64),
+    serviceId: 'service-mrc20',
+    skillName: 'chain-analysis',
+    paymentChain: 'btc',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'trac',
+    mrc20Id: 'mrc20-token-id-001',
+    paymentCommitTxid: 'c'.repeat(64),
+  });
+
+  assert.match(payload, /payment chain:\s*btc/i);
+  assert.match(payload, /settlement kind:\s*mrc20/i);
+  assert.match(payload, /mrc20 ticker:\s*TRAC/);
+  assert.match(payload, /mrc20 id:\s*mrc20-token-id-001/i);
+  assert.match(payload, new RegExp(`commit txid:\\s*${'c'.repeat(64)}`, 'i'));
+});
+
 test('validateGigSquareOrderPrompt rejects requests longer than 4000 characters', () => {
   const valid = validateGigSquareOrderPrompt('x'.repeat(4000));
   const invalid = validateGigSquareOrderPrompt('x'.repeat(4001));

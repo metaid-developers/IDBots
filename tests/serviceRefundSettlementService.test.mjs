@@ -51,6 +51,10 @@ function insertRefundPendingOrder(
     paymentChain = 'mvc',
     paymentCurrency = 'SPACE',
     paymentAmount = '12.34',
+    settlementKind = 'native',
+    mrc20Ticker = null,
+    mrc20Id = null,
+    paymentCommitTxid = null,
     refundRequestPinId = 'refund-request-pin-id',
     refundTxid = null,
   }
@@ -58,10 +62,11 @@ function insertRefundPendingOrder(
   db.run(
     `INSERT INTO service_orders (
       id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
-      payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id,
-      cowork_session_id, status, first_response_deadline_at, delivery_deadline_at, failed_at,
-      failure_reason, refund_request_pin_id, refund_txid, refund_requested_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+      mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
+      status, first_response_deadline_at, delivery_deadline_at, failed_at, failure_reason,
+      refund_request_pin_id, refund_txid, refund_requested_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       role,
@@ -73,6 +78,10 @@ function insertRefundPendingOrder(
       paymentChain,
       paymentAmount,
       paymentCurrency,
+      settlementKind,
+      mrc20Ticker,
+      mrc20Id,
+      paymentCommitTxid,
       'order-pin-id',
       coworkSessionId,
       'refund_pending',
@@ -346,6 +355,76 @@ test('processSellerRefundForSession preserves BTC refund chain and currency sema
   assert.equal(transferInputs[0].order.paymentCurrency, 'BTC');
   assert.equal(transferInputs[0].refundCurrency, 'BTC');
   assert.equal(transferInputs[0].refundAmount, '0.00120000');
+});
+
+test('processSellerRefundForSession preserves MRC20 settlement metadata for transfer and finalize payloads', async () => {
+  const transferInputs = [];
+  const finalizeInputs = [];
+  const { db, service } = await createRefundSettlementServiceForTest({
+    fetchRefundRequestPin: async () => ({
+      pinId: 'refund-request-pin-id',
+      content: JSON.stringify({
+        paymentTxid: '3'.repeat(64),
+        servicePinId: 'service-pin-id',
+        serviceName: 'Indexer Credits',
+        refundAmount: '15.00000000',
+        refundCurrency: 'METAID-MRC20',
+        paymentChain: 'btc',
+        settlementKind: 'mrc20',
+        mrc20Ticker: 'METAID',
+        mrc20Id: 'mrc20-token-id-010',
+        paymentCommitTxid: '4'.repeat(64),
+        refundToAddress: '1MFi1WM2NXnV3kjdLKaUw7Ad23LSvSD9fY',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }),
+    executeRefundTransfer: async (input) => {
+      transferInputs.push(input);
+      return { txId: '5'.repeat(64) };
+    },
+    createRefundFinalizePin: async (input) => {
+      finalizeInputs.push(input);
+      return { pinId: 'refund-finalize-mrc20-pin-id' };
+    },
+    resolveLocalMetabotGlobalMetaId: (metabotId) => (
+      metabotId === 8 ? 'seller-global-metaid' : null
+    ),
+  });
+  insertRefundPendingOrder(db, {
+    id: 'seller-mrc20-order',
+    role: 'seller',
+    localMetabotId: 8,
+    counterpartyGlobalMetaId: 'buyer-global-metaid',
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: '3'.repeat(64),
+    paymentChain: 'btc',
+    paymentCurrency: 'METAID-MRC20',
+    paymentAmount: '15.00000000',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'METAID',
+    mrc20Id: 'mrc20-token-id-010',
+    paymentCommitTxid: '4'.repeat(64),
+  });
+
+  await service.processSellerRefundForSession('seller-session-id');
+
+  assert.equal(transferInputs.length, 1);
+  assert.equal(transferInputs[0].order.paymentChain, 'btc');
+  assert.equal(transferInputs[0].order.paymentCurrency, 'METAID-MRC20');
+  assert.equal(transferInputs[0].order.settlementKind, 'mrc20');
+  assert.equal(transferInputs[0].order.mrc20Ticker, 'METAID');
+  assert.equal(transferInputs[0].order.mrc20Id, 'mrc20-token-id-010');
+  assert.equal(transferInputs[0].order.paymentCommitTxid, '4'.repeat(64));
+  assert.equal(transferInputs[0].refundCurrency, 'METAID-MRC20');
+
+  assert.equal(finalizeInputs.length, 1);
+  assert.equal(finalizeInputs[0].payload.paymentChain, 'btc');
+  assert.equal(finalizeInputs[0].payload.refundCurrency, 'METAID-MRC20');
+  assert.equal(finalizeInputs[0].payload.settlementKind, 'mrc20');
+  assert.equal(finalizeInputs[0].payload.mrc20Ticker, 'METAID');
+  assert.equal(finalizeInputs[0].payload.mrc20Id, 'mrc20-token-id-010');
+  assert.equal(finalizeInputs[0].payload.paymentCommitTxid, '4'.repeat(64));
 });
 
 test('processSellerRefundForSession preserves DOGE refund chain and currency semantics', async () => {

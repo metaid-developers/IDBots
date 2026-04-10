@@ -4,6 +4,7 @@ import {
   computeOrderDeadlines,
   type ServiceOrderStatus,
 } from './services/serviceOrderState';
+import { parseGigSquareSettlementAsset } from './shared/gigSquareSettlementAsset.js';
 
 interface ServiceOrderRow {
   id: string;
@@ -16,6 +17,10 @@ interface ServiceOrderRow {
   payment_chain: string;
   payment_amount: string;
   payment_currency: string;
+  settlement_kind: string;
+  mrc20_ticker: string | null;
+  mrc20_id: string | null;
+  payment_commit_txid: string | null;
   order_message_pin_id: string | null;
   cowork_session_id: string | null;
   status: string;
@@ -50,6 +55,10 @@ export interface ServiceOrderRecord {
   paymentChain: string;
   paymentAmount: string;
   paymentCurrency: string;
+  settlementKind: 'native' | 'mrc20';
+  mrc20Ticker: string | null;
+  mrc20Id: string | null;
+  paymentCommitTxid: string | null;
   orderMessagePinId: string | null;
   coworkSessionId: string | null;
   status: ServiceOrderStatus;
@@ -95,6 +104,10 @@ export interface ServiceOrderCreateInput {
   paymentChain?: string;
   paymentAmount: string;
   paymentCurrency?: string;
+  settlementKind?: string;
+  mrc20Ticker?: string;
+  mrc20Id?: string;
+  paymentCommitTxid?: string;
   orderMessagePinId?: string | null;
   coworkSessionId?: string | null;
   status?: ServiceOrderStatus;
@@ -119,10 +132,65 @@ function normalizePaymentChain(chain: string | undefined): string {
   return 'mvc';
 }
 
+function inferPaymentChainFromCurrency(currency: string | undefined): string {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'BTC') return 'btc';
+  if (normalized === 'DOGE') return 'doge';
+  return 'mvc';
+}
+
 function derivePaymentCurrency(chain: string): string {
   if (chain === 'btc') return 'BTC';
   if (chain === 'doge') return 'DOGE';
   return 'SPACE';
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || null;
+}
+
+function resolveStructuredSettlement(input: {
+  paymentChain?: string;
+  paymentCurrency?: string;
+  settlementKind?: string;
+  mrc20Ticker?: string;
+  mrc20Id?: string;
+}) {
+  const hintedPaymentChain = input.paymentChain
+    ? normalizePaymentChain(input.paymentChain)
+    : inferPaymentChainFromCurrency(input.paymentCurrency);
+  const settlement = parseGigSquareSettlementAsset({
+    paymentCurrency: normalizeOptionalText(input.paymentCurrency) || derivePaymentCurrency(hintedPaymentChain),
+    settlementKind: normalizeOptionalText(input.settlementKind),
+    mrc20Ticker: normalizeOptionalText(input.mrc20Ticker),
+    mrc20Id: normalizeOptionalText(input.mrc20Id),
+  });
+
+  if (settlement.settlementKind === 'mrc20') {
+    return {
+      paymentChain: 'btc',
+      paymentCurrency: settlement.protocolCurrency,
+      settlementKind: 'mrc20' as const,
+      mrc20Ticker: settlement.mrc20Ticker,
+      mrc20Id: settlement.mrc20Id,
+    };
+  }
+
+  const paymentChain = hintedPaymentChain;
+  return {
+    paymentChain,
+    paymentCurrency: derivePaymentCurrency(paymentChain),
+    settlementKind: 'native' as const,
+    mrc20Ticker: null,
+    mrc20Id: null,
+  };
+}
+
+function listTableColumns(db: Database, tableName: string): string[] {
+  const result = db.exec(`PRAGMA table_info(${tableName});`);
+  if (!result[0]?.values) return [];
+  return result[0].values.map((row) => String(row[1] || ''));
 }
 
 const SERVICE_ORDER_TABLE_SQL = `
@@ -136,7 +204,11 @@ const SERVICE_ORDER_TABLE_SQL = `
     payment_txid TEXT NOT NULL,
     payment_chain TEXT NOT NULL CHECK (payment_chain IN ('mvc', 'btc', 'doge')),
     payment_amount TEXT NOT NULL,
-    payment_currency TEXT NOT NULL CHECK (payment_currency IN ('SPACE', 'BTC', 'DOGE')),
+    payment_currency TEXT NOT NULL,
+    settlement_kind TEXT NOT NULL DEFAULT 'native' CHECK (settlement_kind IN ('native', 'mrc20')),
+    mrc20_ticker TEXT,
+    mrc20_id TEXT,
+    payment_commit_txid TEXT,
     order_message_pin_id TEXT,
     cowork_session_id TEXT,
     status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
@@ -170,6 +242,7 @@ export class ServiceOrderStore {
   }
 
   private ensureSchema(): void {
+    this.migrateLegacyServiceOrdersTable();
     this.db.run(SERVICE_ORDER_TABLE_SQL);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
@@ -226,7 +299,18 @@ export class ServiceOrderStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_currency_insert
       BEFORE INSERT ON service_orders
-      WHEN NEW.payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+      WHEN NOT (
+        (NEW.settlement_kind = 'native' AND NEW.payment_currency IN ('SPACE', 'BTC', 'DOGE'))
+        OR (
+          NEW.settlement_kind = 'mrc20'
+          AND NEW.payment_chain = 'btc'
+          AND NEW.mrc20_ticker IS NOT NULL
+          AND trim(NEW.mrc20_ticker) <> ''
+          AND NEW.mrc20_id IS NOT NULL
+          AND trim(NEW.mrc20_id) <> ''
+          AND NEW.payment_currency = upper(trim(NEW.mrc20_ticker)) || '-MRC20'
+        )
+      )
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.payment_currency');
       END;
@@ -234,7 +318,18 @@ export class ServiceOrderStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_payment_currency_update
       BEFORE UPDATE OF payment_currency ON service_orders
-      WHEN NEW.payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+      WHEN NOT (
+        (NEW.settlement_kind = 'native' AND NEW.payment_currency IN ('SPACE', 'BTC', 'DOGE'))
+        OR (
+          NEW.settlement_kind = 'mrc20'
+          AND NEW.payment_chain = 'btc'
+          AND NEW.mrc20_ticker IS NOT NULL
+          AND trim(NEW.mrc20_ticker) <> ''
+          AND NEW.mrc20_id IS NOT NULL
+          AND trim(NEW.mrc20_id) <> ''
+          AND NEW.payment_currency = upper(trim(NEW.mrc20_ticker)) || '-MRC20'
+        )
+      )
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.payment_currency');
       END;
@@ -247,7 +342,98 @@ export class ServiceOrderStore {
     `);
   }
 
+  private migrateLegacyServiceOrdersTable(): void {
+    const columns = listTableColumns(this.db, 'service_orders');
+    if (columns.length === 0) return;
+    if (
+      columns.includes('settlement_kind')
+      && columns.includes('mrc20_ticker')
+      && columns.includes('mrc20_id')
+      && columns.includes('payment_commit_txid')
+    ) {
+      return;
+    }
+
+    this.db.run('BEGIN TRANSACTION;');
+    try {
+      this.db.run('ALTER TABLE service_orders RENAME TO service_orders_legacy_mrc20_migration;');
+      this.db.run(SERVICE_ORDER_TABLE_SQL);
+      this.db.run(`
+        INSERT INTO service_orders (
+          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+          payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+          mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
+          status, first_response_deadline_at, delivery_deadline_at, first_response_at,
+          delivery_message_pin_id, delivered_at, failed_at, failure_reason, refund_request_pin_id,
+          refund_finalize_pin_id, refund_txid, refund_requested_at, refund_completed_at,
+          refund_apply_retry_count, next_retry_at, created_at, updated_at
+        )
+        SELECT
+          id,
+          role,
+          local_metabot_id,
+          counterparty_global_metaid,
+          service_pin_id,
+          service_name,
+          payment_txid,
+          CASE
+            WHEN lower(trim(payment_chain)) IN ('mvc', 'btc', 'doge') THEN lower(trim(payment_chain))
+            WHEN upper(trim(payment_currency)) = 'BTC' THEN 'btc'
+            WHEN upper(trim(payment_currency)) = 'DOGE' THEN 'doge'
+            ELSE 'mvc'
+          END,
+          payment_amount,
+          CASE
+            WHEN lower(trim(payment_chain)) = 'btc' OR upper(trim(payment_currency)) = 'BTC' THEN 'BTC'
+            WHEN lower(trim(payment_chain)) = 'doge' OR upper(trim(payment_currency)) = 'DOGE' THEN 'DOGE'
+            ELSE 'SPACE'
+          END,
+          'native',
+          NULL,
+          NULL,
+          NULL,
+          order_message_pin_id,
+          cowork_session_id,
+          status,
+          first_response_deadline_at,
+          delivery_deadline_at,
+          first_response_at,
+          delivery_message_pin_id,
+          delivered_at,
+          failed_at,
+          failure_reason,
+          refund_request_pin_id,
+          refund_finalize_pin_id,
+          refund_txid,
+          refund_requested_at,
+          refund_completed_at,
+          refund_apply_retry_count,
+          next_retry_at,
+          created_at,
+          updated_at
+        FROM service_orders_legacy_mrc20_migration;
+      `);
+      this.db.run('DROP TABLE service_orders_legacy_mrc20_migration;');
+      this.db.run('COMMIT;');
+    } catch (error) {
+      this.db.run('ROLLBACK;');
+      throw error;
+    }
+  }
+
   private remediateLegacyServiceOrderRows(): void {
+    this.db.run(`
+      UPDATE service_orders
+      SET settlement_kind = lower(trim(settlement_kind))
+      WHERE settlement_kind IS NOT NULL;
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET settlement_kind = 'native'
+      WHERE settlement_kind NOT IN ('native', 'mrc20')
+         OR settlement_kind IS NULL
+         OR trim(settlement_kind) = '';
+    `);
     this.db.run(`
       UPDATE service_orders
       SET payment_chain = lower(trim(payment_chain))
@@ -255,8 +441,14 @@ export class ServiceOrderStore {
     `);
     this.db.run(`
       UPDATE service_orders
+      SET payment_chain = 'btc'
+      WHERE settlement_kind = 'mrc20';
+    `);
+    this.db.run(`
+      UPDATE service_orders
       SET payment_chain = 'mvc'
-      WHERE payment_chain NOT IN ('mvc', 'btc', 'doge');
+      WHERE settlement_kind <> 'mrc20'
+        AND payment_chain NOT IN ('mvc', 'btc', 'doge');
     `);
     this.db.run(`
       UPDATE service_orders
@@ -265,13 +457,45 @@ export class ServiceOrderStore {
     `);
     this.db.run(`
       UPDATE service_orders
+      SET mrc20_ticker = upper(trim(
+        COALESCE(
+          NULLIF(mrc20_ticker, ''),
+          CASE
+            WHEN upper(trim(payment_currency)) LIKE '%-MRC20'
+              THEN substr(upper(trim(payment_currency)), 1, length(upper(trim(payment_currency))) - 6)
+            ELSE ''
+          END
+        )
+      ))
+      WHERE settlement_kind = 'mrc20';
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET payment_currency = CASE
+        WHEN settlement_kind = 'mrc20' AND trim(COALESCE(mrc20_ticker, '')) <> ''
+          THEN upper(trim(mrc20_ticker)) || '-MRC20'
+        WHEN payment_chain = 'btc' THEN 'BTC'
+        WHEN payment_chain = 'doge' THEN 'DOGE'
+        ELSE 'SPACE'
+      END;
+    `);
+    this.db.run(`
+      UPDATE service_orders
+      SET mrc20_ticker = NULL,
+          mrc20_id = NULL,
+          payment_commit_txid = NULL
+      WHERE settlement_kind <> 'mrc20';
+    `);
+    this.db.run(`
+      UPDATE service_orders
       SET payment_currency = CASE
         WHEN payment_chain = 'btc' THEN 'BTC'
         WHEN payment_chain = 'doge' THEN 'DOGE'
         ELSE 'SPACE'
       END
-      WHERE payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
-         OR (payment_chain = 'mvc' AND payment_currency = 'MVC');
+      WHERE settlement_kind <> 'mrc20'
+        AND (payment_currency NOT IN ('SPACE', 'BTC', 'DOGE')
+          OR (payment_chain = 'mvc' AND payment_currency = 'MVC'));
     `);
   }
 
@@ -330,6 +554,10 @@ export class ServiceOrderStore {
       paymentChain: row.payment_chain,
       paymentAmount: row.payment_amount,
       paymentCurrency: row.payment_currency,
+      settlementKind: row.settlement_kind === 'mrc20' ? 'mrc20' : 'native',
+      mrc20Ticker: row.mrc20_ticker,
+      mrc20Id: row.mrc20_id,
+      paymentCommitTxid: row.payment_commit_txid,
       orderMessagePinId: row.order_message_pin_id,
       coworkSessionId: row.cowork_session_id,
       status: row.status as ServiceOrderStatus,
@@ -355,8 +583,16 @@ export class ServiceOrderStore {
   createOrder(input: ServiceOrderCreateInput): ServiceOrderRecord {
     const now = input.now ?? Date.now();
     const deadlines = computeOrderDeadlines(now);
-    const paymentChain = normalizePaymentChain(input.paymentChain);
-    const paymentCurrency = derivePaymentCurrency(paymentChain);
+    const settlement = resolveStructuredSettlement({
+      paymentChain: input.paymentChain,
+      paymentCurrency: input.paymentCurrency,
+      settlementKind: input.settlementKind,
+      mrc20Ticker: input.mrc20Ticker,
+      mrc20Id: input.mrc20Id,
+    });
+    const paymentCommitTxid = settlement.settlementKind === 'mrc20'
+      ? normalizeOptionalText(input.paymentCommitTxid)
+      : null;
     const existing = this.getOne<ServiceOrderRow>(
       `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
       [input.localMetabotId, input.role, input.paymentTxid]
@@ -368,12 +604,13 @@ export class ServiceOrderStore {
       this.db.run(`
         INSERT INTO service_orders (
           id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
-          payment_txid, payment_chain, payment_amount, payment_currency, order_message_pin_id, cowork_session_id,
+          payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+          mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
           status, first_response_deadline_at, delivery_deadline_at, first_response_at, delivery_message_pin_id,
           delivered_at, failed_at, failure_reason, refund_request_pin_id, refund_finalize_pin_id, refund_txid,
           refund_requested_at, refund_completed_at, refund_apply_retry_count, next_retry_at, created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
         );
       `, [
         id,
@@ -383,9 +620,13 @@ export class ServiceOrderStore {
         input.servicePinId ?? null,
         input.serviceName,
         input.paymentTxid,
-        paymentChain,
+        settlement.paymentChain,
         input.paymentAmount,
-        paymentCurrency,
+        settlement.paymentCurrency,
+        settlement.settlementKind,
+        settlement.mrc20Ticker,
+        settlement.mrc20Id,
+        paymentCommitTxid,
         input.orderMessagePinId ?? null,
         input.coworkSessionId ?? null,
         input.status ?? 'awaiting_first_response',

@@ -103,6 +103,38 @@ test('store createOrder defaults to SLA deadlines based on current time', async 
   assert.equal(order.deliveryDeadlineAt, now + 15 * 60_000);
 });
 
+test('store createOrder persists structured MRC20 settlement columns', async () => {
+  const { db, store } = await createServiceOrderStoreForTest();
+  const order = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: 'm'.repeat(64),
+    paymentCommitTxid: 'c'.repeat(64),
+    paymentChain: 'btc',
+    paymentAmount: '5.25',
+    paymentCurrency: 'TRAC-MRC20',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'trac',
+    mrc20Id: 'mrc20-token-id-002',
+  });
+
+  assert.equal(order.settlementKind, 'mrc20');
+  assert.equal(order.mrc20Ticker, 'TRAC');
+  assert.equal(order.mrc20Id, 'mrc20-token-id-002');
+  assert.equal(order.paymentCommitTxid, 'c'.repeat(64));
+  assert.equal(order.paymentCurrency, 'TRAC-MRC20');
+
+  const row = db.exec(
+    `SELECT settlement_kind, mrc20_ticker, mrc20_id, payment_commit_txid
+     FROM service_orders
+     WHERE id = ?`,
+    [order.id]
+  )[0].values[0];
+  assert.deepEqual(row, ['mrc20', 'TRAC', 'mrc20-token-id-002', 'c'.repeat(64)]);
+});
+
 test('store createOrder is idempotent for localMetabotId + role + paymentTxid', async () => {
   const { db, store } = await createServiceOrderStoreForTest();
   const baseInput = {
@@ -247,6 +279,12 @@ test('store bootstrap remediates legacy duplicate payment rows before creating u
     "SELECT name FROM pragma_index_list('service_orders') WHERE name = 'idx_service_orders_dedupe_payment' AND \"unique\" = 1"
   );
   assert.equal(uniqueIndexRows[0]?.values?.length ?? 0, 1);
+
+  const settlementRows = db.exec(
+    'SELECT settlement_kind, mrc20_ticker, mrc20_id, payment_commit_txid FROM service_orders WHERE id = ?',
+    ['dup-keep']
+  )[0].values;
+  assert.deepEqual(settlementRows, [['native', null, null, null]]);
 });
 
 test('SqliteStore.create() remediates legacy duplicate payment rows and enforces unique dedupe index on startup', async () => {
@@ -338,6 +376,12 @@ test('SqliteStore.create() remediates legacy duplicate payment rows and enforces
       "SELECT name FROM pragma_index_list('service_orders') WHERE name = 'idx_service_orders_dedupe_payment' AND \"unique\" = 1"
     );
     assert.equal(uniqueIndexRows[0]?.values?.length ?? 0, 1);
+
+    const settlementRows = db.exec(
+      'SELECT settlement_kind, mrc20_ticker, mrc20_id, payment_commit_txid FROM service_orders WHERE id = ?',
+      ['legacy-keep']
+    )[0].values;
+    assert.deepEqual(settlementRows, [['native', null, null, null]]);
   } finally {
     Module._load = originalLoad;
     fs.rmSync(userDataPath, { recursive: true, force: true });
@@ -415,10 +459,10 @@ test('SqliteStore.create() remediates legacy MVC currency alias to SPACE for mvc
     const sqliteStore = await SqliteStore.create(userDataPath);
     const db = sqliteStore.getDatabase();
     const rows = db.exec(
-      'SELECT payment_chain, payment_currency FROM service_orders WHERE id = ?',
+      'SELECT payment_chain, payment_currency, settlement_kind, mrc20_ticker, mrc20_id, payment_commit_txid FROM service_orders WHERE id = ?',
       ['legacy-mvc-currency']
     )[0].values;
-    assert.deepEqual(rows, [['mvc', 'SPACE']]);
+    assert.deepEqual(rows, [['mvc', 'SPACE', 'native', null, null, null]]);
   } finally {
     Module._load = originalLoad;
     fs.rmSync(userDataPath, { recursive: true, force: true });
