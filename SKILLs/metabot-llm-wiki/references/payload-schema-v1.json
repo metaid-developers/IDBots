@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "metabot-llm-wiki payload schema v1",
+  "type": "object",
+  "required": ["action", "kbId"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "init",
+        "ingest",
+        "index",
+        "query",
+        "absorb",
+        "wiki_build",
+        "bundle_zip",
+        "publish_zip",
+        "publish_snapshot",
+        "publish_all"
+      ]
+    },
+    "kbId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requestId": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}
