@@ -24,6 +24,14 @@ import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
 import { createOwnerMemoryScope } from '../memory/memoryScope';
 import { resolveMemoryScopes } from '../memory/memoryScopeResolver';
 import {
+  containsSharedDelegationControlPrefix,
+  getSharedDelegationDisplayText,
+  isSharedDelegationPriceNumeric,
+  isSharedExplicitMetaAppUserRequest,
+  normalizeSharedDelegationPaymentTerms,
+  parseSharedDelegationMessage,
+} from '../shared/metabotServiceBridge';
+import {
   buildSandboxRequest,
   collectSkillFilesForSandbox,
   ensureCoworkSandboxDirs,
@@ -385,95 +393,27 @@ export interface DelegationRequest {
   rawRequest: string;
 }
 
-const DELEGATE_REMOTE_SERVICE_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
-const NUMERIC_DELEGATION_PRICE_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/;
-const DECORATED_DELEGATION_PRICE_RE = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:\s+([A-Za-z]+))$/;
-const DELEGATION_PARTIAL_PREFIX_MIN_CHARS = 1;
-const METAAPP_GENERIC_CONFIRMATION_RE = /^(?:好|好的|好呀|好哒|行|可以|确定|确认|继续|开始吧|请开始|没问题|嗯|嗯嗯|ok|okay|yes|yep|sure)[!！。.\s]*$/i;
-const METAAPP_EXPLICIT_INTENT_RE = /\b(?:open|launch|start|use|run)\b|(?:打开|开启|启动|运行|使用|进入)/i;
-const METAAPP_CONTEXT_WORD_RE = /\b(?:metaapp|app|application)\b|(?:应用|应用页|本地应用|本地app|本地 App|MetaApp)/i;
-
 export function containsDelegationControlPrefix(content: string): boolean {
-  return typeof content === 'string' && content.includes(DELEGATE_REMOTE_SERVICE_PREFIX);
-}
-
-function findTrailingDelegationPrefixFragmentStart(content: string): number {
-  if (typeof content !== 'string' || content.length === 0) {
-    return -1;
-  }
-
-  const maxFragmentLength = Math.min(DELEGATE_REMOTE_SERVICE_PREFIX.length - 1, content.length);
-  for (let length = maxFragmentLength; length >= DELEGATION_PARTIAL_PREFIX_MIN_CHARS; length -= 1) {
-    if (DELEGATE_REMOTE_SERVICE_PREFIX.startsWith(content.slice(-length))) {
-      return content.length - length;
-    }
-  }
-  return -1;
+  return containsSharedDelegationControlPrefix(content);
 }
 
 export function getDelegationDisplayText(content: string): string {
-  if (typeof content !== 'string' || !content) {
-    return '';
-  }
-
-  const fullPrefixIndex = content.indexOf(DELEGATE_REMOTE_SERVICE_PREFIX);
-  if (fullPrefixIndex >= 0) {
-    return content.slice(0, fullPrefixIndex).trimEnd();
-  }
-
-  const partialPrefixStart = findTrailingDelegationPrefixFragmentStart(content);
-  if (partialPrefixStart >= 0) {
-    return content.slice(0, partialPrefixStart).trimEnd();
-  }
-
-  return content;
-}
-
-function normalizeMetaAppIntentText(text: string): string {
-  return String(text || '').trim().toLowerCase();
+  return getSharedDelegationDisplayText(content);
 }
 
 export function isExplicitMetaAppUserRequest(userText: string, appId?: string): boolean {
-  const normalizedText = normalizeMetaAppIntentText(userText);
-  if (!normalizedText) {
-    return false;
-  }
-  if (METAAPP_GENERIC_CONFIRMATION_RE.test(normalizedText)) {
-    return false;
-  }
-
-  const normalizedAppId = normalizeMetaAppIntentText(appId || '');
-  const mentionsAppId = normalizedAppId.length > 0 && normalizedText.includes(normalizedAppId);
-  const hasIntentVerb = METAAPP_EXPLICIT_INTENT_RE.test(userText);
-  const hasMetaAppContext = METAAPP_CONTEXT_WORD_RE.test(userText);
-
-  if (mentionsAppId && (hasIntentVerb || hasMetaAppContext)) {
-    return true;
-  }
-
-  return hasIntentVerb && hasMetaAppContext;
+  return isSharedExplicitMetaAppUserRequest(userText, appId);
 }
 
 export function normalizeDelegationPaymentTerms(
   rawPrice: unknown,
   rawCurrency: unknown,
 ): { price: string; currency: string } {
-  let price = typeof rawPrice === 'string' ? rawPrice.trim() : '';
-  let currency = typeof rawCurrency === 'string' ? rawCurrency.trim() : '';
-
-  const decoratedMatch = price.match(DECORATED_DELEGATION_PRICE_RE);
-  if (decoratedMatch) {
-    price = decoratedMatch[1];
-    if (!currency && decoratedMatch[2]) {
-      currency = decoratedMatch[2];
-    }
-  }
-
-  return { price, currency };
+  return normalizeSharedDelegationPaymentTerms(rawPrice, rawCurrency);
 }
 
 export function isDelegationPriceNumeric(value: string): boolean {
-  return NUMERIC_DELEGATION_PRICE_RE.test(value.trim());
+  return isSharedDelegationPriceNumeric(value);
 }
 
 /**
@@ -483,48 +423,7 @@ export function isDelegationPriceNumeric(value: string): boolean {
  * present, or `null` when the content does not match the expected pattern.
  */
 export function parseDelegationMessage(content: string): DelegationRequest | null {
-  const idx = content.indexOf(DELEGATE_REMOTE_SERVICE_PREFIX);
-  if (idx === -1) return null;
-
-  const afterPrefix = content.slice(idx + DELEGATE_REMOTE_SERVICE_PREFIX.length);
-  const firstBrace = afterPrefix.indexOf('{');
-  const lastBrace = afterPrefix.lastIndexOf('}');
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
-
-  const jsonStr = afterPrefix.slice(firstBrace, lastBrace + 1);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    return null;
-  }
-
-  if (typeof parsed !== 'object' || parsed === null) return null;
-
-  const obj = parsed as Record<string, unknown>;
-
-  // Validate required fields
-  if (
-    typeof obj.servicePinId !== 'string' || !obj.servicePinId ||
-    typeof obj.serviceName !== 'string' || !obj.serviceName ||
-    typeof obj.providerGlobalMetaid !== 'string' || !obj.providerGlobalMetaid
-  ) {
-    return null;
-  }
-
-  const normalizedTerms = normalizeDelegationPaymentTerms(obj.price, obj.currency);
-
-  return {
-    servicePinId: obj.servicePinId,
-    serviceName: obj.serviceName,
-    providerGlobalMetaid: obj.providerGlobalMetaid,
-    price: normalizedTerms.price,
-    currency: normalizedTerms.currency,
-    userTask: typeof obj.userTask === 'string' ? obj.userTask : '',
-    taskContext: typeof obj.taskContext === 'string' ? obj.taskContext : '',
-    rawRequest: typeof obj.rawRequest === 'string' ? obj.rawRequest : '',
-  };
+  return parseSharedDelegationMessage(content);
 }
 
 // Event types emitted by the runner

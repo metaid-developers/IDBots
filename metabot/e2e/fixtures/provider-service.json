@@ -1,0 +1,34 @@
+{
+  "host": "claude-code",
+  "identity": {
+    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    "path": "m/44'/10001'/0'/0/0",
+    "publicKey": "0321e4ffeaea35361f12a676a7f48f24bc2b292fdb20d5980fafcc86bc3780370a",
+    "chatPublicKey": "04f6b1d713f8e4a00515996cd2e0fd1f00460c08aa17793bd39d53c15ef6b10531c2485f34c37189e85e7723c90598111a845f31871f3b1bf6d080e60f3e929773",
+    "mvcAddress": "15Lofqw6Kpa6P8WnTYXKvmPyw3UZvvQWrB",
+    "btcAddress": "15Lofqw6Kpa6P8WnTYXKvmPyw3UZvvQWrB",
+    "dogeAddress": "D9UuD6sjdEUNv8hPC8WtUXZapBCsFn67jo",
+    "metaId": "1dde986762a582142fa908419eed375c76d683c0414ed67bb08cbea8c0fe2b4f",
+    "globalMetaId": "idq1970463ym8fqmgawe4lylktne97ahhw4kqehkch"
+  },
+  "presence": {
+    "lastSeenSec": 1744444444
+  },
+  "service": {
+    "sourceServicePinId": "service-weather-001",
+    "currentPinId": "service-weather-001",
+    "creatorMetabotId": 7,
+    "updatedAtMs": 1744444444000,
+    "skillDocument": "# Weather Oracle\n\nProvides short weather predictions over MetaWeb.\n",
+    "draft": {
+      "serviceName": "weather-oracle",
+      "displayName": "Weather Oracle",
+      "description": "Provides tomorrow weather predictions.",
+      "providerSkill": "metabot-weather-oracle",
+      "price": "0.0001",
+      "currency": "SPACE",
+      "outputType": "text",
+      "serviceIconUri": "metafile://service-weather-icon"
+    }
+  }
+}
