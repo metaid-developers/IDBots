@@ -69,6 +69,10 @@ const normalizeComparableGlobalMetaId = (value: unknown): string => {
 
 const normalizeWord = (value: string): string => value.toLowerCase().replace(/[^a-z]/g, '');
 
+const isPongPlaintext = (value: string): boolean => {
+  return Boolean(value && normalizeWord(value.trim()) === 'pong');
+};
+
 const getServicePinCandidates = (service: any): string[] => (
   [...new Set([
     service?.id,
@@ -205,6 +209,9 @@ export class ProviderPingService {
         const cipherText = toSafeString(message.content);
         const peerPubkey = toSafeString(message.from_chat_pubkey) || toChatPubkey;
 
+        if (isPongPlaintext(cipherText)) {
+          return true;
+        }
         if (this.tryDecryptPong(cipherText, privateKeyBuffer, peerPubkey, true)) {
           return true;
         }

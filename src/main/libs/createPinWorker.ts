@@ -25,6 +25,29 @@ async function fetchMVCUtxos(address: string): Promise<{ txid: string; outIndex:
   return all;
 }
 
+export function computeMvcTxidFromRawTx(rawTx: string): string {
+  const tx = new mvc.Transaction(rawTx);
+  return tx.id;
+}
+
+export function isTxnAlreadyKnownError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  return normalized.includes('txn-already-known') || normalized.includes('already known');
+}
+
+export function resolveBroadcastTxResult(
+  rawTx: string,
+  json: { code?: number; message?: string; data?: string },
+): string {
+  if (json?.code === 0) {
+    return json.data ?? computeMvcTxidFromRawTx(rawTx);
+  }
+  if (isTxnAlreadyKnownError(json?.message || '')) {
+    return computeMvcTxidFromRawTx(rawTx);
+  }
+  throw new Error(json?.message || 'Broadcast failed');
+}
+
 async function broadcastTx(rawTx: string): Promise<string> {
   const res = await fetch(`${METALET_HOST}/wallet-api/v3/tx/broadcast`, {
     method: 'POST',
@@ -32,8 +55,7 @@ async function broadcastTx(rawTx: string): Promise<string> {
     body: JSON.stringify({ chain: 'mvc', net: NET, rawTx }),
   });
   const json = (await res.json()) as { code?: number; message?: string; data?: string };
-  if (json?.code !== 0) throw new Error(json?.message || 'Broadcast failed');
-  return json.data ?? '';
+  return resolveBroadcastTxResult(rawTx, json);
 }
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
@@ -283,10 +305,12 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  const msg = err && typeof err === 'object' && 'message' in err
-    ? String((err as Error).message)
-    : String(err);
-  console.error(JSON.stringify({ success: false, error: msg }));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    const msg = err && typeof err === 'object' && 'message' in err
+      ? String((err as Error).message)
+      : String(err);
+    console.error(JSON.stringify({ success: false, error: msg }));
+    process.exit(1);
+  });
+}
