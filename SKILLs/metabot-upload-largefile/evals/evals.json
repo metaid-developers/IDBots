@@ -1,0 +1,23 @@
+{
+  "skill_name": "metabot-upload-largefile",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "把本地文件 /tmp/avatar.png 上传到链上，返回 pinId 和预览地址。",
+      "expected_output": "调用 metabot-upload-largefile 脚本上传文件，并返回 pinId、previewUrl、uploadMode。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "把 /tmp/report.pdf 上链，目标网络是 mvc，直接告诉我预览地址。",
+      "expected_output": "使用该技能上传 PDF，输出 JSON 结果并在最终回复里包含 pinId 与预览地址。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "把一个 5MB 的 /tmp/demo.mp4 上传到 mvc 链，超过 2M 要自动分片。",
+      "expected_output": "触发大文件分片上传路径，最终返回 pinId、previewUrl，并标明 uploadMode=chunked。",
+      "files": []
+    }
+  ]
+}
