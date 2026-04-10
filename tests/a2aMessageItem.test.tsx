@@ -41,3 +41,93 @@ test('A2A delivery result renders markdown content inside the bubble', () => {
   assert.match(markup, /<li[^>]*>item two<\/li>/);
   assert.doesNotMatch(markup, />## Done</);
 });
+
+test('A2A delivery image keeps metafile text and renders image preview for .jpg', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-3',
+        type: 'user',
+        content: '[DELIVERY] {"result":"这是给你处理好的图片： metafile://aabbccddeeff00112233445566778899i0.jpg"}',
+        timestamp: 1_744_444_446_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /metafile:\/\/aabbccddeeff00112233445566778899i0\.jpg/);
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/aabbccddeeff00112233445566778899i0"/);
+});
+
+test('A2A delivery renders embedded player for .mp4 metafile', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-4',
+        type: 'user',
+        content: '[DELIVERY] {"result":"视频交付： metafile://ffeeddccbbaa99887766554433221100i0.mp4"}',
+        timestamp: 1_744_444_447_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /<video[^>]*controls/);
+  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/ffeeddccbbaa99887766554433221100i0"/);
+});
+
+test('A2A delivery renders embedded player for .mp3 metafile', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-5',
+        type: 'user',
+        content: '[DELIVERY] {"result":"音频交付： metafile://11223344556677889900aabbccddeeffi0.mp3"}',
+        timestamp: 1_744_444_448_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /<audio[^>]*controls/);
+  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/11223344556677889900aabbccddeeffi0"/);
+});
+
+test('A2A delivery renders save button for unsupported metafile extension', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-6',
+        type: 'user',
+        content: '[DELIVERY] {"result":"文档交付： metafile://cafebabefeed00112233445566778899i0.pdf"}',
+        timestamp: 1_744_444_449_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /保存文件/);
+  assert.match(markup, /metafile:\/\/cafebabefeed00112233445566778899i0\.pdf/);
+});
+
+test('A2A delivery renders save button for metafile without extension', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-7',
+        type: 'user',
+        content: '[DELIVERY] {"result":"原始交付： metafile://8899aabbccddeeff0011223344556677i0"}',
+        timestamp: 1_744_444_450_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /保存文件/);
+  assert.match(markup, /metafile:\/\/8899aabbccddeeff0011223344556677i0/);
+});
