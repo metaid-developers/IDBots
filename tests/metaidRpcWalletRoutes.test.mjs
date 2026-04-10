@@ -43,7 +43,12 @@ async function startRpcServerForTest() {
   return startRpcServerForTestWithOverrides({});
 }
 
-async function startRpcServerForTestWithOverrides({ walletRawTxService = null, transferService = null } = {}) {
+async function startRpcServerForTestWithOverrides({
+  walletRawTxService = null,
+  transferService = null,
+  utxoWalletService = null,
+  mrc20Service = null,
+} = {}) {
   const originalLoad = Module._load;
   Module._load = function patchedModuleLoad(request, parent, isMain) {
     if (request === 'electron') {
@@ -67,11 +72,17 @@ async function startRpcServerForTestWithOverrides({ walletRawTxService = null, t
         },
       };
     }
+    if (utxoWalletService && request === '@metalet/utxo-wallet-service') {
+      return utxoWalletService;
+    }
     if (walletRawTxService && (request === './walletRawTxService' || request.endsWith('/walletRawTxService'))) {
       return walletRawTxService;
     }
     if (transferService && (request === './transferService' || request.endsWith('/transferService'))) {
       return transferService;
+    }
+    if (mrc20Service && (request === './mrc20Service' || request.endsWith('/mrc20Service'))) {
+      return mrc20Service;
     }
     return originalLoad(request, parent, isMain);
   };
@@ -348,6 +359,172 @@ test('rpc transfer route rejects unsupported chain or missing fields with 400', 
       assert.equal(res.status, 400);
       assert.match(String(bodies[index].error || ''), cases[index].error);
     });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('rpc btc signing routes expose sign-message and sign-psbt through metabot wallet context', async () => {
+  const calls = [];
+  class FakeBtcWallet {
+    constructor(params) {
+      calls.push({ kind: 'construct', params });
+    }
+
+    getAddress() {
+      return '1btc-signer-address';
+    }
+
+    getPublicKey() {
+      return Buffer.from(`02${'11'.repeat(32)}`, 'hex');
+    }
+
+    signMessage(message, encoding) {
+      calls.push({ kind: 'sign-message', message, encoding });
+      return 'signed-metaid-market-message';
+    }
+
+    signTx(signType, params) {
+      calls.push({ kind: 'sign-psbt', signType, params });
+      return {
+        rawTx: 'signed-raw-tx',
+        txId: 'signed-txid',
+        psbtHex: 'signed-psbt-hex',
+        fee: '123',
+        txInputs: [{ address: '1btc-signer-address', value: 1000 }],
+        txOutputs: [{ address: '1dest', value: 877 }],
+      };
+    }
+  }
+
+  const utxoWalletService = {
+    AddressType: { SameAsMvc: 'same-as-mvc' },
+    CoinType: { MVC: 'mvc' },
+    SignType: { SIGN_PSBT: 'SIGN_PSBT' },
+    BtcWallet: FakeBtcWallet,
+  };
+
+  const { server, baseUrl } = await startRpcServerForTestWithOverrides({ utxoWalletService });
+  try {
+    const signMessageRes = await fetch(`${baseUrl}/api/idbots/wallet/btc/sign-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metabot_id: 1,
+        message: 'metaid.market',
+      }),
+    });
+    const signPsbtRes = await fetch(`${baseUrl}/api/idbots/wallet/btc/sign-psbt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metabot_id: 1,
+        psbt_hex: '70736274ff',
+        auto_finalized: false,
+        to_sign_inputs: [{ index: 0, sighash_types: [1] }],
+      }),
+    });
+
+    const signMessageJson = await signMessageRes.json();
+    const signPsbtJson = await signPsbtRes.json();
+
+    assert.equal(signMessageJson.success, true);
+    assert.equal(signMessageJson.signature, 'signed-metaid-market-message');
+    assert.equal(signMessageJson.address, '1btc-signer-address');
+    assert.equal(signMessageJson.public_key, `02${'11'.repeat(32)}`);
+
+    assert.equal(signPsbtJson.success, true);
+    assert.equal(signPsbtJson.raw_tx, 'signed-raw-tx');
+    assert.equal(signPsbtJson.txid, 'signed-txid');
+    assert.equal(signPsbtJson.psbt_hex, 'signed-psbt-hex');
+
+    assert.deepEqual(calls, [
+      {
+        kind: 'construct',
+        params: {
+          coinType: 'mvc',
+          addressType: 'same-as-mvc',
+          addressIndex: 0,
+          network: 'livenet',
+          mnemonic: 'test mnemonic',
+        },
+      },
+      {
+        kind: 'sign-message',
+        message: 'metaid.market',
+        encoding: undefined,
+      },
+      {
+        kind: 'construct',
+        params: {
+          coinType: 'mvc',
+          addressType: 'same-as-mvc',
+          addressIndex: 0,
+          network: 'livenet',
+          mnemonic: 'test mnemonic',
+        },
+      },
+      {
+        kind: 'sign-psbt',
+        signType: 'SIGN_PSBT',
+        params: {
+          psbtHex: '70736274ff',
+          autoFinalized: false,
+          toSignInputs: [{ index: 0, sighashTypes: [1] }],
+        },
+      },
+    ]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('rpc mrc20 transfer route forwards validated requests to the main-process mrc20 executor', async () => {
+  const calls = [];
+  const mrc20Service = {
+    async executeMrc20Transfer(_store, input) {
+      calls.push(input);
+      return {
+        commitTxId: 'commit-txid',
+        revealTxId: 'reveal-txid',
+        totalFeeSats: 321,
+      };
+    },
+  };
+
+  const { server, baseUrl } = await startRpcServerForTestWithOverrides({ mrc20Service });
+  try {
+    const response = await fetch(`${baseUrl}/api/idbots/wallet/mrc20/transfer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metabot_id: 1,
+        mrc20_id: 'tick-id',
+        symbol: 'metaid',
+        decimal: 8,
+        to_address: '1btc-recipient',
+        amount: '1000',
+        fee_rate: 9,
+      }),
+    });
+
+    const payload = await response.json();
+    assert.equal(payload.success, true);
+    assert.equal(payload.commit_txid, 'commit-txid');
+    assert.equal(payload.reveal_txid, 'reveal-txid');
+    assert.equal(payload.total_fee_sats, 321);
+    assert.deepEqual(calls, [{
+      metabotId: 1,
+      asset: {
+        mrc20Id: 'tick-id',
+        decimal: 8,
+        address: '1BtcAddress',
+        symbol: 'METAID',
+      },
+      toAddress: '1btc-recipient',
+      amount: '1000',
+      feeRate: 9,
+    }]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

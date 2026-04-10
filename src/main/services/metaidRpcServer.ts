@@ -7,6 +7,12 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
+import {
+  AddressType,
+  BtcWallet,
+  CoinType,
+  SignType,
+} from '@metalet/utxo-wallet-service';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { createPin, getPinData, setMetaidCoreStore, type MetaidDataPayload } from './metaidCore';
@@ -20,8 +26,11 @@ import { getRate as getGlobalFeeRate, getAllTiers as getGlobalFeeTiers } from '.
 import { listenWithRetry } from './httpListenWithRetry';
 import { DEFAULT_METAID_RPC_HOST, getMetaidRpcBase, resolveMetaidRpcPort } from './metaidRpcEndpoint';
 import { getMetabotAccountSummary } from './metabotAccountService';
+import { uploadMetaFile } from './metaFileUploadService';
 import { buildMvcFtTransferRawTx, buildMvcOrderedRawTxBundle, buildMvcTransferRawTx } from './walletRawTxService';
 import { executeTransfer } from './transferService';
+import { parseAddressIndexFromPath } from './metabotWalletService';
+import { executeMrc20Transfer } from './mrc20Service';
 
 const RPC_HOST = DEFAULT_METAID_RPC_HOST;
 
@@ -34,7 +43,31 @@ const FEE_RATE_SUMMARY_PATH = '/api/idbots/fee-rate-summary';
 const BUILD_MVC_TRANSFER_RAW_TX_PATH = '/api/idbots/wallet/mvc/build-transfer-rawtx';
 const BUILD_MVC_FT_TRANSFER_RAW_TX_PATH = '/api/idbots/wallet/mvc-ft/build-transfer-rawtx';
 const BUILD_MVC_RAW_TX_BUNDLE_PATH = '/api/idbots/wallet/mvc/build-rawtx-bundle';
+const EXECUTE_MRC20_TRANSFER_PATH = '/api/idbots/wallet/mrc20/transfer';
+const SIGN_BTC_MESSAGE_PATH = '/api/idbots/wallet/btc/sign-message';
+const SIGN_BTC_PSBT_PATH = '/api/idbots/wallet/btc/sign-psbt';
+const UPLOAD_LARGEFILE_PATH = '/api/idbots/files/upload-largefile';
 const EXECUTE_TRANSFER_PATH = '/api/idbots/wallet/transfer';
+
+function createMetabotBtcWallet(store: MetabotStore, metabotId: number): BtcWallet {
+  if (!Number.isInteger(metabotId) || metabotId <= 0) {
+    throw new Error('metabot_id is required');
+  }
+
+  const walletRecord = store.getMetabotWalletByMetabotId(metabotId);
+  if (!walletRecord?.mnemonic?.trim()) {
+    throw new Error(`MetaBot wallet not found: ${metabotId}`);
+  }
+
+  const addressIndex = parseAddressIndexFromPath(walletRecord.path || '');
+  return new BtcWallet({
+    coinType: CoinType.MVC,
+    addressType: AddressType.SameAsMvc,
+    addressIndex,
+    network: 'livenet',
+    mnemonic: walletRecord.mnemonic,
+  });
+}
 
 export function startMetaidRpcServer(
   getMetabotStore: () => MetabotStore,
@@ -60,6 +93,229 @@ export function startMetaidRpcServer(
     const url = req.url ?? '';
     const [pathname, search] = url.split('?');
     const persist = new URLSearchParams(search || '').get('persist') === 'true';
+
+    if (req.method === 'POST' && pathname === SIGN_BTC_MESSAGE_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      let parsed: { metabot_id?: number; message?: string; encoding?: BufferEncoding };
+      try {
+        parsed = JSON.parse(body) as { metabot_id?: number; message?: string; encoding?: BufferEncoding };
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      const message = String(parsed.message || '');
+      if (!message) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'message is required' }));
+        return;
+      }
+
+      try {
+        const store = getMetabotStore();
+        const btcWallet = createMetabotBtcWallet(store, Number(parsed.metabot_id));
+        const signature = btcWallet.signMessage(message, parsed.encoding);
+        const publicKeyRaw = btcWallet.getPublicKey?.();
+        const publicKey = Buffer.isBuffer(publicKeyRaw)
+          ? publicKeyRaw.toString('hex')
+          : String(publicKeyRaw || '');
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          signature,
+          public_key: publicKey,
+          address: btcWallet.getAddress(),
+        }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === SIGN_BTC_PSBT_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      let parsed: {
+        metabot_id?: number;
+        psbt_hex?: string;
+        auto_finalized?: boolean;
+        to_sign_inputs?: Array<{ index?: number; sighash_types?: number[] }>;
+      };
+      try {
+        parsed = JSON.parse(body) as {
+          metabot_id?: number;
+          psbt_hex?: string;
+          auto_finalized?: boolean;
+          to_sign_inputs?: Array<{ index?: number; sighash_types?: number[] }>;
+        };
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      const psbtHex = String(parsed.psbt_hex || '').trim();
+      if (!psbtHex) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'psbt_hex is required' }));
+        return;
+      }
+
+      try {
+        const btcWallet = createMetabotBtcWallet(getMetabotStore(), Number(parsed.metabot_id));
+        const toSignInputs = Array.isArray(parsed.to_sign_inputs)
+          ? parsed.to_sign_inputs.map((item) => {
+              const index = Number(item?.index);
+              if (!Number.isInteger(index) || index < 0) {
+                throw new Error('to_sign_inputs[].index must be a non-negative integer');
+              }
+              const sighashTypes = Array.isArray(item?.sighash_types)
+                ? item.sighash_types
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isInteger(value) && value >= 0)
+                : [];
+              if (sighashTypes.length === 0) {
+                throw new Error('to_sign_inputs[].sighash_types must include at least one integer');
+              }
+              return { index, sighashTypes };
+            })
+          : undefined;
+
+        const result = btcWallet.signTx(SignType.SIGN_PSBT, {
+          psbtHex,
+          autoFinalized: parsed.auto_finalized !== false,
+          ...(toSignInputs ? { toSignInputs } : {}),
+        });
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          raw_tx: result.rawTx,
+          txid: result.txId,
+          psbt_hex: result.psbtHex,
+          fee: result.fee,
+          tx_inputs: result.txInputs,
+          tx_outputs: result.txOutputs,
+        }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === EXECUTE_MRC20_TRANSFER_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      let parsed: {
+        metabot_id?: number;
+        mrc20_id?: string;
+        symbol?: string;
+        decimal?: number;
+        to_address?: string;
+        amount?: string | number;
+        fee_rate?: number;
+      };
+      try {
+        parsed = JSON.parse(body) as {
+          metabot_id?: number;
+          mrc20_id?: string;
+          symbol?: string;
+          decimal?: number;
+          to_address?: string;
+          amount?: string | number;
+          fee_rate?: number;
+        };
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      const metabotId = Number(parsed.metabot_id);
+      const mrc20Id = String(parsed.mrc20_id || '').trim();
+      const symbol = String(parsed.symbol || '').trim().toUpperCase();
+      const toAddress = String(parsed.to_address || '').trim();
+      const amount = typeof parsed.amount === 'number' ? String(parsed.amount) : String(parsed.amount || '').trim();
+      const decimal = Number(parsed.decimal);
+      const feeRate = Number(parsed.fee_rate);
+
+      if (!Number.isInteger(metabotId) || metabotId <= 0) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'metabot_id is required' }));
+        return;
+      }
+      if (!mrc20Id) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'mrc20_id is required' }));
+        return;
+      }
+      if (!symbol) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'symbol is required' }));
+        return;
+      }
+      if (!Number.isInteger(decimal) || decimal < 0) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'decimal must be a non-negative integer' }));
+        return;
+      }
+      if (!toAddress) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'to_address is required' }));
+        return;
+      }
+      if (!amount || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'amount must be positive' }));
+        return;
+      }
+      if (!Number.isFinite(feeRate) || feeRate <= 0) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'fee_rate must be positive' }));
+        return;
+      }
+
+      try {
+        const summary = getMetabotAccountSummary(getMetabotStore(), metabotId);
+        const result = await executeMrc20Transfer(getMetabotStore(), {
+          metabotId,
+          asset: {
+            mrc20Id,
+            decimal,
+            address: summary.btc_address,
+            symbol,
+          },
+          toAddress,
+          amount,
+          feeRate,
+        });
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          success: true,
+          commit_txid: result.commitTxId,
+          reveal_txid: result.revealTxId,
+          total_fee_sats: result.totalFeeSats,
+        }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
 
     if (req.method === 'POST' && pathname === RESOLVE_METABOT_ID_PATH) {
       let body = '';
@@ -334,6 +590,47 @@ export function startMetaidRpcServer(
         }
         res.writeHead(200);
         res.end(JSON.stringify({ success: true, txid: result.txId }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === UPLOAD_LARGEFILE_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      let parsed: {
+        metabot_id?: number;
+        file_path?: string;
+        content_type?: string;
+        network?: string;
+      };
+      try {
+        parsed = JSON.parse(body) as {
+          metabot_id?: number;
+          file_path?: string;
+          content_type?: string;
+          network?: string;
+        };
+      } catch {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: 'Invalid JSON body' }));
+        return;
+      }
+
+      try {
+        const result = await uploadMetaFile(getMetabotStore(), {
+          metabotId: Number(parsed.metabot_id),
+          filePath: String(parsed.file_path || '').trim(),
+          contentType: typeof parsed.content_type === 'string' ? parsed.content_type : undefined,
+          network: typeof parsed.network === 'string' ? parsed.network : undefined,
+        });
+        res.writeHead(200);
+        res.end(JSON.stringify(result));
       } catch (err) {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));

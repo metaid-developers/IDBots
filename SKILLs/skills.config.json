@@ -44,8 +44,29 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
+    "metabot-upload-largefile": {
+      "order": 16,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "metabot-trade-metaidmarket": {
+      "order": 17,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
     "metabot-create-metaapp": {
       "order": 20,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1740969600000,
+      "enabled": true
+    },
+    "metabot-llm-wiki": {
+      "order": 19,
       "version": "1.0.0",
       "creator-metaid": "",
       "installedAt": 1740969600000,

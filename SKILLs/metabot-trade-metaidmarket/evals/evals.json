@@ -1,0 +1,35 @@
+{
+  "skill_name": "metabot-trade-metaidmarket",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我展示 $METAID 的挂单列表，并按价格从低到高给我看前 10 条。",
+      "expected_output": "应触发 orders 动作，解析 token 为 METAID，并返回结构化挂单列表。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "帮我以最低价格买入当前最便宜的一笔 $METAID 挂单，直接执行。",
+      "expected_output": "应触发 buy-lowest 动作，走本地签名与 market take 流程，并返回订单与 tx 信息。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "把我钱包里的 $METAID 以每个 0.0001 BTC 的价格挂 1000 份到 market。",
+      "expected_output": "应触发 list 动作，正确抽取数量和单价，并返回挂单结果。",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "帮我看下我自己现在挂了哪些 $METAID 单，把订单号也一起列出来。",
+      "expected_output": "应触发 my-orders 动作，按当前 MetaBot 地址查询有效挂单，并返回订单号列表。",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "帮我取消订单 7818c13ce41b6f16184f3a84fe7269cbf7e128c1f299188f00e7613587328677，并把 token 解锁回钱包。",
+      "expected_output": "应触发 cancel 动作，先调用 market cancel，再执行解锁转出，并返回 commit/reveal 结果。",
+      "files": []
+    }
+  ]
+}
