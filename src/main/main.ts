@@ -126,6 +126,7 @@ import {
   normalizeGigSquareSettlementDraft,
   parseGigSquareSettlementAsset,
 } from './shared/gigSquareSettlementAsset.js';
+import { verifyMrc20Transfer } from './services/mrc20PaymentVerification';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
 import {
@@ -3119,6 +3120,18 @@ const getServiceRefundSyncService = () => {
             expectedAmountSats: Math.floor(Number(order.paymentAmount) * 100_000_000),
           };
         },
+        resolveRefundMrc20RecipientAddress: (order) => {
+          const metabot = getMetabotStore().getMetabotById(order.localMetabotId);
+          if (!metabot) {
+            throw new Error(`Missing buyer metabot for MRC20 refund verification order=${order.id}`);
+          }
+          const recipientAddress = getRefundAddressForOrder(metabot, 'btc');
+          if (!recipientAddress) {
+            throw new Error(`Missing BTC refund recipient address for order=${order.id}`);
+          }
+          return recipientAddress;
+        },
+        verifyMrc20Transfer,
         onOrderEvent: async ({ type, order }) => {
           if (type === 'refund_requested') {
             await recoverMissingRefundPendingOrderObserverSessions().catch((error) => {
