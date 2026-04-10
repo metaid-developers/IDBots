@@ -25,9 +25,26 @@ const formatTime = (timestamp: number): string => {
 
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
 const DELIVERY_PREFIX = '[DELIVERY]';
+const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
+const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
+
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.gif', '.png']);
+const VIDEO_EXTENSIONS = new Set(['.mp4']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac']);
 
 type DeliveryPayload = {
   result?: string;
+};
+
+type MetafilePreviewKind = 'image' | 'video' | 'audio' | 'download';
+
+type ParsedMetafile = {
+  uri: string;
+  pinId: string;
+  extension: string | null;
+  sourceUrl: string;
+  fileName: string;
+  kind: MetafilePreviewKind;
 };
 
 const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
@@ -50,6 +67,93 @@ const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
   } catch {
     return null;
   }
+};
+
+const normalizeMetafileCandidate = (candidate: string): string => {
+  return String(candidate || '').trim().replace(/[),.;:!?]+$/, '');
+};
+
+const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
+  const normalizedUri = normalizeMetafileCandidate(rawUri);
+  if (!normalizedUri.toLowerCase().startsWith('metafile://')) {
+    return null;
+  }
+
+  const withoutScheme = normalizedUri.slice('metafile://'.length).trim();
+  if (!withoutScheme) {
+    return null;
+  }
+
+  const basePart = withoutScheme.split(/[?#]/)[0] || '';
+  if (!basePart) {
+    return null;
+  }
+
+  const lastDotIndex = basePart.lastIndexOf('.');
+  const hasExtension = lastDotIndex > 0 && lastDotIndex < basePart.length - 1;
+  const pinId = hasExtension ? basePart.slice(0, lastDotIndex) : basePart;
+  const extension = hasExtension ? `.${basePart.slice(lastDotIndex + 1).toLowerCase()}` : null;
+
+  if (!pinId) {
+    return null;
+  }
+
+  let kind: MetafilePreviewKind = 'download';
+  if (extension && IMAGE_EXTENSIONS.has(extension)) {
+    kind = 'image';
+  } else if (extension && VIDEO_EXTENSIONS.has(extension)) {
+    kind = 'video';
+  } else if (extension && AUDIO_EXTENSIONS.has(extension)) {
+    kind = 'audio';
+  }
+
+  const sourceUrl = `${METAID_CONTENT_BASE}/${encodeURIComponent(pinId)}`;
+  const fileName = extension ? `${pinId}${extension}` : pinId;
+
+  return {
+    uri: normalizedUri,
+    pinId,
+    extension,
+    sourceUrl,
+    fileName,
+    kind,
+  };
+};
+
+const extractMetafileItems = (content: string): ParsedMetafile[] => {
+  const text = String(content || '');
+  if (!text) {
+    return [];
+  }
+
+  const entries: ParsedMetafile[] = [];
+  const seen = new Set<string>();
+  const matches = text.match(METAFILE_URI_REGEX) || [];
+
+  for (const match of matches) {
+    const parsed = parseMetafileUri(match);
+    if (!parsed || seen.has(parsed.uri)) {
+      continue;
+    }
+    seen.add(parsed.uri);
+    entries.push(parsed);
+  }
+
+  return entries;
+};
+
+const triggerMetafileDownload = (item: ParsedMetafile): void => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = item.sourceUrl;
+  link.download = item.fileName || 'metafile';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 };
 
 const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
@@ -183,6 +287,8 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? deliveryPayload.result.trim()
     : '';
   const shouldRenderDeliveryResult = deliveryResult.length > 0;
+  const contentToRender = shouldRenderDeliveryResult ? deliveryResult : message.content;
+  const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = getA2AMarkdownClassName(isLocal);
 
   return (
@@ -199,12 +305,52 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
               : 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text rounded-bl-sm'
           }`}
         >
-          {shouldRenderDeliveryResult ? (
-            <MarkdownContent content={deliveryResult} className={markdownClassName} />
-          ) : (
-            <MarkdownContent content={message.content} className={markdownClassName} />
-          )}
+          <MarkdownContent content={contentToRender} className={markdownClassName} />
         </div>
+        {metafileItems.length > 0 && (
+          <div className="w-full mt-2 space-y-2">
+            {metafileItems.map((item, index) => (
+              <div
+                key={`${item.uri}-${index}`}
+                className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2"
+              >
+                {item.kind === 'image' && (
+                  <img
+                    src={item.sourceUrl}
+                    alt={item.fileName}
+                    className="w-full max-h-80 object-contain rounded-md"
+                    loading="lazy"
+                  />
+                )}
+                {item.kind === 'video' && (
+                  <video
+                    src={item.sourceUrl}
+                    controls
+                    preload="metadata"
+                    className="w-full max-h-80 rounded-md"
+                  />
+                )}
+                {item.kind === 'audio' && (
+                  <audio
+                    src={item.sourceUrl}
+                    controls
+                    preload="metadata"
+                    className="w-full"
+                  />
+                )}
+                {item.kind === 'download' && (
+                  <button
+                    type="button"
+                    onClick={() => triggerMetafileDownload(item)}
+                    className="inline-flex items-center rounded-md border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
+                  >
+                    保存文件
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5 px-1">
           {formatTime(message.timestamp)}
         </span>
