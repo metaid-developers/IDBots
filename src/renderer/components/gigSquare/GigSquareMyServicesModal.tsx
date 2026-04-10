@@ -17,8 +17,10 @@ import type {
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
+  getGigSquareMrc20SelectPlaceholder,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
+  getGigSquareSettlementGridClassName,
   getSelectableGigSquareModifyMrc20Assets,
   getSelectableGigSquareMrc20Assets,
 } from './gigSquarePublishPresentation.js';
@@ -36,7 +38,13 @@ import {
 
 type GigSquareMyServicesView = 'list' | 'detail';
 type ModifyCurrency = 'BTC' | 'SPACE' | 'DOGE' | 'MRC20';
-type SelectableMrc20Asset = Pick<ElectronMrc20Asset, 'symbol' | 'mrc20Id' | 'balance'>;
+type SelectableMrc20Asset = {
+  symbol: string;
+  mrc20Id: string;
+  balance: {
+    display: string;
+  };
+};
 
 type SelectedServiceLike = Pick<GigSquareMyServiceSummary, 'id'> & Partial<GigSquareMyServiceSummary>;
 
@@ -1435,7 +1443,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                         ))}
                       </select>
                     </div>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className={getGigSquareSettlementGridClassName(modifyDraft.currency)}>
                       <div>
                         <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
                           {i18nService.t('gigSquarePublishPriceLabel')}
@@ -1471,37 +1479,39 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                           ))}
                         </select>
                       </div>
-                    </div>
-                    {modifyDraft.currency === 'MRC20' && (
                       <div>
-                        <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          MRC20 Token
-                        </label>
-                        <select
-                          value={modifyDraft.mrc20Id}
-                          onChange={(event) => {
-                            const nextMrc20Id = event.target.value;
-                            const selectedAsset = modifyMrc20Options.find((item) => item.mrc20Id === nextMrc20Id);
-                            setModifyDraft((prev) => (prev ? {
-                              ...prev,
-                              mrc20Id: nextMrc20Id,
-                              mrc20Ticker: selectedAsset?.symbol || '',
-                            } : prev));
-                          }}
-                          disabled={isModifySubmitting}
-                          className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
-                        >
-                          <option value="">
-                            {modifyMrc20Options.length > 0 ? 'Select token' : 'No available MRC20 token'}
-                          </option>
-                          {modifyMrc20Options.map((asset) => (
-                            <option key={asset.mrc20Id} value={asset.mrc20Id}>
-                              {asset.symbol} ({asset.balance.display})
-                            </option>
-                          ))}
-                        </select>
+                        {modifyDraft.currency === 'MRC20' && (
+                          <>
+                            <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                              MRC20 Token
+                            </label>
+                            <select
+                              value={modifyDraft.mrc20Id}
+                              onChange={(event) => {
+                                const nextMrc20Id = event.target.value;
+                                const selectedAsset = modifyMrc20Options.find((item) => item.mrc20Id === nextMrc20Id);
+                                setModifyDraft((prev) => (prev ? {
+                                  ...prev,
+                                  mrc20Id: nextMrc20Id,
+                                  mrc20Ticker: selectedAsset?.symbol || '',
+                                } : prev));
+                              }}
+                              disabled={isModifySubmitting}
+                              className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
+                            >
+                              <option value="">
+                                {getGigSquareMrc20SelectPlaceholder(modifyMrc20Options)}
+                              </option>
+                              {modifyMrc20Options.map((asset) => (
+                                <option key={asset.mrc20Id} value={asset.mrc20Id}>
+                                  {asset.symbol} ({asset.balance.display})
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        )}
                       </div>
-                    )}
+                    </div>
                     {modifyPriceLimitText && (
                       <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('gigSquarePublishPriceLimitPrefix')}{modifyPriceLimitText}

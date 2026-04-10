@@ -23,6 +23,19 @@ export function getGigSquarePublishPriceLimit(currency) {
   return GIG_SQUARE_PUBLISH_PRICE_LIMITS[normalized] || GIG_SQUARE_PUBLISH_PRICE_LIMITS.BTC;
 }
 
+export function getGigSquareSettlementGridClassName(currency) {
+  const normalized = typeof currency === 'string' ? currency.trim().toUpperCase() : '';
+  return normalized === 'MRC20'
+    ? 'grid grid-cols-1 gap-4 md:grid-cols-3'
+    : 'grid grid-cols-1 gap-4 md:grid-cols-2';
+}
+
+export function getGigSquareMrc20SelectPlaceholder(assets) {
+  return Array.isArray(assets) && assets.length > 0
+    ? 'Select token'
+    : 'No Token';
+}
+
 export function getSelectableGigSquareMrc20Assets(assets) {
   return (Array.isArray(assets) ? assets : []).filter((asset) => Number(asset?.balance?.display || 0) > 0);
 }
