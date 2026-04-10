@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativeImage, systemPreferences, Menu } from 'electron';
-import type { WebContents } from 'electron';
+import type { Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { randomBytes } from 'crypto';
@@ -243,6 +243,15 @@ const SERVICE_REFUND_REQUEST_PATH = '/protocols/service-refund-request';
 const SERVICE_REFUND_FINALIZE_PATH = '/protocols/service-refund-finalize';
 const SERVICE_REFUND_SYNC_SIZE = 200;
 const SERVICE_REFUND_SYNC_MAX_PAGES = 10;
+const SYSTEM_PROXY_BYPASS_RULES = '<local>,127.0.0.1,[::1]';
+
+const applySystemProxyWithLoopbackBypass = async (targetSession: Session, scope: string): Promise<void> => {
+  await targetSession.setProxy({
+    mode: 'system',
+    proxyBypassRules: SYSTEM_PROXY_BYPASS_RULES,
+  });
+  console.log(`[Proxy] ${scope} set to follow system proxy with loopback bypass (${SYSTEM_PROXY_BYPASS_RULES})`);
+};
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -7021,11 +7030,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     mainWindow.webContents.on('did-finish-load', () => {
       emitWindowState();
     });
+    if (isDev) {
+      mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+        console.log(`[Renderer:${level}] ${sourceId}:${line} ${message}`);
+      });
+    }
 
     // [关键代码] 显式告诉 Electron 使用系统的代理配置
     // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
-    mainWindow.webContents.session.setProxy({ mode: 'system' }).then(() => {
-      console.log('已设置为跟随系统代理');
+    void applySystemProxyWithLoopbackBypass(mainWindow.webContents.session, 'window session').catch((error) => {
+      console.error('Failed to apply system proxy to window session:', error);
     });
 
     // Block unexpected window popups/navigation; only allow explicit external links.
@@ -7321,8 +7335,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
 
     // [关键代码] 显式告诉 Electron 使用系统的代理配置
     // 这会涵盖绝大多数 VPN（如 Clash, V2Ray 等开启了"系统代理"模式的情况）
-    await session.defaultSession.setProxy({ mode: 'system' });
-    console.log('已设置为跟随系统代理');
+    await applySystemProxyWithLoopbackBypass(session.defaultSession, 'default session');
 
     await startCoworkOpenAICompatProxy().catch((error) => {
       console.error('Failed to start OpenAI compatibility proxy:', error);

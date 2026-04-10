@@ -68,3 +68,7 @@ nul
 .tmp-bin/
 .tmp-oss/
 man_base_data_pebble/
+
+# Repo-local gstack generated Codex skill entrypoints are machine-local symlinks.
+# Keep the vendored source at .agents/skills/gstack/, but regenerate these locally.
+/.agents/skills/gstack-*
