@@ -114,6 +114,17 @@ function isProviderStaleFundingError(message: string): boolean {
   return String(message || '').includes(STALE_PROVIDER_ERROR_MESSAGE);
 }
 
+function computeSpendableSatoshisAfterExclusions(
+  candidates: SpendableMvcUtxo[],
+  excludedOutpoints: ReadonlySet<string>,
+): number {
+  return candidates.reduce((total, utxo) => {
+    const outpoint = getUtxoOutpointKey(utxo);
+    if (excludedOutpoints.has(outpoint)) return total;
+    return total + Number(utxo.satoshis || 0);
+  }, 0);
+}
+
 async function fetchMVCUtxos(address: string): Promise<Array<{ txid: string; outIndex: number; value: number; height: number }>> {
   const all: Array<{ txid: string; outIndex: number; value: number; height: number }> = [];
   let flag: string | undefined;
@@ -182,6 +193,7 @@ async function main(): Promise<void> {
 
   for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
     let pickedForAttempt: SpendableMvcUtxo[] = [];
+    let candidatesForAttempt: SpendableMvcUtxo[] = [];
     try {
       const providerUtxos = await fetchMVCUtxos(fromAddress);
       const providerFundingUtxos: SpendableMvcUtxo[] = providerUtxos.flatMap((u) => {
@@ -201,6 +213,7 @@ async function main(): Promise<void> {
         }];
       });
       const usableUtxos = mergeFundingCandidates(preferredFundingUtxos, providerFundingUtxos);
+      candidatesForAttempt = usableUtxos;
       logStep('Fetched MVC transfer funding candidates', {
         attempt,
         candidateOutpoints: usableUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
@@ -261,6 +274,7 @@ async function main(): Promise<void> {
       lastError = err;
       const message = getMessage(err);
       const pickedOutpoints = pickedForAttempt.map((utxo) => getUtxoOutpointKey(utxo));
+      const discoveredStaleOutpoints = Array.from(excludedOutpoints);
       if (attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
         for (const utxo of pickedForAttempt) {
           excludedOutpoints.add(getUtxoOutpointKey(utxo));
@@ -274,16 +288,22 @@ async function main(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
+      const spendableSats = computeSpendableSatoshisAfterExclusions(candidatesForAttempt, excludedOutpoints);
+      const staleOutpoints =
+        pickedOutpoints.length > 0 && isRetryableMvcBroadcastError(message)
+          ? pickedOutpoints
+          : discoveredStaleOutpoints.length > 0
+            ? discoveredStaleOutpoints
+            : isProviderStaleFundingError(message)
+              ? Array.from(excludedOutpoints)
+              : undefined;
       logStep('MVC transfer failed', { attempt, error: message });
       console.error(JSON.stringify({
         success: false,
         error: message,
-        staleOutpoints:
-          pickedOutpoints.length > 0 && isRetryableMvcBroadcastError(message)
-            ? pickedOutpoints
-            : isProviderStaleFundingError(message)
-              ? Array.from(excludedOutpoints)
-              : undefined,
+        requestedSats: Number(amountSats),
+        spendableSats,
+        staleOutpoints,
       }));
       process.exit(1);
     }
@@ -293,7 +313,7 @@ async function main(): Promise<void> {
   console.error(JSON.stringify({
     success: false,
     error: finalError,
-    staleOutpoints: isProviderStaleFundingError(finalError) ? Array.from(excludedOutpoints) : undefined,
+    staleOutpoints: excludedOutpoints.size > 0 ? Array.from(excludedOutpoints) : undefined,
   }));
   process.exit(1);
 }

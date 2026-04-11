@@ -240,6 +240,8 @@ interface MvcTransferWorkerFailure {
   success: false;
   error: string;
   staleOutpoints?: string[];
+  requestedSats?: number;
+  spendableSats?: number;
 }
 
 const MVC_SPEND_SESSION_TTL_MS = 30 * 60 * 1000;
@@ -470,6 +472,8 @@ async function runMvcTransferWorker(params: {
             success: false,
             error: String(result.error || 'Worker did not return txId'),
             staleOutpoints: Array.isArray(result.staleOutpoints) ? result.staleOutpoints : undefined,
+            requestedSats: Number.isFinite(Number(result.requestedSats)) ? Number(result.requestedSats) : undefined,
+            spendableSats: Number.isFinite(Number(result.spendableSats)) ? Number(result.spendableSats) : undefined,
           });
         }
       } catch (e) {
@@ -553,9 +557,20 @@ export async function executeTransfer(
           } else {
             const failureResult = workerResult as MvcTransferWorkerFailure;
             recordMvcSpentOutpoints(params.metabotId, failureResult.staleOutpoints);
-            const errMsg = failureResult.error;
+            let errMsg = failureResult.error;
+            if (
+              String(failureResult.error || '').toLowerCase().includes('not enough balance')
+              && Number.isFinite(failureResult.requestedSats)
+              && Number.isFinite(failureResult.spendableSats)
+            ) {
+              const requested = new Decimal(failureResult.requestedSats as number).div(SATOSHI_PER_UNIT).toFixed(8);
+              const spendable = new Decimal(failureResult.spendableSats as number).div(SATOSHI_PER_UNIT).toFixed(8);
+              errMsg = `${failureResult.error} (requested ${requested} SPACE, spendable ${spendable} SPACE with current provider UTXOs)`;
+            }
             console.error('[Transfer] MVC worker failed:', errMsg, {
               staleOutpoints: failureResult.staleOutpoints ?? [],
+              requestedSats: failureResult.requestedSats,
+              spendableSats: failureResult.spendableSats,
             });
             return { success: false, error: errMsg };
           }
