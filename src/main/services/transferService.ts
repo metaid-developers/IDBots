@@ -340,6 +340,12 @@ function recordMvcSpentOutpoints(metabotId: number, outpoints: unknown): void {
   pruneMvcSpendSessionState(metabotId);
 }
 
+function clearMvcExcludedOutpoints(metabotId: number): void {
+  const state = getOrCreateMvcSpendSessionState(metabotId);
+  state.excludedOutpoints.clear();
+  pruneMvcSpendSessionState(metabotId);
+}
+
 function replaceMvcPendingFundingUtxos(metabotId: number, utxo: unknown): void {
   const state = getOrCreateMvcSpendSessionState(metabotId);
   const normalized = normalizeMvcCachedFundingUtxo(utxo);
@@ -556,10 +562,16 @@ export async function executeTransfer(
             return { success: true, txId };
           } else {
             const failureResult = workerResult as MvcTransferWorkerFailure;
-            recordMvcSpentOutpoints(params.metabotId, failureResult.staleOutpoints);
+            const isInsufficient = String(failureResult.error || '').toLowerCase().includes('not enough balance');
+            if (isInsufficient) {
+              // Provider balance/index state may have drifted; do not carry stale exclusions across requests.
+              clearMvcExcludedOutpoints(params.metabotId);
+            } else {
+              recordMvcSpentOutpoints(params.metabotId, failureResult.staleOutpoints);
+            }
             let errMsg = failureResult.error;
             if (
-              String(failureResult.error || '').toLowerCase().includes('not enough balance')
+              isInsufficient
               && Number.isFinite(failureResult.requestedSats)
               && Number.isFinite(failureResult.spendableSats)
             ) {

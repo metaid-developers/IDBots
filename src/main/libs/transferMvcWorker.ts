@@ -114,6 +114,10 @@ function isProviderStaleFundingError(message: string): boolean {
   return String(message || '').includes(STALE_PROVIDER_ERROR_MESSAGE);
 }
 
+function isInsufficientBalanceError(message: string): boolean {
+  return String(message || '').toLowerCase().includes('not enough balance');
+}
+
 function computeSpendableSatoshisAfterExclusions(
   candidates: SpendableMvcUtxo[],
   excludedOutpoints: ReadonlySet<string>,
@@ -190,6 +194,7 @@ async function main(): Promise<void> {
   const preferredFundingUtxos = normalizePreferredFundingUtxos(payload.preferredFundingUtxos, fromAddress);
   const preferredOutpoints = new Set(preferredFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)));
   let lastError: unknown = null;
+  let didReprobeAfterInsufficient = false;
 
   for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
     let pickedForAttempt: SpendableMvcUtxo[] = [];
@@ -285,6 +290,22 @@ async function main(): Promise<void> {
           blacklistedOutpoints: pickedOutpoints,
           excludedOutpoints: Array.from(excludedOutpoints),
         });
+        await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
+        continue;
+      }
+      if (
+        attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS
+        && !didReprobeAfterInsufficient
+        && isInsufficientBalanceError(message)
+        && excludedOutpoints.size > 0
+      ) {
+        didReprobeAfterInsufficient = true;
+        logStep('Reprobing MVC transfer with provider UTXO set after insufficient-balance under exclusions', {
+          attempt,
+          error: message,
+          excludedOutpoints: Array.from(excludedOutpoints),
+        });
+        excludedOutpoints.clear();
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
