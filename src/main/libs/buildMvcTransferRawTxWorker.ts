@@ -1,7 +1,15 @@
-import { API_NET, API_TARGET, Wallet, mvc } from 'meta-contract';
+import { TxComposer, mvc } from 'meta-contract';
 import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import {
+  getUtxoOutpointKey,
+  pickUtxo,
+  type SpendableMvcUtxo,
+} from './mvcSpend';
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
+const METALET_HOST = 'https://www.metalet.space';
+const NET = 'livenet';
+const ESTIMATED_TX_SIZE_WITHOUT_INPUTS = 4 + 1 + 1 + 43 + 43 + 4;
 
 function getMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
@@ -17,6 +25,102 @@ function normalizeExcludeOutpoints(input: unknown): Set<string> {
       .map((item) => String(item || '').trim().toLowerCase())
       .filter((value) => /^[0-9a-f]{64}:\d+$/.test(value)),
   );
+}
+
+export function normalizeMvcWalletUtxos(input: unknown, address: string): SpendableMvcUtxo[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item) => {
+      const record = item as Record<string, unknown>;
+      const txId = String(record.txId ?? record.txid ?? '').trim();
+      const outputIndex = Number(record.outputIndex ?? record.outIndex ?? record.vout);
+      const satoshis = Number(record.satoshis ?? record.value ?? 0);
+      const height = Number(record.height ?? 0);
+      return {
+        txId,
+        outputIndex,
+        satoshis,
+        address: String(record.address || address).trim() || address,
+        height: Number.isFinite(height) ? height : 0,
+      };
+    })
+    .filter((utxo) => /^[0-9a-fA-F]{64}$/.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && utxo.satoshis > 600);
+}
+
+async function fetchMVCUtxos(address: string): Promise<Array<{ txid: string; outIndex: number; value: number; height: number }>> {
+  const all: Array<{ txid: string; outIndex: number; value: number; height: number }> = [];
+  let flag: string | undefined;
+  while (true) {
+    const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
+    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
+    const list = json?.data?.list ?? [];
+    if (!list.length) break;
+    all.push(...list.filter((u) => u.value >= 600));
+    flag = list[list.length - 1]?.flag;
+    if (!flag) break;
+  }
+  return all;
+}
+
+export function buildMvcTransferRawTxLocally(params: {
+  senderWif: string;
+  senderAddress: string;
+  toAddress: string;
+  amountSats: number;
+  feeRate: number;
+  utxos: SpendableMvcUtxo[];
+  excludeOutpoints?: ReadonlySet<string>;
+}): {
+  txHex: string;
+  txId: string;
+  spentOutpoints: string[];
+  changeOutpoint: string | null;
+} {
+  const network = mvc.Networks.livenet;
+  const privateKey = mvc.PrivateKey.fromWIF(params.senderWif);
+  const senderAddressObj = new mvc.Address(params.senderAddress, network as any);
+  const recipientAddressObj = new mvc.Address(params.toAddress, network as any);
+
+  const txComposer = new TxComposer();
+  txComposer.appendP2PKHOutput({
+    address: recipientAddressObj,
+    satoshis: params.amountSats,
+  });
+
+  const picked = pickUtxo(
+    params.utxos,
+    params.amountSats,
+    params.feeRate,
+    ESTIMATED_TX_SIZE_WITHOUT_INPUTS,
+    params.excludeOutpoints ?? new Set(),
+  );
+
+  for (const utxo of picked) {
+    txComposer.appendP2PKHInput({
+      address: senderAddressObj,
+      txId: utxo.txId,
+      outputIndex: utxo.outputIndex,
+      satoshis: utxo.satoshis,
+    });
+  }
+  txComposer.appendChangeOutput(senderAddressObj, params.feeRate);
+
+  const tx = txComposer.tx;
+  for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex += 1) {
+    txComposer.unlockP2PKHInput(privateKey, inputIndex);
+  }
+
+  const txHex = txComposer.getRawHex();
+  const txId = tx.id;
+  const changeIndex = tx.outputs.length > 1 ? tx.outputs.length - 1 : -1;
+
+  return {
+    txHex,
+    txId,
+    spentOutpoints: picked.map((utxo) => getUtxoOutpointKey(utxo)),
+    changeOutpoint: changeIndex >= 0 ? `${txId}:${changeIndex}` : null,
+  };
 }
 
 async function main(): Promise<void> {
@@ -46,36 +150,39 @@ async function main(): Promise<void> {
   const addressIndex = parseAddressIndexFromPath(pathStr);
   const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
   const senderWif = mvcWallet.getPrivateKey();
-  const wallet = new Wallet(senderWif, API_NET.MAIN, feeRate, API_TARGET.APIMVC);
+  const senderAddress = mvcWallet.getAddress();
   const excludeOutpoints = normalizeExcludeOutpoints(payload.excludeOutpoints);
-
-  const allUtxos = await wallet.api.getUnspents(mvcWallet.getAddress());
-  const utxos = allUtxos.filter((utxo) => {
-    const key = `${String((utxo as any).txId || '').toLowerCase()}:${Number((utxo as any).outputIndex)}`;
-    return !excludeOutpoints.has(key);
-  });
-  if (utxos.length === 0) {
+  const utxos = normalizeMvcWalletUtxos(await fetchMVCUtxos(senderAddress), senderAddress);
+  const availableUtxos = utxos.filter((utxo) => !excludeOutpoints.has(getUtxoOutpointKey(utxo)));
+  if (availableUtxos.length === 0) {
     console.log(JSON.stringify({ success: false, error: 'No spendable MVC UTXOs after exclusions' }));
     process.exit(1);
   }
 
-  const receivers = [{ address: toAddress, amount: amountSats }];
-  const result = await wallet.sendArray(receivers, utxos, { noBroadcast: true });
-  const tx = new mvc.Transaction(result.txHex);
-  const spentOutpoints = tx.inputs.map((input: any) => `${input.prevTxId.toString('hex')}:${Number(input.outputIndex)}`);
+  const result = buildMvcTransferRawTxLocally({
+    senderWif,
+    senderAddress,
+    toAddress,
+    amountSats,
+    feeRate,
+    utxos,
+    excludeOutpoints,
+  });
 
   console.log(
     JSON.stringify({
       success: true,
       txHex: result.txHex,
       txid: result.txId,
-      spentOutpoints,
-      changeOutpoint: tx.outputs.length > receivers.length ? `${tx.id}:${tx.outputs.length - 1}` : null,
+      spentOutpoints: result.spentOutpoints,
+      changeOutpoint: result.changeOutpoint,
     }),
   );
 }
 
-main().catch((err: unknown) => {
-  console.error(JSON.stringify({ success: false, error: getMessage(err) }));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    console.error(JSON.stringify({ success: false, error: getMessage(err) }));
+    process.exit(1);
+  });
+}
