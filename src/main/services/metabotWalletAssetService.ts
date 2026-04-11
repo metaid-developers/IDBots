@@ -118,25 +118,53 @@ interface MetabotWalletAssetServiceDeps {
 
 const SATOSHIS_PER_UNIT = 100_000_000;
 
-function isTokenNoDataError(error: unknown): boolean {
+function getErrorMessage(error: unknown): string {
+  return error != null && typeof error === 'object' && 'message' in error && typeof (error as Error).message === 'string'
+    ? (error as Error).message
+    : String(error ?? '');
+}
+
+function isTokenSoftFailure(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  const normalized = message.toLowerCase();
+  if (/no data found/i.test(message)) return true;
+  return (
+    normalized.includes('rpc error')
+    || normalized.includes('request error')
+    || normalized.includes('fetch failed')
+    || normalized.includes('network error')
+    || normalized.includes('networkerror')
+    || normalized.includes('timeout')
+  );
+}
+
+function logSoftFailure(scope: string, error: unknown): void {
   const message =
-    error != null && typeof error === 'object' && 'message' in error && typeof (error as Error).message === 'string'
-      ? (error as Error).message
-      : String(error ?? '');
-  return /no data found/i.test(message);
+    error instanceof Error ? error.message : String(error ?? '');
+  console.warn(`[MetabotWalletAssets] ${scope} soft-failed: ${message}`);
 }
 
 const defaultDeps: MetabotWalletAssetServiceDeps = {
   async getNativeBalances(summary) {
-    const [btc, doge, mvc] = await Promise.all([
+    const [btc, doge, mvc] = await Promise.allSettled([
       getAddressBalance('btc', summary.btc_address),
       getAddressBalance('doge', summary.doge_address),
       getAddressBalance('mvc', summary.mvc_address),
     ]);
+    if (btc.status === 'rejected') logSoftFailure('BTC native balance', btc.reason);
+    if (doge.status === 'rejected') logSoftFailure('DOGE native balance', doge.reason);
+    if (mvc.status === 'rejected') logSoftFailure('MVC native balance', mvc.reason);
+
     return {
-      btc: { address: summary.btc_address, value: btc.value, unit: btc.unit },
-      doge: { address: summary.doge_address, value: doge.value, unit: doge.unit },
-      mvc: { address: summary.mvc_address, value: mvc.value, unit: mvc.unit },
+      btc: btc.status === 'fulfilled'
+        ? { address: summary.btc_address, value: btc.value.value, unit: btc.value.unit }
+        : { address: summary.btc_address, value: 0, unit: 'BTC' },
+      doge: doge.status === 'fulfilled'
+        ? { address: summary.doge_address, value: doge.value.value, unit: doge.value.unit }
+        : { address: summary.doge_address, value: 0, unit: 'DOGE' },
+      mvc: mvc.status === 'fulfilled'
+        ? { address: summary.mvc_address, value: mvc.value.value, unit: mvc.value.unit }
+        : { address: summary.mvc_address, value: 0, unit: 'SPACE' },
     };
   },
   async listMrc20Assets(btcAddress) {
@@ -292,11 +320,17 @@ export async function getMetabotWalletAssets(
   const [nativeBalances, mrc20Assets, mvcFtAssets] = await Promise.all([
     deps.getNativeBalances(summary),
     deps.listMrc20Assets(summary.btc_address).catch((error) => {
-      if (isTokenNoDataError(error)) return [];
+      if (isTokenSoftFailure(error)) {
+        logSoftFailure('MRC20 asset list', error);
+        return [];
+      }
       throw error;
     }),
     deps.listMvcFtAssets(summary.mvc_address).catch((error) => {
-      if (isTokenNoDataError(error)) return [];
+      if (isTokenSoftFailure(error)) {
+        logSoftFailure('MVC FT asset list', error);
+        return [];
+      }
       throw error;
     }),
   ]);
