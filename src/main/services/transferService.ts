@@ -361,6 +361,10 @@ export async function executeTransfer(
 
   try {
     if (params.chain === 'mvc') {
+      console.log('[Transfer] MVC: queueing governed spend job', {
+        metabotId: params.metabotId,
+        action: 'mvc_transfer',
+      });
       return getMvcSpendCoordinator().runMvcSpendJob({
         metabotId: params.metabotId,
         action: 'mvc_transfer',
@@ -380,7 +384,10 @@ export async function executeTransfer(
             return { success: false, error: errMsg };
           }
           const txId = (workerResult as { success: true; txId: string }).txId;
-          console.log('[Transfer] MVC success txId:', txId);
+          console.log('[Transfer] MVC governed spend completed', {
+            metabotId: params.metabotId,
+            txId,
+          });
           return { success: true, txId };
         },
       });

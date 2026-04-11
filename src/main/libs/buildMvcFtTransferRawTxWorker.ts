@@ -9,6 +9,15 @@ const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
 
+function logStep(message: string, details?: Record<string, unknown>): void {
+  try {
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    process.stderr.write(`[buildMvcFtTransferRawTxWorker] ${message}${suffix}\n`);
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function getMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
     return (err as Error).message;
@@ -125,6 +134,9 @@ async function main(): Promise<void> {
       satoshis: Number(output.satoshis),
       address: senderAddress,
     }];
+    logStep('Using explicit MVC FT funding outpoint', {
+      fundingOutpoint,
+    });
   } else {
     const allUtxos = await fetchMvcFundingUtxos(senderAddress);
     utxos = allUtxos
@@ -138,12 +150,19 @@ async function main(): Promise<void> {
         const key = `${utxo.txId.toLowerCase()}:${utxo.outputIndex}`;
         return /^[0-9a-f]{64}$/i.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && utxo.satoshis > 600 && !excludeOutpoints.has(key);
       });
+    logStep('Fetched MVC FT funding candidates', {
+      candidateOutpoints: utxos.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
+      excludedOutpoints: Array.from(excludeOutpoints),
+    });
   }
   utxos = attachMvcFundingSignatureContext(utxos, {
     senderWif,
     senderAddress,
   });
   utxos = selectMvcFundingUtxos(utxos);
+  logStep('Picked MVC FT funding inputs', {
+    pickedOutpoints: utxos.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
+  });
   if (utxos.length === 0) {
     console.log(JSON.stringify({ success: false, error: 'No spendable MVC UTXOs after exclusions' }));
     process.exit(1);
@@ -172,6 +191,10 @@ async function main(): Promise<void> {
       changeOutpoint: transferResult.tx.outputs.length > 1 ? `${transferResult.txid}:${transferResult.tx.outputs.length - 1}` : null,
     }),
   );
+  logStep('Built MVC FT raw-tx bundle locally', {
+    txid: transferResult.txid,
+    spentOutpoints,
+  });
 }
 
 if (require.main === module) {

@@ -11,6 +11,15 @@ const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
 const ESTIMATED_TX_SIZE_WITHOUT_INPUTS = 4 + 1 + 1 + 43 + 43 + 4;
 
+function logStep(message: string, details?: Record<string, unknown>): void {
+  try {
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    process.stderr.write(`[buildMvcTransferRawTxWorker] ${message}${suffix}\n`);
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function getMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
     return (err as Error).message;
@@ -153,6 +162,10 @@ async function main(): Promise<void> {
   const senderAddress = mvcWallet.getAddress();
   const excludeOutpoints = normalizeExcludeOutpoints(payload.excludeOutpoints);
   const utxos = normalizeMvcWalletUtxos(await fetchMVCUtxos(senderAddress), senderAddress);
+  logStep('Fetched MVC raw-tx funding candidates', {
+    candidateOutpoints: utxos.map((utxo) => getUtxoOutpointKey(utxo)),
+    excludedOutpoints: Array.from(excludeOutpoints),
+  });
   const availableUtxos = utxos.filter((utxo) => !excludeOutpoints.has(getUtxoOutpointKey(utxo)));
   if (availableUtxos.length === 0) {
     console.log(JSON.stringify({ success: false, error: 'No spendable MVC UTXOs after exclusions' }));
@@ -167,6 +180,11 @@ async function main(): Promise<void> {
     feeRate,
     utxos,
     excludeOutpoints,
+  });
+  logStep('Built MVC raw-tx transfer locally', {
+    pickedOutpoints: result.spentOutpoints,
+    txid: result.txId,
+    changeOutpoint: result.changeOutpoint,
   });
 
   console.log(

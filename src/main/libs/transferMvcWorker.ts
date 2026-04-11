@@ -25,6 +25,15 @@ const RETRYABLE_MVC_BROADCAST_ATTEMPTS = 3;
 const RETRYABLE_MVC_BROADCAST_DELAY_MS = 750;
 const ESTIMATED_TX_SIZE_WITHOUT_INPUTS = 4 + 1 + 1 + 43 + 43 + 4;
 
+function logStep(message: string, details?: Record<string, unknown>): void {
+  try {
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    process.stderr.write(`[transferMvcWorker] ${message}${suffix}\n`);
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function getMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
     return (err as Error).message;
@@ -105,6 +114,11 @@ async function main(): Promise<void> {
         address: fromAddress,
         height: u.height,
       }));
+      logStep('Fetched MVC transfer funding candidates', {
+        attempt,
+        candidateOutpoints: usableUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        excludedOutpoints: Array.from(excludedOutpoints),
+      });
 
       const txComposer = new TxComposer();
       txComposer.appendP2PKHOutput({
@@ -120,6 +134,10 @@ async function main(): Promise<void> {
         excludedOutpoints,
       );
       pickedForAttempt = picked;
+      logStep('Picked MVC transfer funding inputs', {
+        attempt,
+        pickedOutpoints: picked.map((utxo) => getUtxoOutpointKey(utxo)),
+      });
 
       for (const utxo of picked) {
         txComposer.appendP2PKHInput({
@@ -138,6 +156,7 @@ async function main(): Promise<void> {
 
       const rawHex = txComposer.getRawHex();
       const txId = await broadcastTx(rawHex);
+      logStep('Broadcasted MVC transfer transaction', { attempt, txId });
       console.log(JSON.stringify({ success: true, txId }));
       return;
     } catch (err) {
@@ -147,9 +166,16 @@ async function main(): Promise<void> {
         for (const utxo of pickedForAttempt) {
           excludedOutpoints.add(getUtxoOutpointKey(utxo));
         }
+        logStep('Retrying MVC transfer after retryable broadcast failure', {
+          attempt,
+          error: message,
+          blacklistedOutpoints: pickedForAttempt.map((utxo) => getUtxoOutpointKey(utxo)),
+          excludedOutpoints: Array.from(excludedOutpoints),
+        });
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
+      logStep('MVC transfer failed', { attempt, error: message });
       console.error(JSON.stringify({ success: false, error: message }));
       process.exit(1);
     }

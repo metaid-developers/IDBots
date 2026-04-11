@@ -32,6 +32,13 @@ function appendMetaidLog(level: string, message: string, details?: object): void
   }
 }
 
+function getErrorMessage(err: unknown): string {
+  if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
+    return (err as Error).message;
+  }
+  return String(err);
+}
+
 export type Operation = 'init' | 'create' | 'modify' | 'revoke';
 
 /** MetaID 7-tuple payload (SDD format). */
@@ -188,10 +195,34 @@ export async function createPin(
   });
 
   if (network === 'mvc') {
+    appendMetaidLog('INFO', 'Queueing governed MVC createPin job', {
+      metabot_id,
+      action: `createPin:${metaidData.path || metaidData.operation}`,
+      operation: metaidData.operation,
+      path: metaidData.path || '',
+    });
     return getMvcSpendCoordinator().runMvcSpendJob({
       metabotId: metabot_id,
       action: `createPin:${metaidData.path || metaidData.operation}`,
-      execute: runWorker,
+      execute: async () => {
+        try {
+          const result = await runWorker();
+          appendMetaidLog('INFO', 'Governed MVC createPin job completed', {
+            metabot_id,
+            txid: result.txids[0],
+            pinId: result.pinId,
+          });
+          return result;
+        } catch (error) {
+          appendMetaidLog('ERROR', 'Governed MVC createPin job failed', {
+            metabot_id,
+            error: getErrorMessage(error),
+            operation: metaidData.operation,
+            path: metaidData.path || '',
+          });
+          throw error;
+        }
+      },
     });
   }
 

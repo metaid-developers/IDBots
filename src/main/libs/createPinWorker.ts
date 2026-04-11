@@ -79,6 +79,15 @@ function parseAddressIndexFromPath(pathStr: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+function logStep(message: string, details?: Record<string, unknown>): void {
+  try {
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    process.stderr.write(`[createPinWorker] ${message}${suffix}\n`);
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function buildMvcOpReturn(data: RpcPayload['metaidData']): (string | Buffer)[] {
   const result: (string | Buffer)[] = ['metaid', data.operation];
   if (data.operation !== 'init') {
@@ -227,6 +236,13 @@ async function main(): Promise<void> {
         address,
         height: u.height,
       }));
+      logStep('Fetched MVC pin funding candidates', {
+        attempt,
+        operation: metaidData.operation,
+        path: metaidData.path || '',
+        candidateOutpoints: usableUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        excludedOutpoints: Array.from(excludedOutpoints),
+      });
 
       const txComposer = new TxComposer();
       txComposer.appendP2PKHOutput({
@@ -239,6 +255,10 @@ async function main(): Promise<void> {
       const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
       const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs, excludedOutpoints);
       pickedForAttempt = picked;
+      logStep('Picked MVC pin funding inputs', {
+        attempt,
+        pickedOutpoints: picked.map((utxo) => getUtxoOutpointKey(utxo)),
+      });
 
       for (const utxo of picked) {
         txComposer.appendP2PKHInput({
@@ -261,6 +281,12 @@ async function main(): Promise<void> {
 
       const txid = await broadcastTx(rawHex);
       const pinId = `${txid}i0`;
+      logStep('Broadcasted MVC pin transaction', {
+        attempt,
+        txid,
+        pinId,
+        totalCost,
+      });
       console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost, feeRate }));
       return;
     } catch (err) {
@@ -268,6 +294,7 @@ async function main(): Promise<void> {
       const message = err && typeof err === 'object' && 'message' in err
         ? String((err as Error).message)
         : String(err);
+      logStep('MVC pin transaction attempt failed', { attempt, error: message });
       if (isInsufficientFeeError(message)) {
         throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
       }
@@ -275,6 +302,11 @@ async function main(): Promise<void> {
         for (const utxo of pickedForAttempt) {
           excludedOutpoints.add(getUtxoOutpointKey(utxo));
         }
+        logStep('Retrying MVC pin transaction after retryable failure', {
+          attempt,
+          blacklistedOutpoints: pickedForAttempt.map((utxo) => getUtxoOutpointKey(utxo)),
+          excludedOutpoints: Array.from(excludedOutpoints),
+        });
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }

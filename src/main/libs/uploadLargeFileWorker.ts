@@ -81,9 +81,10 @@ function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
-function logStep(message: string): void {
+function logStep(message: string, details?: Record<string, unknown>): void {
   try {
-    process.stderr.write(`[uploadLargeFileWorker] ${message}\n`);
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    process.stderr.write(`[uploadLargeFileWorker] ${message}${suffix}\n`);
   } catch {
     // ignore logging failures
   }
@@ -367,6 +368,11 @@ async function main(): Promise<void> {
     let pickedUtxos: ChunkedUploadFundingUtxo[] = [];
     try {
       const utxos = await fetchMvcFundingUtxos(address);
+      logStep('Fetched chunked upload funding candidates', {
+        attempt,
+        candidateOutpoints: utxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        excludedOutpoints: Array.from(excludedOutpoints),
+      });
       const merge = buildChunkedUploadMergeTxLocally({
         senderWif,
         address,
@@ -384,6 +390,11 @@ async function main(): Promise<void> {
         return matched;
       });
       logStep(`Building merge transaction with outpoints: ${pickedUtxos.map((utxo) => getUtxoOutpointKey(utxo)).join(', ')}`);
+      logStep('Built chunked upload merge transaction locally', {
+        attempt,
+        txid: merge.txId,
+        changeOutpoint: merge.changeOutpoint,
+      });
 
       const mergeTx = new mvc.Transaction(merge.txHex);
       if (mergeTx.outputs.length < 2) {
@@ -433,6 +444,7 @@ async function main(): Promise<void> {
       if (!indexTxId) {
         throw new Error('Chunked upload succeeded but indexTxId is missing');
       }
+      logStep('Chunked upload completed', { attempt, indexTxId });
       break;
     } catch (error) {
       lastError = error;
