@@ -1,6 +1,13 @@
 import fs from 'fs';
 import { API_NET, API_TARGET, TxComposer, Wallet, mvc } from 'meta-contract';
 import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getUtxoOutpointKey } from './mvcSpend';
+import {
+  isRetryableChunkedUploadError,
+  normalizeChunkedUploadUtxos,
+  pickChunkedUploadFundingUtxos,
+  type ChunkedUploadFundingUtxo,
+} from './uploadLargeFileFunding';
 
 const {
   buildChunkedMetaFilePath,
@@ -10,6 +17,8 @@ const {
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
+const RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS = 3;
+const RETRYABLE_CHUNKED_UPLOAD_DELAY_MS = 750;
 // Match the existing MetaFS frontend flow in this repo: SIGHASH_NONE | SIGHASH_FORKID.
 const PRE_TX_SIGTYPE =
   mvc.crypto.Signature.SIGHASH_NONE | mvc.crypto.Signature.SIGHASH_FORKID;
@@ -63,15 +72,6 @@ interface ChunkedUploadData {
   message?: string;
 }
 
-interface NormalizedUtxo {
-  txId: string;
-  outputIndex: number;
-  satoshis: number;
-  address: string;
-  height: number;
-  flag: string;
-}
-
 function getErrorMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
     return (err as Error).message;
@@ -106,46 +106,6 @@ async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(parsed.message || 'Uploader request failed');
   }
   return (parsed?.data ?? (parsed as unknown)) as T;
-}
-
-function normalizeUtxos(input: unknown, address: string): NormalizedUtxo[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((item) => {
-      const record = item as Record<string, unknown>;
-      const txId = String(record.txId ?? record.txid ?? '').trim();
-      const outputIndex = Number(record.outputIndex ?? record.outIndex ?? record.vout);
-      const satoshis = Number(record.satoshis ?? record.value ?? 0);
-      const height = Number(record.height ?? 0);
-      return {
-        txId,
-        outputIndex,
-        satoshis,
-        address: String(record.address || address).trim() || address,
-        height: Number.isFinite(height) ? height : 0,
-        flag: String(record.flag || ''),
-      };
-    })
-    .filter((utxo) => /^[0-9a-fA-F]{64}$/.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && utxo.satoshis > 600);
-}
-
-function pickUtxos(utxos: NormalizedUtxo[], amount: number, feeRate: number): NormalizedUtxo[] {
-  let requiredAmount = amount + 34 * 2 * feeRate + 100;
-  const candidateUtxos: NormalizedUtxo[] = [];
-  const confirmed = utxos.filter((utxo) => utxo.height > 0).sort(() => Math.random() - 0.5);
-  const unconfirmed = utxos.filter((utxo) => utxo.height <= 0).sort(() => Math.random() - 0.5);
-
-  let current = 0;
-  for (const utxo of [...confirmed, ...unconfirmed]) {
-    current += utxo.satoshis;
-    requiredAmount += feeRate * 148;
-    candidateUtxos.push(utxo);
-    if (current > requiredAmount) {
-      return candidateUtxos;
-    }
-  }
-
-  throw new Error('Insufficient MVC balance for chunked upload');
 }
 
 async function uploadToMultipartStorage(
@@ -321,66 +281,96 @@ async function main(): Promise<void> {
   const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
   const senderWif = mvcWallet.getPrivateKey();
   const wallet = new Wallet(senderWif, API_NET.MAIN, feeRate, API_TARGET.APIMVC);
-  const utxos = normalizeUtxos(await wallet.api.getUnspents(address), address);
-  const pickedUtxos = pickUtxos(utxos, chunkPreTxOutputAmount + indexPreTxOutputAmount, feeRate);
+  const excludedOutpoints = new Set<string>();
+  let indexTxId = '';
+  let lastError: unknown = null;
 
-  logStep('Building merge transaction');
-  const merge = await wallet.sendArray(
-    [
-      { address, amount: chunkPreTxOutputAmount },
-      { address, amount: indexPreTxOutputAmount },
-    ],
-    pickedUtxos,
-    { noBroadcast: true },
-  );
+  for (let attempt = 1; attempt <= RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS; attempt++) {
+    let pickedUtxos: ChunkedUploadFundingUtxo[] = [];
+    try {
+      const utxos = normalizeChunkedUploadUtxos(await wallet.api.getUnspents(address), address);
+      pickedUtxos = pickChunkedUploadFundingUtxos(
+        utxos,
+        chunkPreTxOutputAmount + indexPreTxOutputAmount,
+        feeRate,
+        excludedOutpoints,
+      );
+      logStep(`Building merge transaction with outpoints: ${pickedUtxos.map((utxo) => getUtxoOutpointKey(utxo)).join(', ')}`);
+      const merge = await wallet.sendArray(
+        [
+          { address, amount: chunkPreTxOutputAmount },
+          { address, amount: indexPreTxOutputAmount },
+        ],
+        pickedUtxos,
+        { noBroadcast: true },
+      );
 
-  const mergeTx = new mvc.Transaction(merge.txHex);
-  if (mergeTx.outputs.length < 2) {
-    throw new Error('Merge transaction did not produce the expected funding outputs');
+      const mergeTx = new mvc.Transaction(merge.txHex);
+      if (mergeTx.outputs.length < 2) {
+        throw new Error('Merge transaction did not produce the expected funding outputs');
+      }
+
+      const chunkPreTxHex = buildSignedPreTx({
+        txId: merge.txId,
+        outputIndex: 0,
+        satoshis: Number(mergeTx.outputs[0].satoshis),
+        address,
+        privateKey: wallet.privateKey,
+      });
+      const indexPreTxHex = buildSignedPreTx({
+        txId: merge.txId,
+        outputIndex: 1,
+        satoshis: Number(mergeTx.outputs[1].satoshis),
+        address,
+        privateKey: wallet.privateKey,
+      });
+
+      logStep('Submitting chunked upload to MetaFS');
+      const uploadResult = await readJson<ChunkedUploadData>(`${uploaderBaseUrl}/api/v1/files/chunked-upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metaId,
+          address,
+          fileName,
+          path: uploadPath,
+          operation: 'create',
+          contentType,
+          chunkPreTxHex,
+          indexPreTxHex,
+          mergeTxHex: merge.txHex,
+          feeRate,
+          isBroadcast: true,
+          storageKey,
+        }),
+      });
+
+      if (uploadResult?.status && uploadResult.status !== 'success') {
+        throw new Error(uploadResult.message || `Chunked upload returned status ${uploadResult.status}`);
+      }
+
+      indexTxId = String(uploadResult?.indexTxId || uploadResult?.txId || '').trim();
+      if (!indexTxId) {
+        throw new Error('Chunked upload succeeded but indexTxId is missing');
+      }
+      break;
+    } catch (error) {
+      lastError = error;
+      const message = getErrorMessage(error);
+      if (attempt < RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS && isRetryableChunkedUploadError(message)) {
+        for (const utxo of pickedUtxos) {
+          excludedOutpoints.add(getUtxoOutpointKey(utxo));
+        }
+        logStep(`Retrying chunked upload after stale-input failure: ${message}`);
+        await new Promise((resolve) => setTimeout(resolve, RETRYABLE_CHUNKED_UPLOAD_DELAY_MS));
+        continue;
+      }
+      throw error;
+    }
   }
 
-  const chunkPreTxHex = buildSignedPreTx({
-    txId: merge.txId,
-    outputIndex: 0,
-    satoshis: Number(mergeTx.outputs[0].satoshis),
-    address,
-    privateKey: wallet.privateKey,
-  });
-  const indexPreTxHex = buildSignedPreTx({
-    txId: merge.txId,
-    outputIndex: 1,
-    satoshis: Number(mergeTx.outputs[1].satoshis),
-    address,
-    privateKey: wallet.privateKey,
-  });
-
-  logStep('Submitting chunked upload to MetaFS');
-  const uploadResult = await readJson<ChunkedUploadData>(`${uploaderBaseUrl}/api/v1/files/chunked-upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      metaId,
-      address,
-      fileName,
-      path: uploadPath,
-      operation: 'create',
-      contentType,
-      chunkPreTxHex,
-      indexPreTxHex,
-      mergeTxHex: merge.txHex,
-      feeRate,
-      isBroadcast: true,
-      storageKey,
-    }),
-  });
-
-  if (uploadResult?.status && uploadResult.status !== 'success') {
-    throw new Error(uploadResult.message || `Chunked upload returned status ${uploadResult.status}`);
-  }
-
-  const indexTxId = String(uploadResult?.indexTxId || uploadResult?.txId || '').trim();
   if (!indexTxId) {
-    throw new Error('Chunked upload succeeded but indexTxId is missing');
+    throw lastError instanceof Error ? lastError : new Error(getErrorMessage(lastError ?? 'Chunked upload failed'));
   }
 
   console.log(
