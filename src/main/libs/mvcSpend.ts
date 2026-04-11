@@ -90,6 +90,10 @@ export function getUtxoOutpointKey(utxo: Pick<SpendableMvcUtxo, 'txId' | 'output
   return `${utxo.txId}:${utxo.outputIndex}`;
 }
 
+function isConfirmedMvcUtxo(utxo: Partial<SpendableMvcUtxo>): boolean {
+  return Number.isFinite(Number(utxo?.height)) && Number(utxo?.height) > 0;
+}
+
 export function ensureFreshMvcFundingCandidates(
   utxos: SpendableMvcUtxo[],
   excludedOutpoints: ReadonlySet<string> = new Set(),
@@ -115,10 +119,14 @@ export function pickUtxo(
 ): SpendableMvcUtxo[] {
   ensureFreshMvcFundingCandidates(utxos, excludedOutpoints);
   const ordered = utxos.filter((u) => !excludedOutpoints.has(getUtxoOutpointKey(u)));
+  const confirmed = ordered.filter((utxo) => isConfirmedMvcUtxo(utxo));
+  const prioritized = confirmed.length > 0
+    ? confirmed.concat(ordered.filter((utxo) => !isConfirmedMvcUtxo(utxo)))
+    : ordered;
 
   let current = 0;
   const candidate: SpendableMvcUtxo[] = [];
-  for (const u of ordered) {
+  for (const u of prioritized) {
     current += u.satoshis;
     candidate.push(u);
     const numInputs = candidate.length;
