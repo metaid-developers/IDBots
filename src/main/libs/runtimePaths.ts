@@ -13,6 +13,22 @@ export function isPathWithin(basePath: string, targetPath: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+export function findNearestExistingFile(startDir: string, relativeFilePath: string): string | null {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const candidate = path.join(currentDir, relativeFilePath);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
+
 /**
  * Resolve the best Electron executable path for child process spawning.
  * Prefer app.getPath('exe') because process.execPath can be incorrect on some Windows builds.
@@ -27,4 +43,20 @@ export function resolveElectronExecutablePath(): string {
     // Fall through to process.execPath.
   }
   return process.execPath;
+}
+
+export function resolveMetabotDistModulePath(
+  relativePath: string,
+  input?: {
+    startDir?: string;
+    appPath?: string;
+  },
+): string {
+  const baseDir = input?.startDir ?? input?.appPath ?? app.getAppPath();
+  const metabotRelativePath = path.join('metabot', 'dist', relativePath);
+  const resolvedFromAncestors = findNearestExistingFile(baseDir, metabotRelativePath);
+  if (resolvedFromAncestors) {
+    return resolvedFromAncestors;
+  }
+  return path.join(path.resolve(baseDir), metabotRelativePath);
 }
