@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { API_NET, API_TARGET, TxComposer, Wallet, mvc } from 'meta-contract';
+import { TxComposer, mvc } from 'meta-contract';
 import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
 import { getUtxoOutpointKey } from './mvcSpend';
 import {
@@ -19,6 +19,8 @@ const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
 const RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS = 3;
 const RETRYABLE_CHUNKED_UPLOAD_DELAY_MS = 750;
+const METALET_HOST = 'https://www.metalet.space';
+const NET = 'livenet';
 // Match the existing MetaFS frontend flow in this repo: SIGHASH_NONE | SIGHASH_FORKID.
 const PRE_TX_SIGTYPE =
   mvc.crypto.Signature.SIGHASH_NONE | mvc.crypto.Signature.SIGHASH_FORKID;
@@ -197,6 +199,83 @@ function buildSignedPreTx(params: {
   return txComposer.getRawHex();
 }
 
+async function fetchMvcFundingUtxos(address: string): Promise<ChunkedUploadFundingUtxo[]> {
+  const all: Array<{ txid: string; outIndex: number; value: number; height: number }> = [];
+  let flag: string | undefined;
+  while (true) {
+    const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
+    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
+    const list = json?.data?.list ?? [];
+    if (!list.length) break;
+    all.push(...list.filter((u) => u.value >= 600));
+    flag = list[list.length - 1]?.flag;
+    if (!flag) break;
+  }
+  return normalizeChunkedUploadUtxos(all, address);
+}
+
+export function buildChunkedUploadMergeTxLocally(params: {
+  senderWif: string;
+  address: string;
+  feeRate: number;
+  chunkPreTxOutputAmount: number;
+  indexPreTxOutputAmount: number;
+  utxos: ChunkedUploadFundingUtxo[];
+  excludedOutpoints?: ReadonlySet<string>;
+}): {
+  txHex: string;
+  txId: string;
+  spentOutpoints: string[];
+  changeOutpoint: string | null;
+  privateKey: InstanceType<typeof mvc.PrivateKey>;
+} {
+  const privateKey = mvc.PrivateKey.fromWIF(params.senderWif);
+  const addressObj = new mvc.Address(params.address, 'livenet');
+  const pickedUtxos = pickChunkedUploadFundingUtxos(
+    params.utxos,
+    params.chunkPreTxOutputAmount + params.indexPreTxOutputAmount,
+    params.feeRate,
+    params.excludedOutpoints ?? new Set(),
+  );
+
+  const txComposer = new TxComposer();
+  txComposer.appendP2PKHOutput({
+    address: addressObj,
+    satoshis: params.chunkPreTxOutputAmount,
+  });
+  txComposer.appendP2PKHOutput({
+    address: addressObj,
+    satoshis: params.indexPreTxOutputAmount,
+  });
+  for (const utxo of pickedUtxos) {
+    txComposer.appendP2PKHInput({
+      address: addressObj,
+      txId: utxo.txId,
+      outputIndex: utxo.outputIndex,
+      satoshis: utxo.satoshis,
+    });
+  }
+  txComposer.appendChangeOutput(addressObj, params.feeRate);
+
+  const tx = txComposer.tx;
+  for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex += 1) {
+    txComposer.unlockP2PKHInput(privateKey, inputIndex);
+  }
+
+  const txHex = txComposer.getRawHex();
+  const txId = tx.id;
+  const changeIndex = tx.outputs.length > 2 ? tx.outputs.length - 1 : -1;
+
+  return {
+    txHex,
+    txId,
+    spentOutpoints: pickedUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+    changeOutpoint: changeIndex >= 0 ? `${txId}:${changeIndex}` : null,
+    privateKey,
+  };
+}
+
 async function main(): Promise<void> {
   const mnemonic = process.env.IDBOTS_METABOT_MNEMONIC?.trim();
   const pathStr = (process.env.IDBOTS_METABOT_PATH || DEFAULT_PATH).trim();
@@ -280,7 +359,6 @@ async function main(): Promise<void> {
   const addressIndex = parseAddressIndexFromPath(pathStr);
   const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
   const senderWif = mvcWallet.getPrivateKey();
-  const wallet = new Wallet(senderWif, API_NET.MAIN, feeRate, API_TARGET.APIMVC);
   const excludedOutpoints = new Set<string>();
   let indexTxId = '';
   let lastError: unknown = null;
@@ -288,22 +366,24 @@ async function main(): Promise<void> {
   for (let attempt = 1; attempt <= RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS; attempt++) {
     let pickedUtxos: ChunkedUploadFundingUtxo[] = [];
     try {
-      const utxos = normalizeChunkedUploadUtxos(await wallet.api.getUnspents(address), address);
-      pickedUtxos = pickChunkedUploadFundingUtxos(
-        utxos,
-        chunkPreTxOutputAmount + indexPreTxOutputAmount,
+      const utxos = await fetchMvcFundingUtxos(address);
+      const merge = buildChunkedUploadMergeTxLocally({
+        senderWif,
+        address,
         feeRate,
+        chunkPreTxOutputAmount,
+        indexPreTxOutputAmount,
+        utxos,
         excludedOutpoints,
-      );
+      });
+      pickedUtxos = merge.spentOutpoints.map((outpoint) => {
+        const matched = utxos.find((utxo) => getUtxoOutpointKey(utxo) === outpoint);
+        if (!matched) {
+          throw new Error(`Failed to resolve picked chunked-upload funding utxo: ${outpoint}`);
+        }
+        return matched;
+      });
       logStep(`Building merge transaction with outpoints: ${pickedUtxos.map((utxo) => getUtxoOutpointKey(utxo)).join(', ')}`);
-      const merge = await wallet.sendArray(
-        [
-          { address, amount: chunkPreTxOutputAmount },
-          { address, amount: indexPreTxOutputAmount },
-        ],
-        pickedUtxos,
-        { noBroadcast: true },
-      );
 
       const mergeTx = new mvc.Transaction(merge.txHex);
       if (mergeTx.outputs.length < 2) {
@@ -315,14 +395,14 @@ async function main(): Promise<void> {
         outputIndex: 0,
         satoshis: Number(mergeTx.outputs[0].satoshis),
         address,
-        privateKey: wallet.privateKey,
+        privateKey: merge.privateKey,
       });
       const indexPreTxHex = buildSignedPreTx({
         txId: merge.txId,
         outputIndex: 1,
         satoshis: Number(mergeTx.outputs[1].satoshis),
         address,
-        privateKey: wallet.privateKey,
+        privateKey: merge.privateKey,
       });
 
       logStep('Submitting chunked upload to MetaFS');
@@ -386,7 +466,9 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err: unknown) => {
-  console.error(JSON.stringify({ success: false, error: getErrorMessage(err) }));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    console.error(JSON.stringify({ success: false, error: getErrorMessage(err) }));
+    process.exit(1);
+  });
+}
