@@ -5,6 +5,23 @@
  */
 
 import { TxComposer, mvc } from 'meta-contract';
+import {
+  computeMvcTxidFromRawTx,
+  isRetryableMvcBroadcastError,
+  isTxnAlreadyKnownError,
+  pickUtxo,
+  resolveBroadcastTxResult,
+  getUtxoOutpointKey,
+  type SpendableMvcUtxo,
+  P2PKH_INPUT_SIZE,
+} from './mvcSpend';
+export {
+  computeMvcTxidFromRawTx,
+  isRetryableMvcBroadcastError,
+  isTxnAlreadyKnownError,
+  pickUtxo,
+  resolveBroadcastTxResult,
+} from './mvcSpend';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -25,40 +42,6 @@ async function fetchMVCUtxos(address: string): Promise<{ txid: string; outIndex:
   return all;
 }
 
-export function computeMvcTxidFromRawTx(rawTx: string): string {
-  const tx = new mvc.Transaction(rawTx);
-  return tx.id;
-}
-
-export function isTxnAlreadyKnownError(message: string): boolean {
-  const normalized = String(message || '').toLowerCase();
-  return normalized.includes('txn-already-known') || normalized.includes('already known');
-}
-
-export function isRetryableMvcBroadcastError(message: string): boolean {
-  const normalized = String(message || '').toLowerCase();
-  return (
-    normalized.includes('missing inputs')
-    || normalized.includes('missingorspent')
-    || normalized.includes('inputs missing/spent')
-    || normalized.includes('inputs missing or spent')
-    || normalized.includes('txn-mempool-conflict')
-  );
-}
-
-export function resolveBroadcastTxResult(
-  rawTx: string,
-  json: { code?: number; message?: string; data?: string },
-): string {
-  if (json?.code === 0) {
-    return json.data ?? computeMvcTxidFromRawTx(rawTx);
-  }
-  if (isTxnAlreadyKnownError(json?.message || '')) {
-    return computeMvcTxidFromRawTx(rawTx);
-  }
-  throw new Error(json?.message || 'Broadcast failed');
-}
-
 async function broadcastTx(rawTx: string): Promise<string> {
   const res = await fetch(`${METALET_HOST}/wallet-api/v3/tx/broadcast`, {
     method: 'POST',
@@ -73,9 +56,6 @@ const RETRYABLE_MVC_BROADCAST_ATTEMPTS = 3;
 const RETRYABLE_MVC_BROADCAST_DELAY_MS = 750;
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
-/** Size in bytes of one signed P2PKH input in the serialized tx. */
-const P2PKH_INPUT_SIZE = 148;
-
 interface RpcPayload {
   feeRate?: number;
   /** Target network: 'mvc' (default), 'doge', 'btc'. Omit or empty defaults to 'mvc'. */
@@ -91,13 +71,7 @@ interface RpcPayload {
   };
 }
 
-interface SA_utxo {
-  txId: string;
-  outputIndex: number;
-  satoshis: number;
-  address: string;
-  height: number;
-}
+type SA_utxo = SpendableMvcUtxo;
 
 function parseAddressIndexFromPath(pathStr: string): number {
   if (!pathStr || typeof pathStr !== 'string') return 0;
@@ -145,33 +119,6 @@ function getEstimatedTxSizeWithoutInputs(opReturnScriptSize: number): number {
  * Pick UTXOs so that sum(satoshis) >= totalOutput + fee, where fee = txSize * feeRate.
  * Tx size depends on number of inputs, so we add UTXOs until sum >= required.
  */
-function getUtxoOutpointKey(utxo: Pick<SA_utxo, 'txId' | 'outputIndex'>): string {
-  return `${utxo.txId}:${utxo.outputIndex}`;
-}
-
-export function pickUtxo(
-  utxos: SA_utxo[],
-  totalOutput: number,
-  feeRate: number,
-  estimatedTxSizeWithoutInputs: number,
-  excludedOutpoints: ReadonlySet<string> = new Set(),
-): SA_utxo[] {
-  const ordered = utxos.filter((u) => !excludedOutpoints.has(getUtxoOutpointKey(u)));
-
-  let current = 0;
-  const candidate: SA_utxo[] = [];
-  for (const u of ordered) {
-    current += u.satoshis;
-    candidate.push(u);
-    const numInputs = candidate.length;
-    const estimatedTxSize = estimatedTxSizeWithoutInputs + numInputs * P2PKH_INPUT_SIZE;
-    const requiredAmount = totalOutput + Math.ceil(estimatedTxSize * feeRate);
-    if (current >= requiredAmount) return candidate;
-  }
-
-  throw new Error('Not enough balance');
-}
-
 const FALLBACK_FEE_RATES: Record<string, number> = { mvc: 1, btc: 2, doge: 5000000 };
 
 function isInsufficientFeeError(message: string): boolean {

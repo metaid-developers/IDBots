@@ -80,23 +80,6 @@ export function getDefaultFeeRate(chain: TransferChain, list: FeeRateOption[]): 
   return avg?.feeRate ?? 200_000; // DOGE sat/kB
 }
 
-interface BroadcastMvcResponse {
-  txid?: string;
-  txId?: string;
-}
-
-/** Broadcast MVC transaction. Returns txid. */
-async function broadcastMvcTx(rawTx: string): Promise<string> {
-  const url = `${METALET_HOST}/wallet-api/v3/tx/broadcast`;
-  const data = await fetchPost<BroadcastMvcResponse | string>(url, {
-    chain: 'mvc',
-    net: NET,
-    rawTx,
-  });
-  if (typeof data === 'string') return data;
-  return (data as BroadcastMvcResponse).txid ?? (data as BroadcastMvcResponse).txId ?? '';
-}
-
 /** Fetch DOGE UTXOs for address (no auth). */
 interface DogeUtxoItem {
   address: string;
@@ -269,7 +252,7 @@ function getErrorMessage(err: unknown): string {
 
 /**
  * Run MVC transfer in a subprocess worker to avoid meta-contract "instanceof" issues in Electron main.
- * Returns raw tx hex for broadcasting in main process.
+ * The worker owns UTXO selection + broadcast retries and returns the final txid.
  */
 async function runMvcTransferWorker(params: {
   mnemonic: string;
@@ -277,7 +260,7 @@ async function runMvcTransferWorker(params: {
   toAddress: string;
   amountSats: number;
   feeRate: number;
-}): Promise<{ success: true; txHex: string } | { success: false; error: string }> {
+}): Promise<{ success: true; txId: string } | { success: false; error: string }> {
   const appPath = app.getAppPath();
   const candidatePaths = [
     path.join(__dirname, '..', 'libs', 'transferMvcWorker.js'),
@@ -333,11 +316,11 @@ async function runMvcTransferWorker(params: {
       if (stderr.trim()) console.log('[Transfer] MVC worker stderr:', stderr.trim());
       if (code !== 0) console.error('[Transfer] MVC worker exit code:', code, 'stderr:', stderr || '(none)');
       try {
-        const result = JSON.parse(output) as { success: boolean; txHex?: string; error?: string };
-        if (result.success && result.txHex) {
-          resolve({ success: true, txHex: result.txHex });
+        const result = JSON.parse(output) as { success: boolean; txId?: string; error?: string };
+        if (result.success && result.txId) {
+          resolve({ success: true, txId: result.txId });
         } else {
-          resolve({ success: false, error: result.error || 'Worker did not return txHex' });
+          resolve({ success: false, error: result.error || 'Worker did not return txId' });
         }
       } catch (e) {
         console.error('[Transfer] MVC worker output parse failed:', output);
@@ -391,20 +374,9 @@ export async function executeTransfer(
         console.error('[Transfer] MVC worker failed:', errMsg);
         return { success: false, error: errMsg };
       }
-      const txHex = (workerResult as { success: true; txHex: string }).txHex;
-      console.log('[Transfer] MVC: broadcasting tx, txHex length:', txHex?.length ?? 0);
-      try {
-        const txId = await broadcastMvcTx(txHex);
-        console.log('[Transfer] MVC success txId:', txId);
-        return { success: true, txId };
-      } catch (broadcastErr) {
-        const broadcastMsg = broadcastErr != null && typeof broadcastErr === 'object' && 'message' in broadcastErr
-          ? String((broadcastErr as Error).message)
-          : String(broadcastErr);
-        console.error('[Transfer] MVC broadcast failed:', broadcastMsg);
-        console.error('[Transfer] MVC broadcast error (full):', broadcastErr);
-        return { success: false, error: broadcastMsg };
-      }
+      const txId = (workerResult as { success: true; txId: string }).txId;
+      console.log('[Transfer] MVC success txId:', txId);
+      return { success: true, txId };
     }
 
     if (params.chain === 'doge') {

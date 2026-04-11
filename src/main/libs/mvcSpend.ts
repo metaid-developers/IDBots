@@ -1,0 +1,73 @@
+import { mvc } from 'meta-contract';
+
+/** Size in bytes of one signed P2PKH input in the serialized tx. */
+export const P2PKH_INPUT_SIZE = 148;
+
+export interface SpendableMvcUtxo {
+  txId: string;
+  outputIndex: number;
+  satoshis: number;
+  address: string;
+  height: number;
+}
+
+export function computeMvcTxidFromRawTx(rawTx: string): string {
+  const tx = new mvc.Transaction(rawTx);
+  return tx.id;
+}
+
+export function isTxnAlreadyKnownError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  return normalized.includes('txn-already-known') || normalized.includes('already known');
+}
+
+export function isRetryableMvcBroadcastError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  return (
+    normalized.includes('missing inputs')
+    || normalized.includes('missingorspent')
+    || normalized.includes('inputs missing/spent')
+    || normalized.includes('inputs missing or spent')
+    || normalized.includes('txn-mempool-conflict')
+  );
+}
+
+export function resolveBroadcastTxResult(
+  rawTx: string,
+  json: { code?: number; message?: string; data?: string },
+): string {
+  if (json?.code === 0) {
+    return json.data ?? computeMvcTxidFromRawTx(rawTx);
+  }
+  if (isTxnAlreadyKnownError(json?.message || '')) {
+    return computeMvcTxidFromRawTx(rawTx);
+  }
+  throw new Error(json?.message || 'Broadcast failed');
+}
+
+export function getUtxoOutpointKey(utxo: Pick<SpendableMvcUtxo, 'txId' | 'outputIndex'>): string {
+  return `${utxo.txId}:${utxo.outputIndex}`;
+}
+
+export function pickUtxo(
+  utxos: SpendableMvcUtxo[],
+  totalOutput: number,
+  feeRate: number,
+  estimatedTxSizeWithoutInputs: number,
+  excludedOutpoints: ReadonlySet<string> = new Set(),
+): SpendableMvcUtxo[] {
+  const ordered = utxos.filter((u) => !excludedOutpoints.has(getUtxoOutpointKey(u)));
+
+  let current = 0;
+  const candidate: SpendableMvcUtxo[] = [];
+  for (const u of ordered) {
+    current += u.satoshis;
+    candidate.push(u);
+    const numInputs = candidate.length;
+    const estimatedTxSize = estimatedTxSizeWithoutInputs + numInputs * P2PKH_INPUT_SIZE;
+    const requiredAmount = totalOutput + Math.ceil(estimatedTxSize * feeRate);
+    if (current >= requiredAmount) return candidate;
+  }
+
+  throw new Error('Not enough balance');
+}
