@@ -6,6 +6,8 @@ import {
 } from '../services/tokenTransferAdapters';
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
+const METALET_HOST = 'https://www.metalet.space';
+const NET = 'livenet';
 
 function getMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
@@ -25,6 +27,22 @@ function normalizeExcludeOutpoints(input: unknown): Set<string> {
 
 function resolveTokenGenesis(token: { tokenID?: string; genesisHash?: string }): string {
   return String(token?.tokenID || token?.genesisHash || '').trim();
+}
+
+async function fetchMvcFundingUtxos(address: string): Promise<Array<{ txid: string; outIndex: number; value: number; height: number }>> {
+  const all: Array<{ txid: string; outIndex: number; value: number; height: number }> = [];
+  let flag: string | undefined;
+  while (true) {
+    const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
+    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
+    const list = json?.data?.list ?? [];
+    if (!list.length) break;
+    all.push(...list.filter((u) => u.value >= 600));
+    flag = list[list.length - 1]?.flag;
+    if (!flag) break;
+  }
+  return all;
 }
 
 async function main(): Promise<void> {
@@ -108,11 +126,18 @@ async function main(): Promise<void> {
       address: senderAddress,
     }];
   } else {
-    const allUtxos = await ftManager.api.getUnspents(mvcWallet.getAddress());
-    utxos = allUtxos.filter((utxo: any) => {
-      const key = `${String(utxo.txId || '').toLowerCase()}:${Number(utxo.outputIndex)}`;
-      return !excludeOutpoints.has(key);
-    });
+    const allUtxos = await fetchMvcFundingUtxos(senderAddress);
+    utxos = allUtxos
+      .map((utxo) => ({
+        txId: String(utxo.txid || '').trim(),
+        outputIndex: Number(utxo.outIndex),
+        satoshis: Number(utxo.value),
+        address: senderAddress,
+      }))
+      .filter((utxo) => {
+        const key = `${utxo.txId.toLowerCase()}:${utxo.outputIndex}`;
+        return /^[0-9a-f]{64}$/i.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && utxo.satoshis > 600 && !excludeOutpoints.has(key);
+      });
   }
   utxos = attachMvcFundingSignatureContext(utxos, {
     senderWif,
@@ -149,7 +174,9 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err: unknown) => {
-  console.error(JSON.stringify({ success: false, error: getMessage(err) }));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    console.error(JSON.stringify({ success: false, error: getMessage(err) }));
+    process.exit(1);
+  });
+}

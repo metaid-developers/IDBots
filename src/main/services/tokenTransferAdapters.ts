@@ -103,10 +103,8 @@ export function selectMvcFundingUtxos<T extends MvcFundingUtxoLike>(
 ): T[] {
   const maxCount = Number.isInteger(input.maxCount) && Number(input.maxCount) > 0
     ? Number(input.maxCount)
-    : 3;
+    : null;
 
-  return [...utxos]
-    .filter((utxo) => Number.isFinite(Number(utxo?.satoshis)) && Number(utxo.satoshis) > 0)
-    .sort((left, right) => Number(right.satoshis) - Number(left.satoshis))
-    .slice(0, maxCount);
+  const ordered = utxos.filter((utxo) => Number.isFinite(Number(utxo?.satoshis)) && Number(utxo.satoshis) > 0);
+  return maxCount == null ? ordered : ordered.slice(0, maxCount);
 }
