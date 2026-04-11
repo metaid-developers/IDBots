@@ -1,9 +1,14 @@
 import Decimal from 'decimal.js';
+import { mvc } from 'meta-contract';
 import type { MetabotStore } from '../metabotStore';
 import { buildMvcFtTransferRawTx } from './walletRawTxService';
+import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/mvcSpend';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
+const RETRYABLE_MVC_FT_CHILD_BROADCAST_ATTEMPTS = 3;
+const RETRYABLE_MVC_FT_BUILD_ATTEMPTS = 3;
+const RETRYABLE_MVC_FT_BROADCAST_DELAY_MS = 750;
 
 export interface MvcFtAsset {
   kind: 'mvc-ft';
@@ -89,17 +94,37 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (json.data ?? json) as T;
 }
 
-async function postJson<T>(url: string, body: Record<string, string>): Promise<T> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const json = await response.json() as { code?: number; message?: string; data?: T };
-  if (json.code !== 0 && json.code !== undefined) {
-    throw new Error(json.message || 'API request failed');
+function getErrorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as Error).message === 'string') {
+    return (error as Error).message;
   }
-  return (json.data ?? json) as T;
+  return String(error ?? '');
+}
+
+function normalizeSpentOutpoints(outpoints: unknown): string[] {
+  if (!Array.isArray(outpoints)) return [];
+  return Array.from(new Set(
+    outpoints
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter((value) => /^[0-9a-f]{64}:\d+$/.test(value)),
+  ));
+}
+
+function extractSpentOutpointsFromRawTx(rawTx: unknown): string[] {
+  const raw = String(rawTx || '').trim();
+  if (!raw) return [];
+  try {
+    const tx = new mvc.Transaction(raw);
+    return normalizeSpentOutpoints(
+      tx.inputs.map((input: any) => `${input.prevTxId.toString('hex')}:${Number(input.outputIndex)}`),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const defaultDeps: MvcFtServiceDeps = {
@@ -111,11 +136,17 @@ const defaultDeps: MvcFtServiceDeps = {
   },
   buildRawTx: buildMvcFtTransferRawTx,
   broadcastTx: async (rawTx) => {
-    return await postJson<string>(`${METALET_HOST}/wallet-api/v3/tx/broadcast`, {
-      chain: 'mvc',
-      net: NET,
-      rawTx,
+    const response = await fetch(`${METALET_HOST}/wallet-api/v3/tx/broadcast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chain: 'mvc',
+        net: NET,
+        rawTx,
+      }),
     });
+    const json = await response.json() as { code?: number; message?: string; data?: string };
+    return resolveBroadcastTxResult(rawTx, json);
   },
 };
 
@@ -133,8 +164,24 @@ export async function broadcastMvcFtTransferBundle(
   }
 
   const amountCheckTxId = await broadcastTx(amountCheckRawTx);
-  const txId = await broadcastTx(rawTx);
-  return { amountCheckTxId, txId };
+  let lastRawTxError: unknown = null;
+
+  for (let attempt = 1; attempt <= RETRYABLE_MVC_FT_CHILD_BROADCAST_ATTEMPTS; attempt += 1) {
+    try {
+      const txId = await broadcastTx(rawTx);
+      return { amountCheckTxId, txId };
+    } catch (error) {
+      lastRawTxError = error;
+      const message = getErrorMessage(error);
+      if (attempt < RETRYABLE_MVC_FT_CHILD_BROADCAST_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
+        await sleep(RETRYABLE_MVC_FT_BROADCAST_DELAY_MS);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(getErrorMessage(lastRawTxError ?? 'MVC FT broadcast failed'));
 }
 
 export async function listMvcFtAssets(
@@ -200,27 +247,52 @@ export async function executeMvcFtTransfer(
   if (!Number.isFinite(input?.feeRate) || input.feeRate <= 0) throw new Error('feeRate must be positive');
 
   const amount = toAtomicAmount(input.amount, normalizeDecimal(input.asset.decimal));
-  const raw = await deps.buildRawTx(store, {
-    metabotId: input.metabotId,
-    token: {
-      symbol: input.asset.symbol,
-      tokenID: input.asset.genesis,
-      genesisHash: input.asset.genesis,
-      codeHash: input.asset.codeHash,
-      decimal: input.asset.decimal,
-    },
-    toAddress: input.toAddress,
-    amount,
-    feeRate: input.feeRate,
-  });
+  const excludedOutpoints = new Set<string>();
+  let lastError: unknown = null;
 
-  const { txId, amountCheckTxId } = await broadcastMvcFtTransferBundle({
-    amountCheckRawTx: raw.amount_check_raw_tx,
-    rawTx: raw.raw_tx,
-  }, deps.broadcastTx);
-  return {
-    txId,
-    rawTx: raw.raw_tx,
-    amountCheckTxId,
-  };
+  for (let attempt = 1; attempt <= RETRYABLE_MVC_FT_BUILD_ATTEMPTS; attempt += 1) {
+    const raw = await deps.buildRawTx(store, {
+      metabotId: input.metabotId,
+      token: {
+        symbol: input.asset.symbol,
+        tokenID: input.asset.genesis,
+        genesisHash: input.asset.genesis,
+        codeHash: input.asset.codeHash,
+        decimal: input.asset.decimal,
+      },
+      toAddress: input.toAddress,
+      amount,
+      feeRate: input.feeRate,
+      excludeOutpoints: Array.from(excludedOutpoints),
+    });
+
+    try {
+      const { txId, amountCheckTxId } = await broadcastMvcFtTransferBundle({
+        amountCheckRawTx: raw.amount_check_raw_tx,
+        rawTx: raw.raw_tx,
+      }, deps.broadcastTx);
+      return {
+        txId,
+        rawTx: raw.raw_tx,
+        amountCheckTxId,
+      };
+    } catch (error) {
+      lastError = error;
+      const message = getErrorMessage(error);
+      if (attempt < RETRYABLE_MVC_FT_BUILD_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
+        const retryBlacklist = normalizeSpentOutpoints([
+          ...extractSpentOutpointsFromRawTx(raw.amount_check_raw_tx),
+          ...normalizeSpentOutpoints(raw.spent_outpoints),
+        ]);
+        for (const outpoint of retryBlacklist) {
+          excludedOutpoints.add(outpoint);
+        }
+        await sleep(RETRYABLE_MVC_FT_BROADCAST_DELAY_MS);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(getErrorMessage(lastError ?? 'MVC FT transfer failed'));
 }

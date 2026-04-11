@@ -144,9 +144,109 @@ test('executeMvcFtTransfer reuses walletRawTxService and broadcasts the returned
     toAddress: 'mvc-dest',
     amount: '125000000',
     feeRate: 1,
+    excludeOutpoints: [],
   });
   assert.deepEqual(broadcasts, ['amount-check', 'ft-raw']);
   assert.equal(result.txId, 'broadcast-txid');
   assert.equal(result.rawTx, 'ft-raw');
   assert.equal(result.amountCheckTxId, 'amount-check-txid');
+});
+
+test('broadcastMvcFtTransferBundle retries the child tx when the parent broadcast has not propagated yet', async () => {
+  assert.equal(
+    typeof mvcFtService?.broadcastMvcFtTransferBundle,
+    'function',
+    'broadcastMvcFtTransferBundle() should be exported',
+  );
+
+  const calls = [];
+  let rawAttempts = 0;
+
+  const result = await mvcFtService.broadcastMvcFtTransferBundle({
+    amountCheckRawTx: 'amount-check',
+    rawTx: 'ft-raw',
+  }, async (rawTx) => {
+    calls.push(rawTx);
+    if (rawTx === 'amount-check') {
+      return 'amount-check-txid';
+    }
+    rawAttempts += 1;
+    if (rawAttempts < 3) {
+      throw new Error('[-25]Missing inputs');
+    }
+    return 'ft-txid';
+  });
+
+  assert.deepEqual(calls, ['amount-check', 'ft-raw', 'ft-raw', 'ft-raw']);
+  assert.deepEqual(result, {
+    amountCheckTxId: 'amount-check-txid',
+    txId: 'ft-txid',
+  });
+});
+
+test('executeMvcFtTransfer rebuilds the bundle with excluded stale outpoints after retryable amount-check failure', async () => {
+  assert.equal(
+    typeof mvcFtService?.executeMvcFtTransfer,
+    'function',
+    'executeMvcFtTransfer() should be exported',
+  );
+
+  const buildCalls = [];
+  const broadcastCalls = [];
+  const staleOutpoint = `${'a'.repeat(64)}:0`;
+
+  const result = await mvcFtService.executeMvcFtTransfer(createStore(), {
+    metabotId: 1,
+    asset: {
+      symbol: 'MC',
+      genesis: 'genesis',
+      codeHash: 'code',
+      decimal: 8,
+      address: 'mvc-address',
+    },
+    toAddress: 'mvc-dest',
+    amount: '1.25',
+    feeRate: 1,
+  }, {
+    buildRawTx: async (_store, params) => {
+      buildCalls.push(params);
+      if (buildCalls.length === 1) {
+        assert.equal(Array.isArray(params.excludeOutpoints), true);
+        assert.deepEqual(params.excludeOutpoints, []);
+        return {
+          raw_tx: 'ft-raw-1',
+          txid: 'ft-txid-1',
+          output_index: 0,
+          amount_check_raw_tx: 'amount-check-1',
+          spent_outpoints: [staleOutpoint],
+          change_outpoint: null,
+        };
+      }
+
+      assert.deepEqual(params.excludeOutpoints, [staleOutpoint]);
+      return {
+        raw_tx: 'ft-raw-2',
+        txid: 'ft-txid-2',
+        output_index: 0,
+        amount_check_raw_tx: 'amount-check-2',
+        spent_outpoints: [`${'b'.repeat(64)}:1`],
+        change_outpoint: null,
+      };
+    },
+    broadcastTx: async (rawTx) => {
+      broadcastCalls.push(rawTx);
+      if (rawTx === 'amount-check-1') {
+        throw new Error('[-25]Missing inputs');
+      }
+      return rawTx === 'amount-check-2' ? 'amount-check-txid-2' : 'broadcast-txid-2';
+    },
+  });
+
+  assert.equal(buildCalls.length, 2);
+  assert.deepEqual(broadcastCalls, ['amount-check-1', 'amount-check-2', 'ft-raw-2']);
+  assert.deepEqual(result, {
+    txId: 'broadcast-txid-2',
+    rawTx: 'ft-raw-2',
+    amountCheckTxId: 'amount-check-txid-2',
+  });
 });

@@ -25,6 +25,11 @@ function getMessage(err: unknown): string {
   return String(err);
 }
 
+function isInsufficientMvcFundingError(err: unknown): boolean {
+  const normalized = getMessage(err).toLowerCase();
+  return normalized.includes('insufficient balance') || normalized.includes('not enough balance') || normalized.includes('余额不足');
+}
+
 function normalizeExcludeOutpoints(input: unknown): Set<string> {
   if (!Array.isArray(input)) return new Set();
   return new Set(
@@ -144,6 +149,7 @@ async function main(): Promise<void> {
         txId: String(utxo.txid || '').trim(),
         outputIndex: Number(utxo.outIndex),
         satoshis: Number(utxo.value),
+        height: Number(utxo.height),
         address: senderAddress,
       }))
       .filter((utxo) => {
@@ -168,14 +174,38 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const transferResult = await ftManager.transfer({
-    codehash: token.codeHash,
-    genesis: tokenGenesis,
-    receivers: [{ address: toAddress, amount }],
-    senderWif,
-    utxos,
-    noBroadcast: true,
-  });
+  let transferResult: Awaited<ReturnType<typeof ftManager.transfer>> | null = null;
+  let lastTransferError: unknown = null;
+  let pickedFundingUtxos = utxos;
+  for (let prefixSize = 1; prefixSize <= utxos.length; prefixSize += 1) {
+    const fundingSlice = utxos.slice(0, prefixSize);
+    try {
+      transferResult = await ftManager.transfer({
+        codehash: token.codeHash,
+        genesis: tokenGenesis,
+        receivers: [{ address: toAddress, amount }],
+        senderWif,
+        utxos: fundingSlice,
+        noBroadcast: true,
+      });
+      pickedFundingUtxos = fundingSlice;
+      logStep('Built MVC FT bundle with funding prefix', {
+        prefixSize,
+        pickedOutpoints: fundingSlice.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
+      });
+      break;
+    } catch (error) {
+      lastTransferError = error;
+      if (prefixSize < utxos.length && isInsufficientMvcFundingError(error)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (!transferResult) {
+    throw lastTransferError instanceof Error ? lastTransferError : new Error(getMessage(lastTransferError || 'Failed to build MVC FT transfer'));
+  }
 
   const spentOutpoints = transferResult.tx.inputs.map(
     (input: any) => `${input.prevTxId.toString('hex')}:${Number(input.outputIndex)}`,
@@ -194,6 +224,7 @@ async function main(): Promise<void> {
   logStep('Built MVC FT raw-tx bundle locally', {
     txid: transferResult.txid,
     spentOutpoints,
+    fundingOutpoints: pickedFundingUtxos.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
   });
 }
 

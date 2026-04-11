@@ -14,6 +14,8 @@ export interface MvcFundingUtxoLike {
   satoshis: number;
   address?: string;
   wif?: string;
+  confirmed?: boolean;
+  height?: number | null;
   [key: string]: unknown;
 }
 
@@ -106,5 +108,13 @@ export function selectMvcFundingUtxos<T extends MvcFundingUtxoLike>(
     : null;
 
   const ordered = utxos.filter((utxo) => Number.isFinite(Number(utxo?.satoshis)) && Number(utxo.satoshis) > 0);
-  return maxCount == null ? ordered : ordered.slice(0, maxCount);
+  const confirmed = ordered.filter((utxo) => {
+    if (utxo.confirmed === false) return false;
+    if (utxo.height == null) return true;
+    return Number(utxo.height) > 0;
+  });
+  const prioritized = confirmed.length > 0
+    ? confirmed.concat(ordered.filter((utxo) => !confirmed.includes(utxo)))
+    : ordered;
+  return maxCount == null ? prioritized : prioritized.slice(0, maxCount);
 }
