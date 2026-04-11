@@ -7,6 +7,7 @@
 
 import { TxComposer, mvc } from 'meta-contract';
 import {
+  ensureFreshMvcFundingCandidates,
   getUtxoOutpointKey,
   isRetryableMvcBroadcastError,
   pickUtxo,
@@ -14,6 +15,7 @@ import {
   type SpendableMvcUtxo,
 } from './mvcSpend';
 export {
+  ensureFreshMvcFundingCandidates,
   isRetryableMvcBroadcastError,
   pickUtxo,
 } from './mvcSpend';
@@ -119,6 +121,7 @@ async function main(): Promise<void> {
         candidateOutpoints: usableUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
         excludedOutpoints: Array.from(excludedOutpoints),
       });
+      ensureFreshMvcFundingCandidates(usableUtxos, excludedOutpoints);
 
       const txComposer = new TxComposer();
       txComposer.appendP2PKHOutput({

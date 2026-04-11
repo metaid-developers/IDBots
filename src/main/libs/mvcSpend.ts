@@ -90,6 +90,22 @@ export function getUtxoOutpointKey(utxo: Pick<SpendableMvcUtxo, 'txId' | 'output
   return `${utxo.txId}:${utxo.outputIndex}`;
 }
 
+export function ensureFreshMvcFundingCandidates(
+  utxos: SpendableMvcUtxo[],
+  excludedOutpoints: ReadonlySet<string> = new Set(),
+): void {
+  if (excludedOutpoints.size === 0 || utxos.length === 0) {
+    return;
+  }
+
+  const hasFreshCandidate = utxos.some((utxo) => !excludedOutpoints.has(getUtxoOutpointKey(utxo)));
+  if (hasFreshCandidate) {
+    return;
+  }
+
+  throw new Error('MVC funding inputs are stale on the provider; wait for the UTXO set to refresh and retry.');
+}
+
 export function pickUtxo(
   utxos: SpendableMvcUtxo[],
   totalOutput: number,
@@ -97,6 +113,7 @@ export function pickUtxo(
   estimatedTxSizeWithoutInputs: number,
   excludedOutpoints: ReadonlySet<string> = new Set(),
 ): SpendableMvcUtxo[] {
+  ensureFreshMvcFundingCandidates(utxos, excludedOutpoints);
   const ordered = utxos.filter((u) => !excludedOutpoints.has(getUtxoOutpointKey(u)));
 
   let current = 0;
