@@ -11,6 +11,12 @@ export interface SpendableMvcUtxo {
   height: number;
 }
 
+export interface ClassifiedMvcSpendError {
+  category: 'stale_inputs' | 'insufficient_balance' | 'network' | 'unknown';
+  message: string;
+  retryable: boolean;
+}
+
 export function computeMvcTxidFromRawTx(rawTx: string): string {
   const tx = new mvc.Transaction(rawTx);
   return tx.id;
@@ -30,6 +36,41 @@ export function isRetryableMvcBroadcastError(message: string): boolean {
     || normalized.includes('inputs missing or spent')
     || normalized.includes('txn-mempool-conflict')
   );
+}
+
+export function classifyMvcSpendError(error: unknown): ClassifiedMvcSpendError {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const normalized = message.toLowerCase();
+
+  if (isRetryableMvcBroadcastError(message)) {
+    return {
+      category: 'stale_inputs',
+      message,
+      retryable: true,
+    };
+  }
+
+  if (normalized.includes('not enough balance') || normalized.includes('余额不足')) {
+    return {
+      category: 'insufficient_balance',
+      message,
+      retryable: false,
+    };
+  }
+
+  if (normalized.includes('fetch failed') || normalized.includes('networkerror') || normalized.includes('network error')) {
+    return {
+      category: 'network',
+      message,
+      retryable: false,
+    };
+  }
+
+  return {
+    category: 'unknown',
+    message,
+    retryable: false,
+  };
 }
 
 export function resolveBroadcastTxResult(
