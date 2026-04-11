@@ -116,13 +116,17 @@ export function pickUtxo(
   feeRate: number,
   estimatedTxSizeWithoutInputs: number,
   excludedOutpoints: ReadonlySet<string> = new Set(),
+  preferredOutpoints: ReadonlySet<string> = new Set(),
 ): SpendableMvcUtxo[] {
   ensureFreshMvcFundingCandidates(utxos, excludedOutpoints);
   const ordered = utxos.filter((u) => !excludedOutpoints.has(getUtxoOutpointKey(u)));
-  const confirmed = ordered.filter((utxo) => isConfirmedMvcUtxo(utxo));
-  const prioritized = confirmed.length > 0
-    ? confirmed.concat(ordered.filter((utxo) => !isConfirmedMvcUtxo(utxo)))
-    : ordered;
+  const preferred = ordered.filter((utxo) => preferredOutpoints.has(getUtxoOutpointKey(utxo)));
+  const remaining = ordered.filter((utxo) => !preferredOutpoints.has(getUtxoOutpointKey(utxo)));
+  const confirmed = remaining.filter((utxo) => isConfirmedMvcUtxo(utxo));
+  const fallback = confirmed.length > 0
+    ? confirmed.concat(remaining.filter((utxo) => !isConfirmedMvcUtxo(utxo)))
+    : remaining;
+  const prioritized = preferred.concat(fallback);
 
   let current = 0;
   const candidate: SpendableMvcUtxo[] = [];

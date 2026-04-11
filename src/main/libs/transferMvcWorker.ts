@@ -2,7 +2,7 @@
  * MVC transfer worker: runs in subprocess via ELECTRON_RUN_AS_NODE to avoid
  * meta-contract "instanceof" issues in the Electron main process.
  * Reads mnemonic/path from env, transfer params from stdin, broadcasts with
- * provider-order UTXO selection + stale-outpoint retries, then outputs txid.
+ * local pending-funding preference + stale-outpoint retries, then outputs txid.
  */
 
 import { TxComposer, mvc } from 'meta-contract';
@@ -26,6 +26,7 @@ const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 const RETRYABLE_MVC_BROADCAST_ATTEMPTS = 3;
 const RETRYABLE_MVC_BROADCAST_DELAY_MS = 750;
 const ESTIMATED_TX_SIZE_WITHOUT_INPUTS = 4 + 1 + 1 + 43 + 43 + 4;
+const STALE_PROVIDER_ERROR_MESSAGE = 'MVC funding inputs are stale on the provider; wait for the UTXO set to refresh and retry.';
 
 function logStep(message: string, details?: Record<string, unknown>): void {
   try {
@@ -41,6 +42,76 @@ function getMessage(err: unknown): string {
     return (err as Error).message;
   }
   return String(err);
+}
+
+function normalizeOutpointList(input: unknown): Set<string> {
+  if (!Array.isArray(input)) return new Set();
+  return new Set(
+    input
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter((value) => /^[0-9a-f]{64}:\d+$/.test(value)),
+  );
+}
+
+function normalizePreferredFundingUtxos(input: unknown, fallbackAddress: string): SpendableMvcUtxo[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const record = item as Record<string, unknown>;
+    const txId = String(record.txId || '').trim().toLowerCase();
+    const outputIndex = Number(record.outputIndex);
+    const satoshis = Number(record.satoshis);
+    const address = String(record.address || fallbackAddress).trim() || fallbackAddress;
+    const height = Number(record.height ?? -1);
+    if (!/^[0-9a-f]{64}$/.test(txId)) return [];
+    if (!Number.isInteger(outputIndex) || outputIndex < 0) return [];
+    if (!Number.isFinite(satoshis) || satoshis < 600) return [];
+    return [{
+      txId,
+      outputIndex,
+      satoshis,
+      address,
+      height: Number.isFinite(height) ? height : -1,
+    }];
+  });
+}
+
+function mergeFundingCandidates(
+  preferredFundingUtxos: SpendableMvcUtxo[],
+  providerFundingUtxos: SpendableMvcUtxo[],
+): SpendableMvcUtxo[] {
+  const merged: SpendableMvcUtxo[] = [];
+  const seen = new Set<string>();
+  for (const utxo of preferredFundingUtxos.concat(providerFundingUtxos)) {
+    const outpoint = getUtxoOutpointKey(utxo);
+    if (seen.has(outpoint)) continue;
+    seen.add(outpoint);
+    merged.push(utxo);
+  }
+  return merged;
+}
+
+function buildChangeUtxo(tx: mvc.Transaction, txId: string, address: string): SpendableMvcUtxo | null {
+  if (!Array.isArray(tx.outputs) || tx.outputs.length <= 1) {
+    return null;
+  }
+  const changeIndex = tx.outputs.length - 1;
+  const changeOutput: any = tx.outputs[changeIndex];
+  const satoshis = Number(changeOutput?.satoshis);
+  if (!Number.isFinite(satoshis) || satoshis < 600) {
+    return null;
+  }
+  return {
+    txId,
+    outputIndex: changeIndex,
+    satoshis,
+    address,
+    height: -1,
+  };
+}
+
+function isProviderStaleFundingError(message: string): boolean {
+  return String(message || '').includes(STALE_PROVIDER_ERROR_MESSAGE);
 }
 
 async function fetchMVCUtxos(address: string): Promise<Array<{ txid: string; outIndex: number; value: number; height: number }>> {
@@ -85,6 +156,8 @@ async function main(): Promise<void> {
     toAddress: string;
     amountSats: number;
     feeRate: number;
+    excludeOutpoints?: string[];
+    preferredFundingUtxos?: SpendableMvcUtxo[];
   };
   const { toAddress, amountSats, feeRate } = payload;
   if (!toAddress || amountSats == null || amountSats < 600 || feeRate == null) {
@@ -102,23 +175,37 @@ async function main(): Promise<void> {
   const fromAddress = childPk.publicKey.toAddress(network as any).toString();
   const addressObj = new mvc.Address(fromAddress, network as any);
   const privateKey = childPk.privateKey;
-  const excludedOutpoints = new Set<string>();
+  const excludedOutpoints = normalizeOutpointList(payload.excludeOutpoints);
+  const preferredFundingUtxos = normalizePreferredFundingUtxos(payload.preferredFundingUtxos, fromAddress);
+  const preferredOutpoints = new Set(preferredFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)));
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
     let pickedForAttempt: SpendableMvcUtxo[] = [];
     try {
-      const utxos = await fetchMVCUtxos(fromAddress);
-      const usableUtxos: SpendableMvcUtxo[] = utxos.map((u) => ({
-        txId: u.txid,
-        outputIndex: u.outIndex,
-        satoshis: u.value,
-        address: fromAddress,
-        height: u.height,
-      }));
+      const providerUtxos = await fetchMVCUtxos(fromAddress);
+      const providerFundingUtxos: SpendableMvcUtxo[] = providerUtxos.flatMap((u) => {
+        const txId = String(u.txid || '').trim().toLowerCase();
+        const outputIndex = Number(u.outIndex);
+        const satoshis = Number(u.value);
+        const height = Number(u.height);
+        if (!/^[0-9a-f]{64}$/.test(txId)) return [];
+        if (!Number.isInteger(outputIndex) || outputIndex < 0) return [];
+        if (!Number.isFinite(satoshis) || satoshis < 600) return [];
+        return [{
+          txId,
+          outputIndex,
+          satoshis,
+          address: fromAddress,
+          height: Number.isFinite(height) ? height : -1,
+        }];
+      });
+      const usableUtxos = mergeFundingCandidates(preferredFundingUtxos, providerFundingUtxos);
       logStep('Fetched MVC transfer funding candidates', {
         attempt,
         candidateOutpoints: usableUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        providerCandidateOutpoints: providerFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        preferredOutpoints: Array.from(preferredOutpoints),
         excludedOutpoints: Array.from(excludedOutpoints),
       });
       ensureFreshMvcFundingCandidates(usableUtxos, excludedOutpoints);
@@ -135,6 +222,7 @@ async function main(): Promise<void> {
         feeRate,
         ESTIMATED_TX_SIZE_WITHOUT_INPUTS,
         excludedOutpoints,
+        preferredOutpoints,
       );
       pickedForAttempt = picked;
       logStep('Picked MVC transfer funding inputs', {
@@ -159,12 +247,20 @@ async function main(): Promise<void> {
 
       const rawHex = txComposer.getRawHex();
       const txId = await broadcastTx(rawHex);
-      logStep('Broadcasted MVC transfer transaction', { attempt, txId });
-      console.log(JSON.stringify({ success: true, txId }));
+      const changeUtxo = buildChangeUtxo(tx, txId, fromAddress);
+      const spentOutpoints = picked.map((utxo) => getUtxoOutpointKey(utxo));
+      logStep('Broadcasted MVC transfer transaction', {
+        attempt,
+        txId,
+        spentOutpoints,
+        changeOutpoint: changeUtxo ? getUtxoOutpointKey(changeUtxo) : null,
+      });
+      console.log(JSON.stringify({ success: true, txId, spentOutpoints, changeUtxo }));
       return;
     } catch (err) {
       lastError = err;
       const message = getMessage(err);
+      const pickedOutpoints = pickedForAttempt.map((utxo) => getUtxoOutpointKey(utxo));
       if (attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
         for (const utxo of pickedForAttempt) {
           excludedOutpoints.add(getUtxoOutpointKey(utxo));
@@ -172,19 +268,33 @@ async function main(): Promise<void> {
         logStep('Retrying MVC transfer after retryable broadcast failure', {
           attempt,
           error: message,
-          blacklistedOutpoints: pickedForAttempt.map((utxo) => getUtxoOutpointKey(utxo)),
+          blacklistedOutpoints: pickedOutpoints,
           excludedOutpoints: Array.from(excludedOutpoints),
         });
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
       logStep('MVC transfer failed', { attempt, error: message });
-      console.error(JSON.stringify({ success: false, error: message }));
+      console.error(JSON.stringify({
+        success: false,
+        error: message,
+        staleOutpoints:
+          pickedOutpoints.length > 0 && isRetryableMvcBroadcastError(message)
+            ? pickedOutpoints
+            : isProviderStaleFundingError(message)
+              ? Array.from(excludedOutpoints)
+              : undefined,
+      }));
       process.exit(1);
     }
   }
 
-  console.error(JSON.stringify({ success: false, error: getMessage(lastError ?? 'Broadcast failed') }));
+  const finalError = getMessage(lastError ?? 'Broadcast failed');
+  console.error(JSON.stringify({
+    success: false,
+    error: finalError,
+    staleOutpoints: isProviderStaleFundingError(finalError) ? Array.from(excludedOutpoints) : undefined,
+  }));
   process.exit(1);
 }
 

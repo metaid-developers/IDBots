@@ -212,6 +212,146 @@ export interface ExecuteTransferResult {
   error?: string;
 }
 
+interface MvcCachedFundingUtxo {
+  txId: string;
+  outputIndex: number;
+  satoshis: number;
+  address: string;
+  height: number;
+}
+
+interface MvcPendingFundingCacheEntry extends MvcCachedFundingUtxo {
+  createdAt: number;
+}
+
+interface MvcSpendSessionState {
+  excludedOutpoints: Map<string, number>;
+  pendingFundingUtxos: MvcPendingFundingCacheEntry[];
+}
+
+interface MvcTransferWorkerSuccess {
+  success: true;
+  txId: string;
+  spentOutpoints?: string[];
+  changeUtxo?: MvcCachedFundingUtxo | null;
+}
+
+interface MvcTransferWorkerFailure {
+  success: false;
+  error: string;
+  staleOutpoints?: string[];
+}
+
+const MVC_SPEND_SESSION_TTL_MS = 30 * 60 * 1000;
+const mvcSpendSessionState = new Map<number, MvcSpendSessionState>();
+
+function getMvcCachedFundingOutpointKey(utxo: Pick<MvcCachedFundingUtxo, 'txId' | 'outputIndex'>): string {
+  return `${String(utxo.txId || '').trim().toLowerCase()}:${Number(utxo.outputIndex)}`;
+}
+
+function normalizeMvcOutpoint(value: unknown): string | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{64}:\d+$/.test(normalized) ? normalized : null;
+}
+
+function normalizeMvcCachedFundingUtxo(input: unknown): MvcCachedFundingUtxo | null {
+  if (!input || typeof input !== 'object') return null;
+  const record = input as Record<string, unknown>;
+  const txId = String(record.txId || '').trim().toLowerCase();
+  const outputIndex = Number(record.outputIndex);
+  const satoshis = Number(record.satoshis);
+  const address = String(record.address || '').trim();
+  const height = Number(record.height ?? -1);
+  if (!/^[0-9a-f]{64}$/.test(txId)) return null;
+  if (!Number.isInteger(outputIndex) || outputIndex < 0) return null;
+  if (!Number.isFinite(satoshis) || satoshis < 600) return null;
+  if (!address) return null;
+  return {
+    txId,
+    outputIndex,
+    satoshis,
+    address,
+    height: Number.isFinite(height) ? height : -1,
+  };
+}
+
+function getOrCreateMvcSpendSessionState(metabotId: number): MvcSpendSessionState {
+  const existing = mvcSpendSessionState.get(metabotId);
+  if (existing) return existing;
+  const next: MvcSpendSessionState = {
+    excludedOutpoints: new Map(),
+    pendingFundingUtxos: [],
+  };
+  mvcSpendSessionState.set(metabotId, next);
+  return next;
+}
+
+function pruneMvcSpendSessionState(metabotId: number): MvcSpendSessionState {
+  const state = getOrCreateMvcSpendSessionState(metabotId);
+  const cutoff = Date.now() - MVC_SPEND_SESSION_TTL_MS;
+  for (const [outpoint, timestamp] of state.excludedOutpoints.entries()) {
+    if (timestamp < cutoff) {
+      state.excludedOutpoints.delete(outpoint);
+    }
+  }
+  state.pendingFundingUtxos = state.pendingFundingUtxos.filter((entry) => entry.createdAt >= cutoff);
+  if (state.excludedOutpoints.size === 0 && state.pendingFundingUtxos.length === 0) {
+    mvcSpendSessionState.delete(metabotId);
+    return {
+      excludedOutpoints: new Map(),
+      pendingFundingUtxos: [],
+    };
+  }
+  return state;
+}
+
+function getMvcSpendSessionSnapshot(metabotId: number): {
+  excludeOutpoints: string[];
+  preferredFundingUtxos: MvcCachedFundingUtxo[];
+} {
+  const state = pruneMvcSpendSessionState(metabotId);
+  return {
+    excludeOutpoints: Array.from(state.excludedOutpoints.keys()),
+    preferredFundingUtxos: state.pendingFundingUtxos
+      .filter((entry) => !state.excludedOutpoints.has(getMvcCachedFundingOutpointKey(entry)))
+      .map(({ createdAt: _createdAt, ...utxo }) => ({ ...utxo })),
+  };
+}
+
+function recordMvcSpentOutpoints(metabotId: number, outpoints: unknown): void {
+  if (!Array.isArray(outpoints) || outpoints.length === 0) return;
+  const state = getOrCreateMvcSpendSessionState(metabotId);
+  const now = Date.now();
+  const normalizedOutpoints = new Set<string>();
+  for (const value of outpoints) {
+    const normalized = normalizeMvcOutpoint(value);
+    if (normalized) {
+      normalizedOutpoints.add(normalized);
+      state.excludedOutpoints.set(normalized, now);
+    }
+  }
+  if (normalizedOutpoints.size > 0 && state.pendingFundingUtxos.length > 0) {
+    state.pendingFundingUtxos = state.pendingFundingUtxos.filter(
+      (entry) => !normalizedOutpoints.has(getMvcCachedFundingOutpointKey(entry)),
+    );
+  }
+  pruneMvcSpendSessionState(metabotId);
+}
+
+function replaceMvcPendingFundingUtxos(metabotId: number, utxo: unknown): void {
+  const state = getOrCreateMvcSpendSessionState(metabotId);
+  const normalized = normalizeMvcCachedFundingUtxo(utxo);
+  if (!normalized) {
+    state.pendingFundingUtxos = [];
+    pruneMvcSpendSessionState(metabotId);
+    return;
+  }
+  state.pendingFundingUtxos = [{
+    ...normalized,
+    createdAt: Date.now(),
+  }];
+}
+
 function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWallet {
   return new BtcWallet({
     coinType: CoinType.MVC,
@@ -248,7 +388,9 @@ async function runMvcTransferWorker(params: {
   toAddress: string;
   amountSats: number;
   feeRate: number;
-}): Promise<{ success: true; txId: string } | { success: false; error: string }> {
+  excludeOutpoints?: string[];
+  preferredFundingUtxos?: MvcCachedFundingUtxo[];
+}): Promise<MvcTransferWorkerSuccess | MvcTransferWorkerFailure> {
   const appPath = app.getAppPath();
   const candidatePaths = [
     path.join(__dirname, '..', 'libs', 'transferMvcWorker.js'),
@@ -281,6 +423,8 @@ async function runMvcTransferWorker(params: {
     toAddress: params.toAddress,
     amountSats: params.amountSats,
     feeRate: params.feeRate,
+    excludeOutpoints: params.excludeOutpoints ?? [],
+    preferredFundingUtxos: params.preferredFundingUtxos ?? [],
   });
 
   return new Promise((resolve) => {
@@ -303,12 +447,30 @@ async function runMvcTransferWorker(params: {
       const output = stdout.trim() || stderr.trim();
       if (stderr.trim()) console.log('[Transfer] MVC worker stderr:', stderr.trim());
       if (code !== 0) console.error('[Transfer] MVC worker exit code:', code, 'stderr:', stderr || '(none)');
+      if (!output) {
+        resolve({ success: false, error: 'MVC worker returned empty output' });
+        return;
+      }
+      const lines = output
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const lastLine = lines[lines.length - 1] ?? output;
       try {
-        const result = JSON.parse(output) as { success: boolean; txId?: string; error?: string };
-        if (result.success && result.txId) {
-          resolve({ success: true, txId: result.txId });
+        const result = JSON.parse(lastLine) as Record<string, unknown>;
+        if (result.success === true && result.txId) {
+          resolve({
+            success: true,
+            txId: String(result.txId),
+            spentOutpoints: Array.isArray(result.spentOutpoints) ? result.spentOutpoints : undefined,
+            changeUtxo: normalizeMvcCachedFundingUtxo(result.changeUtxo) ?? null,
+          });
         } else {
-          resolve({ success: false, error: result.error || 'Worker did not return txId' });
+          resolve({
+            success: false,
+            error: String(result.error || 'Worker did not return txId'),
+            staleOutpoints: Array.isArray(result.staleOutpoints) ? result.staleOutpoints : undefined,
+          });
         }
       } catch (e) {
         console.error('[Transfer] MVC worker output parse failed:', output);
@@ -357,25 +519,46 @@ export async function executeTransfer(
         action: 'mvc_transfer',
         execute: async () => {
           const amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SPACE_TO_SATS).toNumber());
-          console.log('[Transfer] MVC: running worker', { amountSats, feeRate: params.feeRate, toAddress: params.toAddress });
+          const sessionSnapshot = getMvcSpendSessionSnapshot(params.metabotId);
+          console.log('[Transfer] MVC: running worker', {
+            amountSats,
+            feeRate: params.feeRate,
+            toAddress: params.toAddress,
+            excludedOutpoints: sessionSnapshot.excludeOutpoints,
+            preferredFundingOutpoints: sessionSnapshot.preferredFundingUtxos.map((utxo) => getMvcCachedFundingOutpointKey(utxo)),
+          });
           const workerResult = await runMvcTransferWorker({
             mnemonic: wallet.mnemonic,
             path: wallet.path ?? "m/44'/10001'/0'/0/0",
             toAddress: params.toAddress,
             amountSats,
             feeRate: params.feeRate,
+            excludeOutpoints: sessionSnapshot.excludeOutpoints,
+            preferredFundingUtxos: sessionSnapshot.preferredFundingUtxos,
           });
-          if (!workerResult.success) {
-            const errMsg = (workerResult as { success: false; error: string }).error;
-            console.error('[Transfer] MVC worker failed:', errMsg);
+          if (workerResult.success) {
+            const successResult = workerResult as MvcTransferWorkerSuccess;
+            recordMvcSpentOutpoints(params.metabotId, successResult.spentOutpoints);
+            replaceMvcPendingFundingUtxos(params.metabotId, successResult.changeUtxo);
+            const txId = successResult.txId;
+            console.log('[Transfer] MVC governed spend completed', {
+              metabotId: params.metabotId,
+              txId,
+              spentOutpoints: successResult.spentOutpoints ?? [],
+              changeOutpoint: successResult.changeUtxo
+                ? getMvcCachedFundingOutpointKey(successResult.changeUtxo)
+                : null,
+            });
+            return { success: true, txId };
+          } else {
+            const failureResult = workerResult as MvcTransferWorkerFailure;
+            recordMvcSpentOutpoints(params.metabotId, failureResult.staleOutpoints);
+            const errMsg = failureResult.error;
+            console.error('[Transfer] MVC worker failed:', errMsg, {
+              staleOutpoints: failureResult.staleOutpoints ?? [],
+            });
             return { success: false, error: errMsg };
           }
-          const txId = (workerResult as { success: true; txId: string }).txId;
-          console.log('[Transfer] MVC governed spend completed', {
-            metabotId: params.metabotId,
-            txId,
-          });
-          return { success: true, txId };
         },
       });
     }

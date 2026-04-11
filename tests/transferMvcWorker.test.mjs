@@ -13,7 +13,7 @@ test('transfer MVC retries treat stale-input broadcast failures as retryable', (
   assert.equal(isRetryableMvcBroadcastError('txn-already-known'), false);
 });
 
-test('transfer MVC pickUtxo preserves provider order', () => {
+test('transfer MVC pickUtxo prefers locally cached funding before stale confirmed inputs', () => {
   const picked = pickUtxo(
     [
       { txId: 'fresh-change', outputIndex: 2, satoshis: 1300, address: 'addr', height: -1 },
@@ -22,6 +22,8 @@ test('transfer MVC pickUtxo preserves provider order', () => {
     1000,
     1,
     78,
+    new Set(),
+    new Set(['fresh-change:2']),
   );
 
   assert.deepEqual(
