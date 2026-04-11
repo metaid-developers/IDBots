@@ -9,15 +9,6 @@
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-const HEARTBEAT_PIN_DATA = {
-  path: '/protocols/metabot-heartbeat',
-  contentType: 'text/plain',
-  payload: '',
-  operation: 'create' as const,
-  version: '1.0.0',
-  encryption: '0' as const,
-};
-
 export type CreatePinFn = (
   metabotStore: any,
   metabotId: number,
@@ -29,7 +20,17 @@ export interface HeartbeatServiceDeps {
   createPin: CreatePinFn;
   getMetabotStore?: () => unknown;
   onHeartbeatSuccess?: (input: { metabotId: number; pinId: string; timestampSec: number }) => void;
+  now?: () => number;
 }
+
+const buildHeartbeatPinData = (timestampSec: number) => ({
+  path: '/protocols/metabot-heartbeat',
+  contentType: 'text/plain',
+  payload: String(timestampSec),
+  operation: 'create' as const,
+  version: '1.0.0',
+  encryption: '0' as const,
+});
 
 export class HeartbeatService {
   private readonly timers = new Map<number, ReturnType<typeof setInterval>>();
@@ -49,17 +50,18 @@ export class HeartbeatService {
 
     const fire = async () => {
       const metabotStore = this.deps.getMetabotStore ? this.deps.getMetabotStore() : null;
+      const timestampSec = Math.floor((this.deps.now ?? Date.now)() / 1000);
       try {
         const result = await this.deps.createPin(
           metabotStore,
           metabotId,
-          HEARTBEAT_PIN_DATA,
+          buildHeartbeatPinData(timestampSec),
           { network: 'mvc' }
         );
         this.deps.onHeartbeatSuccess?.({
           metabotId,
           pinId: result.pinId,
-          timestampSec: Math.floor(Date.now() / 1000),
+          timestampSec,
         });
       } catch (err) {
         console.error(`[HeartbeatService] metabot ${metabotId} heartbeat failed:`, err);

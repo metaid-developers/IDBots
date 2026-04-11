@@ -181,13 +181,13 @@ describe('HeartbeatService', () => {
   it('passes correct heartbeat pin parameters', async () => {
     const HeartbeatService = await loadHeartbeatService();
     const { fn, calls } = mockCreatePin();
-    const svc = new HeartbeatService({ createPin: fn });
+    const svc = new HeartbeatService({ createPin: fn, now: () => 1_745_000_123_000 });
     svc.startHeartbeat(1);
     await new Promise(r => setTimeout(r, 50));
     const c = calls[0];
     assert.equal(c.data.path, '/protocols/metabot-heartbeat');
     assert.equal(c.data.contentType, 'text/plain');
-    assert.equal(c.data.payload, '');
+    assert.equal(c.data.payload, '1745000123');
     assert.equal(c.options.network, 'mvc');
     svc.stopAll();
   });

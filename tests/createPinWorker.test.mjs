@@ -7,6 +7,7 @@ const { mvc } = require('meta-contract');
 const {
   computeMvcTxidFromRawTx,
   isTxnAlreadyKnownError,
+  isRetryableMvcBroadcastError,
   resolveBroadcastTxResult,
 } = await import('../dist-electron/libs/createPinWorker.js');
 
@@ -31,4 +32,11 @@ test('resolveBroadcastTxResult preserves explicit txids on normal success', () =
   });
 
   assert.equal(txid, 'abc123');
+});
+
+test('isRetryableMvcBroadcastError detects stale-input broadcast failures', () => {
+  assert.equal(isRetryableMvcBroadcastError('[-25]Missing inputs'), true);
+  assert.equal(isRetryableMvcBroadcastError('bad-txns-inputs-missingorspent'), true);
+  assert.equal(isRetryableMvcBroadcastError('txn-already-known'), false);
+  assert.equal(isRetryableMvcBroadcastError('MetaBot 余额不足'), false);
 });

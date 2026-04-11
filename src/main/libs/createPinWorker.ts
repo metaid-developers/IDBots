@@ -35,6 +35,16 @@ export function isTxnAlreadyKnownError(message: string): boolean {
   return normalized.includes('txn-already-known') || normalized.includes('already known');
 }
 
+export function isRetryableMvcBroadcastError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  return (
+    normalized.includes('missing inputs')
+    || normalized.includes('missingorspent')
+    || normalized.includes('inputs missing/spent')
+    || normalized.includes('inputs missing or spent')
+  );
+}
+
 export function resolveBroadcastTxResult(
   rawTx: string,
   json: { code?: number; message?: string; data?: string },
@@ -57,6 +67,9 @@ async function broadcastTx(rawTx: string): Promise<string> {
   const json = (await res.json()) as { code?: number; message?: string; data?: string };
   return resolveBroadcastTxResult(rawTx, json);
 }
+
+const RETRYABLE_MVC_BROADCAST_ATTEMPTS = 3;
+const RETRYABLE_MVC_BROADCAST_DELAY_MS = 750;
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 /** Size in bytes of one signed P2PKH input in the serialized tx. */
@@ -246,63 +259,73 @@ async function main(): Promise<void> {
   const address = childPk.publicKey.toAddress(network as any).toString();
   const privateKey = childPk.privateKey;
 
-  const utxos = await fetchMVCUtxos(address);
-  const usableUtxos: SA_utxo[] = utxos.map((u) => ({
-    txId: u.txid,
-    outputIndex: u.outIndex,
-    satoshis: u.value,
-    address,
-    height: u.height,
-  }));
-
   const addressObj = new mvc.Address(address, network as any);
   const opReturnParts = buildMvcOpReturn(metaidData);
   const opReturnScriptSize = getOpReturnScriptSize(opReturnParts);
   const estimatedTxSizeWithoutInputs = getEstimatedTxSizeWithoutInputs(opReturnScriptSize);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
+    try {
+      const utxos = await fetchMVCUtxos(address);
+      const usableUtxos: SA_utxo[] = utxos.map((u) => ({
+        txId: u.txid,
+        outputIndex: u.outIndex,
+        satoshis: u.value,
+        address,
+        height: u.height,
+      }));
 
-  const txComposer = new TxComposer();
-  txComposer.appendP2PKHOutput({
-    address: addressObj,
-    satoshis: 1,
-  });
-  txComposer.appendOpReturnOutput(opReturnParts);
+      const txComposer = new TxComposer();
+      txComposer.appendP2PKHOutput({
+        address: addressObj,
+        satoshis: 1,
+      });
+      txComposer.appendOpReturnOutput(opReturnParts);
 
-  const tx = txComposer.tx;
-  const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
-  const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs);
+      const tx = txComposer.tx;
+      const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
+      const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs);
 
-  for (const utxo of picked) {
-    txComposer.appendP2PKHInput({
-      address: addressObj,
-      txId: utxo.txId,
-      outputIndex: utxo.outputIndex,
-      satoshis: utxo.satoshis,
-    });
-  }
-  txComposer.appendChangeOutput(addressObj, feeRate);
+      for (const utxo of picked) {
+        txComposer.appendP2PKHInput({
+          address: addressObj,
+          txId: utxo.txId,
+          outputIndex: utxo.outputIndex,
+          satoshis: utxo.satoshis,
+        });
+      }
+      txComposer.appendChangeOutput(addressObj, feeRate);
 
-  for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex++) {
-    txComposer.unlockP2PKHInput(privateKey, inputIndex);
-  }
+      for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex++) {
+        txComposer.unlockP2PKHInput(privateKey, inputIndex);
+      }
 
-  const rawHex = txComposer.getRawHex();
-  const inputTotal = tx.inputs.reduce((s, inp) => s + (inp.output?.satoshis || 0), 0);
-  const outputTotal = tx.outputs.reduce((s, o) => s + o.satoshis, 0);
-  const totalCost = inputTotal - outputTotal;
+      const rawHex = txComposer.getRawHex();
+      const inputTotal = tx.inputs.reduce((s, inp) => s + (inp.output?.satoshis || 0), 0);
+      const outputTotal = tx.outputs.reduce((s, o) => s + o.satoshis, 0);
+      const totalCost = inputTotal - outputTotal;
 
-  try {
-    const txid = await broadcastTx(rawHex);
-    const pinId = `${txid}i0`;
-    console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost, feeRate }));
-  } catch (err) {
-    const message = err && typeof err === 'object' && 'message' in err
-      ? String((err as Error).message)
-      : String(err);
-    if (isInsufficientFeeError(message)) {
-      throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
+      const txid = await broadcastTx(rawHex);
+      const pinId = `${txid}i0`;
+      console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost, feeRate }));
+      return;
+    } catch (err) {
+      lastError = err;
+      const message = err && typeof err === 'object' && 'message' in err
+        ? String((err as Error).message)
+        : String(err);
+      if (isInsufficientFeeError(message)) {
+        throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
+      }
+      if (attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
+        await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Broadcast failed'));
 }
 
 if (require.main === module) {
