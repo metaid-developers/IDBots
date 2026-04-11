@@ -13,6 +13,7 @@ import { getMvcWallet, getDogeWallet, parseAddressIndexFromPath } from './metabo
 import { BtcWallet, AddressType, CoinType, SignType } from '@metalet/utxo-wallet-service';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import type { MetabotStore } from '../metabotStore';
+import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -360,23 +361,29 @@ export async function executeTransfer(
 
   try {
     if (params.chain === 'mvc') {
-      const amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SPACE_TO_SATS).toNumber());
-      console.log('[Transfer] MVC: running worker', { amountSats, feeRate: params.feeRate, toAddress: params.toAddress });
-      const workerResult = await runMvcTransferWorker({
-        mnemonic: wallet.mnemonic,
-        path: wallet.path ?? "m/44'/10001'/0'/0/0",
-        toAddress: params.toAddress,
-        amountSats,
-        feeRate: params.feeRate,
+      return getMvcSpendCoordinator().runMvcSpendJob({
+        metabotId: params.metabotId,
+        action: 'mvc_transfer',
+        execute: async () => {
+          const amountSats = Math.floor(new Decimal(params.amountSpaceOrDoge).mul(SPACE_TO_SATS).toNumber());
+          console.log('[Transfer] MVC: running worker', { amountSats, feeRate: params.feeRate, toAddress: params.toAddress });
+          const workerResult = await runMvcTransferWorker({
+            mnemonic: wallet.mnemonic,
+            path: wallet.path ?? "m/44'/10001'/0'/0/0",
+            toAddress: params.toAddress,
+            amountSats,
+            feeRate: params.feeRate,
+          });
+          if (!workerResult.success) {
+            const errMsg = (workerResult as { success: false; error: string }).error;
+            console.error('[Transfer] MVC worker failed:', errMsg);
+            return { success: false, error: errMsg };
+          }
+          const txId = (workerResult as { success: true; txId: string }).txId;
+          console.log('[Transfer] MVC success txId:', txId);
+          return { success: true, txId };
+        },
       });
-      if (!workerResult.success) {
-        const errMsg = (workerResult as { success: false; error: string }).error;
-        console.error('[Transfer] MVC worker failed:', errMsg);
-        return { success: false, error: errMsg };
-      }
-      const txId = (workerResult as { success: true; txId: string }).txId;
-      console.log('[Transfer] MVC success txId:', txId);
-      return { success: true, txId };
     }
 
     if (params.chain === 'doge') {

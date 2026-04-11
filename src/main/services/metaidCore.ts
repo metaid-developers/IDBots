@@ -14,6 +14,7 @@ import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import { fetchFromLocalOrFallback } from './localIndexerProxy';
+import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -141,7 +142,7 @@ export async function createPin(
   // Never use app.getAppPath() as cwd in packaged mode (it may be app.asar file).
   // A file cwd makes spawn fail with ENOENT/ENOTDIR on Windows first-run paths.
   const spawnCwd = app.getPath('userData');
-  return new Promise((resolve, reject) => {
+  const runWorker = () => new Promise<{ txids: string[]; pinId: string; totalCost: number }>((resolve, reject) => {
     const child = spawn(electronExe, [workerPath], {
       cwd: spawnCwd,
       env,
@@ -185,6 +186,16 @@ export async function createPin(
       }
     });
   });
+
+  if (network === 'mvc') {
+    return getMvcSpendCoordinator().runMvcSpendJob({
+      metabotId: metabot_id,
+      action: `createPin:${metaidData.path || metaidData.operation}`,
+      execute: runWorker,
+    });
+  }
+
+  return runWorker();
 }
 
 /** Sleep for ms milliseconds. Used between sequential chain ops to avoid UTXO double-spend. */
