@@ -8,6 +8,7 @@ const {
   computeMvcTxidFromRawTx,
   isTxnAlreadyKnownError,
   isRetryableMvcBroadcastError,
+  pickUtxo,
   resolveBroadcastTxResult,
 } = await import('../dist-electron/libs/createPinWorker.js');
 
@@ -37,6 +38,42 @@ test('resolveBroadcastTxResult preserves explicit txids on normal success', () =
 test('isRetryableMvcBroadcastError detects stale-input broadcast failures', () => {
   assert.equal(isRetryableMvcBroadcastError('[-25]Missing inputs'), true);
   assert.equal(isRetryableMvcBroadcastError('bad-txns-inputs-missingorspent'), true);
+  assert.equal(isRetryableMvcBroadcastError('258: txn-mempool-conflict'), true);
   assert.equal(isRetryableMvcBroadcastError('txn-already-known'), false);
   assert.equal(isRetryableMvcBroadcastError('MetaBot 余额不足'), false);
+});
+
+test('pickUtxo preserves provider order instead of preferring confirmed utxos', () => {
+  const picked = pickUtxo(
+    [
+      { txId: 'new-change', outputIndex: 2, satoshis: 1200, address: 'addr', height: -1 },
+      { txId: 'old-confirmed', outputIndex: 0, satoshis: 100000, address: 'addr', height: 123 },
+    ],
+    1,
+    1,
+    62,
+  );
+
+  assert.deepEqual(
+    picked.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
+    ['new-change:2'],
+  );
+});
+
+test('pickUtxo skips excluded outpoints on retryable retry attempts', () => {
+  const picked = pickUtxo(
+    [
+      { txId: 'stale-confirmed', outputIndex: 0, satoshis: 1200, address: 'addr', height: 123 },
+      { txId: 'fresh-change', outputIndex: 2, satoshis: 1400, address: 'addr', height: -1 },
+    ],
+    1,
+    1,
+    62,
+    new Set(['stale-confirmed:0']),
+  );
+
+  assert.deepEqual(
+    picked.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
+    ['fresh-change:2'],
+  );
 });

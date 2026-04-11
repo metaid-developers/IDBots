@@ -42,6 +42,7 @@ export function isRetryableMvcBroadcastError(message: string): boolean {
     || normalized.includes('missingorspent')
     || normalized.includes('inputs missing/spent')
     || normalized.includes('inputs missing or spent')
+    || normalized.includes('txn-mempool-conflict')
   );
 }
 
@@ -144,15 +145,18 @@ function getEstimatedTxSizeWithoutInputs(opReturnScriptSize: number): number {
  * Pick UTXOs so that sum(satoshis) >= totalOutput + fee, where fee = txSize * feeRate.
  * Tx size depends on number of inputs, so we add UTXOs until sum >= required.
  */
-function pickUtxo(
+function getUtxoOutpointKey(utxo: Pick<SA_utxo, 'txId' | 'outputIndex'>): string {
+  return `${utxo.txId}:${utxo.outputIndex}`;
+}
+
+export function pickUtxo(
   utxos: SA_utxo[],
   totalOutput: number,
   feeRate: number,
-  estimatedTxSizeWithoutInputs: number
+  estimatedTxSizeWithoutInputs: number,
+  excludedOutpoints: ReadonlySet<string> = new Set(),
 ): SA_utxo[] {
-  const confirmed = utxos.filter((u) => u.height > 0).sort(() => Math.random() - 0.5);
-  const unconfirmed = utxos.filter((u) => u.height <= 0).sort(() => Math.random() - 0.5);
-  const ordered = [...confirmed, ...unconfirmed];
+  const ordered = utxos.filter((u) => !excludedOutpoints.has(getUtxoOutpointKey(u)));
 
   let current = 0;
   const candidate: SA_utxo[] = [];
@@ -264,7 +268,9 @@ async function main(): Promise<void> {
   const opReturnScriptSize = getOpReturnScriptSize(opReturnParts);
   const estimatedTxSizeWithoutInputs = getEstimatedTxSizeWithoutInputs(opReturnScriptSize);
   let lastError: unknown = null;
+  const excludedOutpoints = new Set<string>();
   for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
+    let pickedForAttempt: SA_utxo[] = [];
     try {
       const utxos = await fetchMVCUtxos(address);
       const usableUtxos: SA_utxo[] = utxos.map((u) => ({
@@ -284,7 +290,8 @@ async function main(): Promise<void> {
 
       const tx = txComposer.tx;
       const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
-      const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs);
+      const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs, excludedOutpoints);
+      pickedForAttempt = picked;
 
       for (const utxo of picked) {
         txComposer.appendP2PKHInput({
@@ -318,6 +325,9 @@ async function main(): Promise<void> {
         throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
       }
       if (attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
+        for (const utxo of pickedForAttempt) {
+          excludedOutpoints.add(getUtxoOutpointKey(utxo));
+        }
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
