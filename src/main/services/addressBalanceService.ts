@@ -4,6 +4,8 @@
  * For use by other features or Skills.
  */
 
+import { fetchBtcBalance } from '../libs/btcApi';
+
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
 const SATOSHI_PER_UNIT = 100_000_000; // 1 unit = 10^8 satoshis
@@ -114,21 +116,14 @@ async function getMvcBalance(address: string, timeoutMs: number): Promise<Addres
 
 /** BTC: uses balance as available balance (API returns BTC, convert to satoshis for consistency) */
 async function getBtcBalance(address: string, timeoutMs: number): Promise<AddressBalanceResult> {
-  const url = `${METALET_HOST}/wallet-api/v3/address/btc-balance?net=${NET}&address=${encodeURIComponent(address)}`;
-  const json = await fetchMetaletJson<{
-    balance: number; // API returns balance in BTC
-  }>(url, 'Failed to fetch BTC balance', timeoutMs);
-  if (json.code !== 0) {
-    throw new Error(json.message || 'Failed to fetch BTC balance');
-  }
-  const valueBtc = json.data?.balance ?? 0;
-  const satoshis = Math.round(valueBtc * SATOSHI_PER_UNIT);
+  const snapshot = await fetchBtcBalance(address, { timeoutMs: Math.min(timeoutMs, 1_500) });
+  const satoshis = snapshot.totalSatoshis;
   return {
     chain: 'btc',
     address,
     satoshis,
     unit: 'BTC',
-    value: valueBtc,
+    value: satoshiToUnit(satoshis),
   };
 }
 

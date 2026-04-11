@@ -11,6 +11,7 @@ import {
   attachRawTxToMrc20Utxos,
   buildMrc20TransferSignOptions,
 } from './tokenTransferAdapters';
+import { fetchBtcTxHex, fetchBtcUtxos } from '../libs/btcApi';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -192,23 +193,13 @@ function mapBalanceRow(address: string, row: RawMrc20BalanceRow): Mrc20Asset {
 }
 
 async function fetchFundingUtxosDefault(address: string): Promise<FundingUtxo[]> {
-  const list = await fetchJson<Array<{ txId: string; outputIndex: number; satoshis: number; address?: string; confirmed?: boolean }>>(
-    `${METALET_HOST}/wallet-api/v3/address/btc-utxo?net=${NET}&address=${encodeURIComponent(address)}&unconfirmed=1`,
-  );
-  const filtered = (list ?? []).filter((item) => item.satoshis >= 600 && item.confirmed !== false);
-  const resolved = filtered.length > 0 ? filtered : (list ?? []).filter((item) => item.satoshis >= 600);
-
-  return await Promise.all(resolved.map(async (item) => {
-    const raw = await fetchJson<{ rawTx?: string; hex?: string }>(
-      `${METALET_HOST}/wallet-api/v3/tx/raw?net=${NET}&txId=${encodeURIComponent(item.txId)}&chain=btc`,
-    );
-    return {
-      txId: item.txId,
-      outputIndex: item.outputIndex,
-      satoshis: item.satoshis,
-      address: item.address || address,
-      rawTx: raw.rawTx ?? raw.hex ?? '',
-    };
+  const list = await fetchBtcUtxos(address, true);
+  return list.map((item) => ({
+    txId: item.txId,
+    outputIndex: item.outputIndex,
+    satoshis: item.satoshis,
+    address: item.address || address,
+    rawTx: item.rawTx ?? '',
   }));
 }
 
@@ -217,12 +208,7 @@ async function fetchMrc20UtxosDefault(address: string, mrc20Id: string): Promise
     `${METALET_HOST}/wallet-api/v3/mrc20/address/utxo?net=${NET}&address=${encodeURIComponent(address)}&tickId=${encodeURIComponent(mrc20Id)}&source=mrc20-v2`,
   );
   const list = response?.list ?? [];
-  return await attachRawTxToMrc20Utxos(list, async (txId) => {
-    const raw = await fetchJson<{ rawTx?: string; hex?: string }>(
-      `${METALET_HOST}/wallet-api/v3/tx/raw?net=${NET}&txId=${encodeURIComponent(txId)}&chain=btc`,
-    );
-    return raw.rawTx ?? raw.hex ?? '';
-  });
+  return await attachRawTxToMrc20Utxos(list, async (txId) => await fetchBtcTxHex(txId));
 }
 
 async function deriveWalletContextDefault(store: MetabotStore, metabotId: number): Promise<WalletContext> {

@@ -14,6 +14,7 @@ import { BtcWallet, AddressType, CoinType, SignType } from '@metalet/utxo-wallet
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import type { MetabotStore } from '../metabotStore';
 import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
+import { broadcastBtcTx as broadcastBtcTxViaProvider, fetchBtcUtxos as fetchBtcUtxosViaProvider } from '../libs/btcApi';
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
@@ -222,25 +223,11 @@ function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWal
 }
 
 async function fetchBtcUtxosForTransfer(address: string): Promise<{ txId: string; outputIndex: number; satoshis: number; address: string; rawTx?: string; confirmed?: boolean }[]> {
-  const url = `${METALET_HOST}/wallet-api/v3/address/btc-utxo?net=${NET}&address=${encodeURIComponent(address)}&unconfirmed=1`;
-  const list = await fetchJson<Array<{ txId: string; outputIndex: number; satoshis: number; address?: string; confirmed?: boolean }>>(url);
-  const all = (list ?? []).filter((u) => u.satoshis >= 600).map((u) => ({ txId: u.txId, outputIndex: u.outputIndex, satoshis: u.satoshis, address: u.address || address, confirmed: u.confirmed, rawTx: undefined as string | undefined }));
-  const confirmed = all.filter((u) => u.confirmed !== false);
-  const filtered = confirmed.length > 0 ? confirmed : all;
-  for (const utxo of filtered) {
-    try {
-      const r = await fetchJson<{ rawTx?: string; hex?: string }>(`${METALET_HOST}/wallet-api/v3/tx/raw?net=${NET}&txId=${encodeURIComponent(utxo.txId)}&chain=btc`);
-      utxo.rawTx = (r as any)?.rawTx ?? (r as any)?.hex ?? '';
-    } catch { /* skip */ }
-  }
-  return filtered;
+  return await fetchBtcUtxosViaProvider(address, true);
 }
 
 async function broadcastBtcTx(rawTx: string): Promise<string> {
-  const url = `${METALET_HOST}/wallet-api/v3/tx/broadcast`;
-  const data = await fetchPost<string>(url, { chain: 'btc', net: NET, rawTx });
-  if (!data || typeof data !== 'string') throw new Error('BTC broadcast failed');
-  return data;
+  return await broadcastBtcTxViaProvider(rawTx);
 }
 
 /** Safe error message extraction without relying on instanceof Error (avoids cross-realm issues). */
