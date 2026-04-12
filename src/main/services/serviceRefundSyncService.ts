@@ -124,10 +124,21 @@ export class ServiceRefundSyncService {
       const payload = parseRefundRequestPayload(pin.content);
       if (!payload) continue;
 
-      let matchingOrders = this.store
-        .listOrdersByPaymentTxid(String(payload.paymentTxid || ''))
+      const ordersByPaymentTxid = this.store
+        .listOrdersByPaymentTxid(String(payload.paymentTxid || ''));
+      let matchingOrders = ordersByPaymentTxid
         .filter((order) => this.matchesRefundRequestPayload(order, payload))
         .filter((order) => this.shouldApplyRefundRequest(order, pin.pinId));
+      if (matchingOrders.length === 0) {
+        const fallbackExistingSellerOrder = this.selectFallbackSellerOrderForRefundRequest(
+          ordersByPaymentTxid,
+          payload,
+          pin.pinId
+        );
+        if (fallbackExistingSellerOrder) {
+          matchingOrders = [fallbackExistingSellerOrder];
+        }
+      }
       if (matchingOrders.length === 0) {
         const synthesized = this.synthesizeSellerOrderForRefundRequest(payload);
         if (synthesized && this.shouldApplyRefundRequest(synthesized, pin.pinId)) {
@@ -348,6 +359,68 @@ export class ServiceRefundSyncService {
       return false;
     }
     return true;
+  }
+
+  private selectFallbackSellerOrderForRefundRequest(
+    ordersByPaymentTxid: ServiceOrderRecord[],
+    payload: Record<string, any>,
+    refundRequestPinId: string
+  ): ServiceOrderRecord | null {
+    const sellerCandidates = ordersByPaymentTxid
+      .filter((order) => order.role === 'seller')
+      .filter((order) => this.shouldApplyRefundRequest(order, refundRequestPinId));
+    if (sellerCandidates.length === 0) {
+      return null;
+    }
+
+    if (sellerCandidates.length === 1) {
+      return sellerCandidates[0];
+    }
+
+    const expectedBuyerGlobalMetaId = String(payload.buyerGlobalMetaId || '').trim();
+    const expectedSellerGlobalMetaId = String(payload.sellerGlobalMetaId || '').trim();
+    const expectedServicePinId = String(payload.servicePinId || '').trim();
+    const scored = sellerCandidates
+      .map((order) => {
+        let score = 0;
+        if (expectedServicePinId && order.servicePinId === expectedServicePinId) {
+          score += 4;
+        }
+        if (
+          expectedBuyerGlobalMetaId
+          && order.counterpartyGlobalMetaid === expectedBuyerGlobalMetaId
+        ) {
+          score += 2;
+        }
+        const localGlobalMetaId = this.resolveLocalMetabotGlobalMetaId(order.localMetabotId)?.trim() || '';
+        if (
+          expectedSellerGlobalMetaId
+          && localGlobalMetaId
+          && localGlobalMetaId === expectedSellerGlobalMetaId
+        ) {
+          score += 2;
+        }
+        return { order, score };
+      })
+      .sort((left, right) => {
+        if (right.score !== left.score) {
+          return right.score - left.score;
+        }
+        return right.order.updatedAt - left.order.updatedAt;
+      });
+
+    const best = scored[0];
+    const second = scored[1];
+    if (!best) {
+      return null;
+    }
+    if (best.score === 0) {
+      return null;
+    }
+    if (second && second.score === best.score) {
+      return null;
+    }
+    return best.order;
   }
 
   private shouldApplyRefundRequest(

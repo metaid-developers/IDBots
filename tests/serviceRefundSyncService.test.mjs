@@ -225,6 +225,63 @@ test('syncRequestPins synthesizes seller MRC20 refund orders with structured set
   assert.deepEqual(seenEvents, ['refund_requested:seller']);
 });
 
+test('syncRequestPins falls back to an existing seller order by payment txid when strict globalMetaId matching fails', async () => {
+  const paymentTxid = 'f'.repeat(64);
+  const seenEvents = [];
+  const { store, service } = await createRefundSyncServiceForTest({
+    fetchRefundRequestPins: async () => [{
+      pinId: 'refund-request-existing-seller-fallback',
+      timestampMs: 1_770_000_730_000,
+      content: JSON.stringify({
+        paymentTxid,
+        servicePinId: 'service-forecast',
+        serviceName: 'Forecast Service',
+        refundAmount: '0.1',
+        refundCurrency: 'SPACE',
+        refundToAddress: 'buyer-refund-address',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid-legacy',
+        orderMessagePinId: 'order-pin-id',
+        failureReason: 'delivery_timeout',
+        failureDetectedAt: 1_770_000_725,
+      }),
+    }],
+    resolveLocalMetabotGlobalMetaId: (localMetabotId) => (
+      localMetabotId === 31 ? 'seller-global-metaid-current' : null
+    ),
+    resolveLocalMetabotIdByGlobalMetaId: () => null,
+    resolveLocalMetabotIdByServicePinId: () => null,
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}:${event.order.id}`);
+    },
+  });
+
+  const sellerOrder = store.createOrder({
+    role: 'seller',
+    localMetabotId: 31,
+    counterpartyGlobalMetaid: 'buyer-global-metaid',
+    servicePinId: 'service-forecast',
+    serviceName: 'Forecast Service',
+    paymentTxid,
+    paymentChain: 'mvc',
+    paymentAmount: '0.1',
+    paymentCurrency: 'SPACE',
+    status: 'failed',
+    now: 1_770_000_720_000,
+  });
+  store.markFailed(sellerOrder.id, 'llm_error', 1_770_000_721_000);
+
+  await service.syncRequestPins();
+
+  const updatedOrder = store.getOrderById(sellerOrder.id);
+  assert.equal(updatedOrder.status, 'refund_pending');
+  assert.equal(updatedOrder.refundRequestPinId, 'refund-request-existing-seller-fallback');
+  assert.equal(updatedOrder.failureReason, 'llm_error');
+  assert.equal(updatedOrder.refundRequestedAt, 1_770_000_730_000);
+  assert.equal(seenEvents.length, 1);
+  assert.equal(seenEvents[0], `refund_requested:seller:${sellerOrder.id}`);
+});
+
 test('syncFinalizePins routes explicit MRC20 refund finalize payloads to the dedicated MRC20 verifier and does not call the native verifier', async () => {
   const paymentTxid = 'a'.repeat(64);
   const refundRequestPinId = 'refund-request-pin-id-finalize';
