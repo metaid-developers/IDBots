@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
 export interface SharedDelegationRequest {
   servicePinId: string;
@@ -88,7 +89,7 @@ let cachedOrderLifecycleModule: SharedOrderLifecycleModule | null = null;
 let cachedManualRefundModule: SharedManualRefundModule | null = null;
 
 function resolveMetabotModulePath(relativePath: string): string {
-  return path.resolve(__dirname, `../../metabot/dist/${relativePath}`);
+  return resolveMetabotDistModulePath(relativePath, { startDir: __dirname });
 }
 
 function loadRemoteCallModule(): SharedRemoteCallModule {

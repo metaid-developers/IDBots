@@ -14,6 +14,7 @@ import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import { fetchFromLocalOrFallback } from './localIndexerProxy';
+import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -29,6 +30,13 @@ function appendMetaidLog(level: string, message: string, details?: object): void
   } catch {
     // Ignore if app not ready
   }
+}
+
+function getErrorMessage(err: unknown): string {
+  if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
+    return (err as Error).message;
+  }
+  return String(err);
 }
 
 export type Operation = 'init' | 'create' | 'modify' | 'revoke';
@@ -141,7 +149,7 @@ export async function createPin(
   // Never use app.getAppPath() as cwd in packaged mode (it may be app.asar file).
   // A file cwd makes spawn fail with ENOENT/ENOTDIR on Windows first-run paths.
   const spawnCwd = app.getPath('userData');
-  return new Promise((resolve, reject) => {
+  const runWorker = () => new Promise<{ txids: string[]; pinId: string; totalCost: number }>((resolve, reject) => {
     const child = spawn(electronExe, [workerPath], {
       cwd: spawnCwd,
       env,
@@ -185,6 +193,40 @@ export async function createPin(
       }
     });
   });
+
+  if (network === 'mvc') {
+    appendMetaidLog('INFO', 'Queueing governed MVC createPin job', {
+      metabot_id,
+      action: `createPin:${metaidData.path || metaidData.operation}`,
+      operation: metaidData.operation,
+      path: metaidData.path || '',
+    });
+    return getMvcSpendCoordinator().runMvcSpendJob({
+      metabotId: metabot_id,
+      action: `createPin:${metaidData.path || metaidData.operation}`,
+      execute: async () => {
+        try {
+          const result = await runWorker();
+          appendMetaidLog('INFO', 'Governed MVC createPin job completed', {
+            metabot_id,
+            txid: result.txids[0],
+            pinId: result.pinId,
+          });
+          return result;
+        } catch (error) {
+          appendMetaidLog('ERROR', 'Governed MVC createPin job failed', {
+            metabot_id,
+            error: getErrorMessage(error),
+            operation: metaidData.operation,
+            path: metaidData.path || '',
+          });
+          throw error;
+        }
+      },
+    });
+  }
+
+  return runWorker();
 }
 
 /** Sleep for ms milliseconds. Used between sequential chain ops to avoid UTXO double-spend. */

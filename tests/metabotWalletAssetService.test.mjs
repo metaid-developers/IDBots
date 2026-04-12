@@ -120,3 +120,33 @@ test('getMetabotWalletAssets treats token no-data responses as empty token secti
   assert.deepEqual(result.mrc20Assets, []);
   assert.deepEqual(result.mvcFtAssets, []);
 });
+
+test('getMetabotWalletAssets treats upstream token RPC failures as empty token sections instead of failing native balances', async () => {
+  const store = createMetabotStoreStub({
+    id: 1,
+    name: 'Trader',
+    mvc_address: 'mvc-1',
+    btc_address: 'btc-1',
+    doge_address: 'doge-1',
+    public_key: 'pub',
+  });
+
+  const result = await assetService.getMetabotWalletAssets(store, { metabotId: 1 }, {
+    getNativeBalances: async () => ({
+      btc: { address: 'btc-1', value: 0.12, unit: 'BTC' },
+      doge: { address: 'doge-1', value: 2.5, unit: 'DOGE' },
+      mvc: { address: 'mvc-1', value: 8.88, unit: 'SPACE' },
+    }),
+    listMrc20Assets: async () => {
+      throw new Error('rpc error: code = Unknown desc = Higun request error');
+    },
+    listMvcFtAssets: async () => {
+      throw new Error('fetch failed');
+    },
+  });
+
+  assert.equal(result.nativeAssets.length, 3);
+  assert.equal(result.nativeAssets[0].symbol, 'BTC');
+  assert.deepEqual(result.mrc20Assets, []);
+  assert.deepEqual(result.mvcFtAssets, []);
+});

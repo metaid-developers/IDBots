@@ -5,6 +5,7 @@ import type {
 } from './heartbeatPollingService';
 import type { LocalPresenceSnapshot } from './p2pPresenceClient';
 import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
 const PRESENCE_POLL_INTERVAL_MS = 10 * 1000;
 
@@ -98,7 +99,7 @@ const loadSharedServiceDirectoryModule = (): SharedServiceDirectoryModule => {
   if (cachedSharedServiceDirectoryModule) {
     return cachedSharedServiceDirectoryModule;
   }
-  const modulePath = path.resolve(__dirname, '../../metabot/dist/core/discovery/serviceDirectory.js');
+  const modulePath = resolveMetabotDistModulePath('core/discovery/serviceDirectory.js', { startDir: __dirname });
   cachedSharedServiceDirectoryModule = require(modulePath) as SharedServiceDirectoryModule;
   return cachedSharedServiceDirectoryModule;
 };

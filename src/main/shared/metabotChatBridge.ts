@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
 export interface SharedPrivateChatIdentity {
   globalMetaId?: string | null;
@@ -94,7 +95,7 @@ let cachedPrivateChatModule: SharedPrivateChatModule | null = null;
 let cachedSessionTraceModule: SharedSessionTraceModule | null = null;
 
 function resolveMetabotModulePath(relativePath: string): string {
-  return path.resolve(__dirname, `../../metabot/dist/${relativePath}`);
+  return resolveMetabotDistModulePath(relativePath, { startDir: __dirname });
 }
 
 function loadPrivateChatModule(): SharedPrivateChatModule {

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { MetabotStore } from '../metabotStore';
 import type { Metabot, MetabotType } from '../types/metabot';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 import {
   createMetaBotWallet,
   type CreateMetaBotWalletResult
@@ -100,7 +101,7 @@ function loadBootstrapFlowModule(): BootstrapFlowModule {
     return cachedBootstrapFlowModule;
   }
 
-  const modulePath = path.resolve(__dirname, '../../metabot/dist/core/bootstrap/bootstrapFlow.js');
+  const modulePath = resolveMetabotDistModulePath('core/bootstrap/bootstrapFlow.js', { startDir: __dirname });
   cachedBootstrapFlowModule = require(modulePath) as BootstrapFlowModule;
   return cachedBootstrapFlowModule;
 }

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 import { fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
 import { getP2PLocalBase } from './p2pLocalEndpoint';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
 const HEARTBEAT_ONLINE_WINDOW_SEC = 10 * 60; // 10 minutes
 const HEARTBEAT_POLL_INTERVAL_MS = 60 * 1000; // 1 minute
@@ -102,7 +103,7 @@ const loadSharedPresenceRegistryModule = (): SharedPresenceRegistryModule => {
   if (cachedSharedPresenceRegistryModule) {
     return cachedSharedPresenceRegistryModule;
   }
-  const modulePath = path.resolve(__dirname, '../../metabot/dist/core/discovery/presenceRegistry.js');
+  const modulePath = resolveMetabotDistModulePath('core/discovery/presenceRegistry.js', { startDir: __dirname });
   cachedSharedPresenceRegistryModule = require(modulePath) as SharedPresenceRegistryModule;
   return cachedSharedPresenceRegistryModule;
 };

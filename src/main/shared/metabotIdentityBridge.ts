@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
 export interface SharedDerivedIdentity {
   mnemonic: string;
@@ -27,7 +28,7 @@ interface SharedIdentityModule {
 let cachedIdentityModule: SharedIdentityModule | null = null;
 
 function resolveSharedIdentityModulePath(): string {
-  return path.resolve(__dirname, '../../metabot/dist/core/identity/deriveIdentity.js');
+  return resolveMetabotDistModulePath('core/identity/deriveIdentity.js', { startDir: __dirname });
 }
 
 function loadSharedIdentityModule(): SharedIdentityModule {

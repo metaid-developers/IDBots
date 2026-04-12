@@ -6,6 +6,30 @@ import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import { createPin } from './metaidCore';
 import { getRate as getGlobalFeeRate } from './feeRateStore';
+import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
+
+function loadMetaFileUploadShared(): {
+  DEFAULT_CHUNK_THRESHOLD_BYTES: number;
+  DEFAULT_MAX_FILE_SIZE_BYTES: number;
+  inferContentTypeFromFilePath: (filePath: string) => string;
+  normalizeRpcUploadResult: (payload: Record<string, unknown>) => Record<string, unknown>;
+  normalizeUploadContentType: (contentType: string) => string;
+  normalizeUploadNetwork: (network?: string) => 'mvc' | 'btc' | 'doge';
+  validateUploadSize: (input: { sizeBytes: number; maxSizeBytes?: number }) => number;
+  selectUploadMode: (input: { sizeBytes: number; chunkThresholdBytes?: number }) => 'direct' | 'chunked';
+} {
+  const candidatePaths = [
+    path.join(__dirname, 'metaFileUploadShared.js'),
+    path.join(__dirname, 'services', 'metaFileUploadShared.js'),
+    path.join(app.getAppPath(), 'dist-electron', 'services', 'metaFileUploadShared.js'),
+    path.join(app.getAppPath(), 'services', 'metaFileUploadShared.js'),
+  ];
+  const modulePath = candidatePaths.find((entry) => fs.existsSync(entry));
+  if (!modulePath) {
+    throw new Error('metaFileUploadShared module not found');
+  }
+  return require(modulePath) as ReturnType<typeof loadMetaFileUploadShared>;
+}
 
 const {
   DEFAULT_CHUNK_THRESHOLD_BYTES,
@@ -16,7 +40,7 @@ const {
   normalizeUploadNetwork,
   validateUploadSize,
   selectUploadMode,
-} = require('./metaFileUploadShared');
+} = loadMetaFileUploadShared();
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 
@@ -212,23 +236,27 @@ export async function uploadMetaFile(
     throw new Error(`MetaBot ${params.metabotId} wallet not found`);
   }
 
-  const workerResult = await runUploadLargeFileWorker(
-    {
-      filePath: resolvedFilePath,
-      fileName,
-      size,
-      contentType,
-      metaId: metabot.metaid.trim(),
-      address: metabot.mvc_address.trim(),
-      feeRate: getGlobalFeeRate('mvc'),
-      maxSizeBytes: params.maxSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
-      uploaderBaseUrl: params.uploaderBaseUrl,
-    },
-    {
-      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic.trim(),
-      IDBOTS_METABOT_PATH: (wallet.path || DEFAULT_PATH).trim(),
-    },
-  );
+  const workerResult = await getMvcSpendCoordinator().runMvcSpendJob({
+    metabotId: params.metabotId,
+    action: `chunked_upload:${fileName}`,
+    execute: async () => runUploadLargeFileWorker(
+      {
+        filePath: resolvedFilePath,
+        fileName,
+        size,
+        contentType,
+        metaId: metabot.metaid.trim(),
+        address: metabot.mvc_address.trim(),
+        feeRate: getGlobalFeeRate('mvc'),
+        maxSizeBytes: params.maxSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES,
+        uploaderBaseUrl: params.uploaderBaseUrl,
+      },
+      {
+        IDBOTS_METABOT_MNEMONIC: wallet.mnemonic.trim(),
+        IDBOTS_METABOT_PATH: (wallet.path || DEFAULT_PATH).trim(),
+      },
+    ),
+  });
 
   return normalizeRpcUploadResult(workerResult);
 }

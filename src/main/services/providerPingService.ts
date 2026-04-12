@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
+import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
 type PendingPrivateMessage = {
   id?: number | null;
@@ -105,7 +106,7 @@ const loadSharedOrderabilityModule = (): SharedOrderabilityModule | null => {
     return cachedSharedOrderabilityModule;
   }
   try {
-    const modulePath = path.resolve(__dirname, '../../metabot/dist/core/discovery/orderability.js');
+    const modulePath = resolveMetabotDistModulePath('core/discovery/orderability.js', { startDir: __dirname });
     cachedSharedOrderabilityModule = require(modulePath) as SharedOrderabilityModule;
   } catch {
     cachedSharedOrderabilityModule = null;

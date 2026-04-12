@@ -6,6 +6,7 @@ import path from 'path';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
+import { findNearestExistingFile } from './libs/runtimePaths';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -15,22 +16,6 @@ type ChangePayload<T = unknown> = {
 
 const USER_MEMORIES_MIGRATION_KEY = 'userMemories.migration.v1.completed';
 const SQL_JS_WASM_RELATIVE_PATH = path.join('node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
-
-function findNearestExistingFile(startDir: string, relativeFilePath: string): string | null {
-  let currentDir = path.resolve(startDir);
-
-  while (true) {
-    const candidate = path.join(currentDir, relativeFilePath);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) {
-      return null;
-    }
-    currentDir = parentDir;
-  }
-}
 
 // Get the path to sql.js WASM file
 export function resolveSqlJsWasmPath(input?: {

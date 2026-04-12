@@ -1,6 +1,13 @@
 import fs from 'fs';
-import { API_NET, API_TARGET, TxComposer, Wallet, mvc } from 'meta-contract';
+import { TxComposer, mvc } from 'meta-contract';
 import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
+import { getUtxoOutpointKey } from './mvcSpend';
+import {
+  isRetryableChunkedUploadError,
+  normalizeChunkedUploadUtxos,
+  pickChunkedUploadFundingUtxos,
+  type ChunkedUploadFundingUtxo,
+} from './uploadLargeFileFunding';
 
 const {
   buildChunkedMetaFilePath,
@@ -10,6 +17,10 @@ const {
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 const DEFAULT_MULTIPART_PART_SIZE = 1024 * 1024;
+const RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS = 3;
+const RETRYABLE_CHUNKED_UPLOAD_DELAY_MS = 750;
+const METALET_HOST = 'https://www.metalet.space';
+const NET = 'livenet';
 // Match the existing MetaFS frontend flow in this repo: SIGHASH_NONE | SIGHASH_FORKID.
 const PRE_TX_SIGTYPE =
   mvc.crypto.Signature.SIGHASH_NONE | mvc.crypto.Signature.SIGHASH_FORKID;
@@ -63,15 +74,6 @@ interface ChunkedUploadData {
   message?: string;
 }
 
-interface NormalizedUtxo {
-  txId: string;
-  outputIndex: number;
-  satoshis: number;
-  address: string;
-  height: number;
-  flag: string;
-}
-
 function getErrorMessage(err: unknown): string {
   if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
     return (err as Error).message;
@@ -79,9 +81,10 @@ function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
-function logStep(message: string): void {
+function logStep(message: string, details?: Record<string, unknown>): void {
   try {
-    process.stderr.write(`[uploadLargeFileWorker] ${message}\n`);
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    process.stderr.write(`[uploadLargeFileWorker] ${message}${suffix}\n`);
   } catch {
     // ignore logging failures
   }
@@ -106,46 +109,6 @@ async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(parsed.message || 'Uploader request failed');
   }
   return (parsed?.data ?? (parsed as unknown)) as T;
-}
-
-function normalizeUtxos(input: unknown, address: string): NormalizedUtxo[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((item) => {
-      const record = item as Record<string, unknown>;
-      const txId = String(record.txId ?? record.txid ?? '').trim();
-      const outputIndex = Number(record.outputIndex ?? record.outIndex ?? record.vout);
-      const satoshis = Number(record.satoshis ?? record.value ?? 0);
-      const height = Number(record.height ?? 0);
-      return {
-        txId,
-        outputIndex,
-        satoshis,
-        address: String(record.address || address).trim() || address,
-        height: Number.isFinite(height) ? height : 0,
-        flag: String(record.flag || ''),
-      };
-    })
-    .filter((utxo) => /^[0-9a-fA-F]{64}$/.test(utxo.txId) && Number.isInteger(utxo.outputIndex) && utxo.outputIndex >= 0 && utxo.satoshis > 600);
-}
-
-function pickUtxos(utxos: NormalizedUtxo[], amount: number, feeRate: number): NormalizedUtxo[] {
-  let requiredAmount = amount + 34 * 2 * feeRate + 100;
-  const candidateUtxos: NormalizedUtxo[] = [];
-  const confirmed = utxos.filter((utxo) => utxo.height > 0).sort(() => Math.random() - 0.5);
-  const unconfirmed = utxos.filter((utxo) => utxo.height <= 0).sort(() => Math.random() - 0.5);
-
-  let current = 0;
-  for (const utxo of [...confirmed, ...unconfirmed]) {
-    current += utxo.satoshis;
-    requiredAmount += feeRate * 148;
-    candidateUtxos.push(utxo);
-    if (current > requiredAmount) {
-      return candidateUtxos;
-    }
-  }
-
-  throw new Error('Insufficient MVC balance for chunked upload');
 }
 
 async function uploadToMultipartStorage(
@@ -237,6 +200,83 @@ function buildSignedPreTx(params: {
   return txComposer.getRawHex();
 }
 
+async function fetchMvcFundingUtxos(address: string): Promise<ChunkedUploadFundingUtxo[]> {
+  const all: Array<{ txid: string; outIndex: number; value: number; height: number }> = [];
+  let flag: string | undefined;
+  while (true) {
+    const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
+    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
+    const list = json?.data?.list ?? [];
+    if (!list.length) break;
+    all.push(...list.filter((u) => u.value >= 600));
+    flag = list[list.length - 1]?.flag;
+    if (!flag) break;
+  }
+  return normalizeChunkedUploadUtxos(all, address);
+}
+
+export function buildChunkedUploadMergeTxLocally(params: {
+  senderWif: string;
+  address: string;
+  feeRate: number;
+  chunkPreTxOutputAmount: number;
+  indexPreTxOutputAmount: number;
+  utxos: ChunkedUploadFundingUtxo[];
+  excludedOutpoints?: ReadonlySet<string>;
+}): {
+  txHex: string;
+  txId: string;
+  spentOutpoints: string[];
+  changeOutpoint: string | null;
+  privateKey: InstanceType<typeof mvc.PrivateKey>;
+} {
+  const privateKey = mvc.PrivateKey.fromWIF(params.senderWif);
+  const addressObj = new mvc.Address(params.address, 'livenet');
+  const pickedUtxos = pickChunkedUploadFundingUtxos(
+    params.utxos,
+    params.chunkPreTxOutputAmount + params.indexPreTxOutputAmount,
+    params.feeRate,
+    params.excludedOutpoints ?? new Set(),
+  );
+
+  const txComposer = new TxComposer();
+  txComposer.appendP2PKHOutput({
+    address: addressObj,
+    satoshis: params.chunkPreTxOutputAmount,
+  });
+  txComposer.appendP2PKHOutput({
+    address: addressObj,
+    satoshis: params.indexPreTxOutputAmount,
+  });
+  for (const utxo of pickedUtxos) {
+    txComposer.appendP2PKHInput({
+      address: addressObj,
+      txId: utxo.txId,
+      outputIndex: utxo.outputIndex,
+      satoshis: utxo.satoshis,
+    });
+  }
+  txComposer.appendChangeOutput(addressObj, params.feeRate);
+
+  const tx = txComposer.tx;
+  for (let inputIndex = 0; inputIndex < tx.inputs.length; inputIndex += 1) {
+    txComposer.unlockP2PKHInput(privateKey, inputIndex);
+  }
+
+  const txHex = txComposer.getRawHex();
+  const txId = tx.id;
+  const changeIndex = tx.outputs.length > 2 ? tx.outputs.length - 1 : -1;
+
+  return {
+    txHex,
+    txId,
+    spentOutpoints: pickedUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+    changeOutpoint: changeIndex >= 0 ? `${txId}:${changeIndex}` : null,
+    privateKey,
+  };
+}
+
 async function main(): Promise<void> {
   const mnemonic = process.env.IDBOTS_METABOT_MNEMONIC?.trim();
   const pathStr = (process.env.IDBOTS_METABOT_PATH || DEFAULT_PATH).trim();
@@ -320,67 +360,109 @@ async function main(): Promise<void> {
   const addressIndex = parseAddressIndexFromPath(pathStr);
   const mvcWallet = await getMvcWallet(mnemonic, addressIndex);
   const senderWif = mvcWallet.getPrivateKey();
-  const wallet = new Wallet(senderWif, API_NET.MAIN, feeRate, API_TARGET.APIMVC);
-  const utxos = normalizeUtxos(await wallet.api.getUnspents(address), address);
-  const pickedUtxos = pickUtxos(utxos, chunkPreTxOutputAmount + indexPreTxOutputAmount, feeRate);
+  const excludedOutpoints = new Set<string>();
+  let indexTxId = '';
+  let lastError: unknown = null;
 
-  logStep('Building merge transaction');
-  const merge = await wallet.sendArray(
-    [
-      { address, amount: chunkPreTxOutputAmount },
-      { address, amount: indexPreTxOutputAmount },
-    ],
-    pickedUtxos,
-    { noBroadcast: true },
-  );
+  for (let attempt = 1; attempt <= RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS; attempt++) {
+    let pickedUtxos: ChunkedUploadFundingUtxo[] = [];
+    try {
+      const utxos = await fetchMvcFundingUtxos(address);
+      logStep('Fetched chunked upload funding candidates', {
+        attempt,
+        candidateOutpoints: utxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        excludedOutpoints: Array.from(excludedOutpoints),
+      });
+      const merge = buildChunkedUploadMergeTxLocally({
+        senderWif,
+        address,
+        feeRate,
+        chunkPreTxOutputAmount,
+        indexPreTxOutputAmount,
+        utxos,
+        excludedOutpoints,
+      });
+      pickedUtxos = merge.spentOutpoints.map((outpoint) => {
+        const matched = utxos.find((utxo) => getUtxoOutpointKey(utxo) === outpoint);
+        if (!matched) {
+          throw new Error(`Failed to resolve picked chunked-upload funding utxo: ${outpoint}`);
+        }
+        return matched;
+      });
+      logStep(`Building merge transaction with outpoints: ${pickedUtxos.map((utxo) => getUtxoOutpointKey(utxo)).join(', ')}`);
+      logStep('Built chunked upload merge transaction locally', {
+        attempt,
+        txid: merge.txId,
+        changeOutpoint: merge.changeOutpoint,
+      });
 
-  const mergeTx = new mvc.Transaction(merge.txHex);
-  if (mergeTx.outputs.length < 2) {
-    throw new Error('Merge transaction did not produce the expected funding outputs');
+      const mergeTx = new mvc.Transaction(merge.txHex);
+      if (mergeTx.outputs.length < 2) {
+        throw new Error('Merge transaction did not produce the expected funding outputs');
+      }
+
+      const chunkPreTxHex = buildSignedPreTx({
+        txId: merge.txId,
+        outputIndex: 0,
+        satoshis: Number(mergeTx.outputs[0].satoshis),
+        address,
+        privateKey: merge.privateKey,
+      });
+      const indexPreTxHex = buildSignedPreTx({
+        txId: merge.txId,
+        outputIndex: 1,
+        satoshis: Number(mergeTx.outputs[1].satoshis),
+        address,
+        privateKey: merge.privateKey,
+      });
+
+      logStep('Submitting chunked upload to MetaFS');
+      const uploadResult = await readJson<ChunkedUploadData>(`${uploaderBaseUrl}/api/v1/files/chunked-upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metaId,
+          address,
+          fileName,
+          path: uploadPath,
+          operation: 'create',
+          contentType,
+          chunkPreTxHex,
+          indexPreTxHex,
+          mergeTxHex: merge.txHex,
+          feeRate,
+          isBroadcast: true,
+          storageKey,
+        }),
+      });
+
+      if (uploadResult?.status && uploadResult.status !== 'success') {
+        throw new Error(uploadResult.message || `Chunked upload returned status ${uploadResult.status}`);
+      }
+
+      indexTxId = String(uploadResult?.indexTxId || uploadResult?.txId || '').trim();
+      if (!indexTxId) {
+        throw new Error('Chunked upload succeeded but indexTxId is missing');
+      }
+      logStep('Chunked upload completed', { attempt, indexTxId });
+      break;
+    } catch (error) {
+      lastError = error;
+      const message = getErrorMessage(error);
+      if (attempt < RETRYABLE_CHUNKED_UPLOAD_ATTEMPTS && isRetryableChunkedUploadError(message)) {
+        for (const utxo of pickedUtxos) {
+          excludedOutpoints.add(getUtxoOutpointKey(utxo));
+        }
+        logStep(`Retrying chunked upload after stale-input failure: ${message}`);
+        await new Promise((resolve) => setTimeout(resolve, RETRYABLE_CHUNKED_UPLOAD_DELAY_MS));
+        continue;
+      }
+      throw error;
+    }
   }
 
-  const chunkPreTxHex = buildSignedPreTx({
-    txId: merge.txId,
-    outputIndex: 0,
-    satoshis: Number(mergeTx.outputs[0].satoshis),
-    address,
-    privateKey: wallet.privateKey,
-  });
-  const indexPreTxHex = buildSignedPreTx({
-    txId: merge.txId,
-    outputIndex: 1,
-    satoshis: Number(mergeTx.outputs[1].satoshis),
-    address,
-    privateKey: wallet.privateKey,
-  });
-
-  logStep('Submitting chunked upload to MetaFS');
-  const uploadResult = await readJson<ChunkedUploadData>(`${uploaderBaseUrl}/api/v1/files/chunked-upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      metaId,
-      address,
-      fileName,
-      path: uploadPath,
-      operation: 'create',
-      contentType,
-      chunkPreTxHex,
-      indexPreTxHex,
-      mergeTxHex: merge.txHex,
-      feeRate,
-      isBroadcast: true,
-      storageKey,
-    }),
-  });
-
-  if (uploadResult?.status && uploadResult.status !== 'success') {
-    throw new Error(uploadResult.message || `Chunked upload returned status ${uploadResult.status}`);
-  }
-
-  const indexTxId = String(uploadResult?.indexTxId || uploadResult?.txId || '').trim();
   if (!indexTxId) {
-    throw new Error('Chunked upload succeeded but indexTxId is missing');
+    throw lastError instanceof Error ? lastError : new Error(getErrorMessage(lastError ?? 'Chunked upload failed'));
   }
 
   console.log(
@@ -396,7 +478,9 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err: unknown) => {
-  console.error(JSON.stringify({ success: false, error: getErrorMessage(err) }));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    console.error(JSON.stringify({ success: false, error: getErrorMessage(err) }));
+    process.exit(1);
+  });
+}
