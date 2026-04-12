@@ -349,7 +349,10 @@ function scheduleRestart(): void {
     restartTimer = null;
     if (stopping || !lastStartArgs) return;
     try {
-      await spawnProcess(lastStartArgs.dataDir, lastStartArgs.configPath);
+      await start(lastStartArgs.dataDir, lastStartArgs.configPath, {
+        allowCorruptionRecovery: true,
+        resetRetryCount: false,
+      });
     } catch (err) {
       console.error('[p2p] Restart failed:', err);
       scheduleRestart();
@@ -493,9 +496,10 @@ function spawnProcess(dataDir: string, configPath: string): Promise<void> {
 export async function start(
   dataDir: string,
   configPath: string,
-  options?: { allowCorruptionRecovery?: boolean },
+  options?: { allowCorruptionRecovery?: boolean; resetRetryCount?: boolean },
 ): Promise<void> {
   const allowCorruptionRecovery = options?.allowCorruptionRecovery ?? true;
+  const resetRetryCount = options?.resetRetryCount ?? true;
   // Validate binary exists before doing anything else
   const binaryPath = resolveBinaryPath();
   if (!fs.existsSync(binaryPath)) {
@@ -506,7 +510,9 @@ export async function start(
 
   // Reset state for explicit start
   stopping = false;
-  retryCount = 0;
+  if (resetRetryCount) {
+    retryCount = 0;
+  }
   lastStartArgs = { dataDir, configPath };
 
   if (restartTimer !== null) {
@@ -552,6 +558,8 @@ export async function start(
     } catch {
       emitStatusToAllWindows({ ...cachedStatus, running: true, error: undefined });
     }
+    // A healthy runtime gets a fresh crash budget, even if it came from a restart.
+    retryCount = 0;
     startStatusPoll();
   } finally {
     startupInProgressCount = Math.max(0, startupInProgressCount - 1);
