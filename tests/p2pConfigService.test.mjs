@@ -6,10 +6,12 @@ const require = createRequire(import.meta.url);
 
 const {
   DEFAULT_P2P_CONFIG,
-  buildRuntimeConfig,
-  getConfig,
+  LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES,
+  LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY,
   OFFICIAL_P2P_BOOTSTRAP_NODES,
   P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY,
+  buildRuntimeConfig,
+  getConfig,
 } = require('../dist-electron/services/p2pConfigService.js');
 
 function makeStore({
@@ -115,6 +117,7 @@ test('getConfig migrates historical empty bootstrap defaults once when marker is
   assert.equal(store.state.setP2PConfigCalls.length, 1);
   assert.deepEqual(store.state.setP2PConfigCalls[0].p2p_bootstrap_nodes, OFFICIAL_P2P_BOOTSTRAP_NODES);
   assert.deepEqual(store.state.setCalls, [
+    { key: LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, value: true },
     { key: P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, value: true },
   ]);
 });
@@ -153,6 +156,28 @@ test('getConfig preserves custom bootstrap node lists unchanged', () => {
   assert.deepEqual(config.p2p_bootstrap_nodes, customNodes);
   assert.equal(store.state.setP2PConfigCalls.length, 0);
   assert.equal(store.state.setCalls.length, 0);
+});
+
+test('getConfig expands legacy single-node defaults to the full official bootstrap list', () => {
+  const store = makeStore({
+    p2pConfig: {
+      ...DEFAULT_P2P_CONFIG,
+      p2p_bootstrap_nodes: [...LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES],
+    },
+    kv: {
+      [LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY]: true,
+    },
+  });
+
+  const config = getConfig(store);
+
+  assert.deepEqual(config.p2p_bootstrap_nodes, OFFICIAL_P2P_BOOTSTRAP_NODES);
+  assert.equal(store.state.setP2PConfigCalls.length, 1);
+  assert.deepEqual(store.state.setP2PConfigCalls[0].p2p_bootstrap_nodes, OFFICIAL_P2P_BOOTSTRAP_NODES);
+  assert.deepEqual(store.state.setCalls, [
+    { key: LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, value: true },
+    { key: P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, value: true },
+  ]);
 });
 
 test('getConfig does not force unrelated optional list fields to empty arrays', () => {

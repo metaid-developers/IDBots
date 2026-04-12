@@ -19,12 +19,18 @@ export interface P2PConfig {
   p2p_presence_global_metaids?: string[];
 }
 
-export const OFFICIAL_P2P_BOOTSTRAP_NODES = [
+export const LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES = [
   '/ip4/8.217.14.206/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
   '/dns4/manapi.metaid.io/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
 ] as const;
 
-export const P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v1';
+export const OFFICIAL_P2P_BOOTSTRAP_NODES = [
+  ...LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES,
+  '/ip4/8.129.223.128/tcp/4001/p2p/12D3KooWBTHrWigtJyPGVvAu5uTU7BEJocPHHX5D5buuFuaQdrxw',
+] as const;
+
+export const LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v1';
+export const P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v2';
 
 export const DEFAULT_P2P_CONFIG: P2PConfig = {
   p2p_sync_mode: 'self',
@@ -170,10 +176,26 @@ function hasBootstrapDefaultsMigration(store: SqliteStore): boolean {
   return store.get<boolean>(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY) === true;
 }
 
-function shouldMigrateLegacyBootstrapDefaults(stored: Partial<P2PConfig> | undefined): boolean {
+function markBootstrapDefaultsMigration(store: SqliteStore): void {
+  store.set(LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, true);
+  store.set(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, true);
+}
+
+function stringListsMatch(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+
+  const expected = new Set(b);
+  return a.every((value) => expected.has(value));
+}
+
+function shouldMigrateBootstrapDefaults(stored: Partial<P2PConfig> | undefined): boolean {
   if (!stored) return false;
   if (!Object.prototype.hasOwnProperty.call(stored, 'p2p_bootstrap_nodes')) return true;
-  return normalizeStringList(stored.p2p_bootstrap_nodes).length === 0;
+
+  const nodes = normalizeStringList(stored.p2p_bootstrap_nodes);
+  if (nodes.length === 0) return true;
+
+  return stringListsMatch(nodes, LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES);
 }
 
 export function getConfig(store: SqliteStore): P2PConfig {
@@ -181,13 +203,13 @@ export function getConfig(store: SqliteStore): P2PConfig {
     ?? normalizeStoredConfig(store.get('p2p_config'));
   const normalized = applyListNormalization({ ...DEFAULT_P2P_CONFIG, ...(stored ?? {}) });
 
-  if (!hasBootstrapDefaultsMigration(store) && shouldMigrateLegacyBootstrapDefaults(stored)) {
+  if (!hasBootstrapDefaultsMigration(store) && shouldMigrateBootstrapDefaults(stored)) {
     const migrated = {
       ...normalized,
       p2p_bootstrap_nodes: [...OFFICIAL_P2P_BOOTSTRAP_NODES],
     };
     store.setP2PConfig(migrated as unknown as Record<string, unknown>);
-    store.set(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, true);
+    markBootstrapDefaultsMigration(store);
     return migrated;
   }
 
@@ -198,7 +220,7 @@ export function setConfig(store: SqliteStore, config: Partial<P2PConfig>): P2PCo
   const existing = getConfig(store);
   const updated = applyListNormalization({ ...existing, ...config });
   store.setP2PConfig(updated as unknown as Record<string, unknown>);
-  store.set(P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, true);
+  markBootstrapDefaultsMigration(store);
   return updated;
 }
 
