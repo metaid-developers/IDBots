@@ -29,6 +29,7 @@ export interface PrivateChatOrderCoworkOptions {
 export interface OrderCoworkResult {
   serviceReply: string;
   ratingInvite: string;
+  isDeliverable: boolean;
 }
 
 export interface OrderCoworkRequest {
@@ -44,7 +45,12 @@ export interface OrderCoworkRequest {
   peerAvatar?: string | null;
 }
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 240_000;
+const TIMEOUT_FALLBACK_MAX_LINES = 8;
+const TIMEOUT_FALLBACK_MAX_CHARS = 900;
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const HTML_TAG_RE = /<[^>]+>/g;
+const HTML_ENTITY_RE = /&(nbsp|amp|lt|gt|quot|#39);/gi;
 
 export class PrivateChatOrderCowork extends EventEmitter {
   private coworkRunner: CoworkRunner;
@@ -169,9 +175,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
       const timeoutId = setTimeout(() => {
         const acc = this.accumulators.get(sessionId);
         if (!acc) return;
-        this.accumulators.delete(sessionId);
-        this.coworkRunner.stopSession(sessionId);
-        reject(new Error('Order request timed out'));
+        this.cleanupAccumulator(sessionId);
+        this.resolveTimeoutFallback(sessionId, acc);
       }, this.timeoutMs);
 
       this.accumulators.set(sessionId, {
@@ -247,10 +252,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
     }
     // Generate [NeedsRating] invite asynchronously, then resolve
     this.buildRatingInvite(serviceReply, request).then((ratingInvite) => {
-      accumulator.resolve({ serviceReply, ratingInvite });
+      accumulator.resolve({ serviceReply, ratingInvite, isDeliverable: true });
     }).catch(() => {
       // Fallback if LLM fails
-      accumulator.resolve({ serviceReply, ratingInvite: '[NeedsRating] 服务已完成，请给个评价吧！' });
+      accumulator.resolve({
+        serviceReply,
+        ratingInvite: '[NeedsRating] 服务已完成，请给个评价吧！',
+        isDeliverable: true,
+      });
     });
   }
 
@@ -276,6 +285,133 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const accumulator = this.accumulators.get(sessionId);
     if (accumulator?.timeoutId) clearTimeout(accumulator.timeoutId);
     this.accumulators.delete(sessionId);
+  }
+
+  private resolveTimeoutFallback(sessionId: string, accumulator: MessageAccumulator): void {
+    this.coworkRunner.stopSession(sessionId, { finalStatus: 'completed' });
+    const fallbackReply = this.buildTimeoutFallbackReply(accumulator.messages);
+    const fallbackMessage = this.coworkStore.addMessage(sessionId, {
+      type: 'assistant',
+      content: fallbackReply,
+      metadata: {
+        sourceChannel: accumulator.request?.source,
+        externalConversationId: accumulator.request?.externalConversationId,
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        orderTimeoutFallback: true,
+      },
+    });
+    accumulator.messages.push(fallbackMessage);
+
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:message', { sessionId, message: fallbackMessage });
+      this.emitToRenderer('cowork:stream:complete', { sessionId, timeoutFallback: true });
+    }
+
+    accumulator.resolve({
+      serviceReply: fallbackReply,
+      ratingInvite: '',
+      isDeliverable: false,
+    });
+  }
+
+  private buildTimeoutFallbackReply(messages: CoworkMessage[]): string {
+    const assistantReply = this.extractLatestAssistantDeliverable(messages);
+    if (assistantReply) {
+      return [
+        '本次服务执行超时，先同步当前可用结果（可能不完整）：',
+        '',
+        assistantReply,
+        '',
+        '若稍后仍未收到正式交付，系统会自动发起退款。',
+      ].join('\n');
+    }
+
+    const toolSnippet = this.extractLatestToolResultSnippet(messages);
+    if (toolSnippet) {
+      return [
+        '本次服务执行超时，先同步当前可用信息（可能不完整）：',
+        '',
+        toolSnippet,
+        '',
+        '若稍后仍未收到正式交付，系统会自动发起退款。',
+      ].join('\n');
+    }
+
+    return '本次服务执行超时，暂未生成可交付结果。若稍后仍未收到正式交付，系统会自动发起退款。';
+  }
+
+  private extractLatestAssistantDeliverable(messages: CoworkMessage[]): string | null {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.type !== 'assistant') continue;
+      if (message.metadata?.isThinking) continue;
+      if (message.metadata?.orderProcessingNotice === true) continue;
+      const text = String(message.content || '').trim();
+      if (!text) continue;
+      const cleaned = cleanServiceResultText(text) || text;
+      return this.truncateTimeoutFallbackText(cleaned);
+    }
+    return null;
+  }
+
+  private extractLatestToolResultSnippet(messages: CoworkMessage[]): string | null {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.type !== 'tool_result') continue;
+      const normalized = this.normalizeTimeoutSnippetText(message.content || '');
+      if (!normalized) continue;
+      return normalized;
+    }
+    return null;
+  }
+
+  private normalizeTimeoutSnippetText(raw: string): string {
+    let text = String(raw || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(ANSI_ESCAPE_RE, '');
+    if (!text.trim()) {
+      return '';
+    }
+
+    if (/<\/?[a-z][\s\S]*>/i.test(text)) {
+      text = text
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(HTML_TAG_RE, ' ')
+        .replace(HTML_ENTITY_RE, (_match, entity: string) => {
+          const normalized = String(entity || '').toLowerCase();
+          if (normalized === 'nbsp') return ' ';
+          if (normalized === 'amp') return '&';
+          if (normalized === 'lt') return '<';
+          if (normalized === 'gt') return '>';
+          if (normalized === 'quot') return '"';
+          if (normalized === '#39') return '\'';
+          return ' ';
+        });
+    }
+
+    const lines = text
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .filter((line) => !/^\d+\s*→/.test(line))
+      .slice(0, TIMEOUT_FALLBACK_MAX_LINES);
+
+    if (lines.length === 0) {
+      return '';
+    }
+
+    return this.truncateTimeoutFallbackText(lines.join('\n'));
+  }
+
+  private truncateTimeoutFallbackText(value: string): string {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (text.length <= TIMEOUT_FALLBACK_MAX_CHARS) {
+      return text;
+    }
+    return `${text.slice(0, TIMEOUT_FALLBACK_MAX_CHARS)}\n...[已截断]`;
   }
 
   private formatReply(sessionId: string, messages: CoworkMessage[]): string {

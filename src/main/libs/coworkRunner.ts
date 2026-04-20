@@ -7,7 +7,7 @@ import type { Readable } from 'stream';
 import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
-import type { CoworkStore, CoworkMessage, CoworkExecutionMode } from '../coworkStore';
+import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus } from '../coworkStore';
 import { getClaudeCodePath, getCurrentApiConfig } from './claudeSettings';
 import { loadClaudeSdk } from './claudeSdk';
 import { getEnhancedEnv, getEnhancedEnvWithTmpdir, getSkillsRoot } from './coworkUtil';
@@ -2745,10 +2745,19 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
-  stopSession(sessionId: string): void {
+  stopSession(
+    sessionId: string,
+    options: {
+      finalStatus?: CoworkSessionStatus;
+    } = {}
+  ): void {
+    const finalStatus = options.finalStatus ?? 'idle';
     this.stoppedSessions.add(sessionId);
     const activeSession = this.activeSessions.get(sessionId);
     if (activeSession) {
+      // Flush any partially streamed assistant/thinking text so interrupted sessions
+      // do not get stuck with trailing isStreaming=true placeholders.
+      this.finalizeStreamingContent(activeSession);
       activeSession.abortController.abort();
       if (activeSession.ipcBridge) {
         try {
@@ -2770,7 +2779,7 @@ export class CoworkRunner extends EventEmitter {
     }
     this.clearPendingPermissions(sessionId);
     this.clearSandboxPermissions(sessionId);
-    this.store.updateSession(sessionId, { status: 'idle' });
+    this.store.updateSession(sessionId, { status: finalStatus });
   }
 
   respondToPermission(requestId: string, result: PermissionResult): void {

@@ -220,6 +220,25 @@ function normalizeSellerOrderAcknowledgementText(text: string): string {
   return compact || '已明确你的需求，正在处理中，请稍候，我会尽快返回结果。';
 }
 
+function buildOrderExecutionFailureNotice(error: unknown): string {
+  const rawReason = error instanceof Error ? error.message : String(error || '');
+  const reason = rawReason.replace(/\s+/g, ' ').trim();
+  const compactReason = reason.length > 160 ? `${reason.slice(0, 160)}...` : reason;
+  if (/timed out|timeout/i.test(reason)) {
+    return [
+      '抱歉，本次服务执行超时，暂未生成最终结果。',
+      compactReason ? `原因：${compactReason}` : '',
+      '若稍后仍未收到正式交付，系统会自动发起退款。',
+    ].filter(Boolean).join('\n');
+  }
+
+  return [
+    '抱歉，本次服务执行遇到异常，暂未生成最终结果。',
+    compactReason ? `原因：${compactReason}` : '',
+    '若稍后仍未收到正式交付，系统会自动发起退款。',
+  ].filter(Boolean).join('\n');
+}
+
 export async function sendSellerOrderAcknowledgement(params: {
   metabot: {
     id: number;
@@ -941,7 +960,7 @@ async function processOne(
         ? buildOrderDispatchKey(metabot.id, orderPeerGlobalMetaId, orderTrackingId)
         : null;
 
-      let orderResult: { serviceReply: string; ratingInvite: string };
+      let orderResult: { serviceReply: string; ratingInvite: string; isDeliverable: boolean };
       try {
         orderResult = await orderCoworkHandler.runOrder({
           metabotId: metabot.id,
@@ -955,7 +974,29 @@ async function processOne(
           peerAvatar: (row.from_avatar as string | null) ?? null,
         });
       } catch (error) {
+        const failureNotice = buildOrderExecutionFailureNotice(error);
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
+        if (source === 'metaweb_private' && fromGlobalMetaId) {
+          try {
+            await sendEncryptedMsg(failureNotice);
+            emitLog(`[Order] Failure notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+            if (sellerOrderSessionId && emitToRenderer) {
+              const failureMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: failureNotice,
+                metadata: {
+                  sourceChannel: 'metaweb_order',
+                  externalConversationId,
+                  direction: 'outgoing',
+                  orderExecutionFailed: true,
+                },
+              });
+              emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: failureMsg });
+            }
+          } catch (sendError) {
+            emitLog(`[Order] Failure notice broadcast failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
+          }
+        }
         markProcessed(db, row.id, saveDb);
         return;
       }
@@ -968,7 +1009,27 @@ async function processOne(
       const trimmedReply = (orderResult.serviceReply || '').trim();
       const trimmedInvite = (orderResult.ratingInvite || '').trim();
       if (trimmedReply && source === 'metaweb_private') {
-        if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
+        if (orderResult.isDeliverable === false) {
+          try {
+            await sendEncryptedMsg(trimmedReply);
+            emitLog(`[Order] Timeout fallback notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
+            if (sellerOrderSessionId && emitToRenderer) {
+              const fallbackMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: trimmedReply,
+                metadata: {
+                  sourceChannel: 'metaweb_order',
+                  externalConversationId,
+                  direction: 'outgoing',
+                  orderTimeoutFallback: true,
+                },
+              });
+              emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: fallbackMsg });
+            }
+          } catch (error) {
+            emitLog(`[Order] Timeout fallback notice broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        } else if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
           emitLog(`[Order] Delivery already sent for order ${orderTrackingId}, skipping duplicate send.`);
         } else {
           try {
