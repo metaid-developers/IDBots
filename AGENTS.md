@@ -62,21 +62,7 @@ npm run dist:win
 node --test tests/*.test.mjs
 ```
 
-## gstack Workflow
 
-- This repo vendors gstack for Codex under `.agents/skills/gstack`.
-- Use the namespaced gstack skills first when the request matches their workflow. Prefer:
-  - `gstack-office-hours` for product framing and scope shaping
-  - `gstack-plan-ceo-review` for founder/product review on new ideas
-  - `gstack-plan-eng-review` for architecture, edge cases, and test planning
-  - `gstack-review` for branch review before commit or PR
-  - `gstack-investigate` for root-cause debugging
-  - `gstack-qa` or `gstack-browse` for browser-based verification
-  - `gstack-ship` for PR / release preparation
-  - `gstack-retro` for retrospectives
-- Keep the `gstack-` prefix in this repo to avoid collisions with other installed skill packs.
-- After cloning this repo on a new machine or creating a fresh worktree, rerun `cd .agents/skills/gstack && ./setup --host codex --prefix` to refresh the local Codex symlinks.
-- If Codex reports missing or stale gstack skills, rerun `cd .agents/skills/gstack && ./setup --host codex --prefix`.
 
 ## Current Development Workflow
 
@@ -96,10 +82,11 @@ node --test tests/*.test.mjs
 ## Commit and Merge Rules
 
 - If you notice unfamiliar or unrelated file changes, continue working and stay focused on your own scoped edits unless the user asks you to inspect them.
+- Before creating a new git worktree or branch, ask for explicit user confirmation first.
 - When the user says "commit", stage and commit only the files you changed and understand.
 - Prefer small, frequent commits. Commit each independent, verifiable unit of work as soon as it is complete.
 - For every modification or newly added feature, create one commit.
-- For every commit, use the `metabot-post-buzz` skill to post a detailed development-journal entry on-chain describing the change.
+- For every commit, use Codex's `metabot-post-buzz` skill (not this repository's `SKILLs/metabot-post-buzz` implementation) to post a detailed development-journal entry on-chain describing the change.
 - Use commit messages in the format `<type>: <short description>`, where `<type>` is one of `feat`, `fix`, `refactor`, `docs`, or `chore`.
 - Before committing, make sure the relevant local tests or verification steps pass for your changes.
 - When merging completed work into `main`, use `git merge --no-ff` to preserve the feature merge point.
