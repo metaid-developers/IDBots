@@ -1,6 +1,5 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
 import type { ServiceOrderRecord } from '../serviceOrderStore';
-import { buildSharedServiceOrderEventMessage } from '../shared/metabotChatBridge';
 
 export interface ServiceOrderCoworkPublishResult {
   message: CoworkMessage | null;
@@ -11,7 +10,17 @@ export function buildServiceOrderEventMessage(
   type: 'refund_requested' | 'refunded',
   order: ServiceOrderRecord
 ): string {
-  return buildSharedServiceOrderEventMessage(type, order);
+  if (type === 'refund_requested') {
+    if (order.role === 'seller') {
+      const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
+      return `系统提示：买家已发起全额退款申请，请人工处理。${pinId}`.trim();
+    }
+    const pinId = order.refundRequestPinId ? ` 申请凭证：${order.refundRequestPinId}` : '';
+    return `系统提示：服务订单已超时，已自动发起全额退款申请。${pinId}`.trim();
+  }
+
+  const refundTxid = order.refundTxid ? ` 退款 txid：${order.refundTxid}` : '';
+  return `系统提示：退款已处理完成。${refundTxid}`.trim();
 }
 
 export function publishServiceOrderEventToCowork(

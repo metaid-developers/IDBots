@@ -182,15 +182,16 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onClose }) => {
     setWalletDone(false);
     setSyncDone(false);
     try {
-      const result = await window.electron.idbots.bootstrapMetaBot({
+      const result = await window.electron.idbots.addMetaBot({
         name,
         avatar: twinAvatar || null,
         role,
         soul: '',
         metabot_type: 'twin',
+        boss_id: 0,
         llm_id: selectedLlmId ?? null,
       });
-      if (!result.metabot) {
+      if (!result.success || !result.metabot) {
         setAddBotError(result.error || 'Failed to create MetaBot');
         setRunning(false);
         return;
@@ -199,18 +200,22 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onClose }) => {
       const id = result.metabot.id;
       setNewBotId(id);
 
-      if (!result.success) {
-        const syncResult = {
-          success: false,
-          error: result.error,
-          canSkip: result.canSkip,
-        };
+      const delayMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const SYNC_DELAY_MS = 2500;
+      await delayMs(SYNC_DELAY_MS);
+
+      let syncResult = await window.electron.idbots.syncMetaBot(id);
+      if (!syncResult.success) {
+        await delayMs(SYNC_DELAY_MS);
+        syncResult = await window.electron.idbots.syncMetaBot(id);
+      }
+      if (!syncResult.success) {
         setLastSyncResult(syncResult);
-        setSyncError(result.error ?? i18nService.t('onboardingSyncError'));
+        setSyncError(syncResult.error ?? i18nService.t('onboardingSyncError'));
         setRunning(false);
         return;
       }
-      setLastSyncResult(result.sync ?? { success: true });
+      setLastSyncResult(syncResult);
       setSyncDone(true);
       setAwakeningComplete(true);
     } catch (err) {

@@ -2,21 +2,13 @@ import {
   ServiceOrderStore,
   type ServiceOrderRecord,
 } from '../serviceOrderStore';
-import {
-  buildSharedBuyerPaymentKey,
-  isSharedSelfDirectedPair,
-  SHARED_DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS,
-  SHARED_SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON,
-  SHARED_SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE,
-  SHARED_SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
-} from '../shared/metabotServiceBridge';
 import { getTimedOutOrderTransition } from './serviceOrderState';
 import { buildRefundRequestPayload } from './serviceOrderProtocols.js';
 
-export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = SHARED_SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE;
-export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = SHARED_SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE;
-export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = SHARED_DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS;
-export const SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON = SHARED_SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON;
+export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
+export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = 'self_order_not_allowed';
+export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = 60_000;
+export const SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON = 'free_order_no_refund_required';
 
 export interface CreateBuyerOrderInput {
   localMetabotId: number;
@@ -474,7 +466,9 @@ export class ServiceOrderLifecycleService {
     counterpartyGlobalMetaId: string,
     paymentTxid?: string | null
   ): string | null {
-    return buildSharedBuyerPaymentKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
+    const normalizedTxid = typeof paymentTxid === 'string' ? paymentTxid.trim() : '';
+    if (!normalizedTxid) return null;
+    return `${localMetabotId}:${counterpartyGlobalMetaId}:${normalizedTxid}`;
   }
 
   private isSelfDirectedOrder(order: ServiceOrderRecord): boolean {
@@ -485,12 +479,15 @@ export class ServiceOrderLifecycleService {
     localMetabotId: number,
     counterpartyGlobalMetaId: string
   ): boolean {
-    return isSharedSelfDirectedPair({
-      localGlobalMetaId: this.normalizeGlobalMetaId(
-        this.resolveLocalMetabotGlobalMetaId(localMetabotId)
-      ),
-      counterpartyGlobalMetaId: this.normalizeGlobalMetaId(counterpartyGlobalMetaId),
-    });
+    const localGlobalMetaId = this.normalizeGlobalMetaId(
+      this.resolveLocalMetabotGlobalMetaId(localMetabotId)
+    );
+    const normalizedCounterparty = this.normalizeGlobalMetaId(counterpartyGlobalMetaId);
+    return Boolean(
+      localGlobalMetaId
+      && normalizedCounterparty
+      && localGlobalMetaId === normalizedCounterparty
+    );
   }
 
   private assertNotSelfDirectedOrder(

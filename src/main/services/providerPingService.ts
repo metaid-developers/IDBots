@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { normalizeRawGlobalMetaId } from '../shared/globalMetaId';
 import { resolveMetabotDistModulePath } from '../libs/runtimePaths';
 
@@ -93,27 +92,6 @@ const serviceMatches = (service: any, servicePinId: string, providerGlobalMetaId
   );
 };
 
-interface SharedOrderabilityModule {
-  resolveDelegationOrderability(
-    params: ResolveDelegationOrderabilityParams
-  ): ResolveDelegationOrderabilityResult;
-}
-
-let cachedSharedOrderabilityModule: SharedOrderabilityModule | null | undefined;
-
-const loadSharedOrderabilityModule = (): SharedOrderabilityModule | null => {
-  if (cachedSharedOrderabilityModule !== undefined) {
-    return cachedSharedOrderabilityModule;
-  }
-  try {
-    const modulePath = resolveMetabotDistModulePath('core/discovery/orderability.js', { startDir: __dirname });
-    cachedSharedOrderabilityModule = require(modulePath) as SharedOrderabilityModule;
-  } catch {
-    cachedSharedOrderabilityModule = null;
-  }
-  return cachedSharedOrderabilityModule;
-};
-
 const resolveMessageCursor = (messages: PendingPrivateMessage[]): number => {
   let latestId = 0;
   for (const message of messages) {
@@ -130,11 +108,6 @@ const resolveMessageCursor = (messages: PendingPrivateMessage[]): number => {
 export function resolveDelegationOrderability(
   params: ResolveDelegationOrderabilityParams,
 ): ResolveDelegationOrderabilityResult {
-  const sharedModule = loadSharedOrderabilityModule();
-  if (sharedModule) {
-    return sharedModule.resolveDelegationOrderability(params);
-  }
-
   const availableService = params.availableServices.find((service) => (
     serviceMatches(service, params.servicePinId, params.providerGlobalMetaId)
   ));

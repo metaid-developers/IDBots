@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type {
   HeartbeatDiscoverySnapshot,
   HeartbeatProviderState,
@@ -65,11 +64,11 @@ const toSafeString = (value: unknown): string => {
 };
 
 const normalizeComparableGlobalMetaId = (value: unknown): string => {
-  return loadSharedServiceDirectoryModule().normalizeComparableGlobalMetaId(value);
+  return normalizeRawGlobalMetaId(value) ?? toSafeString(value);
 };
 
 const resolveServiceGlobalMetaId = (service: any): string => {
-  return loadSharedServiceDirectoryModule().resolveServiceGlobalMetaId(service);
+  return normalizeComparableGlobalMetaId(service?.providerGlobalMetaId || service?.globalMetaId);
 };
 
 const resolveServiceProviderAddress = (service: any): string => {
@@ -80,50 +79,125 @@ const buildProviderKey = (globalMetaId: string, address: string): string => {
   return `${globalMetaId}::${address}`;
 };
 
-interface SharedServiceDirectoryModule {
-  normalizeComparableGlobalMetaId(value: unknown): string;
-  resolveServiceGlobalMetaId(service: any): string;
-  cloneDiscoverySnapshot(snapshot: DiscoverySnapshot): DiscoverySnapshot;
-  serializeDiscoverySnapshot(snapshot: DiscoverySnapshot): string;
-  buildPresenceSnapshot(
-    services: any[],
-    presence: LocalPresenceSnapshot,
-    fallbackNowSec: number,
-    forcedOfflineGlobalMetaIds: ReadonlySet<string>
-  ): DiscoverySnapshot;
-}
+const cloneProviderState = (state: HeartbeatProviderState): HeartbeatProviderState => ({ ...state });
 
-let cachedSharedServiceDirectoryModule: SharedServiceDirectoryModule | null = null;
+const cloneDiscoverySnapshot = (snapshot: DiscoverySnapshot): DiscoverySnapshot => ({
+  onlineBots: { ...snapshot.onlineBots },
+  availableServices: snapshot.availableServices.map((service) => ({ ...service })),
+  providers: Object.fromEntries(
+    Object.entries(snapshot.providers).map(([key, state]) => [key, cloneProviderState(state)]),
+  ),
+});
 
-const loadSharedServiceDirectoryModule = (): SharedServiceDirectoryModule => {
-  if (cachedSharedServiceDirectoryModule) {
-    return cachedSharedServiceDirectoryModule;
+const normalizeForComparison = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeForComparison(entry));
   }
-  const modulePath = resolveMetabotDistModulePath('core/discovery/serviceDirectory.js', { startDir: __dirname });
-  cachedSharedServiceDirectoryModule = require(modulePath) as SharedServiceDirectoryModule;
-  return cachedSharedServiceDirectoryModule;
-};
-
-const cloneDiscoverySnapshot = (snapshot: DiscoverySnapshot): DiscoverySnapshot => {
-  return loadSharedServiceDirectoryModule().cloneDiscoverySnapshot(snapshot);
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => [key, normalizeForComparison(nestedValue)]),
+  );
 };
 
 const serializeSnapshot = (snapshot: DiscoverySnapshot): string => {
-  return loadSharedServiceDirectoryModule().serializeDiscoverySnapshot(snapshot);
+  return JSON.stringify(normalizeForComparison(snapshot));
+};
+
+const resolvePresenceCheckAtSec = (
+  presence: LocalPresenceSnapshot,
+  fallbackNowSec: number,
+): number => {
+  return typeof presence.nowSec === 'number' && Number.isFinite(presence.nowSec)
+    ? presence.nowSec
+    : fallbackNowSec;
+};
+
+const buildProviderGroups = (services: any[]): ProviderGroup[] => {
+  const groups = new Map<string, ProviderGroup>();
+
+  for (const service of services) {
+    const status = Number(service?.status ?? 0);
+    if (Number.isFinite(status) && status < 0) {
+      continue;
+    }
+
+    const available = Number(service?.available ?? 1);
+    if (Number.isFinite(available) && available === 0) {
+      continue;
+    }
+
+    const globalMetaId = resolveServiceGlobalMetaId(service);
+    const address = resolveServiceProviderAddress(service);
+    if (!address) {
+      continue;
+    }
+
+    const key = buildProviderKey(globalMetaId, address);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.services.push(service);
+      continue;
+    }
+
+    groups.set(key, {
+      key,
+      globalMetaId,
+      address,
+      services: [service],
+    });
+  }
+
+  return [...groups.values()];
 };
 
 const buildPresenceSnapshot = (
   services: any[],
   presence: LocalPresenceSnapshot,
   fallbackNowSec: number,
-  forcedOfflineGlobalMetaIds: ReadonlySet<string>
+  forcedOfflineGlobalMetaIds: ReadonlySet<string>,
 ): DiscoverySnapshot => {
-  return loadSharedServiceDirectoryModule().buildPresenceSnapshot(
-    services,
-    presence,
-    fallbackNowSec,
-    forcedOfflineGlobalMetaIds
+  const onlineBots = Object.fromEntries(
+    Object.entries(presence.onlineBots)
+      .filter(([globalMetaId]) => !forcedOfflineGlobalMetaIds.has(globalMetaId))
+      .map(([globalMetaId, state]) => [globalMetaId, state.lastSeenSec]),
   );
+  const availableServices: any[] = [];
+  const providers: Record<string, HeartbeatProviderState> = {};
+  const lastCheckAt = resolvePresenceCheckAtSec(presence, fallbackNowSec);
+
+  for (const group of buildProviderGroups(services)) {
+    const forcedOffline =
+      Boolean(group.globalMetaId) && forcedOfflineGlobalMetaIds.has(group.globalMetaId);
+    const presenceState =
+      !forcedOffline && group.globalMetaId ? presence.onlineBots[group.globalMetaId] : undefined;
+    const online = Boolean(presenceState);
+
+    providers[group.key] = {
+      key: group.key,
+      globalMetaId: group.globalMetaId,
+      address: group.address,
+      lastSeenSec: presenceState?.lastSeenSec ?? null,
+      lastCheckAt,
+      lastSource: 'presence',
+      lastError: forcedOffline ? 'locally_disabled' : null,
+      online,
+      optimisticLocal: false,
+    };
+
+    if (online) {
+      availableServices.push(...group.services);
+    }
+  }
+
+  return {
+    onlineBots,
+    availableServices,
+    providers,
+  };
 };
 
 const unhealthyPresenceSnapshot = (reason: string): LocalPresenceSnapshot => ({

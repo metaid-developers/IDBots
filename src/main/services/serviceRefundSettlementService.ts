@@ -7,10 +7,6 @@ import {
   parseRefundRequestPayload,
 } from './serviceOrderProtocols.js';
 import { SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE } from './serviceOrderLifecycleService';
-import {
-  resolveSharedManualRefundDecision,
-  SHARED_SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON,
-} from '../shared/metabotServiceBridge';
 
 export interface RefundRequestPinDetail {
   pinId: string;
@@ -113,15 +109,7 @@ export class ServiceRefundSettlementService {
     if (order.status === 'refunded') {
       throw new Error('Refund already completed for this order');
     }
-    const manualRefundDecision = resolveSharedManualRefundDecision({
-      id: order.id,
-      role: order.role,
-      status: order.status,
-      refundRequestPinId: order.refundRequestPinId,
-      coworkSessionId: order.coworkSessionId,
-      paymentTxid: order.paymentTxid,
-    });
-    if (!manualRefundDecision.required) {
+    if (order.status !== 'refund_pending' || !order.refundRequestPinId) {
       throw new Error('No pending refund request found for this seller session');
     }
 
@@ -133,7 +121,7 @@ export class ServiceRefundSettlementService {
     const refundAmount = this.resolveRefundAmount(order, refundRequestPayload);
     const refundCurrency = this.resolveRefundCurrency(order, refundRequestPayload);
     if (this.isZeroAmount(refundAmount)) {
-      return this.resolveNoTransferRefund(order, SHARED_SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON);
+      return this.resolveNoTransferRefund(order, 'free_order_no_refund_required');
     }
     const refundToAddress = String(refundRequestPayload.refundToAddress || '').trim();
     if (!refundToAddress) {

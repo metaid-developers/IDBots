@@ -15,7 +15,7 @@
     "check:cross-platform-paths": "node scripts/check-cross-platform-paths.js",
     "check:cross-platform-paths:full": "node scripts/check-cross-platform-paths.js --with-build",
     "test:memory": "npx rimraf dist-electron && npm run compile:electron && node --test tests/memoryScopeResolver.test.mjs tests/memoryMigrationInference.test.mjs tests/memoryScopedCrud.test.mjs tests/memoryScopedRecall.test.mjs tests/memoryPromptBlocks.test.mjs tests/privateChatScopedMemory.test.mjs",
-    "test:wallet": "npx rimraf dist-electron && npm run compile:electron && node --test tests/metabotWalletService.test.mjs",
+    "test:wallet": "npm run compile:electron && node --test tests/metabotWalletService.test.mjs",
     "test:im-gateway": "npm run compile:electron && node --test tests/imGatewayConnectivity.test.mjs",
     "test:subsidy": "npm run compile:electron && node --test tests/mvcSubsidyService.test.mjs",
     "test:cognitive-phase2": "npm run compile:electron && node scripts/test_cognitive_phase2.mjs",
@@ -25,7 +25,7 @@
     "test:rpc": "npx ts-node test_rpc.ts",
     "test:read-pin": "npx ts-node -P electron-tsconfig.json test_read_pin.ts",
     "preview": "vite preview",
-    "compile:electron": "npm --prefix metabot run build && npx -p typescript@5 tsc --project electron-tsconfig.json",
+    "compile:electron": "npx -p typescript@5 tsc --project electron-tsconfig.json",
     "sync:man-p2p": "node scripts/sync-man-p2p-binary.mjs",
     "build:skills": "node scripts/build-skills.js && node scripts/build-web-search-skill.js",
     "build:skill:web-search": "node scripts/build-web-search-skill.js",
@@ -48,9 +48,7 @@
     "generate:tray-icons": "node scripts/generate-tray-icons.js",
     "setup:mingit": "node scripts/setup-mingit.js",
     "regenerate:icon": "bash scripts/regenerate-mac-icon.sh",
-    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh",
-    "metabot:build": "npm --prefix metabot run build",
-    "metabot:test": "npm --prefix metabot run test"
+    "fix:mac-icon": "bash scripts/fix-mac-icon-display.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.12",

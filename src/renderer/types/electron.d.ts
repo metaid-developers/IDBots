@@ -635,33 +635,6 @@ interface IElectronAPI {
       subsidy?: { success: boolean; error?: string };
       error?: string;
     }>;
-    bootstrapMetaBot: (input: {
-      name: string;
-      avatar?: string | null;
-      role: string;
-      soul: string;
-      goal?: string | null;
-      background?: string | null;
-      boss_global_metaid?: string | null;
-      llm_id?: string | null;
-      metabot_type?: 'twin' | 'worker';
-    }) => Promise<{
-      success: boolean;
-      metabot?: Metabot;
-      subsidy?: { success: boolean; error?: string };
-      sync?: {
-        success: boolean;
-        error?: string;
-        canSkip?: boolean;
-        metabotInfoPinId?: string;
-        chatPublicKeyPinId?: string;
-        txids?: string[];
-      };
-      error?: string;
-      canSkip?: boolean;
-      retryable?: boolean;
-      manualActionRequired?: boolean;
-    }>;
     restoreMetaBotFromMnemonic: (input: { mnemonic: string; path?: string; boss_global_metaid?: string | null }) => Promise<{ success: boolean; metabot?: Metabot; error?: string }>;
     getAddressBalance: (options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) =>
       Promise<{

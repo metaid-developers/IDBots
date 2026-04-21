@@ -1,6 +1,8 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
-import { buildSharedServiceOrderObserverConversationId } from '../shared/metabotChatBridge';
-import { ensureServiceOrderObserverSession } from './serviceOrderObserverSession';
+import {
+  buildServiceOrderObserverConversationId,
+  ensureServiceOrderObserverSession,
+} from './serviceOrderObserverSession';
 
 export interface EnsureBuyerOrderObserverSessionInput {
   metabotId: number;
@@ -28,12 +30,16 @@ export interface EnsureBuyerOrderObserverSessionResult {
   initialMessage: CoworkMessage | null;
 }
 
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 export function buildBuyerOrderObserverConversationId(input: {
   metabotId: number;
   peerGlobalMetaId: string;
   paymentTxid?: string | null;
 }): string {
-  return buildSharedServiceOrderObserverConversationId({
+  return buildServiceOrderObserverConversationId({
     role: 'buyer',
     metabotId: input.metabotId,
     peerGlobalMetaId: input.peerGlobalMetaId,

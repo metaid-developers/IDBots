@@ -9,7 +9,6 @@ import { getEnhancedEnv } from './libs/coworkUtil';
 import { isPathWithin, resolveElectronExecutablePath } from './libs/runtimePaths';
 import { buildImageSkillEnvOverrides } from './libs/skillImageProviderEnv';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
-import { buildSharedRemoteServicesPrompt } from './shared/metabotServiceBridge';
 
 export type SkillRecord = {
   id: string;
@@ -1028,7 +1027,55 @@ export class SkillManager {
   }
 
   buildRemoteServicesPrompt(availableServices: any[]): string | null {
-    return buildSharedRemoteServicesPrompt(availableServices);
+    if (!availableServices || availableServices.length === 0) return null;
+
+    const entries = availableServices
+      .map(
+        (svc) =>
+          `  <remote_service>` +
+          `<service_pin_id>${svc.currentPinId || svc.id || svc.pinId || svc.servicePinId || ''}</service_pin_id>` +
+          `<service_name>${svc.displayName || svc.serviceName || ''}</service_name>` +
+          `<description>${svc.description || ''}</description>` +
+          `<price_amount>${svc.price || ''}</price_amount>` +
+          `<price_currency>${svc.currency || ''}</price_currency>` +
+          `<rating_avg>${svc.ratingAvg ?? 'N/A'}</rating_avg>` +
+          `<rating_count>${svc.ratingCount ?? 0}</rating_count>` +
+          `<provider_name>${svc.providerMetaBot || svc.providerName || ''}</provider_name>` +
+          `<provider_global_metaid>${svc.providerGlobalMetaId || ''}</provider_global_metaid>` +
+          `</remote_service>`,
+      )
+      .join('\n');
+
+    return (
+      `\n<available_remote_services>\n` +
+      `  <notice>\n` +
+      `    The following are on-chain services provided by remote MetaBots on the\n` +
+      `    permissionless agent collaboration network.\n\n` +
+      `    RULES:\n` +
+      `    1. ONLY consider these when NO local skill can fulfill the user's request.\n` +
+      `    2. When you find a matching remote service, present it to the user in\n` +
+      `       natural language with: service name, description, price, rating, and\n` +
+      `       provider Bot name.\n` +
+      `       - If price > 0, ask the user to confirm before delegating.\n` +
+      `       - If price = 0, it is free and you may delegate directly without\n` +
+      `         extra user confirmation.\n` +
+      `    3. After confirmation (for paid) or directly (for free), output\n` +
+      `       [DELEGATE_REMOTE_SERVICE] followed by\n` +
+      `       a JSON object on the next line. This message will be intercepted by\n` +
+      `       the system — do NOT show it to the user.\n` +
+      `       - "rawRequest" MUST contain the user's original request verbatim.\n` +
+      `       - "userTask" is a short summary only.\n` +
+      `       - "taskContext" may add concise routing context, but must not replace "rawRequest".\n` +
+      `    4. Do NOT attempt to read SKILL.md files for remote services.\n\n` +
+      `    [DELEGATE_REMOTE_SERVICE] JSON format:\n` +
+      `    {"servicePinId":"...","serviceName":"...","providerGlobalMetaid":"...","price":"...","currency":"...","rawRequest":"verbatim original request","userTask":"summary","taskContext":"routing context"}\n` +
+      `    Note: "price" must be numeric only, without the currency/unit suffix.\n` +
+      `    Note: providerAddress is resolved by the system using servicePinId.\n` +
+      `  </notice>\n` +
+      entries +
+      '\n' +
+      `</available_remote_services>\n`
+    );
   }
 
   /**
