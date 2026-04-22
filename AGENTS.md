@@ -2,16 +2,6 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-## Start Here
-
-Read in this order:
-
-1. This `AGENTS.md`
-2. `localdocs/README.md` if it exists locally
-3. Relevant docs under `docs/superpowers/` when the task touches the current P2P / release baseline
-
-Keep this file stable. Put fast-changing local context, current baselines, recent pitfalls, and reusable new-session prompts in `localdocs/`.
-
 ## Project Overview
 
 **IDBots** is a local-first desktop MetaID / MetaBot platform built with Electron, React, and TypeScript.
@@ -36,33 +26,6 @@ As of March 23, 2026, `main` includes the local-first `man-p2p` Alpha baseline u
 | `tests/` | Node-based tests for main-process services, packaging helpers, and P2P runtime contracts |
 | `docs/superpowers/` | Specs, plans, acceptance notes from the recent P2P / alpha integration work |
 
-## Build & Run Commands
-
-```bash
-# Install dependencies
-npm install
-
-# Main local dev loop
-npm run electron:dev
-
-# Compile Electron TypeScript only
-npm run compile:electron
-
-# Build renderer + main bundles
-npm run build
-
-# Refresh bundled man-p2p binaries from the sibling man-p2p repo/build output
-npm run sync:man-p2p
-
-# Package release artifacts
-npm run dist:mac
-npm run dist:win
-
-# Run the node-based test suite
-node --test tests/*.test.mjs
-```
-
-
 
 ## Current Development Workflow
 
@@ -85,7 +48,7 @@ node --test tests/*.test.mjs
 - Before creating a new git worktree or branch, ask for explicit user confirmation first.
 - When the user says "commit", stage and commit only the files you changed and understand.
 - Prefer small, frequent commits. Commit each independent, verifiable unit of work as soon as it is complete.
-- For every modification or newly added feature, create one commit.
+- ** For every modification or newly added feature, create one commit. **
 - For every commit, use Codex's `metabot-post-buzz` skill (not this repository's `SKILLs/metabot-post-buzz` implementation) to post a detailed development-journal entry on-chain describing the change.
 - Use commit messages in the format `<type>: <short description>`, where `<type>` is one of `feat`, `fix`, `refactor`, `docs`, or `chore`.
 - Before committing, make sure the relevant local tests or verification steps pass for your changes.
@@ -108,22 +71,3 @@ node --test tests/*.test.mjs
 - Any database schema change must include a safe, idempotent first-run migration path so upgraded users get required tables, columns, indexes, and defaults before new code depends on them.
 - Any change to field meaning, data shape, or storage semantics must include an explicit migration or compatibility strategy for existing user data on first launch after upgrade.
 - Do not delete, reset, or casually discard user data. Maintain old-user database continuity across releases unless a deliberate, well-documented migration plan says otherwise.
-
-## Known Useful Files
-
-- `src/main/services/p2pIndexerService.ts` — bundled subprocess lifecycle, health checks, status polling
-- `src/main/services/localIndexerProxy.ts` — local-first HTTP/content fallback rules
-- `src/main/services/p2pConfigService.ts` — persisted P2P config and runtime derivation
-- `src/renderer/components/p2p/P2PStatusBadge.tsx` — sidebar runtime status UI
-- `src/renderer/components/p2p/p2pStatusBadgeState.js` — display truth for peerless/online/offline states
-- `scripts/sync-man-p2p-binary.mjs` — sync bridge from `man-p2p` into this repo
-- `electron-builder.json` — packaging, icons, extraResources, platform settings
-- `.github/workflows/build.yml` — release build and artifact publishing flow
-
-## Key Documentation
-
-- `README.md` — product/dev overview
-- `docs/superpowers/specs/2026-03-20-p2p-blockchain-sync-design.md`
-- `docs/superpowers/specs/2026-03-22-idbots-alpha-acceptance-runbook.md`
-- `docs/superpowers/plans/2026-03-20-idbots-p2p-integration.md`
-- `docs/superpowers/plans/2026-03-21-idbots-man-p2p-alpha-hardening.md`
