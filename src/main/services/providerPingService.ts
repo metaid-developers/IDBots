@@ -27,6 +27,7 @@ export interface ProviderPingServiceDeps {
   createPin(metabotId: number, payload: string): Promise<void>;
   listPendingMessages(): PendingPrivateMessage[];
   listRecentMessages?: () => PendingPrivateMessage[];
+  isProviderOnline?: (providerGlobalMetaId: string) => boolean;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
@@ -37,6 +38,7 @@ export interface PingProviderParams {
   toGlobalMetaId: string;
   toChatPubkey: string;
   timeoutMs?: number;
+  allowOnlineFallback?: boolean;
 }
 
 export type DelegationOrderabilityStatus = 'available' | 'offline' | 'missing';
@@ -142,6 +144,7 @@ export class ProviderPingService {
     const toGlobalMetaId = normalizeComparableGlobalMetaId(params.toGlobalMetaId);
     const toChatPubkey = toSafeString(params.toChatPubkey);
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
+    const allowOnlineFallback = Boolean(params.allowOnlineFallback);
 
     if (metabotId < 0 || !toGlobalMetaId || !toChatPubkey) {
       throw new Error('Missing required params');
@@ -195,10 +198,21 @@ export class ProviderPingService {
       }
 
       if (this.deps.now() >= deadline) {
+        if (allowOnlineFallback && this.isProviderOnline(toGlobalMetaId)) {
+          return true;
+        }
         return false;
       }
 
       await this.deps.sleep(this.deps.pollIntervalMs);
+    }
+  }
+
+  private isProviderOnline(providerGlobalMetaId: string): boolean {
+    try {
+      return Boolean(this.deps.isProviderOnline?.(providerGlobalMetaId));
+    } catch {
+      return false;
     }
   }
 

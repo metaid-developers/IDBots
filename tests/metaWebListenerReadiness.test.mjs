@@ -8,7 +8,7 @@ function loadMetaWebListenerReadiness() {
   return require('../dist-electron/services/metaWebListenerReadiness.js');
 }
 
-test('listener readiness does not restart an existing socket that is still connecting', () => {
+test('listener readiness restarts an existing socket when it is disconnected', () => {
   const { planPrivateChatListenerReadiness } = loadMetaWebListenerReadiness();
 
   const plan = planPrivateChatListenerReadiness({
@@ -32,7 +32,7 @@ test('listener readiness does not restart an existing socket that is still conne
       serviceRequests: false,
     },
     persistConfig: false,
-    shouldStartListener: false,
+    shouldStartListener: true,
     shouldWaitForConnection: true,
   });
 });

@@ -2345,6 +2345,7 @@ const executeDelegationPipeline = async (
       toGlobalMetaId: providerGlobalMetaId,
       toChatPubkey: chatPubkey,
       timeoutMs: 15000,
+      allowOnlineFallback: true,
     });
   } catch (error) {
     console.error(LOG_TAG, 'PING/PONG handshake failed:', error);
@@ -3039,6 +3040,14 @@ function getProviderPingService(): ProviderPingService {
       },
       listPendingMessages: () => listPendingPrivateMessages(),
       listRecentMessages: () => listRecentPrivateMessages(),
+      isProviderOnline: (providerGlobalMetaId) => {
+        const normalizedGlobalMetaId = toSafeString(providerGlobalMetaId).trim();
+        if (!normalizedGlobalMetaId) {
+          return false;
+        }
+        const snapshot = getProviderDiscoveryService().getDiscoverySnapshot();
+        return Object.prototype.hasOwnProperty.call(snapshot.onlineBots, normalizedGlobalMetaId);
+      },
     });
   }
   return providerPingService;
@@ -6130,6 +6139,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         toGlobalMetaId,
         toChatPubkey,
         timeoutMs,
+        allowOnlineFallback: true,
       });
       return { success: pongReceived };
     } catch (error) {

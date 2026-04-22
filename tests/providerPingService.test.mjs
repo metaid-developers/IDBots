@@ -8,6 +8,10 @@ function loadProviderPingService() {
   return require('../dist-electron/services/providerPingService.js');
 }
 
+function loadMetaWebListenerReadiness() {
+  return require('../dist-electron/services/metaWebListenerReadiness.js');
+}
+
 function createClock() {
   let nowMs = 0;
 
@@ -108,6 +112,79 @@ test('provider ping resolves false when timeout expires without pong', async () 
 
   assert.equal(result, false);
   assert.equal(listPendingMessagesCalls >= 3, true);
+});
+
+test('provider ping accepts online snapshot fallback after pong timeout when enabled', async () => {
+  const { ProviderPingService } = loadProviderPingService();
+  const clock = createClock();
+
+  const service = new ProviderPingService({
+    pollIntervalMs: 1000,
+    now: () => clock.now(),
+    sleep: async (ms) => {
+      clock.advance(ms);
+    },
+    getWallet: () => ({
+      mnemonic: 'test mnemonic',
+      path: "m/44'/10001'/0'/0/0",
+    }),
+    getLocalGlobalMetaId: () => 'idq1buyer',
+    derivePrivateKeyBuffer: async () => Buffer.from('buyer-private-key'),
+    computeSharedSecretSha256: () => 'shared-secret',
+    computeSharedSecret: () => 'raw-shared-secret',
+    encrypt: (plainText) => `encrypted:${plainText}`,
+    decrypt: (cipherText) => cipherText,
+    buildPrivateMessagePayload: (to, encryptedContent) => JSON.stringify({ to, encryptedContent }),
+    createPin: async () => undefined,
+    listPendingMessages: () => [],
+    isProviderOnline: (globalMetaId) => globalMetaId === 'idq1provider',
+  });
+
+  const result = await service.pingProvider({
+    metabotId: 9,
+    toGlobalMetaId: 'idq1provider',
+    toChatPubkey: 'provider-pubkey',
+    timeoutMs: 2500,
+    allowOnlineFallback: true,
+  });
+
+  assert.equal(result, true);
+});
+
+test('provider ping does not use online snapshot fallback unless enabled', async () => {
+  const { ProviderPingService } = loadProviderPingService();
+  const clock = createClock();
+
+  const service = new ProviderPingService({
+    pollIntervalMs: 1000,
+    now: () => clock.now(),
+    sleep: async (ms) => {
+      clock.advance(ms);
+    },
+    getWallet: () => ({
+      mnemonic: 'test mnemonic',
+      path: "m/44'/10001'/0'/0/0",
+    }),
+    getLocalGlobalMetaId: () => 'idq1buyer',
+    derivePrivateKeyBuffer: async () => Buffer.from('buyer-private-key'),
+    computeSharedSecretSha256: () => 'shared-secret',
+    computeSharedSecret: () => 'raw-shared-secret',
+    encrypt: (plainText) => `encrypted:${plainText}`,
+    decrypt: (cipherText) => cipherText,
+    buildPrivateMessagePayload: (to, encryptedContent) => JSON.stringify({ to, encryptedContent }),
+    createPin: async () => undefined,
+    listPendingMessages: () => [],
+    isProviderOnline: () => true,
+  });
+
+  const result = await service.pingProvider({
+    metabotId: 9,
+    toGlobalMetaId: 'idq1provider',
+    toChatPubkey: 'provider-pubkey',
+    timeoutMs: 2500,
+  });
+
+  assert.equal(result, false);
 });
 
 test('provider ping matches provider and buyer globalMetaIds case-insensitively', async () => {
@@ -307,4 +384,24 @@ test('provider ping accepts plaintext pong even when decrypt only works for ciph
   });
 
   assert.equal(result, true);
+});
+
+test('private-chat listener readiness restarts when socket exists but is disconnected', async () => {
+  const { planPrivateChatListenerReadiness } = loadMetaWebListenerReadiness();
+
+  const plan = planPrivateChatListenerReadiness({
+    localGlobalMetaId: 'idq1buyer',
+    config: {
+      enabled: true,
+      privateChats: true,
+      groupChats: false,
+      serviceRequests: false,
+    },
+    hasSocket: true,
+    isSocketConnected: false,
+  });
+
+  assert.equal(plan.success, true);
+  assert.equal(plan.shouldWaitForConnection, true);
+  assert.equal(plan.shouldStartListener, true);
 });

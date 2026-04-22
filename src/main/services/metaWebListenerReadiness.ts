@@ -64,7 +64,9 @@ export function planPrivateChatListenerReadiness(
     success: true,
     config,
     persistConfig,
-    shouldStartListener: persistConfig || !input.hasSocket,
+    // If a socket exists but is disconnected, force a listener restart so
+    // handshake requests do not keep timing out on stale sockets.
+    shouldStartListener: persistConfig || !input.hasSocket || !connected,
     shouldWaitForConnection: true,
   };
 }
