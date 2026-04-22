@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import type { ChatMessagePayload } from '../../types/chat';
 import type { GigSquareService } from '../../types/gigSquare';
-import { formatGigSquarePrice, getGigSquarePaymentAmount } from '../../utils/gigSquare';
+import {
+  formatGigSquarePrice,
+  getGigSquarePaymentAmount,
+  normalizeGigSquareDisplayCurrency,
+} from '../../utils/gigSquare';
 import { fetchMetaidInfoByGlobalId } from '../../services/metabotInfoService';
 import { apiService } from '../../services/api';
 import {
@@ -93,8 +97,10 @@ function resolveGigSquareSettlement(service: GigSquareService | null): ResolvedG
 
   if (!isMrc20) {
     const paymentChain = parsePaymentChain(service.paymentChain) || currencyToChain(currency);
-    const normalizedCurrency = currency
-      || (paymentChain === 'btc' ? 'BTC' : paymentChain === 'doge' ? 'DOGE' : 'SPACE');
+    const normalizedCurrency = normalizeGigSquareDisplayCurrency(
+      currency
+      || (paymentChain === 'btc' ? 'BTC' : paymentChain === 'doge' ? 'DOGE' : 'SPACE')
+    );
     return {
       kind: 'native',
       paymentChain,
@@ -864,7 +870,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
                   {i18nService.t('gigSquareConfirmAmount')}
                 </span>
                 <span className="dark:text-claude-darkText text-claude-text font-medium">
-                  {service.price} {service.currency}
+                  {priceDisplay?.amount ?? service.price} {priceDisplay?.unit ?? normalizeGigSquareDisplayCurrency(service.currency)}
                 </span>
               </div>
               <div className="flex justify-between">

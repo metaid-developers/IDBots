@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
   getGigSquareMrc20SelectPlaceholder,
+  getGigSquarePublishCurrencyLabel,
   getGigSquareSettlementGridClassName,
   getGigSquarePublishPriceLimit,
   getNextGigSquareSelectedMrc20Id,
@@ -16,6 +17,12 @@ test('publish currency options include MRC20', () => {
     GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => item.value),
     ['BTC', 'SPACE', 'DOGE', 'MRC20'],
   );
+});
+
+test('getGigSquarePublishCurrencyLabel maps MVC to SPACE for display', () => {
+  assert.equal(getGigSquarePublishCurrencyLabel('MVC'), 'SPACE');
+  assert.equal(getGigSquarePublishCurrencyLabel('space'), 'SPACE');
+  assert.equal(getGigSquarePublishCurrencyLabel('BTC'), 'BTC');
 });
 
 test('getSelectableGigSquareMrc20Assets keeps only positive balances', () => {

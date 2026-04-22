@@ -35,3 +35,29 @@ test('GigSquareServiceCard renders title on its own row and keeps service name w
     /data-slot="gig-square-card-meta-row"[\s\S]*weather-oracle-service[\s\S]*data-slot="gig-square-card-price"[\s\S]*0\.25[\s\S]*SPACE/,
   );
 });
+
+test('GigSquareServiceCard shows SPACE when service currency is MVC', () => {
+  const markup = renderToStaticMarkup(
+    <GigSquareServiceCard
+      service={{
+        id: 'svc-2',
+        displayName: 'Legacy MVC Service',
+        serviceName: 'legacy-mvc-service',
+        description: 'Legacy service record',
+        price: '1.25',
+        currency: 'MVC',
+        providerMetaId: 'meta-2',
+        providerGlobalMetaId: 'global-2',
+        providerAddress: 'addr-2',
+      }}
+      providerName="Legacy Bot"
+      providerAvatarSrc="https://example.com/provider.png"
+      providerLookupId="global-2"
+      isOnline={true}
+      onOpen={() => {}}
+    />
+  );
+
+  assert.match(markup, /1\.25[\s\S]*SPACE/);
+  assert.doesNotMatch(markup, /1\.25[\s\S]*MVC/);
+});

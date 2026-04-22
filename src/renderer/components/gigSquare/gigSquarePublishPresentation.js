@@ -13,6 +13,7 @@ export const GIG_SQUARE_PUBLISH_PRICE_LIMITS = {
 
 export function getGigSquarePublishCurrencyLabel(currency) {
   const normalized = typeof currency === 'string' ? currency.trim().toUpperCase() : '';
+  if (normalized === 'MVC') return 'SPACE';
   const option = GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.find((item) => item.value === normalized);
   return option?.label || normalized || 'BTC';
 }
