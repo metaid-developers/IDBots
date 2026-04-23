@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
+  DocumentDuplicateIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
@@ -11,6 +12,9 @@ import type {
 } from '../../types/gigSquare';
 
 type RefundTab = 'pendingForMe' | 'initiatedByMe';
+type ClipboardWriter = {
+  writeText?: (value: string) => Promise<void> | void;
+} | null | undefined;
 
 interface GigSquareRefundsModalBaseProps {
   isOpen: boolean;
@@ -41,6 +45,11 @@ const formatRefundDate = (value: number | null | undefined): string => {
   return date.toLocaleString();
 };
 
+const showToastMessage = (message: string): void => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+};
+
 const getFailureReasonLabel = (failureReason?: string | null): string | null => {
   if (failureReason === 'first_response_timeout') {
     return i18nService.t('coworkRefundReasonFirstResponseTimeout');
@@ -50,6 +59,20 @@ const getFailureReasonLabel = (failureReason?: string | null): string | null => 
   }
   return failureReason ? failureReason.trim() : null;
 };
+
+export async function copyGigSquareRefundPaymentTxid(
+  value: string | null | undefined,
+  clipboard: ClipboardWriter
+): Promise<boolean> {
+  const normalized = String(value || '').trim();
+  if (!normalized || !clipboard?.writeText) return false;
+  try {
+    await clipboard.writeText(normalized);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const dispatchGigSquareRefundSessionView = (
   sessionId: string | null | undefined,
@@ -74,23 +97,23 @@ const RefundIdentity: React.FC<{
     .toUpperCase();
 
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    <div className="flex min-w-0 items-center gap-2.5">
       {avatar ? (
         <img
           src={avatar}
           alt={item.counterpartyName}
-          className="h-10 w-10 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
+          className="h-9 w-9 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
         />
       ) : (
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-claude-accent/15 text-sm font-semibold text-claude-accent">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-claude-accent/15 text-xs font-semibold text-claude-accent">
           {fallbackInitial}
         </div>
       )}
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-claude-text dark:text-claude-darkText">
+        <div className="truncate text-[13px] font-semibold leading-5 text-claude-text dark:text-claude-darkText">
           {item.counterpartyName || item.counterpartyGlobalMetaid}
         </div>
-        <div className="truncate font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+        <div className="truncate font-mono text-[10px] leading-4 text-claude-textSecondary dark:text-claude-darkTextSecondary">
           {item.counterpartyGlobalMetaid}
         </div>
       </div>
@@ -103,7 +126,7 @@ const RefundStatusBadge: React.FC<{
 }> = ({ status }) => {
   const isPending = status === 'refund_pending';
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold leading-none ${
       isPending
         ? 'bg-amber-500/12 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300'
         : 'bg-emerald-500/12 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300'
@@ -112,6 +135,61 @@ const RefundStatusBadge: React.FC<{
         ? i18nService.t('gigSquareRefundsStatusPending')
         : i18nService.t('gigSquareRefundsStatusRefunded')}
     </span>
+  );
+};
+
+const RefundInfoSlot: React.FC<{
+  label: string;
+  children: React.ReactNode;
+  wide?: boolean;
+}> = ({ label, children, wide = false }) => (
+  <div className={`min-w-0 rounded-xl border border-claude-border/70 bg-claude-surfaceMuted/65 px-3 py-2 dark:border-claude-darkBorder/70 dark:bg-claude-darkSurfaceMuted/65 ${
+    wide ? 'sm:col-span-2 xl:col-span-1' : ''
+  }`}>
+    <div className="text-[10px] uppercase tracking-[0.12em] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+      {label}
+    </div>
+    <div className="mt-1 min-w-0 text-[13px] font-medium leading-5 text-claude-text dark:text-claude-darkText">
+      {children}
+    </div>
+  </div>
+);
+
+const RefundPaymentTxid: React.FC<{
+  value: string;
+}> = ({ value }) => {
+  const normalizedValue = String(value || '').trim();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    const clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
+    const didCopy = await copyGigSquareRefundPaymentTxid(normalizedValue, clipboard);
+    if (!didCopy) return;
+    setCopied(true);
+    showToastMessage(i18nService.t('gigSquareRefundsPaymentTxidCopied'));
+    window.setTimeout(() => setCopied(false), 1600);
+  }, [normalizedValue]);
+
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-[11px] leading-5 text-claude-textSecondary dark:text-claude-darkTextSecondary"
+        title={normalizedValue}
+      >
+        {normalizedValue}
+      </span>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-claude-border text-claude-textSecondary transition hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover ${
+          copied ? 'text-claude-accent' : ''
+        }`}
+        title={i18nService.t('copyToClipboard')}
+        aria-label={i18nService.t('copyToClipboard')}
+      >
+        <DocumentDuplicateIcon className="h-3 w-3" />
+      </button>
+    </div>
   );
 };
 
@@ -270,53 +348,45 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
                 return (
                   <div
                     key={item.orderId}
-                    className={`px-4 py-4 ${index > 0 ? 'border-t border-claude-border dark:border-claude-darkBorder' : ''}`}
+                    className={`px-4 py-3 ${index > 0 ? 'border-t border-claude-border dark:border-claude-darkBorder' : ''}`}
                   >
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                      <div className="min-w-0 flex-1 space-y-3">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                      <div className="min-w-0 flex-1 space-y-2.5">
+                        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between">
                           <RefundIdentity item={item} />
                           <RefundStatusBadge status={item.status} />
                         </div>
 
-                        <div className="grid gap-3 text-sm text-claude-text dark:text-claude-darkText md:grid-cols-2 xl:grid-cols-4">
-                          <div>
-                            <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              {i18nService.t('gigSquareRefundsFieldService')}
-                            </div>
-                            <div className="mt-1 font-medium">
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          <RefundInfoSlot label={i18nService.t('gigSquareRefundsFieldService')}>
+                            <div className="truncate" title={item.serviceName}>
                               {item.serviceName}
                             </div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              {i18nService.t('gigSquareRefundsFieldAmount')}
-                            </div>
-                            <div className="mt-1 font-medium">
+                          </RefundInfoSlot>
+                          <RefundInfoSlot label={i18nService.t('gigSquareRefundsFieldAmount')}>
+                            <div>
                               {item.paymentAmount} {item.paymentCurrency}
                             </div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              {dateLabel}
-                            </div>
-                            <div className="mt-1 font-medium">
+                          </RefundInfoSlot>
+                          <RefundInfoSlot label={dateLabel}>
+                            <div>
                               {formatRefundDate(dateValue)}
                             </div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              {i18nService.t('gigSquareRefundsFieldPaymentTxid')}
-                            </div>
-                            <div className="mt-1 break-all font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              {item.paymentTxid}
-                            </div>
-                          </div>
+                          </RefundInfoSlot>
+                          <RefundInfoSlot
+                            label={i18nService.t('gigSquareRefundsFieldPaymentTxid')}
+                            wide
+                          >
+                            <RefundPaymentTxid value={item.paymentTxid} />
+                          </RefundInfoSlot>
                         </div>
 
                         {failureReasonLabel && (
-                          <div className="rounded-xl bg-claude-surfaceMuted/80 px-3.5 py-2 text-sm text-claude-textSecondary dark:bg-claude-darkSurfaceMuted/80 dark:text-claude-darkTextSecondary">
-                            {i18nService.t('gigSquareRefundsFailureReason')}: {failureReasonLabel}
+                          <div className="flex flex-wrap items-center gap-1.5 text-[12px] leading-5 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            <span className="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/8 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-700 dark:text-amber-300">
+                              {i18nService.t('gigSquareRefundsFailureReason')}
+                            </span>
+                            <span>{failureReasonLabel}</span>
                           </div>
                         )}
                       </div>
@@ -326,9 +396,9 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleViewSession(item.coworkSessionId)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-textSecondary transition hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border px-2.5 py-1.5 text-[11px] font-medium text-claude-textSecondary transition hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
                           >
-                            <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                            <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
                             {i18nService.t('gigSquareRefundsViewSession')}
                           </button>
                         )}
@@ -337,7 +407,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
                             type="button"
                             onClick={() => void onProcessRefund(item.orderId)}
                             disabled={isAnyRefundProcessing}
-                            className="btn-idchat-primary px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                            className="btn-idchat-primary px-2.5 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isProcessing
                               ? i18nService.t('gigSquareRefundsProcessing')

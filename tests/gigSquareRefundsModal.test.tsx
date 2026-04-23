@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import GigSquareRefundsModal, {
+  copyGigSquareRefundPaymentTxid,
   dispatchGigSquareRefundSessionView,
 } from '../src/renderer/components/gigSquare/GigSquareRefundsModal';
 import type { GigSquareRefundCollections } from '../src/renderer/types/gigSquare';
@@ -80,6 +81,7 @@ test('seller tab renders refund workspace details, amount, process action, and s
   assert.match(markup, /Weather Analyst/);
   assert.match(markup, /处理退款/);
   assert.match(markup, /查看会话/);
+  assert.match(markup, /复制到剪贴板/);
 });
 
 test('buyer tab hides the process action and shows buyer-side refund content', () => {
@@ -132,6 +134,18 @@ test('view session helper dispatches cowork:viewSession and closes the modal', (
     detail: { sessionId: 'session-99' },
   }]);
   assert.deepEqual(onCloseCalls, ['closed']);
+});
+
+test('payment txid copy helper trims input and writes to clipboard', async () => {
+  const writes: string[] = [];
+  const didCopy = await copyGigSquareRefundPaymentTxid('  abc123  ', {
+    async writeText(value: string) {
+      writes.push(value);
+    },
+  });
+
+  assert.equal(didCopy, true);
+  assert.deepEqual(writes, ['abc123']);
 });
 
 test('seller processing state disables every refund action while the active row shows processing copy', () => {
