@@ -105,6 +105,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('gigSquare:fetchMyServices', params),
     fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number; refresh?: boolean }) =>
       ipcRenderer.invoke('gigSquare:fetchMyServiceOrders', params),
+    fetchRefunds: () => ipcRenderer.invoke('gigSquare:fetchRefunds'),
+    processRefundOrder: (params: { orderId: string }) =>
+      ipcRenderer.invoke('gigSquare:processRefundOrder', params),
     syncFromRemote: () => ipcRenderer.invoke('gigSquare:syncFromRemote'),
     fetchProviderInfo: (params: { providerMetaId?: string; providerGlobalMetaId?: string; providerAddress?: string }) =>
       ipcRenderer.invoke('gigSquare:fetchProviderInfo', params),

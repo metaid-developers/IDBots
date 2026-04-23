@@ -7,6 +7,7 @@ import type {
   MetaAppUrlResult,
 } from './metaApp';
 import type {
+  GigSquareRefundCollections,
   GigSquareModifyServiceParams,
   GigSquareMyServiceOrderDetail,
   GigSquareMyServiceSummary,
@@ -414,6 +415,17 @@ interface IElectronAPI {
     fetchMyServiceOrders: (params: { serviceId: string; page?: number; pageSize?: number; refresh?: boolean }) => Promise<{
       success: boolean;
       page?: GigSquarePageResult<GigSquareMyServiceOrderDetail>;
+      error?: string;
+    }>;
+    fetchRefunds: () => Promise<{
+      success: boolean;
+      refunds?: GigSquareRefundCollections;
+      error?: string;
+    }>;
+    processRefundOrder: (params: { orderId: string }) => Promise<{
+      success: boolean;
+      refundTxid?: string;
+      refundFinalizePinId?: string;
       error?: string;
     }>;
     syncFromRemote: () => Promise<{ success: boolean; error?: string }>;

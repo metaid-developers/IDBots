@@ -174,6 +174,7 @@ import {
   validateGigSquareServiceMutation,
   type GigSquareModifyDraft,
 } from './services/gigSquareServiceMutationService';
+import { GigSquareRefundsService } from './services/gigSquareRefundsService';
 
 // 设置应用程序名称
 app.name = APP_NAME;
@@ -1892,6 +1893,7 @@ let serviceOrderStore: ServiceOrderStore | null = null;
 let serviceOrderLifecycleService: ServiceOrderLifecycleService | null = null;
 let serviceRefundSyncService: ServiceRefundSyncService | null = null;
 let serviceRefundSettlementService: ServiceRefundSettlementService | null = null;
+let gigSquareRefundsService: GigSquareRefundsService | null = null;
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
@@ -3332,6 +3334,39 @@ const getServiceRefundSettlementService = () => {
     );
   }
   return serviceRefundSettlementService;
+};
+
+const getGigSquareRefundsService = () => {
+  if (!gigSquareRefundsService) {
+    gigSquareRefundsService = new GigSquareRefundsService({
+      listSellerRefundOrders: () => getServiceOrderStore().listOrdersByStatuses('seller', ['refund_pending', 'refunded']),
+      listBuyerRefundOrders: () => getServiceOrderStore().listOrdersByStatuses('buyer', ['refund_pending', 'refunded']),
+      resolveCounterpartyInfo: async (globalMetaId) => {
+        try {
+          const payload = await fetchMetaidUserInfoByGlobalMetaId(globalMetaId);
+          const data = unwrapMetaidInfoRecord(payload?.data);
+          return {
+            name: toSafeString(data?.name).trim() || null,
+            avatarUrl: toSafeString(data?.avatarUrl).trim() || null,
+          };
+        } catch (error) {
+          console.warn('[GigSquare] Failed to hydrate refund counterparty info', globalMetaId, error);
+          return {
+            name: null,
+            avatarUrl: null,
+          };
+        }
+      },
+      resolveCoworkSessionIdForOrder: (order) => {
+        const sessions = listCoworkSessionsForOrderResolution();
+        return resolveCoworkSessionIdForOrder(order as ServiceOrderRecord, sessions);
+      },
+      processSellerRefundForOrderId: (orderId) => (
+        getServiceRefundSettlementService().processSellerRefundForOrderId(orderId)
+      ),
+    });
+  }
+  return gigSquareRefundsService;
 };
 
 const syncServiceRefundProtocols = async (): Promise<void> => {
@@ -5383,6 +5418,37 @@ if (!gotTheLock) {
       return { success: true, page: { ...detailPage, items } };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my service orders' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:fetchRefunds', async () => {
+    try {
+      const refunds = await getGigSquareRefundsService().listRefunds();
+      return { success: true, refunds };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch refunds' };
+    }
+  });
+
+  ipcMain.handle('gigSquare:processRefundOrder', async (_event, params?: {
+    orderId?: string;
+  }) => {
+    try {
+      const orderId = toSafeString(params?.orderId).trim();
+      if (!orderId) {
+        return { success: false, error: 'orderId is required' };
+      }
+      const result = await getGigSquareRefundsService().processRefundOrder({ orderId });
+      return {
+        success: true,
+        refundTxid: result.refundTxid,
+        refundFinalizePinId: result.refundFinalizePinId,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to process refund order',
+      };
     }
   });
 

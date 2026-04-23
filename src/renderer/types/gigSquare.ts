@@ -111,6 +111,35 @@ export type GigSquareMyServiceOrderDetail = {
   rating: GigSquareMyServiceOrderRating | null;
 };
 
+export type GigSquareRefundItem = {
+  orderId: string;
+  role: 'buyer' | 'seller';
+  servicePinId: string | null;
+  serviceName: string;
+  paymentTxid: string;
+  paymentAmount: string;
+  paymentCurrency: string;
+  status: 'refund_pending' | 'refunded';
+  failureReason: string | null;
+  refundRequestPinId: string | null;
+  refundTxid: string | null;
+  refundRequestedAt: number | null;
+  refundCompletedAt: number | null;
+  counterpartyGlobalMetaid: string;
+  counterpartyName: string;
+  counterpartyAvatar: string | null;
+  createdAt: number;
+  updatedAt: number;
+  coworkSessionId: string | null;
+  canProcessRefund: boolean;
+};
+
+export type GigSquareRefundCollections = {
+  pendingForMe: GigSquareRefundItem[];
+  initiatedByMe: GigSquareRefundItem[];
+  pendingCount: number;
+};
+
 export type GigSquareModifyServiceParams = {
   serviceId: string;
   serviceName?: string;
