@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ShoppingBagIcon, ArrowPathIcon, MagnifyingGlassIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import type { GigSquareService } from '../../types/gigSquare';
+import type { GigSquareRefundCollections, GigSquareService } from '../../types/gigSquare';
 import { fetchMetaidInfoByGlobalId, type MetaidInfoResult } from '../../services/metabotInfoService';
 import GigSquareOrderModal from './GigSquareOrderModal';
+import GigSquareRefundsModal from './GigSquareRefundsModal';
 import GigSquareMyServicesModal from './GigSquareMyServicesModal';
 import GigSquarePublishModal from './GigSquarePublishModal';
 import GigSquareServiceCard from './GigSquareServiceCard';
+import GigSquareHeaderActions from './GigSquareHeaderActions';
 import {
   copyGigSquareProviderIdToClipboard,
   getGigSquareProviderAvatarSrc,
@@ -80,6 +82,11 @@ const GigSquareView: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'rating' | 'updated'>('rating');
   const [providerInfoMap, setProviderInfoMap] = useState<Record<string, MetaidInfoResult>>({});
   const [onlineBots, setOnlineBots] = useState<Record<string, number>>({});
+  const [refunds, setRefunds] = useState<GigSquareRefundCollections | null>(null);
+  const [refundsLoading, setRefundsLoading] = useState(false);
+  const [refundsError, setRefundsError] = useState<string | null>(null);
+  const [isRefundsModalOpen, setIsRefundsModalOpen] = useState(false);
+  const [processingRefundOrderId, setProcessingRefundOrderId] = useState<string | null>(null);
 
   const loadServices = useCallback(async () => {
     setIsLoading(true);
@@ -111,6 +118,36 @@ const GigSquareView: React.FC = () => {
     }
   }, []);
 
+  const loadRefunds = useCallback(async (options?: {
+    throwOnError?: boolean;
+  }) => {
+    const shouldThrow = options?.throwOnError === true;
+    setRefundsLoading(true);
+    setRefundsError(null);
+    try {
+      const res = await window.electron.gigSquare.fetchRefunds();
+      if (res?.success && res.refunds) {
+        setRefunds(res.refunds);
+        return res.refunds;
+      }
+      const errorMessage = res?.error || i18nService.t('gigSquareRefundsLoadFailed');
+      setRefundsError(errorMessage);
+      if (shouldThrow) {
+        throw new Error(errorMessage);
+      }
+      return null;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : i18nService.t('gigSquareRefundsLoadFailed');
+      setRefundsError(errorMessage);
+      if (shouldThrow) {
+        throw new Error(errorMessage);
+      }
+      return null;
+    } finally {
+      setRefundsLoading(false);
+    }
+  }, []);
+
   const handleRefresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -119,13 +156,46 @@ const GigSquareView: React.FC = () => {
     } catch {
       // Sync failure: still load from DB
     }
-    await loadServices();
-  }, [loadServices]);
+    await Promise.all([loadServices(), loadRefunds()]);
+  }, [loadRefunds, loadServices]);
+
+  const handleOpenRefunds = useCallback(() => {
+    setIsRefundsModalOpen(true);
+    void loadRefunds();
+  }, [loadRefunds]);
+
+  const handleProcessRefund = useCallback(async (orderId: string) => {
+    const normalizedOrderId = String(orderId || '').trim();
+    if (!normalizedOrderId || processingRefundOrderId) {
+      return;
+    }
+
+    setProcessingRefundOrderId(normalizedOrderId);
+    let hasProcessedRefund = false;
+    try {
+      const res = await window.electron.gigSquare.processRefundOrder({ orderId: normalizedOrderId });
+      if (!res?.success) {
+        throw new Error(res?.error || i18nService.t('gigSquareRefundsProcessFailed'));
+      }
+      hasProcessedRefund = true;
+      await loadRefunds({ throwOnError: true });
+      showToastMessage(i18nService.t('gigSquareRefundsProcessSuccess'));
+    } catch (err) {
+      if (hasProcessedRefund) {
+        showToastMessage(i18nService.t('gigSquareRefundsRefreshAfterProcessFailed'));
+      } else {
+        showToastMessage(err instanceof Error ? err.message : i18nService.t('gigSquareRefundsProcessFailed'));
+      }
+    } finally {
+      setProcessingRefundOrderId(null);
+    }
+  }, [loadRefunds, processingRefundOrderId]);
 
   useEffect(() => {
-    loadServices();
-    loadMetabot();
-  }, [loadServices, loadMetabot]);
+    void loadServices();
+    void loadMetabot();
+    void loadRefunds();
+  }, [loadRefunds, loadServices, loadMetabot]);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,23 +320,15 @@ const GigSquareView: React.FC = () => {
                 {heroStats}
               </span>
             )}
+            <GigSquareHeaderActions
+              pendingRefundCount={refunds?.pendingCount ?? 0}
+              onOpenMyServices={() => setIsMyServicesModalOpen(true)}
+              onOpenRefunds={handleOpenRefunds}
+              onOpenPublish={() => setIsPublishModalOpen(true)}
+            />
             <button
               type="button"
-              onClick={() => setIsMyServicesModalOpen(true)}
-              className="btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
-            >
-              {i18nService.t('gigSquareMyServicesButton')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsPublishModalOpen(true)}
-              className="btn-idchat-primary whitespace-nowrap px-3 py-1.5 text-xs font-medium"
-            >
-              {i18nService.t('gigSquarePublishButton')}
-            </button>
-            <button
-              type="button"
-              onClick={handleRefresh}
+              onClick={() => void handleRefresh()}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
             >
               <ArrowPathIcon className="h-4 w-4" />
@@ -375,6 +437,17 @@ const GigSquareView: React.FC = () => {
           setIsMyServicesModalOpen(false);
           setIsPublishModalOpen(true);
         }}
+      />
+
+      <GigSquareRefundsModal
+        isOpen={isRefundsModalOpen}
+        refunds={refunds}
+        isLoading={refundsLoading}
+        loadError={refundsError}
+        processingOrderId={processingRefundOrderId}
+        onRetry={() => void loadRefunds()}
+        onClose={() => setIsRefundsModalOpen(false)}
+        onProcessRefund={handleProcessRefund}
       />
 
       <GigSquareOrderModal
