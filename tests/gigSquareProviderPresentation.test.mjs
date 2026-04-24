@@ -4,6 +4,10 @@ import {
   shortenGigSquareProviderGlobalMetaId,
   copyGigSquareProviderIdToClipboard,
 } from '../src/renderer/components/gigSquare/gigSquareProviderPresentation.js';
+import {
+  shouldHideRiskyGigSquareService,
+  getGigSquareRefundRiskBadge,
+} from '../src/renderer/components/gigSquare/gigSquareRefundRiskPresentation.js';
 
 test('shortenGigSquareProviderGlobalMetaId renders first 6 chars, 6 dots, and last 4 chars', () => {
   assert.equal(
@@ -30,4 +34,23 @@ test('copyGigSquareProviderIdToClipboard returns false when clipboard support is
   const copied = await copyGigSquareProviderIdToClipboard('idq14h1234567890abcdg9xz', null);
 
   assert.equal(copied, false);
+});
+
+test('shouldHideRiskyGigSquareService keeps risky providers visible for transparency', () => {
+  const hidden = shouldHideRiskyGigSquareService({
+    hasUnresolvedRefund: true,
+    unresolvedRefundAgeHours: 999,
+    hidden: true,
+  });
+
+  assert.equal(hidden, false);
+});
+
+test('getGigSquareRefundRiskBadge still marks unresolved refund risk', () => {
+  const badge = getGigSquareRefundRiskBadge({
+    hasUnresolvedRefund: true,
+    unresolvedRefundAgeHours: 999,
+  });
+
+  assert.equal(badge, 'REFUND RISK');
 });

@@ -7,6 +7,7 @@
 import { TxComposer, mvc } from 'meta-contract';
 import {
   computeMvcTxidFromRawTx,
+  ensureFreshMvcFundingCandidates,
   isRetryableMvcBroadcastError,
   isTxnAlreadyKnownError,
   pickUtxo,
@@ -17,6 +18,7 @@ import {
 } from './mvcSpend';
 export {
   computeMvcTxidFromRawTx,
+  ensureFreshMvcFundingCandidates,
   isRetryableMvcBroadcastError,
   isTxnAlreadyKnownError,
   pickUtxo,
@@ -58,6 +60,8 @@ const RETRYABLE_MVC_BROADCAST_DELAY_MS = 750;
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 interface RpcPayload {
   feeRate?: number;
+  excludeOutpoints?: string[];
+  preferredFundingUtxos?: SpendableMvcUtxo[];
   /** Target network: 'mvc' (default), 'doge', 'btc'. Omit or empty defaults to 'mvc'. */
   network?: string;
   metaidData: {
@@ -72,6 +76,79 @@ interface RpcPayload {
 }
 
 type SA_utxo = SpendableMvcUtxo;
+
+function getErrorMessage(err: unknown): string {
+  if (err != null && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string') {
+    return (err as Error).message;
+  }
+  return String(err);
+}
+
+function normalizeOutpointList(input: unknown): Set<string> {
+  if (!Array.isArray(input)) return new Set();
+  return new Set(
+    input
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter((value) => /^[0-9a-f]{64}:\d+$/.test(value)),
+  );
+}
+
+function normalizePreferredFundingUtxos(input: unknown, fallbackAddress: string): SpendableMvcUtxo[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const record = item as Record<string, unknown>;
+    const txId = String(record.txId || '').trim().toLowerCase();
+    const outputIndex = Number(record.outputIndex);
+    const satoshis = Number(record.satoshis);
+    const address = String(record.address || fallbackAddress).trim() || fallbackAddress;
+    const height = Number(record.height ?? -1);
+    if (!/^[0-9a-f]{64}$/.test(txId)) return [];
+    if (!Number.isInteger(outputIndex) || outputIndex < 0) return [];
+    if (!Number.isFinite(satoshis) || satoshis < 600) return [];
+    return [{
+      txId,
+      outputIndex,
+      satoshis,
+      address,
+      height: Number.isFinite(height) ? height : -1,
+    }];
+  });
+}
+
+function mergeFundingCandidates(
+  preferredFundingUtxos: SpendableMvcUtxo[],
+  providerFundingUtxos: SpendableMvcUtxo[],
+): SpendableMvcUtxo[] {
+  const merged: SpendableMvcUtxo[] = [];
+  const seen = new Set<string>();
+  for (const utxo of preferredFundingUtxos.concat(providerFundingUtxos)) {
+    const outpoint = getUtxoOutpointKey(utxo);
+    if (seen.has(outpoint)) continue;
+    seen.add(outpoint);
+    merged.push(utxo);
+  }
+  return merged;
+}
+
+function buildChangeUtxo(tx: mvc.Transaction, txId: string, address: string): SpendableMvcUtxo | null {
+  if (!Array.isArray(tx.outputs) || tx.outputs.length <= 1) {
+    return null;
+  }
+  const changeIndex = tx.outputs.length - 1;
+  const changeOutput: any = tx.outputs[changeIndex];
+  const satoshis = Number(changeOutput?.satoshis);
+  if (!Number.isFinite(satoshis) || satoshis < 600) {
+    return null;
+  }
+  return {
+    txId,
+    outputIndex: changeIndex,
+    satoshis,
+    address,
+    height: -1,
+  };
+}
 
 function parseAddressIndexFromPath(pathStr: string): number {
   if (!pathStr || typeof pathStr !== 'string') return 0;
@@ -224,25 +301,31 @@ async function main(): Promise<void> {
   const opReturnScriptSize = getOpReturnScriptSize(opReturnParts);
   const estimatedTxSizeWithoutInputs = getEstimatedTxSizeWithoutInputs(opReturnScriptSize);
   let lastError: unknown = null;
-  const excludedOutpoints = new Set<string>();
+  const excludedOutpoints = normalizeOutpointList(payload.excludeOutpoints);
+  const preferredFundingUtxos = normalizePreferredFundingUtxos(payload.preferredFundingUtxos, address);
+  const preferredOutpoints = new Set(preferredFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)));
   for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
     let pickedForAttempt: SA_utxo[] = [];
     try {
       const utxos = await fetchMVCUtxos(address);
-      const usableUtxos: SA_utxo[] = utxos.map((u) => ({
+      const providerFundingUtxos: SA_utxo[] = utxos.map((u) => ({
         txId: u.txid,
         outputIndex: u.outIndex,
         satoshis: u.value,
         address,
         height: u.height,
       }));
+      const usableUtxos = mergeFundingCandidates(preferredFundingUtxos, providerFundingUtxos);
       logStep('Fetched MVC pin funding candidates', {
         attempt,
         operation: metaidData.operation,
         path: metaidData.path || '',
         candidateOutpoints: usableUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        providerCandidateOutpoints: providerFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)),
+        preferredOutpoints: Array.from(preferredOutpoints),
         excludedOutpoints: Array.from(excludedOutpoints),
       });
+      ensureFreshMvcFundingCandidates(usableUtxos, excludedOutpoints);
 
       const txComposer = new TxComposer();
       txComposer.appendP2PKHOutput({
@@ -253,7 +336,14 @@ async function main(): Promise<void> {
 
       const tx = txComposer.tx;
       const totalOutput = tx.outputs.reduce((acc, o) => acc + o.satoshis, 0);
-      const picked = pickUtxo(usableUtxos, totalOutput, feeRate, estimatedTxSizeWithoutInputs, excludedOutpoints);
+      const picked = pickUtxo(
+        usableUtxos,
+        totalOutput,
+        feeRate,
+        estimatedTxSizeWithoutInputs,
+        excludedOutpoints,
+        preferredOutpoints,
+      );
       pickedForAttempt = picked;
       logStep('Picked MVC pin funding inputs', {
         attempt,
@@ -281,19 +371,29 @@ async function main(): Promise<void> {
 
       const txid = await broadcastTx(rawHex);
       const pinId = `${txid}i0`;
+      const changeUtxo = buildChangeUtxo(tx, txid, address);
+      const spentOutpoints = picked.map((utxo) => getUtxoOutpointKey(utxo));
       logStep('Broadcasted MVC pin transaction', {
         attempt,
         txid,
         pinId,
         totalCost,
+        spentOutpoints,
+        changeOutpoint: changeUtxo ? getUtxoOutpointKey(changeUtxo) : null,
       });
-      console.log(JSON.stringify({ success: true, txids: [txid], pinId, totalCost, feeRate }));
+      console.log(JSON.stringify({
+        success: true,
+        txids: [txid],
+        pinId,
+        totalCost,
+        feeRate,
+        spentOutpoints,
+        changeUtxo,
+      }));
       return;
     } catch (err) {
       lastError = err;
-      const message = err && typeof err === 'object' && 'message' in err
-        ? String((err as Error).message)
-        : String(err);
+      const message = getErrorMessage(err);
       logStep('MVC pin transaction attempt failed', { attempt, error: message });
       if (isInsufficientFeeError(message)) {
         throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
@@ -310,7 +410,11 @@ async function main(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
-      throw err;
+      const failure = new Error(message);
+      if (isRetryableMvcBroadcastError(message) || excludedOutpoints.size > 0) {
+        (failure as Error & { staleOutpoints?: string[] }).staleOutpoints = Array.from(excludedOutpoints);
+      }
+      throw failure;
     }
   }
 
@@ -319,10 +423,19 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch((err: unknown) => {
-    const msg = err && typeof err === 'object' && 'message' in err
-      ? String((err as Error).message)
-      : String(err);
-    console.error(JSON.stringify({ success: false, error: msg }));
+    const msg = getErrorMessage(err);
+    const details = err as Error & {
+      staleOutpoints?: string[];
+      requestedSats?: number;
+      spendableSats?: number;
+    };
+    console.error(JSON.stringify({
+      success: false,
+      error: msg,
+      staleOutpoints: Array.isArray(details?.staleOutpoints) ? details.staleOutpoints : undefined,
+      requestedSats: Number.isFinite(details?.requestedSats) ? details.requestedSats : undefined,
+      spendableSats: Number.isFinite(details?.spendableSats) ? details.spendableSats : undefined,
+    }));
     process.exit(1);
   });
 }

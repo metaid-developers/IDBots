@@ -86,6 +86,10 @@ import {
   ProviderPingService,
   resolveDelegationOrderability,
 } from './services/providerPingService';
+import {
+  PrivateChatHistorySyncService,
+  storePrivateChatHistoryMessages,
+} from './services/privateChatHistorySyncService';
 import { syncP2PRuntimeConfig } from './services/p2pRuntimeConfigSync';
 import { encryptGroupMessageECB, computeEcdhSharedSecretSha256, computeEcdhSharedSecret, ecdhEncrypt, ecdhDecrypt } from './services/metaWebCrypto';
 import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/assignGroupChatTaskService';
@@ -1896,12 +1900,13 @@ let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
 let idchatPresenceService: IdchatPresenceService | null = null;
 let providerDiscoveryService: ProviderDiscoveryService | null = null;
 let providerPingService: ProviderPingService | null = null;
+let privateChatHistorySyncService: PrivateChatHistorySyncService | null = null;
 
 const listPendingPrivateMessages = (): Array<Record<string, unknown>> => {
   const db = getStore().getDatabase();
   try {
     const result = db.exec(
-      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey, chain_timestamp
        FROM private_chat_messages
        WHERE is_processed = 0
        ORDER BY id DESC
@@ -1927,7 +1932,7 @@ const listRecentPrivateMessages = (): Array<Record<string, unknown>> => {
   const db = getStore().getDatabase();
   try {
     const result = db.exec(
-      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey
+      `SELECT id, from_global_metaid, from_metaid, to_global_metaid, content, encryption, from_chat_pubkey, chain_timestamp
        FROM private_chat_messages
        ORDER BY id DESC
        LIMIT 200`
@@ -3003,6 +3008,28 @@ function getProviderPingService(): ProviderPingService {
       },
       listPendingMessages: () => listPendingPrivateMessages(),
       listRecentMessages: () => listRecentPrivateMessages(),
+      syncConversationMessages: async ({ metabotId, otherGlobalMetaId, unprocessedAfterTimestampSec }) => {
+        const localGlobalMetaId = toSafeString(
+          getMetabotStore().getMetabotById(metabotId)?.globalmetaid,
+        ).trim();
+        const peerGlobalMetaId = toSafeString(otherGlobalMetaId).trim();
+        if (!localGlobalMetaId || !peerGlobalMetaId) {
+          return;
+        }
+
+        const messages = await getPrivateChatHistorySyncService().fetchRecentConversationMessages({
+          metaId: localGlobalMetaId,
+          otherMetaId: peerGlobalMetaId,
+          lookback: 64,
+        });
+
+        storePrivateChatHistoryMessages({
+          db: getStore().getDatabase(),
+          saveDb: getStore().getSaveFunction(),
+          messages,
+          unprocessedAfterTimestampSec,
+        });
+      },
       isProviderOnline: (providerGlobalMetaId) => {
         const normalizedGlobalMetaId = toSafeString(providerGlobalMetaId).trim();
         if (!normalizedGlobalMetaId) {
@@ -3014,6 +3041,13 @@ function getProviderPingService(): ProviderPingService {
     });
   }
   return providerPingService;
+}
+
+function getPrivateChatHistorySyncService(): PrivateChatHistorySyncService {
+  if (!privateChatHistorySyncService) {
+    privateChatHistorySyncService = new PrivateChatHistorySyncService();
+  }
+  return privateChatHistorySyncService;
 }
 
 const getServiceOrderStore = () => {

@@ -15,6 +15,17 @@ import type { MetabotStore } from '../metabotStore';
 import { resolveElectronExecutablePath } from '../libs/runtimePaths';
 import { fetchFromLocalOrFallback } from './localIndexerProxy';
 import { getMvcSpendCoordinator } from './mvcSpendCoordinator';
+import {
+  clearMvcExcludedOutpoints,
+  getMvcSpendSessionSnapshot,
+  recordMvcSpentOutpoints,
+  replaceMvcPendingFundingUtxos,
+  type MvcCachedFundingUtxo,
+} from './mvcSpendSessionState';
+import {
+  mergeMvcFundingCandidates,
+  recoverMvcFundingCandidatesFromPinHistory,
+} from './mvcFundingRecoveryService';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -56,6 +67,84 @@ export interface MetaidDataPayload {
 
 /** Supported network for createPin. Default 'mvc' for backward compatibility. */
 export type CreatePinNetwork = 'mvc' | 'doge' | 'btc';
+
+interface CreatePinWorkerSuccess {
+  txids: string[];
+  pinId: string;
+  totalCost: number;
+  spentOutpoints?: string[];
+  changeUtxo?: MvcCachedFundingUtxo | null;
+}
+
+function isMvcInsufficientBalanceMessage(message: string): boolean {
+  return /not enough balance|余额不足/i.test(message);
+}
+
+function getMvcWorkerStaleOutpoints(error: unknown): string[] | undefined {
+  const candidate = error as { staleOutpoints?: unknown };
+  return Array.isArray(candidate?.staleOutpoints)
+    ? candidate.staleOutpoints.filter((item): item is string => typeof item === 'string')
+    : undefined;
+}
+
+async function buildMvcCreatePinSessionSnapshot(
+  metabotStore: MetabotStore,
+  metabotId: number,
+): Promise<{ excludeOutpoints: string[]; preferredFundingUtxos: MvcCachedFundingUtxo[] }> {
+  const sessionSnapshot = getMvcSpendSessionSnapshot(metabotId);
+  if (sessionSnapshot.preferredFundingUtxos.length > 0) {
+    return sessionSnapshot;
+  }
+
+  const metabot = metabotStore.getMetabotById(metabotId);
+  const mvcAddress = String(metabot?.mvc_address || '').trim();
+  if (!mvcAddress) {
+    return sessionSnapshot;
+  }
+
+  const recentPinTransactions = metabotStore.listRecentPinTransactionsByAddress(mvcAddress, 8);
+  if (recentPinTransactions.length === 0) {
+    return sessionSnapshot;
+  }
+
+  const recoveredFundingUtxos = await recoverMvcFundingCandidatesFromPinHistory({
+    address: mvcAddress,
+    recentPinTransactions,
+    excludedOutpoints: sessionSnapshot.excludeOutpoints,
+    onRecoverError: ({ txid, error }) => {
+      appendMetaidLog('WARN', 'MVC funding recovery tx probe failed', {
+        metabot_id: metabotId,
+        mvcAddress,
+        txid,
+        error,
+      });
+    },
+  });
+
+  if (recoveredFundingUtxos.length === 0) {
+    appendMetaidLog('INFO', 'MVC funding recovery found no usable local candidates', {
+      metabot_id: metabotId,
+      mvcAddress,
+      recentPinTransactions: recentPinTransactions.map((item) => item.txid),
+      excludedOutpoints: sessionSnapshot.excludeOutpoints,
+    });
+    return sessionSnapshot;
+  }
+
+  appendMetaidLog('INFO', 'Recovered MVC funding candidates from local pin history', {
+    metabot_id: metabotId,
+    mvcAddress,
+    recoveredOutpoints: recoveredFundingUtxos.map((utxo) => `${utxo.txId}:${utxo.outputIndex}`),
+  });
+
+  return {
+    excludeOutpoints: sessionSnapshot.excludeOutpoints,
+    preferredFundingUtxos: mergeMvcFundingCandidates(
+      sessionSnapshot.preferredFundingUtxos,
+      recoveredFundingUtxos,
+    ),
+  };
+}
 
 /**
  * Create Pin for a MetaBot: spawn skill worker with mnemonic, returns txids.
@@ -149,7 +238,9 @@ export async function createPin(
   // Never use app.getAppPath() as cwd in packaged mode (it may be app.asar file).
   // A file cwd makes spawn fail with ENOENT/ENOTDIR on Windows first-run paths.
   const spawnCwd = app.getPath('userData');
-  const runWorker = () => new Promise<{ txids: string[]; pinId: string; totalCost: number }>((resolve, reject) => {
+  const runWorker = (
+    sessionSnapshot?: { excludeOutpoints: string[]; preferredFundingUtxos: MvcCachedFundingUtxo[] },
+  ) => new Promise<CreatePinWorkerSuccess>((resolve, reject) => {
     const child = spawn(electronExe, [workerPath], {
       cwd: spawnCwd,
       env,
@@ -161,7 +252,12 @@ export async function createPin(
     let stderr = '';
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
     child.stderr?.on('data', (d) => { stderr += d.toString(); });
-    child.stdin?.write(payloadStr, () => child.stdin?.end());
+    const workerPayload = JSON.stringify({
+      ...JSON.parse(payloadStr),
+      excludeOutpoints: sessionSnapshot?.excludeOutpoints ?? [],
+      preferredFundingUtxos: sessionSnapshot?.preferredFundingUtxos ?? [],
+    });
+    child.stdin?.write(workerPayload, () => child.stdin?.end());
     child.on('error', (err) => {
       appendMetaidLog('ERROR', 'Worker spawn failed', { error: String(err) });
       reject(err);
@@ -177,10 +273,26 @@ export async function createPin(
             txids: result.txids,
             pinId,
             totalCost: result.totalCost ?? 0,
+            spentOutpoints: Array.isArray(result.spentOutpoints) ? result.spentOutpoints : undefined,
+            changeUtxo: result.changeUtxo ?? null,
           });
         } else {
           appendMetaidLog('ERROR', 'Worker returned error', { error: result.error, stderr, stdout });
-          reject(new Error(result.error || 'Worker failed'));
+          const error = new Error(result.error || 'Worker failed') as Error & {
+            staleOutpoints?: string[];
+            requestedSats?: number;
+            spendableSats?: number;
+          };
+          if (Array.isArray(result.staleOutpoints)) {
+            error.staleOutpoints = result.staleOutpoints.filter((item: unknown): item is string => typeof item === 'string');
+          }
+          if (typeof result.requestedSats === 'number') {
+            error.requestedSats = result.requestedSats;
+          }
+          if (typeof result.spendableSats === 'number') {
+            error.spendableSats = result.spendableSats;
+          }
+          reject(error);
         }
       } catch {
         appendMetaidLog('ERROR', 'Worker output parse failed', {
@@ -205,20 +317,31 @@ export async function createPin(
       metabotId: metabot_id,
       action: `createPin:${metaidData.path || metaidData.operation}`,
       execute: async () => {
+        const sessionSnapshot = await buildMvcCreatePinSessionSnapshot(metabotStore, metabot_id);
         try {
-          const result = await runWorker();
+          const result = await runWorker(sessionSnapshot);
+          recordMvcSpentOutpoints(metabot_id, result.spentOutpoints);
+          replaceMvcPendingFundingUtxos(metabot_id, result.changeUtxo);
           appendMetaidLog('INFO', 'Governed MVC createPin job completed', {
             metabot_id,
             txid: result.txids[0],
             pinId: result.pinId,
+            spentOutpoints: result.spentOutpoints ?? [],
           });
           return result;
         } catch (error) {
+          const message = getErrorMessage(error);
+          if (isMvcInsufficientBalanceMessage(message)) {
+            clearMvcExcludedOutpoints(metabot_id);
+          } else {
+            recordMvcSpentOutpoints(metabot_id, getMvcWorkerStaleOutpoints(error));
+          }
           appendMetaidLog('ERROR', 'Governed MVC createPin job failed', {
             metabot_id,
-            error: getErrorMessage(error),
+            error: message,
             operation: metaidData.operation,
             path: metaidData.path || '',
+            staleOutpoints: getMvcWorkerStaleOutpoints(error) ?? [],
           });
           throw error;
         }

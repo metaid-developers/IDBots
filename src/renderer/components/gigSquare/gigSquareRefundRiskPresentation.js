@@ -1,8 +1,7 @@
 export function shouldHideRiskyGigSquareService(refundRisk) {
-  if (!refundRisk?.hasUnresolvedRefund) {
-    return false;
-  }
-  return Number(refundRisk.unresolvedRefundAgeHours || 0) >= 72;
+  // Keep risky providers visible in Bot Hub so users can still discover services
+  // and make an informed choice with the explicit risk badge.
+  return false;
 }
 
 export function getGigSquareRefundRiskBadge(refundRisk) {

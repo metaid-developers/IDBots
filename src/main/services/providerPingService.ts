@@ -8,6 +8,7 @@ type PendingPrivateMessage = {
   to_global_metaid?: string | null;
   content?: string | null;
   from_chat_pubkey?: string | null;
+  chain_timestamp?: number | null;
 };
 
 type WalletLike = {
@@ -27,6 +28,11 @@ export interface ProviderPingServiceDeps {
   createPin(metabotId: number, payload: string): Promise<void>;
   listPendingMessages(): PendingPrivateMessage[];
   listRecentMessages?: () => PendingPrivateMessage[];
+  syncConversationMessages?: (params: {
+    metabotId: number;
+    otherGlobalMetaId: string;
+    unprocessedAfterTimestampSec: number;
+  }) => Promise<void>;
   isProviderOnline?: (providerGlobalMetaId: string) => boolean;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -164,6 +170,7 @@ export class ProviderPingService {
     const pingPayload = this.deps.buildPrivateMessagePayload(toGlobalMetaId, encryptedPing, '');
     const listRecentMessages = this.deps.listRecentMessages ?? this.deps.listPendingMessages;
     const initialMessageCursor = resolveMessageCursor(listRecentMessages());
+    const pingStartedAtSec = Math.trunc(this.deps.now() / 1000);
 
     await this.deps.createPin(metabotId, pingPayload);
 
@@ -171,8 +178,23 @@ export class ProviderPingService {
     const myGlobalMetaId = normalizeComparableGlobalMetaId(this.deps.getLocalGlobalMetaId(metabotId));
 
     while (true) {
+      try {
+        await this.deps.syncConversationMessages?.({
+          metabotId,
+          otherGlobalMetaId: toGlobalMetaId,
+          unprocessedAfterTimestampSec: pingStartedAtSec,
+        });
+      } catch {
+        // Keep the handshake alive even if history sync is temporarily unavailable.
+      }
+
       const messages = listRecentMessages();
       for (const message of messages) {
+        const messageTimestamp = typeof message?.chain_timestamp === 'number' && Number.isFinite(message.chain_timestamp)
+          ? Math.trunc(message.chain_timestamp)
+          : null;
+        if (messageTimestamp != null && messageTimestamp + 1 < pingStartedAtSec) continue;
+
         const messageId = typeof message?.id === 'number' && Number.isFinite(message.id)
           ? Math.trunc(message.id)
           : null;
