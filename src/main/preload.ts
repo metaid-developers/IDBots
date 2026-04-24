@@ -167,21 +167,17 @@ contextBridge.exposeInMainWorld('electron', {
       timeoutMs?: number;
     }) => ipcRenderer.invoke('gigSquare:pingProvider', params),
   },
-  heartbeat: {
-    toggle: (params: { metabotId: number; enabled: boolean }) =>
-      ipcRenderer.invoke('heartbeat:toggle', params),
-    getStatus: (metabotId: number) =>
-      ipcRenderer.invoke('heartbeat:getStatus', metabotId),
+  providerDiscovery: {
     getOnlineServices: () =>
-      ipcRenderer.invoke('heartbeat:getOnlineServices'),
+      ipcRenderer.invoke('providerDiscovery:getOnlineServices'),
     getOnlineBots: () =>
-      ipcRenderer.invoke('heartbeat:getOnlineBots'),
-    getDiscoverySnapshot: () =>
-      ipcRenderer.invoke('heartbeat:getDiscoverySnapshot'),
-    onDiscoveryChanged: (callback: (data: unknown) => void) => {
+      ipcRenderer.invoke('providerDiscovery:getOnlineBots'),
+    getSnapshot: () =>
+      ipcRenderer.invoke('providerDiscovery:getSnapshot'),
+    onChanged: (callback: (data: unknown) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
-      ipcRenderer.on('heartbeat:discoveryChanged', handler);
-      return () => ipcRenderer.removeListener('heartbeat:discoveryChanged', handler);
+      ipcRenderer.on('providerDiscovery:changed', handler);
+      return () => ipcRenderer.removeListener('providerDiscovery:changed', handler);
     },
   },
   appEvents: {

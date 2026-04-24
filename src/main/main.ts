@@ -78,13 +78,9 @@ import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privat
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
-import { HeartbeatService } from './services/heartbeatService';
-import {
-  HeartbeatPollingService,
-  fetchHeartbeatFromChain,
-  type HeartbeatDiscoverySnapshot,
-} from './services/heartbeatPollingService';
+import type { DiscoverySnapshot } from './services/providerDiscoveryService';
 import { ProviderDiscoveryService } from './services/providerDiscoveryService';
+import { IdchatPresenceService } from './services/idchatPresenceService';
 import { fetchLocalPresenceSnapshot } from './services/p2pPresenceClient';
 import {
   ProviderPingService,
@@ -413,14 +409,14 @@ const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
   });
 };
 
-const emitHeartbeatDiscoveryChanged = (snapshot: HeartbeatDiscoverySnapshot): void => {
+const emitProviderDiscoveryChanged = (snapshot: DiscoverySnapshot): void => {
   const windows = BrowserWindow.getAllWindows();
   windows.forEach((win) => {
     if (!win.isDestroyed()) {
       try {
-        win.webContents.send('heartbeat:discoveryChanged', snapshot);
+        win.webContents.send('providerDiscovery:changed', snapshot);
       } catch (error) {
-        console.error('Failed to forward heartbeat discovery snapshot:', error);
+        console.error('Failed to forward provider discovery snapshot:', error);
       }
     }
   });
@@ -1110,9 +1106,9 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
 async function syncGigSquareRemoteData(): Promise<void> {
   await syncRemoteSkillServices();
   await syncRemoteSkillServiceRatings();
-  if (heartbeatPollingService) {
-    await heartbeatPollingService.refreshNow().catch((error) => {
-      console.warn('[Heartbeat] Refresh after GigSquare sync failed:', error);
+  if (providerDiscoveryService) {
+    await providerDiscoveryService.refreshNow().catch((error) => {
+      console.warn('[ProviderDiscovery] Refresh after GigSquare sync failed:', error);
     });
   }
 }
@@ -1897,8 +1893,7 @@ let gigSquareRefundsService: GigSquareRefundsService | null = null;
 let gigSquareSchemaReady = false;
 let scheduler: Scheduler | null = null;
 let metaidRpcServer: ReturnType<typeof startMetaidRpcServer> | null = null;
-let heartbeatService: HeartbeatService | null = null;
-let heartbeatPollingService: HeartbeatPollingService | null = null;
+let idchatPresenceService: IdchatPresenceService | null = null;
 let providerDiscoveryService: ProviderDiscoveryService | null = null;
 let providerPingService: ProviderPingService | null = null;
 
@@ -2197,7 +2192,7 @@ const resolveChatPubkeyForProvider = async (
  * Execute the full delegation pipeline when the LLM emits [DELEGATE_REMOTE_SERVICE].
  *
  * Steps:
- * 1. Resolve service from heartbeat polling's available services
+ * 1. Resolve service from provider discovery available services
  * 2. PING/PONG handshake with the provider
  * 3. Execute payment
  * 4. Build & send encrypted ORDER message via createPin
@@ -2241,7 +2236,7 @@ const executeDelegationPipeline = async (
   }
 
   // -----------------------------------------------------------------------
-  // Step 1: Resolve service from heartbeat polling's available services
+  // Step 1: Resolve service from provider discovery available services
   // -----------------------------------------------------------------------
   const pollingService = getProviderDiscoveryService();
   const orderability = resolveDelegationOrderability({
@@ -2965,55 +2960,21 @@ const getMetabotStore = () => {
   return metabotStore;
 };
 
-function recordLocalHeartbeatDiscovery(metabotId: number, timestampSec: number): void {
-  try {
-    const metabot = getMetabotStore().getMetabotById(metabotId);
-    if (!metabot) return;
-    const providerAddress = toSafeString(metabot.mvc_address).trim();
-    if (!providerAddress) return;
-    getProviderDiscoveryService().recordLocalHeartbeat({
-      globalMetaId: toSafeString(metabot.globalmetaid).trim() || null,
-      address: providerAddress,
-      timestampSec,
-    });
-    void getProviderDiscoveryService().refreshNow().catch((error) => {
-      console.warn('[Heartbeat] Refresh after local heartbeat failed:', error);
-    });
-  } catch (error) {
-    console.warn('[Heartbeat] Failed to record local heartbeat discovery:', error);
+function getIdchatPresenceService(): IdchatPresenceService {
+  if (!idchatPresenceService) {
+    idchatPresenceService = new IdchatPresenceService();
   }
-}
-
-function getHeartbeatService(): HeartbeatService {
-  if (!heartbeatService) {
-    heartbeatService = new HeartbeatService({
-      createPin,
-      getMetabotStore: () => getMetabotStore(),
-      onHeartbeatSuccess: ({ metabotId, timestampSec }) => {
-        recordLocalHeartbeatDiscovery(metabotId, timestampSec);
-      },
-    });
-  }
-  return heartbeatService;
-}
-
-function getHeartbeatPollingService(): HeartbeatPollingService {
-  if (!heartbeatPollingService) {
-    heartbeatPollingService = new HeartbeatPollingService({
-      fetchHeartbeat: fetchHeartbeatFromChain,
-    });
-  }
-  return heartbeatPollingService;
+  return idchatPresenceService;
 }
 
 function getProviderDiscoveryService(): ProviderDiscoveryService {
   if (!providerDiscoveryService) {
     providerDiscoveryService = new ProviderDiscoveryService({
-      heartbeat: getHeartbeatPollingService(),
-      fetchPresence: () => fetchLocalPresenceSnapshot(getP2PLocalBase()),
+      presence: getIdchatPresenceService(),
+      fetchP2PPresence: () => fetchLocalPresenceSnapshot(getP2PLocalBase()),
     });
     providerDiscoveryService.subscribe((snapshot) => {
-      emitHeartbeatDiscoveryChanged(snapshot);
+      emitProviderDiscoveryChanged(snapshot);
     });
   }
   return providerDiscoveryService;
@@ -6213,54 +6174,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
-  // --- Heartbeat IPC handlers ---
-
-  ipcMain.handle('heartbeat:toggle', async (_event, params: { metabotId: number; enabled: boolean }) => {
-    try {
-      const db = getStore().getDatabase();
-      const save = getStore().getSaveFunction();
-      db.run('UPDATE metabots SET heartbeat_enabled = ? WHERE id = ?', [params.enabled ? 1 : 0, params.metabotId]);
-      save();
-      await syncP2PRuntimeConfigForCurrentMetabots();
-
-      if (params.enabled) {
-        getHeartbeatService().startHeartbeat(params.metabotId);
-        const metabot = getMetabotStore().getMetabotById(params.metabotId);
-        const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
-        if (globalMetaId) {
-          getProviderDiscoveryService().clearForceOffline(globalMetaId);
-        }
-        void getProviderDiscoveryService().refreshNow().catch((error) => {
-          console.warn('[Heartbeat] Refresh after toggle-on failed:', error);
-        });
-      } else {
-        getHeartbeatService().stopHeartbeat(params.metabotId);
-        const metabot = getMetabotStore().getMetabotById(params.metabotId);
-        const globalMetaId = toSafeString(metabot?.globalmetaid).trim();
-        if (globalMetaId) {
-          getProviderDiscoveryService().forceOffline(globalMetaId);
-        }
-        void getProviderDiscoveryService().refreshNow().catch((error) => {
-          console.warn('[Heartbeat] Refresh after toggle-off failed:', error);
-        });
-      }
-
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to toggle heartbeat' };
-    }
-  });
-
-  ipcMain.handle('heartbeat:getStatus', async (_event, metabotId: number) => {
-    try {
-      const active = getHeartbeatService().isActive(metabotId);
-      return { success: true, active };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat status' };
-    }
-  });
-
-  ipcMain.handle('heartbeat:getOnlineServices', async () => {
+  // --- Provider discovery IPC handlers ---
+  ipcMain.handle('providerDiscovery:getOnlineServices', async () => {
     try {
       const services = getProviderDiscoveryService().getDiscoverySnapshot().availableServices;
       return { success: true, services };
@@ -6269,7 +6184,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
-  ipcMain.handle('heartbeat:getOnlineBots', async () => {
+  ipcMain.handle('providerDiscovery:getOnlineBots', async () => {
     try {
       const bots = getProviderDiscoveryService().getDiscoverySnapshot().onlineBots;
       return { success: true, bots };
@@ -6278,12 +6193,12 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
-  ipcMain.handle('heartbeat:getDiscoverySnapshot', async () => {
+  ipcMain.handle('providerDiscovery:getSnapshot', async () => {
     try {
       const snapshot = getProviderDiscoveryService().getDiscoverySnapshot();
       return { success: true, snapshot };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to get heartbeat discovery snapshot' };
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get provider discovery snapshot' };
     }
   });
 
@@ -7232,19 +7147,12 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       },
       stopCognitiveOrchestrator,
       stopP2P: () => p2pIndexerService.stop(),
-      stopHeartbeatServices: () => {
-        if (heartbeatService) {
-          heartbeatService.stopAll();
-          heartbeatService = null;
-        }
+      stopProviderDiscovery: () => {
         if (providerDiscoveryService) {
           providerDiscoveryService.dispose();
           providerDiscoveryService = null;
         }
-        if (heartbeatPollingService) {
-          heartbeatPollingService.stopPolling();
-          heartbeatPollingService = null;
-        }
+        idchatPresenceService = null;
       },
       deactivateGroupChatTasks: () => {
         try {
@@ -7388,24 +7296,14 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
       void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
     }, 10 * 60 * 1000);
 
-    // Start heartbeats for MetaBots with heartbeat_enabled = 1
-    try {
-      const allBots = getMetabotStore().listMetabots();
-      for (const bot of allBots) {
-        if (bot.heartbeat_enabled) {
-          getHeartbeatService().startHeartbeat(bot.id);
-        }
-      }
-    } catch (e) { console.warn('[Heartbeat] Failed to start heartbeats:', e); }
-
-    // Start heartbeat polling for online service discovery
+    // Start idchat-backed provider discovery for online service availability
     try {
       getProviderDiscoveryService().startPolling(() => {
         try {
           return listCurrentRemoteGigSquareServices();
         } catch { return []; }
       });
-    } catch (e) { console.warn('[Heartbeat] Failed to start heartbeat polling:', e); }
+    } catch (e) { console.warn('[ProviderDiscovery] Failed to start polling:', e); }
 
     // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
     // Local skills (Cowork / Read-Bash) only when trigger is Boss (supervisor or metabot owner GlobalMetaID).

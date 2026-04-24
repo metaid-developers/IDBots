@@ -868,11 +868,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: '已备份助记词，并确认删除',
     metabotConfirmDeleteCountdown: '确认删除 ({count}s)',
     metabotDeleteSuccess: 'MetaBot 已删除',
-    heartbeatToggle: '链上心跳',
-    heartbeatConfirmTitle: '开启链上心跳？',
-    heartbeatConfirmMessage: '开启此功能会每 5 分钟向区块链广播一次心跳信号，增加该 Bot 在 Bot Hub 被发现的几率，但将会消耗少量的 gas（MVC）。',
-    heartbeatConfirmOk: '确定',
-    heartbeatConfirmCancel: '取消',
 
     // Onboarding
     onboardingTitle: '新用户觉醒引导',
@@ -2003,11 +1998,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metabotBackedUpConfirmDelete: 'Backed up & Confirm Delete',
     metabotConfirmDeleteCountdown: 'Confirm Delete ({count}s)',
     metabotDeleteSuccess: 'MetaBot deleted',
-    heartbeatToggle: 'On-chain Heartbeat',
-    heartbeatConfirmTitle: 'Enable On-chain Heartbeat?',
-    heartbeatConfirmMessage: 'Enabling this will broadcast a heartbeat signal to the blockchain every 5 minutes, increasing this Bot\'s discoverability in the Bot Hub. This will consume a small amount of gas (MVC).',
-    heartbeatConfirmOk: 'Confirm',
-    heartbeatConfirmCancel: 'Cancel',
 
     // Onboarding
     onboardingTitle: 'Awakening Onboarding',

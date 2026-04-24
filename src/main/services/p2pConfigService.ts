@@ -49,7 +49,7 @@ type OwnAddressSource = {
 };
 
 type PresenceGlobalMetaIdSource = {
-  heartbeat_enabled?: unknown;
+  enabled?: unknown;
   globalmetaid?: string | null;
   globalMetaId?: string | null;
 };
@@ -76,10 +76,13 @@ function normalizePresenceGlobalMetaId(value: unknown): string | null {
   return normalizeRawGlobalMetaId(value);
 }
 
-function isHeartbeatEnabled(value: unknown): boolean {
-  if (value === true || value === 1) return true;
-  if (typeof value !== 'string') return false;
-  return value.trim() === '1';
+function isMetabotEnabled(value: unknown): boolean {
+  if (value === false || value === 0) return false;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized !== '0' && normalized !== 'false';
+  }
+  return true;
 }
 
 export function collectPresenceGlobalMetaIds(metabots: PresenceGlobalMetaIdSource[]): string[] {
@@ -87,7 +90,7 @@ export function collectPresenceGlobalMetaIds(metabots: PresenceGlobalMetaIdSourc
   const collected: string[] = [];
 
   for (const metabot of metabots) {
-    if (!isHeartbeatEnabled(metabot?.heartbeat_enabled)) continue;
+    if (!isMetabotEnabled(metabot?.enabled)) continue;
 
     const normalized = normalizePresenceGlobalMetaId(metabot.globalmetaid ?? metabot.globalMetaId);
     if (!normalized || seen.has(normalized)) continue;

@@ -1174,18 +1174,6 @@ export class SqliteStore {
       console.warn('Failed to migrate remote_skill_service_rating_seen detail columns:', error);
     }
 
-    // Migration: Add heartbeat_enabled column to metabots
-    try {
-      const hbColsResult = this.db.exec('PRAGMA table_info(metabots)');
-      const hbColumns = (hbColsResult[0]?.values?.map((row) => row[1]) || []) as string[];
-      if (!hbColumns.includes('heartbeat_enabled')) {
-        this.db.run('ALTER TABLE metabots ADD COLUMN heartbeat_enabled INTEGER DEFAULT 0');
-        this.save();
-      }
-    } catch (error) {
-      console.warn('Failed to migrate metabots heartbeat_enabled:', error);
-    }
-
     this.save();
   }
 

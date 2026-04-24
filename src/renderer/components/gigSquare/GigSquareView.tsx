@@ -200,7 +200,7 @@ const GigSquareView: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
 
-    window.electron.heartbeat.getDiscoverySnapshot().then((res) => {
+    window.electron.providerDiscovery.getSnapshot().then((res) => {
       if (cancelled || !res.success || !res.snapshot) return;
       setOnlineBots(res.snapshot.onlineBots);
     }).catch(() => {
@@ -209,7 +209,7 @@ const GigSquareView: React.FC = () => {
       }
     });
 
-    const unsubscribe = window.electron.heartbeat.onDiscoveryChanged((snapshot) => {
+    const unsubscribe = window.electron.providerDiscovery.onChanged((snapshot) => {
       if (!cancelled) {
         setOnlineBots(snapshot.onlineBots ?? {});
       }

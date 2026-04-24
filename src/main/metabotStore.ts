@@ -53,7 +53,6 @@ interface MetabotRow {
   llm_id: string | null;
   tools: string;
   skills: string;
-  heartbeat_enabled: number;
   created_at: number;
   updated_at: number;
 }
@@ -63,6 +62,11 @@ interface MetabotWalletRow {
   mnemonic: string;
   path: string;
   created_at: number;
+}
+
+interface RecentMetaidPinTransactionRow {
+  txid: string;
+  timestamp: number;
 }
 
 /** Convert DB avatar (BLOB or TEXT) to display string (data URL or URL). */
@@ -114,7 +118,6 @@ function rowToMetabot(row: MetabotRow): Metabot {
     llm_id: row.llm_id ?? null,
     tools: parseJsonArray(row.tools),
     skills: parseJsonArray(row.skills),
-    heartbeat_enabled: (row.heartbeat_enabled ?? 0) === 1,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -324,7 +327,6 @@ export class MetabotStore {
       llm_id: input.llm_id ?? null,
       tools: input.tools ?? [],
       skills: input.skills ?? [],
-      heartbeat_enabled: false,
       created_at: now,
       updated_at: now,
     };
@@ -484,6 +486,35 @@ export class MetabotStore {
   getMetabotWalletByMetabotId(metabot_id: number): MetabotWallet | null {
     const metabot = this.getMetabotById(metabot_id);
     return metabot ? this.getMetabotWalletById(metabot.wallet_id) : null;
+  }
+
+  listRecentPinTransactionsByAddress(address: string, limit = 8): Array<{ txid: string; timestamp: number }> {
+    const normalizedAddress = address.trim();
+    if (!normalizedAddress) return [];
+    const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.max(1, Math.trunc(limit)) : 8;
+    const rows = this.getAll<RecentMetaidPinTransactionRow>(
+      `
+        SELECT genesisTransaction AS txid, MAX(timestamp) AS timestamp
+        FROM metaid_pins
+        WHERE address = ?
+          AND genesisTransaction IS NOT NULL
+          AND TRIM(genesisTransaction) != ''
+        GROUP BY genesisTransaction
+        ORDER BY MAX(timestamp) DESC
+        LIMIT ?
+      `,
+      [normalizedAddress, normalizedLimit]
+    );
+
+    return rows.flatMap((row) => {
+      const txid = String(row.txid || '').trim().toLowerCase();
+      const timestamp = Number(row.timestamp ?? 0);
+      if (!/^[0-9a-f]{64}$/.test(txid)) return [];
+      return [{
+        txid,
+        timestamp: Number.isFinite(timestamp) ? Math.trunc(timestamp) : 0,
+      }];
+    });
   }
 
   /**

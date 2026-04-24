@@ -9,7 +9,7 @@ export interface AppCleanupDeps {
   stopScheduler: () => void;
   stopCognitiveOrchestrator: () => void;
   stopP2P: () => Promise<void>;
-  stopHeartbeatServices: () => void;
+  stopProviderDiscovery: () => void;
   deactivateGroupChatTasks: () => void;
   log: (message: string) => void;
   error: (message: string, error: unknown) => void;
@@ -40,6 +40,6 @@ export async function runAppCleanup(deps: AppCleanupDeps): Promise<void> {
 
   deps.stopScheduler();
   deps.stopCognitiveOrchestrator();
-  deps.stopHeartbeatServices();
+  deps.stopProviderDiscovery();
   deps.deactivateGroupChatTasks();
 }

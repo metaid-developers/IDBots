@@ -20,7 +20,6 @@ export interface Metabot {
   llm_id: string | null;
   tools: string[];
   skills: string[];
-  heartbeat_enabled?: boolean;
   created_at: number;
   updated_at: number;
 }

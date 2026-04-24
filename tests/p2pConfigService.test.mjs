@@ -56,7 +56,7 @@ test('buildRuntimeConfig keeps own-address merge behavior when metabot list is o
   assert.deepEqual(runtime.p2p_own_addresses, ['mvc-owner', 'btc-owner']);
 });
 
-test('buildRuntimeConfig derives canonical p2p_presence_global_metaids from heartbeat-enabled metabots only', () => {
+test('buildRuntimeConfig derives canonical p2p_presence_global_metaids from enabled metabots', () => {
   const runtime = buildRuntimeConfig(
     {
       ...DEFAULT_P2P_CONFIG,
@@ -64,35 +64,35 @@ test('buildRuntimeConfig derives canonical p2p_presence_global_metaids from hear
     },
     [],
     [
-      { heartbeat_enabled: true, globalmetaid: ' IDQ1Alpha ' },
-      { heartbeat_enabled: 1, globalmetaid: 'idq1beta' },
-      { heartbeat_enabled: '1', globalMetaId: ' idq1beta ' },
-      { heartbeat_enabled: false, globalmetaid: 'idq1offline' },
-      { heartbeat_enabled: 0, globalmetaid: 'idq1zero' },
-      { heartbeat_enabled: true, globalmetaid: 'metaid:idq1prefixed' },
-      { heartbeat_enabled: true, globalmetaid: 'not-a-global-metaid' },
-      { heartbeat_enabled: true, globalmetaid: '' },
+      { enabled: true, globalmetaid: ' IDQ1Alpha ' },
+      { enabled: true, globalmetaid: 'idq1beta' },
+      { enabled: true, globalMetaId: ' idq1beta ' },
+      { enabled: false, globalmetaid: 'idq1offline' },
+      { enabled: 0, globalmetaid: 'idq1zero' },
+      { enabled: true, globalmetaid: 'metaid:idq1prefixed' },
+      { enabled: true, globalmetaid: 'not-a-global-metaid' },
+      { enabled: true, globalmetaid: '' },
     ],
   );
 
   assert.deepEqual(runtime.p2p_presence_global_metaids, ['idq1alpha', 'idq1beta']);
 });
 
-test('buildRuntimeConfig ignores falsey string heartbeat_enabled values', () => {
+test('buildRuntimeConfig ignores disabled string enabled values', () => {
   const runtime = buildRuntimeConfig(
     {
       ...DEFAULT_P2P_CONFIG,
     },
     [],
     [
-      { heartbeat_enabled: '0', globalmetaid: 'idq1zero' },
-      { heartbeat_enabled: 'false', globalmetaid: 'idq1false' },
-      { heartbeat_enabled: '1', globalmetaid: 'idq1one' },
-      { heartbeat_enabled: true, globalmetaid: 'idq1true' },
+      { enabled: '0', globalmetaid: 'idq1zero' },
+      { enabled: 'false', globalmetaid: 'idq1false' },
+      { enabled: '1', globalmetaid: 'idq1one' },
+      { globalmetaid: 'idq1default' },
     ],
   );
 
-  assert.deepEqual(runtime.p2p_presence_global_metaids, ['idq1one', 'idq1true']);
+  assert.deepEqual(runtime.p2p_presence_global_metaids, ['idq1one', 'idq1default']);
 });
 
 test('getConfig returns official bootstrap nodes by default for new profiles', () => {

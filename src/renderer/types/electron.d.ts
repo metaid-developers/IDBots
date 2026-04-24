@@ -335,7 +335,7 @@ interface AssignGroupChatTaskResult {
   error?: string;
 }
 
-interface ElectronHeartbeatProviderState {
+interface ElectronProviderDiscoveryState {
   key: string;
   globalMetaId: string;
   address: string;
@@ -347,10 +347,10 @@ interface ElectronHeartbeatProviderState {
   optimisticLocal: boolean;
 }
 
-interface ElectronHeartbeatDiscoverySnapshot {
+interface ElectronProviderDiscoverySnapshot {
   onlineBots: Record<string, number>;
   availableServices: unknown[];
-  providers: Record<string, ElectronHeartbeatProviderState>;
+  providers: Record<string, ElectronProviderDiscoveryState>;
 }
 
 interface IElectronAPI {
@@ -819,13 +819,11 @@ interface IElectronAPI {
     onStatusUpdate: (callback: (status: ElectronP2PStatus) => void) => () => void;
     onSyncProgress: (callback: (data: unknown) => void) => () => void;
   };
-  heartbeat: {
-    toggle: (params: { metabotId: number; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
-    getStatus: (metabotId: number) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+  providerDiscovery: {
     getOnlineServices: () => Promise<{ success: boolean; services?: unknown[]; error?: string }>;
     getOnlineBots: () => Promise<{ success: boolean; bots?: Record<string, number>; error?: string }>;
-    getDiscoverySnapshot: () => Promise<{ success: boolean; snapshot?: ElectronHeartbeatDiscoverySnapshot; error?: string }>;
-    onDiscoveryChanged: (callback: (snapshot: ElectronHeartbeatDiscoverySnapshot) => void) => () => void;
+    getSnapshot: () => Promise<{ success: boolean; snapshot?: ElectronProviderDiscoverySnapshot; error?: string }>;
+    onChanged: (callback: (snapshot: ElectronProviderDiscoverySnapshot) => void) => () => void;
   };
 }
 

@@ -59,8 +59,8 @@ test('syncP2PRuntimeConfig writes derived runtime config and returns reloadOk=tr
         p2p_own_addresses: [],
       }),
       metabots: [
-        { heartbeat_enabled: true, globalmetaid: ' IDQ1Alpha ', mvc_address: 'mvc-1' },
-        { heartbeat_enabled: false, globalmetaid: 'idq1offline', mvc_address: 'mvc-2' },
+        { enabled: true, globalmetaid: ' IDQ1Alpha ', mvc_address: 'mvc-1' },
+        { enabled: false, globalmetaid: 'idq1offline', mvc_address: 'mvc-2' },
       ],
       configPath,
     });
@@ -88,7 +88,7 @@ test('syncP2PRuntimeConfig returns reloadOk=false and does not throw when reload
         p2p_enable_chain_source: false,
         p2p_own_addresses: [],
       }),
-      metabots: [{ heartbeat_enabled: true, globalmetaid: 'idq1beta', mvc_address: 'mvc-1' }],
+      metabots: [{ enabled: true, globalmetaid: 'idq1beta', mvc_address: 'mvc-1' }],
       configPath,
     });
 

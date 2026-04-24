@@ -1,28 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildMetaBotToggleViewModel } from '../src/renderer/components/metabots/metaBotCardPresentation.js';
+const { buildMetaBotToggleViewModel } = await import('../src/renderer/components/metabots/metaBotCardPresentation.js');
 
-test('heartbeat toggle uses a smaller green-on style than the main enable toggle', () => {
-  const enableToggle = buildMetaBotToggleViewModel({ enabled: true, variant: 'enable' });
-  const heartbeatToggle = buildMetaBotToggleViewModel({ enabled: true, variant: 'heartbeat' });
+test('metabot enable toggle uses standard dimensions and accent color when enabled', () => {
+  const toggle = buildMetaBotToggleViewModel({ enabled: true });
 
-  assert.match(enableToggle.trackClass, /\bw-9\b/);
-  assert.match(enableToggle.trackClass, /\bh-5\b/);
-  assert.match(enableToggle.trackClass, /\bbg-claude-accent\b/);
-
-  assert.match(heartbeatToggle.trackClass, /\bw-8\b/);
-  assert.match(heartbeatToggle.trackClass, /\bh-4\b/);
-  assert.match(heartbeatToggle.trackClass, /\bbg-emerald-500\b/);
-  assert.doesNotMatch(heartbeatToggle.trackClass, /\bbg-claude-accent\b/);
+  assert.match(toggle.trackClass, /\bw-9\b/);
+  assert.match(toggle.trackClass, /\bh-5\b/);
+  assert.match(toggle.trackClass, /\bbg-claude-accent\b/);
+  assert.match(toggle.knobClass, /translate-x-\[18px\]/);
 });
 
-test('heartbeat toggle uses the compact knob sizing and translation', () => {
-  const heartbeatToggle = buildMetaBotToggleViewModel({ enabled: true, variant: 'heartbeat' });
-  const heartbeatToggleOff = buildMetaBotToggleViewModel({ enabled: false, variant: 'heartbeat' });
+test('metabot enable toggle uses standard off position when disabled', () => {
+  const toggle = buildMetaBotToggleViewModel({ enabled: false });
 
-  assert.match(heartbeatToggle.knobClass, /\bw-3\b/);
-  assert.match(heartbeatToggle.knobClass, /\bh-3\b/);
-  assert.match(heartbeatToggle.knobClass, /translate-x-\[17px\]/);
-  assert.match(heartbeatToggleOff.knobClass, /translate-x-\[2px\]/);
+  assert.match(toggle.trackClass, /\bbg-claude-border\b/);
+  assert.match(toggle.knobClass, /translate-x-\[3px\]/);
 });

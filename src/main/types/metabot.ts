@@ -38,8 +38,6 @@ export interface Metabot {
   tools: string[];
   /** Allowed skill ids; stored as JSON array in DB */
   skills: string[];
-  /** Whether periodic heartbeat broadcasting is enabled */
-  heartbeat_enabled: boolean;
   created_at: number;
   updated_at: number;
 }
