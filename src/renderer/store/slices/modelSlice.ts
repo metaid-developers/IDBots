@@ -1,11 +1,12 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { defaultConfig } from '../../config';
+import { defaultConfig, type ModelOptions } from '../../config';
 
 export interface Model {
   id: string;
   name: string;
   provider?: string; // 模型所属的提供商
   supportsImage?: boolean;
+  options?: ModelOptions;
 }
 
 // 从 providers 配置中构建初始可用模型列表
@@ -20,6 +21,7 @@ function buildInitialModels(): Model[] {
             name: model.name,
             provider: providerName.charAt(0).toUpperCase() + providerName.slice(1),
             supportsImage: model.supportsImage ?? false,
+            options: model.options,
           });
         });
       }

@@ -1,4 +1,4 @@
-import { AppConfig, CONFIG_KEYS, defaultConfig } from '../config';
+import { AppConfig, CONFIG_KEYS, defaultConfig, normalizeDeepSeekAppConfig } from '../config';
 import { localStore } from './store';
 
 const getFixedProviderApiFormat = (providerKey: string): 'anthropic' | 'openai' | null => {
@@ -49,20 +49,123 @@ const normalizeProviderApiFormat = (providerKey: string, apiFormat: unknown): 'a
   return 'anthropic';
 };
 
-const normalizeProvidersConfig = (providers: AppConfig['providers']): AppConfig['providers'] => {
-  if (!providers) {
-    return providers;
+const cloneProviderModels = (
+  models: NonNullable<NonNullable<AppConfig['providers']>[string]['models']> | undefined,
+) => models?.map((model) => ({
+  ...model,
+  supportsImage: model.supportsImage ?? false,
+  options: model.options
+    ? {
+        ...model.options,
+        thinking: model.options.thinking ? { ...model.options.thinking } : undefined,
+      }
+    : undefined,
+}));
+
+const buildProviderSignature = (
+  models: NonNullable<NonNullable<AppConfig['providers']>[string]['models']> | undefined,
+): string => JSON.stringify(
+  (models ?? []).map((model) => ({
+    id: model.id,
+    name: model.name,
+    supportsImage: model.supportsImage ?? false,
+    options: model.options
+      ? {
+          reasoningEffort: model.options.reasoningEffort,
+          thinking: model.options.thinking ? { ...model.options.thinking } : undefined,
+        }
+      : undefined,
+  })),
+);
+
+const normalizeSingleProviderConfig = (
+  providerKey: string,
+  providerConfig: NonNullable<AppConfig['providers']>[string],
+): NonNullable<AppConfig['providers']>[string] => ({
+  ...providerConfig,
+  baseUrl: normalizeProviderBaseUrl(providerKey, providerConfig.baseUrl),
+  apiFormat: normalizeProviderApiFormat(providerKey, providerConfig.apiFormat),
+  models: cloneProviderModels(providerConfig.models),
+});
+
+const getDefaultProvidersConfig = (): NonNullable<AppConfig['providers']> => (
+  Object.fromEntries(
+    Object.entries(defaultConfig.providers ?? {}).map(([providerKey, providerConfig]) => [
+      providerKey,
+      normalizeSingleProviderConfig(providerKey, providerConfig),
+    ]),
+  ) as NonNullable<AppConfig['providers']>
+);
+
+const shouldPreserveExistingProviderConfig = (
+  providerKey: string,
+  currentProvider: NonNullable<AppConfig['providers']>[string] | undefined,
+  incomingProvider: NonNullable<AppConfig['providers']>[string] | undefined,
+): boolean => {
+  if (!currentProvider || !incomingProvider) {
+    return false;
   }
 
+  if (!String(currentProvider.apiKey ?? '').trim() || String(incomingProvider.apiKey ?? '').trim()) {
+    return false;
+  }
+
+  const defaultProvider = getDefaultProvidersConfig()[providerKey];
+  if (!defaultProvider) {
+    return false;
+  }
+
+  return incomingProvider.enabled === defaultProvider.enabled
+    && incomingProvider.baseUrl === defaultProvider.baseUrl
+    && incomingProvider.apiFormat === defaultProvider.apiFormat
+    && buildProviderSignature(incomingProvider.models) === buildProviderSignature(defaultProvider.models);
+};
+
+export const mergeProvidersConfig = (
+  currentProviders?: AppConfig['providers'],
+  incomingProviders?: AppConfig['providers'],
+): AppConfig['providers'] => {
+  const defaultProviders = getDefaultProvidersConfig();
+  const keys = new Set([
+    ...Object.keys(defaultProviders),
+    ...Object.keys(currentProviders ?? {}),
+    ...Object.keys(incomingProviders ?? {}),
+  ]);
+
   return Object.fromEntries(
-    Object.entries(providers).map(([providerKey, providerConfig]) => [
-      providerKey,
-      {
-        ...providerConfig,
-        baseUrl: normalizeProviderBaseUrl(providerKey, providerConfig.baseUrl),
-        apiFormat: normalizeProviderApiFormat(providerKey, providerConfig.apiFormat),
-      },
-    ])
+    Array.from(keys).map((providerKey) => {
+      const defaultProvider = defaultProviders[providerKey];
+      const currentProvider = currentProviders?.[providerKey]
+        ? normalizeSingleProviderConfig(providerKey, currentProviders[providerKey])
+        : defaultProvider;
+      const incomingProvider = incomingProviders?.[providerKey]
+        ? normalizeSingleProviderConfig(providerKey, {
+            ...defaultProvider,
+            ...incomingProviders[providerKey],
+          })
+        : undefined;
+
+      if (shouldPreserveExistingProviderConfig(providerKey, currentProvider, incomingProvider)) {
+        return [
+          providerKey,
+          {
+            ...currentProvider,
+            models: currentProvider?.models ?? incomingProvider?.models,
+          },
+        ];
+      }
+
+      return [
+        providerKey,
+        incomingProvider
+          ? {
+              ...currentProvider,
+              ...incomingProvider,
+              models: incomingProvider.models ?? currentProvider?.models,
+            }
+          : currentProvider,
+      ];
+    }),
   ) as AppConfig['providers'];
 };
 
@@ -73,29 +176,9 @@ class ConfigService {
     try {
       const storedConfig = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG);
       if (storedConfig) {
-        const mergedProviders = storedConfig.providers
-          ? Object.fromEntries(
-              Object.entries({
-                ...(defaultConfig.providers ?? {}),
-                ...storedConfig.providers,
-              }).map(([providerKey, providerConfig]) => [
-                providerKey,
-                (() => {
-                  const mergedProvider = {
-                    ...(defaultConfig.providers as Record<string, any>)?.[providerKey],
-                    ...providerConfig,
-                  };
-                  return {
-                    ...mergedProvider,
-                    baseUrl: normalizeProviderBaseUrl(providerKey, mergedProvider.baseUrl),
-                    apiFormat: normalizeProviderApiFormat(providerKey, mergedProvider.apiFormat),
-                  };
-                })(),
-              ])
-            )
-          : defaultConfig.providers;
+        const mergedProviders = mergeProvidersConfig(undefined, storedConfig.providers);
 
-        this.config = {
+        const mergedConfig: AppConfig = {
           ...defaultConfig,
           ...storedConfig,
           api: {
@@ -116,6 +199,13 @@ class ConfigService {
           } as AppConfig['shortcuts'],
           providers: mergedProviders as AppConfig['providers'],
         };
+
+        const normalizedConfig = normalizeDeepSeekAppConfig(mergedConfig);
+        this.config = normalizedConfig;
+
+        if (JSON.stringify(normalizedConfig) !== JSON.stringify(mergedConfig)) {
+          await localStore.setItem(CONFIG_KEYS.APP_CONFIG, normalizedConfig);
+        }
       }
     } catch (error) {
       console.error('Failed to load config:', error);
@@ -127,12 +217,14 @@ class ConfigService {
   }
 
   async updateConfig(newConfig: Partial<AppConfig>) {
-    const normalizedProviders = normalizeProvidersConfig(newConfig.providers as AppConfig['providers'] | undefined);
-    this.config = {
+    const normalizedProviders = newConfig.providers
+      ? mergeProvidersConfig(this.config.providers, newConfig.providers as AppConfig['providers'])
+      : undefined;
+    this.config = normalizeDeepSeekAppConfig({
       ...this.config,
       ...newConfig,
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
-    };
+    });
     await localStore.setItem(CONFIG_KEYS.APP_CONFIG, this.config);
   }
 

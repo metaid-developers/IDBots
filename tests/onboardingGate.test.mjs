@@ -8,34 +8,17 @@ import {
   shouldShowInitialOnboarding,
 } from '../src/renderer/components/onboarding/onboardingGate.js';
 
-test('app init shows onboarding when no provider API key is configured', () => {
-  assert.equal(
-    shouldShowInitialOnboarding({
-      hasProviderWithApiKey: false,
-      metabotCount: 3,
-    }),
-    true,
-  );
+test('app init does not show onboarding when local MetaBots already exist', () => {
+  assert.equal(shouldShowInitialOnboarding(3), false);
 });
 
-test('app init shows onboarding when provider config exists but there are no local MetaBots', () => {
-  assert.equal(
-    shouldShowInitialOnboarding({
-      hasProviderWithApiKey: true,
-      metabotCount: 0,
-    }),
-    true,
-  );
+test('app init shows onboarding when there are no local MetaBots yet', () => {
+  assert.equal(shouldShowInitialOnboarding(0), true);
 });
 
-test('app init does not show onboarding when provider config exists and local MetaBots are present', () => {
-  assert.equal(
-    shouldShowInitialOnboarding({
-      hasProviderWithApiKey: true,
-      metabotCount: 2,
-    }),
-    false,
-  );
+test('app init treats invalid MetaBot counts as first-run and keeps onboarding visible', () => {
+  assert.equal(shouldShowInitialOnboarding(undefined), true);
+  assert.equal(shouldShowInitialOnboarding(-1), true);
 });
 
 test('first-MetaBot reroute is enabled only when the local MetaBot count is zero', () => {

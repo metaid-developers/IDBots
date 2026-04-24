@@ -1,3 +1,17 @@
+export type ModelOptions = {
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'max';
+  thinking?: {
+    type: 'enabled' | 'disabled';
+  };
+};
+
+type ConfiguredModel = {
+  id: string;
+  name: string;
+  supportsImage?: boolean;
+  options?: ModelOptions;
+};
+
 // 配置类型定义
 export interface AppConfig {
   // API 配置
@@ -7,11 +21,7 @@ export interface AppConfig {
   };
   // 模型配置
   model: {
-    availableModels: Array<{
-      id: string;
-      name: string;
-      supportsImage?: boolean;
-    }>;
+    availableModels: ConfiguredModel[];
     defaultModel: string;
   };
   // 多模型提供商配置
@@ -22,132 +32,84 @@ export interface AppConfig {
       baseUrl: string;
       // API 协议格式：anthropic 为 Anthropic 兼容，openai 为 OpenAI 兼容
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     deepseek: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     moonshot: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     zhipu: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     minimax: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     qwen: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     openrouter: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     gemini: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     anthropic: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     xiaomi: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     ollama: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
     [key: string]: {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
       apiFormat?: 'anthropic' | 'openai';
-      models?: Array<{
-        id: string;
-        name: string;
-        supportsImage?: boolean;
-      }>;
+      models?: ConfiguredModel[];
     };
   };
   // 主题配置
@@ -176,6 +138,208 @@ export interface AppConfig {
   };
 }
 
+type ModelDefinition = AppConfig['model']['availableModels'][number];
+type ProviderDefinition = NonNullable<AppConfig['providers']>[string];
+type ProviderModelDefinition = NonNullable<ProviderDefinition['models']>[number];
+type ModelLike = {
+  id: string;
+  name: string;
+  supportsImage?: boolean;
+  options?: ModelOptions;
+};
+
+export const DEEPSEEK_DEFAULT_MODEL_ID = 'deepseek-v4-pro';
+
+const DEEPSEEK_DEFAULT_MODELS: ReadonlyArray<ModelLike> = Object.freeze([
+  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false },
+  {
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    supportsImage: false,
+    options: {
+      reasoningEffort: 'max',
+      thinking: { type: 'enabled' },
+    },
+  },
+]);
+
+const DEEPSEEK_DEFAULT_MODEL_ORDER = DEEPSEEK_DEFAULT_MODELS.map((model) => model.id);
+
+const DEEPSEEK_LEGACY_MODEL_MIGRATION_MAP: Readonly<Record<string, ModelLike>> = Object.freeze({
+  'deepseek-chat': DEEPSEEK_DEFAULT_MODELS[0],
+  'deepseek-reasoner': DEEPSEEK_DEFAULT_MODELS[1],
+});
+
+export function getDefaultDeepSeekModels(): ModelDefinition[] {
+  return DEEPSEEK_DEFAULT_MODELS.map((model) => ({
+    ...model,
+    options: model.options
+      ? {
+          ...model.options,
+          thinking: model.options.thinking ? { ...model.options.thinking } : undefined,
+        }
+      : undefined,
+  }));
+}
+
+function normalizeDeepSeekModel(model: ModelLike): ModelLike {
+  const migrated = DEEPSEEK_LEGACY_MODEL_MIGRATION_MAP[model.id];
+  const canonical = DEEPSEEK_DEFAULT_MODELS.find((entry) => entry.id === (migrated?.id ?? model.id));
+  if (!migrated) {
+    if (!canonical) {
+      return { ...model };
+    }
+    return {
+      ...model,
+      supportsImage: canonical.supportsImage ?? model.supportsImage,
+      options: model.options ?? canonical.options,
+    };
+  }
+  return {
+    ...model,
+    id: migrated.id,
+    name: migrated.name,
+    supportsImage: migrated.supportsImage,
+    options: migrated.options,
+  };
+}
+
+function dedupeModels<T extends ModelLike>(models: T[]): T[] {
+  const seen = new Set<string>();
+  return models.filter((model) => {
+    if (seen.has(model.id)) {
+      return false;
+    }
+    seen.add(model.id);
+    return true;
+  });
+}
+
+function maybeCanonicalizeDeepSeekDefaults<T extends ModelLike>(models: T[]): T[] {
+  if (
+    models.length !== DEEPSEEK_DEFAULT_MODEL_ORDER.length
+    || models.some((model) => !DEEPSEEK_DEFAULT_MODEL_ORDER.includes(model.id))
+  ) {
+    return models;
+  }
+  return [...models].sort(
+    (left, right) => DEEPSEEK_DEFAULT_MODEL_ORDER.indexOf(left.id) - DEEPSEEK_DEFAULT_MODEL_ORDER.indexOf(right.id),
+  );
+}
+
+function normalizeDeepSeekModelList<T extends ModelLike>(models?: T[] | null): T[] | undefined {
+  if (!models) {
+    return undefined;
+  }
+  return maybeCanonicalizeDeepSeekDefaults(dedupeModels(models.map((model) => normalizeDeepSeekModel(model) as T)));
+}
+
+function normalizeDeepSeekDefaultModel(defaultModel: string, availableModels: ModelLike[]): string {
+  const migratedDefault = DEEPSEEK_LEGACY_MODEL_MIGRATION_MAP[defaultModel]?.id ?? defaultModel;
+  if (availableModels.some((model) => model.id === migratedDefault)) {
+    return migratedDefault;
+  }
+  if (availableModels.some((model) => model.id === DEEPSEEK_DEFAULT_MODEL_ID)) {
+    return DEEPSEEK_DEFAULT_MODEL_ID;
+  }
+  return availableModels[0]?.id ?? DEEPSEEK_DEFAULT_MODEL_ID;
+}
+
+function hasConfiguredProviderApiKey(providers?: AppConfig['providers']): boolean {
+  if (!providers) {
+    return false;
+  }
+  return Object.values(providers).some(
+    (provider) => provider?.enabled && typeof provider.apiKey === 'string' && provider.apiKey.trim() !== '',
+  );
+}
+
+function detectLegacyProviderFromApiBaseUrl(baseUrl: string): keyof NonNullable<AppConfig['providers']> | null {
+  const normalizedBaseUrl = baseUrl.trim().toLowerCase();
+  if (!normalizedBaseUrl) {
+    return null;
+  }
+  if (normalizedBaseUrl.includes('openai')) return 'openai';
+  if (normalizedBaseUrl.includes('deepseek')) return 'deepseek';
+  if (normalizedBaseUrl.includes('moonshot.ai') || normalizedBaseUrl.includes('moonshot.cn')) return 'moonshot';
+  if (normalizedBaseUrl.includes('bigmodel.cn')) return 'zhipu';
+  if (normalizedBaseUrl.includes('minimax')) return 'minimax';
+  if (normalizedBaseUrl.includes('dashscope')) return 'qwen';
+  if (normalizedBaseUrl.includes('openrouter.ai')) return 'openrouter';
+  if (normalizedBaseUrl.includes('googleapis')) return 'gemini';
+  if (normalizedBaseUrl.includes('anthropic')) return 'anthropic';
+  if (normalizedBaseUrl.includes('ollama') || normalizedBaseUrl.includes('11434')) return 'ollama';
+  return null;
+}
+
+function inferLegacyApiFormat(
+  providerKey: keyof NonNullable<AppConfig['providers']>,
+  baseUrl: string,
+): 'anthropic' | 'openai' {
+  if (providerKey === 'openai' || providerKey === 'gemini') {
+    return 'openai';
+  }
+  if (providerKey === 'anthropic') {
+    return 'anthropic';
+  }
+  return baseUrl.toLowerCase().includes('/anthropic') ? 'anthropic' : 'openai';
+}
+
+function normalizeLegacyApiBackfill(providers: AppConfig['providers'], api: AppConfig['api']): AppConfig['providers'] {
+  const legacyApiKey = typeof api.key === 'string' ? api.key.trim() : '';
+  const legacyBaseUrl = typeof api.baseUrl === 'string' ? api.baseUrl.trim().replace(/\/+$/, '') : '';
+  if (!legacyApiKey || !legacyBaseUrl || hasConfiguredProviderApiKey(providers)) {
+    return providers;
+  }
+
+  const providerKey = detectLegacyProviderFromApiBaseUrl(legacyBaseUrl);
+  if (!providerKey) {
+    return providers;
+  }
+
+  const nextProviders = { ...((providers ?? defaultConfig.providers) as NonNullable<AppConfig['providers']>) };
+  const existingProvider = nextProviders[providerKey];
+  nextProviders[providerKey] = {
+    ...existingProvider,
+    enabled: true,
+    apiKey: legacyApiKey,
+    baseUrl: legacyBaseUrl,
+    apiFormat: inferLegacyApiFormat(providerKey, legacyBaseUrl),
+    models: existingProvider?.models,
+  };
+  return nextProviders;
+}
+
+export function normalizeDeepSeekAppConfig(config: AppConfig): AppConfig {
+  const normalizedAvailableModels = normalizeDeepSeekModelList(config.model.availableModels)
+    ?? getDefaultDeepSeekModels();
+  const normalizedProviders = config.providers
+    ? Object.fromEntries(
+        Object.entries(config.providers).map(([providerKey, providerConfig]) => [
+          providerKey,
+          providerKey === 'deepseek'
+            ? {
+                ...providerConfig,
+                models: normalizeDeepSeekModelList(providerConfig.models as ProviderModelDefinition[] | undefined)
+                  ?? getDefaultDeepSeekModels(),
+              }
+            : providerConfig,
+        ]),
+      ) as AppConfig['providers']
+    : config.providers;
+  const normalizedProvidersWithLegacyApi = normalizeLegacyApiBackfill(normalizedProviders, config.api);
+
+  return {
+    ...config,
+    model: {
+      ...config.model,
+      availableModels: normalizedAvailableModels,
+      defaultModel: normalizeDeepSeekDefaultModel(config.model.defaultModel, normalizedAvailableModels),
+    },
+    providers: normalizedProvidersWithLegacyApi,
+  };
+}
+
 // 默认配置
 export const defaultConfig: AppConfig = {
   api: {
@@ -183,11 +347,8 @@ export const defaultConfig: AppConfig = {
     baseUrl: 'https://api.deepseek.com/anthropic',
   },
   model: {
-    availableModels: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat', supportsImage: false },
-      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', supportsImage: false },
-    ],
-    defaultModel: 'deepseek-chat',
+    availableModels: getDefaultDeepSeekModels(),
+    defaultModel: DEEPSEEK_DEFAULT_MODEL_ID,
   },
   providers: {
     openai: {
@@ -227,10 +388,7 @@ export const defaultConfig: AppConfig = {
       apiKey: '',
       baseUrl: 'https://api.deepseek.com',
       apiFormat: 'openai',
-      models: [
-        { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', supportsImage: false },
-        { id: 'deepseek-chat', name: 'DeepSeek Chat', supportsImage: false }
-      ]
+      models: getDefaultDeepSeekModels()
     },
     moonshot: {
       enabled: false,

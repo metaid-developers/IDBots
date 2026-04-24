@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { configService } from '../services/config';
+import { configService, mergeProvidersConfig } from '../services/config';
 import { apiService } from '../services/api';
 import { themeService } from '../services/theme';
 import { i18nService, LanguageType } from '../services/i18n';
@@ -331,6 +331,10 @@ const getDefaultProviders = (): ProvidersConfig => {
   ) as ProvidersConfig;
 };
 
+const getInitialProviders = (): ProvidersConfig => (
+  (mergeProvidersConfig(undefined, configService.getConfig().providers) as ProvidersConfig) || getDefaultProviders()
+);
+
 const getDefaultActiveProvider = (): ProviderType => {
   const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
   const firstEnabledProvider = providerKeys.find(providerKey => providers[providerKey]?.enabled);
@@ -361,7 +365,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
 
   // Add state for providers configuration
-  const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
+  const [providers, setProviders] = useState<ProvidersConfig>(() => getInitialProviders());
   
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
@@ -636,30 +640,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
       
       // Load provider-specific configurations if available
       // 合并已保存的配置和默认配置，确保新添加的 provider 能被显示
-      if (config.providers) {
-        setProviders(prev => {
-          const merged = {
-            ...prev,  // 保留默认的 providers（包括新添加的 anthropic）
-            ...config.providers,  // 覆盖已保存的配置
-          };
-          return Object.fromEntries(
-            Object.entries(merged).map(([providerKey, providerConfig]) => {
-              const models = providerConfig.models?.map(model => ({
-                ...model,
-                supportsImage: model.supportsImage ?? false,
-              }));
-              return [
-                providerKey,
-                {
-                  ...providerConfig,
-                  apiFormat: getEffectiveApiFormat(providerKey, (providerConfig as ProviderConfig).apiFormat),
-                  models,
-                },
-              ];
-            })
-          ) as ProvidersConfig;
-        });
-      }
+      setProviders(mergeProvidersConfig(undefined, config.providers) as ProvidersConfig);
       
       // 加载快捷键设置
       if (config.shortcuts) {
@@ -1140,7 +1121,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
       });
 
       // 更新 Redux store 中的可用模型列表
-      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean }[] = [];
+      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean; options?: AppConfig['model']['availableModels'][number]['options'] }[] = [];
       Object.entries(normalizedProviders).forEach(([providerName, config]) => {
         if (config.enabled && config.models) {
           config.models.forEach(model => {
@@ -1149,6 +1130,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
               name: model.name,
               provider: providerName.charAt(0).toUpperCase() + providerName.slice(1),
               supportsImage: model.supportsImage ?? false,
+              options: model.options,
             });
           });
         }
@@ -1259,7 +1241,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
       return;
     }
 
+    const existingModel = isEditingModel && editingModelId
+      ? currentModels.find(model => model.id === editingModelId)
+      : undefined;
     const nextModel = {
+      ...(existingModel ?? {}),
       id: modelId,
       name: modelName,
       supportsImage: newModelSupportsImage,

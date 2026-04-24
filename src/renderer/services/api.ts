@@ -1,5 +1,10 @@
 import { store } from '../store';
+import type { ModelOptions } from '../config';
 import { configService } from './config';
+import {
+  buildAnthropicModelRequestOptions,
+  buildOpenAICompatibleModelRequestOptions,
+} from './modelRequestOptions';
 import { ChatMessagePayload, ChatUserMessageInput, ImageAttachment } from '../types/chat';
 
 export interface ApiConfig {
@@ -338,10 +343,28 @@ class ApiService {
     const useOpenAIFormat = normalizedApiFormat === 'openai';
 
     if (!useOpenAIFormat) {
-      return this.chatWithAnthropic(userMessage, onProgress, history, selectedModel.id, effectiveConfig, supportsImages);
+      return this.chatWithAnthropic(
+        userMessage,
+        onProgress,
+        history,
+        selectedModel.id,
+        effectiveConfig,
+        supportsImages,
+        provider,
+        selectedModel.options,
+      );
     }
 
-    return this.chatWithOpenAICompatible(userMessage, onProgress, history, selectedModel.id, effectiveConfig, supportsImages, provider);
+    return this.chatWithOpenAICompatible(
+      userMessage,
+      onProgress,
+      history,
+      selectedModel.id,
+      effectiveConfig,
+      supportsImages,
+      provider,
+      selectedModel.options,
+    );
   }
 
   // Anthropic API 调用
@@ -351,7 +374,9 @@ class ApiService {
     history: ChatMessagePayload[] = [],
     modelId: string = 'claude-3-5-sonnet-20241022',
     config: ApiConfig = this.config!,
-    supportsImages: boolean = false
+    supportsImages: boolean = false,
+    provider: string = 'anthropic',
+    modelOptions?: ModelOptions,
   ): Promise<{ content: string; reasoning?: string }> {
     let fullContent = '';
     let fullReasoning = '';
@@ -384,6 +409,7 @@ class ApiService {
         messages: messages,
         stream: true,
       };
+      Object.assign(requestBody, buildAnthropicModelRequestOptions(provider, modelOptions));
 
       // 添加 system 消息
       if (systemMessages.length > 0) {
@@ -516,7 +542,8 @@ class ApiService {
     modelId: string = 'gpt-4',
     config: ApiConfig = this.config!,
     supportsImages: boolean = false,
-    provider: string = 'openai'
+    provider: string = 'openai',
+    modelOptions?: ModelOptions,
   ): Promise<{ content: string; reasoning?: string }> {
     let fullContent = '';
     let fullReasoning = '';
@@ -688,6 +715,7 @@ class ApiService {
         if (useResponsesApi && systemInstructions) {
           requestBody.instructions = systemInstructions;
         }
+        Object.assign(requestBody, buildOpenAICompatibleModelRequestOptions(provider, modelOptions));
 
         window.electron.api.stream({
           url: requestUrl,

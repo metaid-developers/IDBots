@@ -3,6 +3,11 @@
  * the same validation and URL building as the system LLM config (config.providers).
  */
 
+import {
+  buildAnthropicModelRequestOptions,
+  buildOpenAICompatibleModelRequestOptions,
+} from './modelRequestOptions';
+
 const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
 
 function getFixedApiFormatForProvider(provider: string): 'anthropic' | 'openai' | null {
@@ -93,7 +98,7 @@ export interface ProviderConfigForTest {
   apiKey: string;
   baseUrl: string;
   apiFormat?: 'anthropic' | 'openai';
-  models?: Array<{ id: string }>;
+  models?: Array<{ id: string; options?: import('../config').ModelOptions }>;
 }
 
 /**
@@ -133,6 +138,7 @@ export async function testProviderConnection(
           model: firstModel.id,
           max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
           messages: [{ role: 'user', content: 'Hi' }],
+          ...buildAnthropicModelRequestOptions(providerKey, firstModel.options),
         }),
       });
     } else {
@@ -159,6 +165,7 @@ export async function testProviderConnection(
       } else if (!useResponsesApi) {
         openAIRequestBody.max_tokens = CONNECTIVITY_TEST_TOKEN_BUDGET;
       }
+      Object.assign(openAIRequestBody, buildOpenAICompatibleModelRequestOptions(providerKey, firstModel.options));
       response = await window.electron.api.fetch({
         url: openaiUrl,
         method: 'POST',

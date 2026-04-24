@@ -19,7 +19,7 @@ import { themeService } from './services/theme';
 import { coworkService } from './services/cowork';
 import { scheduledTaskService } from './services/scheduledTask';
 import { checkForAppUpdate, type AppUpdateInfo, type AppUpdateDownloadProgress, UPDATE_POLL_INTERVAL_MS, UPDATE_HEARTBEAT_INTERVAL_MS } from './services/appUpdate';
-import { defaultConfig } from './config';
+import { defaultConfig, type ModelOptions } from './config';
 import { setAvailableModels, setSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
 import { setActiveSkillIds } from './store/slices/skillSlice';
@@ -142,16 +142,17 @@ const App: React.FC = () => {
         apiService.setConfig(apiConfig);
 
         // 从 providers 配置中加载可用模型列表到 Redux
-        const providerModels: { id: string; name: string; provider?: string; supportsImage?: boolean }[] = [];
+        const providerModels: { id: string; name: string; provider?: string; supportsImage?: boolean; options?: ModelOptions }[] = [];
         if (config.providers) {
           Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
             if (providerConfig.enabled && providerConfig.models) {
-              providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean }) => {
+              providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean; options?: ModelOptions }) => {
                 providerModels.push({
                   id: model.id,
                   name: model.name,
                   provider: providerName.charAt(0).toUpperCase() + providerName.slice(1),
                   supportsImage: model.supportsImage ?? false,
+                  options: model.options,
                 });
               });
             }
@@ -161,6 +162,7 @@ const App: React.FC = () => {
           id: model.id,
           name: model.name,
           supportsImage: model.supportsImage ?? false,
+          options: model.options,
         }));
         const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
         if (resolvedModels.length > 0) {
@@ -172,14 +174,9 @@ const App: React.FC = () => {
         // 初始化定时任务服务
         await scheduledTaskService.init();
 
-        // Onboarding visibility: show the wizard initially when LLM config is missing
-        // or when there are no local MetaBots yet. Users can close it and continue into the app.
-        const hasProviderWithApiKey =
-          config.providers &&
-          Object.values(config.providers).some(
-            (p: { enabled?: boolean; apiKey?: string }) =>
-              p?.enabled && p?.apiKey && String(p.apiKey).trim() !== ''
-          );
+        // Onboarding visibility: only first-run users without local MetaBots
+        // should land in onboarding. Existing users must enter the app directly,
+        // even if their current LLM config is empty or needs migration.
         let metabotCount = 0;
         try {
           const metabotResult = await window.electron.metabot.list();
@@ -189,12 +186,7 @@ const App: React.FC = () => {
         } catch {
           metabotCount = 0;
         }
-        setShowOnboarding(
-          shouldShowInitialOnboarding({
-            hasProviderWithApiKey,
-            metabotCount,
-          })
-        );
+        setShowOnboarding(shouldShowInitialOnboarding(metabotCount));
         setIsInitialized(true);
       } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -238,15 +230,16 @@ const App: React.FC = () => {
     const config = configService.getConfig();
     apiService.setConfig({ apiKey: config.api.key, baseUrl: config.api.baseUrl });
     if (config.providers) {
-      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean }[] = [];
+      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean; options?: ModelOptions }[] = [];
       Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
         if (providerConfig.enabled && providerConfig.models) {
-          providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean }) => {
+          providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean; options?: ModelOptions }) => {
             allModels.push({
               id: model.id,
               name: model.name,
               provider: providerName.charAt(0).toUpperCase() + providerName.slice(1),
               supportsImage: model.supportsImage ?? false,
+              options: model.options,
             });
           });
         }
@@ -453,15 +446,16 @@ const App: React.FC = () => {
     });
 
     if (config.providers) {
-      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean }[] = [];
+      const allModels: { id: string; name: string; provider?: string; supportsImage?: boolean; options?: ModelOptions }[] = [];
       Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
         if (providerConfig.enabled && providerConfig.models) {
-          providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean }) => {
+          providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean; options?: ModelOptions }) => {
             allModels.push({
               id: model.id,
               name: model.name,
               provider: providerName.charAt(0).toUpperCase() + providerName.slice(1),
               supportsImage: model.supportsImage ?? false,
+              options: model.options,
             });
           });
         }

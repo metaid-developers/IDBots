@@ -2,10 +2,7 @@ function normalizeMetabotCount(metabotCount) {
   return Number.isFinite(metabotCount) && metabotCount > 0 ? Math.floor(metabotCount) : 0;
 }
 
-export function shouldShowInitialOnboarding({ hasProviderWithApiKey, metabotCount }) {
-  if (!hasProviderWithApiKey) {
-    return true;
-  }
+export function shouldShowInitialOnboarding(metabotCount) {
   return normalizeMetabotCount(metabotCount) === 0;
 }
 
