@@ -31,6 +31,7 @@ tests/*
 !tests/gigSquareServiceCard.test.tsx
 !tests/a2aMessageItem.test.tsx
 !tests/privateChatOrderCoworkTimeout.test.mjs
+!tests/coworkFormatTransform.test.mjs
 
 # Local DB (never commit)
 *.sqlite

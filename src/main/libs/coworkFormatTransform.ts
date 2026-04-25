@@ -27,11 +27,96 @@ export type OpenAIStreamChunk = {
   };
 };
 
+const SDK_BUILTIN_WEB_TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
+  websearch: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'The search query to use',
+      },
+      allowed_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Only include search results from these domains',
+      },
+      blocked_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Never include search results from these domains',
+      },
+    },
+    required: ['query'],
+  },
+  webfetch: {
+    type: 'object',
+    properties: {
+      url: {
+        type: 'string',
+        description: 'The URL to fetch content from',
+      },
+      prompt: {
+        type: 'string',
+        description: 'The prompt to run on the fetched content',
+      },
+    },
+    required: ['url', 'prompt'],
+  },
+};
+
 function toObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as Record<string, unknown>;
   }
   return {};
+}
+
+function normalizeToolSchemaKey(value: unknown): string {
+  return toString(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function getSdkBuiltinWebToolSchema(toolObj: Record<string, unknown>): Record<string, unknown> | null {
+  const nameKey = normalizeToolSchemaKey(toolObj.name);
+  if (SDK_BUILTIN_WEB_TOOL_SCHEMAS[nameKey]) {
+    return SDK_BUILTIN_WEB_TOOL_SCHEMAS[nameKey];
+  }
+
+  const typeKey = normalizeToolSchemaKey(toolObj.type);
+  if (typeKey.startsWith('websearch')) {
+    return SDK_BUILTIN_WEB_TOOL_SCHEMAS.websearch;
+  }
+  if (typeKey.startsWith('webfetch')) {
+    return SDK_BUILTIN_WEB_TOOL_SCHEMAS.webfetch;
+  }
+
+  return null;
+}
+
+function hasMeaningfulToolInputSchema(schema: unknown): boolean {
+  const obj = toOptionalObject(schema);
+  if (!obj) {
+    return false;
+  }
+
+  const keys = Object.keys(obj);
+  if (keys.length === 0) {
+    return false;
+  }
+
+  if (keys.length === 1 && obj.type == null) {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveToolInputSchema(toolObj: Record<string, unknown>): unknown {
+  const inputSchema = toolObj.input_schema;
+  if (hasMeaningfulToolInputSchema(inputSchema)) {
+    return inputSchema;
+  }
+
+  return getSdkBuiltinWebToolSchema(toolObj) ?? {};
 }
 
 function toArray(value: unknown): unknown[] {
@@ -87,9 +172,19 @@ export function formatSSEEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-function cleanSchema(schema: unknown): unknown {
+function cleanSchema(schema: unknown, options?: { requireObjectRoot?: boolean }): unknown {
   const obj = toObject(schema);
   const output: Record<string, unknown> = { ...obj };
+
+  if (options?.requireObjectRoot) {
+    const type = toString(output.type);
+    if (!type) {
+      output.type = 'object';
+    }
+    if (!toOptionalObject(output.properties)) {
+      output.properties = {};
+    }
+  }
 
   if (output.format === 'uri') {
     delete output.format;
@@ -293,7 +388,7 @@ export function anthropicToOpenAI(body: unknown): Record<string, unknown> {
         function: {
           name: toString(toolObj.name),
           description: toolObj.description,
-          parameters: cleanSchema(toolObj.input_schema ?? {}),
+          parameters: cleanSchema(resolveToolInputSchema(toolObj), { requireObjectRoot: true }),
         },
       };
     });
