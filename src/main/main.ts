@@ -113,6 +113,7 @@ import {
 } from './services/serviceOrderLifecycleService';
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
+import { fetchProtocolPinsFromIndexer } from './services/protocolPinFetch';
 import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
@@ -3311,54 +3312,20 @@ const repairSelfDirectedServiceOrders = (): void => {
   getServiceOrderLifecycleService().repairSelfDirectedOrders();
 };
 
-async function fetchProtocolPinsFromIndexer(
-  protocolPath: string
-): Promise<Array<{ pinId: string; content: unknown; timestampMs?: number | null }>> {
-  const pins: Array<{ pinId: string; content: unknown; timestampMs?: number | null }> = [];
-  let cursor: string | undefined;
-
-  for (let page = 0; page < SERVICE_REFUND_SYNC_MAX_PAGES; page++) {
-    const url = new URL('https://manapi.metaid.io/pin/path/list');
-    url.searchParams.set('path', protocolPath);
-    url.searchParams.set('size', String(SERVICE_REFUND_SYNC_SIZE));
-    if (cursor) url.searchParams.set('cursor', cursor);
-
-    const resp = await fetchJsonWithFallbackOnMiss(
-      `/api/pin/path/list${url.search}`,
-      url.toString(),
-      isEmptyListDataPayload
-    );
-    if (!resp.ok) break;
-
-    const json = await resp.json() as Record<string, unknown>;
-    const data = json?.data as Record<string, unknown> | undefined;
-    const list = Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : [];
-    for (const item of list) {
-      const pinId = typeof item.id === 'string' ? item.id.trim() : String(item.id || '').trim();
-      if (!pinId) continue;
-      const content = selectProtocolPinContent(item);
-      const timestampRaw = item.timestamp;
-      const timestampMs = typeof timestampRaw === 'number' && Number.isFinite(timestampRaw)
-        ? Math.floor(timestampRaw * 1000)
-        : null;
-      pins.push({ pinId, content, timestampMs });
-    }
-
-    const nextCursor =
-      typeof data?.nextCursor === 'string' && data.nextCursor ? data.nextCursor : undefined;
-    if (!nextCursor) break;
-    cursor = nextCursor;
-  }
-
-  return pins;
-}
-
 async function fetchRefundRequestPinsFromIndexer(): Promise<Array<{ pinId: string; content: unknown; timestampMs?: number | null }>> {
-  return fetchProtocolPinsFromIndexer(SERVICE_REFUND_REQUEST_PATH);
+  return fetchProtocolPinsFromIndexer(SERVICE_REFUND_REQUEST_PATH, {
+    pageSize: SERVICE_REFUND_SYNC_SIZE,
+    maxPages: SERVICE_REFUND_SYNC_MAX_PAGES,
+    selectContent: selectProtocolPinContent,
+  });
 }
 
 async function fetchRefundFinalizePinsFromIndexer(): Promise<Array<{ pinId: string; content: unknown; timestampMs?: number | null }>> {
-  return fetchProtocolPinsFromIndexer(SERVICE_REFUND_FINALIZE_PATH);
+  return fetchProtocolPinsFromIndexer(SERVICE_REFUND_FINALIZE_PATH, {
+    pageSize: SERVICE_REFUND_SYNC_SIZE,
+    maxPages: SERVICE_REFUND_SYNC_MAX_PAGES,
+    selectContent: selectProtocolPinContent,
+  });
 }
 
 const getServiceRefundSyncService = () => {
