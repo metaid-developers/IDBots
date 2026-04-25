@@ -206,6 +206,10 @@ export class SqliteStore {
     return store;
   }
 
+  static resetSqlJsRuntimeForRecovery(): void {
+    SqliteStore.sqlPromise = null;
+  }
+
   private initializeTables(basePath: string) {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS kv (
@@ -1391,6 +1395,10 @@ export class SqliteStore {
     const data = this.db.export();
     const buffer = Buffer.from(data);
     fs.writeFileSync(this.dbPath, buffer);
+  }
+
+  close(): void {
+    this.db.close();
   }
 
   onDidChange<T = unknown>(key: string, callback: (newValue: T | undefined, oldValue: T | undefined) => void) {

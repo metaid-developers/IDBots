@@ -7,6 +7,7 @@ import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
 import { SqliteStore } from './sqliteStore';
+import { isSqliteWasmBoundsError, runWithSqliteWasmRecovery } from './sqliteRecovery';
 import { CoworkStore } from './coworkStore';
 import { McpStore, type McpServerFormData } from './mcpStore';
 import type { MemoryBackend } from './memory/memoryBackend';
@@ -2079,6 +2080,180 @@ const getStore = (): SqliteStore => {
     throw new Error('Store not initialized. Call initStore() first.');
   }
   return store;
+};
+
+let sqliteRecoveryPromise: Promise<void> | null = null;
+
+const resetSqliteBackedSingletons = async (): Promise<void> => {
+  if (coworkRunner) {
+    try {
+      coworkRunner.stopAllSessions();
+    } catch (error) {
+      console.warn('[SQLiteRecovery] Failed to stop cowork sessions before reset:', error);
+    }
+  }
+  if (imGatewayManager) {
+    await imGatewayManager.stopAll().catch((error) => {
+      console.warn('[SQLiteRecovery] Failed to stop IM gateways before reset:', error);
+    });
+  }
+  stopMetaWebListener();
+  coworkStore = null;
+  mcpStore = null;
+  coworkRunner = null;
+  imGatewayManager = null;
+  scheduledTaskStore = null;
+  metabotStore = null;
+  serviceOrderStore = null;
+  serviceOrderLifecycleService = null;
+  serviceRefundSyncService = null;
+  serviceRefundSettlementService = null;
+  gigSquareRefundsService = null;
+  gigSquareSchemaReady = false;
+  providerPingService = null;
+  privateChatHistorySyncService = null;
+};
+
+const restartSqliteBackedDaemons = (input: {
+  restartScheduler: boolean;
+  restartListener: boolean;
+  restartImGateways: boolean;
+}): void => {
+  try {
+    if (scheduler) {
+      scheduler.stop();
+      scheduler = null;
+    }
+    stopCognitiveOrchestrator();
+    stopPrivateChatDaemon();
+
+    if (input.restartScheduler) {
+      getScheduler().start();
+    }
+
+    const skillMgr = getSkillManager();
+    startCognitiveOrchestrator(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      (id: number) => {
+        const m = getMetabotStore().getMetabotById(id);
+        return m
+          ? {
+              id: m.id,
+              name: m.name,
+              role: m.role ?? '',
+              soul: m.soul ?? '',
+              llm_id: m.llm_id ?? null,
+              globalmetaid: m.globalmetaid ?? null,
+              metaid: m.metaid,
+              boss_global_metaid: m.boss_global_metaid ?? null,
+            }
+          : null;
+      },
+      performChatCompletionForOrchestrator,
+      async (metabotId: number, groupId: string, nickName: string, content: string) => {
+        const encryptedContent = encryptGroupMessageECB(content, groupId);
+        const payload = {
+          groupId,
+          nickName,
+          content: encryptedContent,
+          contentType: 'text/plain',
+          encryption: 'aes',
+          timestamp: Date.now(),
+        };
+        await createPin(getMetabotStore(), metabotId, {
+          operation: 'create',
+          path: '/protocols/simplegroupchat',
+          contentType: 'application/json',
+          payload: JSON.stringify(payload),
+        });
+      },
+      {
+        getSkillsPromptForIds: (_ids: string[]) =>
+          skillMgr.buildAutoRoutingPromptForSkillIds(skillMgr.listSkills().map((s) => s.id)),
+        skillsRoots: skillMgr.getAllSkillRoots(),
+        runSkillTurnViaCowork: (params) =>
+          runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
+      }
+    );
+
+    startPrivateChatDaemon(
+      getStore().getDatabase(),
+      getStore().getSaveFunction(),
+      getCoworkStore(),
+      getMetabotStore(),
+      getCoworkRunner(),
+      createPin,
+      (msg) => console.log(msg),
+      getServiceOrderLifecycleService(),
+      async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
+      (channel, data) => {
+        BrowserWindow.getAllWindows().forEach(win => {
+          if (!win.isDestroyed()) {
+            try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
+          }
+        });
+      }
+    );
+
+    if (input.restartListener) {
+      const listenerConfig = getListenerConfigFromStore();
+      if (shouldRunListener(listenerConfig)) {
+        startListenerWithConfig(listenerConfig).catch((listenerError) => {
+          console.warn('[SQLiteRecovery] Failed to restart MetaWeb listener:', listenerError);
+        });
+      }
+    }
+
+    if (input.restartImGateways) {
+      getIMGatewayManager().startAllEnabled().catch((imError) => {
+        console.warn('[SQLiteRecovery] Failed to restart IM gateways:', imError);
+      });
+    }
+  } catch (error) {
+    console.warn('[SQLiteRecovery] Failed to restart sqlite-backed daemons:', error);
+  }
+};
+
+const recoverSqliteStore = async (error: unknown, operationName: string): Promise<void> => {
+  if (!sqliteRecoveryPromise) {
+    sqliteRecoveryPromise = (async () => {
+      console.warn(`[SQLiteRecovery] Recovering after sql.js wasm failure during ${operationName}:`, error);
+      const shouldRestartScheduler = Boolean(scheduler);
+      const shouldRestartListener = isListenerRunning();
+      const shouldRestartImGateways = Boolean(imGatewayManager);
+      await resetSqliteBackedSingletons();
+      try {
+        store?.close();
+      } catch (closeError) {
+        console.warn('[SQLiteRecovery] Failed to close damaged SQLite database:', closeError);
+      }
+      SqliteStore.resetSqlJsRuntimeForRecovery();
+      storeInitPromise = null;
+      store = await initStore();
+      setStoreGetter(() => store);
+      restartSqliteBackedDaemons({
+        restartScheduler: shouldRestartScheduler,
+        restartListener: shouldRestartListener,
+        restartImGateways: shouldRestartImGateways,
+      });
+      console.info(`[SQLiteRecovery] SQLite store recovered for ${operationName}.`);
+    })().finally(() => {
+      sqliteRecoveryPromise = null;
+    });
+  }
+  await sqliteRecoveryPromise;
+};
+
+const withSqliteRecovery = <T>(
+  operationName: string,
+  operation: () => T | Promise<T>,
+): Promise<T> => runWithSqliteWasmRecovery(operationName, operation, recoverSqliteStore);
+
+const rethrowSqliteWasmBoundsError = (error: unknown): void => {
+  if (isSqliteWasmBoundsError(error)) {
+    throw error;
+  }
 };
 
 const getCoworkStore = () => {
@@ -4792,23 +4967,25 @@ if (!gotTheLock) {
 
   // ==================== MetaBot IPC Handlers ====================
 
-  ipcMain.handle('idbots:getMetaBots', async () => {
+  ipcMain.handle('idbots:getMetaBots', async () => withSqliteRecovery('idbots:getMetaBots', async () => {
     try {
       const list = getMetabotStore().getAllMetaBots();
       return { success: true, list };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get MetaBots list' };
     }
-  });
+  }));
 
-  ipcMain.handle('metabot:list', async () => {
+  ipcMain.handle('metabot:list', async () => withSqliteRecovery('metabot:list', async () => {
     try {
       const list = getMetabotStore().listMetabots();
       return { success: true, list };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list metabots' };
     }
-  });
+  }));
 
   ipcMain.handle('metabot:checkNameExists', async (_event, options: { name: string; excludeId?: number }) => {
     try {
@@ -4824,14 +5001,15 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('metabot:get', async (_event, id: number) => {
+  ipcMain.handle('metabot:get', async (_event, id: number) => withSqliteRecovery('metabot:get', async () => {
     try {
       const metabot = getMetabotStore().getMetabotById(id);
       return { success: true, metabot };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get metabot' };
     }
-  });
+  }));
 
   const requireMetabotLlmIdForCreate = (value: unknown): string => {
     const llmId = typeof value === 'string' ? value.trim() : '';
@@ -5259,7 +5437,7 @@ if (!gotTheLock) {
   });
 
 
-  ipcMain.handle('gigSquare:fetchServices', async () => {
+  ipcMain.handle('gigSquare:fetchServices', async () => withSqliteRecovery('gigSquare:fetchServices', async () => {
     try {
       repairSelfDirectedServiceOrders();
       const refundRiskByProvider = new Map(
@@ -5281,15 +5459,16 @@ if (!gotTheLock) {
       );
       return { success: true, list };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch services' };
     }
-  });
+  }));
 
   ipcMain.handle('gigSquare:fetchMyServices', async (_event, params?: {
     page?: number;
     pageSize?: number;
     refresh?: boolean;
-  }) => {
+  }) => withSqliteRecovery('gigSquare:fetchMyServices', async () => {
     try {
       await syncGigSquareMyServicesData({
         refresh: Boolean(params?.refresh),
@@ -5314,16 +5493,17 @@ if (!gotTheLock) {
       );
       return { success: true, page: { ...summaryPage, items } };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my services' };
     }
-  });
+  }));
 
   ipcMain.handle('gigSquare:fetchMyServiceOrders', async (_event, params?: {
     serviceId?: string;
     page?: number;
     pageSize?: number;
     refresh?: boolean;
-  }) => {
+  }) => withSqliteRecovery('gigSquare:fetchMyServiceOrders', async () => {
     try {
       await syncGigSquareMyServicesData({
         refresh: Boolean(params?.refresh),
@@ -5412,18 +5592,20 @@ if (!gotTheLock) {
       });
       return { success: true, page: { ...detailPage, items } };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch my service orders' };
     }
-  });
+  }));
 
-  ipcMain.handle('gigSquare:fetchRefunds', async () => {
+  ipcMain.handle('gigSquare:fetchRefunds', async () => withSqliteRecovery('gigSquare:fetchRefunds', async () => {
     try {
       const refunds = await getGigSquareRefundsService().listRefunds();
       return { success: true, refunds };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch refunds' };
     }
-  });
+  }));
 
   ipcMain.handle('gigSquare:processRefundOrder', async (_event, params?: {
     orderId?: string;
@@ -6209,32 +6391,35 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
   });
 
   // --- Provider discovery IPC handlers ---
-  ipcMain.handle('providerDiscovery:getOnlineServices', async () => {
+  ipcMain.handle('providerDiscovery:getOnlineServices', async () => withSqliteRecovery('providerDiscovery:getOnlineServices', async () => {
     try {
       const services = getProviderDiscoveryService().getDiscoverySnapshot().availableServices;
       return { success: true, services };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online services' };
     }
-  });
+  }));
 
-  ipcMain.handle('providerDiscovery:getOnlineBots', async () => {
+  ipcMain.handle('providerDiscovery:getOnlineBots', async () => withSqliteRecovery('providerDiscovery:getOnlineBots', async () => {
     try {
       const bots = getProviderDiscoveryService().getDiscoverySnapshot().onlineBots;
       return { success: true, bots };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get online bots' };
     }
-  });
+  }));
 
-  ipcMain.handle('providerDiscovery:getSnapshot', async () => {
+  ipcMain.handle('providerDiscovery:getSnapshot', async () => withSqliteRecovery('providerDiscovery:getSnapshot', async () => {
     try {
       const snapshot = getProviderDiscoveryService().getDiscoverySnapshot();
       return { success: true, snapshot };
     } catch (error) {
+      rethrowSqliteWasmBoundsError(error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get provider discovery snapshot' };
     }
-  });
+  }));
 
   ipcMain.handle('idbots:getAddressBalance', async (_event, options: { metabotId?: number; addresses?: { btc?: string; mvc?: string; doge?: string } }) => {
     try {
