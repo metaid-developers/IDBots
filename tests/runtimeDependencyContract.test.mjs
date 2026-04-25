@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const packageJsonPath = path.join(process.cwd(), 'package.json');
 const skillManagerPath = path.join(process.cwd(), 'src', 'main', 'skillManager.ts');
+const coworkRunnerPath = path.join(process.cwd(), 'src', 'main', 'libs', 'coworkRunner.ts');
 
 test('skillManager runtime YAML parser must be declared as production dependency', () => {
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
@@ -37,5 +38,30 @@ test('web-search skill build must go through the runtime bootstrap wrapper', () 
     aggregateBuildScript,
     /node\s+scripts\/build-web-search-skill\.js/,
     'build:skills should use the same web-search bootstrap script so electron:dev works in fresh worktrees',
+  );
+});
+
+test('SDK built-in web tools are gated by an explicit env flag', () => {
+  const source = fs.readFileSync(coworkRunnerPath, 'utf8');
+
+  assert.match(
+    source,
+    /const ENABLE_SDK_WEB_TOOLS_ENV = 'IDBOTS_ENABLE_SDK_WEB_TOOLS'/,
+    'CoworkRunner should expose SDK WebSearch/WebFetch through an explicit opt-in env flag',
+  );
+  assert.match(
+    source,
+    /export function shouldBlockBuiltinWebTool\(toolName: string\): boolean/,
+    'CoworkRunner should keep the web tool gate in a testable helper',
+  );
+  assert.match(
+    source,
+    /if \(isSdkBuiltinWebToolsEnabled\(\)\) \{\s*return false;\s*\}/,
+    'IDBOTS_ENABLE_SDK_WEB_TOOLS should disable the WebSearch/WebFetch block when truthy',
+  );
+  assert.match(
+    source,
+    /const BLOCKED_BUILTIN_WEB_TOOLS = new Set\(\['websearch', 'webfetch'\]\)/,
+    'Default behavior should continue blocking SDK WebSearch and WebFetch',
   );
 });

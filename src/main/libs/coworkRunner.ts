@@ -132,6 +132,7 @@ const TASK_WORKSPACE_CONTAINER_DIR = '.idbots-tasks';
 const PERMISSION_RESPONSE_TIMEOUT_MS = 60_000;
 const DELETE_TOOL_NAMES = new Set(['delete', 'remove', 'unlink', 'rmdir']);
 const BLOCKED_BUILTIN_WEB_TOOLS = new Set(['websearch', 'webfetch']);
+const ENABLE_SDK_WEB_TOOLS_ENV = 'IDBOTS_ENABLE_SDK_WEB_TOOLS';
 const SAFETY_APPROVAL_ALLOW_OPTION = '允许本次操作';
 const SAFETY_APPROVAL_DENY_OPTION = '拒绝本次操作';
 const DELETE_COMMAND_RE = /\b(rm|rmdir|unlink|del|erase|remove-item)\b/i;
@@ -151,6 +152,42 @@ function escapeRegExp(value: string): string {
 
 function findSkillsMarkerIndex(value: string): number {
   return value.toLowerCase().lastIndexOf(SKILLS_MARKER);
+}
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function isSdkBuiltinWebToolsEnabled(): boolean {
+  return isTruthyEnvValue(process.env[ENABLE_SDK_WEB_TOOLS_ENV]);
+}
+
+export function shouldBlockBuiltinWebTool(toolName: string): boolean {
+  if (isSdkBuiltinWebToolsEnabled()) {
+    return false;
+  }
+
+  const normalized = String(toolName ?? '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const compact = normalized.replace(/[^a-z0-9]/g, '');
+  if (BLOCKED_BUILTIN_WEB_TOOLS.has(compact)) {
+    return true;
+  }
+
+  const segments = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  if (segments.length >= 2) {
+    const tail = `${segments[segments.length - 2]}${segments[segments.length - 1]}`;
+    if (BLOCKED_BUILTIN_WEB_TOOLS.has(tail)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function resolveSkillPathFromRoots(
@@ -2472,25 +2509,7 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private isBlockedBuiltinWebTool(toolName: string): boolean {
-    const normalized = String(toolName ?? '').trim().toLowerCase();
-    if (!normalized) {
-      return false;
-    }
-
-    const compact = normalized.replace(/[^a-z0-9]/g, '');
-    if (BLOCKED_BUILTIN_WEB_TOOLS.has(compact)) {
-      return true;
-    }
-
-    const segments = normalized.split(/[^a-z0-9]+/).filter(Boolean);
-    if (segments.length >= 2) {
-      const tail = `${segments[segments.length - 2]}${segments[segments.length - 1]}`;
-      if (BLOCKED_BUILTIN_WEB_TOOLS.has(tail)) {
-        return true;
-      }
-    }
-
-    return false;
+    return shouldBlockBuiltinWebTool(toolName);
   }
 
   private denyBlockedBuiltinWebTool(
