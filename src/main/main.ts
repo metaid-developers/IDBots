@@ -1245,7 +1245,6 @@ const resolveGigSquareServiceCreatorMetabot = (
 
 const listCurrentMyGigSquareServices = (): GigSquareCurrentMyService[] => {
   const ownedGlobalMetaIds = listOwnedGigSquareProviderGlobalMetaIds();
-  const sellerOrders = getServiceOrderStore().listOrdersByRole('seller');
   const resolvedCurrentRows = resolveCurrentMarketplaceServices(
     listRemoteSkillServicesFromDb().filter((service) =>
       ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())
@@ -1257,7 +1256,6 @@ const listCurrentMyGigSquareServices = (): GigSquareCurrentMyService[] => {
     const creator = resolveGigSquareServiceCreatorMetabot(service);
     const actionAvailability = resolveServiceActionAvailability({
       currentService: service,
-      sellerOrders,
       creatorMetabotExists: creator.id != null,
     });
     return {

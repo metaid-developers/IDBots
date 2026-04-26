@@ -8,12 +8,6 @@ type ServiceLike = {
   available?: number;
 };
 
-type SellerOrderLike = {
-  servicePinId?: string | null;
-  status?: string | null;
-  paymentAmount?: string | null;
-};
-
 type LocalServiceStateRecordLike = {
   id?: string;
   pinId?: string;
@@ -62,9 +56,6 @@ export type GigSquareServiceActionAvailability = {
   blockedReason: string | null;
 };
 
-const COMPLETED_STATUS = 'completed';
-const REFUNDED_STATUS = 'refunded';
-
 const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value == null) return '';
@@ -75,13 +66,6 @@ const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const isFreeOrderPaymentAmount = (value: unknown): boolean => {
-  const normalized = toSafeString(value).trim();
-  if (!normalized) return false;
-  const numeric = Number(normalized);
-  return Number.isFinite(numeric) && numeric === 0;
 };
 
 const normalizePinId = (row: ServiceLike): string => {
@@ -279,7 +263,6 @@ export const resolveServiceActionAvailability = (input: {
     operation?: string | null;
     available?: number;
   } | null;
-  sellerOrders: SellerOrderLike[];
   creatorMetabotExists: boolean;
   isCurrent?: boolean;
   isRevoked?: boolean;
@@ -306,26 +289,6 @@ export const resolveServiceActionAvailability = (input: {
       canModify: false,
       canRevoke: false,
       blockedReason: 'gigSquareMyServicesBlockedMissingCreatorMetabot',
-    };
-  }
-
-  const chainPinIds = new Set(
-    (currentRow.chainPinIds?.length ? currentRow.chainPinIds : [currentRow.currentPinId, currentRow.sourceServicePinId])
-      .map((value) => toSafeString(value).trim())
-      .filter(Boolean)
-  );
-  const hasActiveSellerOrder = input.sellerOrders.some((order) => {
-    const orderServicePinId = toSafeString(order.servicePinId).trim();
-    const normalizedStatus = toSafeString(order.status).trim();
-    if (!orderServicePinId || !chainPinIds.has(orderServicePinId)) return false;
-    if (isFreeOrderPaymentAmount(order.paymentAmount)) return false;
-    return normalizedStatus !== COMPLETED_STATUS && normalizedStatus !== REFUNDED_STATUS;
-  });
-  if (hasActiveSellerOrder) {
-    return {
-      canModify: false,
-      canRevoke: false,
-      blockedReason: 'gigSquareMyServicesBlockedActiveOrders',
     };
   }
 

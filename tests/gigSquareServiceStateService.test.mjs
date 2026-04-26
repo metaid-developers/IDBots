@@ -17,7 +17,7 @@ const BASE_CURRENT_SERVICE = {
   available: 1,
 };
 
-test('resolveServiceActionAvailability blocks mutation for active paid seller orders', () => {
+test('resolveServiceActionAvailability allows local service mutation even when paid seller orders are active', () => {
   const result = resolveServiceActionAvailability({
     currentService: BASE_CURRENT_SERVICE,
     creatorMetabotExists: true,
@@ -28,9 +28,9 @@ test('resolveServiceActionAvailability blocks mutation for active paid seller or
     }],
   });
 
-  assert.equal(result.canModify, false);
-  assert.equal(result.canRevoke, false);
-  assert.equal(result.blockedReason, 'gigSquareMyServicesBlockedActiveOrders');
+  assert.equal(result.canModify, true);
+  assert.equal(result.canRevoke, true);
+  assert.equal(result.blockedReason, null);
 });
 
 test('resolveServiceActionAvailability allows mutation when only free seller orders are active', () => {
@@ -47,4 +47,39 @@ test('resolveServiceActionAvailability allows mutation when only free seller ord
   assert.equal(result.canModify, true);
   assert.equal(result.canRevoke, true);
   assert.equal(result.blockedReason, null);
+});
+
+test('resolveServiceActionAvailability still blocks non-current services', () => {
+  const result = resolveServiceActionAvailability({
+    currentService: BASE_CURRENT_SERVICE,
+    creatorMetabotExists: true,
+    isCurrent: false,
+  });
+
+  assert.equal(result.canModify, false);
+  assert.equal(result.canRevoke, false);
+  assert.equal(result.blockedReason, 'gigSquareMyServicesBlockedNotCurrent');
+});
+
+test('resolveServiceActionAvailability still blocks revoked services', () => {
+  const result = resolveServiceActionAvailability({
+    currentService: BASE_CURRENT_SERVICE,
+    creatorMetabotExists: true,
+    isRevoked: true,
+  });
+
+  assert.equal(result.canModify, false);
+  assert.equal(result.canRevoke, false);
+  assert.equal(result.blockedReason, 'gigSquareMyServicesBlockedRevoked');
+});
+
+test('resolveServiceActionAvailability still blocks services without a creator metabot wallet', () => {
+  const result = resolveServiceActionAvailability({
+    currentService: BASE_CURRENT_SERVICE,
+    creatorMetabotExists: false,
+  });
+
+  assert.equal(result.canModify, false);
+  assert.equal(result.canRevoke, false);
+  assert.equal(result.blockedReason, 'gigSquareMyServicesBlockedMissingCreatorMetabot');
 });
