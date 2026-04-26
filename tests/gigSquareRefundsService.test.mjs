@@ -146,7 +146,6 @@ test('listRefunds groups seller and buyer refund rows and counts seller pending 
     result.pendingForMe.map((item) => [item.orderId, item.status, item.canProcessRefund]),
     [
       ['seller-pending', 'refund_pending', true],
-      ['seller-pending-missing-pin', 'refund_pending', false],
       ['seller-refunded', 'refunded', false],
     ],
   );
@@ -154,12 +153,12 @@ test('listRefunds groups seller and buyer refund rows and counts seller pending 
   assert.equal(result.pendingForMe[0].counterpartyAvatar, 'https://example.com/buyer-1.png');
   assert.equal(result.pendingForMe[0].coworkSessionId, 'session-recovered');
   assert.equal(result.pendingForMe[0].paymentTxid, '1'.repeat(64));
-  assert.equal(result.pendingForMe[2].coworkSessionId, 'session-known');
+  assert.equal(result.pendingForMe[1].coworkSessionId, 'session-known');
   assert.equal(result.initiatedByMe[0].counterpartyName, 'seller-global-1');
   assert.equal(result.initiatedByMe[0].canProcessRefund, false);
   assert.deepEqual(
     result.pendingForMe.map((item) => item.orderId),
-    ['seller-pending', 'seller-pending-missing-pin', 'seller-refunded'],
+    ['seller-pending', 'seller-refunded'],
   );
   assert.deepEqual(result.initiatedByMe.map((item) => item.orderId), ['buyer-pending']);
 });
@@ -248,6 +247,40 @@ test('listRefunds follows the spec sorting rules for seller and buyer tabs', asy
     result.initiatedByMe.map((item) => item.orderId),
     ['buyer-pending-latest', 'buyer-pending-fallback', 'buyer-refunded-new', 'buyer-refunded-old'],
   );
+});
+
+test('listRefunds keeps seller refunded history while excluding non-actionable pending rows', async () => {
+  const service = createService({
+    listSellerRefundOrders: () => [
+      createOrder({
+        id: 'seller-refunded',
+        status: 'refunded',
+        refundTxid: '7'.repeat(64),
+        refundCompletedAt: 1_770_101_000_000,
+      }),
+      createOrder({
+        id: 'seller-pending-missing-pin',
+        status: 'refund_pending',
+        refundRequestPinId: null,
+      }),
+      createOrder({
+        id: 'seller-actionable',
+        status: 'refund_pending',
+        refundRequestPinId: 'refund-request-pin-actionable',
+      }),
+    ],
+  });
+
+  const result = await service.listRefunds();
+
+  assert.deepEqual(
+    result.pendingForMe.map((item) => [item.orderId, item.status, item.canProcessRefund]),
+    [
+      ['seller-actionable', 'refund_pending', true],
+      ['seller-refunded', 'refunded', false],
+    ],
+  );
+  assert.equal(result.pendingCount, 1);
 });
 
 test('listRefunds tolerates missing counterparty info and falls back to globalmetaid', async () => {
