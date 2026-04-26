@@ -3,10 +3,25 @@ import assert from 'node:assert/strict';
 
 let appendPrivateChatA2AMessage;
 let endPrivateChatA2AConversation;
+let analyzePrivateChatA2AConversation;
+let buildPrivateChatA2ASystemPrompt;
+let waitBeforePrivateChatReply;
 try {
-  ({ appendPrivateChatA2AMessage, endPrivateChatA2AConversation } = await import('../dist-electron/main/services/privateChatDaemon.js'));
+  ({
+    appendPrivateChatA2AMessage,
+    endPrivateChatA2AConversation,
+    analyzePrivateChatA2AConversation,
+    buildPrivateChatA2ASystemPrompt,
+    waitBeforePrivateChatReply,
+  } = await import('../dist-electron/main/services/privateChatDaemon.js'));
 } catch {
-  ({ appendPrivateChatA2AMessage, endPrivateChatA2AConversation } = await import('../dist-electron/services/privateChatDaemon.js'));
+  ({
+    appendPrivateChatA2AMessage,
+    endPrivateChatA2AConversation,
+    analyzePrivateChatA2AConversation,
+    buildPrivateChatA2ASystemPrompt,
+    waitBeforePrivateChatReply,
+  } = await import('../dist-electron/services/privateChatDaemon.js'));
 }
 
 function createCoworkStoreHarness() {
@@ -160,4 +175,136 @@ test('ending a private chat A2A conversation marks the mapping closed and emits 
     'cowork:stream:message',
     'cowork:stream:complete',
   ]);
+});
+
+test('private chat reply waits through an injectable five-second delay hook', async () => {
+  const delays = [];
+  await waitBeforePrivateChatReply((ms) => {
+    delays.push(ms);
+    return Promise.resolve();
+  });
+
+  assert.deepEqual(delays, [5000]);
+});
+
+test('private chat prompt includes recent A2A context and topic-ending policy', () => {
+  const analysis = analyzePrivateChatA2AConversation({
+    messages: [
+      {
+        id: 'm1',
+        type: 'user',
+        content: '我们讨论一下比特币生态的索引器吧',
+        timestamp: 1_770_000_000_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private', senderName: 'Peer Bot' },
+      },
+      {
+        id: 'm2',
+        type: 'assistant',
+        content: '可以，先从链上数据可用性说起。',
+        timestamp: 1_770_000_001_000,
+        metadata: { direction: 'outgoing', sourceChannel: 'metaweb_private' },
+      },
+      {
+        id: 'm3',
+        type: 'user',
+        content: '那缓存策略呢？',
+        timestamp: 1_770_000_002_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private', senderName: 'Peer Bot' },
+      },
+    ],
+    now: 1_770_000_002_000,
+  });
+
+  const prompt = buildPrivateChatA2ASystemPrompt({
+    metabot: {
+      name: 'Local Bot',
+      role: 'Technical partner',
+      soul: 'direct',
+      goal: 'useful discussion',
+      background: 'MetaID',
+    },
+    memoryContext: '<contactMemories />',
+    analysis,
+  });
+
+  assert.match(prompt, /private-chat MetaBot/);
+  assert.match(prompt, /valuable discussion/i);
+  assert.match(prompt, /coherent topic/i);
+  assert.match(prompt, /say exactly "bye"/i);
+  assert.match(prompt, /50 turns/i);
+  assert.match(prompt, /Peer Bot: 我们讨论一下比特币生态的索引器吧/);
+  assert.match(prompt, /Local Bot: 可以，先从链上数据可用性说起。/);
+  assert.match(prompt, /Peer Bot: 那缓存策略呢？/);
+  assert.match(prompt, /<contactMemories \/>/);
+});
+
+test('private chat analysis requests bye at fifty incoming turns and resets after inactivity', () => {
+  const base = 1_770_000_000_000;
+  const longRun = Array.from({ length: 50 }, (_value, index) => ({
+    id: `incoming-${index + 1}`,
+    type: 'user',
+    content: `turn ${index + 1}`,
+    timestamp: base + index * 10_000,
+    metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+  }));
+
+  const longRunAnalysis = analyzePrivateChatA2AConversation({
+    messages: longRun,
+    now: base + 500_000,
+  });
+  assert.equal(longRunAnalysis.shouldForceBye, true);
+  assert.equal(longRunAnalysis.incomingTurnCount, 50);
+
+  const resetAnalysis = analyzePrivateChatA2AConversation({
+    messages: [
+      ...longRun,
+      {
+        id: 'after-gap',
+        type: 'user',
+        content: 'new topic after a long gap',
+        timestamp: base + 50 * 10_000 + 11 * 60_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+      },
+    ],
+    now: base + 50 * 10_000 + 11 * 60_000,
+  });
+
+  assert.equal(resetAnalysis.shouldForceBye, false);
+  assert.equal(resetAnalysis.incomingTurnCount, 1);
+  assert.deepEqual(
+    resetAnalysis.contextMessages.map((message) => message.content),
+    ['new topic after a long gap']
+  );
+});
+
+test('private chat analysis resets after an outgoing bye', () => {
+  const analysis = analyzePrivateChatA2AConversation({
+    messages: [
+      {
+        id: 'before-bye',
+        type: 'user',
+        content: 'old topic',
+        timestamp: 1_770_000_000_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+      },
+      {
+        id: 'bye',
+        type: 'assistant',
+        content: 'bye',
+        timestamp: 1_770_000_001_000,
+        metadata: { direction: 'outgoing', sourceChannel: 'metaweb_private' },
+      },
+      {
+        id: 'after-bye',
+        type: 'user',
+        content: 'new topic',
+        timestamp: 1_770_000_002_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+      },
+    ],
+    now: 1_770_000_002_000,
+  });
+
+  assert.equal(analysis.incomingTurnCount, 1);
+  assert.deepEqual(analysis.contextMessages.map((message) => message.content), ['new topic']);
 });
