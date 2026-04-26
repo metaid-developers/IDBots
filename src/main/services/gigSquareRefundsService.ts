@@ -112,8 +112,8 @@ const canProcessRefundOrder = (order: GigSquareRefundOrderRecord): boolean => (
   && Boolean(normalizeOptionalText(order.refundRequestPinId))
 );
 
-const isActionableSellerRefundOrder = (order: GigSquareRefundOrderRecord): boolean => (
-  canProcessRefundOrder(order)
+const isSellerRefundListOrder = (order: GigSquareRefundOrderRecord): boolean => (
+  canProcessRefundOrder(order) || order.status === 'refunded'
 );
 
 const getSellerSortTimestamp = (order: GigSquareRefundOrderRecord): number => (
@@ -196,7 +196,7 @@ export class GigSquareRefundsService {
     const [pendingForMe, initiatedByMe] = await Promise.all([
       Promise.all(
         [...sellerOrders]
-          .filter(isActionableSellerRefundOrder)
+          .filter(isSellerRefundListOrder)
           .sort(compareSellerRefundOrders)
           .map((order) => this.buildRefundItem(order))
       ),
@@ -211,7 +211,7 @@ export class GigSquareRefundsService {
     return {
       pendingForMe,
       initiatedByMe,
-      pendingCount: pendingForMe.length,
+      pendingCount: pendingForMe.filter((item) => item.canProcessRefund).length,
     };
   }
 
