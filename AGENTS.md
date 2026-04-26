@@ -47,6 +47,7 @@ As of March 23, 2026, `main` includes the local-first `man-p2p` Alpha baseline u
 - If you notice unfamiliar or unrelated file changes, continue working and stay focused on your own scoped edits unless the user asks you to inspect them.
 - Before creating a new git worktree or branch, ask for explicit user confirmation first.
 - Every new branch must be created together with a dedicated local worktree; use one worktree working directory per branch, and do not create or switch branches in the main working directory.
+- All feature or temporary branches must branch directly from `main`; never create a new branch from another branch. Branch depth is capped at 1.
 - When the user says "commit", stage and commit only the files you changed and understand.
 - After each commit, do not push to the remote GitHub repository unless the user explicitly asks you to push.
 - Prefer small, frequent commits. Commit each independent, verifiable unit of work as soon as it is complete.
