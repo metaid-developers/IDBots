@@ -26,7 +26,7 @@ import {
   OrderSource,
 } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
-import type { CoworkStore } from '../coworkStore';
+import type { CoworkMessage, CoworkMessageMetadata, CoworkStore } from '../coworkStore';
 import type { MemoryBackend } from '../memory/memoryBackend';
 import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
 import { createOwnerMemoryScope } from '../memory/memoryScope';
@@ -74,6 +74,7 @@ export type CreatePrivateMsgPinFn = (
 ) => Promise<{ txid?: string }>;
 
 type SaveDbFn = () => void;
+type RendererEmitter = (channel: string, data: unknown) => void;
 type GetSellerOrderSkillsPromptFn = (params: {
   skillId?: string | null;
   skillName?: string | null;
@@ -517,6 +518,46 @@ async function resolvePrivateConversationSession(
     }),
   });
   return { sessionId: session.id, externalConversationId };
+}
+
+export function appendPrivateChatA2AMessage(params: {
+  coworkStore: Pick<CoworkStore, 'addMessage'>;
+  sessionId: string;
+  externalConversationId: string;
+  type: 'user' | 'assistant';
+  content: string;
+  senderGlobalMetaId?: string | null;
+  senderName?: string | null;
+  senderAvatar?: string | null;
+  emitToRenderer?: RendererEmitter;
+}): CoworkMessage {
+  const metadata: CoworkMessageMetadata = {
+    sourceChannel: 'metaweb_private',
+    externalConversationId: params.externalConversationId,
+    direction: params.type === 'user' ? 'incoming' : 'outgoing',
+  };
+
+  if (params.type === 'user') {
+    metadata.senderGlobalMetaId = params.senderGlobalMetaId ?? undefined;
+    metadata.senderName = params.senderName ?? undefined;
+    metadata.senderAvatar = params.senderAvatar ?? undefined;
+    metadata.suppressRunningStatus = true;
+  }
+
+  const message = params.coworkStore.addMessage(params.sessionId, {
+    type: params.type,
+    content: params.content,
+    metadata,
+  });
+
+  if (params.emitToRenderer) {
+    params.emitToRenderer('cowork:stream:message', {
+      sessionId: params.sessionId,
+      message,
+    });
+  }
+
+  return message;
 }
 
 interface RatingFlowParams {
@@ -1248,16 +1289,16 @@ async function processOne(
       return;
     }
 
-    const userMessage = coworkStore.addMessage(sessionId, {
+    const userMessage = appendPrivateChatA2AMessage({
+      coworkStore,
+      sessionId,
+      externalConversationId,
       type: 'user',
       content: plaintext,
-      metadata: {
-        sourceChannel: 'metaweb_private',
-        externalConversationId,
-        senderGlobalMetaId: fromGlobalMetaId,
-        senderName: (row.from_name as string | null) ?? undefined,
-        senderAvatar: (row.from_avatar as string | null) ?? undefined,
-      },
+      senderGlobalMetaId: fromGlobalMetaId,
+      senderName: (row.from_name as string | null) ?? null,
+      senderAvatar: (row.from_avatar as string | null) ?? null,
+      emitToRenderer,
     });
 
     const memoryBackend = coworkStore.getMemoryBackend();
@@ -1305,13 +1346,13 @@ async function processOne(
       return;
     }
 
-    const assistantMessage = coworkStore.addMessage(sessionId, {
+    const assistantMessage = appendPrivateChatA2AMessage({
+      coworkStore,
+      sessionId,
+      externalConversationId,
       type: 'assistant',
       content: trimmed,
-      metadata: {
-        sourceChannel: 'metaweb_private',
-        externalConversationId,
-      },
+      emitToRenderer,
     });
 
     if (memoryPolicy.memoryEnabled) {
