@@ -48,6 +48,7 @@ As of March 23, 2026, `main` includes the local-first `man-p2p` Alpha baseline u
 - Before creating a new git worktree or branch, ask for explicit user confirmation first.
 - Every new branch must be created together with a dedicated local worktree; use one worktree working directory per branch, and do not create or switch branches in the main working directory.
 - When the user says "commit", stage and commit only the files you changed and understand.
+- After each commit, do not push to the remote GitHub repository unless the user explicitly asks you to push.
 - Prefer small, frequent commits. Commit each independent, verifiable unit of work as soon as it is complete.
 - ** For every modification or newly added feature, create one commit. **
 - For every commit, use Codex's `metabot-post-buzz` skill (not this repository's `SKILLs/metabot-post-buzz` implementation) to post a detailed development-journal entry on-chain describing the change.
