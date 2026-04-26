@@ -529,12 +529,14 @@ export function appendPrivateChatA2AMessage(params: {
   senderGlobalMetaId?: string | null;
   senderName?: string | null;
   senderAvatar?: string | null;
+  extraMetadata?: CoworkMessageMetadata;
   emitToRenderer?: RendererEmitter;
 }): CoworkMessage {
   const metadata: CoworkMessageMetadata = {
     sourceChannel: 'metaweb_private',
     externalConversationId: params.externalConversationId,
     direction: params.type === 'user' ? 'incoming' : 'outgoing',
+    ...(params.extraMetadata ?? {}),
   };
 
   if (params.type === 'user') {
@@ -558,6 +560,108 @@ export function appendPrivateChatA2AMessage(params: {
   }
 
   return message;
+}
+
+export function endPrivateChatA2AConversation(params: {
+  coworkStore: Pick<
+    CoworkStore,
+    | 'getSession'
+    | 'getConversationSourceContextBySession'
+    | 'getConversationMapping'
+    | 'updateConversationMappingMetadata'
+    | 'updateSession'
+    | 'addMessage'
+  >;
+  sessionId: string;
+  now?: () => number;
+  emitToRenderer?: RendererEmitter;
+}): {
+  success: boolean;
+  error?: string;
+  externalConversationId?: string;
+  peerGlobalMetaId?: string | null;
+  alreadyEnded?: boolean;
+} {
+  const session = params.coworkStore.getSession(params.sessionId);
+  if (!session) return { success: false, error: 'Session not found' };
+  if (session.sessionType !== 'a2a') return { success: false, error: 'Only A2A sessions can be ended this way' };
+  if (typeof session.metabotId !== 'number') return { success: false, error: 'A2A session has no local MetaBot id' };
+
+  const sourceContext = params.coworkStore.getConversationSourceContextBySession(params.sessionId);
+  if (sourceContext.sourceChannel !== 'metaweb_private' || !sourceContext.externalConversationId) {
+    return { success: false, error: 'Only MetaWeb private chat A2A sessions can be ended this way' };
+  }
+
+  const mapping = params.coworkStore.getConversationMapping(
+    'metaweb_private',
+    sourceContext.externalConversationId,
+    session.metabotId
+  );
+  if (!mapping) return { success: false, error: 'Private chat conversation mapping not found' };
+
+  const currentMetadata = parseConversationMappingMetadata(mapping.metadataJson);
+  if (currentMetadata.byeSent === true && currentMetadata.endedByHuman === true) {
+    return {
+      success: true,
+      externalConversationId: sourceContext.externalConversationId,
+      peerGlobalMetaId: session.peerGlobalMetaId ?? (currentMetadata.peerGlobalMetaId as string | undefined) ?? null,
+      alreadyEnded: true,
+    };
+  }
+
+  const endedAt = params.now ? params.now() : Date.now();
+  params.coworkStore.updateConversationMappingMetadata(
+    'metaweb_private',
+    sourceContext.externalConversationId,
+    session.metabotId,
+    {
+      ...currentMetadata,
+      byeSent: true,
+      endedByHuman: true,
+      endedAt,
+    }
+  );
+
+  appendPrivateChatA2AMessage({
+    coworkStore: params.coworkStore,
+    sessionId: params.sessionId,
+    externalConversationId: sourceContext.externalConversationId,
+    type: 'assistant',
+    content: 'bye',
+    extraMetadata: {
+      a2aConversationEnded: true,
+      suppressRunningStatus: true,
+    },
+    emitToRenderer: params.emitToRenderer,
+  });
+
+  const systemMessage = params.coworkStore.addMessage(params.sessionId, {
+    type: 'system',
+    content: '系统提示：人类已结束此 A2A 私聊，本机 MetaBot 将不再自动回复该对话。',
+    metadata: {
+      sourceChannel: 'metaweb_private',
+      externalConversationId: sourceContext.externalConversationId,
+      a2aConversationEndSystemNotice: true,
+      suppressRunningStatus: true,
+    },
+  });
+  if (params.emitToRenderer) {
+    params.emitToRenderer('cowork:stream:message', {
+      sessionId: params.sessionId,
+      message: systemMessage,
+    });
+  }
+
+  params.coworkStore.updateSession(params.sessionId, { status: 'completed' });
+  if (params.emitToRenderer) {
+    params.emitToRenderer('cowork:stream:complete', { sessionId: params.sessionId });
+  }
+
+  return {
+    success: true,
+    externalConversationId: sourceContext.externalConversationId,
+    peerGlobalMetaId: session.peerGlobalMetaId ?? (currentMetadata.peerGlobalMetaId as string | undefined) ?? null,
+  };
 }
 
 interface RatingFlowParams {

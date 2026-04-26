@@ -227,6 +227,26 @@ class CoworkService {
     return false;
   }
 
+  async endA2APrivateChat(sessionId: string): Promise<{ success: boolean; noticeSent?: boolean; error?: string }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.endA2APrivateChat) {
+      return { success: false, error: 'A2A private chat end API not available' };
+    }
+
+    const result = await cowork.endA2APrivateChat(sessionId);
+    if (result.success) {
+      store.dispatch(updateSessionStatus({ sessionId, status: 'completed' }));
+      await this.loadSession(sessionId);
+      return {
+        success: true,
+        noticeSent: result.noticeSent,
+      };
+    }
+
+    console.error('Failed to end A2A private chat:', result.error);
+    return { success: false, error: result.error || 'Failed to end A2A private chat' };
+  }
+
   async deleteSession(sessionId: string): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;

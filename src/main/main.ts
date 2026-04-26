@@ -75,7 +75,11 @@ import {
   shouldRunListener,
 } from './services/metaWebListenerReadiness';
 import { startOrchestrator as startCognitiveOrchestrator, stopOrchestrator as stopCognitiveOrchestrator } from './services/cognitiveOrchestrator';
-import { startPrivateChatDaemon, stopPrivateChatDaemon } from './services/privateChatDaemon';
+import {
+  endPrivateChatA2AConversation,
+  startPrivateChatDaemon,
+  stopPrivateChatDaemon,
+} from './services/privateChatDaemon';
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
@@ -4218,6 +4222,89 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to stop session',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:endA2APrivateChat', async (_event, sessionId: string) => {
+    try {
+      const coworkStoreInst = getCoworkStore();
+      const result = endPrivateChatA2AConversation({
+        coworkStore: coworkStoreInst,
+        sessionId,
+        emitToRenderer: (channel, data) => {
+          BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
+            }
+          });
+        },
+      });
+      if (!result.success) {
+        return { success: false, error: result.error || 'Failed to end A2A private chat' };
+      }
+
+      const session = coworkStoreInst.getSession(sessionId);
+      const metabotId = session?.metabotId;
+      const peerGlobalMetaId = toSafeString(result.peerGlobalMetaId || session?.peerGlobalMetaId).trim();
+      let noticeSent = false;
+
+      if (!result.alreadyEnded && typeof metabotId === 'number' && peerGlobalMetaId) {
+        try {
+          const metabotStoreInst = getMetabotStore();
+          const metabot = metabotStoreInst.getMetabotById(metabotId);
+          const wallet = metabotStoreInst.getMetabotWalletByMetabotId(metabotId);
+          const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
+          if (metabot && wallet?.mnemonic?.trim() && localGlobalMetaId) {
+            const db = getStore().getDatabase();
+            const latestPeerKey = db.exec(
+              `SELECT from_chat_pubkey, reply_pin
+               FROM private_chat_messages
+               WHERE (from_global_metaid = ? OR from_metaid = ?)
+                 AND (to_global_metaid = ? OR to_metaid = ?)
+                 AND from_chat_pubkey IS NOT NULL
+                 AND TRIM(from_chat_pubkey) != ''
+               ORDER BY id DESC
+               LIMIT 1`,
+              [peerGlobalMetaId, peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId]
+            );
+            const row = latestPeerKey[0]?.values?.[0] ?? [];
+            let chatPubkey = toSafeString(row[0]).trim();
+            const replyPin = toSafeString(row[1]).trim();
+            if (!chatPubkey) {
+              chatPubkey = await resolveChatPubkeyForProvider(peerGlobalMetaId) ?? '';
+            }
+            if (chatPubkey) {
+              const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+                wallet.mnemonic,
+                wallet.path || "m/44'/10001'/0'/0/0"
+              );
+              const encrypted = ecdhEncrypt(
+                'bye',
+                computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
+              );
+              const payloadStr = buildPrivateMessagePayload(peerGlobalMetaId, encrypted, replyPin);
+              await createPin(metabotStoreInst, metabotId, {
+                operation: 'create',
+                path: '/protocols/simplemsg',
+                encryption: '0',
+                version: '1.0.0',
+                contentType: 'application/json',
+                payload: payloadStr,
+              });
+              noticeSent = true;
+            }
+          }
+        } catch (sendError) {
+          console.warn('[Cowork] Failed to send A2A private chat bye:', sendError);
+        }
+      }
+
+      return { success: true, noticeSent };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to end A2A private chat',
       };
     }
   });
