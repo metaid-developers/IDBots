@@ -3498,6 +3498,7 @@ const getGigSquareRefundsService = () => {
         const sessions = listCoworkSessionsForOrderResolution();
         return resolveCoworkSessionIdForOrder(order as ServiceOrderRecord, sessions);
       },
+      refreshRefundProtocols: () => syncServiceRefundProtocols(),
       processSellerRefundForOrderId: (orderId) => (
         getServiceRefundSettlementService().processSellerRefundForOrderId(orderId)
       ),
@@ -5599,6 +5600,7 @@ if (!gotTheLock) {
   ipcMain.handle('gigSquare:syncFromRemote', async () => {
     try {
       await syncGigSquareMyServicesData({ refresh: true });
+      await syncServiceRefundProtocols();
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Sync failed' };

@@ -76,6 +76,7 @@ interface GigSquareRefundsServiceOptions {
   resolveCoworkSessionIdForOrder?: (
     order: GigSquareRefundOrderRecord
   ) => MaybePromise<string | null | undefined>;
+  refreshRefundProtocols?: () => MaybePromise<void>;
   processSellerRefundForOrderId: (
     orderId: string
   ) => MaybePromise<ProcessSellerRefundResult>;
@@ -174,6 +175,7 @@ export class GigSquareRefundsService {
   private resolveCoworkSessionIdForOrder?: (
     order: GigSquareRefundOrderRecord
   ) => MaybePromise<string | null | undefined>;
+  private refreshRefundProtocols?: () => MaybePromise<void>;
   private processSellerRefundForOrderId: (
     orderId: string
   ) => MaybePromise<ProcessSellerRefundResult>;
@@ -184,10 +186,13 @@ export class GigSquareRefundsService {
     this.getOrderById = options.getOrderById;
     this.resolveCounterpartyInfo = options.resolveCounterpartyInfo;
     this.resolveCoworkSessionIdForOrder = options.resolveCoworkSessionIdForOrder;
+    this.refreshRefundProtocols = options.refreshRefundProtocols;
     this.processSellerRefundForOrderId = options.processSellerRefundForOrderId;
   }
 
   async listRefunds(): Promise<GigSquareRefundCollections> {
+    await this.refreshRefundProtocolsForListing();
+
     const [sellerOrders, buyerOrders] = await Promise.all([
       Promise.resolve(this.listSellerRefundOrders()),
       Promise.resolve(this.listBuyerRefundOrders()),
@@ -213,6 +218,15 @@ export class GigSquareRefundsService {
       initiatedByMe,
       pendingCount: pendingForMe.filter((item) => item.canProcessRefund).length,
     };
+  }
+
+  private async refreshRefundProtocolsForListing(): Promise<void> {
+    if (!this.refreshRefundProtocols) return;
+    try {
+      await Promise.resolve(this.refreshRefundProtocols());
+    } catch (error) {
+      console.warn('[GigSquareRefunds] On-demand refund protocol refresh failed', error);
+    }
   }
 
   async processRefundOrder(input: {
