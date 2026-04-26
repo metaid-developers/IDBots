@@ -271,6 +271,7 @@ interface Metabot {
   name: string;
   avatar: string | null;
   enabled: boolean;
+  globalmetaid: string | null;
   metabot_type: 'twin' | 'worker';
   role: string;
   soul: string;

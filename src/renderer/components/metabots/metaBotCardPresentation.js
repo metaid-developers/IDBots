@@ -24,3 +24,17 @@ export function buildMetaBotToggleViewModel({ enabled, variant = 'enable' }) {
     knobClass,
   };
 }
+
+export function formatGlobalMetaIdShort(globalMetaId) {
+  const value = typeof globalMetaId === 'string' ? globalMetaId.trim() : '';
+  if (!value) return '';
+  if (value.length <= 10) return value;
+  return `${value.slice(0, 6)}....${value.slice(-4)}`;
+}
+
+export async function copyGlobalMetaIdToClipboard(globalMetaId, clipboard) {
+  const value = typeof globalMetaId === 'string' ? globalMetaId.trim() : '';
+  if (!value || !clipboard?.writeText) return false;
+  await clipboard.writeText(value);
+  return true;
+}
