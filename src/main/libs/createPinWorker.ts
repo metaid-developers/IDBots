@@ -27,14 +27,81 @@ export {
 
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
+const FETCH_RETRY_ATTEMPTS = 3;
+const FETCH_RETRY_DELAY_MS = 500;
+
+type FetchJsonWithRetryOptions = {
+  attempts?: number;
+  delayMs?: number;
+  fetchImpl?: typeof fetch;
+  init?: RequestInit;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableFetchFailure(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('fetch failed')
+    || message.includes('network')
+    || message.includes('timeout')
+    || message.includes('econnreset')
+    || message.includes('etimedout')
+    || message.includes('und_err')
+    || message.includes('ssl_error')
+  );
+}
+
+async function fetchJsonWithRetry<T>(
+  url: string,
+  options: FetchJsonWithRetryOptions = {},
+): Promise<T> {
+  const attempts = Number.isFinite(options.attempts) && (options.attempts ?? 0) > 0
+    ? Math.max(1, Math.trunc(options.attempts as number))
+    : FETCH_RETRY_ATTEMPTS;
+  const delayMs = Number.isFinite(options.delayMs) && (options.delayMs ?? 0) >= 0
+    ? Math.trunc(options.delayMs as number)
+    : FETCH_RETRY_DELAY_MS;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, options.init);
+      if (!response.ok && response.status >= 500 && attempt < attempts) {
+        lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
+        await sleep(delayMs * attempt);
+        continue;
+      }
+      return await response.json() as T;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableFetchFailure(error)) {
+        throw error;
+      }
+      logStep('Retrying MVC network request after transient fetch failure', {
+        attempt,
+        error: getErrorMessage(error),
+      });
+      await sleep(delayMs * attempt);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'fetch failed'));
+}
+
+export const fetchJsonWithRetryForTests = fetchJsonWithRetry;
 
 async function fetchMVCUtxos(address: string): Promise<{ txid: string; outIndex: number; value: number; height: number }[]> {
   const all: { txid: string; outIndex: number; value: number; height: number }[] = [];
   let flag: string | undefined;
   while (true) {
     const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
-    const res = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
-    const json = (await res.json()) as { data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> } };
+    const json = await fetchJsonWithRetry<{
+      data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> };
+    }>(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
     const list = json?.data?.list ?? [];
     if (!list.length) break;
     all.push(...list.filter((u) => u.value >= 600));
@@ -45,12 +112,16 @@ async function fetchMVCUtxos(address: string): Promise<{ txid: string; outIndex:
 }
 
 async function broadcastTx(rawTx: string): Promise<string> {
-  const res = await fetch(`${METALET_HOST}/wallet-api/v3/tx/broadcast`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chain: 'mvc', net: NET, rawTx }),
-  });
-  const json = (await res.json()) as { code?: number; message?: string; data?: string };
+  const json = await fetchJsonWithRetry<{ code?: number; message?: string; data?: string }>(
+    `${METALET_HOST}/wallet-api/v3/tx/broadcast`,
+    {
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: 'mvc', net: NET, rawTx }),
+      },
+    },
+  );
   return resolveBroadcastTxResult(rawTx, json);
 }
 
@@ -304,7 +375,11 @@ async function main(): Promise<void> {
   const excludedOutpoints = normalizeOutpointList(payload.excludeOutpoints);
   const preferredFundingUtxos = normalizePreferredFundingUtxos(payload.preferredFundingUtxos, address);
   const preferredOutpoints = new Set(preferredFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)));
-  for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
+  const maxBroadcastAttempts = Math.max(
+    RETRYABLE_MVC_BROADCAST_ATTEMPTS,
+    Math.min(24, preferredFundingUtxos.length + RETRYABLE_MVC_BROADCAST_ATTEMPTS),
+  );
+  for (let attempt = 1; attempt <= maxBroadcastAttempts; attempt++) {
     let pickedForAttempt: SA_utxo[] = [];
     try {
       const utxos = await fetchMVCUtxos(address);
@@ -398,7 +473,7 @@ async function main(): Promise<void> {
       if (isInsufficientFeeError(message)) {
         throw new Error('MetaBot 余额不足，无法支付本次上链所需的手续费，请先充值后重试。');
       }
-      if (attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS && isRetryableMvcBroadcastError(message)) {
+      if (attempt < maxBroadcastAttempts && isRetryableMvcBroadcastError(message)) {
         for (const utxo of pickedForAttempt) {
           excludedOutpoints.add(getUtxoOutpointKey(utxo));
         }
@@ -429,7 +504,7 @@ if (require.main === module) {
       requestedSats?: number;
       spendableSats?: number;
     };
-    console.error(JSON.stringify({
+    console.log(JSON.stringify({
       success: false,
       error: msg,
       staleOutpoints: Array.isArray(details?.staleOutpoints) ? details.staleOutpoints : undefined,

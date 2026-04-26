@@ -24,8 +24,10 @@ import {
 } from './mvcSpendSessionState';
 import {
   mergeMvcFundingCandidates,
+  recoverMvcFundingCandidatesFromAddressHistory,
   recoverMvcFundingCandidatesFromPinHistory,
 } from './mvcFundingRecoveryService';
+import { requestMvcGasSubsidy } from './mvcSubsidyService';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
 
@@ -76,12 +78,19 @@ interface CreatePinWorkerSuccess {
   changeUtxo?: MvcCachedFundingUtxo | null;
 }
 
+interface CreatePinWorkerOutput {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}
+
 type MvcCreatePinSessionSnapshot = {
   excludeOutpoints: string[];
   preferredFundingUtxos: MvcCachedFundingUtxo[];
 };
 
 type MvcCreatePinFundingRecovery = typeof recoverMvcFundingCandidatesFromPinHistory;
+type MvcCreatePinAddressHistoryFundingRecovery = typeof recoverMvcFundingCandidatesFromAddressHistory;
 
 type MvcCreatePinSessionStore = Pick<
   MetabotStore,
@@ -108,11 +117,85 @@ function getMvcWorkerStaleOutpoints(error: unknown): string[] | undefined {
     : undefined;
 }
 
+function createTerminalMvcStaleFundingError(staleOutpoints: readonly string[]): Error & { staleOutpoints?: string[] } {
+  const normalizedStaleOutpoints = Array.from(new Set(
+    staleOutpoints
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean),
+  ));
+  const error = new Error(
+    '所有已知 MVC 手续费输入都已失效，且当前没有获取到新的可花费 UTXO。'
+    + ' 请先向该 MetaBot 的 MVC 地址转入一笔新的小额 SPACE，等待钱包/索引刷新后再重试。'
+  ) as Error & { staleOutpoints?: string[] };
+  error.staleOutpoints = normalizedStaleOutpoints;
+  return error;
+}
+
+function parseJsonLineFromWorkerOutput(output: string): Record<string, unknown> | null {
+  const lines = String(output || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      return JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function parseCreatePinWorkerResult(output: CreatePinWorkerOutput): CreatePinWorkerSuccess {
+  const result = parseJsonLineFromWorkerOutput(output.stdout)
+    ?? parseJsonLineFromWorkerOutput(output.stderr);
+  if (result?.success === true && Array.isArray(result.txids)) {
+    const txids = result.txids.map((item) => String(item || '').trim()).filter(Boolean);
+    if (txids.length > 0) {
+      const pinId = String(result.pinId || `${txids[0]}i0`);
+      appendMetaidLog('INFO', 'createPin success', { txid: txids[0], pinId });
+      return {
+        txids,
+        pinId,
+        totalCost: Number.isFinite(Number(result.totalCost)) ? Number(result.totalCost) : 0,
+        spentOutpoints: Array.isArray(result.spentOutpoints)
+          ? result.spentOutpoints.filter((item): item is string => typeof item === 'string')
+          : undefined,
+        changeUtxo: (result.changeUtxo as MvcCachedFundingUtxo | null | undefined) ?? null,
+      };
+    }
+  }
+
+  const message = result
+    ? String(result.error || 'Worker failed')
+    : (output.stderr.trim() || output.stdout.trim() || `Worker exited with code ${output.exitCode}`);
+  const error = new Error(message) as Error & {
+    staleOutpoints?: string[];
+    requestedSats?: number;
+    spendableSats?: number;
+  };
+  if (Array.isArray(result?.staleOutpoints)) {
+    error.staleOutpoints = result.staleOutpoints.filter((item): item is string => typeof item === 'string');
+  }
+  if (Number.isFinite(Number(result?.requestedSats))) {
+    error.requestedSats = Number(result?.requestedSats);
+  }
+  if (Number.isFinite(Number(result?.spendableSats))) {
+    error.spendableSats = Number(result?.spendableSats);
+  }
+  throw error;
+}
+
+export const parseCreatePinWorkerResultForTests = parseCreatePinWorkerResult;
+
 export async function buildMvcCreatePinSessionSnapshot(
   metabotStore: MvcCreatePinSessionStore,
   metabotId: number,
   options: {
     recoverMvcFundingCandidates?: MvcCreatePinFundingRecovery;
+    recoverMvcAddressHistoryFundingCandidates?: MvcCreatePinAddressHistoryFundingRecovery;
   } = {},
 ): Promise<MvcCreatePinSessionSnapshot> {
   const sessionSnapshot = getMvcSpendSessionSnapshot(metabotId);
@@ -129,35 +212,57 @@ export async function buildMvcCreatePinSessionSnapshot(
     return sessionSnapshot;
   }
 
-  const recentPinTransactions = metabotStore.listRecentPinTransactionsByAddress(mvcAddress, 8);
-  if (recentPinTransactions.length === 0) {
-    return sessionSnapshot;
-  }
-
   const recoverMvcFundingCandidates =
     options.recoverMvcFundingCandidates ?? recoverMvcFundingCandidatesFromPinHistory;
   let recoveredFundingUtxos: MvcCachedFundingUtxo[] = [];
-  try {
-    recoveredFundingUtxos = await recoverMvcFundingCandidates({
-      address: mvcAddress,
-      recentPinTransactions,
-      excludedOutpoints: sessionSnapshot.excludeOutpoints,
-      onRecoverError: ({ txid, error }) => {
-        appendMetaidLog('WARN', 'MVC createPin funding recovery tx probe failed', {
-          metabot_id: metabotId,
-          mvcAddress,
-          txid,
-          error,
-        });
-      },
-    });
-  } catch (error) {
-    appendMetaidLog('WARN', 'MVC createPin funding recovery failed; falling back to provider UTXOs', {
-      metabot_id: metabotId,
-      mvcAddress,
-      error: getErrorMessage(error),
-    });
-    return sessionSnapshot;
+  const recentPinTransactions = metabotStore.listRecentPinTransactionsByAddress(mvcAddress, 8);
+  if (recentPinTransactions.length > 0) {
+    try {
+      recoveredFundingUtxos = await recoverMvcFundingCandidates({
+        address: mvcAddress,
+        recentPinTransactions,
+        excludedOutpoints: sessionSnapshot.excludeOutpoints,
+        onRecoverError: ({ txid, error }) => {
+          appendMetaidLog('WARN', 'MVC createPin funding recovery tx probe failed', {
+            metabot_id: metabotId,
+            mvcAddress,
+            txid,
+            error,
+          });
+        },
+      });
+    } catch (error) {
+      appendMetaidLog('WARN', 'MVC createPin funding recovery failed; falling back to provider UTXOs', {
+        metabot_id: metabotId,
+        mvcAddress,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  if (recoveredFundingUtxos.length === 0) {
+    const recoverMvcAddressHistoryFundingCandidates =
+      options.recoverMvcAddressHistoryFundingCandidates ?? recoverMvcFundingCandidatesFromAddressHistory;
+    try {
+      recoveredFundingUtxos = await recoverMvcAddressHistoryFundingCandidates({
+        address: mvcAddress,
+        excludedOutpoints: sessionSnapshot.excludeOutpoints,
+        onRecoverError: ({ txid, error }) => {
+          appendMetaidLog('WARN', 'MVC createPin address-history funding recovery tx probe failed', {
+            metabot_id: metabotId,
+            mvcAddress,
+            txid,
+            error,
+          });
+        },
+      });
+    } catch (error) {
+      appendMetaidLog('WARN', 'MVC createPin address-history funding recovery failed; falling back to provider UTXOs', {
+        metabot_id: metabotId,
+        mvcAddress,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   if (recoveredFundingUtxos.length === 0) {
@@ -189,6 +294,7 @@ export async function runMvcCreatePinWorkerWithSessionRecovery(params: {
   metabotStore: MvcCreatePinSessionStore;
   metabotId: number;
   buildSessionSnapshot?: BuildMvcCreatePinSessionSnapshot;
+  requestFreshFunding?: () => Promise<boolean>;
   runWorkerForSession: (
     sessionSnapshot: MvcCreatePinSessionSnapshot
   ) => Promise<CreatePinWorkerSuccess>;
@@ -196,6 +302,7 @@ export async function runMvcCreatePinWorkerWithSessionRecovery(params: {
   workerResult: CreatePinWorkerSuccess;
   sessionSnapshot: MvcCreatePinSessionSnapshot;
   retriedAfterStaleFunding: boolean;
+  requestedFreshFundingAfterStale: boolean;
 }> {
   const buildSessionSnapshot = params.buildSessionSnapshot ?? buildMvcCreatePinSessionSnapshot;
   const initialSnapshot = await buildSessionSnapshot(params.metabotStore, params.metabotId);
@@ -205,6 +312,7 @@ export async function runMvcCreatePinWorkerWithSessionRecovery(params: {
       workerResult,
       sessionSnapshot: initialSnapshot,
       retriedAfterStaleFunding: false,
+      requestedFreshFundingAfterStale: false,
     };
   } catch (error) {
     const message = getErrorMessage(error);
@@ -214,16 +322,53 @@ export async function runMvcCreatePinWorkerWithSessionRecovery(params: {
     }
 
     recordMvcSpentOutpoints(params.metabotId, staleOutpoints);
+    let latestStaleError = error;
     const recoveredSnapshot = await buildSessionSnapshot(params.metabotStore, params.metabotId);
-    if (recoveredSnapshot.preferredFundingUtxos.length === 0) {
-      throw error;
+    if (recoveredSnapshot.preferredFundingUtxos.length > 0) {
+      try {
+        const workerResult = await params.runWorkerForSession(recoveredSnapshot);
+        return {
+          workerResult,
+          sessionSnapshot: recoveredSnapshot,
+          retriedAfterStaleFunding: true,
+          requestedFreshFundingAfterStale: false,
+        };
+      } catch (retryError) {
+        const retryMessage = getErrorMessage(retryError);
+        const retryStaleOutpoints = getMvcWorkerStaleOutpoints(retryError) ?? [];
+        if (!isMvcProviderStaleFundingMessage(retryMessage) || retryStaleOutpoints.length === 0) {
+          throw retryError;
+        }
+        latestStaleError = retryError;
+        recordMvcSpentOutpoints(params.metabotId, retryStaleOutpoints);
+      }
     }
 
-    const workerResult = await params.runWorkerForSession(recoveredSnapshot);
+    if (!params.requestFreshFunding) {
+      throw createTerminalMvcStaleFundingError(getMvcSpendSessionSnapshot(params.metabotId).excludeOutpoints);
+    }
+    const requestedFreshFunding = await params.requestFreshFunding();
+    if (!requestedFreshFunding) {
+      throw createTerminalMvcStaleFundingError(getMvcSpendSessionSnapshot(params.metabotId).excludeOutpoints);
+    }
+    const refreshedSnapshot = await buildSessionSnapshot(params.metabotStore, params.metabotId);
+    let workerResult: CreatePinWorkerSuccess;
+    try {
+      workerResult = await params.runWorkerForSession(refreshedSnapshot);
+    } catch (refreshedError) {
+      const refreshedMessage = getErrorMessage(refreshedError);
+      const refreshedStaleOutpoints = getMvcWorkerStaleOutpoints(refreshedError) ?? [];
+      if (isMvcProviderStaleFundingMessage(refreshedMessage) && refreshedStaleOutpoints.length > 0) {
+        recordMvcSpentOutpoints(params.metabotId, refreshedStaleOutpoints);
+        throw createTerminalMvcStaleFundingError(getMvcSpendSessionSnapshot(params.metabotId).excludeOutpoints);
+      }
+      throw refreshedError;
+    }
     return {
       workerResult,
-      sessionSnapshot: recoveredSnapshot,
+      sessionSnapshot: refreshedSnapshot,
       retriedAfterStaleFunding: true,
+      requestedFreshFundingAfterStale: true,
     };
   }
 }
@@ -345,45 +490,16 @@ export async function createPin(
       reject(err);
     });
     child.on('close', (code) => {
-      const output = stdout.trim() || stderr.trim();
       try {
-        const result = JSON.parse(output);
-        if (result.success && result.txids) {
-          const pinId = result.pinId ?? `${result.txids[0]}i0`;
-          appendMetaidLog('INFO', 'createPin success', { txid: result.txids[0], pinId });
-          resolve({
-            txids: result.txids,
-            pinId,
-            totalCost: result.totalCost ?? 0,
-            spentOutpoints: Array.isArray(result.spentOutpoints) ? result.spentOutpoints : undefined,
-            changeUtxo: result.changeUtxo ?? null,
-          });
-        } else {
-          appendMetaidLog('ERROR', 'Worker returned error', { error: result.error, stderr, stdout });
-          const error = new Error(result.error || 'Worker failed') as Error & {
-            staleOutpoints?: string[];
-            requestedSats?: number;
-            spendableSats?: number;
-          };
-          if (Array.isArray(result.staleOutpoints)) {
-            error.staleOutpoints = result.staleOutpoints.filter((item: unknown): item is string => typeof item === 'string');
-          }
-          if (typeof result.requestedSats === 'number') {
-            error.requestedSats = result.requestedSats;
-          }
-          if (typeof result.spendableSats === 'number') {
-            error.spendableSats = result.spendableSats;
-          }
-          reject(error);
-        }
-      } catch {
+        resolve(parseCreatePinWorkerResult({ stdout, stderr, exitCode: code }));
+      } catch (error) {
         appendMetaidLog('ERROR', 'Worker output parse failed', {
           exitCode: code,
           stderr,
           stdout,
-          message: stderr || stdout || `Worker exited with code ${code}`,
+          message: getErrorMessage(error),
         });
-        reject(new Error(stderr || stdout || `Worker exited with code ${code}`));
+        reject(error);
       }
     });
   });
@@ -403,6 +519,37 @@ export async function createPin(
           const workerSessionResult = await runMvcCreatePinWorkerWithSessionRecovery({
             metabotStore,
             metabotId: metabot_id,
+            requestFreshFunding: async () => {
+              const metabot = metabotStore.getMetabotById(metabot_id);
+              const mvcAddress = String(metabot?.mvc_address || '').trim();
+              if (!mvcAddress) {
+                return false;
+              }
+              appendMetaidLog('INFO', 'Requesting fresh MVC funding after stale createPin inputs', {
+                metabot_id,
+                mvcAddress,
+                operation: metaidData.operation,
+                path: metaidData.path || '',
+              });
+              const subsidy = await requestMvcGasSubsidy({
+                mvcAddress,
+                mnemonic,
+                path: wallet.path || "m/44'/10001'/0'/0/0",
+              });
+              if (!subsidy.success) {
+                appendMetaidLog('WARN', 'Fresh MVC funding request after stale createPin inputs failed', {
+                  metabot_id,
+                  mvcAddress,
+                  error: subsidy.error || 'MVC gas subsidy request failed',
+                });
+                return false;
+              }
+              appendMetaidLog('INFO', 'Fresh MVC funding request after stale createPin inputs succeeded', {
+                metabot_id,
+                mvcAddress,
+              });
+              return true;
+            },
             runWorkerForSession: runWorker,
           });
           const result = workerSessionResult.workerResult;
@@ -412,6 +559,7 @@ export async function createPin(
               operation: metaidData.operation,
               path: metaidData.path || '',
               success: true,
+              requestedFreshFundingAfterStale: workerSessionResult.requestedFreshFundingAfterStale,
             });
           }
           recordMvcSpentOutpoints(metabot_id, result.spentOutpoints);
