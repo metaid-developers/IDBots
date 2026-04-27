@@ -10,6 +10,11 @@ export interface RecentMvcPinTransaction {
   timestamp: number;
 }
 
+export interface RecentMvcAddressTransaction {
+  txid: string;
+  timestamp: number;
+}
+
 const METALET_HOST = 'https://www.metalet.space';
 const NET = 'livenet';
 const MIN_MVC_FUNDING_SATOSHIS = 600;
@@ -214,6 +219,62 @@ export async function fetchMvcTxHex(txid: string): Promise<string> {
   return normalizedHex;
 }
 
+export async function fetchMvcAddressTransactions(
+  address: string,
+  maxTransactions = 30,
+): Promise<RecentMvcAddressTransaction[]> {
+  const normalizedAddress = String(address || '').trim();
+  if (!normalizedAddress) return [];
+  const normalizedMax = Number.isFinite(maxTransactions) && maxTransactions > 0
+    ? Math.max(1, Math.trunc(maxTransactions))
+    : 30;
+  const transactions: RecentMvcAddressTransaction[] = [];
+  const seenTxids = new Set<string>();
+  let flag = '';
+
+  while (transactions.length < normalizedMax) {
+    const params = new URLSearchParams({
+      net: NET,
+      address: normalizedAddress,
+      ...(flag ? { flag } : {}),
+    });
+    const response = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/tx-list?${params}`);
+    const json = await response.json() as {
+      code?: number;
+      message?: string;
+      data?: {
+        list?: Array<{
+          txid?: string;
+          time?: number;
+          timestamp?: number;
+          flag?: string;
+        }>;
+      };
+    };
+    if (json?.code !== 0 && json?.code !== undefined) {
+      throw new Error(json?.message || 'Failed to fetch MVC address transactions');
+    }
+    const list = json?.data?.list ?? [];
+    if (list.length === 0) break;
+    for (const item of list) {
+      const txid = String(item.txid || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(txid) || seenTxids.has(txid)) continue;
+      seenTxids.add(txid);
+      const timestamp = Number(item.time ?? item.timestamp ?? 0);
+      transactions.push({
+        txid,
+        timestamp: Number.isFinite(timestamp) ? Math.trunc(timestamp) : 0,
+      });
+      if (transactions.length >= normalizedMax) break;
+    }
+    const nextFlag = String(list[0]?.flag || '').trim();
+    if (!nextFlag || nextFlag === flag) break;
+    flag = nextFlag;
+  }
+
+  return transactions;
+}
+
 export async function recoverMvcFundingCandidatesFromPinHistory(params: {
   address: string;
   recentPinTransactions: readonly RecentMvcPinTransaction[];
@@ -235,6 +296,56 @@ export async function recoverMvcFundingCandidatesFromPinHistory(params: {
   const seenOutpoints = new Set<string>();
 
   for (const item of recentTransactions) {
+    if (recovered.length >= maxCandidates) break;
+    let txHex = '';
+    try {
+      txHex = await fetchTxHex(item.txid);
+    } catch (error) {
+      params.onRecoverError?.({
+        txid: item.txid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    const candidates = extractMvcFundingCandidatesFromPinTxHex(txHex, normalizedAddress);
+    for (const candidate of candidates) {
+      const outpoint = getMvcCachedFundingOutpointKey(candidate);
+      if (excludedOutpoints.has(outpoint) || seenOutpoints.has(outpoint)) continue;
+      seenOutpoints.add(outpoint);
+      recovered.push(candidate);
+      if (recovered.length >= maxCandidates) break;
+    }
+  }
+
+  return recovered;
+}
+
+export async function recoverMvcFundingCandidatesFromAddressHistory(params: {
+  address: string;
+  excludedOutpoints?: readonly string[];
+  fetchAddressTransactions?: (address: string, maxTransactions?: number) => Promise<RecentMvcAddressTransaction[]>;
+  fetchTxHex?: (txid: string) => Promise<string>;
+  maxTransactions?: number;
+  maxCandidates?: number;
+  onRecoverError?: (input: { txid: string; error: string }) => void;
+}): Promise<MvcCachedFundingUtxo[]> {
+  const normalizedAddress = String(params.address || '').trim();
+  if (!normalizedAddress) return [];
+
+  const excludedOutpoints = normalizeOutpointList(params.excludedOutpoints);
+  const maxCandidates = Number.isFinite(params.maxCandidates) && (params.maxCandidates ?? 0) > 0
+    ? Math.max(1, Math.trunc(params.maxCandidates as number))
+    : 12;
+  const fetchAddressTransactions = params.fetchAddressTransactions ?? fetchMvcAddressTransactions;
+  const fetchTxHex = params.fetchTxHex ?? fetchMvcTxHex;
+  const transactions = await fetchAddressTransactions(
+    normalizedAddress,
+    Number.isFinite(params.maxTransactions) ? params.maxTransactions : 30,
+  );
+  const recovered: MvcCachedFundingUtxo[] = [];
+  const seenOutpoints = new Set<string>();
+
+  for (const item of normalizeRecentTransactions(transactions)) {
     if (recovered.length >= maxCandidates) break;
     let txHex = '';
     try {

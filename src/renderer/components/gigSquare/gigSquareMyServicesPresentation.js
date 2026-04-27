@@ -1,7 +1,7 @@
 const ACTION_STATES = {
   detail: { disabled: false, key: null },
-  revoke: { disabled: true, key: 'gigSquareMyServicesComingSoon' },
-  edit: { disabled: true, key: 'gigSquareMyServicesComingSoon' },
+  revoke: { disabled: false, key: null },
+  edit: { disabled: false, key: null },
 };
 
 const METRIC_LABELS = {

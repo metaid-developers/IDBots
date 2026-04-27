@@ -15,7 +15,11 @@ import MetaBotWalletAssetsModal, {
   type WalletDisplayAsset,
 } from './MetaBotWalletAssetsModal';
 import MetaBotTokenTransferModal, { type TokenTransferAsset } from './MetaBotTokenTransferModal';
-import { buildMetaBotToggleViewModel } from './metaBotCardPresentation.js';
+import {
+  buildMetaBotToggleViewModel,
+  copyGlobalMetaIdToClipboard,
+  formatGlobalMetaIdShort,
+} from './metaBotCardPresentation.js';
 
 interface MetaBotListCardProps {
   metabot: Metabot;
@@ -148,6 +152,13 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
     });
   };
 
+  const copyGlobalMetaId = (globalMetaId: string) => {
+    copyGlobalMetaIdToClipboard(globalMetaId, navigator.clipboard).then((didCopy: boolean) => {
+      if (!didCopy) return;
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('metabotGlobalMetaIdCopied') }));
+    });
+  };
+
   const formatShort = (addr: string) => {
     if (!addr || addr.length < 16) return addr;
     return `${addr.slice(0, 6)}...${addr.slice(-6)}`;
@@ -162,6 +173,8 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
   const btcAddr = metabot.btc_address ?? '';
   const mvcAddr = metabot.mvc_address ?? '';
   const dogeAddr = metabot.doge_address ?? '';
+  const globalMetaId = metabot.globalmetaid?.trim() ?? '';
+  const shortGlobalMetaId = formatGlobalMetaIdShort(globalMetaId);
   const enabledToggleView = buildMetaBotToggleViewModel({
     enabled: metabot.enabled,
     variant: 'enable',
@@ -191,17 +204,39 @@ const MetaBotListCard: React.FC<MetaBotListCardProps> = ({
       >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3 min-w-0">
-          {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
-            <img
-              src={metabot.avatar}
-              alt=""
-              className="w-12 h-12 rounded-xl object-cover flex-shrink-0"
-            />
-          ) : (
-            <div className="w-12 h-12 rounded-xl dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
-              <CpuChipIcon className="h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-            </div>
-          )}
+          <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+            {metabot.avatar && (metabot.avatar.startsWith('data:') || metabot.avatar.startsWith('http')) ? (
+              <img
+                src={metabot.avatar}
+                alt=""
+                className="w-12 h-12 rounded-xl object-cover"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-xl dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center">
+                <CpuChipIcon className="h-6 w-6 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+              </div>
+            )}
+            {shortGlobalMetaId && (
+              <div className="flex items-center gap-1 max-w-[136px] text-[11px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                <span className="truncate">metaid:{shortGlobalMetaId}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyGlobalMetaId(globalMetaId);
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                  }}
+                  className="shrink-0 p-0.5 rounded hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover"
+                  title={i18nService.t('metabotCopyGlobalMetaId')}
+                  aria-label={i18nService.t('metabotCopyGlobalMetaId')}
+                >
+                  <DocumentDuplicateIcon className="h-3 w-3 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="min-w-0 flex-1">
             <span className="text-base font-medium dark:text-claude-darkText text-claude-text block truncate">
               {metabot.name}

@@ -1249,7 +1249,6 @@ const resolveGigSquareServiceCreatorMetabot = (
 
 const listCurrentMyGigSquareServices = (): GigSquareCurrentMyService[] => {
   const ownedGlobalMetaIds = listOwnedGigSquareProviderGlobalMetaIds();
-  const sellerOrders = getServiceOrderStore().listOrdersByRole('seller');
   const resolvedCurrentRows = resolveCurrentMarketplaceServices(
     listRemoteSkillServicesFromDb().filter((service) =>
       ownedGlobalMetaIds.has(toSafeString(service.providerGlobalMetaId).trim())
@@ -1261,7 +1260,6 @@ const listCurrentMyGigSquareServices = (): GigSquareCurrentMyService[] => {
     const creator = resolveGigSquareServiceCreatorMetabot(service);
     const actionAvailability = resolveServiceActionAvailability({
       currentService: service,
-      sellerOrders,
       creatorMetabotExists: creator.id != null,
     });
     return {
@@ -3503,6 +3501,7 @@ const getGigSquareRefundsService = () => {
         const sessions = listCoworkSessionsForOrderResolution();
         return resolveCoworkSessionIdForOrder(order as ServiceOrderRecord, sessions);
       },
+      refreshRefundProtocols: () => syncServiceRefundProtocols(),
       processSellerRefundForOrderId: (orderId) => (
         getServiceRefundSettlementService().processSellerRefundForOrderId(orderId)
       ),
@@ -5689,6 +5688,7 @@ if (!gotTheLock) {
   ipcMain.handle('gigSquare:syncFromRemote', async () => {
     try {
       await syncGigSquareMyServicesData({ refresh: true });
+      await syncServiceRefundProtocols();
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Sync failed' };

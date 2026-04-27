@@ -163,6 +163,51 @@ test('listRefunds groups seller and buyer refund rows and counts seller pending 
   assert.deepEqual(result.initiatedByMe.map((item) => item.orderId), ['buyer-pending']);
 });
 
+test('listRefunds refreshes refund protocols before reading the local refund ledger', async () => {
+  const calls = [];
+  let synced = false;
+  const service = createService({
+    refreshRefundProtocols: async () => {
+      calls.push('sync');
+      synced = true;
+    },
+    listSellerRefundOrders: () => {
+      calls.push('seller-list');
+      return synced ? [createOrder({ id: 'seller-synced' })] : [];
+    },
+    listBuyerRefundOrders: () => {
+      calls.push('buyer-list');
+      return [];
+    },
+  });
+
+  const result = await service.listRefunds();
+
+  assert.deepEqual(calls, ['sync', 'seller-list', 'buyer-list']);
+  assert.deepEqual(result.pendingForMe.map((item) => item.orderId), ['seller-synced']);
+});
+
+test('listRefunds falls back to the current local ledger when an on-demand refund refresh fails', async () => {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  const service = createService({
+    refreshRefundProtocols: async () => {
+      throw new Error('remote indexer unavailable');
+    },
+    listSellerRefundOrders: () => [createOrder({ id: 'seller-local' })],
+    listBuyerRefundOrders: () => [],
+  });
+
+  let result;
+  try {
+    result = await service.listRefunds();
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.deepEqual(result.pendingForMe.map((item) => item.orderId), ['seller-local']);
+});
+
 test('listRefunds follows the spec sorting rules for seller and buyer tabs', async () => {
   const service = createService({
     listSellerRefundOrders: () => [

@@ -6,14 +6,14 @@ import {
   getMyServiceMetricLabel,
 } from '../src/renderer/components/gigSquare/gigSquareMyServicesPresentation.js';
 
-test('撤销 and 修改 stay disabled in v1', () => {
+test('撤销 and 修改 are enabled actions for local services', () => {
   assert.deepEqual(getMyServiceActionState('revoke'), {
-    disabled: true,
-    key: 'gigSquareMyServicesComingSoon',
+    disabled: false,
+    key: null,
   });
   assert.deepEqual(getMyServiceActionState('edit'), {
-    disabled: true,
-    key: 'gigSquareMyServicesComingSoon',
+    disabled: false,
+    key: null,
   });
 });
 
