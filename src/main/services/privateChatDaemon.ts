@@ -47,6 +47,7 @@ import {
 } from './privateChatOrderObserverState';
 import { ensureServiceOrderObserverSession } from './serviceOrderObserverSession';
 import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
+import type { ListenerConfig } from './metaWebListenerService';
 
 const POLL_INTERVAL_MS = 5_000;
 const PRIVATE_CHAT_REPLY_DELAY_MS = 5_000;
@@ -84,6 +85,7 @@ type GetSellerOrderSkillsPromptFn = (params: {
   skillId?: string | null;
   skillName?: string | null;
 }) => Promise<string | null>;
+type GetListenerConfigFn = () => Partial<ListenerConfig> | null | undefined;
 
 export interface PrivateChatA2AContextMessage {
   speaker: string;
@@ -541,6 +543,152 @@ function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string 
   return 'unknown-peer';
 }
 
+function buildPrivateConversationExternalConversationId(row: PrivateChatMessageRow): string {
+  return `metaweb-private:${normalizePrivateConversationPeerId(row)}`;
+}
+
+function normalizeIdentity(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function matchesSenderIdentity(
+  candidate: unknown,
+  senderGlobalMetaId: string,
+  senderMetaId: string
+): boolean {
+  const normalized = normalizeIdentity(candidate);
+  return Boolean(normalized && (normalized === senderGlobalMetaId || normalized === senderMetaId));
+}
+
+export type PrivateChatAutoReplyPolicyReason =
+  | 'disabled_metabot'
+  | 'owner'
+  | 'respond_to_strangers_enabled'
+  | 'prior_local_outbound'
+  | 'stranger_blocked';
+
+export function isPrivateChatFromMetabotOwner(params: {
+  metabot: {
+    boss_id?: number | null;
+    boss_global_metaid?: string | null;
+  };
+  senderGlobalMetaId?: string | null;
+  senderMetaId?: string | null;
+  metabotStore: Pick<MetabotStore, 'getMetabotById'>;
+}): boolean {
+  const senderGlobalMetaId = normalizeIdentity(params.senderGlobalMetaId);
+  const senderMetaId = normalizeIdentity(params.senderMetaId);
+  if (!senderGlobalMetaId && !senderMetaId) return false;
+
+  if (matchesSenderIdentity(params.metabot.boss_global_metaid, senderGlobalMetaId, senderMetaId)) {
+    return true;
+  }
+
+  const bossId = Number(params.metabot.boss_id);
+  if (!Number.isFinite(bossId) || bossId <= 0) return false;
+
+  const boss = params.metabotStore.getMetabotById(bossId);
+  if (!boss) return false;
+  return matchesSenderIdentity(boss.globalmetaid, senderGlobalMetaId, senderMetaId)
+    || matchesSenderIdentity(boss.metaid, senderGlobalMetaId, senderMetaId);
+}
+
+export function evaluatePrivateChatAutoReplyPolicy(params: {
+  metabot: {
+    enabled?: boolean;
+    boss_id?: number | null;
+    boss_global_metaid?: string | null;
+  };
+  senderGlobalMetaId?: string | null;
+  senderMetaId?: string | null;
+  listenerConfig?: Partial<ListenerConfig> | null;
+  metabotStore: Pick<MetabotStore, 'getMetabotById'>;
+  hasPriorLocalOutbound: boolean;
+}): { shouldReply: boolean; reason: PrivateChatAutoReplyPolicyReason } {
+  if (params.metabot.enabled === false) {
+    return { shouldReply: false, reason: 'disabled_metabot' };
+  }
+
+  if (isPrivateChatFromMetabotOwner({
+    metabot: params.metabot,
+    senderGlobalMetaId: params.senderGlobalMetaId,
+    senderMetaId: params.senderMetaId,
+    metabotStore: params.metabotStore,
+  })) {
+    return { shouldReply: true, reason: 'owner' };
+  }
+
+  if (params.listenerConfig?.respondToStrangerPrivateChats !== false) {
+    return { shouldReply: true, reason: 'respond_to_strangers_enabled' };
+  }
+
+  if (params.hasPriorLocalOutbound) {
+    return { shouldReply: true, reason: 'prior_local_outbound' };
+  }
+
+  return { shouldReply: false, reason: 'stranger_blocked' };
+}
+
+export function hasPriorNonHandshakePrivateChatOutbound(
+  db: Pick<Database, 'exec'>,
+  params: {
+    localGlobalMetaId?: string | null;
+    localMetaId?: string | null;
+    peerGlobalMetaId?: string | null;
+    peerMetaId?: string | null;
+    currentRowId?: number | null;
+  }
+): boolean {
+  const localGlobalMetaId = normalizeIdentity(params.localGlobalMetaId);
+  const localMetaId = normalizeIdentity(params.localMetaId);
+  const peerGlobalMetaId = normalizeIdentity(params.peerGlobalMetaId);
+  const peerMetaId = normalizeIdentity(params.peerMetaId);
+  if ((!localGlobalMetaId && !localMetaId) || (!peerGlobalMetaId && !peerMetaId)) {
+    return false;
+  }
+
+  const currentRowId = Number.isFinite(params.currentRowId)
+    ? Number(params.currentRowId)
+    : -1;
+  const result = db.exec(
+    `SELECT 1 AS found
+     FROM private_chat_messages
+     WHERE id <> ?
+       AND (from_global_metaid = ? OR from_metaid = ?)
+       AND (to_global_metaid = ? OR to_metaid = ?)
+       AND lower(trim(COALESCE(content, ''))) NOT IN ('ping', 'pong')
+     LIMIT 1`,
+    [currentRowId, localGlobalMetaId, localMetaId, peerGlobalMetaId, peerMetaId]
+  );
+  return Boolean(result[0]?.values?.length);
+}
+
+export function hasPriorPrivateChatA2AOutbound(
+  coworkStore: Pick<CoworkStore, 'getConversationMapping' | 'getSession'>,
+  params: {
+    externalConversationId: string;
+    metabotId: number;
+  }
+): boolean {
+  const mapping = coworkStore.getConversationMapping(
+    'metaweb_private',
+    params.externalConversationId,
+    params.metabotId
+  );
+  if (!mapping) return false;
+
+  const session = coworkStore.getSession(mapping.coworkSessionId);
+  const messages = session?.messages ?? [];
+  return messages.some((message) => {
+    if (!isPrivateA2AMessage(message)) return false;
+    if (resolveA2AMessageDirection(message) !== 'outgoing') return false;
+    const content = String(message.content || '').trim();
+    if (!content) return false;
+    return normalizeHandshakeWord(content) !== 'ping'
+      && normalizeHandshakeWord(content) !== 'pong';
+  });
+}
+
 function completeBuyerOrderObserverSession(
   coworkStore: CoworkStore,
   sessionId: string,
@@ -617,7 +765,7 @@ async function resolvePrivateConversationSession(
   firstMessage: string
 ): Promise<{ sessionId: string; externalConversationId: string }> {
   const peerId = normalizePrivateConversationPeerId(row);
-  const externalConversationId = `metaweb-private:${peerId}`;
+  const externalConversationId = buildPrivateConversationExternalConversationId(row);
   const existing = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabotId);
   if (existing) {
     const session = coworkStore.getSession(existing.coworkSessionId);
@@ -959,7 +1107,8 @@ async function processOne(
   orderCoworkHandler: PrivateChatOrderCowork | null,
   serviceOrderLifecycle: ServiceOrderLifecycleService | null,
   getSkillsPrompt?: GetSellerOrderSkillsPromptFn,
-  emitToRenderer?: (channel: string, data: unknown) => void
+  emitToRenderer?: (channel: string, data: unknown) => void,
+  getListenerConfig?: GetListenerConfigFn
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -975,6 +1124,12 @@ async function processOne(
     const metabot = metabotStore.getMetabotByGlobalMetaId(toGlobalMetaId);
     if (!metabot) {
       emitLog(`[PrivateChat] Skip message ${row.id}: no MetaBot for to_global_metaid ${toGlobalMetaId.slice(0, 12)}…`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
+    if (metabot.enabled === false) {
+      emitLog(`[PrivateChat] Skip message ${row.id}: MetaBot ${metabot.name} is disabled.`);
       markProcessed(db, row.id, saveDb);
       return;
     }
@@ -1514,12 +1669,7 @@ async function processOne(
       emitLog(`[PrivateChat] No buyer order session found for peer ${fromGlobalMetaId.slice(0, 12)}…, treating as regular private chat.`);
     }
 
-    const { sessionId, externalConversationId } = await resolvePrivateConversationSession(
-      coworkStore,
-      metabot.id,
-      row,
-      plaintext
-    );
+    const externalConversationId = buildPrivateConversationExternalConversationId(row);
 
     // Human-ended conversations stay closed. Auto-bye conversations can restart after 10 minutes.
     const existingMapping = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id);
@@ -1543,6 +1693,39 @@ async function processOne(
         restartedAt: Date.now(),
       });
     }
+
+    const hasPriorLocalOutbound = hasPriorNonHandshakePrivateChatOutbound(db, {
+      localGlobalMetaId: metabot.globalmetaid,
+      localMetaId: metabot.metaid,
+      peerGlobalMetaId: row.from_global_metaid,
+      peerMetaId: row.from_metaid,
+      currentRowId: row.id,
+    }) || hasPriorPrivateChatA2AOutbound(coworkStore, {
+      externalConversationId,
+      metabotId: metabot.id,
+    });
+    const autoReplyPolicy = evaluatePrivateChatAutoReplyPolicy({
+      metabot,
+      senderGlobalMetaId: row.from_global_metaid,
+      senderMetaId: row.from_metaid,
+      listenerConfig: getListenerConfig ? getListenerConfig() : null,
+      metabotStore,
+      hasPriorLocalOutbound,
+    });
+    if (!autoReplyPolicy.shouldReply) {
+      emitLog(
+        `[PrivateChat] Stranger auto-reply disabled for ${fromGlobalMetaId.slice(0, 12)}…; skipping regular private chat.`
+      );
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
+    const { sessionId } = await resolvePrivateConversationSession(
+      coworkStore,
+      metabot.id,
+      row,
+      plaintext
+    );
 
     const userMessage = appendPrivateChatA2AMessage({
       coworkStore,
@@ -1683,7 +1866,8 @@ export function startPrivateChatDaemon(
   emitLog: (msg: string) => void,
   serviceOrderLifecycle: ServiceOrderLifecycleService | null,
   getSkillsPrompt?: GetSellerOrderSkillsPromptFn,
-  emitToRenderer?: (channel: string, data: unknown) => void
+  emitToRenderer?: (channel: string, data: unknown) => void,
+  getListenerConfig?: GetListenerConfigFn
 ): void {
   stopPrivateChatDaemon();
   orderCowork = new PrivateChatOrderCowork({
@@ -1696,7 +1880,7 @@ export function startPrivateChatDaemon(
   const tick = () => {
     const rows = parsePrivateChatRows(db);
     for (const row of rows) {
-      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer).catch((e) => {
+      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer, getListenerConfig).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
       });
     }

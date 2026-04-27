@@ -2198,7 +2198,8 @@ const restartSqliteBackedDaemons = (input: {
             try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
           }
         });
-      }
+      },
+      getListenerConfigFromStore
     );
 
     if (input.restartListener) {
@@ -4071,18 +4072,20 @@ if (!gotTheLock) {
   ipcMain.handle('idbots:getListenerStatus', async () => {
     return { success: true, running: isListenerRunning(), connected: isListenerSocketConnected() };
   });
-  ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => {
+  ipcMain.handle('idbots:toggleListener', async (_event, payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests' | 'respondToStrangerPrivateChats'; enabled: boolean }) => {
     const config = getListenerConfigFromStore();
-    if (payload.type === 'enabled' || payload.type === 'groupChats' || payload.type === 'privateChats' || payload.type === 'serviceRequests') {
+    if (payload.type === 'enabled' || payload.type === 'groupChats' || payload.type === 'privateChats' || payload.type === 'serviceRequests' || payload.type === 'respondToStrangerPrivateChats') {
       const next = normalizeListenerConfig({
         ...config,
         [payload.type]: payload.enabled,
       });
       getStore().set(METAWEB_LISTENER_CONFIG_KEY, next);
-      if (shouldRunListener(next)) {
-        await startListenerWithConfig(next);
-      } else {
-        stopMetaWebListener();
+      if (payload.type !== 'respondToStrangerPrivateChats') {
+        if (shouldRunListener(next)) {
+          await startListenerWithConfig(next);
+        } else {
+          stopMetaWebListener();
+        }
       }
       return { success: true, config: next };
     }
@@ -7643,7 +7646,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
           }
         });
-      }
+      },
+      getListenerConfigFromStore
     );
 
     void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {

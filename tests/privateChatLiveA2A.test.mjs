@@ -6,6 +6,9 @@ let endPrivateChatA2AConversation;
 let analyzePrivateChatA2AConversation;
 let buildPrivateChatA2ASystemPrompt;
 let waitBeforePrivateChatReply;
+let evaluatePrivateChatAutoReplyPolicy;
+let hasPriorNonHandshakePrivateChatOutbound;
+let hasPriorPrivateChatA2AOutbound;
 try {
   ({
     appendPrivateChatA2AMessage,
@@ -13,6 +16,9 @@ try {
     analyzePrivateChatA2AConversation,
     buildPrivateChatA2ASystemPrompt,
     waitBeforePrivateChatReply,
+    evaluatePrivateChatAutoReplyPolicy,
+    hasPriorNonHandshakePrivateChatOutbound,
+    hasPriorPrivateChatA2AOutbound,
   } = await import('../dist-electron/main/services/privateChatDaemon.js'));
 } catch {
   ({
@@ -21,6 +27,9 @@ try {
     analyzePrivateChatA2AConversation,
     buildPrivateChatA2ASystemPrompt,
     waitBeforePrivateChatReply,
+    evaluatePrivateChatAutoReplyPolicy,
+    hasPriorNonHandshakePrivateChatOutbound,
+    hasPriorPrivateChatA2AOutbound,
   } = await import('../dist-electron/services/privateChatDaemon.js'));
 }
 
@@ -307,4 +316,221 @@ test('private chat analysis resets after an outgoing bye', () => {
 
   assert.equal(analysis.incomingTurnCount, 1);
   assert.deepEqual(analysis.contextMessages.map((message) => message.content), ['new topic']);
+});
+
+test('regular private chat auto-reply policy blocks strangers when the global switch is off', () => {
+  const result = evaluatePrivateChatAutoReplyPolicy({
+    metabot: {
+      enabled: true,
+      boss_id: null,
+      boss_global_metaid: null,
+      globalmetaid: 'local-global',
+      metaid: 'local-meta',
+    },
+    senderGlobalMetaId: 'peer-global',
+    senderMetaId: 'peer-meta',
+    listenerConfig: {
+      enabled: true,
+      groupChats: false,
+      privateChats: true,
+      serviceRequests: false,
+      respondToStrangerPrivateChats: false,
+    },
+    metabotStore: {
+      getMetabotById() {
+        throw new Error('boss lookup should not be needed');
+      },
+    },
+    hasPriorLocalOutbound: false,
+  });
+
+  assert.deepEqual(result, {
+    shouldReply: false,
+    reason: 'stranger_blocked',
+  });
+});
+
+test('regular private chat auto-reply policy lets owners and known peers bypass the stranger switch', () => {
+  const base = {
+    metabot: {
+      enabled: true,
+      boss_id: 42,
+      boss_global_metaid: null,
+      globalmetaid: 'local-global',
+      metaid: 'local-meta',
+    },
+    listenerConfig: {
+      enabled: true,
+      groupChats: false,
+      privateChats: true,
+      serviceRequests: false,
+      respondToStrangerPrivateChats: false,
+    },
+    metabotStore: {
+      getMetabotById(id) {
+        assert.equal(id, 42);
+        return { globalmetaid: 'boss-global', metaid: 'boss-meta' };
+      },
+    },
+  };
+
+  assert.deepEqual(
+    evaluatePrivateChatAutoReplyPolicy({
+      ...base,
+      senderGlobalMetaId: 'boss-global',
+      senderMetaId: 'anything',
+      hasPriorLocalOutbound: false,
+    }),
+    { shouldReply: true, reason: 'owner' },
+  );
+
+  assert.deepEqual(
+    evaluatePrivateChatAutoReplyPolicy({
+      ...base,
+      metabot: {
+        ...base.metabot,
+        boss_id: null,
+        boss_global_metaid: 'external-owner-global',
+      },
+      senderGlobalMetaId: 'external-owner-global',
+      senderMetaId: 'anything',
+      hasPriorLocalOutbound: false,
+    }),
+    { shouldReply: true, reason: 'owner' },
+  );
+
+  assert.deepEqual(
+    evaluatePrivateChatAutoReplyPolicy({
+      ...base,
+      senderGlobalMetaId: 'peer-global',
+      senderMetaId: 'peer-meta',
+      hasPriorLocalOutbound: true,
+    }),
+    { shouldReply: true, reason: 'prior_local_outbound' },
+  );
+});
+
+test('disabled MetaBots do not auto-respond even to owners or known peers', () => {
+  const result = evaluatePrivateChatAutoReplyPolicy({
+    metabot: {
+      enabled: false,
+      boss_id: null,
+      boss_global_metaid: 'owner-global',
+      globalmetaid: 'local-global',
+      metaid: 'local-meta',
+    },
+    senderGlobalMetaId: 'owner-global',
+    senderMetaId: 'owner-meta',
+    listenerConfig: {
+      enabled: true,
+      groupChats: false,
+      privateChats: true,
+      serviceRequests: false,
+      respondToStrangerPrivateChats: true,
+    },
+    metabotStore: {
+      getMetabotById() {
+        return null;
+      },
+    },
+    hasPriorLocalOutbound: true,
+  });
+
+  assert.deepEqual(result, {
+    shouldReply: false,
+    reason: 'disabled_metabot',
+  });
+});
+
+test('prior private chat outbound detection only counts local non-handshake sends to the peer', () => {
+  const execCalls = [];
+  const hitDb = {
+    exec(sql, params) {
+      execCalls.push({ sql, params });
+      return [{ columns: ['found'], values: [[1]] }];
+    },
+  };
+
+  assert.equal(
+    hasPriorNonHandshakePrivateChatOutbound(hitDb, {
+      localGlobalMetaId: 'local-global',
+      localMetaId: 'local-meta',
+      peerGlobalMetaId: 'peer-global',
+      peerMetaId: 'peer-meta',
+      currentRowId: 9,
+    }),
+    true,
+  );
+  assert.match(execCalls[0].sql, /private_chat_messages/);
+  assert.match(execCalls[0].sql, /NOT IN\s*\(\s*'ping'\s*,\s*'pong'\s*\)/i);
+  assert.deepEqual(execCalls[0].params, [
+    9,
+    'local-global',
+    'local-meta',
+    'peer-global',
+    'peer-meta',
+  ]);
+
+  const missDb = {
+    exec() {
+      return [{ columns: ['found'], values: [] }];
+    },
+  };
+  assert.equal(
+    hasPriorNonHandshakePrivateChatOutbound(missDb, {
+      localGlobalMetaId: 'local-global',
+      localMetaId: 'local-meta',
+      peerGlobalMetaId: 'peer-global',
+      peerMetaId: 'peer-meta',
+      currentRowId: 9,
+    }),
+    false,
+  );
+});
+
+test('prior A2A outbound detection counts previous local private chat turns', () => {
+  const coworkStore = {
+    getConversationMapping(channel, externalConversationId, metabotId) {
+      assert.equal(channel, 'metaweb_private');
+      assert.equal(externalConversationId, 'metaweb-private:peer-global');
+      assert.equal(metabotId, 7);
+      return { coworkSessionId: 'session-1' };
+    },
+    getSession(sessionId) {
+      assert.equal(sessionId, 'session-1');
+      return {
+        messages: [
+          {
+            id: 'm1',
+            type: 'user',
+            content: 'hello?',
+            timestamp: 1,
+            metadata: { sourceChannel: 'metaweb_private', direction: 'incoming' },
+          },
+          {
+            id: 'm2',
+            type: 'assistant',
+            content: 'pong',
+            timestamp: 2,
+            metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing' },
+          },
+          {
+            id: 'm3',
+            type: 'assistant',
+            content: 'local reply',
+            timestamp: 3,
+            metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing' },
+          },
+        ],
+      };
+    },
+  };
+
+  assert.equal(
+    hasPriorPrivateChatA2AOutbound(coworkStore, {
+      externalConversationId: 'metaweb-private:peer-global',
+      metabotId: 7,
+    }),
+    true,
+  );
 });

@@ -23,6 +23,7 @@ export interface ListenerConfig {
   groupChats: boolean;
   privateChats: boolean;
   serviceRequests: boolean;
+  respondToStrangerPrivateChats: boolean;
 }
 
 export interface MetaBotForListener {

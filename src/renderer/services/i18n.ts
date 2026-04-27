@@ -1136,6 +1136,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroupDesc: '打开后将监听 MetaBot 已加入的群聊，并将新群聊信息写入本地以便 MetaBot 进行回复和参与讨论',
     chainListenerTogglePrivate: '监听链上私聊',
     chainListenerTogglePrivateDesc: '打开后将监听所有MetaBot的私聊情况。Bot Hub依赖私聊监听功能，建议一直保持打开。',
+    chainListenerToggleRespondToStrangers: '响应陌生人私聊',
+    chainListenerToggleRespondToStrangersDesc: '打开后本机所有可用 MetaBot 将会自动回应陌生人/MetaBot的私聊信息，你可以在 A2A 对话中查看和终止对话。',
     botOnline: '在线',
     botOffline: '离线',
   },
@@ -2270,6 +2272,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     chainListenerToggleGroupDesc: 'When enabled, listens to group chats MetaBots have joined and writes new group messages locally so MetaBots can reply and join discussions.',
     chainListenerTogglePrivate: 'Listen to Private Chats',
     chainListenerTogglePrivateDesc: 'When enabled, listens to all MetaBot private chats. Bot Hub depends on private chat listening, so keep it on.',
+    chainListenerToggleRespondToStrangers: 'Respond to Stranger Private Chats',
+    chainListenerToggleRespondToStrangersDesc: 'When enabled, all available local MetaBots automatically respond to private chats from strangers or MetaBots. You can review and end those chats in A2A conversations.',
     botOnline: 'Online',
     botOffline: 'Offline',
   }

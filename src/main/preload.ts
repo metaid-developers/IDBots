@@ -530,7 +530,7 @@ contextBridge.exposeInMainWorld('electron', {
   metaWebListener: {
     getListenerConfig: () => ipcRenderer.invoke('idbots:getListenerConfig'),
     getListenerStatus: () => ipcRenderer.invoke('idbots:getListenerStatus'),
-    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) =>
+    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests' | 'respondToStrangerPrivateChats'; enabled: boolean }) =>
       ipcRenderer.invoke('idbots:toggleListener', payload),
     startMetaWebListener: () => ipcRenderer.invoke('idbots:startMetaWebListener'),
     onListenerLog: (callback: (log: string) => void) => {

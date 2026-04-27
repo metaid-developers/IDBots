@@ -18,6 +18,7 @@ test('listener readiness restarts an existing socket when it is disconnected', (
       groupChats: false,
       privateChats: true,
       serviceRequests: false,
+      respondToStrangerPrivateChats: true,
     },
     hasSocket: true,
     isSocketConnected: false,
@@ -30,10 +31,28 @@ test('listener readiness restarts an existing socket when it is disconnected', (
       groupChats: false,
       privateChats: true,
       serviceRequests: false,
+      respondToStrangerPrivateChats: true,
     },
     persistConfig: false,
     shouldStartListener: true,
     shouldWaitForConnection: true,
+  });
+});
+
+test('listener config normalization defaults stranger private chat responses on', () => {
+  const { normalizeListenerConfig } = loadMetaWebListenerReadiness();
+
+  assert.deepEqual(normalizeListenerConfig({
+    enabled: true,
+    groupChats: false,
+    privateChats: true,
+    serviceRequests: false,
+  }), {
+    enabled: true,
+    groupChats: false,
+    privateChats: true,
+    serviceRequests: false,
+    respondToStrangerPrivateChats: true,
   });
 });
 
