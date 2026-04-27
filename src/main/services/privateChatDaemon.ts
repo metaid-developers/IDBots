@@ -50,7 +50,6 @@ import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
 import type { ListenerConfig } from './metaWebListenerService';
 
 const POLL_INTERVAL_MS = 5_000;
-const PRIVATE_CHAT_REPLY_DELAY_MS = 5_000;
 const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
 const PRIVATE_CHAT_MAX_INCOMING_TURNS = 50;
 const PRIVATE_CHAT_CONTEXT_MAX_MESSAGES = 80;
@@ -256,8 +255,28 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function waitBeforePrivateChatReply(wait: DelayFn = sleep): Promise<void> {
-  await wait(PRIVATE_CHAT_REPLY_DELAY_MS);
+export function getPrivateChatReplyDelayMs(incomingTurnCount: number): number {
+  const count = Number.isFinite(incomingTurnCount)
+    ? Math.max(1, Math.floor(incomingTurnCount))
+    : 1;
+  if (count <= 10) return 5_000;
+  if (count <= 20) return 10_000;
+  if (count <= 30) return 15_000;
+  if (count <= 40) return 20_000;
+  return 25_000;
+}
+
+export async function waitBeforePrivateChatReply(
+  incomingTurnCountOrWait: number | DelayFn = 1,
+  maybeWait?: DelayFn
+): Promise<void> {
+  const incomingTurnCount = typeof incomingTurnCountOrWait === 'number'
+    ? incomingTurnCountOrWait
+    : 1;
+  const wait = typeof incomingTurnCountOrWait === 'function'
+    ? incomingTurnCountOrWait
+    : maybeWait ?? sleep;
+  await wait(getPrivateChatReplyDelayMs(incomingTurnCount));
 }
 
 function isPrivateA2AMessage(message: CoworkMessage): boolean {
@@ -276,6 +295,16 @@ function resolveA2AMessageDirection(message: CoworkMessage): 'incoming' | 'outgo
 
 function isByeText(value: string): boolean {
   return value.trim().toLowerCase() === 'bye';
+}
+
+export function shouldSkipPrivateChatAutoReplyText(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized === 'bye') return true;
+  if (normalized === 'thinking...' || normalized === 'thinking…') return true;
+  if (/^[.\s]+$/.test(normalized)) return true;
+  if (/^[…\s]+$/.test(normalized)) return true;
+  return false;
 }
 
 export function analyzePrivateChatA2AConversation(params: {
@@ -360,6 +389,8 @@ export function buildPrivateChatA2ASystemPrompt(params: {
     '- Continue only when you can add valuable discussion, sharper reasoning, or useful questions.',
     '- Keep the discussion around one coherent topic instead of drifting between unrelated subjects.',
     '- Avoid empty pleasantries, loops, repeated introductions, and generic filler.',
+    '- You do not need to reply to every message; reply only to the latest meaningful message.',
+    '- If the latest message is clearly meaningless placeholder or closing content, such as "Thinking...", "....", or "bye", do not reply.',
     '- Do not claim local tool access or execute local skills in this regular private chat.',
     forceByeRule,
     '- When you say "bye", say exactly "bye" and nothing else.',
@@ -659,6 +690,36 @@ export function hasPriorNonHandshakePrivateChatOutbound(
        AND lower(trim(COALESCE(content, ''))) NOT IN ('ping', 'pong')
      LIMIT 1`,
     [currentRowId, localGlobalMetaId, localMetaId, peerGlobalMetaId, peerMetaId]
+  );
+  return Boolean(result[0]?.values?.length);
+}
+
+export function hasNewerPrivateChatMessage(
+  db: Pick<Database, 'exec'>,
+  params: {
+    currentRowId: number;
+    fromGlobalMetaId?: string | null;
+    fromMetaId?: string | null;
+    toGlobalMetaId?: string | null;
+    toMetaId?: string | null;
+  }
+): boolean {
+  const fromGlobalMetaId = normalizeIdentity(params.fromGlobalMetaId);
+  const fromMetaId = normalizeIdentity(params.fromMetaId);
+  const toGlobalMetaId = normalizeIdentity(params.toGlobalMetaId);
+  const toMetaId = normalizeIdentity(params.toMetaId);
+  if ((!fromGlobalMetaId && !fromMetaId) || (!toGlobalMetaId && !toMetaId)) {
+    return false;
+  }
+
+  const result = db.exec(
+    `SELECT 1 AS found
+     FROM private_chat_messages
+     WHERE id > ?
+       AND (from_global_metaid = ? OR from_metaid = ?)
+       AND (to_global_metaid = ? OR to_metaid = ?)
+     LIMIT 1`,
+    [params.currentRowId, fromGlobalMetaId, fromMetaId, toGlobalMetaId, toMetaId]
   );
   return Boolean(result[0]?.values?.length);
 }
@@ -1671,6 +1732,24 @@ async function processOne(
 
     const externalConversationId = buildPrivateConversationExternalConversationId(row);
 
+    if (hasNewerPrivateChatMessage(db, {
+      currentRowId: row.id,
+      fromGlobalMetaId: row.from_global_metaid,
+      fromMetaId: row.from_metaid,
+      toGlobalMetaId: row.to_global_metaid,
+      toMetaId: row.to_metaid,
+    })) {
+      emitLog(`[PrivateChat] Skip stale private chat message ${row.id}; a newer peer message is queued.`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
+    if (shouldSkipPrivateChatAutoReplyText(plaintext)) {
+      emitLog(`[PrivateChat] Skip no-op private chat message from ${fromGlobalMetaId.slice(0, 12)}…`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
     // Human-ended conversations stay closed. Auto-bye conversations can restart after 10 minutes.
     const existingMapping = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id);
     const mappingMeta = parseConversationMappingMetadata(existingMapping?.metadataJson);
@@ -1779,7 +1858,7 @@ async function processOne(
     });
     let reply: string;
     try {
-      await waitBeforePrivateChatReply();
+      await waitBeforePrivateChatReply(conversationAnalysis.incomingTurnCount);
       reply = conversationAnalysis.shouldForceBye
         ? 'bye'
         : await performChat(systemPrompt, plaintext, llmId);

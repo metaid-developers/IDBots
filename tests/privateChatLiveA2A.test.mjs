@@ -6,6 +6,9 @@ let endPrivateChatA2AConversation;
 let analyzePrivateChatA2AConversation;
 let buildPrivateChatA2ASystemPrompt;
 let waitBeforePrivateChatReply;
+let getPrivateChatReplyDelayMs;
+let shouldSkipPrivateChatAutoReplyText;
+let hasNewerPrivateChatMessage;
 let evaluatePrivateChatAutoReplyPolicy;
 let hasPriorNonHandshakePrivateChatOutbound;
 let hasPriorPrivateChatA2AOutbound;
@@ -16,6 +19,9 @@ try {
     analyzePrivateChatA2AConversation,
     buildPrivateChatA2ASystemPrompt,
     waitBeforePrivateChatReply,
+    getPrivateChatReplyDelayMs,
+    shouldSkipPrivateChatAutoReplyText,
+    hasNewerPrivateChatMessage,
     evaluatePrivateChatAutoReplyPolicy,
     hasPriorNonHandshakePrivateChatOutbound,
     hasPriorPrivateChatA2AOutbound,
@@ -27,6 +33,9 @@ try {
     analyzePrivateChatA2AConversation,
     buildPrivateChatA2ASystemPrompt,
     waitBeforePrivateChatReply,
+    getPrivateChatReplyDelayMs,
+    shouldSkipPrivateChatAutoReplyText,
+    hasNewerPrivateChatMessage,
     evaluatePrivateChatAutoReplyPolicy,
     hasPriorNonHandshakePrivateChatOutbound,
     hasPriorPrivateChatA2AOutbound,
@@ -186,14 +195,25 @@ test('ending a private chat A2A conversation marks the mapping closed and emits 
   ]);
 });
 
-test('private chat reply waits through an injectable five-second delay hook', async () => {
+test('private chat reply delay scales with active incoming turn count', async () => {
+  assert.equal(getPrivateChatReplyDelayMs(1), 5000);
+  assert.equal(getPrivateChatReplyDelayMs(10), 5000);
+  assert.equal(getPrivateChatReplyDelayMs(11), 10000);
+  assert.equal(getPrivateChatReplyDelayMs(20), 10000);
+  assert.equal(getPrivateChatReplyDelayMs(21), 15000);
+  assert.equal(getPrivateChatReplyDelayMs(30), 15000);
+  assert.equal(getPrivateChatReplyDelayMs(31), 20000);
+  assert.equal(getPrivateChatReplyDelayMs(40), 20000);
+  assert.equal(getPrivateChatReplyDelayMs(41), 25000);
+  assert.equal(getPrivateChatReplyDelayMs(50), 25000);
+
   const delays = [];
-  await waitBeforePrivateChatReply((ms) => {
+  await waitBeforePrivateChatReply(21, (ms) => {
     delays.push(ms);
     return Promise.resolve();
   });
 
-  assert.deepEqual(delays, [5000]);
+  assert.deepEqual(delays, [15000]);
 });
 
 test('private chat prompt includes recent A2A context and topic-ending policy', () => {
@@ -239,12 +259,56 @@ test('private chat prompt includes recent A2A context and topic-ending policy', 
   assert.match(prompt, /private-chat MetaBot/);
   assert.match(prompt, /valuable discussion/i);
   assert.match(prompt, /coherent topic/i);
+  assert.match(prompt, /do not need to reply to every message/i);
+  assert.match(prompt, /latest meaningful message/i);
+  assert.match(prompt, /Thinking\.\.\./);
+  assert.match(prompt, /\.\.\.\./);
   assert.match(prompt, /say exactly "bye"/i);
   assert.match(prompt, /50 turns/i);
   assert.match(prompt, /Peer Bot: 我们讨论一下比特币生态的索引器吧/);
   assert.match(prompt, /Local Bot: 可以，先从链上数据可用性说起。/);
   assert.match(prompt, /Peer Bot: 那缓存策略呢？/);
   assert.match(prompt, /<contactMemories \/>/);
+});
+
+test('regular private chat skips placeholder latest messages without an LLM reply', () => {
+  assert.equal(shouldSkipPrivateChatAutoReplyText('Thinking...'), true);
+  assert.equal(shouldSkipPrivateChatAutoReplyText(' thinking… '), true);
+  assert.equal(shouldSkipPrivateChatAutoReplyText('....'), true);
+  assert.equal(shouldSkipPrivateChatAutoReplyText('……'), true);
+  assert.equal(shouldSkipPrivateChatAutoReplyText('bye'), true);
+  assert.equal(shouldSkipPrivateChatAutoReplyText('I am thinking about indexer caching.'), false);
+  assert.equal(shouldSkipPrivateChatAutoReplyText('Can you compare these options?'), false);
+});
+
+test('regular private chat skips older turns when a newer peer message exists', () => {
+  const execCalls = [];
+  const db = {
+    exec(sql, params) {
+      execCalls.push({ sql, params });
+      return [{ columns: ['found'], values: [[1]] }];
+    },
+  };
+
+  assert.equal(
+    hasNewerPrivateChatMessage(db, {
+      currentRowId: 10,
+      fromGlobalMetaId: 'peer-global',
+      fromMetaId: 'peer-meta',
+      toGlobalMetaId: 'local-global',
+      toMetaId: 'local-meta',
+    }),
+    true,
+  );
+  assert.match(execCalls[0].sql, /private_chat_messages/);
+  assert.match(execCalls[0].sql, /id > \?/);
+  assert.deepEqual(execCalls[0].params, [
+    10,
+    'peer-global',
+    'peer-meta',
+    'local-global',
+    'local-meta',
+  ]);
 });
 
 test('private chat analysis requests bye at fifty incoming turns and resets after inactivity', () => {
