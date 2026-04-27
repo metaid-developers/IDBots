@@ -34,6 +34,14 @@ function normalizeMrc20Ticker(value) {
   return normalized.replace(/[^A-Z0-9]/g, '');
 }
 
+function normalizeOutputType(value) {
+  const normalized = normalizeSingleLineText(value).toLowerCase();
+  if (normalized === 'image' || normalized === 'video' || normalized === 'other' || normalized === 'text') {
+    return normalized;
+  }
+  return '';
+}
+
 function resolveOrderSettlementMetadata(input) {
   const normalizedCurrency = normalizeSingleLineText(input?.currency).toUpperCase();
   const currencyMrc20Match = normalizedCurrency.match(/^([A-Z0-9]+)-MRC20$/);
@@ -171,6 +179,10 @@ export function buildOrderPayload(input) {
     `service id: ${String(input?.serviceId || '').trim()}`,
     `skill name: ${String(input?.skillName || '').trim()}`,
   );
+  const outputType = normalizeOutputType(input?.outputType);
+  if (outputType) {
+    metadataLines.push(`output type: ${outputType}`);
+  }
 
   return [
     `${ORDER_PREFIX} ${displaySummary}`,

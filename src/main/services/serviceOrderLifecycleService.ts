@@ -7,6 +7,7 @@ import { buildRefundRequestPayload } from './serviceOrderProtocols.js';
 
 export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
 export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = 'self_order_not_allowed';
+export const SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON = 'delivery_artifact_failed';
 export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = 60_000;
 export const SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON = 'free_order_no_refund_required';
 
@@ -62,6 +63,11 @@ export interface MarkSellerOrderDeliveredInput extends ServiceOrderPaymentMatchI
 
 export interface MarkBuyerOrderFirstResponseReceivedInput extends ServiceOrderPaymentMatchInput {
   receivedAt?: number;
+}
+
+export interface MarkBuyerOrderFailedAndRequestRefundInput extends ServiceOrderPaymentMatchInput {
+  failureReason: string;
+  failedAt?: number;
 }
 
 export interface MarkSellerOrderFirstResponseSentInput extends ServiceOrderPaymentMatchInput {
@@ -297,6 +303,26 @@ export class ServiceOrderLifecycleService {
     });
   }
 
+  async markBuyerOrderFailedAndRequestRefund(
+    input: MarkBuyerOrderFailedAndRequestRefundInput
+  ): Promise<ServiceOrderRecord | null> {
+    const order = this.store.findOrderByPayment({
+      role: 'buyer',
+      localMetabotId: input.localMetabotId,
+      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+      paymentTxid: input.paymentTxid,
+    });
+    if (!order) return null;
+    const failedAt = input.failedAt ?? this.now();
+    const failedOrder = this.store.markFailed(
+      order.id,
+      input.failureReason || SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
+      failedAt
+    );
+    if (!failedOrder) return null;
+    return await this.tryCreateRefundRequest(failedOrder.id, failedAt);
+  }
+
   markSellerOrderDelivered(input: MarkSellerOrderDeliveredInput): ServiceOrderRecord | null {
     const order = this.store.findOrderByPayment({
       role: 'seller',
@@ -456,9 +482,16 @@ export class ServiceOrderLifecycleService {
       orderMessagePinId: order.orderMessagePinId,
       failureReason: order.failureReason ?? 'delivery_timeout',
       failureDetectedAt: Math.floor((order.failedAt ?? this.now()) / 1000),
-      reasonComment: '服务超时',
+      reasonComment: this.buildRefundReasonComment(order.failureReason),
       evidencePinIds: [order.orderMessagePinId].filter(Boolean),
     });
+  }
+
+  private buildRefundReasonComment(failureReason?: string | null): string {
+    if (failureReason === SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON) {
+      return '服务方未能按约定交付数字成果';
+    }
+    return '服务超时';
   }
 
   private getBuyerPaymentKey(

@@ -244,6 +244,36 @@ test('sendSellerOrderAcknowledgement sends a private acknowledgement and marks t
   }]);
 });
 
+test('sendSellerOrderAcknowledgement fallback asks the buyer to wait patiently while the skill runs', async () => {
+  const sentMessages = [];
+
+  const result = await sendSellerOrderAcknowledgement({
+    metabot: {
+      id: 7,
+      name: 'SellerBot',
+      llm_id: 'llm-1',
+    },
+    peerGlobalMetaId: 'buyer-global-metaid',
+    peerName: 'Client',
+    plaintext: '[ORDER] 请生成一张火箭发射图片',
+    skillName: 'seedream',
+    paymentTxid: 'b'.repeat(64),
+    performChat: async () => {
+      throw new Error('llm unavailable');
+    },
+    sendEncryptedMsg: async (text) => {
+      sentMessages.push(text);
+      return { pinId: 'ack-pin-id' };
+    },
+    emitLog: () => {},
+  });
+
+  assert.match(result.text, /已收到|已明确/);
+  assert.match(result.text, /技能执行可能需要一些时间/);
+  assert.match(result.text, /耐心等待/);
+  assert.deepEqual(sentMessages, [result.text]);
+});
+
 test('CoworkRunner uses a compact outer prompt profile for seller metaweb_order a2a sessions', () => {
   const { runner } = createCoworkRunnerPromptHarness({
     sessionType: 'a2a',

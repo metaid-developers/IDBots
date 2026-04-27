@@ -9,6 +9,11 @@ import type { OrderSource } from './orderPayment';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { generateSessionTitle } from '../libs/coworkUtil';
 import { cleanServiceResultText } from './serviceOrderProtocols.js';
+import {
+  buildMetafileDeliverySummary,
+  normalizeServiceOutputType,
+  resolveServiceDeliveryArtifact,
+} from './serviceDeliveryArtifacts.js';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -24,6 +29,8 @@ export interface PrivateChatOrderCoworkOptions {
   metabotStore: MetabotStore;
   timeoutMs?: number;
   emitToRenderer?: (channel: string, data: unknown) => void;
+  uploadDeliveryArtifact?: (artifact: Record<string, unknown>, request: OrderCoworkRequest) => Promise<Record<string, unknown>>;
+  buildRatingInvite?: (serviceReply: string, request?: OrderCoworkRequest) => Promise<string>;
 }
 
 export interface OrderCoworkResult {
@@ -43,6 +50,9 @@ export interface OrderCoworkRequest {
   peerGlobalMetaId?: string | null;
   peerName?: string | null;
   peerAvatar?: string | null;
+  expectedOutputType?: string | null;
+  orderStartedAt?: number | null;
+  sendStatusUpdate?: (content: string) => Promise<unknown>;
 }
 
 const DEFAULT_TIMEOUT_MS = 240_000;
@@ -58,6 +68,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
   private metabotStore: MetabotStore;
   private timeoutMs: number;
   private emitToRenderer?: (channel: string, data: unknown) => void;
+  private uploadDeliveryArtifact?: (artifact: Record<string, unknown>, request: OrderCoworkRequest) => Promise<Record<string, unknown>>;
+  private buildRatingInviteOverride?: (serviceReply: string, request?: OrderCoworkRequest) => Promise<string>;
 
   private sessionIds: Set<string> = new Set();
   private accumulators: Map<string, MessageAccumulator> = new Map();
@@ -69,6 +81,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
     this.metabotStore = options.metabotStore;
     this.timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
     this.emitToRenderer = options.emitToRenderer;
+    this.uploadDeliveryArtifact = options.uploadDeliveryArtifact;
+    this.buildRatingInviteOverride = options.buildRatingInvite;
     this.setupListeners();
   }
 
@@ -81,6 +95,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
   }
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
+    request.orderStartedAt = request.orderStartedAt ?? Date.now();
     const sessionId = request.existingSessionId?.trim()
       || await this.createOrderSession(request);
     this.injectProcessingNotice(sessionId, request);
@@ -192,8 +207,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
   private injectProcessingNotice(sessionId: string, request: OrderCoworkRequest): void {
     const peerName = request.peerName?.trim();
     const content = peerName
-      ? `${peerName}，已收到你的服务订单，正在处理，稍后返回结果。`
-      : '已收到服务订单，正在处理，稍后返回结果。';
+      ? `${peerName}，已收到你的服务订单，技能执行可能需要一些时间，正在处理，请耐心等待最终结果。`
+      : '已收到服务订单，技能执行可能需要一些时间，正在处理，请耐心等待最终结果。';
     const notice = this.coworkStore.addMessage(sessionId, {
       type: 'assistant',
       content,
@@ -250,9 +265,21 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (this.emitToRenderer) {
       this.emitToRenderer('cowork:stream:complete', { sessionId });
     }
-    // Generate [NeedsRating] invite asynchronously, then resolve
-    this.buildRatingInvite(serviceReply, request).then((ratingInvite) => {
-      accumulator.resolve({ serviceReply, ratingInvite, isDeliverable: true });
+    this.finalizeCompletedOrder(sessionId, serviceReply, accumulator.messages, request).then(async (finalized) => {
+      if (!finalized.isDeliverable) {
+        accumulator.resolve({
+          serviceReply: finalized.serviceReply,
+          ratingInvite: '',
+          isDeliverable: false,
+        });
+        return;
+      }
+      const ratingInvite = await this.buildRatingInvite(finalized.serviceReply, request);
+      accumulator.resolve({
+        serviceReply: finalized.serviceReply,
+        ratingInvite,
+        isDeliverable: true,
+      });
     }).catch(() => {
       // Fallback if LLM fails
       accumulator.resolve({
@@ -261,6 +288,136 @@ export class PrivateChatOrderCowork extends EventEmitter {
         isDeliverable: true,
       });
     });
+  }
+
+  private async finalizeCompletedOrder(
+    sessionId: string,
+    serviceReply: string,
+    messages: CoworkMessage[],
+    request?: OrderCoworkRequest,
+  ): Promise<OrderCoworkResult> {
+    const outputType = normalizeServiceOutputType(request?.expectedOutputType);
+    if (outputType === 'text') {
+      return {
+        serviceReply,
+        ratingInvite: '',
+        isDeliverable: true,
+      };
+    }
+
+    const session = this.coworkStore.getSession(sessionId);
+    const cwd = session?.cwd || this.coworkStore.getConfig().workingDirectory || os.tmpdir();
+    const artifactResult = resolveServiceDeliveryArtifact({
+      outputType,
+      cwd,
+      orderStartedAt: request?.orderStartedAt ?? Date.now(),
+      messages,
+    });
+
+    if (artifactResult.status !== 'found') {
+      const reason = artifactResult.status === 'invalid' && artifactResult.reason === 'file_too_large'
+        ? '生成文件超过 20MB，无法按约定上传链上交付。'
+        : `未找到符合 ${outputType} 交付格式的数字成果。`;
+      const failureReply = [
+        `服务方未能按约定交付 ${outputType} 数字成果。`,
+        reason,
+        '系统将自动转入退款流程，请勿对本次服务进行好评确认。',
+      ].join('\n');
+      this.addOrderDeliveryStatusMessage(sessionId, failureReply, {
+        orderDeliveryFailed: true,
+      });
+      return {
+        serviceReply: failureReply,
+        ratingInvite: '',
+        isDeliverable: false,
+      };
+    }
+
+    if (!this.uploadDeliveryArtifact) {
+      const failureReply = [
+        `服务方已生成 ${outputType} 数字成果，但当前运行时缺少链上上传能力。`,
+        '系统将自动转入退款流程，请稍后重试或联系服务方。',
+      ].join('\n');
+      this.addOrderDeliveryStatusMessage(sessionId, failureReply, {
+        orderDeliveryFailed: true,
+      });
+      return {
+        serviceReply: failureReply,
+        ratingInvite: '',
+        isDeliverable: false,
+      };
+    }
+
+    const uploadNotice = '技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。';
+    this.addOrderDeliveryStatusMessage(sessionId, uploadNotice, {
+      orderDeliveryUploadNotice: true,
+    });
+    await this.sendOrderStatusUpdate(request, uploadNotice);
+
+    try {
+      const upload = await this.uploadDeliveryArtifact(artifactResult.artifact, request ?? ({} as OrderCoworkRequest));
+      const pinId = typeof upload?.pinId === 'string' ? upload.pinId.trim() : '';
+      if (!pinId) {
+        throw new Error('Upload returned empty pinId');
+      }
+      const deliverySummary = buildMetafileDeliverySummary({
+        artifact: artifactResult.artifact,
+        upload,
+      });
+      this.addOrderDeliveryStatusMessage(sessionId, deliverySummary, {
+        orderDeliveryUploadComplete: true,
+      });
+      return {
+        serviceReply: [serviceReply, '', deliverySummary].filter(Boolean).join('\n\n'),
+        ratingInvite: '',
+        isDeliverable: true,
+      };
+    } catch (error) {
+      const failureReply = [
+        `服务方已生成 ${outputType} 数字成果，但上传链上交付失败。`,
+        error instanceof Error ? error.message : String(error),
+        '系统将自动转入退款流程，请稍后重试或联系服务方。',
+      ].filter(Boolean).join('\n');
+      this.addOrderDeliveryStatusMessage(sessionId, failureReply, {
+        orderDeliveryFailed: true,
+      });
+      return {
+        serviceReply: failureReply,
+        ratingInvite: '',
+        isDeliverable: false,
+      };
+    }
+  }
+
+  private addOrderDeliveryStatusMessage(
+    sessionId: string,
+    content: string,
+    metadata: Record<string, unknown>,
+  ): void {
+    const message = this.coworkStore.addMessage(sessionId, {
+      type: 'assistant',
+      content,
+      metadata: {
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        ...metadata,
+      },
+    });
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:message', { sessionId, message });
+    }
+  }
+
+  private async sendOrderStatusUpdate(
+    request: OrderCoworkRequest | undefined,
+    content: string,
+  ): Promise<void> {
+    if (!request?.sendStatusUpdate) return;
+    try {
+      await request.sendStatusUpdate(content);
+    } catch {
+      // Status updates are best-effort; final delivery or failure notice still follows.
+    }
   }
 
   private handleError(sessionId: string, error: string): void {
@@ -446,6 +603,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
   }
 
   private async buildRatingInvite(serviceReply: string, request?: OrderCoworkRequest): Promise<string> {
+    if (this.buildRatingInviteOverride) {
+      return this.buildRatingInviteOverride(serviceReply, request);
+    }
     const metabot = request?.metabotId != null
       ? this.metabotStore.getMetabotById(request.metabotId)
       : null;

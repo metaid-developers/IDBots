@@ -157,6 +157,7 @@ contextBridge.exposeInMainWorld('electron', {
       serviceMrc20Id?: string | null;
       servicePaymentCommitTxid?: string | null;
       serviceSkill?: string | null;
+      serviceOutputType?: string | null;
       serverBotGlobalMetaId?: string | null;
       servicePaidTx?: string | null;
     }) => ipcRenderer.invoke('gigSquare:sendOrder', params),

@@ -39,13 +39,14 @@ const TXID_RE = /^\s*(?:txid|transaction\s+id)\s*[:：=]?\s*([0-9a-fA-F]{64})(?=
 const ORDER_REFERENCE_RE = /order(?:\s+id|\s+ref(?:erence)?)\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z0-9-]+)/i;
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
-const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|output\s+type|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|skill(?:\s+name)?|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称|输出格式|交付格式)\s*[:：=]?/i;
 const RAW_REQUEST_TAG_LINE_RE = /^\s*<\/?raw_request>\s*$/i;
 const PAYMENT_CHAIN_RE = /^\s*payment\s+chain\s*[:：=]?\s*([A-Za-z0-9_-]+)\s*$/im;
 const SETTLEMENT_KIND_RE = /^\s*settlement\s+kind\s*[:：=]?\s*([A-Za-z0-9_-]+)\s*$/im;
 const MRC20_TICKER_RE = /^\s*mrc20\s+ticker\s*[:：=]?\s*([A-Za-z0-9_-]+)\s*$/im;
 const MRC20_ID_RE = /^\s*mrc20\s+id\s*[:：=]?\s*([^\s]+)\s*$/im;
 const COMMIT_TXID_RE = /^\s*commit\s+txid\s*[:：=]?\s*([0-9a-fA-F]{64})\s*$/im;
+const OUTPUT_TYPE_RE = /^\s*(?:output\s+type|输出格式|交付格式)\s*[:：=]?\s*([A-Za-z0-9_-]+)\s*$/im;
 const SKILL_ID_PATTERNS = [
   /(?:skill(?:\s+service)?\s+id|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID))\s*[:：=]?\s*([^\s,，。]+)/i,
 ];
@@ -83,6 +84,25 @@ export function extractOrderSkillId(plaintext: string): string | null {
 
 export function extractOrderSkillName(plaintext: string): string | null {
   return extractFirstMatch(plaintext, SKILL_NAME_PATTERNS);
+}
+
+export type ServiceOrderOutputType = 'text' | 'image' | 'video' | 'other';
+
+export function normalizeOrderOutputType(value: unknown): ServiceOrderOutputType | null {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (
+    normalized === 'text' ||
+    normalized === 'image' ||
+    normalized === 'video' ||
+    normalized === 'other'
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+export function extractOrderOutputType(plaintext: string): ServiceOrderOutputType | null {
+  return normalizeOrderOutputType(extractStructuredField(plaintext, OUTPUT_TYPE_RE));
 }
 
 export function extractOrderTxid(plaintext: string): string | null {

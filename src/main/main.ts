@@ -1128,7 +1128,8 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, status, operation, path, original_id, available,
            metaid, global_metaid, address, create_address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, updated_at, rating_avg, rating_count
+           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, output_type,
+           updated_at, rating_avg, rating_count
     FROM remote_skill_service
     ORDER BY
       CASE WHEN rating_count > 0
@@ -2695,6 +2696,7 @@ const executeDelegationPipeline = async (
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
     providerSkill: toSafeString(service.providerSkill).trim(),
     servicePinId: delegation.servicePinId,
+    outputType: toSafeString(service.outputType).trim() || 'text',
     paymentTxid: isFreeDelegation ? '' : paymentTxid,
     paymentCommitTxid: isFreeDelegation ? null : paymentCommitTxid,
     orderReference: isFreeDelegation ? paymentTxid : '',
@@ -2717,6 +2719,7 @@ const executeDelegationPipeline = async (
       serviceMrc20Id: delegationSettlement.mrc20Id,
       servicePaymentCommitTxid: paymentCommitTxid,
       serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
+      serviceOutputType: toSafeString(service.outputType).trim() || 'text',
       serverBotGlobalMetaId: providerGlobalMetaId,
       servicePaidTx: paymentTxid,
       orderPayload,
@@ -6213,6 +6216,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serviceMrc20Id?: string | null;
     servicePaymentCommitTxid?: string | null;
     serviceSkill?: string | null;
+    serviceOutputType?: string | null;
     serverBotGlobalMetaId?: string | null;
     servicePaidTx?: string | null;
   }) => {
@@ -6252,6 +6256,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         ? rawServicePaymentCommitTxid
         : null;
       const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
+      const serviceOutputType = typeof params?.serviceOutputType === 'string'
+        ? params.serviceOutputType.trim().toLowerCase() || 'text'
+        : 'text';
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
       let servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
       isFreeServiceOrder = isFreeServicePrice(servicePrice);
@@ -6332,6 +6339,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           serviceMrc20Id,
           servicePaymentCommitTxid,
           serviceSkill,
+          serviceOutputType,
           serverBotGlobalMetaId,
           servicePaidTx,
           orderPayload,

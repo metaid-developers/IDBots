@@ -590,6 +590,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         serviceId: service.id,
         skillName: service.providerSkill || service.serviceName,
         serviceName: service.serviceName,
+        outputType: service.outputType || 'text',
       });
 
       const sendResult = await window.electron.gigSquare.sendOrder({
@@ -608,6 +609,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         serviceMrc20Id: settlement.mrc20Id,
         servicePaymentCommitTxid: isFreeService ? null : (paymentCommitTxid || null),
         serviceSkill: service.providerSkill || service.serviceName,
+        serviceOutputType: service.outputType || 'text',
         serverBotGlobalMetaId: service.providerGlobalMetaId || null,
         servicePaidTx: txId,
       });

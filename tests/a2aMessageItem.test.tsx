@@ -58,6 +58,9 @@ test('A2A delivery image keeps metafile text and renders image preview for .jpg'
 
   assert.match(markup, /metafile:\/\/aabbccddeeff00112233445566778899i0\.jpg/);
   assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/aabbccddeeff00112233445566778899i0"/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /aabbccddeeff00112233445566778899i0/);
+  assert.match(markup, /下载文件/);
 });
 
 test('A2A delivery renders embedded player for .mp4 metafile', () => {
@@ -76,6 +79,28 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
 
   assert.match(markup, /<video[^>]*controls/);
   assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
+});
+
+test('A2A delivery previews modern image and video metafile extensions', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-modern-media',
+        type: 'user',
+        content: '[DELIVERY] {"result":"交付： metafile://imagepin001i0.webp\\n视频： metafile://videopin001i0.webm"}',
+        timestamp: 1_744_444_447_500,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/imagepin001i0"/);
+  assert.match(markup, /<video[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/videopin001i0"/);
+  assert.match(markup, /PINID:\s*imagepin001i0/);
+  assert.match(markup, /PINID:\s*videopin001i0/);
 });
 
 test('A2A delivery renders embedded player for .mp3 metafile', () => {
@@ -94,9 +119,11 @@ test('A2A delivery renders embedded player for .mp3 metafile', () => {
 
   assert.match(markup, /<audio[^>]*controls/);
   assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
 });
 
-test('A2A delivery renders save button for unsupported metafile extension', () => {
+test('A2A delivery renders pin id and download button for unsupported metafile extension', () => {
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -110,11 +137,12 @@ test('A2A delivery renders save button for unsupported metafile extension', () =
     />
   );
 
-  assert.match(markup, /保存文件/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
   assert.match(markup, /metafile:\/\/cafebabefeed00112233445566778899i0\.pdf/);
 });
 
-test('A2A delivery renders save button for metafile without extension', () => {
+test('A2A delivery renders pin id and download button for metafile without extension', () => {
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -128,6 +156,7 @@ test('A2A delivery renders save button for metafile without extension', () => {
     />
   );
 
-  assert.match(markup, /保存文件/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
   assert.match(markup, /metafile:\/\/8899aabbccddeeff0011223344556677i0/);
 });

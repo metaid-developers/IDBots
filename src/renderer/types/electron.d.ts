@@ -463,6 +463,7 @@ interface IElectronAPI {
       serviceMrc20Id?: string | null;
       servicePaymentCommitTxid?: string | null;
       serviceSkill?: string | null;
+      serviceOutputType?: string | null;
       serverBotGlobalMetaId?: string | null;
       servicePaidTx?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | 'order_request_too_long' | string }>;

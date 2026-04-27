@@ -18,6 +18,7 @@ export interface EnsureServiceOrderObserverSessionInput {
   serviceMrc20Id?: string | null;
   servicePaymentCommitTxid?: string | null;
   serviceSkill?: string | null;
+  serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
   orderPayload?: string | null;
@@ -47,6 +48,7 @@ export interface ServiceOrderObserverMetadata {
   serviceMrc20Id: string | null;
   servicePaymentCommitTxid: string | null;
   serviceSkill: string | null;
+  serviceOutputType: string | null;
   serverBotGlobalMetaId: string | null;
   servicePaidTx: string | null;
 }
@@ -80,6 +82,7 @@ export function buildServiceOrderFallbackPayload(input: {
   servicePaymentCommitTxid?: string | null;
   serviceId?: string | null;
   serviceSkill?: string | null;
+  serviceOutputType?: string | null;
   peerGlobalMetaId?: string | null;
 }): string {
   const txid = normalizeText(input.servicePaidTx);
@@ -96,6 +99,7 @@ export function buildServiceOrderFallbackPayload(input: {
     normalizeText(input.serviceMrc20Id) ? `mrc20 id: ${normalizeText(input.serviceMrc20Id)}` : '',
     normalizeText(input.serviceId) ? `service id: ${normalizeText(input.serviceId)}` : '',
     normalizeText(input.serviceSkill) ? `skill name: ${normalizeText(input.serviceSkill)}` : '',
+    normalizeText(input.serviceOutputType) ? `output type: ${normalizeText(input.serviceOutputType)}` : '',
     normalizeText(input.peerGlobalMetaId) ? `peer globalmetaid: ${normalizeText(input.peerGlobalMetaId)}` : '',
   ].filter(Boolean);
   return lines.join('\n');
@@ -118,6 +122,7 @@ export function buildServiceOrderObserverMetadata(
     serviceMrc20Id: normalizeText(input.serviceMrc20Id) || null,
     servicePaymentCommitTxid: normalizeText(input.servicePaymentCommitTxid) || null,
     serviceSkill: normalizeText(input.serviceSkill) || null,
+    serviceOutputType: normalizeText(input.serviceOutputType) || null,
     serverBotGlobalMetaId: normalizeText(input.serverBotGlobalMetaId) || null,
     servicePaidTx: normalizeText(input.servicePaidTx) || null,
   };
@@ -162,6 +167,7 @@ export async function ensureServiceOrderObserverSession(
     servicePaymentCommitTxid: input.servicePaymentCommitTxid,
     serviceId: input.serviceId,
     serviceSkill: input.serviceSkill,
+    serviceOutputType: input.serviceOutputType,
     peerGlobalMetaId: input.peerGlobalMetaId,
   });
   const fallbackTitle = orderPayload.split('\n')[0].slice(0, 50)

@@ -162,6 +162,21 @@ test('buildGigSquareOrderPayload appends structured MRC20 settlement metadata li
   assert.match(payload, new RegExp(`commit txid:\\s*${'c'.repeat(64)}`, 'i'));
 });
 
+test('buildGigSquareOrderPayload appends expected output type metadata', () => {
+  const payload = buildGigSquareOrderPayload({
+    naturalOrderText: '请帮我生成一张火箭发射的图片。',
+    rawRequest: '请帮我生成一张火箭发射的图片。',
+    price: '0.001',
+    currency: 'SPACE',
+    txid: 'd'.repeat(64),
+    serviceId: 'service-image',
+    skillName: 'seedream',
+    outputType: 'image',
+  });
+
+  assert.match(payload, /output type:\s*image/i);
+});
+
 test('validateGigSquareOrderPrompt rejects requests longer than 4000 characters', () => {
   const valid = validateGigSquareOrderPrompt('x'.repeat(4000));
   const invalid = validateGigSquareOrderPrompt('x'.repeat(4001));

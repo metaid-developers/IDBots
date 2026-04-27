@@ -28,8 +28,8 @@ const DELIVERY_PREFIX = '[DELIVERY]';
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
 const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
 
-const IMAGE_EXTENSIONS = new Set(['.jpg', '.gif', '.png']);
-const VIDEO_EXTENSIONS = new Set(['.mp4']);
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg']);
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac']);
 
 type DeliveryPayload = {
@@ -339,14 +339,22 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
                   />
                 )}
                 {item.kind === 'download' && (
+                  <div className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-xs break-all dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface">
+                    {item.fileName}
+                  </div>
+                )}
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0 text-[11px] break-all dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    PINID: {item.pinId}
+                  </span>
                   <button
                     type="button"
                     onClick={() => triggerMetafileDownload(item)}
                     className="inline-flex items-center rounded-md border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
                   >
-                    保存文件
+                    下载文件
                   </button>
-                )}
+                </div>
               </div>
             ))}
           </div>
