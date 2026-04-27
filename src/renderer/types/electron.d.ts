@@ -488,6 +488,7 @@ interface IElectronAPI {
     startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; title?: string; activeSkillIds?: string[]; metabotId?: number | null }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    endA2APrivateChat: (sessionId: string) => Promise<{ success: boolean; noticeSent?: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) => Promise<{ success: boolean; error?: string }>;
     renameSession: (options: { sessionId: string; title: string }) => Promise<{ success: boolean; error?: string }>;
@@ -781,9 +782,9 @@ interface IElectronAPI {
     }>;
   };
   metaWebListener: {
-    getListenerConfig: () => Promise<{ success: boolean; config?: { enabled: boolean; groupChats: boolean; privateChats: boolean; serviceRequests: boolean }; error?: string }>;
+    getListenerConfig: () => Promise<{ success: boolean; config?: { enabled: boolean; groupChats: boolean; privateChats: boolean; serviceRequests: boolean; respondToStrangerPrivateChats: boolean }; error?: string }>;
     getListenerStatus: () => Promise<{ success: boolean; running?: boolean; error?: string }>;
-    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
+    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests' | 'respondToStrangerPrivateChats'; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
     startMetaWebListener: () => Promise<{ success: boolean; error?: string }>;
     onListenerLog: (callback: (log: string) => void) => () => void;
     assignGroupChatTask: (params: AssignGroupChatTaskParams) => Promise<AssignGroupChatTaskResult>;

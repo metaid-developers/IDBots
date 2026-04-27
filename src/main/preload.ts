@@ -220,6 +220,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:continue', options),
     stopSession: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:stop', sessionId),
+    endA2APrivateChat: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:endA2APrivateChat', sessionId),
     deleteSession: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:delete', sessionId),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
@@ -528,7 +530,7 @@ contextBridge.exposeInMainWorld('electron', {
   metaWebListener: {
     getListenerConfig: () => ipcRenderer.invoke('idbots:getListenerConfig'),
     getListenerStatus: () => ipcRenderer.invoke('idbots:getListenerStatus'),
-    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests'; enabled: boolean }) =>
+    toggleListener: (payload: { type: 'enabled' | 'groupChats' | 'privateChats' | 'serviceRequests' | 'respondToStrangerPrivateChats'; enabled: boolean }) =>
       ipcRenderer.invoke('idbots:toggleListener', payload),
     startMetaWebListener: () => ipcRenderer.invoke('idbots:startMetaWebListener'),
     onListenerLog: (callback: (log: string) => void) => {

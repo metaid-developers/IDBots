@@ -21,6 +21,9 @@ export const normalizeListenerConfig = (stored?: Partial<ListenerConfig>): Liste
   groupChats: stored?.groupChats !== undefined ? stored.groupChats : false,
   privateChats: stored?.privateChats !== undefined ? stored.privateChats : true,
   serviceRequests: stored?.serviceRequests !== undefined ? stored.serviceRequests : false,
+  respondToStrangerPrivateChats: stored?.respondToStrangerPrivateChats !== undefined
+    ? stored.respondToStrangerPrivateChats
+    : true,
 });
 
 export const shouldRunListener = (config: ListenerConfig): boolean =>

@@ -25,7 +25,10 @@ interface ChainListenerConfig {
   groupChats: boolean;
   privateChats: boolean;
   serviceRequests?: boolean;
+  respondToStrangerPrivateChats: boolean;
 }
+
+type ChainListenerToggleType = 'enabled' | 'groupChats' | 'privateChats' | 'respondToStrangerPrivateChats';
 
 type SettingsPlatform = IMPlatform | 'chainListener';
 
@@ -66,6 +69,7 @@ const IMSettings: React.FC = () => {
     groupChats: false,
     privateChats: true,
     serviceRequests: false,
+    respondToStrangerPrivateChats: true,
   });
   const [chainListenerRunning, setChainListenerRunning] = useState(false);
   const [chainListenerLoading, setChainListenerLoading] = useState(false);
@@ -149,7 +153,7 @@ const IMSettings: React.FC = () => {
     dispatch(setDiscordConfig({ [field]: value }));
   };
 
-  const handleChainListenerToggle = async (type: 'enabled' | 'groupChats' | 'privateChats', enabled: boolean) => {
+  const handleChainListenerToggle = async (type: ChainListenerToggleType, enabled: boolean) => {
     setChainListenerLoading(true);
     try {
       await window.electron.metaWebListener.toggleListener({ type, enabled });
@@ -804,6 +808,23 @@ const IMSettings: React.FC = () => {
               </div>
               <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                 {i18nService.t('chainListenerTogglePrivateDesc')}
+              </p>
+            </label>
+            <label className="flex flex-col gap-1.5 rounded-xl p-4 dark:bg-claude-darkSurfaceMuted bg-claude-surfaceMuted">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('chainListenerToggleRespondToStrangers')}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={chainListenerConfig.respondToStrangerPrivateChats}
+                  onChange={(e) => { void handleChainListenerToggle('respondToStrangerPrivateChats', e.target.checked); }}
+                  disabled={!chainListenerConfig.enabled || !chainListenerConfig.privateChats || chainListenerLoading}
+                  className="rounded border-claude-border dark:border-claude-darkBorder disabled:opacity-60"
+                />
+              </div>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('chainListenerToggleRespondToStrangersDesc')}
               </p>
             </label>
           </div>

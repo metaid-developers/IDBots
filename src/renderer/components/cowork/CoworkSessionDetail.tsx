@@ -22,6 +22,7 @@ import {
   TrashIcon,
   ExclamationTriangleIcon,
   ChevronRightIcon,
+  StopCircleIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
@@ -1670,6 +1671,16 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const isMac = window.electron.platform === 'darwin';
   const { currentSession, isStreaming } = useSelector((state: RootState) => state.cowork);
   const isA2ASession = currentSession?.sessionType === 'a2a';
+  const isPrivateA2ASession = useMemo(() => (
+    currentSession?.sessionType === 'a2a'
+    && currentSession.messages.some((message) => message.metadata?.sourceChannel === 'metaweb_private')
+  ), [currentSession?.sessionType, currentSession?.messages]);
+  const isA2AConversationEnded = useMemo(() => (
+    currentSession?.messages.some((message) => (
+      message.metadata?.a2aConversationEnded === true
+      || message.metadata?.a2aConversationEndSystemNotice === true
+    )) ?? false
+  ), [currentSession?.messages]);
   const skills = useSelector((state: RootState) => state.skill.skills);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1693,6 +1704,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundActionError, setRefundActionError] = useState<string | null>(null);
   const [delegationBlocking, setDelegationBlocking] = useState(false);
+  const [isEndingA2A, setIsEndingA2A] = useState(false);
+  const [a2aEndError, setA2AEndError] = useState<string | null>(null);
 
   // Fetch initial delegation blocking state when session changes
   useEffect(() => {
@@ -1777,6 +1790,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   useEffect(() => {
     setIsProcessingRefund(false);
     setRefundActionError(null);
+    setIsEndingA2A(false);
+    setA2AEndError(null);
   }, [
     currentSession?.id,
     currentSession?.serviceOrderSummary?.status,
@@ -1796,6 +1811,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
     setIsProcessingRefund(false);
   }, [currentSession?.id, isProcessingRefund]);
+
+  const handleEndA2APrivateChat = useCallback(async () => {
+    if (!currentSession?.id || isEndingA2A || isA2AConversationEnded) return;
+    setIsEndingA2A(true);
+    setA2AEndError(null);
+    const result = await coworkService.endA2APrivateChat(currentSession.id);
+    if (!result.success) {
+      setA2AEndError(result.error || i18nService.t('a2aSessionEndFailed'));
+      setIsEndingA2A(false);
+      return;
+    }
+    setIsEndingA2A(false);
+  }, [currentSession?.id, isA2AConversationEnded, isEndingA2A]);
 
   // Reset rename value when session changes
   useEffect(() => {
@@ -2499,9 +2527,33 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {/* Input Area */}
       {isA2ASession ? (
         <div className="px-4 py-3 shrink-0 border-t dark:border-claude-darkBorder border-claude-border">
-          <p className="text-xs text-center dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('a2aSessionObserverNotice')}
-          </p>
+          <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
+            <p className="text-xs text-center dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('a2aSessionObserverNotice')}
+            </p>
+            {isPrivateA2ASession && (
+              isA2AConversationEnded ? (
+                <span className="inline-flex h-8 items-center rounded-md border border-emerald-500/30 px-3 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  {i18nService.t('a2aSessionEnded')}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleEndA2APrivateChat}
+                  disabled={isEndingA2A}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-red-500/30 px-3 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400"
+                >
+                  <StopCircleIcon className="h-4 w-4" />
+                  {isEndingA2A ? i18nService.t('a2aSessionEnding') : i18nService.t('a2aSessionEndConversation')}
+                </button>
+              )
+            )}
+          </div>
+          {a2aEndError && (
+            <p className="mt-2 text-center text-xs text-red-500">
+              {a2aEndError}
+            </p>
+          )}
         </div>
       ) : (
         <div className="p-4 shrink-0">
