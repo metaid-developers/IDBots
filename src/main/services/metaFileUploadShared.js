@@ -3,7 +3,8 @@ import path from 'path';
 const DEFAULT_CHUNK_THRESHOLD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_METAFS_UPLOADER_BASE = 'https://file.metaid.io/metafile-uploader';
-const PREVIEW_URL_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
+const PREVIEW_URL_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
+const FALLBACK_URL_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const MIME_MAP = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -112,6 +113,14 @@ function buildPreviewUrl(pinId) {
   return `${PREVIEW_URL_BASE}/${normalizedPinId}`;
 }
 
+function buildFallbackUrl(pinId) {
+  const normalizedPinId = String(pinId || '').trim();
+  if (!normalizedPinId) {
+    throw new Error('pinId is required');
+  }
+  return `${FALLBACK_URL_BASE}/${normalizedPinId}`;
+}
+
 function buildUploadSuccessPayload({
   pinId,
   fileName,
@@ -130,6 +139,7 @@ function buildUploadSuccessPayload({
     success: true,
     pinId: normalizedPinId,
     previewUrl: buildPreviewUrl(normalizedPinId),
+    fallbackUrl: buildFallbackUrl(normalizedPinId),
     fileName: String(fileName || ''),
     size,
     contentType: String(contentType || 'application/octet-stream'),
@@ -161,7 +171,9 @@ const metaFileUploadShared = {
   DEFAULT_METAFS_UPLOADER_BASE,
   MIME_MAP,
   buildChunkedMetaFilePath,
+  FALLBACK_URL_BASE,
   PREVIEW_URL_BASE,
+  buildFallbackUrl,
   buildPreviewUrl,
   buildUploadSuccessPayload,
   formatMiB,
@@ -180,9 +192,11 @@ export {
   DEFAULT_CHUNK_THRESHOLD_BYTES,
   DEFAULT_MAX_FILE_SIZE_BYTES,
   DEFAULT_METAFS_UPLOADER_BASE,
+  FALLBACK_URL_BASE,
   MIME_MAP,
   PREVIEW_URL_BASE,
   buildChunkedMetaFilePath,
+  buildFallbackUrl,
   buildPreviewUrl,
   buildUploadSuccessPayload,
   formatMiB,

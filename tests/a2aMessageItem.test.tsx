@@ -8,6 +8,7 @@ import A2AMessageItem, {
   triggerMetafileDownload,
 } from '../src/renderer/components/cowork/A2AMessageItem';
 
+const METAID_ACCELERATE_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\//;
 const METAID_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\//;
 
 test('A2A normal message bubble renders markdown content', () => {
@@ -63,11 +64,12 @@ test('A2A delivery image keeps metafile text and renders image preview for .jpg'
   );
 
   assert.match(markup, /metafile:\/\/aabbccddeeff00112233445566778899i0\.jpg/);
-  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/aabbccddeeff00112233445566778899i0"/);
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/aabbccddeeff00112233445566778899i0"/);
   assert.match(markup, /PINID/);
   assert.match(markup, /aabbccddeeff00112233445566778899i0/);
   assert.match(markup, /下载文件/);
-  assert.match(markup, METAID_CONTENT_API_RE);
+  assert.match(markup, METAID_ACCELERATE_CONTENT_API_RE);
+  assert.doesNotMatch(markup, METAID_CONTENT_API_RE);
   assert.doesNotMatch(markup, /metafile-indexer\/content\/aabbccddeeff00112233445566778899i0/);
 });
 
@@ -88,8 +90,8 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
   assert.match(markup, /<video[^>]*controls/);
   assert.match(markup, /<video[^>]*preload="auto"/);
   assert.match(markup, /<video[^>]*playsinline/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/ffeeddccbbaa99887766554433221100i0"/);
   assert.doesNotMatch(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
-  assert.match(markup, /正在加载视频预览/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
 });
@@ -108,8 +110,9 @@ test('A2A delivery previews modern image and video metafile extensions', () => {
     />
   );
 
-  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/imagepin001i0"/);
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/imagepin001i0"/);
   assert.match(markup, /<video[^>]*controls/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/videopin001i0"/);
   assert.doesNotMatch(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
   assert.match(markup, /PINID:\s*imagepin001i0/);
   assert.match(markup, /PINID:\s*videopin001i0/);
@@ -130,10 +133,23 @@ test('A2A delivery renders embedded player for .mp3 metafile', () => {
   );
 
   assert.match(markup, /<audio[^>]*controls/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/11223344556677889900aabbccddeeffi0"/);
   assert.doesNotMatch(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/11223344556677889900aabbccddeeffi0"/);
-  assert.match(markup, /正在加载音频预览/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
+});
+
+test('A2A metafile parser keeps accelerate URL primary and content URL fallback', () => {
+  const item = parseMetafileUri('metafile://aabbccddeeff00112233445566778899i0.png');
+  assert.ok(item);
+  assert.equal(
+    item.sourceUrl,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/aabbccddeeff00112233445566778899i0',
+  );
+  assert.equal(
+    item.fallbackUrl,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/content/aabbccddeeff00112233445566778899i0',
+  );
 });
 
 test('A2A metafile download uses native save dialog API when available', async () => {
@@ -159,7 +175,8 @@ test('A2A metafile download uses native save dialog API when available', async (
   }
 
   assert.deepEqual(calls, [{
-    url: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/cafebabefeed00112233445566778899i0',
+    url: 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cafebabefeed00112233445566778899i0',
+    fallbackUrl: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/cafebabefeed00112233445566778899i0',
     fileName: 'cafebabefeed00112233445566778899i0.pdf',
   }]);
 });
@@ -198,7 +215,7 @@ test('A2A media preview does not download a local preview before playback', () =
   assert.deepEqual(calls, []);
 });
 
-test('A2A media preview loads chain content into a blob URL for playback', async () => {
+test('A2A media preview fallback loads original content URL into a blob URL', async () => {
   const item = parseMetafileUri('metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4');
   assert.ok(item);
   const originalFetch = globalThis.fetch;

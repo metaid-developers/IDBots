@@ -520,6 +520,7 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     downloadMetafile: (options: {
       url: string;
+      fallbackUrl?: string;
       fileName?: string;
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     respondToPermission: (options: { requestId: string; result: CoworkPermissionResult }) => Promise<{ success: boolean; error?: string }>;

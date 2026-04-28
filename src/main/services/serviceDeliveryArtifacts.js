@@ -9,6 +9,7 @@ const {
 } = metaFileUploadShared;
 
 export const DELIVERY_CONTENT_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
+export const DELIVERY_ACCELERATE_CONTENT_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
@@ -248,7 +249,7 @@ export function buildMetafileDeliverySummary(input) {
   const upload = input?.upload || {};
   const pinId = String(upload.pinId || '').trim();
   const metafileUri = buildMetafileUri(pinId, artifact);
-  const downloadUrl = pinId ? `${DELIVERY_CONTENT_BASE_URL}/${encodeURIComponent(pinId)}` : '';
+  const downloadUrl = pinId ? `${DELIVERY_ACCELERATE_CONTENT_BASE_URL}/${encodeURIComponent(pinId)}` : '';
   const lines = [
     '数字成果已生成并上传链上交付。',
     metafileUri ? `交付文件: ${metafileUri}` : '',

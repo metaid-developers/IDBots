@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
@@ -26,6 +26,7 @@ const formatTime = (timestamp: number): string => {
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
 const DELIVERY_PREFIX = '[DELIVERY]';
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
+const METAID_ACCELERATE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
 const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
 const METAFILE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -59,6 +60,7 @@ type ParsedMetafile = {
   pinId: string;
   extension: string | null;
   sourceUrl: string;
+  fallbackUrl: string;
   fileName: string;
   kind: MetafilePreviewKind;
 };
@@ -123,7 +125,9 @@ export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
     kind = 'audio';
   }
 
-  const sourceUrl = `${METAID_CONTENT_BASE}/${encodeURIComponent(pinId)}`;
+  const encodedPinId = encodeURIComponent(pinId);
+  const sourceUrl = `${METAID_ACCELERATE_CONTENT_BASE}/${encodedPinId}`;
+  const fallbackUrl = `${METAID_CONTENT_BASE}/${encodedPinId}`;
   const fileName = extension ? `${pinId}${extension}` : pinId;
 
   return {
@@ -131,6 +135,7 @@ export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
     pinId,
     extension,
     sourceUrl,
+    fallbackUrl,
     fileName,
     kind,
   };
@@ -165,6 +170,7 @@ export const triggerMetafileDownload = async (item: ParsedMetafile): Promise<voi
   if (nativeDownload) {
     const result = await nativeDownload({
       url: item.sourceUrl,
+      fallbackUrl: item.fallbackUrl,
       fileName: item.fileName || 'metafile',
     });
     if (!result.success && !result.canceled) {
@@ -213,7 +219,7 @@ export const createMetafileMediaObjectUrl = async (
     throw new Error('Only video and audio metafiles can be prepared for media preview');
   }
 
-  const response = await fetch(item.sourceUrl);
+  const response = await fetch(item.fallbackUrl || item.sourceUrl);
   if (!response.ok) {
     throw new Error(`Preview fetch failed: ${response.status} ${response.statusText}`);
   }
@@ -329,52 +335,51 @@ const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
 };
 
 const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
-  const [mediaSourceUrl, setMediaSourceUrl] = useState<string | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [mediaSourceUrl, setMediaSourceUrl] = useState<string | null>(item.sourceUrl);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('ready');
   const [loadedBytes, setLoadedBytes] = useState(0);
+  const objectUrlRef = useRef<string | null>(null);
   const mediaType = getMetafileMimeType(item);
 
   useEffect(() => {
-    let canceled = false;
-    let objectUrl: string | null = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
 
-    setMediaSourceUrl(null);
-    setStatus('loading');
+    setMediaSourceUrl(item.sourceUrl);
+    setStatus('ready');
     setLoadedBytes(0);
 
-    const loadPreview = async () => {
-      try {
-        const previewUrl = await createMetafileMediaObjectUrl(item, (bytes) => {
-          if (!canceled) {
-            setLoadedBytes(bytes);
-          }
-        });
-        if (canceled) {
-          URL.revokeObjectURL(previewUrl);
-          return;
-        }
-        objectUrl = previewUrl;
-        setMediaSourceUrl(previewUrl);
-        setStatus('ready');
-      } catch (error) {
-        if (canceled) {
-          return;
-        }
-        console.error('Failed to load metafile media preview:', error);
-        setMediaSourceUrl(item.sourceUrl);
-        setStatus('error');
-      }
-    };
-
-    void loadPreview();
-
     return () => {
-      canceled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
       }
     };
-  }, [item.uri, item.kind, item.sourceUrl, item.extension]);
+  }, [item.uri, item.kind, item.sourceUrl]);
+
+  const loadFallbackPreview = async () => {
+    if (status === 'loading' || mediaSourceUrl !== item.sourceUrl) {
+      setStatus('error');
+      return;
+    }
+
+    setStatus('loading');
+    setLoadedBytes(0);
+    try {
+      const previewUrl = await createMetafileMediaObjectUrl(item, setLoadedBytes);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+      }
+      objectUrlRef.current = previewUrl;
+      setMediaSourceUrl(previewUrl);
+      setStatus('ready');
+    } catch (error) {
+      console.error('Failed to load metafile media fallback preview:', error);
+      setStatus('error');
+    }
+  };
 
   const loadingLabel = item.kind === 'video' ? '正在加载视频预览...' : '正在加载音频预览...';
   const errorLabel = item.kind === 'video'
@@ -385,7 +390,12 @@ const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
   if (item.kind === 'audio') {
     return (
       <>
-        <audio controls preload="auto" className="w-full">
+        <audio
+          controls
+          preload="auto"
+          className="w-full"
+          onError={() => { void loadFallbackPreview(); }}
+        >
           {mediaSourceUrl && <source src={mediaSourceUrl} type={mediaType} />}
         </audio>
         {status === 'loading' && (
@@ -409,6 +419,7 @@ const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
         preload="auto"
         playsInline
         className="w-full max-h-80 rounded-md bg-black"
+        onError={() => { void loadFallbackPreview(); }}
       >
         {mediaSourceUrl && <source src={mediaSourceUrl} type={mediaType} />}
       </video>
@@ -426,16 +437,33 @@ const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
   );
 };
 
+const MetafileImagePreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
+  const [imageSourceUrl, setImageSourceUrl] = useState(item.sourceUrl);
+
+  useEffect(() => {
+    setImageSourceUrl(item.sourceUrl);
+  }, [item.uri, item.sourceUrl]);
+
+  return (
+    <img
+      src={imageSourceUrl}
+      alt={item.fileName}
+      className="w-full max-h-80 object-contain rounded-md"
+      loading="lazy"
+      onError={() => {
+        if (imageSourceUrl !== item.fallbackUrl) {
+          setImageSourceUrl(item.fallbackUrl);
+        }
+      }}
+    />
+  );
+};
+
 const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
   return (
     <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2">
       {item.kind === 'image' && (
-        <img
-          src={item.sourceUrl}
-          alt={item.fileName}
-          className="w-full max-h-80 object-contain rounded-md"
-          loading="lazy"
-        />
+        <MetafileImagePreview item={item} />
       )}
       {item.kind === 'video' && (
         <MetafileMediaPreview item={item} />

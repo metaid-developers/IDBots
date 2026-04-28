@@ -125,6 +125,7 @@ test('buildMetafileDeliverySummary includes metafile URI, pin ID, and download U
 
   assert.match(summary, /metafile:\/\/aabbccddeeff00112233445566778899i0\.png/);
   assert.match(summary, /PINID:\s*aabbccddeeff00112233445566778899i0/);
-  assert.match(summary, /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/aabbccddeeff00112233445566778899i0/);
+  assert.match(summary, /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/aabbccddeeff00112233445566778899i0/);
+  assert.doesNotMatch(summary, /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/aabbccddeeff00112233445566778899i0/);
   assert.doesNotMatch(summary, /metafile-indexer\/content\/aabbccddeeff00112233445566778899i0/);
 });

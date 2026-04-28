@@ -251,6 +251,7 @@ const SERVICE_REFUND_SYNC_SIZE = 200;
 const SERVICE_REFUND_SYNC_MAX_PAGES = 10;
 const SYSTEM_PROXY_BYPASS_RULES = '<local>,127.0.0.1,[::1]';
 const METAFILE_CONTENT_API_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/content/';
+const METAFILE_ACCELERATE_CONTENT_API_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/';
 
 const applySystemProxyWithLoopbackBypass = async (targetSession: Session, scope: string): Promise<void> => {
   await targetSession.setProxy({
@@ -1593,22 +1594,43 @@ const normalizeMetafileContentUrl = (value: unknown): string => {
   } catch {
     throw new Error('Invalid metafile download URL');
   }
-  const base = new URL(METAFILE_CONTENT_API_BASE_URL);
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.hostname !== base.hostname ||
-    !parsed.pathname.startsWith(base.pathname)
-  ) {
+  const allowedBases = [
+    new URL(METAFILE_CONTENT_API_BASE_URL),
+    new URL(METAFILE_ACCELERATE_CONTENT_API_BASE_URL),
+  ];
+  const isAllowed = allowedBases.some((base) => (
+    parsed.protocol === 'https:' &&
+    parsed.hostname === base.hostname &&
+    parsed.pathname.startsWith(base.pathname)
+  ));
+  if (!isAllowed) {
     throw new Error('Unsupported metafile download URL');
   }
   return parsed.toString();
 };
 
+const fetchMetafileDownloadResponse = async (url: string, fallbackUrl?: string): Promise<Response> => {
+  try {
+    const response = await fetch(url);
+    if (response.ok || !fallbackUrl || fallbackUrl === url) {
+      return response;
+    }
+  } catch (error) {
+    if (!fallbackUrl || fallbackUrl === url) {
+      throw error;
+    }
+  }
+  return fetch(fallbackUrl);
+};
+
 const downloadMetafileWithDialog = async (
   webContents: WebContents,
-  options: { url?: string; fileName?: string }
+  options: { url?: string; fallbackUrl?: string; fileName?: string }
 ): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> => {
   const url = normalizeMetafileContentUrl(options?.url);
+  const fallbackUrl = options?.fallbackUrl
+    ? normalizeMetafileContentUrl(options.fallbackUrl)
+    : undefined;
   const defaultName = sanitizeAttachmentFileName(options?.fileName || 'metafile');
   const ownerWindow = BrowserWindow.fromWebContents(webContents);
   const saveOptions = {
@@ -1623,7 +1645,7 @@ const downloadMetafileWithDialog = async (
     return { success: true, canceled: true };
   }
 
-  const response = await fetch(url);
+  const response = await fetchMetafileDownloadResponse(url, fallbackUrl);
   if (!response.ok) {
     throw new Error(`Download failed: ${response.status} ${response.statusText}`);
   }
@@ -4599,6 +4621,7 @@ if (!gotTheLock) {
     event,
     options: {
       url?: string;
+      fallbackUrl?: string;
       fileName?: string;
     }
   ) => {
@@ -7240,7 +7263,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         "img-src 'self' data: https: http:",
         "connect-src 'self' https: http: ws: wss:",
         "font-src 'self' data:",
-        "media-src 'self' blob:",
+        "media-src 'self' blob: https://file.metaid.io https://metafs.oss-cn-beijing.aliyuncs.com",
         "worker-src 'self' blob:",
         "frame-src 'self'"
       ];
