@@ -8,11 +8,13 @@ import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus } from '../coworkStore';
-import { getClaudeCodePath, getCurrentApiConfig } from './claudeSettings';
+import { getClaudeCodePath, getCurrentApiConfig, resolveCurrentModelLimits } from './claudeSettings';
 import { loadClaudeSdk } from './claudeSdk';
 import { getEnhancedEnv, getEnhancedEnvWithTmpdir, getSkillsRoot } from './coworkUtil';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
 import { isQuestionLikeMemoryText, type CoworkMemoryGuardLevel } from './coworkMemoryExtractor';
+import { getCoworkContextBudget, isContextWindowExceededError } from './coworkContextBudget';
+import { buildCoworkCompactedPrompt } from './coworkContextCompaction';
 import {
   buildUserConfiguredMcpServerConfigs,
   type UserConfiguredMcpServerDefinition,
@@ -616,6 +618,8 @@ interface ActiveSession {
   delegationRequestEmitted: boolean;
   staleResumeDetected: boolean;
   staleResumeRetryAllowed: boolean;
+  contextOverflowDetected: boolean;
+  contextOverflowRetryAllowed: boolean;
   executionMode: CoworkExecutionMode;
   disableRemoteServicesPrompt: boolean;
   sandboxProcess?: ChildProcessByStdio<null, Readable, Readable>;
@@ -2762,6 +2766,8 @@ export class CoworkRunner extends EventEmitter {
       delegationRequestEmitted: false,
       staleResumeDetected: false,
       staleResumeRetryAllowed: true,
+      contextOverflowDetected: false,
+      contextOverflowRetryAllowed: false,
       executionMode: 'local',
       disableRemoteServicesPrompt: Boolean(options.disableRemoteServicesPrompt),
       autoApprove: options.autoApprove ?? false,
@@ -3089,6 +3095,8 @@ export class CoworkRunner extends EventEmitter {
     activeSession.delegationRequestEmitted = false;
     activeSession.staleResumeDetected = false;
     activeSession.staleResumeRetryAllowed = !isRetry;
+    activeSession.contextOverflowDetected = false;
+    activeSession.contextOverflowRetryAllowed = false;
 
     const apiConfig = getCurrentApiConfig('local');
     if (!apiConfig) {
@@ -3097,6 +3105,7 @@ export class CoworkRunner extends EventEmitter {
       this.activeSessions.delete(sessionId);
       return;
     }
+    const modelLimits = resolveCurrentModelLimits(apiConfig.model);
 
     const claudeCodePath = getClaudeCodePath();
     const envVars = await getEnhancedEnvWithTmpdir(cwd, 'local');
@@ -3131,6 +3140,45 @@ export class CoworkRunner extends EventEmitter {
       return;
     }
 
+    let effectivePrompt = prompt;
+    const sessionSnapshotForBudget = this.store.getSession(sessionId);
+    if (activeSession.claudeSessionId && !isRetry) {
+      const budget = getCoworkContextBudget({
+        messages: sessionSnapshotForBudget?.messages ?? [],
+        currentPrompt: prompt,
+        systemPrompt,
+        modelLimits,
+      });
+
+      if (budget.shouldCompact) {
+        const compacted = buildCoworkCompactedPrompt({
+          messages: sessionSnapshotForBudget?.messages ?? [],
+          currentPrompt: prompt,
+          modelLimits,
+        });
+        effectivePrompt = compacted.prompt;
+        this.store.updateSession(sessionId, { claudeSessionId: null });
+        activeSession.claudeSessionId = null;
+        coworkLog('INFO', 'runClaudeCodeLocal', 'Context estimate reached soft threshold; starting compacted SDK session instead of resume', {
+          sessionId,
+          modelId: modelLimits.modelId,
+          contextWindow: modelLimits.contextWindow,
+          maxOutputTokens: modelLimits.maxOutputTokens,
+          limitSource: modelLimits.source,
+          estimatedTokens: budget.estimatedTokens,
+          softThresholdTokens: budget.softThresholdTokens,
+          usableInputTokens: budget.usableInputTokens,
+          compactedEstimatedTokens: compacted.estimatedTokens,
+          compactedRecentMessages: compacted.recentMessages,
+          compactedSummarizedMessages: compacted.summarizedMessages,
+        });
+        this.addSystemMessage(
+          sessionId,
+          '当前 cowork 会话已接近模型上下文上限，已自动压缩历史并重置底层模型会话继续。'
+        );
+      }
+    }
+
     const forceTextOnlyAttachments = shouldForceTextOnlyAttachmentMode(
       envVars.ANTHROPIC_BASE_URL,
       envVars.ANTHROPIC_MODEL
@@ -3144,9 +3192,9 @@ export class CoworkRunner extends EventEmitter {
       }
     }
     const promptForQuery = forceTextOnlyAttachments
-      ? this.rewriteAttachmentLinesAsTextReferences(prompt)
-      : prompt;
-    if (forceTextOnlyAttachments && promptForQuery !== prompt) {
+      ? this.rewriteAttachmentLinesAsTextReferences(effectivePrompt)
+      : effectivePrompt;
+    if (forceTextOnlyAttachments && promptForQuery !== effectivePrompt) {
       coworkLog('INFO', 'runClaudeCodeLocal', 'Force text-only attachment references for provider compatibility', {
         sessionId,
         anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
@@ -3288,13 +3336,49 @@ export class CoworkRunner extends EventEmitter {
       },
     };
 
-    if (activeSession.claudeSessionId) {
+    const usedResumeForThisRun = Boolean(activeSession.claudeSessionId);
+    if (usedResumeForThisRun) {
       options.resume = activeSession.claudeSessionId;
     }
+    activeSession.contextOverflowRetryAllowed = !isRetry && usedResumeForThisRun;
+    let contextOverflowExceptionRetryAllowed = !isRetry && usedResumeForThisRun;
 
     if (systemPrompt) {
       options.systemPrompt = systemPrompt;
     }
+
+    const retryWithCompactedContext = async (
+      reason: 'result-event' | 'exception',
+      errorMessage?: string
+    ): Promise<void> => {
+      const sessionSnapshot = this.store.getSession(sessionId);
+      const compacted = buildCoworkCompactedPrompt({
+        messages: sessionSnapshot?.messages ?? [],
+        currentPrompt: prompt,
+        modelLimits,
+      });
+      this.store.updateSession(sessionId, { claudeSessionId: null });
+      activeSession.claudeSessionId = null;
+      activeSession.contextOverflowRetryAllowed = false;
+      activeSession.contextOverflowDetected = false;
+      coworkLog('WARN', 'runClaudeCodeLocal', 'Context window exceeded while resuming; retrying with compacted fresh SDK session', {
+        sessionId,
+        reason,
+        errorMessage,
+        modelId: modelLimits.modelId,
+        contextWindow: modelLimits.contextWindow,
+        maxOutputTokens: modelLimits.maxOutputTokens,
+        limitSource: modelLimits.source,
+        compactedEstimatedTokens: compacted.estimatedTokens,
+        compactedRecentMessages: compacted.recentMessages,
+        compactedSummarizedMessages: compacted.summarizedMessages,
+      });
+      this.addSystemMessage(
+        sessionId,
+        '模型提示上下文超限，已自动压缩历史并重置底层模型会话重试当前输入。'
+      );
+      await this.runClaudeCodeLocal(activeSession, compacted.prompt, cwd, systemPrompt, true);
+    };
 
     const hasAvailableSkillsInPrompt = typeof systemPrompt === 'string' && systemPrompt.includes('<available_skills>');
     console.log('[Orchestrator] [CoworkRunner] runClaudeCodeLocal: systemPrompt length=', systemPrompt?.length ?? 0, 'has <available_skills>=', hasAvailableSkillsInPrompt);
@@ -3567,7 +3651,13 @@ export class CoworkRunner extends EventEmitter {
         this.store.updateSession(sessionId, { claudeSessionId: null });
         activeSession.claudeSessionId = null;
         coworkLog('INFO', 'runClaudeCodeLocal', 'Cleared stale claudeSessionId after result-event stale session, retrying once without resume', { sessionId });
+        contextOverflowExceptionRetryAllowed = false;
         await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
+        return;
+      }
+
+      if (activeSession.contextOverflowDetected && !isRetry) {
+        await retryWithCompactedContext('result-event');
         return;
       }
 
@@ -3602,6 +3692,7 @@ export class CoworkRunner extends EventEmitter {
           await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
           return;
         } catch (retryError) {
+          contextOverflowExceptionRetryAllowed = false;
           runtimeError = retryError;
           errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
         }
@@ -3623,6 +3714,18 @@ export class CoworkRunner extends EventEmitter {
         );
         try {
           await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
+          return;
+        } catch (retryError) {
+          contextOverflowExceptionRetryAllowed = false;
+          runtimeError = retryError;
+          errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+        }
+      }
+
+      const isContextOverflowError = isContextWindowExceededError(errorMessage);
+      if (isContextOverflowError && contextOverflowExceptionRetryAllowed) {
+        try {
+          await retryWithCompactedContext('exception', errorMessage);
           return;
         } catch (retryError) {
           runtimeError = retryError;
@@ -4837,6 +4940,22 @@ export class CoworkRunner extends EventEmitter {
             'INFO',
             'handleClaudeEvent',
             'Detected stale claudeSessionId in result event, scheduling one-time retry without resume',
+            { sessionId }
+          );
+          return;
+        }
+
+        if (
+          activeSession.executionMode === 'local'
+          && activeSession.contextOverflowRetryAllowed
+          && isContextWindowExceededError(errorMessage)
+        ) {
+          activeSession.contextOverflowRetryAllowed = false;
+          activeSession.contextOverflowDetected = true;
+          coworkLog(
+            'WARN',
+            'handleClaudeEvent',
+            'Detected context-window overflow in result event, scheduling one-time compacted retry without resume',
             { sessionId }
           );
           return;

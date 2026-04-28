@@ -33,6 +33,8 @@ tests/*
 !tests/privateChatOrderCoworkTimeout.test.mjs
 !tests/coworkFormatTransform.test.mjs
 !tests/coworkModelLimits.test.mjs
+!tests/coworkContextBudget.test.mjs
+!tests/coworkContextCompaction.test.mjs
 !tests/transferServiceMvcRecovery.test.mjs
 !tests/metaidCoreMvcRecovery.test.mjs
 
