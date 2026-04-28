@@ -35,6 +35,7 @@ tests/*
 !tests/coworkModelLimits.test.mjs
 !tests/coworkContextBudget.test.mjs
 !tests/coworkContextCompaction.test.mjs
+!tests/coworkProviderErrors.test.mjs
 !tests/transferServiceMvcRecovery.test.mjs
 !tests/metaidCoreMvcRecovery.test.mjs
 

@@ -15,6 +15,8 @@ import { coworkLog, getCoworkLogPath } from './coworkLogger';
 import { isQuestionLikeMemoryText, type CoworkMemoryGuardLevel } from './coworkMemoryExtractor';
 import { getCoworkContextBudget, isContextWindowExceededError } from './coworkContextBudget';
 import { buildCoworkCompactedPrompt } from './coworkContextCompaction';
+import { buildCoworkProviderErrorSignal, isDeepSeekMissingReasoningContentError as isDeepSeekProviderMissingReasoningContentError } from './coworkProviderErrors';
+import { getCoworkOpenAICompatProxyStatus } from './coworkOpenAICompatProxy';
 import {
   buildUserConfiguredMcpServerConfigs,
   type UserConfiguredMcpServerDefinition,
@@ -149,13 +151,7 @@ function isStaleConversationSessionError(message: string): boolean {
 }
 
 function isDeepSeekMissingReasoningContentError(message: string): boolean {
-  if (!message) return false;
-  const normalized = message.toLowerCase();
-  return normalized.includes('reasoning_content')
-    && (
-      normalized.includes('thinking mode')
-      || normalized.includes('deepseek thinking request is missing')
-    );
+  return isDeepSeekProviderMissingReasoningContentError(message);
 }
 
 function escapeRegExp(value: string): string {
@@ -3683,7 +3679,21 @@ export class CoworkRunner extends EventEmitter {
 
       let runtimeError: unknown = error;
       let errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
-      const isStaleResumeError = isStaleConversationSessionError(errorMessage);
+      const getProxyLastErrorForCurrentRun = (): string | null => {
+        const proxyStatus = getCoworkOpenAICompatProxyStatus();
+        if (!proxyStatus.lastError || apiConfig.baseURL !== proxyStatus.baseURL) {
+          return null;
+        }
+        return proxyStatus.lastError;
+      };
+      const buildProviderErrorSignalForMessage = (message: string, includeStderr = true): string => (
+        buildCoworkProviderErrorSignal(message, {
+          proxyLastError: getProxyLastErrorForCurrentRun(),
+          stderr: includeStderr ? stderrTail : '',
+        })
+      );
+      let providerErrorSignal = buildProviderErrorSignalForMessage(errorMessage);
+      const isStaleResumeError = isStaleConversationSessionError(providerErrorSignal);
       if (isStaleResumeError && !isRetry) {
         this.store.updateSession(sessionId, { claudeSessionId: null });
         activeSession.claudeSessionId = null;
@@ -3695,16 +3705,17 @@ export class CoworkRunner extends EventEmitter {
           contextOverflowExceptionRetryAllowed = false;
           runtimeError = retryError;
           errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+          providerErrorSignal = buildProviderErrorSignalForMessage(errorMessage);
         }
       }
 
-      const isDeepSeekReasoningHistoryError = isDeepSeekMissingReasoningContentError(errorMessage);
+      const isDeepSeekReasoningHistoryError = isDeepSeekMissingReasoningContentError(providerErrorSignal);
       if (isDeepSeekReasoningHistoryError && !isRetry) {
         this.store.updateSession(sessionId, { claudeSessionId: null });
         activeSession.claudeSessionId = null;
         coworkLog('WARN', 'runClaudeCodeLocal', 'DeepSeek thinking history lost reasoning_content; retrying with fresh session', {
           sessionId,
-          errorMessage,
+          errorMessage: providerErrorSignal,
           anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
           anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
         });
@@ -3719,27 +3730,29 @@ export class CoworkRunner extends EventEmitter {
           contextOverflowExceptionRetryAllowed = false;
           runtimeError = retryError;
           errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+          providerErrorSignal = buildProviderErrorSignalForMessage(errorMessage);
         }
       }
 
-      const isContextOverflowError = isContextWindowExceededError(errorMessage);
+      const isContextOverflowError = isContextWindowExceededError(providerErrorSignal);
       if (isContextOverflowError && contextOverflowExceptionRetryAllowed) {
         try {
-          await retryWithCompactedContext('exception', errorMessage);
+          await retryWithCompactedContext('exception', providerErrorSignal);
           return;
         } catch (retryError) {
           runtimeError = retryError;
           errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+          providerErrorSignal = buildProviderErrorSignalForMessage(errorMessage);
         }
       }
 
-      const isMultimodalCompatError = isUnsupportedMultimodalContentError(errorMessage);
+      const isMultimodalCompatError = isUnsupportedMultimodalContentError(providerErrorSignal);
       if (isMultimodalCompatError && !isRetry) {
         this.store.updateSession(sessionId, { claudeSessionId: null });
         activeSession.claudeSessionId = null;
         coworkLog('WARN', 'runClaudeCodeLocal', 'Provider rejected image/document content block; retrying with fresh text-only session', {
           sessionId,
-          errorMessage,
+          errorMessage: providerErrorSignal,
           anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
           anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
         });
@@ -3753,23 +3766,25 @@ export class CoworkRunner extends EventEmitter {
         } catch (retryError) {
           runtimeError = retryError;
           errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+          providerErrorSignal = buildProviderErrorSignalForMessage(errorMessage);
         }
       }
 
-      if (isUnsupportedMultimodalContentError(errorMessage)) {
+      if (isUnsupportedMultimodalContentError(providerErrorSignal)) {
         coworkLog('WARN', 'runClaudeCodeLocal', 'Provider still rejected multimodal content after fallback', {
           sessionId,
-          errorMessage,
+          errorMessage: providerErrorSignal,
           anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
           anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
         });
-        this.handleError(sessionId, buildUnsupportedMultimodalUserHint(errorMessage));
+        this.handleError(sessionId, buildUnsupportedMultimodalUserHint(providerErrorSignal));
         throw runtimeError;
       }
 
       const stderrOutput = stderrTail;
       coworkLog('ERROR', 'runClaudeCodeLocal', 'Claude Code process failed', {
         errorMessage,
+        providerErrorSignal,
         errorStack: runtimeError instanceof Error ? runtimeError.stack : undefined,
         stderr: stderrOutput || '(no stderr captured)',
         claudeCodePath,
@@ -3777,8 +3792,8 @@ export class CoworkRunner extends EventEmitter {
       });
 
       const detailedError = stderrOutput
-        ? `${errorMessage}\n\nProcess stderr:\n${stderrOutput.slice(-2000)}\n\nLog file: ${getCoworkLogPath()}`
-        : `${errorMessage}\n\nLog file: ${getCoworkLogPath()}`;
+        ? `${buildProviderErrorSignalForMessage(errorMessage, false)}\n\nProcess stderr:\n${stderrOutput.slice(-2000)}\n\nLog file: ${getCoworkLogPath()}`
+        : `${providerErrorSignal}\n\nLog file: ${getCoworkLogPath()}`;
       this.handleError(sessionId, detailedError);
       throw runtimeError;
     } finally {
