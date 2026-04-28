@@ -4,6 +4,7 @@ import { i18nService } from '../../services/i18n';
 import type { Skill } from '../../types/skill';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
+  formatGigSquareMrc20OptionLabel,
   getGigSquareMrc20SelectPlaceholder,
   getNextGigSquareSelectedMrc20Id,
   getGigSquarePublishPriceLimit,
@@ -506,7 +507,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
                     </option>
                     {mrc20Assets.map((asset) => (
                       <option key={asset.mrc20Id} value={asset.mrc20Id}>
-                        {asset.symbol} ({asset.balance.display})
+                        {formatGigSquareMrc20OptionLabel(asset)}
                       </option>
                     ))}
                   </select>

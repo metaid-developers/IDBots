@@ -124,7 +124,7 @@ test('checkOrderPaymentStatus routes MRC20 orders through dedicated verifier and
   assert.equal(result.amountAtomic, '1250000000');
 });
 
-test('checkOrderPaymentStatus rejects non-observable MRC20 recipient state until the transfer is verifiable', async () => {
+test('checkOrderPaymentStatus allows non-observable MRC20 recipient state like native transient gaps', async () => {
   const txid = 'c'.repeat(64);
 
   const result = await checkOrderPaymentStatus({
@@ -151,7 +151,7 @@ test('checkOrderPaymentStatus rejects non-observable MRC20 recipient state until
     }),
   });
 
-  assert.equal(result.paid, false);
+  assert.equal(result.paid, true);
   assert.equal(result.reason, 'unverified_state_gap: recipient_txid_not_observable');
   assert.equal(result.settlementKind, 'mrc20');
   assert.equal(result.currency, 'METAID-MRC20');
@@ -159,7 +159,7 @@ test('checkOrderPaymentStatus rejects non-observable MRC20 recipient state until
   assert.equal(result.amountAtomic, '0');
 });
 
-test('checkOrderPaymentStatus rejects MRC20 orders when verifier returns a network error', async () => {
+test('checkOrderPaymentStatus allows MRC20 orders when verifier returns a network error', async () => {
   const txid = 'd'.repeat(64);
 
   const result = await checkOrderPaymentStatus({
@@ -186,7 +186,7 @@ test('checkOrderPaymentStatus rejects MRC20 orders when verifier returns a netwo
     }),
   });
 
-  assert.equal(result.paid, false);
+  assert.equal(result.paid, true);
   assert.equal(result.reason, 'unverified_network_error: fetch_token_utxos_failed: upstream timeout');
   assert.equal(result.settlementKind, 'mrc20');
   assert.equal(result.currency, 'METAID-MRC20');

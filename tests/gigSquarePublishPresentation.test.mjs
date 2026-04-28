@@ -7,6 +7,7 @@ import {
   getGigSquarePublishCurrencyLabel,
   getGigSquareSettlementGridClassName,
   getGigSquarePublishPriceLimit,
+  formatGigSquareMrc20OptionLabel,
   getNextGigSquareSelectedMrc20Id,
   getSelectableGigSquareModifyMrc20Assets,
   getSelectableGigSquareMrc20Assets,
@@ -77,4 +78,17 @@ test('getGigSquareMrc20SelectPlaceholder keeps the empty-state label compact', (
     getGigSquareMrc20SelectPlaceholder([{ symbol: 'METAID', mrc20Id: 'metaid-id', balance: { display: '1.25000000' } }]),
     'Select token',
   );
+});
+
+test('formatGigSquareMrc20OptionLabel identifies the token without leaking balance', () => {
+  const label = formatGigSquareMrc20OptionLabel({
+    symbol: 'METAID',
+    tokenName: 'MetaID Token',
+    mrc20Id: 'metaid-token-id',
+    balance: { display: '1.25000000' },
+  });
+
+  assert.match(label, /METAID/);
+  assert.match(label, /metaid-token-id/);
+  assert.doesNotMatch(label, /1\.25000000/);
 });

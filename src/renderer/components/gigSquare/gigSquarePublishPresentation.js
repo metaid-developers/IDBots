@@ -37,6 +37,20 @@ export function getGigSquareMrc20SelectPlaceholder(assets) {
     : 'No Token';
 }
 
+export function formatGigSquareMrc20OptionLabel(asset) {
+  const symbol = typeof asset?.symbol === 'string' ? asset.symbol.trim().toUpperCase() : '';
+  const tokenName = typeof asset?.tokenName === 'string' ? asset.tokenName.trim() : '';
+  const mrc20Id = typeof asset?.mrc20Id === 'string' ? asset.mrc20Id.trim() : '';
+  const parts = [symbol || 'MRC20'];
+  if (tokenName && tokenName.toUpperCase() !== (symbol || '').toUpperCase()) {
+    parts.push(tokenName);
+  }
+  if (mrc20Id) {
+    parts.push(mrc20Id);
+  }
+  return parts.join(' - ');
+}
+
 export function getSelectableGigSquareMrc20Assets(assets) {
   return (Array.isArray(assets) ? assets : []).filter((asset) => Number(asset?.balance?.display || 0) > 0);
 }

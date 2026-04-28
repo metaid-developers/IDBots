@@ -17,6 +17,7 @@ import type {
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
+  formatGigSquareMrc20OptionLabel,
   getGigSquareMrc20SelectPlaceholder,
   getGigSquarePublishPriceLimit,
   getGigSquarePublishPriceLimitText,
@@ -1504,7 +1505,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               </option>
                               {modifyMrc20Options.map((asset) => (
                                 <option key={asset.mrc20Id} value={asset.mrc20Id}>
-                                  {asset.symbol} ({asset.balance.display})
+                                  {formatGigSquareMrc20OptionLabel(asset)}
                                 </option>
                               ))}
                             </select>
