@@ -245,8 +245,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:saveResultImage', options),
     downloadMetafile: (options: { url: string; fileName?: string }) =>
       ipcRenderer.invoke('cowork:metafile:download', options),
-    prepareMetafilePreview: (options: { url: string; fileName?: string }) =>
-      ipcRenderer.invoke('cowork:metafile:preparePreview', options),
 
     // Permission handling
     respondToPermission: (options: { requestId: string; result: any }) =>

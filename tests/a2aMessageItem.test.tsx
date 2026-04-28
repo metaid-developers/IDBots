@@ -4,7 +4,6 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import A2AMessageItem, {
   parseMetafileUri,
-  prepareMetafilePreview,
   triggerMetafileDownload,
 } from '../src/renderer/components/cowork/A2AMessageItem';
 
@@ -86,7 +85,10 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
   );
 
   assert.match(markup, /<video[^>]*controls/);
-  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /<video[^>]*preload="auto"/);
+  assert.match(markup, /<video[^>]*playsinline/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /<source[^>]*type="video\/mp4"/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
 });
@@ -106,7 +108,7 @@ test('A2A delivery previews modern image and video metafile extensions', () => {
   );
 
   assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/imagepin001i0"/);
-  assert.match(markup, /<video[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
   assert.match(markup, /PINID:\s*imagepin001i0/);
   assert.match(markup, /PINID:\s*videopin001i0/);
 });
@@ -159,9 +161,7 @@ test('A2A metafile download uses native save dialog API when available', async (
   }]);
 });
 
-test('A2A video preview asks Electron to prepare a local playable preview file', async () => {
-  const item = parseMetafileUri('metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4');
-  assert.ok(item);
+test('A2A media preview does not download a local preview before playback', () => {
   const calls: unknown[] = [];
   const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
   (globalThis as typeof globalThis & { window?: unknown }).window = {
@@ -169,29 +169,30 @@ test('A2A video preview asks Electron to prepare a local playable preview file',
       cowork: {
         prepareMetafilePreview: async (input: unknown) => {
           calls.push(input);
-          return {
-            success: true,
-            fileUrl: 'file:///tmp/idbots-preview/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4',
-          };
+          return { success: false, error: 'should not be called' };
         },
       },
     },
   };
 
   try {
-    const previewUrl = await prepareMetafilePreview(item);
-    assert.equal(
-      previewUrl,
-      'file:///tmp/idbots-preview/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4',
+    renderToStaticMarkup(
+      <A2AMessageItem
+        message={{
+          id: 'msg-online-video',
+          type: 'user',
+          content: '[DELIVERY] {"result":"视频交付： metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4"}',
+          timestamp: 1_744_444_447_000,
+          metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        }}
+        peerName="Peer Bot"
+      />
     );
   } finally {
     (globalThis as typeof globalThis & { window?: unknown }).window = originalWindow;
   }
 
-  assert.deepEqual(calls, [{
-    url: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0',
-    fileName: '3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4',
-  }]);
+  assert.deepEqual(calls, []);
 });
 
 test('A2A delivery renders pin id and download button for unsupported metafile extension', () => {

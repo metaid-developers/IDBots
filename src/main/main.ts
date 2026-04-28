@@ -3,7 +3,6 @@ import type { Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { randomBytes } from 'crypto';
-import { pathToFileURL } from 'url';
 import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
@@ -1634,44 +1633,6 @@ const downloadMetafileWithDialog = async (
   }
   await fs.promises.writeFile(saveResult.filePath, buffer);
   return { success: true, canceled: false, path: saveResult.filePath };
-};
-
-const prepareMetafilePreviewFile = async (
-  options: { url?: string; fileName?: string }
-): Promise<{ success: boolean; path?: string; fileUrl?: string; error?: string }> => {
-  const url = normalizeMetafileContentUrl(options?.url);
-  const defaultName = sanitizeAttachmentFileName(options?.fileName || 'metafile');
-  const previewDir = path.join(app.getPath('temp'), APP_NAME, 'metafile-previews');
-  const previewPath = path.join(previewDir, defaultName);
-
-  await fs.promises.mkdir(previewDir, { recursive: true });
-  try {
-    const stat = await fs.promises.stat(previewPath);
-    if (stat.isFile() && stat.size > 0) {
-      return {
-        success: true,
-        path: previewPath,
-        fileUrl: pathToFileURL(previewPath).toString(),
-      };
-    }
-  } catch {
-    // Cache miss: fetch the metafile content below.
-  }
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Preview download failed: ${response.status} ${response.statusText}`);
-  }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (!buffer.length) {
-    throw new Error('Preview file is empty');
-  }
-  await fs.promises.writeFile(previewPath, buffer);
-  return {
-    success: true,
-    path: previewPath,
-    fileUrl: pathToFileURL(previewPath).toString(),
-  };
 };
 
 const configureUserDataPath = (): void => {
@@ -4647,23 +4608,6 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to download metafile',
-      };
-    }
-  });
-
-  ipcMain.handle('cowork:metafile:preparePreview', async (
-    _event,
-    options: {
-      url?: string;
-      fileName?: string;
-    }
-  ) => {
-    try {
-      return await prepareMetafilePreviewFile(options || {});
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to prepare metafile preview',
       };
     }
   });

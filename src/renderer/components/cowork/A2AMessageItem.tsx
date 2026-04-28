@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
@@ -31,6 +31,21 @@ const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac']);
+const MIME_TYPE_BY_EXTENSION = new Map<string, string>([
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+  ['.bmp', 'image/bmp'],
+  ['.svg', 'image/svg+xml'],
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm'],
+  ['.mov', 'video/quicktime'],
+  ['.mp3', 'audio/mpeg'],
+  ['.wav', 'audio/wav'],
+  ['.flac', 'audio/flac'],
+]);
 
 type DeliveryPayload = {
   result?: string;
@@ -170,27 +185,8 @@ export const triggerMetafileDownload = async (item: ParsedMetafile): Promise<voi
   link.remove();
 };
 
-export const prepareMetafilePreview = async (item: ParsedMetafile): Promise<string | null> => {
-  if (item.kind !== 'video' && item.kind !== 'audio') {
-    return null;
-  }
-  const nativePreview = typeof window !== 'undefined'
-    ? window.electron?.cowork?.prepareMetafilePreview
-    : undefined;
-  if (!nativePreview) {
-    return null;
-  }
-  const result = await nativePreview({
-    url: item.sourceUrl,
-    fileName: item.fileName || 'metafile',
-  });
-  if (result.success && result.fileUrl) {
-    return result.fileUrl;
-  }
-  if (!result.success) {
-    console.error('Failed to prepare metafile preview:', result.error);
-  }
-  return null;
+const getMetafileMimeType = (item: ParsedMetafile): string | undefined => {
+  return item.extension ? MIME_TYPE_BY_EXTENSION.get(item.extension) : undefined;
 };
 
 const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
@@ -261,45 +257,6 @@ const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
 };
 
 const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
-  const [previewSourceUrl, setPreviewSourceUrl] = useState(item.sourceUrl);
-  const [previewStatus, setPreviewStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-
-  useEffect(() => {
-    let canceled = false;
-    if (item.kind !== 'video' && item.kind !== 'audio') {
-      setPreviewSourceUrl(item.sourceUrl);
-      setPreviewStatus('idle');
-      return () => {
-        canceled = true;
-      };
-    }
-
-    const loadPreview = async () => {
-      setPreviewStatus('loading');
-      try {
-        const localPreviewUrl = await prepareMetafilePreview(item);
-        if (canceled) return;
-        if (localPreviewUrl) {
-          setPreviewSourceUrl(localPreviewUrl);
-          setPreviewStatus('ready');
-        } else {
-          setPreviewSourceUrl(item.sourceUrl);
-          setPreviewStatus('error');
-        }
-      } catch (error) {
-        if (canceled) return;
-        console.error('Failed to load metafile preview:', error);
-        setPreviewSourceUrl(item.sourceUrl);
-        setPreviewStatus('error');
-      }
-    };
-
-    void loadPreview();
-    return () => {
-      canceled = true;
-    };
-  }, [item.uri, item.kind, item.sourceUrl, item.fileName]);
-
   return (
     <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2">
       {item.kind === 'image' && (
@@ -311,46 +268,19 @@ const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
         />
       )}
       {item.kind === 'video' && (
-        <>
-          <video
-            key={previewSourceUrl}
-            src={previewSourceUrl}
-            controls
-            preload="metadata"
-            className="w-full max-h-80 rounded-md bg-black"
-          />
-          {previewStatus === 'loading' && (
-            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              正在准备视频预览...
-            </div>
-          )}
-          {previewStatus === 'error' && (
-            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              视频预览暂不可用，可先下载文件观看。
-            </div>
-          )}
-        </>
+        <video
+          controls
+          preload="auto"
+          playsInline
+          className="w-full max-h-80 rounded-md bg-black"
+        >
+          <source src={item.sourceUrl} type={getMetafileMimeType(item)} />
+        </video>
       )}
       {item.kind === 'audio' && (
-        <>
-          <audio
-            key={previewSourceUrl}
-            src={previewSourceUrl}
-            controls
-            preload="metadata"
-            className="w-full"
-          />
-          {previewStatus === 'loading' && (
-            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              正在准备音频预览...
-            </div>
-          )}
-          {previewStatus === 'error' && (
-            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              音频预览暂不可用，可先下载文件收听。
-            </div>
-          )}
-        </>
+        <audio controls preload="auto" className="w-full">
+          <source src={item.sourceUrl} type={getMetafileMimeType(item)} />
+        </audio>
       )}
       {item.kind === 'download' && (
         <div className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-xs break-all dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface">
