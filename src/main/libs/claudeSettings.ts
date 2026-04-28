@@ -9,9 +9,12 @@ import {
   getCoworkOpenAICompatProxyStatus,
 } from './coworkOpenAICompatProxy';
 import { normalizeProviderApiFormat, type AnthropicApiFormat } from './coworkFormatTransform';
+import { resolveCoworkModelLimits, type CoworkModelLimits } from './coworkModelLimits';
 
 type ProviderModel = {
   id: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
 };
 
 type ProviderConfig = {
@@ -25,6 +28,7 @@ type ProviderConfig = {
 type AppConfig = {
   model?: {
     defaultModel?: string;
+    availableModels?: ProviderModel[];
   };
   providers?: Record<string, ProviderConfig>;
 };
@@ -289,6 +293,12 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
 
 export function getCurrentApiConfig(target: OpenAICompatProxyTarget = 'local'): CoworkApiConfig | null {
   return resolveCurrentApiConfig(target).config;
+}
+
+export function resolveCurrentModelLimits(modelId?: string | null): CoworkModelLimits {
+  const sqliteStore = getStore();
+  const appConfig = sqliteStore?.get<AppConfig>('app_config') ?? {};
+  return resolveCoworkModelLimits(appConfig, modelId);
 }
 
 export function buildEnvForConfig(config: CoworkApiConfig): Record<string, string> {

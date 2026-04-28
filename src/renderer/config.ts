@@ -9,6 +9,8 @@ type ConfiguredModel = {
   id: string;
   name: string;
   supportsImage?: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
   options?: ModelOptions;
 };
 
@@ -145,10 +147,14 @@ type ModelLike = {
   id: string;
   name: string;
   supportsImage?: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
   options?: ModelOptions;
 };
 
 export const DEEPSEEK_DEFAULT_MODEL_ID = 'deepseek-v4-pro';
+export const DEEPSEEK_V4_PRO_CONTEXT_WINDOW = 1_000_000;
+export const DEEPSEEK_V4_PRO_MAX_OUTPUT_TOKENS = 16_000;
 
 const DEEPSEEK_DEFAULT_MODELS: ReadonlyArray<ModelLike> = Object.freeze([
   { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false },
@@ -156,6 +162,8 @@ const DEEPSEEK_DEFAULT_MODELS: ReadonlyArray<ModelLike> = Object.freeze([
     id: 'deepseek-v4-pro',
     name: 'DeepSeek V4 Pro',
     supportsImage: false,
+    contextWindow: DEEPSEEK_V4_PRO_CONTEXT_WINDOW,
+    maxOutputTokens: DEEPSEEK_V4_PRO_MAX_OUTPUT_TOKENS,
     options: {
       reasoningEffort: 'max',
       thinking: { type: 'enabled' },
@@ -192,6 +200,8 @@ function normalizeDeepSeekModel(model: ModelLike): ModelLike {
     return {
       ...model,
       supportsImage: canonical.supportsImage ?? model.supportsImage,
+      contextWindow: model.contextWindow ?? canonical.contextWindow,
+      maxOutputTokens: model.maxOutputTokens ?? canonical.maxOutputTokens,
       options: model.options ?? canonical.options,
     };
   }
@@ -200,6 +210,8 @@ function normalizeDeepSeekModel(model: ModelLike): ModelLike {
     id: migrated.id,
     name: migrated.name,
     supportsImage: migrated.supportsImage,
+    contextWindow: migrated.contextWindow,
+    maxOutputTokens: migrated.maxOutputTokens,
     options: migrated.options,
   };
 }

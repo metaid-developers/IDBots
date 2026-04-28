@@ -30,6 +30,14 @@ test('defaultConfig uses DeepSeek V4 Flash and Pro as the built-in DeepSeek defa
       thinking: { type: 'enabled' },
     },
   );
+  assert.equal(
+    defaultConfig.model.availableModels.find(({ id }) => id === 'deepseek-v4-pro')?.contextWindow,
+    1_000_000,
+  );
+  assert.equal(
+    defaultConfig.model.availableModels.find(({ id }) => id === 'deepseek-v4-pro')?.maxOutputTokens,
+    16_000,
+  );
   assert.deepEqual(
     defaultConfig.providers?.deepseek.models?.map(({ id, name }) => ({ id, name })),
     [
@@ -43,6 +51,14 @@ test('defaultConfig uses DeepSeek V4 Flash and Pro as the built-in DeepSeek defa
       reasoningEffort: 'max',
       thinking: { type: 'enabled' },
     },
+  );
+  assert.equal(
+    defaultConfig.providers?.deepseek.models?.find(({ id }) => id === 'deepseek-v4-pro')?.contextWindow,
+    1_000_000,
+  );
+  assert.equal(
+    defaultConfig.providers?.deepseek.models?.find(({ id }) => id === 'deepseek-v4-pro')?.maxOutputTokens,
+    16_000,
   );
 });
 
@@ -75,6 +91,14 @@ test('normalizeDeepSeekAppConfig migrates legacy DeepSeek defaults in stored con
       thinking: { type: 'enabled' },
     },
   );
+  assert.equal(
+    normalized.model.availableModels.find(({ id }) => id === 'deepseek-v4-pro')?.contextWindow,
+    1_000_000,
+  );
+  assert.equal(
+    normalized.model.availableModels.find(({ id }) => id === 'deepseek-v4-pro')?.maxOutputTokens,
+    16_000,
+  );
   assert.deepEqual(
     normalized.providers?.deepseek.models?.map(({ id }) => id),
     ['deepseek-v4-flash', 'deepseek-v4-pro'],
@@ -85,6 +109,14 @@ test('normalizeDeepSeekAppConfig migrates legacy DeepSeek defaults in stored con
       reasoningEffort: 'max',
       thinking: { type: 'enabled' },
     },
+  );
+  assert.equal(
+    normalized.providers?.deepseek.models?.find(({ id }) => id === 'deepseek-v4-pro')?.contextWindow,
+    1_000_000,
+  );
+  assert.equal(
+    normalized.providers?.deepseek.models?.find(({ id }) => id === 'deepseek-v4-pro')?.maxOutputTokens,
+    16_000,
   );
 });
 
