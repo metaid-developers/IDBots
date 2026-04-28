@@ -1,3 +1,5 @@
+import path from 'path';
+
 const DEFAULT_CHUNK_THRESHOLD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_METAFS_UPLOADER_BASE = 'https://file.metaid.io/metafile-uploader';
@@ -43,7 +45,6 @@ function formatMiB(bytes) {
 }
 
 function inferContentTypeFromFilePath(filePath) {
-  const path = require('path');
   const ext = path.extname(String(filePath || '')).toLowerCase();
   return MIME_MAP[ext] || 'application/octet-stream';
 }
@@ -154,7 +155,7 @@ function normalizeRpcUploadResult(payload) {
   });
 }
 
-module.exports = {
+const metaFileUploadShared = {
   DEFAULT_CHUNK_THRESHOLD_BYTES,
   DEFAULT_MAX_FILE_SIZE_BYTES,
   DEFAULT_METAFS_UPLOADER_BASE,
@@ -174,3 +175,26 @@ module.exports = {
   selectUploadMode,
   validateUploadSize,
 };
+
+export {
+  DEFAULT_CHUNK_THRESHOLD_BYTES,
+  DEFAULT_MAX_FILE_SIZE_BYTES,
+  DEFAULT_METAFS_UPLOADER_BASE,
+  MIME_MAP,
+  PREVIEW_URL_BASE,
+  buildChunkedMetaFilePath,
+  buildPreviewUrl,
+  buildUploadSuccessPayload,
+  formatMiB,
+  inferContentTypeFromFilePath,
+  isTextContentType,
+  normalizeRpcUploadResult,
+  normalizeUploadContentType,
+  normalizeUploadNetwork,
+  normalizeUploaderBaseUrl,
+  sanitizeUploadPathSegment,
+  selectUploadMode,
+  validateUploadSize,
+};
+
+export default metaFileUploadShared;
