@@ -13,6 +13,14 @@ function deriveNativePaymentChain(protocolCurrency) {
   return 'mvc';
 }
 
+function normalizeNativeCurrencyUnit(value) {
+  const normalized = toSafeString(value).trim().toUpperCase();
+  if (!normalized || normalized === 'MVC' || normalized === 'MICROVISIONCHAIN') return 'SPACE';
+  if (normalized === 'BITCOIN') return 'BTC';
+  if (normalized === 'DOGECOIN') return 'DOGE';
+  return normalized;
+}
+
 function parseTickerFromProtocolCurrency(currency) {
   const normalized = toSafeString(currency).trim().toUpperCase();
   const match = /^([A-Z0-9]+)-MRC20$/.exec(normalized);
@@ -33,10 +41,9 @@ function normalizeMrc20Ticker(value) {
 export function normalizeGigSquareSettlementDraft(input) {
   const primary = toSafeString(input?.currency).trim().toUpperCase();
   if (primary !== 'MRC20') {
-    const selectorCurrency = primary || 'SPACE';
-    const protocolCurrency = selectorCurrency === 'SPACE' ? 'MVC' : selectorCurrency;
+    const protocolCurrency = normalizeNativeCurrencyUnit(primary);
     return {
-      selectorCurrency,
+      selectorCurrency: protocolCurrency,
       protocolCurrency,
       displayCurrency: protocolCurrency,
       settlementKind: 'native',
@@ -77,12 +84,9 @@ export function parseGigSquareSettlementAsset(input) {
   const isMrc20 = hasMrc20Currency || (!protocolCurrency && structuredKind === 'mrc20');
 
   if (!isMrc20) {
-    const normalizedInputCurrency = protocolCurrency || 'SPACE';
-    const normalizedProtocolCurrency = normalizedInputCurrency === 'SPACE'
-      ? 'MVC'
-      : normalizedInputCurrency;
+    const normalizedProtocolCurrency = normalizeNativeCurrencyUnit(protocolCurrency);
     return {
-      selectorCurrency: normalizedProtocolCurrency === 'MVC' ? 'SPACE' : normalizedProtocolCurrency,
+      selectorCurrency: normalizedProtocolCurrency,
       protocolCurrency: normalizedProtocolCurrency,
       displayCurrency: normalizedProtocolCurrency,
       settlementKind: 'native',

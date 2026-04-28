@@ -73,7 +73,7 @@ export function resolveDelegationSettlement(
   return {
     price,
     protocolCurrency,
-    displayCurrency: protocolCurrency === 'MVC' ? 'SPACE' : protocolCurrency,
+    displayCurrency: settlement.displayCurrency || protocolCurrency,
     paymentMode: settlement.settlementKind as DelegationSettlementKind,
     settlementKind: settlement.settlementKind as DelegationSettlementKind,
     paymentChain: settlement.paymentChain as DelegationPaymentChain,

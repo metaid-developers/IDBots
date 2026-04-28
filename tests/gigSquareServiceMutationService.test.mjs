@@ -60,7 +60,7 @@ test('validateGigSquareServiceMutation returns blocked reason code when action i
   assert.equal(result.errorCode, 'gigSquareMyServicesBlockedActiveOrders');
 });
 
-test('normalizeGigSquareModifyDraft normalizes currency and output type', () => {
+test('normalizeGigSquareModifyDraft normalizes network aliases to currency units', () => {
   const normalized = normalizeGigSquareModifyDraft({
     serviceName: ' weather ',
     displayName: ' Weather ',
@@ -71,9 +71,35 @@ test('normalizeGigSquareModifyDraft normalizes currency and output type', () => 
     outputType: 'TEXT',
   });
 
-  assert.equal(normalized.currency, 'MVC');
+  assert.equal(normalized.currency, 'SPACE');
   assert.equal(normalized.outputType, 'text');
   assert.equal(normalized.serviceName, 'weather');
+
+  assert.equal(
+    normalizeGigSquareModifyDraft({
+      serviceName: 'svc',
+      displayName: 'SVC',
+      description: 'desc',
+      providerSkill: 'skill',
+      price: '0.1',
+      currency: 'mvc',
+      outputType: 'text',
+    }).currency,
+    'SPACE',
+  );
+
+  assert.equal(
+    normalizeGigSquareModifyDraft({
+      serviceName: 'svc',
+      displayName: 'SVC',
+      description: 'desc',
+      providerSkill: 'skill',
+      price: '0.1',
+      currency: 'Bitcoin',
+      outputType: 'text',
+    }).currency,
+    'BTC',
+  );
 });
 
 test('validateGigSquareModifyDraft rejects price beyond currency limit', () => {
@@ -123,7 +149,7 @@ test('validateGigSquareModifyDraft rejects invalid MRC20 ticker formats', () => 
   assert.match(result.error || '', /MRC20 ticker is invalid/);
 });
 
-test('buildGigSquareServicePayload and pin payload helpers produce metaid-compliant structures', () => {
+test('buildGigSquareServicePayload and pin payload helpers write SPACE for mvc-chain settlement', () => {
   const payload = buildGigSquareServicePayload({
     draft: {
       serviceName: 'weather',
@@ -139,7 +165,9 @@ test('buildGigSquareServicePayload and pin payload helpers produce metaid-compli
     paymentAddress: '1abc',
   });
 
-  assert.equal(payload.currency, 'MVC');
+  assert.equal(payload.currency, 'SPACE');
+  assert.equal(payload.paymentChain, 'mvc');
+  assert.equal(payload.settlementKind, 'native');
   assert.equal(payload.providerMetaBot, 'global-metaid-1');
   assert.equal(payload.paymentAddress, '1abc');
 
@@ -157,7 +185,7 @@ test('buildGigSquareServicePayload and pin payload helpers produce metaid-compli
   assert.equal(typeof modifyPayload.payload, 'string');
 });
 
-test('buildGigSquareServicePayload keeps native MVC behavior but writes MRC20 payment metadata', () => {
+test('buildGigSquareServicePayload writes MRC20 payment metadata', () => {
   const payload = buildGigSquareServicePayload({
     draft: {
       serviceName: 'weather',
