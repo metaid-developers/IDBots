@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
@@ -170,6 +170,29 @@ export const triggerMetafileDownload = async (item: ParsedMetafile): Promise<voi
   link.remove();
 };
 
+export const prepareMetafilePreview = async (item: ParsedMetafile): Promise<string | null> => {
+  if (item.kind !== 'video' && item.kind !== 'audio') {
+    return null;
+  }
+  const nativePreview = typeof window !== 'undefined'
+    ? window.electron?.cowork?.prepareMetafilePreview
+    : undefined;
+  if (!nativePreview) {
+    return null;
+  }
+  const result = await nativePreview({
+    url: item.sourceUrl,
+    fileName: item.fileName || 'metafile',
+  });
+  if (result.success && result.fileUrl) {
+    return result.fileUrl;
+  }
+  if (!result.success) {
+    console.error('Failed to prepare metafile preview:', result.error);
+  }
+  return null;
+};
+
 const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized.startsWith('data:')
@@ -233,6 +256,119 @@ const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
           )}
         </div>
       )}
+    </div>
+  );
+};
+
+const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
+  const [previewSourceUrl, setPreviewSourceUrl] = useState(item.sourceUrl);
+  const [previewStatus, setPreviewStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+
+  useEffect(() => {
+    let canceled = false;
+    if (item.kind !== 'video' && item.kind !== 'audio') {
+      setPreviewSourceUrl(item.sourceUrl);
+      setPreviewStatus('idle');
+      return () => {
+        canceled = true;
+      };
+    }
+
+    const loadPreview = async () => {
+      setPreviewStatus('loading');
+      try {
+        const localPreviewUrl = await prepareMetafilePreview(item);
+        if (canceled) return;
+        if (localPreviewUrl) {
+          setPreviewSourceUrl(localPreviewUrl);
+          setPreviewStatus('ready');
+        } else {
+          setPreviewSourceUrl(item.sourceUrl);
+          setPreviewStatus('error');
+        }
+      } catch (error) {
+        if (canceled) return;
+        console.error('Failed to load metafile preview:', error);
+        setPreviewSourceUrl(item.sourceUrl);
+        setPreviewStatus('error');
+      }
+    };
+
+    void loadPreview();
+    return () => {
+      canceled = true;
+    };
+  }, [item.uri, item.kind, item.sourceUrl, item.fileName]);
+
+  return (
+    <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2">
+      {item.kind === 'image' && (
+        <img
+          src={item.sourceUrl}
+          alt={item.fileName}
+          className="w-full max-h-80 object-contain rounded-md"
+          loading="lazy"
+        />
+      )}
+      {item.kind === 'video' && (
+        <>
+          <video
+            key={previewSourceUrl}
+            src={previewSourceUrl}
+            controls
+            preload="metadata"
+            className="w-full max-h-80 rounded-md bg-black"
+          />
+          {previewStatus === 'loading' && (
+            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              正在准备视频预览...
+            </div>
+          )}
+          {previewStatus === 'error' && (
+            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              视频预览暂不可用，可先下载文件观看。
+            </div>
+          )}
+        </>
+      )}
+      {item.kind === 'audio' && (
+        <>
+          <audio
+            key={previewSourceUrl}
+            src={previewSourceUrl}
+            controls
+            preload="metadata"
+            className="w-full"
+          />
+          {previewStatus === 'loading' && (
+            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              正在准备音频预览...
+            </div>
+          )}
+          {previewStatus === 'error' && (
+            <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              音频预览暂不可用，可先下载文件收听。
+            </div>
+          )}
+        </>
+      )}
+      {item.kind === 'download' && (
+        <div className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-xs break-all dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface">
+          {item.fileName}
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="min-w-0 text-[11px] break-all dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          PINID: {item.pinId}
+        </span>
+        <button
+          type="button"
+          onClick={() => { void triggerMetafileDownload(item); }}
+          className="inline-flex items-center rounded-md border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
+        >
+          下载文件
+        </button>
+      </div>
     </div>
   );
 };
@@ -324,52 +460,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
         {metafileItems.length > 0 && (
           <div className="w-full mt-2 space-y-2">
             {metafileItems.map((item, index) => (
-              <div
-                key={`${item.uri}-${index}`}
-                className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2"
-              >
-                {item.kind === 'image' && (
-                  <img
-                    src={item.sourceUrl}
-                    alt={item.fileName}
-                    className="w-full max-h-80 object-contain rounded-md"
-                    loading="lazy"
-                  />
-                )}
-                {item.kind === 'video' && (
-                  <video
-                    src={item.sourceUrl}
-                    controls
-                    preload="metadata"
-                    className="w-full max-h-80 rounded-md"
-                  />
-                )}
-                {item.kind === 'audio' && (
-                  <audio
-                    src={item.sourceUrl}
-                    controls
-                    preload="metadata"
-                    className="w-full"
-                  />
-                )}
-                {item.kind === 'download' && (
-                  <div className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-xs break-all dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface">
-                    {item.fileName}
-                  </div>
-                )}
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="min-w-0 text-[11px] break-all dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    PINID: {item.pinId}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { void triggerMetafileDownload(item); }}
-                    className="inline-flex items-center rounded-md border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
-                  >
-                    下载文件
-                  </button>
-                </div>
-              </div>
+              <MetafilePreviewCard key={`${item.uri}-${index}`} item={item} />
             ))}
           </div>
         )}

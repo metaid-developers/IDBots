@@ -522,6 +522,10 @@ interface IElectronAPI {
       url: string;
       fileName?: string;
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+    prepareMetafilePreview: (options: {
+      url: string;
+      fileName?: string;
+    }) => Promise<{ success: boolean; path?: string; fileUrl?: string; error?: string }>;
     respondToPermission: (options: { requestId: string; result: CoworkPermissionResult }) => Promise<{ success: boolean; error?: string }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;
     setConfig: (config: CoworkConfigUpdate) => Promise<{ success: boolean; error?: string }>;

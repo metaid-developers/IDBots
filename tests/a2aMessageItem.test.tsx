@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import A2AMessageItem, {
   parseMetafileUri,
+  prepareMetafilePreview,
   triggerMetafileDownload,
 } from '../src/renderer/components/cowork/A2AMessageItem';
 
@@ -155,6 +156,41 @@ test('A2A metafile download uses native save dialog API when available', async (
   assert.deepEqual(calls, [{
     url: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/cafebabefeed00112233445566778899i0',
     fileName: 'cafebabefeed00112233445566778899i0.pdf',
+  }]);
+});
+
+test('A2A video preview asks Electron to prepare a local playable preview file', async () => {
+  const item = parseMetafileUri('metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4');
+  assert.ok(item);
+  const calls: unknown[] = [];
+  const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+  (globalThis as typeof globalThis & { window?: unknown }).window = {
+    electron: {
+      cowork: {
+        prepareMetafilePreview: async (input: unknown) => {
+          calls.push(input);
+          return {
+            success: true,
+            fileUrl: 'file:///tmp/idbots-preview/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4',
+          };
+        },
+      },
+    },
+  };
+
+  try {
+    const previewUrl = await prepareMetafilePreview(item);
+    assert.equal(
+      previewUrl,
+      'file:///tmp/idbots-preview/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4',
+    );
+  } finally {
+    (globalThis as typeof globalThis & { window?: unknown }).window = originalWindow;
+  }
+
+  assert.deepEqual(calls, [{
+    url: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0',
+    fileName: '3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4',
   }]);
 });
 
