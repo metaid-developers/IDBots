@@ -7240,7 +7240,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         "img-src 'self' data: https: http:",
         "connect-src 'self' https: http: ws: wss:",
         "font-src 'self' data:",
-        "media-src 'self'",
+        "media-src 'self' blob:",
         "worker-src 'self' blob:",
         "frame-src 'self'"
       ];
