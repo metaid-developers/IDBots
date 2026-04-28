@@ -25,7 +25,7 @@ const formatTime = (timestamp: number): string => {
 
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
 const DELIVERY_PREFIX = '[DELIVERY]';
-const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/content';
+const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg']);
@@ -73,7 +73,7 @@ const normalizeMetafileCandidate = (candidate: string): string => {
   return String(candidate || '').trim().replace(/[),.;:!?]+$/, '');
 };
 
-const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
+export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
   const normalizedUri = normalizeMetafileCandidate(rawUri);
   if (!normalizedUri.toLowerCase().startsWith('metafile://')) {
     return null;
@@ -142,7 +142,21 @@ const extractMetafileItems = (content: string): ParsedMetafile[] => {
   return entries;
 };
 
-const triggerMetafileDownload = (item: ParsedMetafile): void => {
+export const triggerMetafileDownload = async (item: ParsedMetafile): Promise<void> => {
+  const nativeDownload = typeof window !== 'undefined'
+    ? window.electron?.cowork?.downloadMetafile
+    : undefined;
+  if (nativeDownload) {
+    const result = await nativeDownload({
+      url: item.sourceUrl,
+      fileName: item.fileName || 'metafile',
+    });
+    if (!result.success && !result.canceled) {
+      console.error('Failed to download metafile:', result.error);
+    }
+    return;
+  }
+
   if (typeof document === 'undefined') {
     return;
   }
@@ -349,7 +363,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
                   </span>
                   <button
                     type="button"
-                    onClick={() => triggerMetafileDownload(item)}
+                    onClick={() => { void triggerMetafileDownload(item); }}
                     className="inline-flex items-center rounded-md border dark:border-claude-darkBorder border-claude-border px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text hover:opacity-80 transition-opacity"
                   >
                     下载文件

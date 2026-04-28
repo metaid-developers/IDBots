@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import A2AMessageItem from '../src/renderer/components/cowork/A2AMessageItem';
+import A2AMessageItem, {
+  parseMetafileUri,
+  triggerMetafileDownload,
+} from '../src/renderer/components/cowork/A2AMessageItem';
+
+const METAID_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\//;
 
 test('A2A normal message bubble renders markdown content', () => {
   const markup = renderToStaticMarkup(
@@ -57,10 +62,12 @@ test('A2A delivery image keeps metafile text and renders image preview for .jpg'
   );
 
   assert.match(markup, /metafile:\/\/aabbccddeeff00112233445566778899i0\.jpg/);
-  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/aabbccddeeff00112233445566778899i0"/);
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/aabbccddeeff00112233445566778899i0"/);
   assert.match(markup, /PINID/);
   assert.match(markup, /aabbccddeeff00112233445566778899i0/);
   assert.match(markup, /下载文件/);
+  assert.match(markup, METAID_CONTENT_API_RE);
+  assert.doesNotMatch(markup, /metafile-indexer\/content\/aabbccddeeff00112233445566778899i0/);
 });
 
 test('A2A delivery renders embedded player for .mp4 metafile', () => {
@@ -78,7 +85,7 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
   );
 
   assert.match(markup, /<video[^>]*controls/);
-  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
 });
@@ -97,8 +104,8 @@ test('A2A delivery previews modern image and video metafile extensions', () => {
     />
   );
 
-  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/imagepin001i0"/);
-  assert.match(markup, /<video[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/videopin001i0"/);
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/imagepin001i0"/);
+  assert.match(markup, /<video[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
   assert.match(markup, /PINID:\s*imagepin001i0/);
   assert.match(markup, /PINID:\s*videopin001i0/);
 });
@@ -118,9 +125,37 @@ test('A2A delivery renders embedded player for .mp3 metafile', () => {
   );
 
   assert.match(markup, /<audio[^>]*controls/);
-  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/11223344556677889900aabbccddeeffi0"/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
+});
+
+test('A2A metafile download uses native save dialog API when available', async () => {
+  const item = parseMetafileUri('metafile://cafebabefeed00112233445566778899i0.pdf');
+  assert.ok(item);
+  const calls: unknown[] = [];
+  const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+  (globalThis as typeof globalThis & { window?: unknown }).window = {
+    electron: {
+      cowork: {
+        downloadMetafile: async (input: unknown) => {
+          calls.push(input);
+          return { success: true, path: '/tmp/cafebabefeed00112233445566778899i0.pdf' };
+        },
+      },
+    },
+  };
+
+  try {
+    await triggerMetafileDownload(item);
+  } finally {
+    (globalThis as typeof globalThis & { window?: unknown }).window = originalWindow;
+  }
+
+  assert.deepEqual(calls, [{
+    url: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/cafebabefeed00112233445566778899i0',
+    fileName: 'cafebabefeed00112233445566778899i0.pdf',
+  }]);
 });
 
 test('A2A delivery renders pin id and download button for unsupported metafile extension', () => {

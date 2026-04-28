@@ -8,7 +8,7 @@ const {
   inferContentTypeFromFilePath,
 } = metaFileUploadShared;
 
-export const DELIVERY_CONTENT_BASE_URL = 'https://file.metaid.io/metafile-indexer/content';
+export const DELIVERY_CONTENT_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
