@@ -436,3 +436,112 @@ test('syncFinalizePins falls back to local mrc20 settlement metadata when finali
   assert.equal(updatedBuyer.status, 'refunded');
   assert.equal(updatedBuyer.refundFinalizePinId, refundFinalizePinId);
 });
+
+test('syncFinalizePins allows MRC20 refund finalize when verifier reports transient recipient state gap', async () => {
+  const paymentTxid = '9'.repeat(64);
+  const refundRequestPinId = 'refund-request-pin-id-state-gap';
+  const refundFinalizePinId = 'refund-finalize-pin-id-state-gap';
+
+  const { store, service } = await createRefundSyncServiceForTest({
+    fetchRefundFinalizePins: async () => [{
+      pinId: refundFinalizePinId,
+      content: JSON.stringify({
+        refundRequestPinId,
+        paymentTxid,
+        servicePinId: 'service-mrc20',
+        refundTxid: '8'.repeat(64),
+        refundAmount: '4.25000000',
+        refundCurrency: 'METAID-MRC20',
+        settlementKind: 'mrc20',
+        mrc20Ticker: 'METAID',
+        mrc20Id: 'order-mrc20-id-state-gap',
+        buyerGlobalMetaId: 'buyer-global-metaid',
+        sellerGlobalMetaId: 'seller-global-metaid',
+      }),
+    }],
+    resolveRefundMrc20RecipientAddress: () => '1buyer-btc-address',
+    verifyMrc20Transfer: async () => ({
+      valid: false,
+      reason: 'recipient_txid_not_observable',
+      currency: 'METAID-MRC20',
+      amountDisplay: '4.25000000',
+      matchedAmountAtomic: '0',
+      expectedAmountAtomic: '425000000',
+    }),
+  });
+
+  const buyerOrder = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'seller-global-metaid',
+    servicePinId: 'service-mrc20',
+    serviceName: 'Indexer Credits',
+    paymentTxid,
+    paymentChain: 'btc',
+    paymentAmount: '4.25000000',
+    paymentCurrency: 'METAID-MRC20',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'METAID',
+    mrc20Id: 'order-mrc20-id-state-gap',
+    status: 'failed',
+    now: 1_770_000_700_000,
+  });
+  store.markRefundPending(buyerOrder.id, refundRequestPinId, 1_770_000_710_000);
+
+  await service.syncFinalizePins();
+
+  const updatedBuyer = store.getOrderById(buyerOrder.id);
+  assert.equal(updatedBuyer.status, 'refunded');
+  assert.equal(updatedBuyer.refundFinalizePinId, refundFinalizePinId);
+});
+
+test('syncFinalizePins rejects deterministic MRC20 refund verifier failures', async () => {
+  const paymentTxid = '6'.repeat(64);
+  const refundRequestPinId = 'refund-request-pin-id-deterministic-failure';
+
+  const { store, service } = await createRefundSyncServiceForTest({
+    fetchRefundFinalizePins: async () => [{
+      pinId: 'refund-finalize-pin-id-deterministic-failure',
+      content: JSON.stringify({
+        refundRequestPinId,
+        paymentTxid,
+        servicePinId: 'service-mrc20',
+        refundTxid: '5'.repeat(64),
+        refundAmount: '4.25000000',
+        refundCurrency: 'METAID-MRC20',
+        settlementKind: 'mrc20',
+        mrc20Ticker: 'METAID',
+        mrc20Id: 'order-mrc20-id-deterministic-failure',
+      }),
+    }],
+    resolveRefundMrc20RecipientAddress: () => '1buyer-btc-address',
+    verifyMrc20Transfer: async () => ({
+      valid: false,
+      reason: 'ticker_mismatch:WRONG:METAID',
+    }),
+  });
+
+  const buyerOrder = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'seller-global-metaid',
+    servicePinId: 'service-mrc20',
+    serviceName: 'Indexer Credits',
+    paymentTxid,
+    paymentChain: 'btc',
+    paymentAmount: '4.25000000',
+    paymentCurrency: 'METAID-MRC20',
+    settlementKind: 'mrc20',
+    mrc20Ticker: 'METAID',
+    mrc20Id: 'order-mrc20-id-deterministic-failure',
+    status: 'failed',
+    now: 1_770_000_700_000,
+  });
+  store.markRefundPending(buyerOrder.id, refundRequestPinId, 1_770_000_710_000);
+
+  await service.syncFinalizePins();
+
+  const updatedBuyer = store.getOrderById(buyerOrder.id);
+  assert.equal(updatedBuyer.status, 'refund_pending');
+  assert.equal(updatedBuyer.refundFinalizePinId, null);
+});

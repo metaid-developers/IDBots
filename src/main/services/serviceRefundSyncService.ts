@@ -14,6 +14,7 @@ import {
 } from './txTransferVerification';
 import {
   verifyMrc20Transfer,
+  isMrc20TransientVerificationReason,
   type VerifyMrc20PaymentInput,
   type VerifyMrc20PaymentResult,
 } from './mrc20PaymentVerification';
@@ -199,7 +200,7 @@ export class ServiceRefundSyncService {
       if (this.shouldUseMrc20Verifier(verificationOrder, payload)) {
         const input = this.buildMrc20RefundVerificationInput(verificationOrder, payload);
         const verification = await this.verifyMrc20Transfer(input);
-        if (!verification.valid) continue;
+        if (!verification.valid && !isMrc20TransientVerificationReason(verification.reason)) continue;
       } else {
         const verification = await this.verifyTransferToRecipient(
           this.buildRefundVerificationInput(verificationOrder, payload)

@@ -14,6 +14,7 @@ import { extractOrderRawRequest } from '../shared/orderMessage.js';
 import { parseGigSquareSettlementAsset } from '../shared/gigSquareSettlementAsset.js';
 import {
   verifyMrc20Payment,
+  isMrc20TransientVerificationReason,
   type VerifyMrc20PaymentInput,
   type VerifyMrc20PaymentResult,
 } from './mrc20PaymentVerification';
@@ -395,29 +396,13 @@ export async function checkOrderPaymentStatus(params: {
       };
     }
 
-    if (
-      mrc20Verification.reason.startsWith('fetch_token_info_failed:') ||
-      mrc20Verification.reason.startsWith('fetch_token_utxos_failed:')
-    ) {
+    if (isMrc20TransientVerificationReason(mrc20Verification.reason)) {
+      const isNetworkError = mrc20Verification.reason.startsWith('fetch_token_info_failed:')
+        || mrc20Verification.reason.startsWith('fetch_token_utxos_failed:');
       return {
-        paid: false,
+        paid: true,
         txid,
-        reason: `unverified_network_error: ${mrc20Verification.reason}`,
-        ...baseResult,
-        currency: mrc20Verification.currency || currency,
-        amountDisplay: mrc20Verification.amountDisplay || parsed.amountDisplay,
-        amountAtomic: mrc20Verification.matchedAmountAtomic || '0',
-      };
-    }
-
-    if (
-      mrc20Verification.reason === 'recipient_txid_not_observable'
-      || mrc20Verification.reason === 'recipient_txid_not_found'
-    ) {
-      return {
-        paid: false,
-        txid,
-        reason: `unverified_state_gap: ${mrc20Verification.reason}`,
+        reason: `${isNetworkError ? 'unverified_network_error' : 'unverified_state_gap'}: ${mrc20Verification.reason}`,
         ...baseResult,
         currency: mrc20Verification.currency || currency,
         amountDisplay: mrc20Verification.amountDisplay || parsed.amountDisplay,

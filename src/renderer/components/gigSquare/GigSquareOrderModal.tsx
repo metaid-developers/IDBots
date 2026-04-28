@@ -15,7 +15,10 @@ import {
   getGigSquareProviderDisplayName,
 } from './gigSquareProviderPresentation.js';
 import {
+  findGigSquareMrc20PaymentAsset,
+  formatGigSquareMrc20PaymentBalance,
   getGigSquareOrderErrorMessageKey,
+  getGigSquareMrc20PaymentReadiness,
   getGigSquarePayActionBlockedMessageKey,
   getGigSquarePayActionClassName,
   isGigSquarePayActionEnabled,
@@ -30,6 +33,23 @@ import {
 } from './gigSquareOrderPayloadBuilder.mjs';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
+type Mrc20PaymentAsset = {
+  kind: 'mrc20';
+  chain: 'btc';
+  symbol: string;
+  tokenName: string;
+  mrc20Id: string;
+  address: string;
+  decimal: number;
+  icon?: string;
+  balance: {
+    confirmed: string;
+    unconfirmed: string;
+    pendingIn: string;
+    pendingOut: string;
+    display: string;
+  };
+};
 
 interface GigSquareOrderModalProps {
   service: GigSquareService | null;
@@ -158,6 +178,19 @@ function resolveGigSquarePaymentAddress(
   return String(service.paymentAddress || service.providerAddress || '').trim();
 }
 
+function getMrc20PaymentReadinessError(reason: string | null | undefined): string {
+  if (reason === 'missing_token') {
+    return i18nService.t('gigSquareMrc20TokenMissing');
+  }
+  if (reason === 'insufficient_token_balance') {
+    return i18nService.t('gigSquareMrc20TokenInsufficient');
+  }
+  if (reason === 'missing_payment_address' || reason === 'missing_token_id' || reason === 'invalid_amount') {
+    return i18nService.t('gigSquareMrc20InvalidPayment');
+  }
+  return i18nService.t('gigSquarePaymentFailed');
+}
+
 const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
   service,
   isOpen,
@@ -182,6 +215,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     doge?: { value: number; unit: string };
   }>({});
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [mrc20PaymentAsset, setMrc20PaymentAsset] = useState<Mrc20PaymentAsset | null>(null);
+  const [mrc20PaymentAssetLoading, setMrc20PaymentAssetLoading] = useState(false);
   const [handshake, setHandshake] = useState<HandshakeStatus>('idle');
   const [feeRate, setFeeRate] = useState<number>(1);
 
@@ -294,6 +329,11 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
   );
   const chain = settlement.paymentChain;
 
+  useEffect(() => {
+    setMrc20PaymentAsset(null);
+    setMrc20PaymentAssetLoading(false);
+  }, [selectedMetabotId, service?.id, settlement.mrc20Id]);
+
   // Fetch live fee rate for the payment chain
   useEffect(() => {
     if (!isOpen) return;
@@ -383,6 +423,89 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     };
   }, [getOrderErrorMessage, selectedMetabotId, service]);
 
+  const loadMrc20PaymentAsset = useCallback(async (): Promise<{
+    success: true;
+    asset: Mrc20PaymentAsset | null;
+  } | {
+    success: false;
+    error: string;
+  }> => {
+    if (!selectedMetabotId || !service || settlement.kind !== 'mrc20' || isFreeService) {
+      return { success: true, asset: null };
+    }
+
+    const paymentAddress = resolveGigSquarePaymentAddress(service, settlement);
+    const targetMrc20Id = String(settlement.mrc20Id || '').trim();
+    if (!paymentAddress || !targetMrc20Id) {
+      return {
+        success: false,
+        error: getMrc20PaymentReadinessError(!paymentAddress ? 'missing_payment_address' : 'missing_token_id'),
+      };
+    }
+
+    setMrc20PaymentAssetLoading(true);
+    try {
+      const walletAssetsResult = await window.electron.idbots.getMetabotWalletAssets({
+        metabotId: selectedMetabotId,
+      });
+      if (!walletAssetsResult?.success || !walletAssetsResult.assets) {
+        return {
+          success: false,
+          error: walletAssetsResult?.error || i18nService.t('gigSquareMrc20AssetsLoadFailed'),
+        };
+      }
+
+      const asset = findGigSquareMrc20PaymentAsset(
+        walletAssetsResult.assets.mrc20Assets,
+        targetMrc20Id,
+      ) as Mrc20PaymentAsset | null;
+      setMrc20PaymentAsset(asset);
+
+      const readiness = getGigSquareMrc20PaymentReadiness({
+        asset,
+        amount: paymentAmount,
+        mrc20Id: targetMrc20Id,
+        paymentAddress,
+      });
+      if (!readiness.ok) {
+        return {
+          success: false,
+          error: getMrc20PaymentReadinessError(readiness.reason),
+        };
+      }
+      if (!asset) {
+        return {
+          success: false,
+          error: i18nService.t('gigSquareMrc20TokenMissing'),
+        };
+      }
+
+      const preview = await window.electron.idbots.buildTokenTransferPreview({
+        kind: 'mrc20',
+        metabotId: selectedMetabotId,
+        asset,
+        toAddress: paymentAddress,
+        amount: paymentAmount,
+        feeRate,
+      });
+      if (!preview?.success || !preview.preview) {
+        return {
+          success: false,
+          error: preview?.error || i18nService.t('gigSquareMrc20FeeInsufficient'),
+        };
+      }
+
+      return { success: true, asset };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : i18nService.t('gigSquareMrc20AssetsLoadFailed'),
+      };
+    } finally {
+      setMrc20PaymentAssetLoading(false);
+    }
+  }, [feeRate, isFreeService, paymentAmount, selectedMetabotId, service, settlement]);
+
   const handleOpenConfirm = async () => {
     if (!isGigSquarePayActionEnabled(status, handshake)) {
       const blockedMessageKey = getGigSquarePayActionBlockedMessageKey(handshake);
@@ -403,12 +526,18 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       return;
     }
     const paymentAddress = resolveGigSquarePaymentAddress(service, settlement);
-    if (!service?.providerAddress || !paymentAddress) {
+    if (!paymentAddress) {
       setError(i18nService.t('gigSquareOrderFailed'));
       return;
     }
     if (settlement.kind === 'mrc20' && !settlement.mrc20Id) {
       setError(i18nService.t('gigSquareOrderFailed'));
+      return;
+    }
+
+    const mrc20PaymentAssetResult = await loadMrc20PaymentAsset();
+    if (mrc20PaymentAssetResult.success === false) {
+      setError(mrc20PaymentAssetResult.error);
       return;
     }
 
@@ -459,19 +588,13 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         setStatus('sending');
       } else if (settlement.kind === 'mrc20') {
         setStatus('paying');
-        const walletAssetsResult = await window.electron.idbots.getMetabotWalletAssets({
-          metabotId: selectedMetabotId,
-        });
-        if (!walletAssetsResult?.success || !walletAssetsResult.assets) {
-          throw new Error(walletAssetsResult?.error || i18nService.t('gigSquarePaymentFailed'));
+        const assetResult = await loadMrc20PaymentAsset();
+        if (assetResult.success === false) {
+          throw new Error(assetResult.error);
         }
-
-        const targetMrc20Id = String(settlement.mrc20Id || '').trim();
-        const asset = walletAssetsResult.assets.mrc20Assets.find((candidate) => (
-          String(candidate.mrc20Id || '').trim() === targetMrc20Id
-        ));
+        const asset = assetResult.asset;
         if (!asset) {
-          throw new Error(i18nService.t('gigSquarePaymentFailed'));
+          throw new Error(i18nService.t('gigSquareMrc20TokenMissing'));
         }
 
         const payment = await window.electron.idbots.executeTokenTransfer({
@@ -638,12 +761,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
     providerInfo.chatpubkey,
     onClose,
     runOrderPreflight,
+    loadMrc20PaymentAsset,
     getOrderErrorMessage,
   ]);
 
   if (!isOpen || !service) return null;
 
   const selectedMetabot = metabots.find((m) => m.id === selectedMetabotId);
+  const confirmPaymentAddress = resolveGigSquarePaymentAddress(service, settlement);
 
   return (
     <>
@@ -875,14 +1000,35 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
                   {priceDisplay?.amount ?? service.price} {priceDisplay?.unit ?? normalizeGigSquareDisplayCurrency(service.currency)}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('gigSquareConfirmBalance')}
-                </span>
-                <span className="dark:text-claude-darkText text-claude-text">
-                  {formatBalance(balanceForChain, balanceLoading)}
-                </span>
-              </div>
+              {settlement.kind === 'mrc20' ? (
+                <>
+                  <div className="flex justify-between gap-3">
+                    <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t('gigSquareConfirmTokenBalance')}
+                    </span>
+                    <span className="dark:text-claude-darkText text-claude-text text-right">
+                      {formatGigSquareMrc20PaymentBalance(mrc20PaymentAsset, mrc20PaymentAssetLoading)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t('gigSquareConfirmFeeBalance')}
+                    </span>
+                    <span className="dark:text-claude-darkText text-claude-text text-right">
+                      {formatBalance(balance.btc, balanceLoading)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-between">
+                  <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('gigSquareConfirmBalance')}
+                  </span>
+                  <span className="dark:text-claude-darkText text-claude-text">
+                    {formatBalance(balanceForChain, balanceLoading)}
+                  </span>
+                </div>
+              )}
               <div>
                 <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary block mb-1">
                   {i18nService.t('gigSquareConfirmRequest')}
@@ -896,7 +1042,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
                   {i18nService.t('gigSquareConfirmProviderAddress')}
                 </span>
                 <p className="text-xs dark:text-claude-darkText text-claude-text break-all">
-                  {service.providerAddress}
+                  {confirmPaymentAddress}
                 </p>
               </div>
               <div className="flex justify-between">

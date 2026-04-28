@@ -218,6 +218,13 @@ const defaultDeps: VerifyMrc20PaymentDeps = {
   fetchRecipientTokenUtxos: fetchRecipientTokenUtxosDefault,
 };
 
+export function isMrc20TransientVerificationReason(reason: string): boolean {
+  const normalized = normalizeText(reason);
+  return normalized.startsWith('fetch_token_info_failed:')
+    || normalized.startsWith('fetch_token_utxos_failed:')
+    || normalized === 'recipient_txid_not_observable';
+}
+
 export async function verifyMrc20Payment(
   input: VerifyMrc20PaymentInput,
   deps: VerifyMrc20PaymentDeps = defaultDeps
