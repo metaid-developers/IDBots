@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
@@ -27,6 +27,7 @@ const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
 const DELIVERY_PREFIX = '[DELIVERY]';
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
+const METAFILE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
@@ -189,6 +190,77 @@ const getMetafileMimeType = (item: ParsedMetafile): string | undefined => {
   return item.extension ? MIME_TYPE_BY_EXTENSION.get(item.extension) : undefined;
 };
 
+const normalizeContentType = (contentType: string | null): string | undefined => {
+  const normalized = String(contentType || '').split(';')[0]?.trim();
+  return normalized || undefined;
+};
+
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '';
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+export const createMetafileMediaObjectUrl = async (
+  item: ParsedMetafile,
+  onProgress?: (bytes: number) => void,
+): Promise<string> => {
+  if (item.kind !== 'video' && item.kind !== 'audio') {
+    throw new Error('Only video and audio metafiles can be prepared for media preview');
+  }
+
+  const response = await fetch(item.sourceUrl);
+  if (!response.ok) {
+    throw new Error(`Preview fetch failed: ${response.status} ${response.statusText}`);
+  }
+
+  const mimeType = getMetafileMimeType(item)
+    || normalizeContentType(response.headers.get('content-type'))
+    || 'application/octet-stream';
+  const chunks: BlobPart[] = [];
+  let receivedBytes = 0;
+
+  if (response.body?.getReader) {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+      receivedBytes += value.byteLength;
+      if (receivedBytes > METAFILE_PREVIEW_MAX_BYTES) {
+        throw new Error('Preview file exceeds the 20 MB delivery limit');
+      }
+      const chunk = new Uint8Array(value.byteLength);
+      chunk.set(value);
+      chunks.push(chunk.buffer as ArrayBuffer);
+      onProgress?.(receivedBytes);
+    }
+  } else {
+    const buffer = await response.arrayBuffer();
+    receivedBytes = buffer.byteLength;
+    if (receivedBytes > METAFILE_PREVIEW_MAX_BYTES) {
+      throw new Error('Preview file exceeds the 20 MB delivery limit');
+    }
+    chunks.push(buffer);
+    onProgress?.(receivedBytes);
+  }
+
+  if (receivedBytes <= 0) {
+    throw new Error('Preview file is empty');
+  }
+
+  const blob = new Blob(chunks, { type: mimeType });
+  return URL.createObjectURL(blob);
+};
+
 const isRenderableAvatarSource = (value: string | null | undefined): boolean => {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized.startsWith('data:')
@@ -256,6 +328,104 @@ const ToolCallBlock: React.FC<{ message: CoworkMessage }> = ({ message }) => {
   );
 };
 
+const MetafileMediaPreview: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
+  const [mediaSourceUrl, setMediaSourceUrl] = useState<string | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadedBytes, setLoadedBytes] = useState(0);
+  const mediaType = getMetafileMimeType(item);
+
+  useEffect(() => {
+    let canceled = false;
+    let objectUrl: string | null = null;
+
+    setMediaSourceUrl(null);
+    setStatus('loading');
+    setLoadedBytes(0);
+
+    const loadPreview = async () => {
+      try {
+        const previewUrl = await createMetafileMediaObjectUrl(item, (bytes) => {
+          if (!canceled) {
+            setLoadedBytes(bytes);
+          }
+        });
+        if (canceled) {
+          URL.revokeObjectURL(previewUrl);
+          return;
+        }
+        objectUrl = previewUrl;
+        setMediaSourceUrl(previewUrl);
+        setStatus('ready');
+      } catch (error) {
+        if (canceled) {
+          return;
+        }
+        console.error('Failed to load metafile media preview:', error);
+        setMediaSourceUrl(item.sourceUrl);
+        setStatus('error');
+      }
+    };
+
+    void loadPreview();
+
+    return () => {
+      canceled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [item.uri, item.kind, item.sourceUrl, item.extension]);
+
+  const loadingLabel = item.kind === 'video' ? '正在加载视频预览...' : '正在加载音频预览...';
+  const errorLabel = item.kind === 'video'
+    ? '视频预览加载失败，可先下载文件观看。'
+    : '音频预览加载失败，可先下载文件收听。';
+  const progressLabel = formatBytes(loadedBytes);
+
+  if (item.kind === 'audio') {
+    return (
+      <>
+        <audio controls preload="auto" className="w-full">
+          {mediaSourceUrl && <source src={mediaSourceUrl} type={mediaType} />}
+        </audio>
+        {status === 'loading' && (
+          <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {loadingLabel}{progressLabel ? ` 已加载 ${progressLabel}` : ''}
+          </div>
+        )}
+        {status === 'error' && (
+          <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {errorLabel}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <video
+        controls
+        preload="auto"
+        playsInline
+        className="w-full max-h-80 rounded-md bg-black"
+      >
+        {mediaSourceUrl && <source src={mediaSourceUrl} type={mediaType} />}
+      </video>
+      {status === 'loading' && (
+        <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {loadingLabel}{progressLabel ? ` 已加载 ${progressLabel}` : ''}
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          {errorLabel}
+        </div>
+      )}
+    </>
+  );
+};
+
 const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
   return (
     <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg/40 bg-claude-bg/60 p-2">
@@ -268,19 +438,10 @@ const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
         />
       )}
       {item.kind === 'video' && (
-        <video
-          controls
-          preload="auto"
-          playsInline
-          className="w-full max-h-80 rounded-md bg-black"
-        >
-          <source src={item.sourceUrl} type={getMetafileMimeType(item)} />
-        </video>
+        <MetafileMediaPreview item={item} />
       )}
       {item.kind === 'audio' && (
-        <audio controls preload="auto" className="w-full">
-          <source src={item.sourceUrl} type={getMetafileMimeType(item)} />
-        </audio>
+        <MetafileMediaPreview item={item} />
       )}
       {item.kind === 'download' && (
         <div className="rounded-md border dark:border-claude-darkBorder border-claude-border px-2.5 py-2 text-xs break-all dark:text-claude-darkText text-claude-text dark:bg-claude-darkSurface bg-claude-surface">

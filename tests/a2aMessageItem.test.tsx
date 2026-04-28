@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import A2AMessageItem, {
+  createMetafileMediaObjectUrl,
   parseMetafileUri,
   triggerMetafileDownload,
 } from '../src/renderer/components/cowork/A2AMessageItem';
@@ -87,8 +88,8 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
   assert.match(markup, /<video[^>]*controls/);
   assert.match(markup, /<video[^>]*preload="auto"/);
   assert.match(markup, /<video[^>]*playsinline/);
-  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
-  assert.match(markup, /<source[^>]*type="video\/mp4"/);
+  assert.doesNotMatch(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /正在加载视频预览/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
 });
@@ -108,7 +109,8 @@ test('A2A delivery previews modern image and video metafile extensions', () => {
   );
 
   assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/imagepin001i0"/);
-  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
+  assert.match(markup, /<video[^>]*controls/);
+  assert.doesNotMatch(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
   assert.match(markup, /PINID:\s*imagepin001i0/);
   assert.match(markup, /PINID:\s*videopin001i0/);
 });
@@ -128,7 +130,8 @@ test('A2A delivery renders embedded player for .mp3 metafile', () => {
   );
 
   assert.match(markup, /<audio[^>]*controls/);
-  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.doesNotMatch(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.match(markup, /正在加载音频预览/);
   assert.match(markup, /PINID/);
   assert.match(markup, /下载文件/);
 });
@@ -193,6 +196,62 @@ test('A2A media preview does not download a local preview before playback', () =
   }
 
   assert.deepEqual(calls, []);
+});
+
+test('A2A media preview loads chain content into a blob URL for playback', async () => {
+  const item = parseMetafileUri('metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4');
+  assert.ok(item);
+  const originalFetch = globalThis.fetch;
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  const fetchCalls: string[] = [];
+  const blobCalls: Array<{ type: string; size: number }> = [];
+  let progressBytes = 0;
+
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    fetchCalls.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'video/mp4;binary' }),
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    } as Response;
+  }) as typeof fetch;
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: (blob: Blob) => {
+      blobCalls.push({ type: blob.type, size: blob.size });
+      return 'blob:idbots-preview';
+    },
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: () => undefined,
+  });
+
+  try {
+    const previewUrl = await createMetafileMediaObjectUrl(item, (bytes) => {
+      progressBytes = bytes;
+    });
+    assert.equal(previewUrl, 'blob:idbots-preview');
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreateObjectUrl,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevokeObjectUrl,
+    });
+  }
+
+  assert.deepEqual(fetchCalls, [
+    'https://file.metaid.io/metafile-indexer/api/v1/files/content/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0',
+  ]);
+  assert.deepEqual(blobCalls, [{ type: 'video/mp4', size: 4 }]);
+  assert.equal(progressBytes, 4);
 });
 
 test('A2A delivery renders pin id and download button for unsupported metafile extension', () => {
