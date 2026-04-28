@@ -65,3 +65,18 @@ test('SDK built-in web tools are gated by an explicit env flag', () => {
     'Default behavior should continue blocking SDK WebSearch and WebFetch',
   );
 });
+
+test('DeepSeek missing reasoning_content failures reset stale resume state once', () => {
+  const source = fs.readFileSync(coworkRunnerPath, 'utf8');
+
+  assert.match(
+    source,
+    /function isDeepSeekMissingReasoningContentError\(message: string\): boolean/,
+    'CoworkRunner should classify DeepSeek thinking history failures explicitly',
+  );
+  assert.match(
+    source,
+    /DeepSeek thinking history lost reasoning_content; retrying with fresh session/,
+    'DeepSeek missing reasoning_content should trigger one fresh-session retry instead of leaving the run stuck',
+  );
+});

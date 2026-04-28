@@ -146,6 +146,16 @@ function isStaleConversationSessionError(message: string): boolean {
   return /No conversation found with session ID/i.test(message);
 }
 
+function isDeepSeekMissingReasoningContentError(message: string): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return normalized.includes('reasoning_content')
+    && (
+      normalized.includes('thinking mode')
+      || normalized.includes('deepseek thinking request is missing')
+    );
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -3588,6 +3598,29 @@ export class CoworkRunner extends EventEmitter {
         this.store.updateSession(sessionId, { claudeSessionId: null });
         activeSession.claudeSessionId = null;
         coworkLog('INFO', 'runClaudeCodeLocal', 'Cleared stale claudeSessionId after "No conversation found", retrying once without resume', { sessionId });
+        try {
+          await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
+          return;
+        } catch (retryError) {
+          runtimeError = retryError;
+          errorMessage = runtimeError instanceof Error ? runtimeError.message : 'Unknown error';
+        }
+      }
+
+      const isDeepSeekReasoningHistoryError = isDeepSeekMissingReasoningContentError(errorMessage);
+      if (isDeepSeekReasoningHistoryError && !isRetry) {
+        this.store.updateSession(sessionId, { claudeSessionId: null });
+        activeSession.claudeSessionId = null;
+        coworkLog('WARN', 'runClaudeCodeLocal', 'DeepSeek thinking history lost reasoning_content; retrying with fresh session', {
+          sessionId,
+          errorMessage,
+          anthropicBaseUrl: summarizeEndpointForLog(envVars.ANTHROPIC_BASE_URL),
+          anthropicModel: envVars.ANTHROPIC_MODEL ?? null,
+        });
+        this.addSystemMessage(
+          sessionId,
+          'DeepSeek thinking 历史缺少 reasoning_content，已自动重置底层模型会话并重试当前输入。'
+        );
         try {
           await this.runClaudeCodeLocal(activeSession, prompt, cwd, systemPrompt, true);
           return;

@@ -44,6 +44,12 @@ type StreamState = {
   hasMessageStart: boolean;
   hasMessageStop: boolean;
   toolCalls: Record<number, ToolCallState>;
+  preserveDeepSeekReasoning: boolean;
+  currentDeepSeekReasoningContent: string;
+};
+
+type StreamStateOptions = {
+  preserveDeepSeekReasoning?: boolean;
 };
 
 type UpstreamAPIType = 'chat_completions' | 'responses';
@@ -78,7 +84,9 @@ let proxyPort: number | null = null;
 let upstreamConfig: OpenAICompatUpstreamConfig | null = null;
 let lastProxyError: string | null = null;
 const toolCallExtraContentById = new Map<string, unknown>();
+const deepSeekReasoningByToolCallId = new Map<string, string>();
 const MAX_TOOL_CALL_EXTRA_CONTENT_CACHE = 1024;
+const MAX_DEEPSEEK_REASONING_CACHE = 1024;
 
 // --- Scheduled task API dependencies ---
 interface ScheduledTaskDeps {
@@ -179,6 +187,41 @@ function normalizeToolCallExtraContent(toolCallObj: Record<string, unknown>): un
   };
 }
 
+function extractDeepSeekReasoningFromExtraContent(extraContent: unknown): string {
+  const extraObj = toOptionalObject(extraContent);
+  if (!extraObj) {
+    return '';
+  }
+
+  const direct = toString(extraObj.reasoning_content) || toString(extraObj.reasoning);
+  if (direct) {
+    return direct;
+  }
+
+  const deepSeekObj = toOptionalObject(extraObj.deepseek);
+  if (!deepSeekObj) {
+    return '';
+  }
+
+  return toString(deepSeekObj.reasoning_content) || toString(deepSeekObj.reasoning);
+}
+
+function attachDeepSeekReasoningToExtraContent(extraContent: unknown, reasoningContent: string): unknown {
+  if (!reasoningContent.trim()) {
+    return extraContent;
+  }
+
+  const extraObj = toOptionalObject(extraContent);
+  const output: Record<string, unknown> = extraObj ? { ...extraObj } : {};
+  const existingDeepSeek = toOptionalObject(output.deepseek);
+  const nextDeepSeek: Record<string, unknown> = existingDeepSeek ? { ...existingDeepSeek } : {};
+  if (!toString(nextDeepSeek.reasoning_content)) {
+    nextDeepSeek.reasoning_content = reasoningContent;
+  }
+  output.deepseek = nextDeepSeek;
+  return output;
+}
+
 function cacheToolCallExtraContent(toolCallId: string, extraContent: unknown): void {
   if (!toolCallId || extraContent === undefined) {
     return;
@@ -194,6 +237,35 @@ function cacheToolCallExtraContent(toolCallId: string, extraContent: unknown): v
   }
 }
 
+function cacheDeepSeekReasoningForToolCall(toolCallId: string, reasoningContent: string): void {
+  if (!toolCallId || !reasoningContent.trim()) {
+    return;
+  }
+
+  deepSeekReasoningByToolCallId.set(toolCallId, reasoningContent);
+
+  if (deepSeekReasoningByToolCallId.size > MAX_DEEPSEEK_REASONING_CACHE) {
+    const oldestKey = deepSeekReasoningByToolCallId.keys().next().value;
+    if (typeof oldestKey === 'string') {
+      deepSeekReasoningByToolCallId.delete(oldestKey);
+    }
+  }
+}
+
+function cacheDeepSeekReasoningFromToolCalls(toolCalls: unknown, reasoningContent: string): void {
+  if (!reasoningContent.trim()) {
+    return;
+  }
+
+  for (const toolCall of toArray(toolCalls)) {
+    const toolCallObj = toOptionalObject(toolCall);
+    if (!toolCallObj) {
+      continue;
+    }
+    cacheDeepSeekReasoningForToolCall(toString(toolCallObj.id), reasoningContent);
+  }
+}
+
 function cacheToolCallExtraContentFromOpenAIToolCalls(toolCalls: unknown): void {
   for (const toolCall of toArray(toolCalls)) {
     const toolCallObj = toOptionalObject(toolCall);
@@ -205,6 +277,143 @@ function cacheToolCallExtraContentFromOpenAIToolCalls(toolCalls: unknown): void 
     const extraContent = normalizeToolCallExtraContent(toolCallObj);
     cacheToolCallExtraContent(toolCallId, extraContent);
   }
+}
+
+function isDeepSeekProvider(provider?: string, baseURL?: string): boolean {
+  const normalizedProvider = provider?.trim().toLowerCase();
+  if (normalizedProvider === 'deepseek') {
+    return true;
+  }
+  return Boolean(baseURL?.toLowerCase().includes('deepseek'));
+}
+
+function isDeepSeekThinkingRequest(body: Record<string, unknown>, provider?: string, baseURL?: string): boolean {
+  if (!isDeepSeekProvider(provider, baseURL)) {
+    return false;
+  }
+
+  const thinking = toOptionalObject(body.thinking);
+  if (toString(thinking?.type).toLowerCase() === 'enabled') {
+    return true;
+  }
+
+  if (body.reasoning_effort !== undefined || body.output_config !== undefined) {
+    return true;
+  }
+
+  const model = toString(body.model).toLowerCase();
+  return /\b(?:deepseek-)?(?:v4-pro|reasoner|r1)\b/.test(model);
+}
+
+type DeepSeekReasoningHydrateResult =
+  | { ok: true; hydratedCount: number; missingCount: number }
+  | { ok: false; hydratedCount: number; missingCount: number; error: string };
+
+function resolveDeepSeekReasoningForToolCalls(toolCalls: unknown): string {
+  for (const toolCall of toArray(toolCalls)) {
+    const toolCallObj = toOptionalObject(toolCall);
+    if (!toolCallObj) {
+      continue;
+    }
+
+    const inlineReasoning = extractDeepSeekReasoningFromExtraContent(
+      normalizeToolCallExtraContent(toolCallObj)
+    );
+    if (inlineReasoning) {
+      return inlineReasoning;
+    }
+
+    const toolCallId = toString(toolCallObj.id);
+    const cachedReasoning = toolCallId ? deepSeekReasoningByToolCallId.get(toolCallId) : undefined;
+    if (cachedReasoning) {
+      return cachedReasoning;
+    }
+  }
+
+  return '';
+}
+
+function attachDeepSeekReasoningToToolCalls(toolCalls: unknown, reasoningContent: string): void {
+  if (!reasoningContent.trim()) {
+    return;
+  }
+
+  for (const toolCall of toArray(toolCalls)) {
+    const toolCallObj = toOptionalObject(toolCall);
+    if (!toolCallObj) {
+      continue;
+    }
+
+    toolCallObj.extra_content = attachDeepSeekReasoningToExtraContent(
+      normalizeToolCallExtraContent(toolCallObj),
+      reasoningContent
+    );
+    cacheToolCallExtraContent(toString(toolCallObj.id), toolCallObj.extra_content);
+    cacheDeepSeekReasoningForToolCall(toString(toolCallObj.id), reasoningContent);
+  }
+}
+
+function hydrateDeepSeekReasoningForRequest(
+  body: Record<string, unknown>,
+  provider?: string,
+  baseURL?: string
+): DeepSeekReasoningHydrateResult {
+  if (!isDeepSeekThinkingRequest(body, provider, baseURL)) {
+    return { ok: true, hydratedCount: 0, missingCount: 0 };
+  }
+
+  let hydratedCount = 0;
+  let missingCount = 0;
+  const missingToolCallIds: string[] = [];
+
+  for (const message of toArray(body.messages)) {
+    const messageObj = toOptionalObject(message);
+    if (!messageObj || toString(messageObj.role) !== 'assistant') {
+      continue;
+    }
+
+    const toolCalls = toArray(messageObj.tool_calls);
+    if (toolCalls.length === 0) {
+      continue;
+    }
+
+    const existingReasoning = toString(messageObj.reasoning_content) || toString(messageObj.reasoning);
+    if (existingReasoning) {
+      messageObj.reasoning_content = existingReasoning;
+      attachDeepSeekReasoningToToolCalls(toolCalls, existingReasoning);
+      continue;
+    }
+
+    const restoredReasoning = resolveDeepSeekReasoningForToolCalls(toolCalls);
+    if (restoredReasoning) {
+      messageObj.reasoning_content = restoredReasoning;
+      attachDeepSeekReasoningToToolCalls(toolCalls, restoredReasoning);
+      hydratedCount += 1;
+      continue;
+    }
+
+    missingCount += 1;
+    for (const toolCall of toolCalls) {
+      const toolCallId = toString(toOptionalObject(toolCall)?.id);
+      if (toolCallId) {
+        missingToolCallIds.push(toolCallId);
+      }
+    }
+  }
+
+  if (missingCount > 0) {
+    const idPreview = missingToolCallIds.length > 0
+      ? ` Tool call ids: ${missingToolCallIds.slice(0, 5).join(', ')}.`
+      : '';
+    return {
+      ok: false,
+      hydratedCount,
+      missingCount,
+      error: `DeepSeek thinking request is missing reasoning_content for ${missingCount} assistant tool-call message(s).${idPreview}`,
+    };
+  }
+
+  return { ok: true, hydratedCount, missingCount };
 }
 
 function cacheToolCallExtraContentFromOpenAIResponse(body: unknown): void {
@@ -224,6 +433,35 @@ function cacheToolCallExtraContentFromOpenAIResponse(body: unknown): void {
   }
 
   cacheToolCallExtraContentFromOpenAIToolCalls(message.tool_calls);
+}
+
+function attachDeepSeekReasoningToOpenAIResponseToolCalls(
+  body: unknown,
+  provider?: string,
+  baseURL?: string
+): void {
+  if (!isDeepSeekProvider(provider, baseURL)) {
+    return;
+  }
+
+  const responseObj = toOptionalObject(body);
+  if (!responseObj) {
+    return;
+  }
+
+  const firstChoice = toOptionalObject(toArray(responseObj.choices)[0]);
+  const message = toOptionalObject(firstChoice?.message);
+  if (!message) {
+    return;
+  }
+
+  const reasoningContent = toString(message.reasoning_content) || toString(message.reasoning);
+  if (!reasoningContent) {
+    return;
+  }
+
+  attachDeepSeekReasoningToToolCalls(message.tool_calls, reasoningContent);
+  cacheDeepSeekReasoningFromToolCalls(message.tool_calls, reasoningContent);
 }
 
 function hydrateOpenAIRequestToolCalls(
@@ -916,7 +1154,7 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-function createStreamState(): StreamState {
+function createStreamState(options: StreamStateOptions = {}): StreamState {
   return {
     messageId: null,
     model: null,
@@ -926,6 +1164,8 @@ function createStreamState(): StreamState {
     hasMessageStart: false,
     hasMessageStop: false,
     toolCalls: {},
+    preserveDeepSeekReasoning: Boolean(options.preserveDeepSeekReasoning),
+    currentDeepSeekReasoningContent: '',
   };
 }
 
@@ -1259,6 +1499,9 @@ function processOpenAIChunk(
   const deltaReasoning = delta?.reasoning_content ?? delta?.reasoning;
 
   if (deltaReasoning) {
+    if (state.preserveDeepSeekReasoning) {
+      state.currentDeepSeekReasoningContent += deltaReasoning;
+    }
     ensureThinkingBlock(res, state);
     emitSSE(res, 'content_block_delta', {
       type: 'content_block_delta',
@@ -1292,6 +1535,12 @@ function processOpenAIChunk(
       if (normalizedExtraContent !== undefined) {
         existing.extraContent = normalizedExtraContent;
       }
+      if (state.preserveDeepSeekReasoning && state.currentDeepSeekReasoningContent) {
+        existing.extraContent = attachDeepSeekReasoningToExtraContent(
+          existing.extraContent,
+          state.currentDeepSeekReasoningContent
+        );
+      }
 
       if (item.id) {
         existing.id = item.id;
@@ -1302,6 +1551,9 @@ function processOpenAIChunk(
       state.toolCalls[toolIndex] = existing;
       if (existing.id && existing.extraContent !== undefined) {
         cacheToolCallExtraContent(existing.id, existing.extraContent);
+      }
+      if (existing.id && state.preserveDeepSeekReasoning && state.currentDeepSeekReasoningContent) {
+        cacheDeepSeekReasoningForToolCall(existing.id, state.currentDeepSeekReasoningContent);
       }
 
       if (item.function?.name) {
@@ -1847,7 +2099,9 @@ function processResponsesStreamEvent(
 
 async function handleResponsesStreamResponse(
   upstreamResponse: Response,
-  res: http.ServerResponse
+  res: http.ServerResponse,
+  provider?: string,
+  baseURL?: string
 ): Promise<void> {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -1863,7 +2117,9 @@ async function handleResponsesStreamResponse(
 
   const reader = upstreamResponse.body.getReader();
   const decoder = new TextDecoder();
-  const state = createStreamState();
+  const state = createStreamState({
+    preserveDeepSeekReasoning: isDeepSeekProvider(provider, baseURL),
+  });
   const context = createResponsesStreamContext();
 
   let buffer = '';
@@ -1937,7 +2193,9 @@ async function handleResponsesStreamResponse(
 
 async function handleChatCompletionsStreamResponse(
   upstreamResponse: Response,
-  res: http.ServerResponse
+  res: http.ServerResponse,
+  provider?: string,
+  baseURL?: string
 ): Promise<void> {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -1953,7 +2211,9 @@ async function handleChatCompletionsStreamResponse(
 
   const reader = upstreamResponse.body.getReader();
   const decoder = new TextDecoder();
-  const state = createStreamState();
+  const state = createStreamState({
+    preserveDeepSeekReasoning: isDeepSeekProvider(provider, baseURL),
+  });
 
   let buffer = '';
   let sawDoneMarker = false;
@@ -2197,6 +2457,29 @@ async function handleRequest(
   }
   filterOpenAIToolsForProvider(openAIRequest, upstreamConfig.provider);
   hydrateOpenAIRequestToolCalls(openAIRequest, upstreamConfig.provider, upstreamConfig.baseURL);
+  const deepSeekReasoningHydrateResult = hydrateDeepSeekReasoningForRequest(
+    openAIRequest,
+    upstreamConfig.provider,
+    upstreamConfig.baseURL
+  );
+  if (!deepSeekReasoningHydrateResult.ok) {
+    const error = 'error' in deepSeekReasoningHydrateResult
+      ? deepSeekReasoningHydrateResult.error
+      : 'DeepSeek thinking request is missing reasoning_content.';
+    lastProxyError = error;
+    console.warn('[cowork-openai-compat-proxy] DeepSeek reasoning_content validation failed', {
+      hydratedCount: deepSeekReasoningHydrateResult.hydratedCount,
+      missingCount: deepSeekReasoningHydrateResult.missingCount,
+      error,
+    });
+    writeJSON(res, 400, createAnthropicErrorBody(error, 'invalid_request_error'));
+    return;
+  }
+  if (deepSeekReasoningHydrateResult.hydratedCount > 0) {
+    console.info('[cowork-openai-compat-proxy] Hydrated DeepSeek reasoning_content for assistant tool-call history', {
+      hydratedCount: deepSeekReasoningHydrateResult.hydratedCount,
+    });
+  }
 
   if (upstreamAPIType === 'chat_completions') {
     normalizeMaxTokensFieldForOpenAIProvider(openAIRequest, upstreamConfig.provider);
@@ -2325,9 +2608,19 @@ async function handleRequest(
 
   if (stream) {
     if (upstreamAPIType === 'responses') {
-      await handleResponsesStreamResponse(upstreamResponse, res);
+      await handleResponsesStreamResponse(
+        upstreamResponse,
+        res,
+        upstreamConfig.provider,
+        upstreamConfig.baseURL
+      );
     } else {
-      await handleChatCompletionsStreamResponse(upstreamResponse, res);
+      await handleChatCompletionsStreamResponse(
+        upstreamResponse,
+        res,
+        upstreamConfig.provider,
+        upstreamConfig.baseURL
+      );
     }
     return;
   }
@@ -2350,6 +2643,11 @@ async function handleRequest(
     return;
   }
 
+  attachDeepSeekReasoningToOpenAIResponseToolCalls(
+    upstreamJSON,
+    upstreamConfig.provider,
+    upstreamConfig.baseURL
+  );
   cacheToolCallExtraContentFromOpenAIResponse(upstreamJSON);
 
   const anthropicResponse = openAIToAnthropic(upstreamJSON);
@@ -2360,9 +2658,15 @@ export const __openAICompatProxyTestUtils = {
   createStreamState,
   createResponsesStreamContext,
   findSSEPacketBoundary,
+  processOpenAIChunk,
   processResponsesStreamEvent,
   convertChatCompletionsRequestToResponsesRequest,
   filterOpenAIToolsForProvider,
+  hydrateDeepSeekReasoningForRequest,
+  resetDeepSeekReasoningCache: () => {
+    deepSeekReasoningByToolCallId.clear();
+    toolCallExtraContentById.clear();
+  },
 };
 
 export async function startCoworkOpenAICompatProxy(): Promise<void> {
