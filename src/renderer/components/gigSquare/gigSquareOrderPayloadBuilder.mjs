@@ -23,5 +23,6 @@ export function buildGigSquareOrderPayload(input) {
     serviceId: input.serviceId,
     skillName: input.skillName,
     serviceName: input.serviceName,
+    outputType: input.outputType,
   });
 }

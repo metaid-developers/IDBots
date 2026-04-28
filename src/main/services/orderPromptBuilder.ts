@@ -1,4 +1,9 @@
-import { extractOrderRequestText, type OrderSource } from './orderPayment';
+import {
+  extractOrderOutputType,
+  extractOrderRequestText,
+  normalizeOrderOutputType,
+  type OrderSource,
+} from './orderPayment';
 import { extractOrderDisplaySummary } from '../shared/orderMessage.js';
 
 export interface OrderPromptBuildResult {
@@ -25,6 +30,7 @@ export function buildOrderPrompts(params: {
   peerName?: string | null;
   skillId?: string | null;
   skillName?: string | null;
+  expectedOutputType?: string | null;
 }): OrderPromptBuildResult {
   const clientName = params.peerName?.trim() || 'the client';
   const resolvedSkill = params.skillName?.trim() || params.skillId?.trim() || null;
@@ -32,6 +38,9 @@ export function buildOrderPrompts(params: {
   const displaySummary = extractOrderDisplaySummary(params.plaintext)
     || requestText.split('\n')[0]?.trim()
     || requestText;
+  const expectedOutputType = normalizeOrderOutputType(params.expectedOutputType || '')
+    ?? extractOrderOutputType(params.plaintext)
+    ?? 'text';
   const base = [
     'A paid service order is ready for execution.',
     displaySummary ? `Display summary: ${displaySummary}` : '',
@@ -48,6 +57,16 @@ export function buildOrderPrompts(params: {
       : null,
     `- A brief acknowledgement is sent to the client before execution starts. Do not repeat that acknowledgement in your final result.`,
     `- Service SLA: complete the work and return the final result within 15 minutes of order receipt.`,
+    `- Expected output type: ${expectedOutputType}.`,
+    expectedOutputType !== 'text'
+      ? `- The digital deliverable must be ${expectedOutputType}. Keep the generated file under 20MB so IDBots can upload it to MVC for delivery. If the generated file is over 20MB, regenerate or compress it until it is under 20MB.`
+      : null,
+    expectedOutputType !== 'text'
+      ? `- After generation, include the local file path in your final result. IDBots will upload that file on-chain after your skill finishes.`
+      : null,
+    expectedOutputType !== 'text'
+      ? `- If you cannot generate a valid ${expectedOutputType} file, do not claim success. State clearly that the agreed digital deliverable was not produced.`
+      : null,
     `- Return only the substantive deliverable that should be forwarded to the end user.`,
     `- Start directly with the actual result content. If you use markdown, start with the result heading itself.`,
     `- Do not repeat greetings, self-introduction, payment amount, txid, service id, skill name, order confirmation, service-complete boilerplate, rating requests, or other bot-to-bot chatter.`,

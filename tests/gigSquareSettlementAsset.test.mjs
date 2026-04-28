@@ -39,25 +39,26 @@ test('parseGigSquareSettlementAsset parses protocol currency and structured MRC2
   assert.equal(asset.mrc20Id, 'tick-metaid');
 });
 
-test('parseGigSquareSettlementAsset normalizes native SPACE to MVC protocol currency', () => {
+test('parseGigSquareSettlementAsset preserves native SPACE as the protocol currency', () => {
   const asset = parseGigSquareSettlementAsset({
     currency: 'space',
   });
 
   assert.equal(asset.settlementKind, 'native');
   assert.equal(asset.selectorCurrency, 'SPACE');
-  assert.equal(asset.protocolCurrency, 'MVC');
+  assert.equal(asset.protocolCurrency, 'SPACE');
   assert.equal(asset.paymentChain, 'mvc');
 });
 
-test('parseGigSquareSettlementAsset ignores conflicting native paymentChain metadata', () => {
+test('parseGigSquareSettlementAsset normalizes legacy MVC currency alias to SPACE', () => {
   const asset = parseGigSquareSettlementAsset({
     currency: 'MVC',
     paymentChain: 'btc',
   });
 
   assert.equal(asset.settlementKind, 'native');
-  assert.equal(asset.protocolCurrency, 'MVC');
+  assert.equal(asset.selectorCurrency, 'SPACE');
+  assert.equal(asset.protocolCurrency, 'SPACE');
   assert.equal(asset.paymentChain, 'mvc');
 });
 
@@ -71,7 +72,7 @@ test('parseGigSquareSettlementAsset does not let mrc20 settlementKind override n
 
   assert.equal(asset.settlementKind, 'native');
   assert.equal(asset.selectorCurrency, 'SPACE');
-  assert.equal(asset.protocolCurrency, 'MVC');
+  assert.equal(asset.protocolCurrency, 'SPACE');
   assert.equal(asset.paymentChain, 'mvc');
   assert.equal(asset.mrc20Ticker, null);
   assert.equal(asset.mrc20Id, null);
@@ -104,15 +105,26 @@ test('normalizeGigSquareSettlementDraft rejects invalid MRC20 ticker formats', (
   );
 });
 
-test('normalizeGigSquareSettlementDraft keeps native SPACE behavior normalized to MVC protocol currency', () => {
+test('normalizeGigSquareSettlementDraft keeps native SPACE as currency and mvc as payment chain', () => {
   const asset = normalizeGigSquareSettlementDraft({
     currency: 'space',
   });
 
   assert.equal(asset.selectorCurrency, 'SPACE');
-  assert.equal(asset.protocolCurrency, 'MVC');
+  assert.equal(asset.protocolCurrency, 'SPACE');
   assert.equal(asset.settlementKind, 'native');
   assert.equal(asset.paymentChain, 'mvc');
   assert.equal(asset.mrc20Ticker, null);
   assert.equal(asset.mrc20Id, null);
+});
+
+test('normalizeGigSquareSettlementDraft normalizes Bitcoin network label to BTC currency', () => {
+  const asset = normalizeGigSquareSettlementDraft({
+    currency: 'Bitcoin',
+  });
+
+  assert.equal(asset.selectorCurrency, 'BTC');
+  assert.equal(asset.protocolCurrency, 'BTC');
+  assert.equal(asset.settlementKind, 'native');
+  assert.equal(asset.paymentChain, 'btc');
 });

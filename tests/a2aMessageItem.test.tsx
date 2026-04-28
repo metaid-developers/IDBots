@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import A2AMessageItem from '../src/renderer/components/cowork/A2AMessageItem';
+import A2AMessageItem, {
+  createMetafileMediaObjectUrl,
+  parseMetafileUri,
+  triggerMetafileDownload,
+} from '../src/renderer/components/cowork/A2AMessageItem';
+
+const METAID_ACCELERATE_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\//;
+const METAID_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\//;
 
 test('A2A normal message bubble renders markdown content', () => {
   const markup = renderToStaticMarkup(
@@ -57,7 +64,13 @@ test('A2A delivery image keeps metafile text and renders image preview for .jpg'
   );
 
   assert.match(markup, /metafile:\/\/aabbccddeeff00112233445566778899i0\.jpg/);
-  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/aabbccddeeff00112233445566778899i0"/);
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/aabbccddeeff00112233445566778899i0"/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /aabbccddeeff00112233445566778899i0/);
+  assert.match(markup, /下载文件/);
+  assert.match(markup, METAID_ACCELERATE_CONTENT_API_RE);
+  assert.doesNotMatch(markup, METAID_CONTENT_API_RE);
+  assert.doesNotMatch(markup, /metafile-indexer\/content\/aabbccddeeff00112233445566778899i0/);
 });
 
 test('A2A delivery renders embedded player for .mp4 metafile', () => {
@@ -75,7 +88,34 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
   );
 
   assert.match(markup, /<video[^>]*controls/);
-  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /<video[^>]*preload="auto"/);
+  assert.match(markup, /<video[^>]*playsinline/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.doesNotMatch(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/ffeeddccbbaa99887766554433221100i0"/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
+});
+
+test('A2A delivery previews modern image and video metafile extensions', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-modern-media',
+        type: 'user',
+        content: '[DELIVERY] {"result":"交付： metafile://imagepin001i0.webp\\n视频： metafile://videopin001i0.webm"}',
+        timestamp: 1_744_444_447_500,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /<img[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/imagepin001i0"/);
+  assert.match(markup, /<video[^>]*controls/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/videopin001i0"/);
+  assert.doesNotMatch(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/videopin001i0"/);
+  assert.match(markup, /PINID:\s*imagepin001i0/);
+  assert.match(markup, /PINID:\s*videopin001i0/);
 });
 
 test('A2A delivery renders embedded player for .mp3 metafile', () => {
@@ -93,10 +133,145 @@ test('A2A delivery renders embedded player for .mp3 metafile', () => {
   );
 
   assert.match(markup, /<audio[^>]*controls/);
-  assert.match(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.match(markup, /<source[^>]*src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.doesNotMatch(markup, /src="https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/11223344556677889900aabbccddeeffi0"/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
 });
 
-test('A2A delivery renders save button for unsupported metafile extension', () => {
+test('A2A metafile parser keeps accelerate URL primary and content URL fallback', () => {
+  const item = parseMetafileUri('metafile://aabbccddeeff00112233445566778899i0.png');
+  assert.ok(item);
+  assert.equal(
+    item.sourceUrl,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/aabbccddeeff00112233445566778899i0',
+  );
+  assert.equal(
+    item.fallbackUrl,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/content/aabbccddeeff00112233445566778899i0',
+  );
+});
+
+test('A2A metafile download uses native save dialog API when available', async () => {
+  const item = parseMetafileUri('metafile://cafebabefeed00112233445566778899i0.pdf');
+  assert.ok(item);
+  const calls: unknown[] = [];
+  const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+  (globalThis as typeof globalThis & { window?: unknown }).window = {
+    electron: {
+      cowork: {
+        downloadMetafile: async (input: unknown) => {
+          calls.push(input);
+          return { success: true, path: '/tmp/cafebabefeed00112233445566778899i0.pdf' };
+        },
+      },
+    },
+  };
+
+  try {
+    await triggerMetafileDownload(item);
+  } finally {
+    (globalThis as typeof globalThis & { window?: unknown }).window = originalWindow;
+  }
+
+  assert.deepEqual(calls, [{
+    url: 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cafebabefeed00112233445566778899i0',
+    fallbackUrl: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/cafebabefeed00112233445566778899i0',
+    fileName: 'cafebabefeed00112233445566778899i0.pdf',
+  }]);
+});
+
+test('A2A media preview does not download a local preview before playback', () => {
+  const calls: unknown[] = [];
+  const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+  (globalThis as typeof globalThis & { window?: unknown }).window = {
+    electron: {
+      cowork: {
+        prepareMetafilePreview: async (input: unknown) => {
+          calls.push(input);
+          return { success: false, error: 'should not be called' };
+        },
+      },
+    },
+  };
+
+  try {
+    renderToStaticMarkup(
+      <A2AMessageItem
+        message={{
+          id: 'msg-online-video',
+          type: 'user',
+          content: '[DELIVERY] {"result":"视频交付： metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4"}',
+          timestamp: 1_744_444_447_000,
+          metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        }}
+        peerName="Peer Bot"
+      />
+    );
+  } finally {
+    (globalThis as typeof globalThis & { window?: unknown }).window = originalWindow;
+  }
+
+  assert.deepEqual(calls, []);
+});
+
+test('A2A media preview fallback loads original content URL into a blob URL', async () => {
+  const item = parseMetafileUri('metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4');
+  assert.ok(item);
+  const originalFetch = globalThis.fetch;
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  const fetchCalls: string[] = [];
+  const blobCalls: Array<{ type: string; size: number }> = [];
+  let progressBytes = 0;
+
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    fetchCalls.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'video/mp4;binary' }),
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+    } as Response;
+  }) as typeof fetch;
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: (blob: Blob) => {
+      blobCalls.push({ type: blob.type, size: blob.size });
+      return 'blob:idbots-preview';
+    },
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: () => undefined,
+  });
+
+  try {
+    const previewUrl = await createMetafileMediaObjectUrl(item, (bytes) => {
+      progressBytes = bytes;
+    });
+    assert.equal(previewUrl, 'blob:idbots-preview');
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreateObjectUrl,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevokeObjectUrl,
+    });
+  }
+
+  assert.deepEqual(fetchCalls, [
+    'https://file.metaid.io/metafile-indexer/api/v1/files/content/3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0',
+  ]);
+  assert.deepEqual(blobCalls, [{ type: 'video/mp4', size: 4 }]);
+  assert.equal(progressBytes, 4);
+});
+
+test('A2A delivery renders pin id and download button for unsupported metafile extension', () => {
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -110,11 +285,12 @@ test('A2A delivery renders save button for unsupported metafile extension', () =
     />
   );
 
-  assert.match(markup, /保存文件/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
   assert.match(markup, /metafile:\/\/cafebabefeed00112233445566778899i0\.pdf/);
 });
 
-test('A2A delivery renders save button for metafile without extension', () => {
+test('A2A delivery renders pin id and download button for metafile without extension', () => {
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -128,6 +304,7 @@ test('A2A delivery renders save button for metafile without extension', () => {
     />
   );
 
-  assert.match(markup, /保存文件/);
+  assert.match(markup, /PINID/);
+  assert.match(markup, /下载文件/);
   assert.match(markup, /metafile:\/\/8899aabbccddeeff0011223344556677i0/);
 });

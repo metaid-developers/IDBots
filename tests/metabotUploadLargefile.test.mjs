@@ -53,7 +53,8 @@ test('buildUploadSuccessPayload returns pinId and preview URL', () => {
     {
       success: true,
       pinId: 'abc123i0',
-      previewUrl: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/abc123i0',
+      previewUrl: 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/abc123i0',
+      fallbackUrl: 'https://file.metaid.io/metafile-indexer/api/v1/files/content/abc123i0',
       fileName: 'demo.png',
       size: 123,
       contentType: 'image/png',
@@ -75,6 +76,10 @@ test('normalizeRpcUploadResult preserves the backend JSON contract for the skill
   assert.equal(payload.pinId, 'pin123i0');
   assert.equal(
     payload.previewUrl,
+    'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/pin123i0',
+  );
+  assert.equal(
+    payload.fallbackUrl,
     'https://file.metaid.io/metafile-indexer/api/v1/files/content/pin123i0',
   );
   assert.equal(payload.fileName, 'clip.mp4');

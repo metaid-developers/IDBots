@@ -385,6 +385,49 @@ test('scanTimedOutOrders emits refund_requested events for every mirrored sessio
   );
 });
 
+test('markBuyerOrderFailedAndRequestRefund moves explicit delivery failures into refund_pending', async () => {
+  const now = 1_770_000_444_000;
+  let refundRequestInput = null;
+  const seenEvents = [];
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+    createRefundRequestPin: async (input) => {
+      refundRequestInput = input;
+      return { pinId: 'refund-request-delivery-failed-pin-id' };
+    },
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}`);
+    },
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    coworkSessionId: 'buyer-session-id',
+  }));
+  const sellerOrder = service.createSellerOrder(baseOrderInput({
+    coworkSessionId: 'seller-session-id',
+  }));
+
+  const updated = await service.markBuyerOrderFailedAndRequestRefund({
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    failureReason: 'delivery_artifact_failed',
+    failedAt: now,
+  });
+
+  assert.equal(updated?.status, 'refund_pending');
+  assert.equal(updated?.failureReason, 'delivery_artifact_failed');
+  assert.equal(updated?.refundRequestPinId, 'refund-request-delivery-failed-pin-id');
+  assert.equal(store.getOrderById(sellerOrder.id)?.status, 'refund_pending');
+  assert.equal(store.getOrderById(sellerOrder.id)?.refundRequestPinId, 'refund-request-delivery-failed-pin-id');
+  assert.equal(refundRequestInput?.payload.failureReason, 'delivery_artifact_failed');
+  assert.equal(refundRequestInput?.payload.reasonComment, '服务方未能按约定交付数字成果');
+  assert.deepEqual(
+    seenEvents.sort(),
+    ['refund_requested:buyer', 'refund_requested:seller']
+  );
+});
+
 test('scanTimedOutOrders records retry metadata when refund request broadcast fails', async () => {
   let currentNow = 1_770_000_000_000;
   const { service, store } = await createLifecycleServiceForTest({

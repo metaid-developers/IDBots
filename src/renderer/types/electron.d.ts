@@ -463,6 +463,7 @@ interface IElectronAPI {
       serviceMrc20Id?: string | null;
       servicePaymentCommitTxid?: string | null;
       serviceSkill?: string | null;
+      serviceOutputType?: string | null;
       serverBotGlobalMetaId?: string | null;
       servicePaidTx?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | 'order_request_too_long' | string }>;
@@ -516,6 +517,11 @@ interface IElectronAPI {
     saveResultImage: (options: {
       pngBase64: string;
       defaultFileName?: string;
+    }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+    downloadMetafile: (options: {
+      url: string;
+      fallbackUrl?: string;
+      fileName?: string;
     }) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
     respondToPermission: (options: { requestId: string; result: CoworkPermissionResult }) => Promise<{ success: boolean; error?: string }>;
     getConfig: () => Promise<{ success: boolean; config?: CoworkConfig; error?: string }>;

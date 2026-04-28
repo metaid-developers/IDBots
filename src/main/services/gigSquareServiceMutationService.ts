@@ -191,11 +191,14 @@ const createLocalMutationRecord = (input: {
 
 export const normalizeGigSquareCurrency = (value: string): string => {
   const normalized = toSafeString(value).trim().toUpperCase();
-  return normalized === 'SPACE' ? 'MVC' : normalized;
+  if (!normalized || normalized === 'MVC' || normalized === 'MICROVISIONCHAIN') return 'SPACE';
+  if (normalized === 'BITCOIN') return 'BTC';
+  if (normalized === 'DOGECOIN') return 'DOGE';
+  return normalized;
 };
 
 export const getGigSquarePriceLimit = (currency: string): number => {
-  return GIG_SQUARE_PRICE_LIMITS[currency] ?? GIG_SQUARE_PRICE_LIMITS.MVC;
+  return GIG_SQUARE_PRICE_LIMITS[currency] ?? GIG_SQUARE_PRICE_LIMITS.SPACE;
 };
 
 export const resolveGigSquareBlockedReasonError = (blockedReason?: string | null): {

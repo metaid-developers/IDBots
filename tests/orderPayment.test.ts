@@ -5,6 +5,7 @@ import {
   checkOrderPaymentStatus,
   extractOrderReferenceId,
   extractOrderRequestText,
+  extractOrderOutputType,
   extractOrderSkillId,
   extractOrderSkillName,
 } from '../src/main/services/orderPayment';
@@ -63,6 +64,20 @@ test('extractOrderRequestText prefers the explicit raw_request block over the di
   ].join('\n');
 
   assert.equal(extractOrderRequestText(text), rawRequest);
+});
+
+test('extractOrderOutputType parses expected delivery metadata without polluting request text', () => {
+  const text = [
+    '[ORDER] 请生成一张火箭发射图。',
+    '支付金额 0.001 SPACE',
+    `txid: ${'e'.repeat(64)}`,
+    'service id: svc-image',
+    'skill name: seedream',
+    'output type: image',
+  ].join('\n');
+
+  assert.equal(extractOrderOutputType(text), 'image');
+  assert.equal(extractOrderRequestText(text), '请生成一张火箭发射图。');
 });
 
 test('checkOrderPaymentStatus allows free order messages without on-chain txid', async () => {

@@ -19,6 +19,7 @@ export interface BuildDelegationOrderPayloadInput {
   settlementKind?: string | null;
   mrc20Ticker?: string | null;
   mrc20Id?: string | null;
+  outputType?: string | null;
 }
 
 function normalizeText(value: unknown): string {
@@ -26,7 +27,7 @@ function normalizeText(value: unknown): string {
 }
 
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
-const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称)\s*[:：=]?/i;
+const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+id|\s+ref(?:erence)?)?|service(?:\s+pin)?\s+id|service(?:\s+id)?|serviceid|skill(?:\s+name)?|provider\s*skill|service\s+skill|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|output\s+type|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|技能(?:名称?)?|服务技能|服务名称|输出格式|交付格式)\s*[:：=]?/i;
 const TRANSPORT_CHATTER_FRAGMENT_PATTERNS = [
   /(?:^|[，,。；;])\s*已确认同意使用远程MetaBot服务[^，,。；;\n]*/gi,
   /(?:^|[，,。；;])\s*已支付\s*[0-9]+(?:\.[0-9]+)?\s*(?:SPACE|BTC|DOGE)[^，,。；;\n]*/gi,
@@ -114,6 +115,7 @@ export function buildDelegationOrderPayload(
     settlementKind: normalizeText(input.settlementKind),
     mrc20Ticker: normalizeText(input.mrc20Ticker),
     mrc20Id: normalizeText(input.mrc20Id),
+    outputType: normalizeText(input.outputType),
     serviceId: normalizeText(input.servicePinId),
     skillName,
     serviceName: normalizeText(input.serviceName),

@@ -23,6 +23,8 @@ import {
   extractOrderReferenceId,
   extractOrderSkillId,
   extractOrderSkillName,
+  extractOrderOutputType,
+  normalizeOrderOutputType,
   OrderSource,
 } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
@@ -33,7 +35,10 @@ import { createOwnerMemoryScope } from '../memory/memoryScope';
 import { resolveMemoryScopes } from '../memory/memoryScopeResolver';
 import type { MetaidDataPayload } from './metaidCore';
 import { generateSessionTitle } from '../libs/coworkUtil';
-import type { ServiceOrderLifecycleService } from './serviceOrderLifecycleService';
+import {
+  SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
+  type ServiceOrderLifecycleService,
+} from './serviceOrderLifecycleService';
 import {
   buildDeliveryMessage,
   buildCoworkDeliveryResultMessage,
@@ -414,7 +419,7 @@ function buildSellerOrderAcknowledgementSystemPrompt(metabot: {
     'Task:',
     '- Write a short private acknowledgement for a paid service order before execution starts.',
     '- Confirm that you understood the client request and are starting work now.',
-    '- Ask the client to wait for the final result.',
+    '- Tell the client that skill execution may take some time and ask them to wait patiently for the final result.',
     '- Keep it to 1 sentence, or 2 short sentences max.',
     '- Do not mention payment amount, txid, service id, skill id, deadlines, ratings, or system details.',
     '- Do not use markdown, headings, JSON, or bracketed prefixes.',
@@ -423,7 +428,7 @@ function buildSellerOrderAcknowledgementSystemPrompt(metabot: {
 
 function normalizeSellerOrderAcknowledgementText(text: string): string {
   const compact = String(text || '').replace(/\s+/g, ' ').trim();
-  return compact || '已明确你的需求，正在处理中，请稍候，我会尽快返回结果。';
+  return compact || '已收到你的需求，技能执行可能需要一些时间，我正在处理，请耐心等待最终结果。';
 }
 
 function buildOrderExecutionFailureNotice(error: unknown): string {
@@ -477,7 +482,7 @@ export async function sendSellerOrderAcknowledgement(params: {
     requestText,
   ].filter(Boolean).join('\n');
 
-  let acknowledgementText = '已明确你的需求，正在处理中，请稍候，我会尽快返回结果。';
+  let acknowledgementText = '已收到你的需求，技能执行可能需要一些时间，我正在处理，请耐心等待最终结果。';
   try {
     acknowledgementText = normalizeSellerOrderAcknowledgementText(
       await params.performChat(ackSystemPrompt, ackUserPrompt, llmId)
@@ -1023,6 +1028,53 @@ interface RatingFlowParams {
   emitToRenderer?: (channel: string, data: unknown) => void;
 }
 
+export function buildBuyerRatingSystemPrompt(input: {
+  personaLines?: string | null;
+  originalRequest: string;
+  serviceResult: string;
+  expectedOutputType?: string | null;
+}): string {
+  const expectedOutputType = normalizeOrderOutputType(input.expectedOutputType || '') || 'text';
+  const mediaAcceptanceRules = expectedOutputType === 'text'
+    ? ''
+    : [
+      `Expected output type: ${expectedOutputType}.`,
+      `Before rating, verify the delivered result contains a matching on-chain metafile:// attachment for the ${expectedOutputType} deliverable.`,
+      expectedOutputType === 'image'
+        ? 'For image services, the delivery must include metafile://... with an image extension such as .png, .jpg, .jpeg, .gif, or .webp.'
+        : '',
+      expectedOutputType === 'video'
+        ? 'For video services, the delivery must include metafile://... with a video extension such as .mp4, .webm, or .mov.'
+        : '',
+      expectedOutputType === 'other'
+        ? 'For other file services, the delivery must include a concrete metafile:// attachment for the agreed file.'
+        : '',
+      `If the ${expectedOutputType} artifact is missing, do not give a good rating. Reject the delivery, give a low score, and ask for a refund.`,
+    ].filter(Boolean).join('\n');
+
+  return [
+    input.personaLines,
+    'You are the buyer who paid for this service. Write a genuine rating and farewell message in your own voice as the paying client.',
+    `Your original request was: "${input.originalRequest.slice(0, 300)}"`,
+    `The service result delivered: "${input.serviceResult.slice(0, 500)}"`,
+    mediaAcceptanceRules,
+    'You MUST include a numeric score from 1 to 5 (5 is best). Format it clearly, e.g. "评分：4分" or "I give this 4 out of 5".',
+    'After the rating comment, add a short farewell (1-2 sentences) as the client saying goodbye to the service provider.',
+    'Your total message should be 10-300 characters.',
+  ].filter(Boolean).join('\n');
+}
+
+export function isOrderDeliveryFailureNotice(plaintext: string): boolean {
+  const text = String(plaintext || '');
+  if (!text.trim()) return false;
+  const hasRefundFlowNotice = /退款流程/.test(text);
+  const hasDeliveryFailure =
+    /服务方未能按约定交付/.test(text) ||
+    /上传链上交付失败/.test(text) ||
+    /缺少链上上传能力/.test(text);
+  return hasRefundFlowNotice && hasDeliveryFailure;
+}
+
 async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const { metabot, metabotStore, coworkStore, buyerOrderMapping, sellerGlobalMetaId,
     sharedSecretForReply, createPin, performChat, emitLog, emitToRenderer } = params;
@@ -1035,6 +1087,9 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const serviceSkill = typeof orderMeta.serviceSkill === 'string' ? orderMeta.serviceSkill : '';
   const serverBotGlobalMetaId = typeof orderMeta.serverBotGlobalMetaId === 'string' ? orderMeta.serverBotGlobalMetaId : sellerGlobalMetaId;
   const servicePaidTx = typeof orderMeta.servicePaidTx === 'string' ? orderMeta.servicePaidTx : '';
+  const serviceOutputType = typeof orderMeta.serviceOutputType === 'string'
+    ? orderMeta.serviceOutputType
+    : '';
 
   // Retrieve session messages to find original request and service result
   const session = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
@@ -1068,15 +1123,12 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
     buyerMetabot.background ? `Background: ${buyerMetabot.background}.` : '',
   ].filter(Boolean).join(' ') : '';
 
-  const ratingSystemPrompt = [
+  const ratingSystemPrompt = buildBuyerRatingSystemPrompt({
     personaLines,
-    'You are the buyer who paid for this service. Write a genuine rating and farewell message in your own voice as the paying client.',
-    `Your original request was: "${originalRequest.slice(0, 300)}"`,
-    `The service result delivered: "${serviceResult.slice(0, 500)}"`,
-    'You MUST include a numeric score from 1 to 5 (5 is best). Format it clearly, e.g. "评分：4分" or "I give this 4 out of 5".',
-    'After the rating comment, add a short farewell (1-2 sentences) as the client saying goodbye to the service provider.',
-    'Your total message should be 10-300 characters.',
-  ].filter(Boolean).join('\n');
+    originalRequest,
+    serviceResult,
+    expectedOutputType: serviceOutputType || extractOrderOutputType(originalRequest),
+  });
 
   const llmId = typeof metabot.llm_id === 'string' ? metabot.llm_id.trim() || undefined : undefined;
 
@@ -1354,6 +1406,7 @@ async function processOne(
       );
       const serviceId = extractOrderSkillId(plaintext);
       const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
+      const serviceOutputType = extractOrderOutputType(plaintext) || 'text';
       const paymentAmount = payment.amountDisplay || formatPaymentAmountFromSats(payment.amountSats);
       const paymentCurrency = payment.currency || getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
@@ -1397,6 +1450,7 @@ async function processOne(
             serviceMrc20Id: payment.mrc20Id,
             servicePaymentCommitTxid: payment.paymentCommitTxid,
             serviceSkill: serviceName,
+            serviceOutputType,
             serverBotGlobalMetaId: localGlobalMetaId || null,
             servicePaidTx: orderTrackingId,
             orderPayload: plaintext,
@@ -1471,6 +1525,7 @@ async function processOne(
         peerName: (row.from_name as string | null) ?? null,
         skillId: serviceId,
         skillName: serviceName,
+        expectedOutputType: serviceOutputType,
       });
       const externalConversationId = sellerOrderConversationId || buildOrderExternalConversationId(row, source, orderTrackingId);
       const orderDispatchKey = orderTrackingId
@@ -1489,6 +1544,10 @@ async function processOne(
           peerGlobalMetaId: fromGlobalMetaId || null,
           peerName: (row.from_name as string | null) ?? null,
           peerAvatar: (row.from_avatar as string | null) ?? null,
+          expectedOutputType: serviceOutputType,
+          sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
+            ? sendEncryptedMsg
+            : undefined,
         });
       } catch (error) {
         const failureNotice = buildOrderExecutionFailureNotice(error);
@@ -1632,6 +1691,7 @@ async function processOne(
             ? buyerOrderMeta.servicePaidTx.trim()
             : '';
         const delivery = parseDeliveryMessage(plaintext);
+        const deliveryFailureNotice = isOrderDeliveryFailureNotice(plaintext);
         const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
           type: 'assistant',
           content: plaintext,
@@ -1677,6 +1737,33 @@ async function processOne(
                 deliveredOrder.paymentCurrency,
                 deliveredOrder.paymentTxid,
                 deliveredOrder.id,
+                emitLog,
+                emitToRenderer,
+              );
+            }
+          } else if (deliveryFailureNotice) {
+            const failedOrder = await serviceOrderLifecycle.markBuyerOrderFailedAndRequestRefund({
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid,
+              failureReason: SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
+              failedAt: Date.now(),
+            });
+            emitLog(`[Order] Buyer order ${paymentTxid.slice(0, 12)}… entered refund flow after delivery artifact failure.`);
+            if (
+              failedOrder &&
+              failedOrder.coworkSessionId &&
+              coworkStore.isDelegationBlocking(failedOrder.coworkSessionId)
+            ) {
+              handleAutoDeliveryResult(
+                coworkStore,
+                failedOrder.coworkSessionId,
+                plaintext,
+                failedOrder.serviceName,
+                failedOrder.paymentAmount,
+                failedOrder.paymentCurrency,
+                failedOrder.paymentTxid,
+                failedOrder.id,
                 emitLog,
                 emitToRenderer,
               );
@@ -1954,6 +2041,15 @@ export function startPrivateChatDaemon(
     coworkStore,
     metabotStore,
     emitToRenderer,
+    uploadDeliveryArtifact: async (artifact, request) => {
+      const { uploadMetaFile } = await import('./metaFileUploadService');
+      return uploadMetaFile(metabotStore, {
+        metabotId: request.metabotId,
+        filePath: String(artifact.filePath || ''),
+        contentType: typeof artifact.contentType === 'string' ? artifact.contentType : undefined,
+        network: 'mvc',
+      });
+    },
   });
   const performChat = performChatCompletionForOrchestrator;
   const tick = () => {

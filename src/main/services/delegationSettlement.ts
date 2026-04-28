@@ -37,6 +37,7 @@ interface BuildDelegationOrderPayloadFromSettlementInput {
   serviceName?: string | null;
   providerSkill?: string | null;
   servicePinId?: string | null;
+  outputType?: string | null;
   paymentTxid: string;
   paymentCommitTxid?: string | null;
   orderReference?: string | null;
@@ -72,7 +73,7 @@ export function resolveDelegationSettlement(
   return {
     price,
     protocolCurrency,
-    displayCurrency: protocolCurrency === 'MVC' ? 'SPACE' : protocolCurrency,
+    displayCurrency: settlement.displayCurrency || protocolCurrency,
     paymentMode: settlement.settlementKind as DelegationSettlementKind,
     settlementKind: settlement.settlementKind as DelegationSettlementKind,
     paymentChain: settlement.paymentChain as DelegationPaymentChain,
@@ -100,6 +101,7 @@ export function buildDelegationOrderPayloadFromSettlement(
     settlementKind: input.settlement.settlementKind,
     mrc20Ticker: input.settlement.mrc20Ticker,
     mrc20Id: input.settlement.mrc20Id,
+    outputType: input.outputType,
   });
 }
 

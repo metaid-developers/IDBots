@@ -250,6 +250,8 @@ const SERVICE_REFUND_FINALIZE_PATH = '/protocols/service-refund-finalize';
 const SERVICE_REFUND_SYNC_SIZE = 200;
 const SERVICE_REFUND_SYNC_MAX_PAGES = 10;
 const SYSTEM_PROXY_BYPASS_RULES = '<local>,127.0.0.1,[::1]';
+const METAFILE_CONTENT_API_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/content/';
+const METAFILE_ACCELERATE_CONTENT_API_BASE_URL = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/';
 
 const applySystemProxyWithLoopbackBypass = async (targetSession: Session, scope: string): Promise<void> => {
   await targetSession.setProxy({
@@ -1128,7 +1130,8 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, status, operation, path, original_id, available,
            metaid, global_metaid, address, create_address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, updated_at, rating_avg, rating_count
+           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, output_type,
+           updated_at, rating_avg, rating_count
     FROM remote_skill_service
     ORDER BY
       CASE WHEN rating_count > 0
@@ -1578,6 +1581,80 @@ const savePngWithDialog = async (
   const outputPath = ensurePngFileName(saveResult.filePath);
   await fs.promises.writeFile(outputPath, pngData);
   return { success: true, canceled: false, path: outputPath };
+};
+
+const normalizeMetafileContentUrl = (value: unknown): string => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) {
+    throw new Error('Metafile download URL is required');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('Invalid metafile download URL');
+  }
+  const allowedBases = [
+    new URL(METAFILE_CONTENT_API_BASE_URL),
+    new URL(METAFILE_ACCELERATE_CONTENT_API_BASE_URL),
+  ];
+  const isAllowed = allowedBases.some((base) => (
+    parsed.protocol === 'https:' &&
+    parsed.hostname === base.hostname &&
+    parsed.pathname.startsWith(base.pathname)
+  ));
+  if (!isAllowed) {
+    throw new Error('Unsupported metafile download URL');
+  }
+  return parsed.toString();
+};
+
+const fetchMetafileDownloadResponse = async (url: string, fallbackUrl?: string): Promise<Response> => {
+  try {
+    const response = await fetch(url);
+    if (response.ok || !fallbackUrl || fallbackUrl === url) {
+      return response;
+    }
+  } catch (error) {
+    if (!fallbackUrl || fallbackUrl === url) {
+      throw error;
+    }
+  }
+  return fetch(fallbackUrl);
+};
+
+const downloadMetafileWithDialog = async (
+  webContents: WebContents,
+  options: { url?: string; fallbackUrl?: string; fileName?: string }
+): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> => {
+  const url = normalizeMetafileContentUrl(options?.url);
+  const fallbackUrl = options?.fallbackUrl
+    ? normalizeMetafileContentUrl(options.fallbackUrl)
+    : undefined;
+  const defaultName = sanitizeAttachmentFileName(options?.fileName || 'metafile');
+  const ownerWindow = BrowserWindow.fromWebContents(webContents);
+  const saveOptions = {
+    title: '保存交付文件',
+    defaultPath: path.join(app.getPath('downloads'), defaultName),
+  };
+  const saveResult = ownerWindow
+    ? await dialog.showSaveDialog(ownerWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+
+  if (saveResult.canceled || !saveResult.filePath) {
+    return { success: true, canceled: true };
+  }
+
+  const response = await fetchMetafileDownloadResponse(url, fallbackUrl);
+  if (!response.ok) {
+    throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length) {
+    throw new Error('Downloaded file is empty');
+  }
+  await fs.promises.writeFile(saveResult.filePath, buffer);
+  return { success: true, canceled: false, path: saveResult.filePath };
 };
 
 const configureUserDataPath = (): void => {
@@ -2695,6 +2772,7 @@ const executeDelegationPipeline = async (
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
     providerSkill: toSafeString(service.providerSkill).trim(),
     servicePinId: delegation.servicePinId,
+    outputType: toSafeString(service.outputType).trim() || 'text',
     paymentTxid: isFreeDelegation ? '' : paymentTxid,
     paymentCommitTxid: isFreeDelegation ? null : paymentCommitTxid,
     orderReference: isFreeDelegation ? paymentTxid : '',
@@ -2717,6 +2795,7 @@ const executeDelegationPipeline = async (
       serviceMrc20Id: delegationSettlement.mrc20Id,
       servicePaymentCommitTxid: paymentCommitTxid,
       serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
+      serviceOutputType: toSafeString(service.outputType).trim() || 'text',
       serverBotGlobalMetaId: providerGlobalMetaId,
       servicePaidTx: paymentTxid,
       orderPayload,
@@ -4538,6 +4617,24 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:metafile:download', async (
+    event,
+    options: {
+      url?: string;
+      fallbackUrl?: string;
+      fileName?: string;
+    }
+  ) => {
+    try {
+      return await downloadMetafileWithDialog(event.sender, options || {});
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to download metafile',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:permission:respond', async (_event, options: {
     requestId: string;
     result: PermissionResult;
@@ -6213,6 +6310,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serviceMrc20Id?: string | null;
     servicePaymentCommitTxid?: string | null;
     serviceSkill?: string | null;
+    serviceOutputType?: string | null;
     serverBotGlobalMetaId?: string | null;
     servicePaidTx?: string | null;
   }) => {
@@ -6252,6 +6350,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         ? rawServicePaymentCommitTxid
         : null;
       const serviceSkill = typeof params?.serviceSkill === 'string' ? params.serviceSkill.trim() || null : null;
+      const serviceOutputType = typeof params?.serviceOutputType === 'string'
+        ? params.serviceOutputType.trim().toLowerCase() || 'text'
+        : 'text';
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
       let servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
       isFreeServiceOrder = isFreeServicePrice(servicePrice);
@@ -6332,6 +6433,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           serviceMrc20Id,
           servicePaymentCommitTxid,
           serviceSkill,
+          serviceOutputType,
           serverBotGlobalMetaId,
           servicePaidTx,
           orderPayload,
@@ -7161,7 +7263,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         "img-src 'self' data: https: http:",
         "connect-src 'self' https: http: ws: wss:",
         "font-src 'self' data:",
-        "media-src 'self'",
+        "media-src 'self' blob: https://file.metaid.io https://metafs.oss-cn-beijing.aliyuncs.com",
         "worker-src 'self' blob:",
         "frame-src 'self'"
       ];
