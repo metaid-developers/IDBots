@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   buildMetafileDeliverySummary,
   resolveServiceDeliveryArtifact,
+  verifyDeliveryArtifactUpload,
 } from '../src/main/services/serviceDeliveryArtifacts.js';
 
 function makeTempDir() {
@@ -106,6 +107,30 @@ test('resolveServiceDeliveryArtifact rejects delivery files larger than 20 MiB',
   assert.equal(result.reason, 'file_too_large');
 });
 
+test('resolveServiceDeliveryArtifact finds audio output artifacts', () => {
+  const cwd = makeTempDir();
+  const orderStartedAt = Date.now() - 1000;
+  const audioPath = path.join(cwd, 'narration.mp3');
+  writeFile(audioPath, 'mp3');
+
+  const result = resolveServiceDeliveryArtifact({
+    outputType: 'audio',
+    cwd,
+    orderStartedAt,
+    messages: [
+      {
+        type: 'assistant',
+        content: '旁白音频已生成。',
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, audioPath);
+  assert.equal(result.artifact.contentType, 'audio/mpeg');
+  assert.equal(result.artifact.deliveryKind, 'audio');
+});
+
 test('buildMetafileDeliverySummary includes metafile URI, pin ID, and download URL', () => {
   const summary = buildMetafileDeliverySummary({
     artifact: {
@@ -128,4 +153,66 @@ test('buildMetafileDeliverySummary includes metafile URI, pin ID, and download U
   assert.match(summary, /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/accelerate\/content\/aabbccddeeff00112233445566778899i0/);
   assert.doesNotMatch(summary, /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\/aabbccddeeff00112233445566778899i0/);
   assert.doesNotMatch(summary, /metafile-indexer\/content\/aabbccddeeff00112233445566778899i0/);
+});
+
+test('verifyDeliveryArtifactUpload rejects an empty PINID without fetching', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return { ok: true };
+  };
+  try {
+    assert.equal(await verifyDeliveryArtifactUpload({ pinId: '' }), false);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('verifyDeliveryArtifactUpload accepts HEAD success', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), method: options?.method });
+    return { ok: true };
+  };
+  try {
+    assert.equal(await verifyDeliveryArtifactUpload({ pinId: 'abc123i0' }), true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'HEAD');
+    assert.match(calls[0].url, /accelerate\/content\/abc123i0$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('verifyDeliveryArtifactUpload falls back to ranged GET when HEAD fails', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), method: options?.method, range: options?.headers?.Range });
+    return { ok: calls.length === 2 };
+  };
+  try {
+    assert.equal(await verifyDeliveryArtifactUpload({ pinId: 'abc123i0' }), true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].method, 'HEAD');
+    assert.equal(calls[1].method, 'GET');
+    assert.equal(calls[1].range, 'bytes=0-0');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('verifyDeliveryArtifactUpload returns false on network failure', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('network down');
+  };
+  try {
+    assert.equal(await verifyDeliveryArtifactUpload({ pinId: 'abc123i0' }), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -83,6 +83,10 @@ export interface ServiceOrderRecord {
 export interface ServiceOrderSessionSummary {
   role: ServiceOrderRole;
   status: ServiceOrderStatus;
+  servicePinId: string | null;
+  serviceName: string | null;
+  paymentTxid: string | null;
+  outputType?: string | null;
   failureReason: string | null;
   refundRequestPinId: string | null;
   refundTxid: string | null;
@@ -682,6 +686,10 @@ export class ServiceOrderStore {
     return {
       role: row.role as ServiceOrderRole,
       status: row.status as ServiceOrderStatus,
+      servicePinId: row.service_pin_id,
+      serviceName: row.service_name,
+      paymentTxid: row.payment_txid,
+      outputType: null,
       failureReason: row.failure_reason,
       refundRequestPinId: row.refund_request_pin_id,
       refundTxid: row.refund_txid,

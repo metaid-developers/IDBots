@@ -80,6 +80,19 @@ test('extractOrderOutputType parses expected delivery metadata without polluting
   assert.equal(extractOrderRequestText(text), '请生成一张火箭发射图。');
 });
 
+test('extractOrderOutputType supports audio delivery metadata', () => {
+  const text = [
+    '[ORDER] 请生成一段旁白音频。',
+    '支付金额 0.001 SPACE',
+    `txid: ${'f'.repeat(64)}`,
+    'service id: svc-audio',
+    'skill name: voiceover',
+    'output type: audio',
+  ].join('\n');
+
+  assert.equal(extractOrderOutputType(text), 'audio');
+});
+
 test('checkOrderPaymentStatus allows free order messages without on-chain txid', async () => {
   const text = [
     '[ORDER] 帮我整理一段文本。',

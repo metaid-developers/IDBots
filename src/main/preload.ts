@@ -223,6 +223,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:stop', sessionId),
     endA2APrivateChat: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:endA2APrivateChat', sessionId),
+    resendA2ADeliveryArtifact: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:resendA2ADeliveryArtifact', sessionId),
     deleteSession: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:delete', sessionId),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>

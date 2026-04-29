@@ -247,6 +247,31 @@ class CoworkService {
     return { success: false, error: result.error || 'Failed to end A2A private chat' };
   }
 
+  async resendA2ADeliveryArtifact(sessionId: string): Promise<{ success: boolean; deliveryPinId?: string | null; error?: string }> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.resendA2ADeliveryArtifact) {
+      return { success: false, error: 'A2A delivery resend API not available' };
+    }
+
+    try {
+      const result = await cowork.resendA2ADeliveryArtifact(sessionId);
+      if (result?.success) {
+        await this.loadSession(sessionId);
+        await this.loadSessions();
+        return {
+          success: true,
+          deliveryPinId: result.deliveryPinId ?? null,
+        };
+      }
+      return { success: false, error: result?.error || 'Failed to resend digital delivery' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resend digital delivery',
+      };
+    }
+  }
+
   async deleteSession(sessionId: string): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
