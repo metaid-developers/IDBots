@@ -5,6 +5,7 @@ import {
   buildBuyerRatingSystemPrompt,
   deliveryResultHasExpectedArtifact,
   isOrderDeliveryFailureNotice,
+  resolveBuyerOrderOutputType,
   resolveSellerOrderOutputType,
 } from '../src/main/services/privateChatDaemon';
 
@@ -50,6 +51,30 @@ test('deliveryResultHasExpectedArtifact requires a matching metafile for non-tex
     deliveryResultHasExpectedArtifact('普通文字结果', 'text'),
     true
   );
+});
+
+test('resolveBuyerOrderOutputType falls back to service metadata for legacy buyer orders', () => {
+  const orderPayload = [
+    '[ORDER] 请生成一张历史插图。',
+    '支付金额 0.001 SPACE',
+    `txid: ${'a'.repeat(64)}`,
+    'service id: svc-image-pin',
+    'skill name: seedream',
+  ].join('\n');
+
+  const outputType = resolveBuyerOrderOutputType({
+    buyerOrderMeta: {
+      serviceId: 'svc-image-pin',
+      serviceSkill: 'seedream',
+    },
+    orderPayload,
+    resolveLocalServiceOutputType: ({ serviceId }) => (
+      serviceId === 'svc-image-pin' ? 'image' : null
+    ),
+  });
+
+  assert.equal(outputType, 'image');
+  assert.equal(deliveryResultHasExpectedArtifact('图片已生成，保存在 /tmp/local.png。', outputType), false);
 });
 
 test('resolveSellerOrderOutputType falls back to the local service output type for old orders', () => {

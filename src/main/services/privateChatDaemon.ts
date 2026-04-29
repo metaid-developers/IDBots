@@ -249,6 +249,41 @@ export function resolveSellerOrderOutputType(input: {
   return normalizedFallback || 'text';
 }
 
+export function resolveBuyerOrderOutputType(input: {
+  buyerOrderMeta?: Record<string, unknown> | null;
+  orderPayload?: string | null;
+  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn | null;
+}): ServiceOrderOutputType {
+  const meta = input.buyerOrderMeta || {};
+  const explicitMeta = normalizeOrderOutputType(
+    typeof meta.serviceOutputType === 'string' ? meta.serviceOutputType : ''
+  );
+  if (explicitMeta) {
+    return explicitMeta;
+  }
+
+  const payload = String(input.orderPayload || '');
+  const explicitPayload = extractOrderOutputType(payload);
+  if (explicitPayload) {
+    return explicitPayload;
+  }
+
+  const serviceId = typeof meta.serviceId === 'string'
+    ? meta.serviceId
+    : extractOrderSkillId(payload);
+  const serviceName = typeof meta.serviceSkill === 'string'
+    ? meta.serviceSkill
+    : extractOrderSkillName(payload);
+  const fallback = input.resolveLocalServiceOutputType?.({
+    serviceId,
+    serviceName,
+  });
+  const normalizedFallback = normalizeOrderOutputType(
+    typeof fallback === 'string' ? fallback : ''
+  );
+  return normalizedFallback || 'text';
+}
+
 function getExpectedDeliveryExtensions(outputType: string): Set<string> | null {
   if (outputType === 'image') return IMAGE_DELIVERY_EXTENSIONS;
   if (outputType === 'video') return VIDEO_DELIVERY_EXTENSIONS;
@@ -1786,9 +1821,16 @@ async function processOne(
 
         if (serviceOrderLifecycle && paymentTxid) {
           if (delivery && typeof delivery.paymentTxid === 'string') {
-            const expectedOutputType = typeof buyerOrderMeta.serviceOutputType === 'string'
-              ? buyerOrderMeta.serviceOutputType
-              : '';
+            const buyerOrderSession = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
+            const buyerOrderPayload = buyerOrderSession?.messages.find((message) => (
+              typeof message.content === 'string'
+              && isOrderMessage(message.content)
+            ))?.content ?? '';
+            const expectedOutputType = resolveBuyerOrderOutputType({
+              buyerOrderMeta,
+              orderPayload: buyerOrderPayload,
+              resolveLocalServiceOutputType,
+            });
             const deliveryResultText = typeof delivery.result === 'string' ? delivery.result : plaintext;
             if (!deliveryResultHasExpectedArtifact(deliveryResultText, expectedOutputType)) {
               const failedOrder = await serviceOrderLifecycle.markBuyerOrderFailedAndRequestRefund({

@@ -4549,6 +4549,10 @@ if (!gotTheLock) {
       if (!chatPubkey) {
         throw new Error('Peer chat public key is unavailable');
       }
+      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+        wallet.mnemonic,
+        wallet.path || "m/44'/10001'/0'/0/0"
+      );
 
       const uploadNotice = '正在再次上传并发送数字成果，请等待链上交付完成。';
       const uploadNoticeMessage = coworkStoreInst.addMessage(sessionId, {
@@ -4582,7 +4586,46 @@ if (!gotTheLock) {
         maxAttempts: 2,
       });
       if (!verifiedUpload.ok) {
-        throw verifiedUpload.error;
+        const manualResendFailureReply = [
+          `服务方已生成 ${outputType} 数字成果，但上传链上交付失败。`,
+          verifiedUpload.error instanceof Error ? verifiedUpload.error.message : String(verifiedUpload.error || ''),
+          '系统将自动转入退款流程，请稍后重试或联系服务方。',
+        ].filter(Boolean).join('\n');
+        const encryptedFailure = ecdhEncrypt(
+          manualResendFailureReply,
+          computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
+        );
+        const failurePayloadStr = buildPrivateMessagePayload(peerGlobalMetaId, encryptedFailure, replyPin);
+        await createPin(metabotStoreInst, metabotId, {
+          operation: 'create',
+          path: '/protocols/simplemsg',
+          encryption: '0',
+          version: '1.0.0',
+          contentType: 'application/json',
+          payload: failurePayloadStr,
+        });
+        const failureMessage = coworkStoreInst.addMessage(sessionId, {
+          type: 'assistant',
+          content: manualResendFailureReply,
+          metadata: {
+            sourceChannel: 'metaweb_order',
+            direction: 'outgoing',
+            suppressRunningStatus: true,
+            orderDeliveryFailed: true,
+            refreshSessionSummary: true,
+          },
+        });
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) {
+            try { win.webContents.send('cowork:stream:message', { sessionId, message: failureMessage }); } catch { /* ignore */ }
+          }
+        });
+        return {
+          success: false,
+          error: verifiedUpload.error instanceof Error
+            ? verifiedUpload.error.message
+            : 'Failed to upload verified delivery artifact',
+        };
       }
 
       const deliverySummary = buildMetafileDeliverySummary({
@@ -4597,10 +4640,6 @@ if (!gotTheLock) {
         result: deliverySummary,
         deliveredAt,
       });
-      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
-        wallet.mnemonic,
-        wallet.path || "m/44'/10001'/0'/0/0"
-      );
       const encrypted = ecdhEncrypt(
         deliveryText,
         computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)

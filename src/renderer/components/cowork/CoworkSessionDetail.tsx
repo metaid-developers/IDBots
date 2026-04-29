@@ -128,6 +128,7 @@ const getStringArray = (value: unknown): string | null => {
 const ORDER_PREFIX = '[ORDER]';
 const DELIVERY_PREFIX = '[DELIVERY]';
 const DELEGATION_CONTROL_PREFIX = '[DELEGATE_REMOTE_SERVICE]';
+const NON_TEXT_SERVICE_OUTPUT_TYPES = ['image', 'video', 'audio', 'other'];
 
 type GigSquareOrderPayload = {
   txid?: string;
@@ -1708,10 +1709,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [a2aEndError, setA2AEndError] = useState<string | null>(null);
   const [isResendingDelivery, setIsResendingDelivery] = useState(false);
   const [resendDeliveryError, setResendDeliveryError] = useState<string | null>(null);
+  const serviceOrderOutputType = String(currentSession?.serviceOrderSummary?.outputType || '').trim().toLowerCase();
   const canResendDigitalDelivery = (
     isPrivateA2ASession
     && currentSession?.serviceOrderSummary?.role === 'seller'
-    && currentSession.serviceOrderSummary?.outputType !== 'text'
+    && NON_TEXT_SERVICE_OUTPUT_TYPES.includes(serviceOrderOutputType)
   );
 
   // Fetch initial delegation blocking state when session changes
