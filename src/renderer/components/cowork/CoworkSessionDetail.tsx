@@ -1706,6 +1706,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [delegationBlocking, setDelegationBlocking] = useState(false);
   const [isEndingA2A, setIsEndingA2A] = useState(false);
   const [a2aEndError, setA2AEndError] = useState<string | null>(null);
+  const [isResendingDelivery, setIsResendingDelivery] = useState(false);
+  const [resendDeliveryError, setResendDeliveryError] = useState<string | null>(null);
+  const canResendDigitalDelivery = (
+    isPrivateA2ASession
+    && currentSession?.serviceOrderSummary?.role === 'seller'
+    && currentSession.serviceOrderSummary?.outputType !== 'text'
+  );
 
   // Fetch initial delegation blocking state when session changes
   useEffect(() => {
@@ -1792,6 +1799,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setRefundActionError(null);
     setIsEndingA2A(false);
     setA2AEndError(null);
+    setIsResendingDelivery(false);
+    setResendDeliveryError(null);
   }, [
     currentSession?.id,
     currentSession?.serviceOrderSummary?.status,
@@ -1824,6 +1833,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
     setIsEndingA2A(false);
   }, [currentSession?.id, isA2AConversationEnded, isEndingA2A]);
+
+  const handleResendDigitalDelivery = useCallback(async () => {
+    if (!currentSession?.id || isResendingDelivery || !canResendDigitalDelivery) return;
+    setIsResendingDelivery(true);
+    setResendDeliveryError(null);
+    const result = await coworkService.resendA2ADeliveryArtifact(currentSession.id);
+    if (!result.success) {
+      setResendDeliveryError(result.error || i18nService.t('a2aResendDigitalDeliveryFailed'));
+      setIsResendingDelivery(false);
+      return;
+    }
+    setIsResendingDelivery(false);
+  }, [canResendDigitalDelivery, currentSession?.id, isResendingDelivery]);
 
   // Reset rename value when session changes
   useEffect(() => {
@@ -2548,10 +2570,21 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 </button>
               )
             )}
+            {canResendDigitalDelivery && (
+              <button
+                type="button"
+                onClick={handleResendDigitalDelivery}
+                disabled={isResendingDelivery}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/30 px-3 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:text-blue-400"
+              >
+                <ShareIcon className="h-4 w-4" />
+                {isResendingDelivery ? i18nService.t('a2aResendingDigitalDelivery') : i18nService.t('a2aResendDigitalDelivery')}
+              </button>
+            )}
           </div>
-          {a2aEndError && (
+          {(a2aEndError || resendDeliveryError) && (
             <p className="mt-2 text-center text-xs text-red-500">
-              {a2aEndError}
+              {a2aEndError || resendDeliveryError}
             </p>
           )}
         </div>

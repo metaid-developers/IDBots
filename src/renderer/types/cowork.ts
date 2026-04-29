@@ -72,6 +72,10 @@ export interface CoworkServiceOrderSummary {
     | 'failed'
     | 'refund_pending'
     | 'refunded';
+  servicePinId?: string | null;
+  serviceName?: string | null;
+  paymentTxid?: string | null;
+  outputType?: string | null;
   failureReason?: string | null;
   refundRequestPinId?: string | null;
   refundTxid?: string | null;

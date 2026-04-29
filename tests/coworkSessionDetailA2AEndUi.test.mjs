@@ -21,3 +21,12 @@ test('CoworkSessionDetail renders an end-conversation button for private A2A ses
   assert.match(source, /handleEndA2APrivateChat/);
   assert.match(source, /coworkService\.endA2APrivateChat\(currentSession\.id\)/);
 });
+
+test('CoworkSessionDetail renders a resend digital delivery button for seller A2A service orders', () => {
+  const source = fs.readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /a2aResendDigitalDelivery/);
+  assert.match(source, /handleResendDigitalDelivery/);
+  assert.match(source, /coworkService\.resendA2ADeliveryArtifact\(currentSession\.id\)/);
+  assert.match(source, /serviceOrderSummary\?\.role === 'seller'/);
+});

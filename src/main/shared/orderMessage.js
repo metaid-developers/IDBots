@@ -36,7 +36,7 @@ function normalizeMrc20Ticker(value) {
 
 function normalizeOutputType(value) {
   const normalized = normalizeSingleLineText(value).toLowerCase();
-  if (normalized === 'image' || normalized === 'video' || normalized === 'other' || normalized === 'text') {
+  if (normalized === 'image' || normalized === 'video' || normalized === 'audio' || normalized === 'other' || normalized === 'text') {
     return normalized;
   }
   return '';

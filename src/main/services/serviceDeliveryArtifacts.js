@@ -13,6 +13,7 @@ export const DELIVERY_ACCELERATE_CONTENT_BASE_URL = 'https://file.metaid.io/meta
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac']);
 const OTHER_EXPLICIT_EXTENSIONS = new Set([
   '.zip',
   '.pdf',
@@ -28,11 +29,8 @@ const OTHER_EXPLICIT_EXTENSIONS = new Set([
 const ALL_REFERENCE_EXTENSIONS = new Set([
   ...IMAGE_EXTENSIONS,
   ...VIDEO_EXTENSIONS,
+  ...AUDIO_EXTENSIONS,
   ...OTHER_EXPLICIT_EXTENSIONS,
-  '.mp3',
-  '.wav',
-  '.ogg',
-  '.flac',
 ]);
 const IGNORED_SCAN_DIRS = new Set([
   '.git',
@@ -45,7 +43,7 @@ const IGNORED_SCAN_DIRS = new Set([
 
 export function normalizeServiceOutputType(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'text' || normalized === 'image' || normalized === 'video' || normalized === 'other') {
+  if (normalized === 'text' || normalized === 'image' || normalized === 'video' || normalized === 'audio' || normalized === 'other') {
     return normalized;
   }
   return 'text';
@@ -59,8 +57,11 @@ function getDeliveryKindForPath(filePath, outputType) {
   if (outputType === 'video') {
     return VIDEO_EXTENSIONS.has(ext) ? 'video' : null;
   }
+  if (outputType === 'audio') {
+    return AUDIO_EXTENSIONS.has(ext) ? 'audio' : null;
+  }
   if (outputType === 'other') {
-    return ext && !IMAGE_EXTENSIONS.has(ext) && !VIDEO_EXTENSIONS.has(ext)
+    return ext && !IMAGE_EXTENSIONS.has(ext) && !VIDEO_EXTENSIONS.has(ext) && !AUDIO_EXTENSIONS.has(ext)
       ? 'other'
       : null;
   }
@@ -206,7 +207,7 @@ export function resolveServiceDeliveryArtifact(input) {
     }
   }
 
-  if (outputType === 'image' || outputType === 'video') {
+  if (outputType === 'image' || outputType === 'video' || outputType === 'audio') {
     for (const candidate of scanGeneratedCandidates(cwd, outputType, input?.orderStartedAt)) {
       const resolved = resolveCandidate(candidate, outputType, 'generated');
       if (resolved?.status === 'invalid' || resolved?.status === 'found') {
@@ -234,6 +235,9 @@ function getMetafileExtension(fileName, contentType) {
   if (normalized.includes('image/png')) return '.png';
   if (normalized.includes('image/jpeg')) return '.jpg';
   if (normalized.includes('video/mp4')) return '.mp4';
+  if (normalized.includes('audio/mpeg')) return '.mp3';
+  if (normalized.includes('audio/wav')) return '.wav';
+  if (normalized.includes('audio/ogg')) return '.ogg';
   if (normalized.includes('application/zip')) return '.zip';
   return '';
 }
@@ -260,4 +264,89 @@ export function buildMetafileDeliverySummary(input) {
     downloadUrl ? `下载链接: ${downloadUrl}` : '',
   ].filter(Boolean);
   return lines.join('\n');
+}
+
+export function getDeliveryArtifactPinId(upload) {
+  return String(upload?.pinId || '').trim();
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  if (typeof fetch !== 'function') {
+    return null;
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function verifyDeliveryArtifactUpload(upload) {
+  const pinId = getDeliveryArtifactPinId(upload);
+  if (!pinId) {
+    return false;
+  }
+  const url = `${DELIVERY_ACCELERATE_CONTENT_BASE_URL}/${encodeURIComponent(pinId)}`;
+  try {
+    const head = await fetchWithTimeout(url, { method: 'HEAD' });
+    if (head?.ok) {
+      return true;
+    }
+    const get = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Range: 'bytes=0-0' },
+    });
+    return Boolean(get?.ok);
+  } catch {
+    return false;
+  }
+}
+
+export async function uploadVerifiedDeliveryArtifact(input) {
+  const artifact = input?.artifact;
+  const request = input?.request || {};
+  const uploadDeliveryArtifact = input?.uploadDeliveryArtifact;
+  const verifyUpload = input?.verifyDeliveryArtifactUpload;
+  const maxAttempts = Math.max(1, Math.trunc(Number(input?.maxAttempts) || 2));
+  if (typeof uploadDeliveryArtifact !== 'function') {
+    throw new Error('Delivery artifact uploader is not available');
+  }
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const upload = await uploadDeliveryArtifact(artifact, request);
+      const pinId = getDeliveryArtifactPinId(upload);
+      if (!pinId) {
+        throw new Error('Upload returned empty pinId');
+      }
+      const verified = typeof verifyUpload === 'function'
+        ? await verifyUpload(upload, artifact, request)
+        : true;
+      if (!verified) {
+        throw new Error(`Delivery artifact PINID ${pinId} could not be verified`);
+      }
+      return {
+        ok: true,
+        upload,
+        attempts: attempt,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts && typeof input?.onRetry === 'function') {
+        await input.onRetry({ attempt, error });
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    attempts: maxAttempts,
+    error: lastError instanceof Error ? lastError : new Error(String(lastError || 'Delivery artifact upload failed')),
+  };
 }

@@ -94,7 +94,7 @@ export interface GigSquareSettlementAddressOwner {
 }
 
 const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE', 'MRC20']);
-const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'other']);
+const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'audio', 'other']);
 const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
   BTC: 1,
   MVC: 100000,

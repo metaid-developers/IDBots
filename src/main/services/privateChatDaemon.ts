@@ -26,6 +26,7 @@ import {
   extractOrderOutputType,
   normalizeOrderOutputType,
   OrderSource,
+  type ServiceOrderOutputType,
 } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
 import type { CoworkMessage, CoworkMessageMetadata, CoworkStore } from '../coworkStore';
@@ -52,6 +53,10 @@ import {
 } from './privateChatOrderObserverState';
 import { ensureServiceOrderObserverSession } from './serviceOrderObserverSession';
 import { resolveOrderSessionId } from './serviceOrderSessionResolution.js';
+import {
+  normalizeServiceOutputType,
+  verifyDeliveryArtifactUpload,
+} from './serviceDeliveryArtifacts.js';
 import type { ListenerConfig } from './metaWebListenerService';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -188,6 +193,15 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
 
 const ORDER_PREFIX = '[ORDER]';
 const CHAIN_UNIT = 100_000_000;
+const METAFILE_URI_RE = /metafile:\/\/([A-Za-z0-9]+i\d+)(?:\.([A-Za-z0-9]+))?/gi;
+const IMAGE_DELIVERY_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']);
+const VIDEO_DELIVERY_EXTENSIONS = new Set(['mp4', 'webm', 'mov']);
+const AUDIO_DELIVERY_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac']);
+
+type ResolveLocalServiceOutputTypeFn = (input: {
+  serviceId?: string | null;
+  serviceName?: string | null;
+}) => string | null | undefined;
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
@@ -212,6 +226,58 @@ function isByeMessage(text: string): boolean {
 function parseConversationMappingMetadata(json: string | null | undefined): Record<string, unknown> {
   if (!json) return {};
   try { return JSON.parse(json) as Record<string, unknown>; } catch { return {}; }
+}
+
+export function resolveSellerOrderOutputType(input: {
+  plaintext: string;
+  serviceId?: string | null;
+  serviceName?: string | null;
+  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn | null;
+}): ServiceOrderOutputType {
+  const explicit = extractOrderOutputType(input.plaintext);
+  if (explicit) {
+    return explicit;
+  }
+
+  const fallback = input.resolveLocalServiceOutputType?.({
+    serviceId: input.serviceId ?? null,
+    serviceName: input.serviceName ?? null,
+  });
+  const normalizedFallback = normalizeOrderOutputType(
+    typeof fallback === 'string' ? fallback : ''
+  );
+  return normalizedFallback || 'text';
+}
+
+function getExpectedDeliveryExtensions(outputType: string): Set<string> | null {
+  if (outputType === 'image') return IMAGE_DELIVERY_EXTENSIONS;
+  if (outputType === 'video') return VIDEO_DELIVERY_EXTENSIONS;
+  if (outputType === 'audio') return AUDIO_DELIVERY_EXTENSIONS;
+  return null;
+}
+
+export function deliveryResultHasExpectedArtifact(resultText: string, expectedOutputType?: string | null): boolean {
+  const outputType = normalizeServiceOutputType(expectedOutputType);
+  if (outputType === 'text') {
+    return true;
+  }
+
+  const result = String(resultText || '');
+  const expectedExtensions = getExpectedDeliveryExtensions(outputType);
+  METAFILE_URI_RE.lastIndex = 0;
+  for (const match of result.matchAll(METAFILE_URI_RE)) {
+    const pinId = String(match[1] || '').trim();
+    if (!pinId) continue;
+    if (!expectedExtensions) {
+      return true;
+    }
+    const extension = String(match[2] || '').trim().toLowerCase();
+    if (extension && expectedExtensions.has(extension)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function buildOrderExternalConversationId(
@@ -1046,6 +1112,9 @@ export function buildBuyerRatingSystemPrompt(input: {
       expectedOutputType === 'video'
         ? 'For video services, the delivery must include metafile://... with a video extension such as .mp4, .webm, or .mov.'
         : '',
+      expectedOutputType === 'audio'
+        ? 'For audio services, the delivery must include metafile://... with an audio extension such as .mp3, .wav, .ogg, .flac, .m4a, or .aac.'
+        : '',
       expectedOutputType === 'other'
         ? 'For other file services, the delivery must include a concrete metafile:// attachment for the agreed file.'
         : '',
@@ -1221,7 +1290,8 @@ async function processOne(
   serviceOrderLifecycle: ServiceOrderLifecycleService | null,
   getSkillsPrompt?: GetSellerOrderSkillsPromptFn,
   emitToRenderer?: (channel: string, data: unknown) => void,
-  getListenerConfig?: GetListenerConfigFn
+  getListenerConfig?: GetListenerConfigFn,
+  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -1406,7 +1476,12 @@ async function processOne(
       );
       const serviceId = extractOrderSkillId(plaintext);
       const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
-      const serviceOutputType = extractOrderOutputType(plaintext) || 'text';
+      const serviceOutputType = resolveSellerOrderOutputType({
+        plaintext,
+        serviceId,
+        serviceName,
+        resolveLocalServiceOutputType,
+      });
       const paymentAmount = payment.amountDisplay || formatPaymentAmountFromSats(payment.amountSats);
       const paymentCurrency = payment.currency || getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
@@ -1711,35 +1786,68 @@ async function processOne(
 
         if (serviceOrderLifecycle && paymentTxid) {
           if (delivery && typeof delivery.paymentTxid === 'string') {
-            const deliveredOrder = serviceOrderLifecycle.markBuyerOrderDelivered({
-              localMetabotId: metabot.id,
-              counterpartyGlobalMetaId: fromGlobalMetaId,
-              paymentTxid: delivery.paymentTxid,
-              deliveryMessagePinId: row.pin_id,
-              deliveredAt:
-                typeof delivery.deliveredAt === 'number'
-                  ? delivery.deliveredAt * 1000
-                  : Date.now(),
-            });
+            const expectedOutputType = typeof buyerOrderMeta.serviceOutputType === 'string'
+              ? buyerOrderMeta.serviceOutputType
+              : '';
+            const deliveryResultText = typeof delivery.result === 'string' ? delivery.result : plaintext;
+            if (!deliveryResultHasExpectedArtifact(deliveryResultText, expectedOutputType)) {
+              const failedOrder = await serviceOrderLifecycle.markBuyerOrderFailedAndRequestRefund({
+                localMetabotId: metabot.id,
+                counterpartyGlobalMetaId: fromGlobalMetaId,
+                paymentTxid: delivery.paymentTxid,
+                failureReason: SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
+                failedAt: Date.now(),
+              });
+              emitLog(`[Order] Buyer order ${delivery.paymentTxid.slice(0, 12)}… entered refund flow after missing ${normalizeServiceOutputType(expectedOutputType)} artifact.`);
+              if (
+                failedOrder &&
+                failedOrder.coworkSessionId &&
+                coworkStore.isDelegationBlocking(failedOrder.coworkSessionId)
+              ) {
+                handleAutoDeliveryResult(
+                  coworkStore,
+                  failedOrder.coworkSessionId,
+                  plaintext,
+                  failedOrder.serviceName,
+                  failedOrder.paymentAmount,
+                  failedOrder.paymentCurrency,
+                  failedOrder.paymentTxid,
+                  failedOrder.id,
+                  emitLog,
+                  emitToRenderer,
+                );
+              }
+            } else {
+              const deliveredOrder = serviceOrderLifecycle.markBuyerOrderDelivered({
+                localMetabotId: metabot.id,
+                counterpartyGlobalMetaId: fromGlobalMetaId,
+                paymentTxid: delivery.paymentTxid,
+                deliveryMessagePinId: row.pin_id,
+                deliveredAt:
+                  typeof delivery.deliveredAt === 'number'
+                    ? delivery.deliveredAt * 1000
+                    : Date.now(),
+              });
 
-            // Check if this is an auto-delegated order (has a source cowork session in blocking mode)
-            if (
-              deliveredOrder &&
-              deliveredOrder.coworkSessionId &&
-              coworkStore.isDelegationBlocking(deliveredOrder.coworkSessionId)
-            ) {
-              handleAutoDeliveryResult(
-                coworkStore,
-                deliveredOrder.coworkSessionId,
-                plaintext,
-                deliveredOrder.serviceName,
-                deliveredOrder.paymentAmount,
-                deliveredOrder.paymentCurrency,
-                deliveredOrder.paymentTxid,
-                deliveredOrder.id,
-                emitLog,
-                emitToRenderer,
-              );
+              // Check if this is an auto-delegated order (has a source cowork session in blocking mode)
+              if (
+                deliveredOrder &&
+                deliveredOrder.coworkSessionId &&
+                coworkStore.isDelegationBlocking(deliveredOrder.coworkSessionId)
+              ) {
+                handleAutoDeliveryResult(
+                  coworkStore,
+                  deliveredOrder.coworkSessionId,
+                  plaintext,
+                  deliveredOrder.serviceName,
+                  deliveredOrder.paymentAmount,
+                  deliveredOrder.paymentCurrency,
+                  deliveredOrder.paymentTxid,
+                  deliveredOrder.id,
+                  emitLog,
+                  emitToRenderer,
+                );
+              }
             }
           } else if (deliveryFailureNotice) {
             const failedOrder = await serviceOrderLifecycle.markBuyerOrderFailedAndRequestRefund({
@@ -2033,7 +2141,8 @@ export function startPrivateChatDaemon(
   serviceOrderLifecycle: ServiceOrderLifecycleService | null,
   getSkillsPrompt?: GetSellerOrderSkillsPromptFn,
   emitToRenderer?: (channel: string, data: unknown) => void,
-  getListenerConfig?: GetListenerConfigFn
+  getListenerConfig?: GetListenerConfigFn,
+  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn
 ): void {
   stopPrivateChatDaemon();
   orderCowork = new PrivateChatOrderCowork({
@@ -2050,12 +2159,13 @@ export function startPrivateChatDaemon(
         network: 'mvc',
       });
     },
+    verifyDeliveryArtifactUpload,
   });
   const performChat = performChatCompletionForOrchestrator;
   const tick = () => {
     const rows = parsePrivateChatRows(db);
     for (const row of rows) {
-      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer, getListenerConfig).catch((e) => {
+      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer, getListenerConfig, resolveLocalServiceOutputType).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
       });
     }

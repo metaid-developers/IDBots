@@ -118,14 +118,20 @@ import {
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { fetchProtocolPinsFromIndexer } from './services/protocolPinFetch';
-import { buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
+import { buildDeliveryMessage, buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
 import {
   buildDelegationOrderPayloadFromSettlement,
   resolveDelegationSettlement,
 } from './services/delegationSettlement';
-import { extractOrderRequestText } from './services/orderPayment';
+import {
+  extractOrderOutputType,
+  extractOrderRequestText,
+  extractOrderSkillId,
+  extractOrderSkillName,
+  normalizeOrderOutputType,
+} from './services/orderPayment';
 import {
   ORDER_RAW_REQUEST_MAX_CHARS,
   extractOrderRawRequest,
@@ -144,6 +150,13 @@ import {
   resolveOrderSessionId,
   selectProtocolPinContent,
 } from './services/serviceOrderSessionResolution.js';
+import {
+  buildMetafileDeliverySummary,
+  normalizeServiceOutputType,
+  resolveServiceDeliveryArtifact,
+  uploadVerifiedDeliveryArtifact,
+  verifyDeliveryArtifactUpload,
+} from './services/serviceDeliveryArtifacts.js';
 import { publishServiceOrderEventToCowork as publishServiceOrderEventToCoworkStore } from './services/serviceOrderCoworkBridge';
 import {
   buildRemoteSkillServiceUpsertStatement,
@@ -798,6 +811,46 @@ const resolveGigSquareLocalServiceMetabotId = (servicePinId: string): number | n
   const raw = result[0]?.values?.[0]?.[0];
   const metabotId = Math.trunc(toSafeNumber(raw));
   return Number.isFinite(metabotId) && metabotId > 0 ? metabotId : null;
+};
+
+const resolveGigSquareLocalServiceOutputType = (input: {
+  serviceId?: string | null;
+  serviceName?: string | null;
+}): string | null => {
+  ensureGigSquareSchema();
+  const serviceId = toSafeString(input.serviceId).trim();
+  const serviceName = toSafeString(input.serviceName).trim();
+  if (!serviceId && !serviceName) return null;
+  const result = getStore().getDatabase().exec(
+    `SELECT output_type
+     FROM gig_square_services
+     WHERE (? != '' AND (
+       id = ?
+       OR pin_id = ?
+       OR source_service_pin_id = ?
+       OR current_pin_id = ?
+     ))
+        OR (? != '' AND (
+          provider_skill = ?
+          OR service_name = ?
+          OR display_name = ?
+        ))
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    sanitizeDbParams([
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceName,
+      serviceName,
+      serviceName,
+      serviceName,
+    ]),
+  );
+  const outputType = toSafeString(result[0]?.values?.[0]?.[0]).trim().toLowerCase();
+  return normalizeOrderOutputType(outputType) || null;
 };
 
 const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
@@ -2274,7 +2327,8 @@ const restartSqliteBackedDaemons = (input: {
           }
         });
       },
-      getListenerConfigFromStore
+      getListenerConfigFromStore,
+      resolveGigSquareLocalServiceOutputType
     );
 
     if (input.restartListener) {
@@ -3630,6 +3684,10 @@ const buildServiceOrderSummaryFromRecord = (
 ): ReturnType<ServiceOrderStore['getSessionSummary']> => ({
   role: order.role,
   status: order.status,
+  servicePinId: order.servicePinId,
+  serviceName: order.serviceName,
+  paymentTxid: order.paymentTxid,
+  outputType: null,
   failureReason: order.failureReason,
   refundRequestPinId: order.refundRequestPinId,
   refundTxid: order.refundTxid,
@@ -3671,6 +3729,31 @@ const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | 
   return matched;
 };
 
+const resolveSessionOrderPayload = (
+  session: NonNullable<ReturnType<CoworkStore['getSession']>> | null
+): string => {
+  const message = session?.messages.find((item) => (
+    typeof item.content === 'string'
+    && item.content.trim().toUpperCase().startsWith('[ORDER]')
+  ));
+  return toSafeString(message?.content).trim();
+};
+
+const resolveSessionServiceOrderOutputType = (
+  session: NonNullable<ReturnType<CoworkStore['getSession']>> | null,
+  order?: ServiceOrderRecord | null,
+): string | null => {
+  const orderPayload = resolveSessionOrderPayload(session);
+  const explicit = normalizeOrderOutputType(extractOrderOutputType(orderPayload) || '');
+  if (explicit) {
+    return explicit;
+  }
+
+  const serviceId = order?.servicePinId || extractOrderSkillId(orderPayload) || null;
+  const serviceName = order?.serviceName || extractOrderSkillName(orderPayload) || null;
+  return resolveGigSquareLocalServiceOutputType({ serviceId, serviceName });
+};
+
 const listCoworkSessionsForOrderResolution = (): NonNullable<ReturnType<CoworkStore['getSession']>>[] => {
   const coworkStore = getCoworkStore();
   return coworkStore
@@ -3699,12 +3782,23 @@ const resolveCoworkSessionIdForOrder = (
 const getServiceOrderSummaryForSession = (
   sessionId: string
 ): ReturnType<ServiceOrderStore['getSessionSummary']> | null => {
+  const session = getCoworkStore().getSession(sessionId);
   const directSummary = getServiceOrderStore().getSessionSummary(sessionId);
   if (directSummary) {
-    return directSummary;
+    const order = resolveServiceOrderForSession(sessionId);
+    return {
+      ...directSummary,
+      outputType: directSummary.outputType || resolveSessionServiceOrderOutputType(session, order),
+    };
   }
   const resolvedOrder = resolveServiceOrderForSession(sessionId);
-  return resolvedOrder ? buildServiceOrderSummaryFromRecord(resolvedOrder) : null;
+  if (!resolvedOrder) {
+    return null;
+  }
+  return {
+    ...buildServiceOrderSummaryFromRecord(resolvedOrder),
+    outputType: resolveSessionServiceOrderOutputType(session, resolvedOrder),
+  };
 };
 
 const getScheduler = () => {
@@ -4386,6 +4480,172 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to end A2A private chat',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:resendA2ADeliveryArtifact', async (_event, sessionId: string) => {
+    try {
+      const coworkStoreInst = getCoworkStore();
+      const session = coworkStoreInst.getSession(sessionId);
+      if (!session) {
+        throw new Error('A2A session not found');
+      }
+      const order = resolveServiceOrderForSession(sessionId);
+      if (!order || order.role !== 'seller') {
+        throw new Error('Only seller-side service order sessions can resend digital delivery');
+      }
+
+      const outputType = normalizeServiceOutputType(resolveSessionServiceOrderOutputType(session, order));
+      if (outputType === 'text') {
+        throw new Error('This service order does not require a non-text digital delivery artifact');
+      }
+
+      const artifactResult = resolveServiceDeliveryArtifact({
+        outputType,
+        cwd: session.cwd,
+        orderStartedAt: order.createdAt,
+        messages: session.messages,
+      });
+      if (artifactResult.status !== 'found') {
+        const reason = artifactResult.status === 'invalid' && artifactResult.reason === 'file_too_large'
+          ? 'Generated artifact is larger than 20 MiB and cannot be uploaded'
+          : `No matching ${outputType} artifact was found in this A2A session`;
+        throw new Error(reason);
+      }
+
+      const metabotId = session.metabotId ?? order.localMetabotId;
+      const peerGlobalMetaId = toSafeString(session.peerGlobalMetaId || order.counterpartyGlobalMetaid).trim();
+      if (typeof metabotId !== 'number' || metabotId <= 0 || !peerGlobalMetaId) {
+        throw new Error('A2A sender or peer identity is missing');
+      }
+
+      const metabotStoreInst = getMetabotStore();
+      const metabot = metabotStoreInst.getMetabotById(metabotId);
+      const wallet = metabotStoreInst.getMetabotWalletByMetabotId(metabotId);
+      const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
+      if (!metabot || !wallet?.mnemonic?.trim() || !localGlobalMetaId) {
+        throw new Error('Local MetaBot wallet is not ready for encrypted A2A delivery');
+      }
+
+      const db = getStore().getDatabase();
+      const latestPeerKey = db.exec(
+        `SELECT from_chat_pubkey, reply_pin
+         FROM private_chat_messages
+         WHERE (from_global_metaid = ? OR from_metaid = ?)
+           AND (to_global_metaid = ? OR to_metaid = ?)
+           AND from_chat_pubkey IS NOT NULL
+           AND TRIM(from_chat_pubkey) != ''
+         ORDER BY id DESC
+         LIMIT 1`,
+        [peerGlobalMetaId, peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId]
+      );
+      const row = latestPeerKey[0]?.values?.[0] ?? [];
+      let chatPubkey = toSafeString(row[0]).trim();
+      const replyPin = toSafeString(row[1]).trim();
+      if (!chatPubkey) {
+        chatPubkey = await resolveChatPubkeyForProvider(peerGlobalMetaId) ?? '';
+      }
+      if (!chatPubkey) {
+        throw new Error('Peer chat public key is unavailable');
+      }
+
+      const uploadNotice = '正在再次上传并发送数字成果，请等待链上交付完成。';
+      const uploadNoticeMessage = coworkStoreInst.addMessage(sessionId, {
+        type: 'assistant',
+        content: uploadNotice,
+        metadata: {
+          sourceChannel: 'metaweb_order',
+          direction: 'outgoing',
+          suppressRunningStatus: true,
+          excludeFromSandboxHistory: true,
+          orderDeliveryUploadNotice: true,
+        },
+      });
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) {
+          try { win.webContents.send('cowork:stream:message', { sessionId, message: uploadNoticeMessage }); } catch { /* ignore */ }
+        }
+      });
+
+      const { uploadMetaFile } = await import('./services/metaFileUploadService');
+      const verifiedUpload = await uploadVerifiedDeliveryArtifact({
+        artifact: artifactResult.artifact,
+        request: { metabotId },
+        uploadDeliveryArtifact: async (artifact: Record<string, unknown>) => uploadMetaFile(metabotStoreInst, {
+          metabotId,
+          filePath: String(artifact.filePath || ''),
+          contentType: typeof artifact.contentType === 'string' ? artifact.contentType : undefined,
+          network: 'mvc',
+        }),
+        verifyDeliveryArtifactUpload,
+        maxAttempts: 2,
+      });
+      if (!verifiedUpload.ok) {
+        throw verifiedUpload.error;
+      }
+
+      const deliverySummary = buildMetafileDeliverySummary({
+        artifact: artifactResult.artifact,
+        upload: verifiedUpload.upload,
+      });
+      const deliveredAt = Math.floor(Date.now() / 1000);
+      const deliveryText = buildDeliveryMessage({
+        paymentTxid: order.paymentTxid,
+        servicePinId: order.servicePinId,
+        serviceName: order.serviceName,
+        result: deliverySummary,
+        deliveredAt,
+      });
+      const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+        wallet.mnemonic,
+        wallet.path || "m/44'/10001'/0'/0/0"
+      );
+      const encrypted = ecdhEncrypt(
+        deliveryText,
+        computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
+      );
+      const payloadStr = buildPrivateMessagePayload(peerGlobalMetaId, encrypted, replyPin);
+      const deliveryPin = await createPin(metabotStoreInst, metabotId, {
+        operation: 'create',
+        path: '/protocols/simplemsg',
+        encryption: '0',
+        version: '1.0.0',
+        contentType: 'application/json',
+        payload: payloadStr,
+      });
+
+      const deliveryMessage = coworkStoreInst.addMessage(sessionId, {
+        type: 'assistant',
+        content: deliveryText,
+        metadata: {
+          sourceChannel: 'metaweb_order',
+          direction: 'outgoing',
+          suppressRunningStatus: true,
+          orderDeliveryResent: true,
+          orderDeliveryUploadComplete: true,
+          refreshSessionSummary: true,
+        },
+      });
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) {
+          try { win.webContents.send('cowork:stream:message', { sessionId, message: deliveryMessage }); } catch { /* ignore */ }
+        }
+      });
+
+      getServiceOrderLifecycleService().markSellerOrderDelivered({
+        localMetabotId: metabotId,
+        counterpartyGlobalMetaId: peerGlobalMetaId,
+        paymentTxid: order.paymentTxid,
+        deliveryMessagePinId: deliveryPin.pinId ?? null,
+        deliveredAt: deliveredAt * 1000,
+      });
+
+      return { success: true, deliveryPinId: deliveryPin.pinId ?? null };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resend digital delivery',
       };
     }
   });
@@ -7749,7 +8009,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           }
         });
       },
-      getListenerConfigFromStore
+      getListenerConfigFromStore,
+      resolveGigSquareLocalServiceOutputType
     );
 
     void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {

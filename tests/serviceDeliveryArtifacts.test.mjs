@@ -106,6 +106,30 @@ test('resolveServiceDeliveryArtifact rejects delivery files larger than 20 MiB',
   assert.equal(result.reason, 'file_too_large');
 });
 
+test('resolveServiceDeliveryArtifact finds audio output artifacts', () => {
+  const cwd = makeTempDir();
+  const orderStartedAt = Date.now() - 1000;
+  const audioPath = path.join(cwd, 'narration.mp3');
+  writeFile(audioPath, 'mp3');
+
+  const result = resolveServiceDeliveryArtifact({
+    outputType: 'audio',
+    cwd,
+    orderStartedAt,
+    messages: [
+      {
+        type: 'assistant',
+        content: '旁白音频已生成。',
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, audioPath);
+  assert.equal(result.artifact.contentType, 'audio/mpeg');
+  assert.equal(result.artifact.deliveryKind, 'audio');
+});
+
 test('buildMetafileDeliverySummary includes metafile URI, pin ID, and download URL', () => {
   const summary = buildMetafileDeliverySummary({
     artifact: {

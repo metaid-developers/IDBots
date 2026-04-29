@@ -87,7 +87,7 @@ export function extractOrderSkillName(plaintext: string): string | null {
   return extractFirstMatch(plaintext, SKILL_NAME_PATTERNS);
 }
 
-export type ServiceOrderOutputType = 'text' | 'image' | 'video' | 'other';
+export type ServiceOrderOutputType = 'text' | 'image' | 'video' | 'audio' | 'other';
 
 export function normalizeOrderOutputType(value: unknown): ServiceOrderOutputType | null {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -95,6 +95,7 @@ export function normalizeOrderOutputType(value: unknown): ServiceOrderOutputType
     normalized === 'text' ||
     normalized === 'image' ||
     normalized === 'video' ||
+    normalized === 'audio' ||
     normalized === 'other'
   ) {
     return normalized;

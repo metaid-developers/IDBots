@@ -180,3 +180,110 @@ test('runOrder uploads image output artifacts and returns a metafile delivery su
   );
   assert.equal(hasUploadNoticeEvent, true);
 });
+
+test('runOrder retries media delivery upload when the first PINID cannot be verified', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-delivery-retry-'));
+  const imagePath = path.join(cwd, 'portrait.png');
+  fs.writeFileSync(imagePath, 'png');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+  const verifyCalls = [];
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      const suffix = uploadCalls.length === 1 ? 'bad' : 'good';
+      return {
+        pinId: `aabbccddeeff00112233445566778899${suffix}i0`,
+        uploadMode: 'direct',
+      };
+    },
+    verifyDeliveryArtifactUpload: async (upload) => {
+      verifyCalls.push(upload);
+      return String(upload.pinId || '').includes('good');
+    },
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb-order-retry',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 帮我生成一张肖像图',
+    systemPrompt: 'test system prompt',
+    expectedOutputType: 'image',
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-final',
+    type: 'assistant',
+    content: '肖像图已生成，保存在 portrait.png。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('complete', sessionId);
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, true);
+  assert.equal(uploadCalls.length, 2);
+  assert.equal(verifyCalls.length, 2);
+  assert.match(result.serviceReply, /goodi0\.png/);
+});
+
+test('runOrder rejects media delivery after one failed upload retry', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-delivery-failed-'));
+  const imagePath = path.join(cwd, 'failed.png');
+  fs.writeFileSync(imagePath, 'png');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      return { pinId: '' };
+    },
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb-order-failed',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 帮我生成一张图片',
+    systemPrompt: 'test system prompt',
+    expectedOutputType: 'image',
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-final',
+    type: 'assistant',
+    content: '图片已生成，保存在 failed.png。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('complete', sessionId);
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, false);
+  assert.equal(uploadCalls.length, 2);
+  assert.match(result.serviceReply, /上传链上交付失败/);
+  assert.match(result.serviceReply, /退款流程/);
+});

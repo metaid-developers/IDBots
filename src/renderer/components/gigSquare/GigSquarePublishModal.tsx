@@ -40,6 +40,7 @@ const OUTPUT_OPTIONS = [
   { label: 'text', value: 'text' },
   { label: 'image', value: 'image' },
   { label: 'video', value: 'video' },
+  { label: 'audio', value: 'audio' },
   { label: 'other', value: 'other' },
 ];
 
@@ -62,7 +63,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const [currency, setCurrency] = useState<PublishCurrency>('BTC');
   const [mrc20Assets, setMrc20Assets] = useState<SelectableMrc20Asset[]>([]);
   const [selectedMrc20Id, setSelectedMrc20Id] = useState('');
-  const [outputType, setOutputType] = useState<'text' | 'image' | 'video' | 'other'>('text');
+  const [outputType, setOutputType] = useState<'text' | 'image' | 'video' | 'audio' | 'other'>('text');
   const [serviceIconDataUrl, setServiceIconDataUrl] = useState('');
   const [status, setStatus] = useState<PublishStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -534,7 +535,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               </label>
               <select
                 value={outputType}
-                onChange={(e) => setOutputType(e.target.value as 'text' | 'image' | 'video' | 'other')}
+                onChange={(e) => setOutputType(e.target.value as 'text' | 'image' | 'video' | 'audio' | 'other')}
                 className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
                 disabled={isFormDisabled}
               >

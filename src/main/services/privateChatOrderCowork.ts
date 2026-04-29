@@ -13,6 +13,7 @@ import {
   buildMetafileDeliverySummary,
   normalizeServiceOutputType,
   resolveServiceDeliveryArtifact,
+  uploadVerifiedDeliveryArtifact,
 } from './serviceDeliveryArtifacts.js';
 
 interface MessageAccumulator {
@@ -30,6 +31,11 @@ export interface PrivateChatOrderCoworkOptions {
   timeoutMs?: number;
   emitToRenderer?: (channel: string, data: unknown) => void;
   uploadDeliveryArtifact?: (artifact: Record<string, unknown>, request: OrderCoworkRequest) => Promise<Record<string, unknown>>;
+  verifyDeliveryArtifactUpload?: (
+    upload: Record<string, unknown>,
+    artifact: Record<string, unknown>,
+    request: OrderCoworkRequest
+  ) => Promise<boolean>;
   buildRatingInvite?: (serviceReply: string, request?: OrderCoworkRequest) => Promise<string>;
 }
 
@@ -69,6 +75,11 @@ export class PrivateChatOrderCowork extends EventEmitter {
   private timeoutMs: number;
   private emitToRenderer?: (channel: string, data: unknown) => void;
   private uploadDeliveryArtifact?: (artifact: Record<string, unknown>, request: OrderCoworkRequest) => Promise<Record<string, unknown>>;
+  private verifyDeliveryArtifactUpload?: (
+    upload: Record<string, unknown>,
+    artifact: Record<string, unknown>,
+    request: OrderCoworkRequest
+  ) => Promise<boolean>;
   private buildRatingInviteOverride?: (serviceReply: string, request?: OrderCoworkRequest) => Promise<string>;
 
   private sessionIds: Set<string> = new Set();
@@ -82,6 +93,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     this.timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
     this.emitToRenderer = options.emitToRenderer;
     this.uploadDeliveryArtifact = options.uploadDeliveryArtifact;
+    this.verifyDeliveryArtifactUpload = options.verifyDeliveryArtifactUpload;
     this.buildRatingInviteOverride = options.buildRatingInvite;
     this.setupListeners();
   }
@@ -355,14 +367,26 @@ export class PrivateChatOrderCowork extends EventEmitter {
     await this.sendOrderStatusUpdate(request, uploadNotice);
 
     try {
-      const upload = await this.uploadDeliveryArtifact(artifactResult.artifact, request ?? ({} as OrderCoworkRequest));
-      const pinId = typeof upload?.pinId === 'string' ? upload.pinId.trim() : '';
-      if (!pinId) {
-        throw new Error('Upload returned empty pinId');
+      const verifiedUpload = await uploadVerifiedDeliveryArtifact({
+        artifact: artifactResult.artifact,
+        request: request ?? ({} as OrderCoworkRequest),
+        uploadDeliveryArtifact: this.uploadDeliveryArtifact,
+        verifyDeliveryArtifactUpload: this.verifyDeliveryArtifactUpload,
+        maxAttempts: 2,
+        onRetry: async () => {
+          const retryNotice = '数字成果链上上传校验失败，正在重新上传一次。';
+          this.addOrderDeliveryStatusMessage(sessionId, retryNotice, {
+            orderDeliveryUploadRetryNotice: true,
+          });
+          await this.sendOrderStatusUpdate(request, retryNotice);
+        },
+      });
+      if (!verifiedUpload.ok) {
+        throw verifiedUpload.error;
       }
       const deliverySummary = buildMetafileDeliverySummary({
         artifact: artifactResult.artifact,
-        upload,
+        upload: verifiedUpload.upload,
       });
       this.addOrderDeliveryStatusMessage(sessionId, deliverySummary, {
         orderDeliveryUploadComplete: true,

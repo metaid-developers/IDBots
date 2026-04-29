@@ -58,7 +58,7 @@ type ModifyDraft = {
   currency: ModifyCurrency;
   mrc20Ticker: string;
   mrc20Id: string;
-  outputType: 'text' | 'image' | 'video' | 'other';
+  outputType: 'text' | 'image' | 'video' | 'audio' | 'other';
   serviceIconDataUrl: string;
 };
 
@@ -90,6 +90,7 @@ const OUTPUT_OPTIONS: Array<{ label: string; value: ModifyDraft['outputType'] }>
   { label: 'text', value: 'text' },
   { label: 'image', value: 'image' },
   { label: 'video', value: 'video' },
+  { label: 'audio', value: 'audio' },
   { label: 'other', value: 'other' },
 ];
 
@@ -118,6 +119,7 @@ const normalizeModifyOutputType = (value: string | null | undefined): ModifyDraf
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'image') return 'image';
   if (normalized === 'video') return 'video';
+  if (normalized === 'audio') return 'audio';
   if (normalized === 'other') return 'other';
   return 'text';
 };
