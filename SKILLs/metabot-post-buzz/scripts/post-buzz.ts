@@ -6,7 +6,7 @@
  * Requires: Node.js 18+ (for fetch). Env: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).
  *
  * Usage:
- *   node post-buzz.js --content "<content>" [--attachment <file>]... [--content-type "<mime>"] [--network mvc|doge|btc]
+ *   node post-buzz.js --request-file <request.json> [--content "<content>"] [--attachment <file-or-metafile-uri>]... [--content-type "<mime>"] [--network mvc|doge|btc]
  */
 
 import { parseArgs } from 'util';
@@ -65,6 +65,66 @@ interface CreatePinResponse {
   txids?: string[];
   pinId?: string;
   totalCost?: number;
+}
+
+interface BuzzRequestFile {
+  content?: unknown;
+  attachments?: unknown;
+  contentType?: unknown;
+  network?: unknown;
+  quotePin?: unknown;
+}
+
+function readBuzzRequestFile(filePath: string): BuzzRequestFile {
+  const resolved = pathMod.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Request file not found: ${resolved}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolved, 'utf8')) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid request file JSON: ${resolved}: ${message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Invalid request file: ${resolved} must contain a JSON object.`);
+  }
+
+  return parsed as BuzzRequestFile;
+}
+
+function optionalString(value: unknown, fieldName: string): string | undefined {
+  if (typeof value === 'undefined') return undefined;
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid request file field: ${fieldName} must be a string.`);
+  }
+  return value;
+}
+
+function normalizeAttachmentList(value: unknown, fieldName: string): string[] {
+  if (typeof value === 'undefined') return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid request file field: ${fieldName} must be an array of strings.`);
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== 'string') {
+      throw new Error(`Invalid request file field: ${fieldName}[${index}] must be a string.`);
+    }
+    return item.trim();
+  }).filter((item) => item.length > 0);
+}
+
+function normalizeNetwork(value: string | undefined): string {
+  const networkRaw = value?.toLowerCase?.()?.trim() ?? '';
+  return networkRaw === 'doge' || networkRaw === 'btc' ? networkRaw : 'mvc';
+}
+
+function isMetafileUri(value: string): boolean {
+  return value.trim().toLowerCase().startsWith('metafile://');
 }
 
 async function createPin(metabotId: number, network: string, metaidData: Record<string, unknown>): Promise<CreatePinResponse> {
@@ -138,11 +198,12 @@ async function uploadFile(filePath: string, metabotId: number, network: string):
 }
 
 const USAGE =
-  'Usage: node post-buzz.js --content "<content>" [--attachment <file>]... [--content-type "<mime>"] [--network mvc|doge|btc]';
+  'Usage: node post-buzz.js --request-file <request.json> [--content "<content>"] [--attachment <file-or-metafile-uri>]... [--content-type "<mime>"] [--network mvc|doge|btc]';
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     options: {
+      'request-file': { type: 'string' },
       content: { type: 'string' },
       attachment: { type: 'string', multiple: true },
       'content-type': { type: 'string' },
@@ -158,21 +219,16 @@ async function main(): Promise<void> {
         USAGE +
         '\n\n' +
         'Options:\n' +
-        '  --content <string>       (required) Text to post.\n' +
-        '  --attachment <file>      (optional, repeatable) Local file path to upload as attachment.\n' +
-        '  --content-type <string>  (optional) Content MIME type, default: text/plain;utf-8\n' +
-        '  --network <string>       (optional) Target network: mvc (default), doge, btc\n' +
-        '  -h, --help               Show this message.\n' +
+        '  --request-file <json>           (recommended) JSON request file with content, attachments, contentType, network, quotePin.\n' +
+        '  --content <string>              Text to post. Optional when request file provides content.\n' +
+        '  --attachment <file|metafile://> (optional, repeatable) Local file path to upload, or existing metafile URI to attach directly.\n' +
+        '  --content-type <string>         (optional) Content MIME type, default: text/plain;utf-8\n' +
+        '  --network <string>              (optional) Target network: mvc (default), doge, btc\n' +
+        '  -h, --help                      Show this message.\n' +
         '\nEnv: IDBOTS_METABOT_ID (required), IDBOTS_RPC_URL (optional).\n'
     );
     process.exit(0);
   }
-
-  const content = values.content ?? '';
-  const contentType = values['content-type'] ?? 'text/plain;utf-8';
-  const attachmentPaths: string[] = values.attachment ?? [];
-  const networkRaw = values.network?.toLowerCase?.()?.trim() ?? '';
-  const network = networkRaw === 'doge' || networkRaw === 'btc' ? networkRaw : 'mvc';
 
   for (const p of positionals) {
     if (p.startsWith('-')) {
@@ -181,8 +237,23 @@ async function main(): Promise<void> {
     }
   }
 
+  const requestFile = values['request-file'];
+  const request = requestFile ? readBuzzRequestFile(requestFile) : {};
+  const requestContent = optionalString(request.content, 'content');
+  const requestContentType = optionalString(request.contentType, 'contentType');
+  const requestNetwork = optionalString(request.network, 'network');
+  const quotePin = optionalString(request.quotePin, 'quotePin') ?? '';
+
+  const content = values.content ?? requestContent ?? '';
+  const contentType = values['content-type'] ?? requestContentType ?? 'text/plain;utf-8';
+  const attachmentInputs = [
+    ...normalizeAttachmentList(request.attachments, 'attachments'),
+    ...(values.attachment ?? []).map((item) => item.trim()).filter((item) => item.length > 0),
+  ];
+  const network = normalizeNetwork(values.network ?? requestNetwork);
+
   if (typeof content !== 'string' || content.trim() === '') {
-    writeStderr('Error: --content is required and must not be empty.');
+    writeStderr('Error: content is required and must not be empty. Use --request-file or --content.');
     writeStderr(USAGE);
     process.exit(1);
   }
@@ -198,24 +269,36 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Phase 1: upload attachments and collect metafile:// URIs (with file extension)
+  // Phase 1: upload local attachments and collect metafile:// URIs.
   const attachments: string[] = [];
+  let uploadedAttachmentCount = 0;
+  let directMetafileCount = 0;
 
-  for (const filePath of attachmentPaths) {
-    const { pinId, ext } = await uploadFile(filePath, metabotId, network);
+  for (const attachment of attachmentInputs) {
+    if (isMetafileUri(attachment)) {
+      attachments.push(attachment);
+      directMetafileCount += 1;
+      continue;
+    }
+
+    const { pinId, ext } = await uploadFile(attachment, metabotId, network);
     attachments.push(`metafile://${pinId}${ext}`);
+    uploadedAttachmentCount += 1;
   }
 
-  if (attachments.length > 0) {
-    writeStderr(`All ${attachments.length} attachment(s) uploaded.`);
+  if (uploadedAttachmentCount > 0) {
+    writeStderr(`Uploaded ${uploadedAttachmentCount} local attachment(s).`);
+  }
+  if (directMetafileCount > 0) {
+    writeStderr(`Using ${directMetafileCount} existing metafile attachment(s).`);
   }
 
   // Phase 2: post the SimpleBuzz with attachments
   const buzzPayload = {
-    content: content.trim(),
+    content,
     contentType,
     attachments,
-    quotePin: '',
+    quotePin,
   };
 
   const resp = await createPin(metabotId, network, {

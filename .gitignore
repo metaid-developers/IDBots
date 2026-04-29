@@ -42,6 +42,7 @@ tests/*
 !tests/coworkProviderErrors.test.mjs
 !tests/transferServiceMvcRecovery.test.mjs
 !tests/metaidCoreMvcRecovery.test.mjs
+!tests/metabotPostBuzzSkill.test.mjs
 
 # Local DB (never commit)
 *.sqlite
