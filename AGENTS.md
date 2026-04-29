@@ -5,6 +5,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Commit and Merge Rules
 
 - If you notice unfamiliar or unrelated file changes, continue working and stay focused on your own scoped edits unless the user asks you to inspect them.
+- All IDBots-related edits must stay within this IDBots project directory; modifying files outside the IDBots project is strictly forbidden.
 - Before creating a new git worktree or branch, ask for explicit user confirmation first.
 - Every new branch must be created together with a dedicated local worktree; use one worktree working directory per branch, and do not create or switch branches in the main working directory.
 - All feature or temporary branches must branch directly from `main`; never create a new branch from another branch. Branch depth is capped at 1.
