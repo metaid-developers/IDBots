@@ -24,8 +24,10 @@ import {
 } from './mvcSpendSessionState';
 import {
   mergeMvcFundingCandidates,
+  recoverMvcFundingCandidatesFromAddressHistory,
   recoverMvcFundingCandidatesFromPinHistory,
 } from './mvcFundingRecoveryService';
+import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { broadcastBtcTx as broadcastBtcTxViaProvider, fetchBtcUtxos as fetchBtcUtxosViaProvider } from '../libs/btcApi';
 
 const METALET_HOST = 'https://www.metalet.space';
@@ -247,6 +249,7 @@ type MvcTransferSessionSnapshot = {
 };
 
 type MvcTransferFundingRecovery = typeof recoverMvcFundingCandidatesFromPinHistory;
+type MvcTransferAddressHistoryFundingRecovery = typeof recoverMvcFundingCandidatesFromAddressHistory;
 
 type MvcTransferSessionStore = Pick<
   MetabotStore,
@@ -275,6 +278,15 @@ interface MvcTransferWorkerFailure {
 
 function isMvcProviderStaleFundingMessage(message: string): boolean {
   return String(message || '').includes('MVC funding inputs are stale on the provider');
+}
+
+function createTerminalMvcStaleFundingFailure(metabotId: number): MvcTransferWorkerFailure {
+  const excludedOutpoints = getMvcSpendSessionSnapshot(metabotId).excludeOutpoints;
+  return {
+    success: false,
+    error: '所有已知 MVC 手续费输入都已失效，且当前没有获取到新的可花费 UTXO。请先向该 MetaBot 的 MVC 地址转入一笔新的小额 SPACE，等待钱包/索引刷新后再重试。',
+    staleOutpoints: excludedOutpoints,
+  };
 }
 
 function getBtcWalletForTransfer(mnemonic: string, addressIndex: number): BtcWallet {
@@ -412,6 +424,7 @@ export async function buildMvcTransferSessionSnapshot(
   metabotId: number,
   options: {
     recoverMvcFundingCandidates?: MvcTransferFundingRecovery;
+    recoverMvcAddressHistoryFundingCandidates?: MvcTransferAddressHistoryFundingRecovery;
   } = {},
 ): Promise<MvcTransferSessionSnapshot> {
   const sessionSnapshot = getMvcSpendSessionSnapshot(metabotId);
@@ -428,42 +441,70 @@ export async function buildMvcTransferSessionSnapshot(
     return sessionSnapshot;
   }
 
-  const recentPinTransactions = metabotStore.listRecentPinTransactionsByAddress(mvcAddress, 8);
-  if (recentPinTransactions.length === 0) {
-    return sessionSnapshot;
-  }
-
   const recoverMvcFundingCandidates =
     options.recoverMvcFundingCandidates ?? recoverMvcFundingCandidatesFromPinHistory;
   let recoveredFundingUtxos: MvcCachedFundingUtxo[] = [];
-  try {
-    recoveredFundingUtxos = await recoverMvcFundingCandidates({
-      address: mvcAddress,
-      recentPinTransactions,
-      excludedOutpoints: sessionSnapshot.excludeOutpoints,
-      onRecoverError: ({ txid, error }) => {
-        console.warn('[Transfer] MVC funding recovery tx probe failed', {
-          metabotId,
-          mvcAddress,
-          txid,
-          error,
-        });
-      },
-    });
-  } catch (error) {
-    console.warn('[Transfer] MVC funding recovery failed; falling back to provider UTXOs', {
-      metabotId,
-      mvcAddress,
-      error: getErrorMessage(error),
-    });
-    return sessionSnapshot;
+  const recentPinTransactions = metabotStore.listRecentPinTransactionsByAddress(mvcAddress, 8);
+  if (recentPinTransactions.length > 0) {
+    try {
+      recoveredFundingUtxos = await recoverMvcFundingCandidates({
+        address: mvcAddress,
+        recentPinTransactions,
+        excludedOutpoints: sessionSnapshot.excludeOutpoints,
+        onRecoverError: ({ txid, error }) => {
+          console.warn('[Transfer] MVC funding recovery tx probe failed', {
+            metabotId,
+            mvcAddress,
+            txid,
+            error,
+          });
+        },
+      });
+    } catch (error) {
+      console.warn('[Transfer] MVC funding recovery failed; falling back to provider UTXOs', {
+        metabotId,
+        mvcAddress,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   if (recoveredFundingUtxos.length === 0) {
+    const recoverMvcAddressHistoryFundingCandidates =
+      options.recoverMvcAddressHistoryFundingCandidates ?? recoverMvcFundingCandidatesFromAddressHistory;
+    try {
+      recoveredFundingUtxos = await recoverMvcAddressHistoryFundingCandidates({
+        address: mvcAddress,
+        excludedOutpoints: sessionSnapshot.excludeOutpoints,
+        onRecoverError: ({ txid, error }) => {
+          console.warn('[Transfer] MVC address-history funding recovery tx probe failed', {
+            metabotId,
+            mvcAddress,
+            txid,
+            error,
+          });
+        },
+      });
+    } catch (error) {
+      console.warn('[Transfer] MVC address-history funding recovery failed; falling back to provider UTXOs', {
+        metabotId,
+        mvcAddress,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  if (recoveredFundingUtxos.length === 0) {
+    console.log('[Transfer] MVC funding recovery found no usable local candidates', {
+      metabotId,
+      mvcAddress,
+      recentPinTransactions: recentPinTransactions.map((item) => item.txid),
+      excludedOutpoints: sessionSnapshot.excludeOutpoints,
+    });
     return sessionSnapshot;
   }
 
-  console.log('[Transfer] Recovered MVC funding candidates from local pin history', {
+  console.log('[Transfer] Recovered MVC funding candidates from local history', {
     metabotId,
     mvcAddress,
     recoveredOutpoints: recoveredFundingUtxos.map((utxo) => getMvcCachedFundingOutpointKey(utxo)),
@@ -482,6 +523,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
   metabotStore: MvcTransferSessionStore;
   metabotId: number;
   buildSessionSnapshot?: BuildMvcTransferSessionSnapshot;
+  requestFreshFunding?: () => Promise<boolean>;
   runWorkerForSession: (
     sessionSnapshot: MvcTransferSessionSnapshot
   ) => Promise<MvcTransferWorkerSuccess | MvcTransferWorkerFailure>;
@@ -489,6 +531,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
   workerResult: MvcTransferWorkerSuccess | MvcTransferWorkerFailure;
   sessionSnapshot: MvcTransferSessionSnapshot;
   retriedAfterStaleFunding: boolean;
+  requestedFreshFundingAfterStale: boolean;
 }> {
   const buildSessionSnapshot = params.buildSessionSnapshot ?? buildMvcTransferSessionSnapshot;
   const initialSnapshot = await buildSessionSnapshot(params.metabotStore, params.metabotId);
@@ -498,6 +541,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
       workerResult: initialResult,
       sessionSnapshot: initialSnapshot,
       retriedAfterStaleFunding: false,
+      requestedFreshFundingAfterStale: false,
     };
   }
 
@@ -510,24 +554,90 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
       workerResult: initialResult,
       sessionSnapshot: initialSnapshot,
       retriedAfterStaleFunding: false,
+      requestedFreshFundingAfterStale: false,
     };
   }
 
   recordMvcSpentOutpoints(params.metabotId, staleOutpoints);
+  let latestSnapshot = initialSnapshot;
   const recoveredSnapshot = await buildSessionSnapshot(params.metabotStore, params.metabotId);
-  if (recoveredSnapshot.preferredFundingUtxos.length === 0) {
+  latestSnapshot = recoveredSnapshot;
+  if (recoveredSnapshot.preferredFundingUtxos.length > 0) {
+    const retryResult = await params.runWorkerForSession(recoveredSnapshot);
+    if (retryResult.success) {
+      return {
+        workerResult: retryResult,
+        sessionSnapshot: recoveredSnapshot,
+        retriedAfterStaleFunding: true,
+        requestedFreshFundingAfterStale: false,
+      };
+    }
+
+    const retryFailure = retryResult as MvcTransferWorkerFailure;
+    const retryStaleOutpoints = Array.isArray(retryFailure.staleOutpoints)
+      ? retryFailure.staleOutpoints
+      : [];
+    if (!isMvcProviderStaleFundingMessage(retryFailure.error) || retryStaleOutpoints.length === 0) {
+      return {
+        workerResult: retryResult,
+        sessionSnapshot: recoveredSnapshot,
+        retriedAfterStaleFunding: true,
+        requestedFreshFundingAfterStale: false,
+      };
+    }
+
+    recordMvcSpentOutpoints(params.metabotId, retryStaleOutpoints);
+  }
+
+  if (!params.requestFreshFunding) {
     return {
-      workerResult: initialResult,
-      sessionSnapshot: initialSnapshot,
+      workerResult: createTerminalMvcStaleFundingFailure(params.metabotId),
+      sessionSnapshot: latestSnapshot,
       retriedAfterStaleFunding: false,
+      requestedFreshFundingAfterStale: false,
     };
   }
 
-  const retryResult = await params.runWorkerForSession(recoveredSnapshot);
+  const requestedFreshFunding = await params.requestFreshFunding();
+  if (!requestedFreshFunding) {
+    return {
+      workerResult: createTerminalMvcStaleFundingFailure(params.metabotId),
+      sessionSnapshot: latestSnapshot,
+      retriedAfterStaleFunding: false,
+      requestedFreshFundingAfterStale: true,
+    };
+  }
+
+  const refreshedSnapshot = await buildSessionSnapshot(params.metabotStore, params.metabotId);
+  const refreshedResult = await params.runWorkerForSession(refreshedSnapshot);
+  if (refreshedResult.success) {
+    return {
+      workerResult: refreshedResult,
+      sessionSnapshot: refreshedSnapshot,
+      retriedAfterStaleFunding: true,
+      requestedFreshFundingAfterStale: true,
+    };
+  }
+
+  const refreshedFailure = refreshedResult as MvcTransferWorkerFailure;
+  const refreshedStaleOutpoints = Array.isArray(refreshedFailure.staleOutpoints)
+    ? refreshedFailure.staleOutpoints
+    : [];
+  if (isMvcProviderStaleFundingMessage(refreshedFailure.error) && refreshedStaleOutpoints.length > 0) {
+    recordMvcSpentOutpoints(params.metabotId, refreshedStaleOutpoints);
+    return {
+      workerResult: createTerminalMvcStaleFundingFailure(params.metabotId),
+      sessionSnapshot: refreshedSnapshot,
+      retriedAfterStaleFunding: true,
+      requestedFreshFundingAfterStale: true,
+    };
+  }
+
   return {
-    workerResult: retryResult,
-    sessionSnapshot: recoveredSnapshot,
+    workerResult: refreshedResult,
+    sessionSnapshot: refreshedSnapshot,
     retriedAfterStaleFunding: true,
+    requestedFreshFundingAfterStale: true,
   };
 }
 
@@ -573,6 +683,35 @@ export async function executeTransfer(
           const workerSessionResult = await runMvcTransferWorkerWithSessionRecovery({
             metabotStore: store,
             metabotId: params.metabotId,
+            requestFreshFunding: async () => {
+              const metabot = store.getMetabotById(params.metabotId);
+              const mvcAddress = String(metabot?.mvc_address || '').trim();
+              if (!mvcAddress) {
+                return false;
+              }
+              console.log('[Transfer] MVC: requesting fresh funding after stale transfer inputs', {
+                metabotId: params.metabotId,
+                mvcAddress,
+              });
+              const subsidy = await requestMvcGasSubsidy({
+                mvcAddress,
+                mnemonic: wallet.mnemonic,
+                path: wallet.path ?? "m/44'/10001'/0'/0/0",
+              });
+              if (!subsidy.success) {
+                console.warn('[Transfer] MVC: fresh funding request after stale transfer inputs failed', {
+                  metabotId: params.metabotId,
+                  mvcAddress,
+                  error: subsidy.error || 'MVC gas subsidy request failed',
+                });
+                return false;
+              }
+              console.log('[Transfer] MVC: fresh funding request after stale transfer inputs succeeded', {
+                metabotId: params.metabotId,
+                mvcAddress,
+              });
+              return true;
+            },
             runWorkerForSession: async (sessionSnapshot) => {
               console.log('[Transfer] MVC: running worker', {
                 amountSats,
@@ -597,6 +736,7 @@ export async function executeTransfer(
             console.log('[Transfer] MVC: retried worker with recovered funding after stale provider state', {
               metabotId: params.metabotId,
               success: workerResult.success,
+              requestedFreshFundingAfterStale: workerSessionResult.requestedFreshFundingAfterStale,
             });
           }
           if (workerResult.success) {

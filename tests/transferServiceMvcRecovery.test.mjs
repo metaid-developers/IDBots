@@ -110,7 +110,9 @@ test('buildMvcTransferSessionSnapshot falls back to the provider snapshot when r
   const metabotId = 10;
   const staleOutpoint = `${'f'.repeat(64)}:0`;
   const originalWarn = console.warn;
+  const originalLog = console.log;
   console.warn = () => {};
+  console.log = () => {};
 
   recordMvcSpentOutpoints(metabotId, [staleOutpoint]);
 
@@ -128,16 +130,80 @@ test('buildMvcTransferSessionSnapshot falls back to the provider snapshot when r
         recoverMvcFundingCandidates: async () => {
           throw new Error('local tx probe failed');
         },
+        recoverMvcAddressHistoryFundingCandidates: async () => {
+          throw new Error('address tx probe failed');
+        },
       },
     );
   } finally {
     console.warn = originalWarn;
+    console.log = originalLog;
   }
 
   assert.deepEqual(snapshot, {
     excludeOutpoints: [staleOutpoint],
     preferredFundingUtxos: [],
   });
+});
+
+test('buildMvcTransferSessionSnapshot recovers from address history when local pin history has no candidates', async () => {
+  resetMvcSpendSessionStateForTests();
+  const metabotId = 13;
+  const mvcAddress = '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx';
+  const staleOutpoint = `${'6'.repeat(64)}:0`;
+  const recoveredUtxo = {
+    txId: '7'.repeat(64),
+    outputIndex: 1,
+    satoshis: 70_000,
+    address: mvcAddress,
+    height: -1,
+  };
+  const recoveryCalls = [];
+  const originalLog = console.log;
+  console.log = () => {};
+
+  recordMvcSpentOutpoints(metabotId, [staleOutpoint]);
+
+  let snapshot;
+  try {
+    snapshot = await buildMvcTransferSessionSnapshot(
+      {
+        getMetabotById: (id) => (id === metabotId ? { mvc_address: mvcAddress } : null),
+        listRecentPinTransactionsByAddress: (address, limit) => {
+          recoveryCalls.push({ source: 'pin-list', address, limit });
+          return [];
+        },
+      },
+      metabotId,
+      {
+        recoverMvcFundingCandidates: async () => {
+          recoveryCalls.push({ source: 'pin-history' });
+          return [];
+        },
+        recoverMvcAddressHistoryFundingCandidates: async (params) => {
+          recoveryCalls.push({
+            source: 'address-history',
+            address: params.address,
+            excludedOutpoints: params.excludedOutpoints,
+          });
+          return [recoveredUtxo];
+        },
+      },
+    );
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(snapshot.excludeOutpoints, [staleOutpoint]);
+  assert.deepEqual(snapshot.preferredFundingUtxos, [recoveredUtxo]);
+  assert.deepEqual(recoveryCalls, [
+    { source: 'pin-list', address: mvcAddress, limit: 8 },
+    {
+      source: 'address-history',
+      address: mvcAddress,
+      excludedOutpoints: [staleOutpoint],
+    },
+  ]);
 });
 
 test('runMvcTransferWorkerWithSessionRecovery retries once with recovered funding after stale provider failure', async () => {
@@ -197,6 +263,71 @@ test('runMvcTransferWorkerWithSessionRecovery retries once with recovered fundin
     {
       excludeOutpoints: [staleOutpoint],
       preferredFundingUtxos: [recoveredUtxo],
+    },
+  ]);
+  assert.deepEqual(getMvcSpendSessionSnapshot(metabotId).excludeOutpoints, [staleOutpoint]);
+});
+
+test('runMvcTransferWorkerWithSessionRecovery requests fresh funding when recovered transfer inputs are unavailable', async () => {
+  resetMvcSpendSessionStateForTests();
+  const metabotId = 14;
+  const staleOutpoint = `${'8'.repeat(64)}:0`;
+  const snapshots = [
+    {
+      excludeOutpoints: [],
+      preferredFundingUtxos: [],
+    },
+    {
+      excludeOutpoints: [staleOutpoint],
+      preferredFundingUtxos: [],
+    },
+    {
+      excludeOutpoints: [staleOutpoint],
+      preferredFundingUtxos: [],
+    },
+  ];
+  const seenSnapshots = [];
+  let freshFundingRequests = 0;
+
+  const result = await runMvcTransferWorkerWithSessionRecovery({
+    metabotStore: {},
+    metabotId,
+    buildSessionSnapshot: async () => snapshots.shift(),
+    requestFreshFunding: async () => {
+      freshFundingRequests += 1;
+      return true;
+    },
+    runWorkerForSession: async (snapshot) => {
+      seenSnapshots.push(snapshot);
+      if (seenSnapshots.length === 1) {
+        return {
+          success: false,
+          error: 'MVC funding inputs are stale on the provider; wait for the UTXO set to refresh and retry.',
+          staleOutpoints: [staleOutpoint],
+        };
+      }
+      return {
+        success: true,
+        txId: '9'.repeat(64),
+        spentOutpoints: [],
+        changeUtxo: null,
+      };
+    },
+  });
+
+  assert.equal(result.workerResult.success, true);
+  assert.equal(result.workerResult.txId, '9'.repeat(64));
+  assert.equal(result.retriedAfterStaleFunding, true);
+  assert.equal(result.requestedFreshFundingAfterStale, true);
+  assert.equal(freshFundingRequests, 1);
+  assert.deepEqual(seenSnapshots, [
+    {
+      excludeOutpoints: [],
+      preferredFundingUtxos: [],
+    },
+    {
+      excludeOutpoints: [staleOutpoint],
+      preferredFundingUtxos: [],
     },
   ]);
   assert.deepEqual(getMvcSpendSessionSnapshot(metabotId).excludeOutpoints, [staleOutpoint]);
