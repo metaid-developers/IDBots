@@ -205,6 +205,8 @@ export async function ensureServiceOrderObserverSession(
       sourceChannel: 'metaweb_order',
       externalConversationId,
       direction: getOrderMessageDirection(input.role),
+      txid: normalizeText(input.servicePaidTx) || undefined,
+      paymentTxid: normalizeText(input.servicePaidTx) || undefined,
     },
   });
 

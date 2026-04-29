@@ -63,6 +63,8 @@ test('ensureBuyerOrderObserverSession creates a dedicated metaweb_order a2a sess
     assert.ok(firstMessage);
     assert.equal(firstMessage?.type, 'user');
     assert.equal(firstMessage?.metadata?.direction, 'outgoing');
+    assert.equal(firstMessage?.metadata?.txid, 'b'.repeat(64));
+    assert.equal(firstMessage?.metadata?.paymentTxid, 'b'.repeat(64));
     assert.match(firstMessage?.content || '', /^\[ORDER\]/);
   } finally {
     sqlite.cleanup();

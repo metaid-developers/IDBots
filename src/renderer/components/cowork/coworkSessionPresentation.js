@@ -20,3 +20,10 @@ export function getCoworkSessionTitleClassName(input) {
     ? 'text-sm font-medium truncate leading-tight text-blue-500 dark:text-blue-400'
     : 'text-sm font-medium truncate leading-tight dark:text-claude-darkText text-claude-text';
 }
+
+export function shouldShowA2AServiceSessionId(input) {
+  const sessionId = typeof input?.sessionId === 'string' ? input.sessionId.trim() : '';
+  if (!sessionId) return false;
+  if (input?.sessionType !== 'a2a') return false;
+  return Boolean(input?.serviceOrderSummary);
+}
