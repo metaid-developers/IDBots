@@ -4,7 +4,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import A2AMessageItem, {
   createMetafileMediaObjectUrl,
+  formatA2ATxidPreview,
   parseMetafileUri,
+  resolveA2AMessageTxid,
   triggerMetafileDownload,
 } from '../src/renderer/components/cowork/A2AMessageItem';
 
@@ -27,6 +29,66 @@ test('A2A normal message bubble renders markdown content', () => {
 
   assert.match(markup, /<strong[^>]*>world<\/strong>/);
   assert.doesNotMatch(markup, /\*\*world\*\*/);
+});
+
+test('A2A message bubble renders subtle txid label from message metadata', () => {
+  const txid = '56ddbdab' + 'c'.repeat(56);
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-txid',
+        type: 'assistant',
+        content: 'Hello with txid',
+        timestamp: 1_744_444_444_000,
+        metadata: { direction: 'outgoing', txid },
+      }}
+      metabotName="Local Bot"
+    />
+  );
+
+  assert.equal(formatA2ATxidPreview(txid), '56ddbdab....');
+  assert.match(markup, /txid:/);
+  assert.match(markup, /56ddbdab\.\.\.\./);
+  assert.match(markup, /title="[^"]*copy/i);
+  assert.match(markup, /class="[^"]*text-\[10px\][^"]*text-claude-textSecondary/);
+});
+
+test('A2A message txid resolver accepts pin ids and structured order text fallback', () => {
+  const pinTxid = 'a'.repeat(64);
+  assert.equal(
+    resolveA2AMessageTxid({
+      id: 'msg-pin',
+      type: 'user',
+      content: 'plain',
+      timestamp: 1,
+      metadata: { direction: 'incoming', pinId: `${pinTxid}i0` },
+    }),
+    pinTxid,
+  );
+
+  const paymentTxid = 'b'.repeat(64);
+  assert.equal(
+    resolveA2AMessageTxid({
+      id: 'msg-order',
+      type: 'user',
+      content: `[ORDER] test\n支付金额 0.1 SPACE\ntxid: ${paymentTxid}`,
+      timestamp: 1,
+      metadata: { direction: 'incoming' },
+    }),
+    paymentTxid,
+  );
+
+  const deliveryTxid = 'c'.repeat(64);
+  assert.equal(
+    resolveA2AMessageTxid({
+      id: 'msg-delivery',
+      type: 'assistant',
+      content: `[DELIVERY] {"paymentTxid":"${deliveryTxid}","result":"done"}`,
+      timestamp: 1,
+      metadata: { direction: 'outgoing' },
+    }),
+    deliveryTxid,
+  );
 });
 
 test('A2A delivery result renders markdown content inside the bubble', () => {

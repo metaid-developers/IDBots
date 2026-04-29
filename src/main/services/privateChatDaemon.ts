@@ -67,6 +67,7 @@ const PRIVATE_CHAT_CONTEXT_MAX_MESSAGES = 80;
 export interface PrivateChatMessageRow {
   id: number;
   pin_id: string;
+  tx_id?: string | null;
   from_metaid: string;
   from_global_metaid: string | null;
   from_name: string | null;
@@ -114,6 +115,41 @@ const thinkingTasks = new Set<string>();
 let orderCowork: PrivateChatOrderCowork | null = null;
 const sentOrderDeliveryKeys = new Set<string>();
 const sentOrderRatingInviteKeys = new Set<string>();
+const CHAIN_TXID_RE = /^[0-9a-f]{64}$/i;
+const CHAIN_PIN_ID_RE = /^([0-9a-f]{64})i\d+$/i;
+
+const normalizeChainTxid = (value: unknown): string => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return CHAIN_TXID_RE.test(normalized) ? normalized : '';
+};
+
+const normalizeChainPinId = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const extractTxidFromChainPinId = (value: unknown): string => {
+  const normalized = normalizeChainPinId(value).toLowerCase();
+  return normalized.match(CHAIN_PIN_ID_RE)?.[1] ?? '';
+};
+
+export function buildPrivateChatA2AChainMetadata(input: {
+  txId?: unknown;
+  txids?: unknown;
+  pinId?: unknown;
+}): CoworkMessageMetadata {
+  const explicitTxid = normalizeChainTxid(input.txId);
+  const txids = Array.isArray(input.txids)
+    ? input.txids.map(normalizeChainTxid).filter(Boolean)
+    : [];
+  const pinId = normalizeChainPinId(input.pinId);
+  const txid = explicitTxid || txids[0] || extractTxidFromChainPinId(pinId);
+  const allTxids = Array.from(new Set([txid, ...txids].filter(Boolean)));
+  const metadata: CoworkMessageMetadata = {};
+  if (txid) metadata.txid = txid;
+  if (allTxids.length > 0) metadata.txids = allTxids;
+  if (pinId) metadata.pinId = pinId;
+  return metadata;
+}
 
 function buildOrderDispatchKey(
   localMetabotId: number,
@@ -125,7 +161,7 @@ function buildOrderDispatchKey(
 
 function parsePrivateChatRows(db: Database): PrivateChatMessageRow[] {
   const result = db.exec(
-    `SELECT id, pin_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey, to_metaid, to_global_metaid, content, encryption, reply_pin, raw_data
+    `SELECT id, pin_id, tx_id, from_metaid, from_global_metaid, from_name, from_avatar, from_chat_pubkey, to_metaid, to_global_metaid, content, encryption, reply_pin, raw_data
      FROM private_chat_messages WHERE is_processed = 0 ORDER BY id ASC`
   );
   if (!result[0]?.values?.length) return [];
@@ -2052,6 +2088,10 @@ async function processOne(
       senderGlobalMetaId: fromGlobalMetaId,
       senderName: (row.from_name as string | null) ?? null,
       senderAvatar: (row.from_avatar as string | null) ?? null,
+      extraMetadata: buildPrivateChatA2AChainMetadata({
+        txId: row.tx_id,
+        pinId: row.pin_id,
+      }),
       emitToRenderer,
     });
 
@@ -2144,7 +2184,26 @@ async function processOne(
     emitLog(`[PrivateChat] Encrypt reply: plaintextLen=${trimmed.length} sharedSecretLen=${sharedSecretForReply.length} encryptedLen=${encryptedReply.length} encryptedPrefix=${encryptedReply.slice(0, 40)}...`);
     const payloadStr = buildPrivateMsgPayload(fromGlobalMetaId, encryptedReply, row.reply_pin ?? '');
     try {
-      await createSimpleMsgPin(payloadStr);
+      const sentResult = await createSimpleMsgPin(payloadStr);
+      const chainMetadata = buildPrivateChatA2AChainMetadata({
+        txids: sentResult.txids,
+        pinId: sentResult.pinId,
+      });
+      if (Object.keys(chainMetadata).length > 0) {
+        const updatedMetadata = {
+          ...(assistantMessage.metadata ?? {}),
+          ...chainMetadata,
+        };
+        coworkStore.updateMessage(sessionId, assistantMessage.id, { metadata: updatedMetadata });
+        assistantMessage.metadata = updatedMetadata;
+        if (emitToRenderer) {
+          emitToRenderer('cowork:stream:messageUpdate', {
+            sessionId,
+            messageId: assistantMessage.id,
+            metadata: updatedMetadata,
+          });
+        }
+      }
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
     } catch (e) {
       emitLog(`[PrivateChat] Failed to broadcast reply: ${e instanceof Error ? e.message : e}`);

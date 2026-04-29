@@ -12,6 +12,7 @@ let hasNewerPrivateChatMessage;
 let evaluatePrivateChatAutoReplyPolicy;
 let hasPriorNonHandshakePrivateChatOutbound;
 let hasPriorPrivateChatA2AOutbound;
+let buildPrivateChatA2AChainMetadata;
 try {
   ({
     appendPrivateChatA2AMessage,
@@ -25,6 +26,7 @@ try {
     evaluatePrivateChatAutoReplyPolicy,
     hasPriorNonHandshakePrivateChatOutbound,
     hasPriorPrivateChatA2AOutbound,
+    buildPrivateChatA2AChainMetadata,
   } = await import('../dist-electron/main/services/privateChatDaemon.js'));
 } catch {
   ({
@@ -39,6 +41,7 @@ try {
     evaluatePrivateChatAutoReplyPolicy,
     hasPriorNonHandshakePrivateChatOutbound,
     hasPriorPrivateChatA2AOutbound,
+    buildPrivateChatA2AChainMetadata,
   } = await import('../dist-electron/services/privateChatDaemon.js'));
 }
 
@@ -105,6 +108,35 @@ test('regular private chat A2A messages are emitted live with display direction 
       data: { sessionId: 'session-private-1', message: outgoing },
     },
   ]);
+});
+
+test('private chat A2A chain metadata normalizes txid and pin ids for bubble display', () => {
+  const txid = '56ddbdab' + 'c'.repeat(56);
+
+  assert.deepEqual(
+    buildPrivateChatA2AChainMetadata({
+      txId: txid.toUpperCase(),
+      pinId: `${txid}i0`,
+    }),
+    {
+      txid,
+      txids: [txid],
+      pinId: `${txid}i0`,
+    },
+  );
+
+  const fallbackTxid = 'a'.repeat(64);
+  assert.deepEqual(
+    buildPrivateChatA2AChainMetadata({
+      txids: [fallbackTxid],
+      pinId: `${fallbackTxid}i0`,
+    }),
+    {
+      txid: fallbackTxid,
+      txids: [fallbackTxid],
+      pinId: `${fallbackTxid}i0`,
+    },
+  );
 });
 
 test('ending a private chat A2A conversation marks the mapping closed and emits the local bye turn', () => {

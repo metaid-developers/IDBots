@@ -31,7 +31,10 @@ import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
-import { getCoworkSessionTitleClassName } from './coworkSessionPresentation.js';
+import {
+  getCoworkSessionTitleClassName,
+  shouldShowA2AServiceSessionId,
+} from './coworkSessionPresentation.js';
 import {
   getRefundCardVariant,
   shouldShowRefundStatusCard,
@@ -1947,6 +1950,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   }, [currentSession?.cwd]);
 
+  const handleCopyHeaderValue = useCallback((value: string) => {
+    const normalized = value.trim();
+    if (!normalized || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      return;
+    }
+    void navigator.clipboard.writeText(normalized).catch(() => {});
+  }, []);
+
   // Rename handlers
   const handleRenameClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -2256,6 +2267,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   const displayItems = buildDisplayItems(currentSession.messages);
   const turns = buildConversationTurns(displayItems);
+  const showA2AServiceSessionId = shouldShowA2AServiceSessionId({
+    sessionId: currentSession.id,
+    sessionType: currentSession.sessionType,
+    serviceOrderSummary: currentSession.serviceOrderSummary,
+  });
 
   const renderConversationTurns = () => {
     if (turns.length === 0) {
@@ -2387,6 +2403,23 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           {isA2ASession && (
             <span className="inline-flex items-center rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
               {i18nService.t('coworkOnChainBadge')}
+            </span>
+          )}
+          {showA2AServiceSessionId && (
+            <span className="non-draggable inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary opacity-75">
+              <span className="shrink-0">sessionid:</span>
+              <span className="min-w-0 max-w-[180px] truncate font-mono">
+                {currentSession.id}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleCopyHeaderValue(currentSession.id)}
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-current hover:bg-black/10 dark:hover:bg-white/10"
+                title={i18nService.t('copyToClipboard')}
+                aria-label={i18nService.t('copyToClipboard')}
+              >
+                <DocumentDuplicateIcon className="h-3 w-3" />
+              </button>
             </span>
           )}
         </div>

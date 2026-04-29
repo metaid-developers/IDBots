@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
-import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronRightIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 import MarkdownContent from '../MarkdownContent';
 
@@ -33,6 +33,10 @@ const METAFILE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.gif', '.png', '.webp', '.bmp', '.svg']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac']);
+const TXID_RE = /^[0-9a-f]{64}$/i;
+const PIN_ID_TXID_RE = /^([0-9a-f]{64})i\d+$/i;
+const CONTENT_TXID_RE = /(?:^|\n)\s*(?:txid|交易\s*id|交易ID|transaction\s+id)\s*[:：=]\s*([0-9a-f]{64})\b/i;
+const STRUCTURED_MESSAGE_JSON_RE = /^\s*\[(?:ORDER|DELIVERY)\]\s*(\{[\s\S]*\})\s*$/i;
 const MIME_TYPE_BY_EXTENSION = new Map<string, string>([
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
@@ -89,6 +93,84 @@ const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
 
 const normalizeMetafileCandidate = (candidate: string): string => {
   return String(candidate || '').trim().replace(/[),.;:!?]+$/, '');
+};
+
+const normalizeTxidCandidate = (value: unknown): string => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TXID_RE.test(normalized) ? normalized : '';
+};
+
+const normalizePinIdCandidate = (value: unknown): string => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const match = normalized.match(PIN_ID_TXID_RE);
+  return match?.[1] ?? '';
+};
+
+const resolveStructuredContentTxid = (content: string): string => {
+  const jsonMatch = content.match(STRUCTURED_MESSAGE_JSON_RE);
+  if (!jsonMatch) return '';
+  try {
+    const payload = JSON.parse(jsonMatch[1]) as Record<string, unknown>;
+    return [
+      payload.txid,
+      payload.txId,
+      payload.paymentTxid,
+      payload.paymentTxId,
+      payload.servicePaidTx,
+      payload.servicePaymentCommitTxid,
+      payload.refundTxid,
+    ].map(normalizeTxidCandidate).find(Boolean) ?? '';
+  } catch {
+    return '';
+  }
+};
+
+export const formatA2ATxidPreview = (txid: string): string => {
+  const normalized = normalizeTxidCandidate(txid);
+  return normalized ? `${normalized.slice(0, 8)}....` : '';
+};
+
+export const resolveA2AMessageTxid = (message: CoworkMessage): string => {
+  const metadata = message.metadata ?? {};
+  const txidsCandidate = Array.isArray(metadata.txids)
+    ? metadata.txids.map(normalizeTxidCandidate).find(Boolean)
+    : '';
+  const directCandidate = [
+    metadata.txid,
+    metadata.messageTxid,
+    metadata.pinTxid,
+    metadata.deliveryTxid,
+    metadata.deliveryMessageTxid,
+    metadata.orderMessageTxid,
+    metadata.paymentTxid,
+    metadata.refundTxid,
+  ].map(normalizeTxidCandidate).find(Boolean);
+  if (txidsCandidate) return txidsCandidate;
+  if (directCandidate) return directCandidate;
+
+  const pinCandidate = [
+    metadata.pinId,
+    metadata.messagePinId,
+    metadata.deliveryPinId,
+    metadata.deliveryMessagePinId,
+    metadata.orderMessagePinId,
+    metadata.refundRequestPinId,
+    metadata.refundFinalizePinId,
+  ].map(normalizePinIdCandidate).find(Boolean);
+  if (pinCandidate) return pinCandidate;
+
+  const contentMatch = String(message.content || '').match(CONTENT_TXID_RE);
+  const contentCandidate = normalizeTxidCandidate(contentMatch?.[1]);
+  if (contentCandidate) return contentCandidate;
+
+  return resolveStructuredContentTxid(String(message.content || ''));
+};
+
+const copyTextToClipboard = (value: string): void => {
+  if (!value || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+    return;
+  }
+  void navigator.clipboard.writeText(value).catch(() => {});
 };
 
 export const parseMetafileUri = (rawUri: string): ParsedMetafile | null => {
@@ -559,6 +641,8 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const contentToRender = shouldRenderDeliveryResult ? deliveryResult : message.content;
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = getA2AMarkdownClassName(isLocal);
+  const txid = resolveA2AMessageTxid(message);
+  const txidPreview = formatA2ATxidPreview(txid);
 
   return (
     <div className={`flex items-end gap-2 px-4 py-1 ${isLocal ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -581,6 +665,20 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
             {metafileItems.map((item, index) => (
               <MetafilePreviewCard key={`${item.uri}-${index}`} item={item} />
             ))}
+          </div>
+        )}
+        {txidPreview && (
+          <div className={`mt-0.5 inline-flex max-w-full items-center gap-1 px-1 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary opacity-70 ${isLocal ? 'justify-end' : 'justify-start'}`}>
+            <span className="font-mono">txid: {txidPreview}</span>
+            <button
+              type="button"
+              onClick={() => copyTextToClipboard(txid)}
+              className="inline-flex h-4 w-4 items-center justify-center rounded text-current hover:bg-black/10 dark:hover:bg-white/10"
+              title="Copy txid"
+              aria-label="Copy txid"
+            >
+              <DocumentDuplicateIcon className="h-3 w-3" />
+            </button>
           </div>
         )}
         <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5 px-1">
