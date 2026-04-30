@@ -1890,6 +1890,7 @@ async function processOne(
 
       const trimmedReply = (orderResult.serviceReply || '').trim();
       const trimmedInvite = (orderResult.ratingInvite || '').trim();
+      let deliveryBroadcastFailed = false;
       if (trimmedReply && source === 'metaweb_private') {
         if (orderResult.isDeliverable === false) {
           try {
@@ -1980,6 +1981,7 @@ async function processOne(
             }
             emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
           } catch (error) {
+            deliveryBroadcastFailed = true;
             emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
             if (sellerOrderSessionId) {
               const failureReason = error instanceof Error ? error.message : String(error);
@@ -2021,7 +2023,7 @@ async function processOne(
           }
         }
       }
-      if (trimmedInvite && source === 'metaweb_private') {
+      if (trimmedInvite && source === 'metaweb_private' && !deliveryBroadcastFailed) {
         if (orderDispatchKey && sentOrderRatingInviteKeys.has(orderDispatchKey)) {
           emitLog(`[Order] Rating invite already sent for order ${orderTrackingId}, skipping duplicate send.`);
         } else {

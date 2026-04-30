@@ -1085,3 +1085,138 @@ test('backfillMetawebPrivateSimplemsgMetadata fills ordinary private-chat bubble
     sqlite.cleanup();
   }
 });
+
+test('backfillMetawebOrderSimplemsgMetadata matches service orders by order txid inside unified peer sessions', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 9;
+    const peerGlobalMetaId = 'seller-unified-peer';
+    const firstOrderTxid = '7'.repeat(64);
+    const secondOrderTxid = '8'.repeat(64);
+    const firstPaymentTxid = '5'.repeat(64);
+    const secondPaymentTxid = '6'.repeat(64);
+    const firstExternalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${firstOrderTxid.slice(0, 16)}`;
+    const secondExternalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${secondOrderTxid.slice(0, 16)}`;
+    const session = store.createSession(
+      'Unified peer',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Seller Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: `metaweb-private:${peerGlobalMetaId}`,
+      metabotId,
+      coworkSessionId: session.id,
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: firstExternalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: firstPaymentTxid,
+        orderTxid: firstOrderTxid,
+      }),
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: secondExternalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: secondPaymentTxid,
+        orderTxid: secondOrderTxid,
+      }),
+    });
+    const firstMessage = store.addMessage(session.id, {
+      type: 'user',
+      content: `[ORDER] first\ntxid: ${firstPaymentTxid}`,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId: `metaweb-private:${peerGlobalMetaId}`,
+        direction: 'outgoing',
+        orderTxid: firstOrderTxid,
+        orderMappingExternalConversationId: firstExternalConversationId,
+      },
+    });
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, order_message_txid, cowork_session_id, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'first-unified-order',
+      'buyer',
+      metabotId,
+      peerGlobalMetaId,
+      'service-first',
+      'First',
+      firstPaymentTxid,
+      'mvc',
+      '1',
+      'SPACE',
+      'native',
+      `${firstOrderTxid}i0`,
+      firstOrderTxid,
+      session.id,
+      'completed',
+      now + 1000,
+      now + 2000,
+      now,
+      now,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, order_message_txid, cowork_session_id, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'second-unified-order',
+      'buyer',
+      metabotId,
+      peerGlobalMetaId,
+      'service-second',
+      'Second',
+      secondPaymentTxid,
+      'mvc',
+      '1',
+      'SPACE',
+      'native',
+      `${secondOrderTxid}i0`,
+      secondOrderTxid,
+      session.id,
+      'completed',
+      now + 1000,
+      now + 2000,
+      now,
+      now + 10_000,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+    const updated = store.getSession(session.id);
+    const updatedFirst = updated.messages.find((message) => message.id === firstMessage.id);
+    assert.equal(updatedFirst.metadata.pinId, `${firstOrderTxid}i0`);
+    assert.equal(updatedFirst.metadata.txid, firstOrderTxid);
+    assert.notEqual(updatedFirst.metadata.pinId, `${secondOrderTxid}i0`);
+  } finally {
+    sqlite.cleanup();
+  }
+});

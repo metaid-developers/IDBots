@@ -156,6 +156,24 @@ test('migration repoints legacy order mapping to canonical peer session and hide
         direction: 'outgoing',
       },
     });
+    store.addMessage(orderSession.id, {
+      type: 'assistant',
+      content: '重复状态：仍在处理。',
+      metadata: {
+        sourceChannel: 'metaweb_order',
+        externalConversationId: orderExternalConversationId,
+        direction: 'outgoing',
+      },
+    });
+    store.addMessage(orderSession.id, {
+      type: 'assistant',
+      content: '重复状态：仍在处理。',
+      metadata: {
+        sourceChannel: 'metaweb_order',
+        externalConversationId: orderExternalConversationId,
+        direction: 'outgoing',
+      },
+    });
 
     const serviceOrderStore = new ServiceOrderStore(sqlite.db, () => {});
     const serviceOrder = serviceOrderStore.createOrder({
@@ -201,6 +219,10 @@ test('migration repoints legacy order mapping to canonical peer session and hide
     assert.equal(copiedNoChain.metadata?.sourceChannel, 'metaweb_private');
     assert.equal(copiedNoChain.metadata?.externalConversationId, privateExternalConversationId);
     assert.equal(copiedNoChain.metadata?.orderMappingExternalConversationId, orderExternalConversationId);
+    assert.equal(
+      privateMessages.filter((message) => message.content === '重复状态：仍在处理。').length,
+      2,
+    );
 
     const legacyRow = getRow(sqlite.db, 'SELECT hidden_from_session_list FROM cowork_sessions WHERE id = ?', [orderSession.id]);
     assert.equal(legacyRow?.hidden_from_session_list, 1);

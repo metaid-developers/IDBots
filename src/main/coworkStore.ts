@@ -657,6 +657,10 @@ interface ServiceOrderSimplemsgBackfillRow {
   delivery_message_pin_id: string | null;
 }
 
+interface ServiceOrderSimplemsgBackfillMatchRow extends ServiceOrderSimplemsgBackfillRow {
+  match_count?: number | string | null;
+}
+
 interface SellerDeliverySimplemsgBackfillRow {
   payment_txid: string | null;
   delivery_message_pin_id: string | null;
@@ -2376,7 +2380,13 @@ export class CoworkStore implements MemoryBackend {
         metadata: copiedMetadata,
         timestamp: message.created_at,
       });
-      this.addMessageIdentitiesToIndex(identityIndex, this.getMessageIdentities(created.metadata ?? {}), created.content);
+      const createdIdentities = this.getMessageIdentities(created.metadata ?? {});
+      this.addMessageIdentitiesToIndex(
+        identityIndex,
+        createdIdentities,
+        created.content,
+        Boolean(createdIdentities.pinId || createdIdentities.txids.size > 0),
+      );
       copied += 1;
     }
     return copied;
@@ -2436,10 +2446,11 @@ export class CoworkStore implements MemoryBackend {
     index: { pinIds: Set<string>; txids: Set<string>; contentKeys: Set<string> },
     identities: { pinId: string; txids: Set<string> },
     content: string,
+    includeContentKey = true,
   ): void {
     if (identities.pinId) index.pinIds.add(identities.pinId);
     for (const txid of identities.txids) index.txids.add(txid);
-    if (!identities.pinId && identities.txids.size === 0) {
+    if (includeContentKey && !identities.pinId && identities.txids.size === 0) {
       const contentKey = String(content || '').trim();
       if (contentKey) index.contentKeys.add(contentKey);
     }
@@ -2877,30 +2888,75 @@ export class CoworkStore implements MemoryBackend {
     const isDeliveryMessage = content.startsWith('[DELIVERY]') || content.startsWith('[DELIVERY:');
     if (!isOrderMessage && !isDeliveryMessage) return null;
 
+    const messageMappingExternalId = String(metadata.orderMappingExternalConversationId || '').trim();
+    if (messageMappingExternalId && messageMappingExternalId !== row.external_conversation_id) {
+      return null;
+    }
+    const messageOrderTxid = normalizeA2AChainTxid(metadata.orderTxid);
+    const mappingOrderTxid = normalizeA2AChainTxid(mappingMetadata.orderTxid);
+    if (messageOrderTxid && mappingOrderTxid && messageOrderTxid !== mappingOrderTxid) {
+      return null;
+    }
+    const orderMessageTxid = messageOrderTxid
+      || mappingOrderTxid
+      || normalizeA2AChainTxid(content.match(/^\[DELIVERY:([0-9a-f]{64})\]/i)?.[1]);
+    const messagePaymentTxid = normalizeA2AChainTxid(metadata.paymentTxid)
+      || normalizeA2AChainTxid(metadata.orderPaymentTxid);
+    const mappingPaymentTxid = normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
+      || normalizeA2AChainTxid(mappingMetadata.paymentTxid);
+    if (messagePaymentTxid && mappingPaymentTxid && messagePaymentTxid !== mappingPaymentTxid && !orderMessageTxid) {
+      return null;
+    }
     const paymentTxid = normalizeA2AChainTxid(metadata.paymentTxid)
-      || normalizeA2AChainTxid(mappingMetadata.servicePaidTx);
+      || normalizeA2AChainTxid(metadata.orderPaymentTxid)
+      || mappingPaymentTxid;
     let orderRow: ServiceOrderSimplemsgBackfillRow | undefined;
     try {
-      orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
-        SELECT order_message_pin_id, delivery_message_pin_id
-        FROM service_orders
-        WHERE cowork_session_id = ?
-        ORDER BY updated_at DESC
-        LIMIT 1
-      `, [row.session_id]);
-
       const peerGlobalMetaId = String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || '').trim();
       const metabotId = parseIdNumber(row.metabot_id);
+      const role = String(metadata.orderRole || mappingMetadata.role || '').trim();
+      if (metabotId != null && peerGlobalMetaId && orderMessageTxid) {
+        const roleClause = role ? 'AND role = ?' : '';
+        const params: (string | number)[] = [metabotId, peerGlobalMetaId, orderMessageTxid];
+        if (role) params.push(role);
+        orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
+          SELECT order_message_pin_id, delivery_message_pin_id
+          FROM service_orders
+          WHERE local_metabot_id = ?
+            AND counterparty_global_metaid = ?
+            AND order_message_txid = ?
+            ${roleClause}
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `, params);
+      }
       if (!orderRow && metabotId != null && peerGlobalMetaId && paymentTxid) {
+        const roleClause = role ? 'AND role = ?' : '';
+        const params: (string | number)[] = [metabotId, peerGlobalMetaId, paymentTxid];
+        if (role) params.push(role);
         orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
           SELECT order_message_pin_id, delivery_message_pin_id
           FROM service_orders
           WHERE local_metabot_id = ?
             AND counterparty_global_metaid = ?
             AND payment_txid = ?
+            ${roleClause}
           ORDER BY updated_at DESC
           LIMIT 1
-        `, [metabotId, peerGlobalMetaId, paymentTxid]);
+        `, params);
+      }
+      if (!orderRow) {
+        const fallback = this.getOne<ServiceOrderSimplemsgBackfillMatchRow>(`
+          SELECT
+            COUNT(*) AS match_count,
+            MAX(order_message_pin_id) AS order_message_pin_id,
+            MAX(delivery_message_pin_id) AS delivery_message_pin_id
+          FROM service_orders
+          WHERE cowork_session_id = ?
+        `, [row.session_id]);
+        if (parseIdNumber(fallback?.match_count) === 1) {
+          orderRow = fallback;
+        }
       }
     } catch {
       return null;
