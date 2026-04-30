@@ -63,6 +63,8 @@ test('backfillMetawebOrderSimplemsgMetadata fills chain metadata without changin
         externalConversationId,
         direction: 'outgoing',
         txid: PAYMENT_TXID,
+        txids: [PAYMENT_TXID],
+        pinId: `${PAYMENT_TXID}i0`,
         paymentTxid: PAYMENT_TXID,
       },
     });

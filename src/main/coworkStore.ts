@@ -3285,6 +3285,9 @@ export class CoworkStore implements MemoryBackend {
           delete updated.txids;
         }
       }
+      if (paymentTxid && extractTxidFromA2AChainPinId(updated.pinId) === paymentTxid) {
+        delete updated.pinId;
+      }
       this.applyBackfilledA2AChainMetadata(updated, chainMetadata);
     }
     return {
