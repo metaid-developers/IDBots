@@ -114,7 +114,7 @@ test('ensureBuyerOrderObserverSession writes order simplemsg metadata when it is
   }
 });
 
-test('ensureBuyerOrderObserverSession separates concurrent orders by order simplemsg txid', async () => {
+test('ensureBuyerOrderObserverSession indexes concurrent orders into one peer session by order simplemsg txid', async () => {
   const sqlite = await createSqliteStore();
   try {
     const store = createCoworkStore(sqlite.db);
@@ -139,9 +139,15 @@ test('ensureBuyerOrderObserverSession separates concurrent orders by order simpl
       orderMessageTxid: secondOrderTxid,
     });
 
-    assert.notEqual(first.coworkSessionId, second.coworkSessionId);
+    assert.equal(first.coworkSessionId, second.coworkSessionId);
+    assert.notEqual(first.externalConversationId, second.externalConversationId);
     assert.equal(first.externalConversationId.endsWith(firstOrderTxid.slice(0, 16)), true);
     assert.equal(second.externalConversationId.endsWith(secondOrderTxid.slice(0, 16)), true);
+
+    const firstMapping = store.getConversationMapping('metaweb_order', first.externalConversationId, 7);
+    const secondMapping = store.getConversationMapping('metaweb_order', second.externalConversationId, 7);
+    assert.equal(firstMapping?.coworkSessionId, first.coworkSessionId);
+    assert.equal(secondMapping?.coworkSessionId, first.coworkSessionId);
   } finally {
     sqlite.cleanup();
   }
