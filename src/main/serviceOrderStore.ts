@@ -1078,13 +1078,11 @@ export class ServiceOrderStore {
     const order = this.getOrderById(orderId);
     if (!order) return null;
     if (
-      order.status === 'rating_pending'
-      || order.status === 'completed'
+      order.status === 'completed'
       || order.status === 'refund_pending'
       || order.status === 'refunded'
       || order.deliveryMessagePinId
       || order.deliveredAt
-      || order.ratingRequestedAt
       || order.orderEndedAt
       || order.orderEndMessagePinId
     ) {
@@ -1114,6 +1112,8 @@ export class ServiceOrderStore {
     if (
       order.status === 'completed'
       || order.status === 'refunded'
+      || order.deliveryMessagePinId
+      || order.deliveredAt
       || order.orderEndedAt
       || order.orderEndMessagePinId
     ) {

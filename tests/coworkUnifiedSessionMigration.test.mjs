@@ -328,6 +328,42 @@ test('migration-created canonical peer sessions keep historical activity timesta
   }
 });
 
+test('session list sorts migrated conversations by message activity instead of migration-updated session time', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const recentSession = store.createSession('Recent real chat', process.cwd(), '', 'local', [], 1, 'a2a', 'recent-peer', 'Recent', null);
+    const oldMigratedSession = store.createSession('Old migrated chat', process.cwd(), '', 'local', [], 1, 'a2a', 'old-peer', 'Old', null);
+
+    const recentMessage = store.addMessage(recentSession.id, {
+      type: 'user',
+      content: 'recent real message',
+      metadata: { sourceChannel: 'metaweb_private' },
+    });
+    const oldMessage = store.addMessage(oldMigratedSession.id, {
+      type: 'user',
+      content: 'old migrated message',
+      metadata: { sourceChannel: 'metaweb_private' },
+    });
+
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [2_000, recentMessage.id]);
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [1_000, oldMessage.id]);
+    sqlite.db.run('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?', [2_000, recentSession.id]);
+    sqlite.db.run('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?', [9_000, oldMigratedSession.id]);
+
+    assert.deepEqual(
+      store.listSessions().map((session) => session.title),
+      ['Recent real chat', 'Old migrated chat'],
+    );
+    assert.deepEqual(
+      store.listSessions().map((session) => session.updatedAt),
+      [2_000, 1_000],
+    );
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
 test('migration repairs legacy metaweb_private mappings that point at local standard sessions', async () => {
   const sqlite = await createSqliteStore();
   try {

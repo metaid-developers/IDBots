@@ -430,6 +430,14 @@ export class ServiceRefundSyncService {
     if (order.status === 'completed' || order.status === 'refunded') {
       return false;
     }
+    if (
+      order.deliveryMessagePinId
+      || order.deliveredAt
+      || order.orderEndMessagePinId
+      || order.orderEndedAt
+    ) {
+      return false;
+    }
     if (order.refundRequestPinId === refundRequestPinId) {
       return false;
     }

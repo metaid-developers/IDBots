@@ -108,6 +108,10 @@ test('completed and delivered orders are not reopened into timeout refund states
       deliveredAt: 1_770_000_001_000,
     });
 
+    const afterDirectRefund = store.markRefundPending(delivered.id, 'early-refund-request-pin-id', 1_770_000_001_500);
+    assert.equal(afterDirectRefund?.status, 'rating_pending');
+    assert.equal(afterDirectRefund?.refundRequestPinId, null);
+
     const afterFailed = store.markFailed(delivered.id, 'first_response_timeout', 1_770_000_002_000);
     assert.equal(afterFailed?.status, 'rating_pending');
     assert.equal(afterFailed?.failureReason, null);
@@ -122,6 +126,29 @@ test('completed and delivered orders are not reopened into timeout refund states
     const afterRefund = store.markRefundPending(delivered.id, 'refund-request-pin-id', 1_770_000_004_000);
     assert.equal(afterRefund?.status, 'completed');
     assert.equal(afterRefund?.refundRequestPinId, null);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('undelivered rating_pending orders can still enter failure and refund flow', async () => {
+  const sqlite = await createSqliteStore();
+
+  try {
+    const store = new ServiceOrderStore(sqlite.db, () => {});
+    const undelivered = createOrder(store, {
+      status: 'in_progress',
+      paymentTxid: '7'.repeat(64),
+    });
+    store.markRatingRequested(undelivered.id, 1_770_000_001_000);
+
+    const failed = store.markFailed(undelivered.id, 'delivery_timeout', 1_770_000_002_000);
+    assert.equal(failed?.status, 'failed');
+    assert.equal(failed?.failureReason, 'delivery_timeout');
+
+    const refundPending = store.markRefundPending(undelivered.id, 'refund-request-pin-id', 1_770_000_003_000);
+    assert.equal(refundPending?.status, 'refund_pending');
+    assert.equal(refundPending?.refundRequestPinId, 'refund-request-pin-id');
   } finally {
     sqlite.cleanup();
   }

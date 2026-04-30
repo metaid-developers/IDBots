@@ -534,6 +534,43 @@ test('markBuyerOrderFailedAndRequestRefund does not reopen completed rated order
   assert.deepEqual(seenEvents, []);
 });
 
+test('markBuyerOrderFailedAndRequestRefund still refunds undelivered rating_pending orders', async () => {
+  const now = 1_770_000_556_000;
+  let refundRequestInput = null;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+    createRefundRequestPin: async (input) => {
+      refundRequestInput = input;
+      return { pinId: 'undelivered-rating-refund-pin-id' };
+    },
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    coworkSessionId: 'buyer-session-id',
+    paymentTxid: '8'.repeat(64),
+  }));
+  service.markOrderRatingRequested('buyer', {
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    requestedAt: now,
+  });
+
+  const updated = await service.markBuyerOrderFailedAndRequestRefund({
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    failureReason: 'delivery_timeout',
+    failedAt: now + 1,
+  });
+
+  assert.equal(updated?.status, 'refund_pending');
+  assert.equal(updated?.failureReason, 'delivery_timeout');
+  assert.equal(updated?.refundRequestPinId, 'undelivered-rating-refund-pin-id');
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'refund_pending');
+  assert.equal(refundRequestInput?.payload.failureReason, 'delivery_timeout');
+});
+
 test('scanTimedOutOrders records retry metadata when refund request broadcast fails', async () => {
   let currentNow = 1_770_000_000_000;
   const { service, store } = await createLifecycleServiceForTest({

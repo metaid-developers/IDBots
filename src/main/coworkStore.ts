@@ -2022,13 +2022,29 @@ export class CoworkStore implements MemoryBackend {
       hidden_from_session_list?: number | null;
       created_at: number;
       updated_at: number;
+      activity_at?: number | null;
     }
 
     const rows = this.getAll<SessionSummaryRow>(`
-      SELECT id, title, status, pinned, session_type, peer_name, hidden_from_session_list, created_at, updated_at
-      FROM cowork_sessions
-      WHERE COALESCE(hidden_from_session_list, 0) = 0
-      ORDER BY pinned DESC, updated_at DESC
+      SELECT
+        s.id,
+        s.title,
+        s.status,
+        s.pinned,
+        s.session_type,
+        s.peer_name,
+        s.hidden_from_session_list,
+        s.created_at,
+        s.updated_at,
+        COALESCE(message_activity.last_message_at, s.updated_at) AS activity_at
+      FROM cowork_sessions s
+      LEFT JOIN (
+        SELECT session_id, MAX(created_at) AS last_message_at
+        FROM cowork_messages
+        GROUP BY session_id
+      ) message_activity ON message_activity.session_id = s.id
+      WHERE COALESCE(s.hidden_from_session_list, 0) = 0
+      ORDER BY s.pinned DESC, activity_at DESC, s.updated_at DESC
     `);
 
     return rows.map(row => ({
@@ -2037,7 +2053,7 @@ export class CoworkStore implements MemoryBackend {
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
       createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      updatedAt: parseIdNumber(row.activity_at) ?? row.updated_at,
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerName: row.peer_name ?? null,
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
