@@ -2544,6 +2544,13 @@ export class CoworkStore implements MemoryBackend {
         || (serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0
         ? serviceOrderMetadata
         : privateChatMetadata);
+      const hasChainMetadata = Boolean(chainMetadata && Object.keys(chainMetadata).length > 0);
+      const hasMessagePatch = Boolean(
+        messagePatch?.content
+        || messagePatch?.extraMetadata
+        || (messagePatch?.removeMetadataKeys?.length ?? 0) > 0,
+      );
+      if (!hasChainMetadata && !hasMessagePatch) continue;
       const merged = this.mergeBackfilledA2AMessageMetadata(metadata, chainMetadata);
       const patchedMetadata: CoworkMessageMetadata = { ...merged.metadata };
       if (messagePatch?.removeMetadataKeys) {
@@ -3265,18 +3272,18 @@ export class CoworkStore implements MemoryBackend {
   ): { metadata: CoworkMessageMetadata; changed: boolean } {
     const before = JSON.stringify(metadata);
     const updated: CoworkMessageMetadata = { ...metadata };
-    const paymentTxid = normalizeA2AChainTxid(updated.paymentTxid);
-    const existingTxid = normalizeA2AChainTxid(updated.txid);
-    if (paymentTxid && existingTxid === paymentTxid) {
-      delete updated.txid;
-    }
-    if (paymentTxid && Array.isArray(updated.txids)) {
-      const normalizedTxids = updated.txids.map(normalizeA2AChainTxid).filter(Boolean);
-      if (normalizedTxids.length > 0 && normalizedTxids.every((txid) => txid === paymentTxid)) {
-        delete updated.txids;
-      }
-    }
     if (chainMetadata && Object.keys(chainMetadata).length > 0) {
+      const paymentTxid = normalizeA2AChainTxid(updated.paymentTxid);
+      const existingTxid = normalizeA2AChainTxid(updated.txid);
+      if (paymentTxid && existingTxid === paymentTxid) {
+        delete updated.txid;
+      }
+      if (paymentTxid && Array.isArray(updated.txids)) {
+        const normalizedTxids = updated.txids.map(normalizeA2AChainTxid).filter(Boolean);
+        if (normalizedTxids.length > 0 && normalizedTxids.every((txid) => txid === paymentTxid)) {
+          delete updated.txids;
+        }
+      }
       Object.assign(updated, chainMetadata);
     }
     return {

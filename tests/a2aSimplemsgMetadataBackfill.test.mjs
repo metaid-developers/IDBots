@@ -1224,6 +1224,7 @@ test('backfillMetawebOrderSimplemsgMetadata matches service orders by order txid
 test('backfillMetawebOrderSimplemsgMetadata does not let another mapping order txid override message payment identity', async () => {
   const sqlite = await createSqliteStore();
   try {
+    sqlite.db.run('PRAGMA reverse_unordered_selects = ON');
     const store = createCoworkStore(sqlite.db);
     const metabotId = 9;
     const peerGlobalMetaId = 'seller-payment-only-peer';
@@ -1282,6 +1283,8 @@ test('backfillMetawebOrderSimplemsgMetadata does not let another mapping order t
         sourceChannel: 'metaweb_private',
         externalConversationId: `metaweb-private:${peerGlobalMetaId}`,
         direction: 'outgoing',
+        txid: firstPaymentTxid,
+        txids: [firstPaymentTxid],
         paymentTxid: firstPaymentTxid,
       },
     });
@@ -1326,6 +1329,7 @@ test('backfillMetawebOrderSimplemsgMetadata does not let another mapping order t
     const updatedFirst = updated.messages.find((message) => message.id === firstMessage.id);
     assert.equal(updatedFirst.metadata.pinId, `${firstOrderTxid}i0`);
     assert.equal(updatedFirst.metadata.txid, firstOrderTxid);
+    assert.deepEqual(updatedFirst.metadata.txids, [firstOrderTxid]);
     assert.notEqual(updatedFirst.metadata.pinId, `${secondOrderTxid}i0`);
   } finally {
     sqlite.cleanup();
