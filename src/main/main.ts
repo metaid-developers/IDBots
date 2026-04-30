@@ -83,6 +83,7 @@ import {
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
 import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
+import { shouldForwardCoworkStreamEvent } from './services/coworkStreamForwarding';
 import type { DiscoverySnapshot } from './services/providerDiscoveryService';
 import { ProviderDiscoveryService } from './services/providerDiscoveryService';
 import { IdchatPresenceService } from './services/idchatPresenceService';
@@ -3199,6 +3200,9 @@ const getCoworkRunner = () => {
 
     // Set up event listeners to forward to renderer
     coworkRunner.on('message', (sessionId: string, message: any) => {
+      if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+        return;
+      }
       const safeMessage = sanitizeCoworkMessageForIpc(message);
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
@@ -3213,6 +3217,9 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('messageUpdate', (sessionId: string, messageId: string, content: string) => {
+      if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+        return;
+      }
       const safeContent = truncateIpcString(content, IPC_UPDATE_CONTENT_MAX_CHARS);
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
@@ -3230,6 +3237,9 @@ const getCoworkRunner = () => {
       if (coworkRunner?.getSessionConfirmationMode(sessionId) === 'text') {
         return;
       }
+      if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+        return;
+      }
       const safeRequest = sanitizePermissionRequestForIpc(request);
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
@@ -3244,6 +3254,9 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('complete', (sessionId: string, claudeSessionId: string | null) => {
+      if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+        return;
+      }
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (!win.isDestroyed()) {
@@ -3253,6 +3266,9 @@ const getCoworkRunner = () => {
     });
 
     coworkRunner.on('error', (sessionId: string, error: string) => {
+      if (!shouldForwardCoworkStreamEvent(getCoworkStore(), sessionId)) {
+        return;
+      }
       const windows = BrowserWindow.getAllWindows();
       windows.forEach(win => {
         if (!win.isDestroyed()) {

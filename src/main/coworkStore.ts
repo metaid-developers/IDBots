@@ -2027,6 +2027,14 @@ export class CoworkStore implements MemoryBackend {
     }
   }
 
+  isSessionHiddenFromList(id: string): boolean {
+    const row = this.getOne<{ hidden_from_session_list?: number | null }>(
+      'SELECT hidden_from_session_list FROM cowork_sessions WHERE id = ? LIMIT 1',
+      [id],
+    );
+    return Boolean(row?.hidden_from_session_list);
+  }
+
   listSessions(): CoworkSessionSummary[] {
     interface SessionSummaryRow {
       id: string;
