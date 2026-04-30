@@ -1220,3 +1220,258 @@ test('backfillMetawebOrderSimplemsgMetadata matches service orders by order txid
     sqlite.cleanup();
   }
 });
+
+test('backfillMetawebOrderSimplemsgMetadata does not let another mapping order txid override message payment identity', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 9;
+    const peerGlobalMetaId = 'seller-payment-only-peer';
+    const firstOrderTxid = '7'.repeat(64);
+    const secondOrderTxid = '8'.repeat(64);
+    const firstPaymentTxid = '5'.repeat(64);
+    const secondPaymentTxid = '6'.repeat(64);
+    const firstExternalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${firstOrderTxid.slice(0, 16)}`;
+    const secondExternalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${secondOrderTxid.slice(0, 16)}`;
+    const session = store.createSession(
+      'Unified payment-only peer',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Seller Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: `metaweb-private:${peerGlobalMetaId}`,
+      metabotId,
+      coworkSessionId: session.id,
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: firstExternalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: firstPaymentTxid,
+        orderTxid: firstOrderTxid,
+      }),
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: secondExternalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: secondPaymentTxid,
+        orderTxid: secondOrderTxid,
+      }),
+    });
+    const firstMessage = store.addMessage(session.id, {
+      type: 'user',
+      content: `[ORDER] first\ntxid: ${firstPaymentTxid}`,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId: `metaweb-private:${peerGlobalMetaId}`,
+        direction: 'outgoing',
+        paymentTxid: firstPaymentTxid,
+      },
+    });
+
+    const now = Date.now();
+    for (const [id, orderTxid, paymentTxid, serviceName, updatedAt] of [
+      ['first-payment-only-order', firstOrderTxid, firstPaymentTxid, 'First', now],
+      ['second-payment-only-order', secondOrderTxid, secondPaymentTxid, 'Second', now + 10_000],
+    ]) {
+      sqlite.db.run(`
+        INSERT INTO service_orders (
+          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+          payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+          order_message_pin_id, order_message_txid, cowork_session_id, status,
+          first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        id,
+        'buyer',
+        metabotId,
+        peerGlobalMetaId,
+        `service-${serviceName.toLowerCase()}`,
+        serviceName,
+        paymentTxid,
+        'mvc',
+        '1',
+        'SPACE',
+        'native',
+        `${orderTxid}i0`,
+        orderTxid,
+        session.id,
+        'completed',
+        now + 1000,
+        now + 2000,
+        now,
+        updatedAt,
+      ]);
+    }
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+    const updated = store.getSession(session.id);
+    const updatedFirst = updated.messages.find((message) => message.id === firstMessage.id);
+    assert.equal(updatedFirst.metadata.pinId, `${firstOrderTxid}i0`);
+    assert.equal(updatedFirst.metadata.txid, firstOrderTxid);
+    assert.notEqual(updatedFirst.metadata.pinId, `${secondOrderTxid}i0`);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebOrderSimplemsgMetadata binds seller delivery by message order identity in unified peer sessions', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 10;
+    const buyerGlobalMetaId = 'buyer-unified-delivery-peer';
+    const sellerGlobalMetaId = 'seller-unified-delivery-peer';
+    const firstOrderTxid = '1'.repeat(64);
+    const secondOrderTxid = '2'.repeat(64);
+    const firstPaymentTxid = '3'.repeat(64);
+    const secondPaymentTxid = '4'.repeat(64);
+    const firstDeliveryTxid = '5'.repeat(64);
+    const secondDeliveryTxid = '6'.repeat(64);
+    const firstExternalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${firstOrderTxid.slice(0, 16)}`;
+    const secondExternalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${secondOrderTxid.slice(0, 16)}`;
+    const session = store.createSession(
+      'Unified seller delivery peer',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: `metaweb-private:${buyerGlobalMetaId}`,
+      metabotId,
+      coworkSessionId: session.id,
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: firstExternalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: firstPaymentTxid,
+        orderTxid: firstOrderTxid,
+      }),
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: secondExternalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: secondPaymentTxid,
+        orderTxid: secondOrderTxid,
+      }),
+    });
+
+    const deliverySummary = '数字成果已生成并上传链上交付。';
+    const uploadCompleteMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: deliverySummary,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId: `metaweb-private:${buyerGlobalMetaId}`,
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        orderDeliveryUploadComplete: true,
+        orderTxid: firstOrderTxid,
+        paymentTxid: firstPaymentTxid,
+        orderMappingExternalConversationId: firstExternalConversationId,
+      },
+    });
+
+    const now = Date.now();
+    for (const [id, orderTxid, paymentTxid, deliveryTxid, deliveredAt] of [
+      ['first-seller-unified-order', firstOrderTxid, firstPaymentTxid, firstDeliveryTxid, now],
+      ['second-seller-unified-order', secondOrderTxid, secondPaymentTxid, secondDeliveryTxid, now + 10_000],
+    ]) {
+      sqlite.db.run(`
+        INSERT INTO service_orders (
+          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+          payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+          order_message_pin_id, order_message_txid, cowork_session_id, status,
+          first_response_deadline_at, delivery_deadline_at, delivery_message_pin_id,
+          delivered_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        id,
+        'seller',
+        metabotId,
+        buyerGlobalMetaId,
+        `service-${id}`,
+        'delivery',
+        paymentTxid,
+        'mvc',
+        '1',
+        'SPACE',
+        'native',
+        `${orderTxid}i0`,
+        orderTxid,
+        session.id,
+        'completed',
+        now + 1000,
+        now + 2000,
+        `${deliveryTxid}i0`,
+        deliveredAt,
+        now,
+        deliveredAt,
+      ]);
+      sqlite.db.run(`
+        INSERT INTO private_chat_messages (
+          pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+          protocol, content, chain_timestamp, is_processed
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        `${deliveryTxid}i0`,
+        deliveryTxid,
+        'seller-metaid',
+        sellerGlobalMetaId,
+        'buyer-metaid',
+        buyerGlobalMetaId,
+        '/protocols/simplemsg',
+        `[DELIVERY:${orderTxid}] {"paymentTxid":"${paymentTxid}","result":"${id}"}`,
+        Math.floor(deliveredAt / 1000),
+        1,
+      ]);
+    }
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+    const updated = store.getSession(session.id);
+    const deliveryBubble = updated.messages.find((message) => message.id === uploadCompleteMessage.id);
+    assert.match(deliveryBubble.content, new RegExp(`^\\[DELIVERY:${firstOrderTxid}\\]`));
+    assert.equal(deliveryBubble.metadata.pinId, `${firstDeliveryTxid}i0`);
+    assert.equal(deliveryBubble.metadata.txid, firstDeliveryTxid);
+    assert.notEqual(deliveryBubble.metadata.pinId, `${secondDeliveryTxid}i0`);
+    assert.equal(deliveryBubble.metadata.paymentTxid, firstPaymentTxid);
+  } finally {
+    sqlite.cleanup();
+  }
+});
