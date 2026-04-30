@@ -646,6 +646,11 @@ interface ServiceOrderSimplemsgBackfillRow {
   delivery_message_pin_id: string | null;
 }
 
+interface SellerDeliverySimplemsgBackfillRow {
+  payment_txid: string | null;
+  delivery_message_pin_id: string | null;
+}
+
 interface PrivateChatSimplemsgBackfillRow {
   pin_id: string | null;
   tx_id: string | null;
@@ -656,6 +661,8 @@ interface PrivateChatSimplemsgBackfillRow {
 interface MetawebOrderBackfillPatch {
   content?: string;
   chainMetadata: A2AChainMetadata | null;
+  extraMetadata?: CoworkMessageMetadata;
+  removeMetadataKeys?: string[];
 }
 
 interface CoworkUserMemoryRow {
@@ -2093,34 +2100,48 @@ export class CoworkStore implements MemoryBackend {
     for (const row of rows) {
       const metadata = this.parseMessageMetadata(row.metadata);
       const mappingMetadata = this.parseMessageMetadata(row.mapping_metadata_json);
-      const sellerProcessingNoticePatch = this.resolveSellerProcessingNoticeSimplemsgPatch(row, metadata, mappingMetadata);
+      const sellerDeliveryPatch = this.resolveSellerDeliverySimplemsgPatch(row, metadata, mappingMetadata);
+      const sellerProcessingNoticePatch = sellerDeliveryPatch
+        ? null
+        : this.resolveSellerProcessingNoticeSimplemsgPatch(row, metadata, mappingMetadata);
+      const messagePatch = sellerDeliveryPatch || sellerProcessingNoticePatch;
       const serviceOrderMetadata = this.resolveServiceOrderSimplemsgMetadata(row, metadata, mappingMetadata);
-      const privateChatMetadata = (sellerProcessingNoticePatch?.chainMetadata || (serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0))
+      const privateChatMetadata = (messagePatch?.chainMetadata || (serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0))
         ? null
         : this.resolvePrivateChatSimplemsgMetadata(row, metadata, mappingMetadata);
-      const chainMetadata = sellerProcessingNoticePatch?.chainMetadata
+      const chainMetadata = messagePatch?.chainMetadata
         || (serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0
         ? serviceOrderMetadata
         : privateChatMetadata);
       const merged = this.mergeBackfilledA2AMessageMetadata(metadata, chainMetadata);
-      const nextContent = sellerProcessingNoticePatch?.content
-        && sellerProcessingNoticePatch.content !== row.content
-        ? sellerProcessingNoticePatch.content
+      const patchedMetadata: CoworkMessageMetadata = { ...merged.metadata };
+      if (messagePatch?.removeMetadataKeys) {
+        for (const key of messagePatch.removeMetadataKeys) {
+          delete patchedMetadata[key];
+        }
+      }
+      if (messagePatch?.extraMetadata) {
+        Object.assign(patchedMetadata, messagePatch.extraMetadata);
+      }
+      const metadataChanged = JSON.stringify(patchedMetadata) !== JSON.stringify(metadata);
+      const nextContent = messagePatch?.content
+        && messagePatch.content !== row.content
+        ? messagePatch.content
         : null;
-      if (!merged.changed && nextContent == null) continue;
+      if (!metadataChanged && nextContent == null) continue;
 
       if (nextContent != null) {
         this.db.run(`
           UPDATE cowork_messages
           SET content = ?, metadata = ?
           WHERE id = ? AND session_id = ?
-        `, [nextContent, JSON.stringify(merged.metadata), row.message_id, row.session_id]);
+        `, [nextContent, JSON.stringify(patchedMetadata), row.message_id, row.session_id]);
       } else {
         this.db.run(`
           UPDATE cowork_messages
           SET metadata = ?
           WHERE id = ? AND session_id = ?
-        `, [JSON.stringify(merged.metadata), row.message_id, row.session_id]);
+        `, [JSON.stringify(patchedMetadata), row.message_id, row.session_id]);
       }
       if ((this.db.getRowsModified?.() || 0) > 0) {
         changed += 1;
@@ -2151,6 +2172,76 @@ export class CoworkStore implements MemoryBackend {
     } catch {
       return {};
     }
+  }
+
+  private resolveSellerDeliverySimplemsgPatch(
+    row: MetawebOrderMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+    mappingMetadata: CoworkMessageMetadata,
+  ): MetawebOrderBackfillPatch | null {
+    if (!this.tableExists('service_orders') || !this.tableExists('private_chat_messages')) return null;
+    if (metadata.orderDeliveryUploadComplete !== true) return null;
+    if (metadata.direction !== 'outgoing') return null;
+    if (String(mappingMetadata.role || '').trim() !== 'seller') return null;
+
+    let orderRow: SellerDeliverySimplemsgBackfillRow | undefined;
+    try {
+      orderRow = this.getOne<SellerDeliverySimplemsgBackfillRow>(`
+        SELECT payment_txid, delivery_message_pin_id
+        FROM service_orders
+        WHERE cowork_session_id = ?
+          AND role = 'seller'
+          AND delivery_message_pin_id IS NOT NULL
+          AND TRIM(delivery_message_pin_id) <> ''
+        ORDER BY delivered_at DESC, updated_at DESC
+        LIMIT 1
+      `, [row.session_id]);
+    } catch {
+      return null;
+    }
+
+    const deliveryPinId = typeof orderRow?.delivery_message_pin_id === 'string'
+      ? orderRow.delivery_message_pin_id.trim()
+      : '';
+    if (!deliveryPinId) return null;
+
+    let deliveryMessage: PrivateChatSimplemsgBackfillRow | undefined;
+    try {
+      deliveryMessage = this.getOne<PrivateChatSimplemsgBackfillRow>(`
+        SELECT pin_id, tx_id, chain_timestamp, content
+        FROM private_chat_messages
+        WHERE pin_id = ?
+          AND LOWER(TRIM(protocol)) IN ('simplemsg', '/protocols/simplemsg')
+          AND TRIM(content) LIKE '[DELIVERY]%'
+        LIMIT 1
+      `, [deliveryPinId]);
+    } catch {
+      return null;
+    }
+
+    const transmittedContent = typeof deliveryMessage?.content === 'string'
+      ? deliveryMessage.content.trim()
+      : '';
+    if (!transmittedContent) return null;
+
+    return {
+      content: transmittedContent,
+      chainMetadata: buildA2AChainMetadata({
+        txId: deliveryMessage?.tx_id,
+        pinId: deliveryPinId,
+      }),
+      extraMetadata: {
+        sourceChannel: 'metaweb_order',
+        externalConversationId: row.external_conversation_id,
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        orderDeliveryMessage: true,
+        paymentTxid: normalizeA2AChainTxid(orderRow?.payment_txid)
+          || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
+          || undefined,
+      },
+      removeMetadataKeys: ['orderDeliveryUploadComplete'],
+    };
   }
 
   private resolveSellerProcessingNoticeSimplemsgPatch(

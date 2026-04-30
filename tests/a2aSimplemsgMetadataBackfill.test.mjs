@@ -335,3 +335,135 @@ test('backfillMetawebOrderSimplemsgMetadata syncs seller local acknowledgement t
     sqlite.cleanup();
   }
 });
+
+test('backfillMetawebOrderSimplemsgMetadata turns seller upload-complete status into delivery simplemsg bubble', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 2;
+    const buyerGlobalMetaId = 'buyer-global-metaid';
+    const sellerGlobalMetaId = 'seller-global-metaid';
+    const externalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Seller delivery session',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const localFinal = '# 像素风格机器人图片\n\n图片已生成完成。';
+    const deliverySummary = '数字成果已生成并上传链上交付。\n交付文件: metafile://delivery-pin-i0.png';
+    const deliveryContent = `[DELIVERY] {"paymentTxid":"${PAYMENT_TXID}","serviceName":"seedream","result":"${localFinal.replace(/\n/g, '\\n')}\\n\\n${deliverySummary.replace(/\n/g, '\\n')}","deliveredAt":1777427686}`;
+
+    const finalMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: localFinal,
+      metadata: {
+        isFinal: true,
+        isStreaming: false,
+      },
+    });
+    const uploadCompleteMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: deliverySummary,
+      metadata: {
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        orderDeliveryUploadComplete: true,
+      },
+    });
+    const deliveredAt = 1_777_427_686_000;
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [
+      deliveredAt,
+      uploadCompleteMessage.id,
+    ]);
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, cowork_session_id, status, first_response_deadline_at,
+        delivery_deadline_at, delivery_message_pin_id, delivered_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'seller-order-1',
+      'seller',
+      metabotId,
+      buyerGlobalMetaId,
+      'service-image',
+      'seedream',
+      PAYMENT_TXID,
+      'mvc',
+      '0.001',
+      'SPACE',
+      'native',
+      `${ORDER_TXID}i0`,
+      session.id,
+      'completed',
+      now + 60_000,
+      now + 120_000,
+      `${DELIVERY_TXID}i0`,
+      deliveredAt,
+      now,
+      now,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${DELIVERY_TXID}i0`,
+      DELIVERY_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      deliveryContent,
+      Math.floor(deliveredAt / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+
+    const updated = store.getSession(session.id);
+    const unchangedFinal = updated.messages.find((message) => message.id === finalMessage.id);
+    const deliveryBubble = updated.messages.find((message) => message.id === uploadCompleteMessage.id);
+
+    assert.equal(unchangedFinal.content, localFinal);
+    assert.equal(unchangedFinal.metadata.txid, undefined);
+
+    assert.equal(deliveryBubble.content, deliveryContent);
+    assert.equal(deliveryBubble.metadata.txid, DELIVERY_TXID);
+    assert.deepEqual(deliveryBubble.metadata.txids, [DELIVERY_TXID]);
+    assert.equal(deliveryBubble.metadata.pinId, `${DELIVERY_TXID}i0`);
+    assert.equal(deliveryBubble.metadata.orderDeliveryMessage, true);
+    assert.equal(deliveryBubble.metadata.orderDeliveryUploadComplete, undefined);
+    assert.equal(deliveryBubble.metadata.sourceChannel, 'metaweb_order');
+    assert.equal(deliveryBubble.metadata.externalConversationId, externalConversationId);
+    assert.equal(deliveryBubble.metadata.paymentTxid, PAYMENT_TXID);
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+  } finally {
+    sqlite.cleanup();
+  }
+});
