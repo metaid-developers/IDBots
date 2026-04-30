@@ -233,3 +233,105 @@ test('backfillMetawebOrderSimplemsgMetadata fills chain metadata without changin
     sqlite.cleanup();
   }
 });
+
+test('backfillMetawebOrderSimplemsgMetadata syncs seller local acknowledgement to transmitted simplemsg', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 2;
+    const buyerGlobalMetaId = 'buyer-global-metaid';
+    const sellerGlobalMetaId = 'seller-global-metaid';
+    const externalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Seller order session',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const localPlaceholder = 'Buyer Bot，已收到你的服务订单，技能执行可能需要一些时间，正在处理，请耐心等待最终结果。';
+    const transmittedAck = '嗨 Buyer Bot，你的像素风机器人图片我收到啦，现在就开始动手创作，稍等片刻，马上就好哦！';
+    const acknowledgement = store.addMessage(session.id, {
+      type: 'assistant',
+      content: localPlaceholder,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId,
+        direction: 'outgoing',
+        excludeFromSandboxHistory: true,
+        orderProcessingNotice: true,
+      },
+    });
+    const acknowledgementCreatedAt = 1_777_427_593_787;
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [
+      acknowledgementCreatedAt,
+      acknowledgement.id,
+    ]);
+
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${ACK_TXID}i0`,
+      ACK_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      transmittedAck,
+      Math.floor((acknowledgementCreatedAt + 1_000) / 1000),
+      1,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${STATUS_TXID}i0`,
+      STATUS_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      '技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。',
+      Math.floor((acknowledgementCreatedAt + 90_000) / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+
+    const updated = store.getSession(session.id).messages.find((message) => message.id === acknowledgement.id);
+    assert.ok(updated);
+    assert.equal(updated.content, transmittedAck);
+    assert.equal(updated.metadata.txid, ACK_TXID);
+    assert.deepEqual(updated.metadata.txids, [ACK_TXID]);
+    assert.equal(updated.metadata.pinId, `${ACK_TXID}i0`);
+    assert.equal(updated.metadata.orderProcessingNotice, true);
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+  } finally {
+    sqlite.cleanup();
+  }
+});

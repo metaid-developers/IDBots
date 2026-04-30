@@ -587,6 +587,19 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     );
   }
 
+  const txid = resolveA2AMessageTxid(message);
+  if (!txid) {
+    return (
+      <div className="px-4 py-1 flex justify-center">
+        <div className="max-w-[76%] px-3 py-1.5 text-xs leading-relaxed whitespace-pre-wrap break-words dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <div className="mb-0.5 font-medium">内部状态</div>
+          <div>{message.content}</div>
+          <div className="mt-0.5 text-[10px] opacity-70">{formatTime(message.timestamp)}</div>
+        </div>
+      </div>
+    );
+  }
+
   // user = incoming from peer MetaBot (left side)
   // assistant = outgoing from local MetaBot (right side)
   // direction in metadata takes priority over type for display direction
@@ -614,7 +627,6 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const contentToRender = shouldRenderDeliveryResult ? deliveryResult : message.content;
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = getA2AMarkdownClassName(isLocal);
-  const txid = resolveA2AMessageTxid(message);
   const txidPreview = formatA2ATxidPreview(txid);
 
   return (
