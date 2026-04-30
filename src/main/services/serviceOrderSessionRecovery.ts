@@ -58,6 +58,7 @@ function orderNeedsRecoveredSession(
     metabotId: order.localMetabotId,
     peerGlobalMetaId: order.counterpartyGlobalMetaid,
     paymentTxid: order.paymentTxid,
+    orderTxid: order.orderMessageTxid,
   });
   const mapping = coworkStore.getConversationMapping(
     'metaweb_order',
@@ -178,6 +179,9 @@ export async function recoverMissingRefundPendingOrderSessions(
       serverBotGlobalMetaId: normalizeText(peerInfo?.serverBotGlobalMetaId)
         || (order.role === 'buyer' ? order.counterpartyGlobalMetaid : ''),
       servicePaidTx: order.paymentTxid,
+      orderTxid: order.orderMessageTxid,
+      orderMessagePinId: order.orderMessagePinId,
+      orderMessageTxid: order.orderMessageTxid,
       orderPayload: normalizeText(orderText) || null,
       recoveryNotice: REFUND_RECOVERY_NOTICE,
     });

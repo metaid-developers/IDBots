@@ -474,13 +474,15 @@ const attachSimplemsgMetadataToCoworkMessage = (
   sessionId: string | null | undefined,
   message: CoworkMessage | null | undefined,
   chain: { txId?: unknown; txids?: unknown; pinId?: unknown },
+  extraMetadata: Record<string, unknown> = {},
 ): void => {
   if (!sessionId || !message) return;
   const chainMetadata = buildA2AChainMetadata(chain);
-  if (Object.keys(chainMetadata).length === 0) return;
+  if (Object.keys(chainMetadata).length === 0 && Object.keys(extraMetadata).length === 0) return;
   const metadata = {
     ...(message.metadata ?? {}),
     ...chainMetadata,
+    ...extraMetadata,
   };
   coworkStore.updateMessage(sessionId, message.id, { metadata });
   message.metadata = metadata;
@@ -2963,10 +2965,6 @@ const executeDelegationPipeline = async (
       txids: result.txids,
       pinId: result.pinId,
     }) || null;
-    attachSimplemsgMetadataToCoworkMessage(coworkStoreInst, buyerObserverSessionId, buyerObserverInitialMessage, {
-      txids: result.txids,
-      pinId: result.pinId,
-    });
     if (buyerObserverExternalConversationId && orderMessageTxid) {
       buyerObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(coworkStoreInst, {
         metabotId,
@@ -2976,6 +2974,15 @@ const executeDelegationPipeline = async (
         currentExternalConversationId: buyerObserverExternalConversationId,
       });
     }
+    attachSimplemsgMetadataToCoworkMessage(coworkStoreInst, buyerObserverSessionId, buyerObserverInitialMessage, {
+      txids: result.txids,
+      pinId: result.pinId,
+    }, {
+      ...(orderMessageTxid ? { orderTxid: orderMessageTxid } : {}),
+      ...(buyerObserverExternalConversationId
+        ? { orderMappingExternalConversationId: buyerObserverExternalConversationId }
+        : {}),
+    });
   } catch (error) {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
     if (buyerObserverSessionId) {
@@ -6964,10 +6971,6 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         txids: result.txids,
         pinId: result.pinId,
       }) || null;
-      attachSimplemsgMetadataToCoworkMessage(getCoworkStore(), coworkSessionId, orderObserverInitialMessage, {
-        txids: result.txids,
-        pinId: result.pinId,
-      });
       if (orderObserverExternalConversationId && orderMessageTxid) {
         orderObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(getCoworkStore(), {
           metabotId,
@@ -6977,6 +6980,15 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           currentExternalConversationId: orderObserverExternalConversationId,
         });
       }
+      attachSimplemsgMetadataToCoworkMessage(getCoworkStore(), coworkSessionId, orderObserverInitialMessage, {
+        txids: result.txids,
+        pinId: result.pinId,
+      }, {
+        ...(orderMessageTxid ? { orderTxid: orderMessageTxid } : {}),
+        ...(orderObserverExternalConversationId
+          ? { orderMappingExternalConversationId: orderObserverExternalConversationId }
+          : {}),
+      });
 
       try {
         serviceOrderLifecycle.createBuyerOrder({

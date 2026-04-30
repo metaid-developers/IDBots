@@ -42,6 +42,7 @@ function createRefundPendingOrder(store, overrides = {}) {
     paymentAmount: overrides.paymentAmount ?? '12.34',
     paymentCurrency: overrides.paymentCurrency ?? 'SPACE',
     orderMessagePinId: overrides.orderMessagePinId ?? 'order-pin-id',
+    orderMessageTxid: overrides.orderMessageTxid ?? null,
     coworkSessionId: overrides.coworkSessionId ?? null,
     status: overrides.status ?? 'awaiting_first_response',
     now,
@@ -79,6 +80,85 @@ test('buildServiceOrderObserverConversationId scopes sessions by role, peer, and
     sellerConversationId,
     `metaweb_order:seller:12:buyer-global-metaid:${'a'.repeat(16)}`
   );
+});
+
+test('recoverMissingRefundPendingOrderSessions uses order txid mapping after buyer observer reindex', async () => {
+  assert.equal(typeof recoverMissingRefundPendingOrderSessions, 'function');
+  const sqlite = await createSqliteStore();
+
+  try {
+    const coworkStore = createCoworkStore(sqlite.db);
+    const orderStore = new ServiceOrderStore(sqlite.db, () => {});
+    const paymentTxid = '8'.repeat(64);
+    const orderTxid = '9'.repeat(64);
+    const peerGlobalMetaId = 'seller-reindexed-global-metaid';
+    const metabotId = 7;
+    const peerSession = coworkStore.createSession(
+      'Seller peer',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Seller',
+      null,
+    );
+    const orderConversationId = buildServiceOrderObserverConversationId({
+      role: 'buyer',
+      metabotId,
+      peerGlobalMetaId,
+      paymentTxid,
+      orderTxid,
+    });
+    const paymentConversationId = buildServiceOrderObserverConversationId({
+      role: 'buyer',
+      metabotId,
+      peerGlobalMetaId,
+      paymentTxid,
+    });
+    coworkStore.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: `metaweb-private:${peerGlobalMetaId}`,
+      metabotId,
+      coworkSessionId: peerSession.id,
+    });
+    coworkStore.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: orderConversationId,
+      metabotId,
+      coworkSessionId: peerSession.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: paymentTxid,
+        orderTxid,
+      }),
+    });
+    const order = createRefundPendingOrder(orderStore, {
+      role: 'buyer',
+      localMetabotId: metabotId,
+      counterpartyGlobalMetaid: peerGlobalMetaId,
+      paymentTxid,
+      orderMessageTxid: orderTxid,
+      coworkSessionId: peerSession.id,
+    });
+
+    const recovered = await recoverMissingRefundPendingOrderSessions({
+      coworkStore,
+      orderStore,
+      resolvePeerInfo: () => ({ peerName: 'Seller', peerAvatar: null }),
+      resolveOrderText: () => `[ORDER] already indexed\ntxid: ${paymentTxid}`,
+    });
+
+    assert.equal(recovered.length, 0);
+    assert.equal(coworkStore.getConversationMapping('metaweb_order', orderConversationId, metabotId)?.coworkSessionId, peerSession.id);
+    assert.equal(coworkStore.getConversationMapping('metaweb_order', paymentConversationId, metabotId), null);
+    assert.equal(orderStore.getOrderById(order.id)?.coworkSessionId, peerSession.id);
+  } finally {
+    sqlite.cleanup();
+  }
 });
 
 test('buildServiceOrderObserverConversationId uses order simplemsg txid when present', () => {

@@ -32,6 +32,7 @@ class FakeCoworkStore {
   constructor(workingDirectory) {
     this.workingDirectory = workingDirectory;
     this.sessions = new Map();
+    this.hiddenSessionIds = new Set();
     this.messageCounter = 0;
   }
 
@@ -60,6 +61,14 @@ class FakeCoworkStore {
   }
 
   upsertConversationMapping() {}
+
+  setSessionHiddenFromList(sessionId, hidden) {
+    if (hidden) {
+      this.hiddenSessionIds.add(sessionId);
+    } else {
+      this.hiddenSessionIds.delete(sessionId);
+    }
+  }
 
   addMessage(sessionId, message) {
     const session = this.getSession(sessionId);
@@ -401,6 +410,10 @@ test('runOrder isolates concurrent same-peer orders into separate execution sess
   assert.notEqual(firstExecutionSessionId, displaySessionId);
   assert.notEqual(secondExecutionSessionId, displaySessionId);
   assert.notEqual(firstExecutionSessionId, secondExecutionSessionId);
+  assert.equal(store.hiddenSessionIds.has(firstExecutionSessionId), true);
+  assert.equal(store.hiddenSessionIds.has(secondExecutionSessionId), true);
+  assert.equal(runner.startSessionCalls[0].options.disableMemoryUpdates, true);
+  assert.equal(runner.startSessionCalls[1].options.disableMemoryUpdates, true);
 
   runner.emit('message', firstExecutionSessionId, {
     id: 'assistant-first',

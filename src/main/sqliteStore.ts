@@ -263,6 +263,7 @@ export class SqliteStore {
         cwd TEXT NOT NULL,
         system_prompt TEXT NOT NULL DEFAULT '',
         execution_mode TEXT,
+        hidden_from_session_list INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -944,6 +945,11 @@ export class SqliteStore {
 
       if (!columns.includes('active_skill_ids')) {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN active_skill_ids TEXT;');
+        this.save();
+      }
+
+      if (!columns.includes('hidden_from_session_list')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN hidden_from_session_list INTEGER NOT NULL DEFAULT 0;');
         this.save();
       }
 

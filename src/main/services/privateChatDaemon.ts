@@ -1930,15 +1930,15 @@ async function processOne(
         } else if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
           emitLog(`[Order] Delivery already sent for order ${orderTrackingId}, skipping duplicate send.`);
         } else {
+          const deliverySentAtSec = Math.floor(Date.now() / 1000);
+          const deliveryText = buildDeliveryMessage({
+            paymentTxid: orderTrackingId,
+            servicePinId: serviceId,
+            serviceName,
+            result: trimmedReply,
+            deliveredAt: deliverySentAtSec,
+          }, orderMessageTxid);
           try {
-            const deliverySentAtSec = Math.floor(Date.now() / 1000);
-            const deliveryText = buildDeliveryMessage({
-              paymentTxid: orderTrackingId,
-              servicePinId: serviceId,
-              serviceName,
-              result: trimmedReply,
-              deliveredAt: deliverySentAtSec,
-            }, orderMessageTxid);
             const deliveryResult = await sendEncryptedMsg(deliveryText);
             if (serviceOrderLifecycle && orderTrackingId) {
               serviceOrderLifecycle.markSellerOrderDelivered({
@@ -1981,6 +1981,43 @@ async function processOne(
             emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
           } catch (error) {
             emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
+            if (sellerOrderSessionId) {
+              const failureReason = error instanceof Error ? error.message : String(error);
+              const localFailureText = orderMessageTxid
+                ? buildOrderStatusMessage(orderMessageTxid, [
+                  '服务结果已生成，但链上交付消息发送失败；以下结果仅保留在本地会话中。',
+                  failureReason,
+                  '',
+                  deliveryText,
+                ].join('\n'))
+                : [
+                  '服务结果已生成，但链上交付消息发送失败；以下结果仅保留在本地会话中。',
+                  failureReason,
+                  '',
+                  deliveryText,
+                ].join('\n');
+              const localFailureMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: localFailureText,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
+                  direction: 'outgoing',
+                  content: localFailureText,
+                  fallbackTag: 'ORDER_STATUS',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  paymentTxid: orderTrackingId,
+                  orderMappingExternalConversationId: externalConversationId,
+                  extra: {
+                    excludeFromSandboxHistory: true,
+                    orderDeliveryBroadcastFailed: true,
+                  },
+                }),
+              });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: localFailureMsg });
+              }
+            }
           }
         }
       }
