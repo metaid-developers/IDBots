@@ -22,6 +22,7 @@ export interface EnsureServiceOrderObserverSessionInput {
   serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
+  orderTxid?: string | null;
   orderMessagePinId?: string | null;
   orderMessageTxid?: string | null;
   orderMessageTxids?: string[] | null;
@@ -55,6 +56,7 @@ export interface ServiceOrderObserverMetadata {
   serviceOutputType: string | null;
   serverBotGlobalMetaId: string | null;
   servicePaidTx: string | null;
+  orderTxid: string | null;
 }
 
 function normalizeText(value: unknown): string {
@@ -70,8 +72,12 @@ export function buildServiceOrderObserverConversationId(input: {
   metabotId: number;
   peerGlobalMetaId: string;
   paymentTxid?: string | null;
+  orderTxid?: string | null;
 }): string {
-  const txidPart = normalizeText(input.paymentTxid).slice(0, 16) || 'pending';
+  const txidPart = (
+    normalizeText(input.orderTxid)
+    || normalizeText(input.paymentTxid)
+  ).slice(0, 16) || 'pending';
   return `metaweb_order:${input.role}:${input.metabotId}:${normalizeText(input.peerGlobalMetaId)}:${txidPart}`;
 }
 
@@ -129,6 +135,7 @@ export function buildServiceOrderObserverMetadata(
     serviceOutputType: normalizeText(input.serviceOutputType) || null,
     serverBotGlobalMetaId: normalizeText(input.serverBotGlobalMetaId) || null,
     servicePaidTx: normalizeText(input.servicePaidTx) || null,
+    orderTxid: normalizeText(input.orderTxid) || normalizeText(input.orderMessageTxid) || null,
   };
 }
 
@@ -141,6 +148,7 @@ export async function ensureServiceOrderObserverSession(
     metabotId: input.metabotId,
     peerGlobalMetaId: input.peerGlobalMetaId,
     paymentTxid: input.servicePaidTx,
+    orderTxid: input.orderTxid || input.orderMessageTxid,
   });
   const existing = coworkStore.getConversationMapping('metaweb_order', externalConversationId, input.metabotId);
   if (existing) {

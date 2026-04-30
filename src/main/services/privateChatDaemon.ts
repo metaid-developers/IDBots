@@ -42,9 +42,14 @@ import {
 } from './serviceOrderLifecycleService';
 import {
   buildDeliveryMessage,
+  buildOrderEndMessage,
+  buildOrderStatusMessage,
   buildCoworkDeliveryResultMessage,
   cleanServiceResultText,
   parseDeliveryMessage,
+  parseNeedsRatingMessage,
+  parseOrderEndMessage,
+  parseOrderStatusMessage,
 } from './serviceOrderProtocols.js';
 import { createPinWithMvcSubsidyRetry, isMvcInsufficientBalanceError } from './privateChatSubsidizedPin';
 import {
@@ -218,6 +223,20 @@ type ResolveLocalServiceOutputTypeFn = (input: {
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
+}
+
+function normalizeOrderMessageTxid(value: unknown): string {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/i.test(normalized) ? normalized : '';
+}
+
+function resolveOrderProtocolTxid(plaintext: string): string {
+  return normalizeOrderMessageTxid(
+    parseOrderStatusMessage(plaintext)?.orderTxid
+      || parseDeliveryMessage(plaintext)?.orderTxid
+      || parseNeedsRatingMessage(plaintext)?.orderTxid
+      || parseOrderEndMessage(plaintext)?.orderTxid
+  );
 }
 
 function getCurrencyFromChain(chain?: string): string {
@@ -579,6 +598,7 @@ export async function sendSellerOrderAcknowledgement(params: {
   plaintext: string;
   skillName?: string | null;
   paymentTxid?: string | null;
+  orderTxid?: string | null;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
   sendEncryptedMsg: (text: string) => Promise<{ pinId?: string | null; txids?: string[] | null }>;
   serviceOrderLifecycle?: Pick<ServiceOrderLifecycleService, 'markSellerOrderFirstResponseSent'> | null;
@@ -607,7 +627,10 @@ export async function sendSellerOrderAcknowledgement(params: {
     );
   }
 
-  const result = await params.sendEncryptedMsg(acknowledgementText);
+  const transmittedText = params.orderTxid
+    ? buildOrderStatusMessage(params.orderTxid, acknowledgementText)
+    : acknowledgementText;
+  const result = await params.sendEncryptedMsg(transmittedText);
   const sentAt = params.now ? params.now() : Date.now();
   if (params.serviceOrderLifecycle && params.paymentTxid) {
     params.serviceOrderLifecycle.markSellerOrderFirstResponseSent({
@@ -620,7 +643,7 @@ export async function sendSellerOrderAcknowledgement(params: {
   params.emitLog?.(`[Order] Acknowledgement sent to ${params.peerGlobalMetaId.slice(0, 12)}…`);
 
   return {
-    text: acknowledgementText,
+    text: transmittedText,
     pinId: result.pinId ?? null,
     txids: Array.isArray(result.txids) ? result.txids : [],
   };
@@ -1141,6 +1164,7 @@ interface RatingFlowParams {
   sharedSecretForReply: string;
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
+  serviceOrderLifecycle?: ServiceOrderLifecycleService | null;
   emitLog: (msg: string) => void;
   emitToRenderer?: (channel: string, data: unknown) => void;
 }
@@ -1197,7 +1221,7 @@ export function isOrderDeliveryFailureNotice(plaintext: string): boolean {
 
 async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const { metabot, metabotStore, coworkStore, buyerOrderMapping, sellerGlobalMetaId,
-    sharedSecretForReply, createPin, performChat, emitLog, emitToRenderer } = params;
+    sharedSecretForReply, createPin, performChat, serviceOrderLifecycle, emitLog, emitToRenderer } = params;
 
   // Parse order metadata stored when buyer sent the order
   const orderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
@@ -1207,6 +1231,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const serviceSkill = typeof orderMeta.serviceSkill === 'string' ? orderMeta.serviceSkill : '';
   const serverBotGlobalMetaId = typeof orderMeta.serverBotGlobalMetaId === 'string' ? orderMeta.serverBotGlobalMetaId : sellerGlobalMetaId;
   const servicePaidTx = typeof orderMeta.servicePaidTx === 'string' ? orderMeta.servicePaidTx : '';
+  const orderTxid = typeof orderMeta.orderTxid === 'string' ? orderMeta.orderTxid : '';
   const serviceOutputType = typeof orderMeta.serviceOutputType === 'string'
     ? orderMeta.serviceOutputType
     : '';
@@ -1293,7 +1318,10 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
 
   // Build combined message: rating text + on-chain pin reference
   const pinLine = ratingPinId ? `\n\n我的评分已记录在链上（pin ID: ${ratingPinId}）。` : '';
-  const combinedMessage = `${ratingText.trim()}${pinLine}`;
+  const combinedMessageBody = `${ratingText.trim()}${pinLine}`;
+  const combinedMessage = orderTxid
+    ? buildOrderEndMessage(orderTxid, 'rated', combinedMessageBody)
+    : combinedMessageBody;
 
   // Send combined message to B via simplemsg
   let combinedMessageMetadata: A2AChainMetadata = {};
@@ -1313,6 +1341,16 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
       pinId: combinedMessageResult.pinId,
     });
     emitLog(`[Rating] Combined rating+farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
+    if (serviceOrderLifecycle && servicePaidTx) {
+      serviceOrderLifecycle.markOrderEnded('buyer', {
+        localMetabotId: metabot.id,
+        counterpartyGlobalMetaId: sellerGlobalMetaId,
+        paymentTxid: servicePaidTx,
+        reason: 'rated',
+        orderEndMessagePinId: combinedMessageResult.pinId ?? null,
+        endedAt: Date.now(),
+      });
+    }
   } catch (e) {
     emitLog(`[Rating] Combined message send failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -1522,6 +1560,7 @@ async function processOne(
       });
       const isFreeOrder = payment.reason === 'free_order_no_payment_required';
       const orderTrackingId = txid || (isFreeOrder ? orderReferenceId : null);
+      const orderMessageTxid = normalizeOrderMessageTxid(row.tx_id);
       const orderPeerGlobalMetaId = fromGlobalMetaId || normalizePrivateConversationPeerId(row);
       if (!payment.paid) {
         emitLog(`[Order] Payment not confirmed for txid=${txid || orderReferenceId || 'n/a'} (reason=${payment.reason})`);
@@ -1559,6 +1598,7 @@ async function processOne(
             mrc20Id: payment.mrc20Id,
             paymentCommitTxid: payment.paymentCommitTxid,
             orderMessagePinId: row.pin_id,
+            orderMessageTxid,
           });
         } catch (error) {
           emitLog(`[Order] Failed to create seller order row: ${error instanceof Error ? error.message : String(error)}`);
@@ -1585,6 +1625,7 @@ async function processOne(
             serviceOutputType,
             serverBotGlobalMetaId: localGlobalMetaId || null,
             servicePaidTx: orderTrackingId,
+            orderTxid: orderMessageTxid,
             orderMessagePinId: row.pin_id,
             orderMessageTxid: row.tx_id,
             orderPayload: plaintext,
@@ -1636,6 +1677,7 @@ async function processOne(
             plaintext,
             skillName: serviceName,
             paymentTxid: orderTrackingId,
+            orderTxid: orderMessageTxid,
             performChat,
             sendEncryptedMsg,
             serviceOrderLifecycle,
@@ -1687,6 +1729,7 @@ async function processOne(
           peerName: (row.from_name as string | null) ?? null,
           peerAvatar: (row.from_avatar as string | null) ?? null,
           expectedOutputType: serviceOutputType,
+          orderTxid: orderMessageTxid,
           processingNotice,
           sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
             ? sendEncryptedMsg
@@ -1694,15 +1737,18 @@ async function processOne(
         });
       } catch (error) {
         const failureNotice = buildOrderExecutionFailureNotice(error);
+        const transmittedFailureNotice = orderMessageTxid
+          ? buildOrderStatusMessage(orderMessageTxid, failureNotice)
+          : failureNotice;
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         if (source === 'metaweb_private' && fromGlobalMetaId) {
           try {
-            const failureResult = await sendEncryptedMsg(failureNotice);
+            const failureResult = await sendEncryptedMsg(transmittedFailureNotice);
             emitLog(`[Order] Failure notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
             if (sellerOrderSessionId) {
               const failureMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
-                content: failureNotice,
+                content: transmittedFailureNotice,
                 metadata: {
                   sourceChannel: 'metaweb_order',
                   externalConversationId,
@@ -1736,12 +1782,15 @@ async function processOne(
       if (trimmedReply && source === 'metaweb_private') {
         if (orderResult.isDeliverable === false) {
           try {
-            const fallbackResult = await sendEncryptedMsg(trimmedReply);
+            const transmittedFallbackReply = orderMessageTxid
+              ? buildOrderStatusMessage(orderMessageTxid, trimmedReply)
+              : trimmedReply;
+            const fallbackResult = await sendEncryptedMsg(transmittedFallbackReply);
             emitLog(`[Order] Timeout fallback notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
             if (sellerOrderSessionId) {
               const fallbackMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
-                content: trimmedReply,
+                content: transmittedFallbackReply,
                 metadata: {
                   sourceChannel: 'metaweb_order',
                   externalConversationId,
@@ -1771,7 +1820,7 @@ async function processOne(
               serviceName,
               result: trimmedReply,
               deliveredAt: deliverySentAtSec,
-            });
+            }, orderMessageTxid);
             const deliveryResult = await sendEncryptedMsg(deliveryText);
             if (serviceOrderLifecycle && orderTrackingId) {
               serviceOrderLifecycle.markSellerOrderDelivered({
@@ -1817,6 +1866,13 @@ async function processOne(
         } else {
           try {
             const inviteResult = await sendEncryptedMsg(trimmedInvite);
+            if (serviceOrderLifecycle && orderTrackingId) {
+              serviceOrderLifecycle.markOrderRatingRequested('seller', {
+                localMetabotId: metabot.id,
+                counterpartyGlobalMetaId: orderPeerGlobalMetaId,
+                paymentTxid: orderTrackingId,
+              });
+            }
             if (orderDispatchKey) {
               sentOrderRatingInviteKeys.add(orderDispatchKey);
             }
@@ -1853,15 +1909,26 @@ async function processOne(
       return;
     }
 
-    // Check if this is an order reply arriving on the buyer side.
-    // If we have a metaweb_order session where the sender is the peer (seller), add the
-    // message as an observer entry and skip LLM reply — the human just watches.
+    // Route explicit order protocol messages by the original [ORDER] simplemsg txid.
+    // Legacy delivery/rating messages without txid keep the old single-open-order fallback.
     if (fromGlobalMetaId) {
-      const buyerOrderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
+      const delivery = parseDeliveryMessage(plaintext);
+      const isNeedsRating = isNeedsRatingMessage(plaintext);
+      const orderEnd = parseOrderEndMessage(plaintext);
+      const orderProtocolTxid = resolveOrderProtocolTxid(plaintext);
+      const buyerOrderMapping = orderProtocolTxid
+        ? coworkStore.findOrderSessionByOrderTxid(
+          metabot.id,
+          fromGlobalMetaId,
+          orderProtocolTxid,
+          orderEnd ? undefined : 'buyer'
+        )
+        : (delivery || isNeedsRating || orderEnd)
+          ? coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId)
+          : null;
       if (buyerOrderMapping) {
-        emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
+        emitLog(`[PrivateChat] Order protocol message from ${fromGlobalMetaId.slice(0, 12)}…, attaching to session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
         const buyerOrderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
-        const isNeedsRating = isNeedsRatingMessage(plaintext);
         if (isNeedsRating && buyerOrderMeta.needsRatingHandled === true) {
           emitLog(`[Rating] Duplicate [NeedsRating] detected for session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…, skipping.`);
           markProcessed(db, row.id, saveDb);
@@ -1871,10 +1938,10 @@ async function processOne(
           typeof buyerOrderMeta.servicePaidTx === 'string'
             ? buyerOrderMeta.servicePaidTx.trim()
             : '';
-        const delivery = parseDeliveryMessage(plaintext);
         const deliveryFailureNotice = isOrderDeliveryFailureNotice(plaintext);
+        const observerRole = String(buyerOrderMeta.role || '').trim();
         const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
-          type: 'assistant',
+          type: observerRole === 'seller' ? 'user' : 'assistant',
           content: plaintext,
           metadata: {
             sourceChannel: 'metaweb_order',
@@ -1896,7 +1963,26 @@ async function processOne(
         }
 
         if (serviceOrderLifecycle && paymentTxid) {
-          if (delivery && typeof delivery.paymentTxid === 'string') {
+          if (orderEnd) {
+            serviceOrderLifecycle.markOrderEnded(observerRole === 'seller' ? 'seller' : 'buyer', {
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid,
+              reason: orderEnd.reason,
+              orderEndMessagePinId: row.pin_id,
+              endedAt: Date.now(),
+            });
+          } else if (isNeedsRating) {
+            serviceOrderLifecycle.markOrderRatingRequested('buyer', {
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid,
+              requestedAt: Date.now(),
+            });
+          } else if (delivery && (typeof delivery.paymentTxid === 'string' || paymentTxid)) {
+            const deliveryPaymentTxid = typeof delivery.paymentTxid === 'string' && delivery.paymentTxid.trim()
+              ? delivery.paymentTxid.trim()
+              : paymentTxid;
             const buyerOrderSession = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
             const buyerOrderPayload = buyerOrderSession?.messages.find((message) => (
               typeof message.content === 'string'
@@ -1912,11 +1998,11 @@ async function processOne(
               const failedOrder = await serviceOrderLifecycle.markBuyerOrderFailedAndRequestRefund({
                 localMetabotId: metabot.id,
                 counterpartyGlobalMetaId: fromGlobalMetaId,
-                paymentTxid: delivery.paymentTxid,
+                paymentTxid: deliveryPaymentTxid,
                 failureReason: SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
                 failedAt: Date.now(),
               });
-              emitLog(`[Order] Buyer order ${delivery.paymentTxid.slice(0, 12)}… entered refund flow after missing ${normalizeServiceOutputType(expectedOutputType)} artifact.`);
+              emitLog(`[Order] Buyer order ${deliveryPaymentTxid.slice(0, 12)}… entered refund flow after missing ${normalizeServiceOutputType(expectedOutputType)} artifact.`);
               if (
                 failedOrder &&
                 failedOrder.coworkSessionId &&
@@ -1939,7 +2025,7 @@ async function processOne(
               const deliveredOrder = serviceOrderLifecycle.markBuyerOrderDelivered({
                 localMetabotId: metabot.id,
                 counterpartyGlobalMetaId: fromGlobalMetaId,
-                paymentTxid: delivery.paymentTxid,
+                paymentTxid: deliveryPaymentTxid,
                 deliveryMessagePinId: row.pin_id,
                 deliveredAt:
                   typeof delivery.deliveredAt === 'number'
@@ -2030,6 +2116,7 @@ async function processOne(
             sharedSecretForReply,
             createPin,
             performChat: performChatCompletionForOrchestrator,
+            serviceOrderLifecycle,
             emitLog,
             emitToRenderer,
           }).catch((e) => {

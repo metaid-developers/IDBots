@@ -21,6 +21,7 @@ export interface EnsureBuyerOrderObserverSessionInput {
   serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
+  orderTxid?: string | null;
   orderMessagePinId?: string | null;
   orderMessageTxid?: string | null;
   orderMessageTxids?: string[] | null;
@@ -42,12 +43,14 @@ export function buildBuyerOrderObserverConversationId(input: {
   metabotId: number;
   peerGlobalMetaId: string;
   paymentTxid?: string | null;
+  orderTxid?: string | null;
 }): string {
   return buildServiceOrderObserverConversationId({
     role: 'buyer',
     metabotId: input.metabotId,
     peerGlobalMetaId: input.peerGlobalMetaId,
     paymentTxid: input.paymentTxid,
+    orderTxid: input.orderTxid,
   });
 }
 
@@ -73,6 +76,7 @@ export async function ensureBuyerOrderObserverSession(
     serviceOutputType: input.serviceOutputType,
     serverBotGlobalMetaId: input.serverBotGlobalMetaId,
     servicePaidTx: input.servicePaidTx,
+    orderTxid: input.orderTxid || input.orderMessageTxid,
     orderMessagePinId: input.orderMessagePinId,
     orderMessageTxid: input.orderMessageTxid,
     orderMessageTxids: input.orderMessageTxids,

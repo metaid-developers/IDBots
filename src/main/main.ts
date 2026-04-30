@@ -118,7 +118,11 @@ import {
 import { ServiceRefundSyncService } from './services/serviceRefundSyncService';
 import { ServiceRefundSettlementService } from './services/serviceRefundSettlementService';
 import { fetchProtocolPinsFromIndexer } from './services/protocolPinFetch';
-import { buildDeliveryMessage, buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
+import {
+  buildDeliveryMessage,
+  buildOrderStatusMessage,
+  buildRefundRequestPayload,
+} from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
 import { buildA2AChainMetadata } from './services/a2aChainMetadata';
@@ -475,6 +479,10 @@ const attachSimplemsgMetadataToCoworkMessage = (
   message.metadata = metadata;
   emitCoworkStreamMessageUpdate(sessionId, message.id, { metadata });
 };
+
+const resolvePrimarySimplemsgTxid = (chain: { txId?: unknown; txids?: unknown; pinId?: unknown }): string => (
+  buildA2AChainMetadata(chain).txid || ''
+);
 
 const emitProviderDiscoveryChanged = (snapshot: DiscoverySnapshot): void => {
   const windows = BrowserWindow.getAllWindows();
@@ -2876,6 +2884,7 @@ const executeDelegationPipeline = async (
   });
 
   let buyerObserverSessionId: string | null = null;
+  let buyerObserverExternalConversationId: string | null = null;
   let buyerObserverInitialMessage: CoworkMessage | null = null;
   try {
     const observerSession = await ensureBuyerOrderObserverSession(coworkStoreInst, {
@@ -2898,6 +2907,7 @@ const executeDelegationPipeline = async (
       orderPayload,
     });
     buyerObserverSessionId = observerSession.coworkSessionId;
+    buyerObserverExternalConversationId = observerSession.externalConversationId;
     buyerObserverInitialMessage = observerSession.initialMessage;
     if (observerSession.initialMessage) {
       emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
@@ -2907,6 +2917,7 @@ const executeDelegationPipeline = async (
   }
 
   let orderPinId: string | null = null;
+  let orderMessageTxid: string | null = null;
   try {
     const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
       wallet.mnemonic,
@@ -2926,10 +2937,24 @@ const executeDelegationPipeline = async (
     });
 
     orderPinId = result.pinId ?? null;
+    orderMessageTxid = resolvePrimarySimplemsgTxid({
+      txids: result.txids,
+      pinId: result.pinId,
+    }) || null;
     attachSimplemsgMetadataToCoworkMessage(coworkStoreInst, buyerObserverSessionId, buyerObserverInitialMessage, {
       txids: result.txids,
       pinId: result.pinId,
     });
+    if (buyerObserverExternalConversationId && orderMessageTxid) {
+      const mapping = coworkStoreInst.getConversationMapping('metaweb_order', buyerObserverExternalConversationId, metabotId);
+      const metadata = mapping ? JSON.parse(mapping.metadataJson || '{}') : null;
+      if (metadata) {
+        coworkStoreInst.updateConversationMappingMetadata('metaweb_order', buyerObserverExternalConversationId, metabotId, {
+          ...metadata,
+          orderTxid: orderMessageTxid,
+        });
+      }
+    }
   } catch (error) {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
     if (buyerObserverSessionId) {
@@ -2975,6 +3000,7 @@ const executeDelegationPipeline = async (
         paymentCommitTxid: paymentCommitTxid || undefined,
         coworkSessionId: sessionId,
         orderMessagePinId: orderPinId,
+        orderMessageTxid,
       });
       orderId = order.id;
     } catch (error) {
@@ -3421,6 +3447,89 @@ const getServiceOrderStore = () => {
   return serviceOrderStore;
 };
 
+async function sendServiceOrderSimplemsg(order: ServiceOrderRecord, plaintext: string) {
+  const metabotStoreInst = getMetabotStore();
+  const metabot = metabotStoreInst.getMetabotById(order.localMetabotId);
+  const wallet = metabotStoreInst.getMetabotWalletByMetabotId(order.localMetabotId);
+  const localGlobalMetaId = toSafeString(metabot?.globalmetaid).trim();
+  const peerGlobalMetaId = toSafeString(order.counterpartyGlobalMetaid).trim();
+  if (!metabot || !wallet?.mnemonic?.trim() || !localGlobalMetaId || !peerGlobalMetaId) {
+    throw new Error(`Missing simplemsg identity context for order=${order.id}`);
+  }
+
+  const latestPeerKey = getStore().getDatabase().exec(
+    `SELECT from_chat_pubkey, reply_pin
+     FROM private_chat_messages
+     WHERE (from_global_metaid = ? OR from_metaid = ?)
+       AND (to_global_metaid = ? OR to_metaid = ?)
+       AND from_chat_pubkey IS NOT NULL
+       AND TRIM(from_chat_pubkey) != ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [peerGlobalMetaId, peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId]
+  );
+  const row = latestPeerKey[0]?.values?.[0] ?? [];
+  let chatPubkey = toSafeString(row[0]).trim();
+  const replyPin = toSafeString(row[1]).trim();
+  if (!chatPubkey) {
+    chatPubkey = await resolveChatPubkeyForProvider(peerGlobalMetaId) ?? '';
+  }
+  if (!chatPubkey) {
+    throw new Error(`Peer chat public key is unavailable for order=${order.id}`);
+  }
+
+  const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+    wallet.mnemonic,
+    wallet.path || "m/44'/10001'/0'/0/0"
+  );
+  const encrypted = ecdhEncrypt(
+    plaintext,
+    computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
+  );
+  const payload = buildPrivateMessagePayload(peerGlobalMetaId, encrypted, replyPin);
+  return createPin(metabotStoreInst, order.localMetabotId, {
+    operation: 'create',
+    path: '/protocols/simplemsg',
+    encryption: '0',
+    version: '1.0.0',
+    contentType: 'application/json',
+    payload,
+  });
+}
+
+async function sendRatingTimeoutOrderEndPin(input: {
+  order: ServiceOrderRecord;
+  reason: string;
+  message: string;
+}) {
+  const result = await sendServiceOrderSimplemsg(input.order, input.message);
+  if (input.order.coworkSessionId) {
+    const message = getCoworkStore().addMessage(input.order.coworkSessionId, {
+      type: 'assistant',
+      content: input.message,
+      metadata: {
+        sourceChannel: 'metaweb_order',
+        direction: 'outgoing',
+        suppressRunningStatus: true,
+        refreshSessionSummary: true,
+        orderEndMessage: true,
+        orderEndReason: input.reason,
+        paymentTxid: input.order.paymentTxid,
+        ...buildA2AChainMetadata({
+          txids: result.txids,
+          pinId: result.pinId,
+        }),
+      },
+    });
+    emitCoworkStreamMessage(input.order.coworkSessionId, message);
+  }
+  return {
+    pinId: result.pinId ?? result.txids?.[0] ?? null,
+    txid: result.txids?.[0] ?? null,
+    txids: result.txids,
+  };
+}
+
 const getServiceOrderLifecycleService = () => {
   if (!serviceOrderLifecycleService) {
     serviceOrderLifecycleService = new ServiceOrderLifecycleService(
@@ -3478,7 +3587,11 @@ const getServiceOrderLifecycleService = () => {
             txid: result.txids?.[0] ?? null,
           };
         },
+        createOrderEndPin: sendRatingTimeoutOrderEndPin,
         onOrderEvent: async ({ type, order }) => {
+          if (type === 'order_ended') {
+            return;
+          }
           if (type === 'refund_requested') {
             await recoverMissingRefundPendingOrderObserverSessions().catch((error) => {
               console.warn('[ServiceOrder] Failed to recover refund observer sessions', error);
@@ -4640,11 +4753,11 @@ if (!gotTheLock) {
         maxAttempts: 2,
       });
       if (!verifiedUpload.ok) {
-        const manualResendFailureReply = [
+        const manualResendFailureReply = buildOrderStatusMessage(order.orderMessageTxid, [
           `服务方已生成 ${outputType} 数字成果，但上传链上交付失败。`,
           verifiedUpload.error instanceof Error ? verifiedUpload.error.message : String(verifiedUpload.error || ''),
           '系统将自动转入退款流程，请稍后重试或联系服务方。',
-        ].filter(Boolean).join('\n');
+        ].filter(Boolean).join('\n'));
         const encryptedFailure = ecdhEncrypt(
           manualResendFailureReply,
           computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
@@ -4693,7 +4806,7 @@ if (!gotTheLock) {
         serviceName: order.serviceName,
         result: deliverySummary,
         deliveredAt,
-      });
+      }, order.orderMessageTxid);
       const encrypted = ecdhEncrypt(
         deliveryText,
         computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
@@ -6771,6 +6884,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         return { success: false, error: 'MetaBot wallet mnemonic is missing' };
       }
 
+      let orderObserverExternalConversationId: string | null = null;
       let orderObserverInitialMessage: CoworkMessage | null = null;
       try {
         const observerSession = await ensureBuyerOrderObserverSession(getCoworkStore(), {
@@ -6793,6 +6907,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           orderPayload,
         });
         coworkSessionId = observerSession.coworkSessionId;
+        orderObserverExternalConversationId = observerSession.externalConversationId;
         orderObserverInitialMessage = observerSession.initialMessage;
         if (observerSession.initialMessage) {
           emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
@@ -6817,10 +6932,24 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         contentType: 'application/json',
         payload: payloadStr,
       });
+      const orderMessageTxid = resolvePrimarySimplemsgTxid({
+        txids: result.txids,
+        pinId: result.pinId,
+      }) || null;
       attachSimplemsgMetadataToCoworkMessage(getCoworkStore(), coworkSessionId, orderObserverInitialMessage, {
         txids: result.txids,
         pinId: result.pinId,
       });
+      if (orderObserverExternalConversationId && orderMessageTxid) {
+        const mapping = getCoworkStore().getConversationMapping('metaweb_order', orderObserverExternalConversationId, metabotId);
+        const metadata = mapping ? JSON.parse(mapping.metadataJson || '{}') : null;
+        if (metadata) {
+          getCoworkStore().updateConversationMappingMetadata('metaweb_order', orderObserverExternalConversationId, metabotId, {
+            ...metadata,
+            orderTxid: orderMessageTxid,
+          });
+        }
+      }
 
       try {
         serviceOrderLifecycle.createBuyerOrder({
@@ -6838,6 +6967,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           paymentCommitTxid: servicePaymentCommitTxid || undefined,
           coworkSessionId,
           orderMessagePinId: result.pinId ?? null,
+          orderMessageTxid,
         });
       } catch (error) {
         if (

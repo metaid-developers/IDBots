@@ -1,11 +1,14 @@
 export type ServiceOrderStatus =
   | 'awaiting_first_response'
   | 'in_progress'
+  | 'rating_pending'
   | 'completed'
   | 'failed'
   | 'refund_pending'
   | 'refunded'
   ;
+
+export const SERVICE_ORDER_RATING_TIMEOUT_MS = 15 * 60_000;
 
 export interface ServiceOrderTimeoutCheckRecord {
   status: ServiceOrderStatus;

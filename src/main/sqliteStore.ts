@@ -68,13 +68,19 @@ const SERVICE_ORDER_TABLE_SQL = `
     mrc20_id TEXT,
     payment_commit_txid TEXT,
     order_message_pin_id TEXT,
+    order_message_txid TEXT,
     cowork_session_id TEXT,
-    status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
+    status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded')),
     first_response_deadline_at INTEGER NOT NULL,
     delivery_deadline_at INTEGER NOT NULL,
     first_response_at INTEGER,
     delivery_message_pin_id TEXT,
     delivered_at INTEGER,
+    rating_requested_at INTEGER,
+    rating_deadline_at INTEGER,
+    order_end_message_pin_id TEXT,
+    order_ended_at INTEGER,
+    order_end_reason TEXT,
     failed_at INTEGER,
     failure_reason TEXT,
     refund_request_pin_id TEXT,
@@ -97,9 +103,26 @@ function migrateLegacyServiceOrdersTable(db: Database): void {
     && columns.includes('mrc20_ticker')
     && columns.includes('mrc20_id')
     && columns.includes('payment_commit_txid')
+    && columns.includes('order_message_txid')
+    && columns.includes('rating_requested_at')
+    && columns.includes('rating_deadline_at')
+    && columns.includes('order_end_message_pin_id')
+    && columns.includes('order_ended_at')
+    && columns.includes('order_end_reason')
   ) {
     return;
   }
+
+  const legacy = (column: string, fallback: string) => (
+    columns.includes(column) ? column : fallback
+  );
+  const orderMessageTxidExpr = columns.includes('order_message_txid')
+    ? 'order_message_txid'
+    : `CASE
+        WHEN length(trim(COALESCE(order_message_pin_id, ''))) >= 66
+          THEN lower(substr(trim(order_message_pin_id), 1, 64))
+        ELSE NULL
+      END`;
 
   db.run('BEGIN TRANSACTION;');
   try {
@@ -109,9 +132,10 @@ function migrateLegacyServiceOrdersTable(db: Database): void {
       INSERT INTO service_orders (
         id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
         payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
-        mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
+        mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, order_message_txid, cowork_session_id,
         status, first_response_deadline_at, delivery_deadline_at, first_response_at,
-        delivery_message_pin_id, delivered_at, failed_at, failure_reason, refund_request_pin_id,
+        delivery_message_pin_id, delivered_at, rating_requested_at, rating_deadline_at,
+        order_end_message_pin_id, order_ended_at, order_end_reason, failed_at, failure_reason, refund_request_pin_id,
         refund_finalize_pin_id, refund_txid, refund_requested_at, refund_completed_at,
         refund_apply_retry_count, next_retry_at, created_at, updated_at
       )
@@ -135,18 +159,27 @@ function migrateLegacyServiceOrdersTable(db: Database): void {
           WHEN lower(trim(payment_chain)) = 'doge' OR upper(trim(payment_currency)) = 'DOGE' THEN 'DOGE'
           ELSE 'SPACE'
         END,
-        'native',
-        NULL,
-        NULL,
-        NULL,
+        ${legacy('settlement_kind', "'native'")},
+        ${legacy('mrc20_ticker', 'NULL')},
+        ${legacy('mrc20_id', 'NULL')},
+        ${legacy('payment_commit_txid', 'NULL')},
         order_message_pin_id,
+        ${orderMessageTxidExpr},
         cowork_session_id,
-        status,
+        CASE
+          WHEN status IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded') THEN status
+          ELSE 'awaiting_first_response'
+        END,
         first_response_deadline_at,
         delivery_deadline_at,
         first_response_at,
         delivery_message_pin_id,
         delivered_at,
+        ${legacy('rating_requested_at', 'NULL')},
+        ${legacy('rating_deadline_at', 'NULL')},
+        ${legacy('order_end_message_pin_id', 'NULL')},
+        ${legacy('order_ended_at', 'NULL')},
+        ${legacy('order_end_reason', 'NULL')},
         failed_at,
         failure_reason,
         refund_request_pin_id,
@@ -733,6 +766,12 @@ export class SqliteStore {
       ON service_orders(local_metabot_id, role, payment_txid);
     `);
     this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_service_orders_order_message_txid
+      ON service_orders(local_metabot_id, role, order_message_txid);
+    `);
+    this.db.run('DROP TRIGGER IF EXISTS trg_service_orders_status_insert;');
+    this.db.run('DROP TRIGGER IF EXISTS trg_service_orders_status_update;');
+    this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_insert
       BEFORE INSERT ON service_orders
       WHEN NEW.role NOT IN ('buyer', 'seller')
@@ -751,7 +790,7 @@ export class SqliteStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_insert
       BEFORE INSERT ON service_orders
-      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded')
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.status');
       END;
@@ -813,7 +852,7 @@ export class SqliteStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_update
       BEFORE UPDATE OF status ON service_orders
-      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded')
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.status');
       END;

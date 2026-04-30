@@ -106,7 +106,7 @@ interface CoworkMessage {
 
 interface CoworkServiceOrderSummary {
   role?: 'buyer' | 'seller';
-  status: 'awaiting_first_response' | 'in_progress' | 'completed' | 'failed' | 'refund_pending' | 'refunded';
+  status: 'awaiting_first_response' | 'in_progress' | 'rating_pending' | 'completed' | 'failed' | 'refund_pending' | 'refunded';
   servicePinId?: string | null;
   serviceName?: string | null;
   paymentTxid?: string | null;

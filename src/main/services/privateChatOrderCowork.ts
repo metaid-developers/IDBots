@@ -8,7 +8,11 @@ import type { MetabotStore } from '../metabotStore';
 import type { OrderSource } from './orderPayment';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { generateSessionTitle } from '../libs/coworkUtil';
-import { cleanServiceResultText } from './serviceOrderProtocols.js';
+import {
+  buildNeedsRatingMessage,
+  buildOrderStatusMessage,
+  cleanServiceResultText,
+} from './serviceOrderProtocols.js';
 import {
   buildMetafileDeliverySummary,
   normalizeServiceOutputType,
@@ -61,6 +65,7 @@ export interface OrderCoworkRequest {
   peerName?: string | null;
   peerAvatar?: string | null;
   expectedOutputType?: string | null;
+  orderTxid?: string | null;
   orderStartedAt?: number | null;
   processingNotice?: {
     content: string;
@@ -299,14 +304,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
       const ratingInvite = await this.buildRatingInvite(finalized.serviceReply, request);
       accumulator.resolve({
         serviceReply: finalized.serviceReply,
-        ratingInvite,
+        ratingInvite: this.formatNeedsRatingText(request, ratingInvite),
         isDeliverable: true,
       });
     }).catch(() => {
       // Fallback if LLM fails
       accumulator.resolve({
         serviceReply,
-        ratingInvite: '[NeedsRating] 服务已完成，请给个评价吧！',
+        ratingInvite: this.formatNeedsRatingText(request, '[NeedsRating] 服务已完成，请给个评价吧！'),
         isDeliverable: true,
       });
     });
@@ -370,7 +375,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       };
     }
 
-    const uploadNotice = '技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。';
+    const uploadNotice = this.formatOrderStatusText(request, '技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。');
     const uploadNoticeMessage = this.addOrderDeliveryStatusMessage(sessionId, uploadNotice, {
       sourceChannel: request?.source,
       externalConversationId: request?.externalConversationId,
@@ -387,7 +392,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         verifyDeliveryArtifactUpload: this.verifyDeliveryArtifactUpload,
         maxAttempts: 2,
         onRetry: async () => {
-          const retryNotice = '数字成果链上上传校验失败，正在重新上传一次。';
+          const retryNotice = this.formatOrderStatusText(request, '数字成果链上上传校验失败，正在重新上传一次。');
           const retryNoticeMessage = this.addOrderDeliveryStatusMessage(sessionId, retryNotice, {
             sourceChannel: request?.source,
             externalConversationId: request?.externalConversationId,
@@ -452,7 +457,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
   ): Promise<A2AChainMetadata | null> {
     if (!request?.sendStatusUpdate) return null;
     try {
-      const result = await request.sendStatusUpdate(content);
+      const result = await request.sendStatusUpdate(this.formatOrderStatusText(request, content));
       if (!result || typeof result !== 'object') return null;
       const record = result as Record<string, unknown>;
       return buildA2AChainMetadata({
@@ -464,6 +469,27 @@ export class PrivateChatOrderCowork extends EventEmitter {
       // Status updates are best-effort; final delivery or failure notice still follows.
       return null;
     }
+  }
+
+  private formatOrderStatusText(
+    request: OrderCoworkRequest | undefined,
+    content: string,
+  ): string {
+    const text = String(content || '').trim();
+    const orderTxid = typeof request?.orderTxid === 'string' ? request.orderTxid.trim() : '';
+    if (!orderTxid || /^\[ORDER_STATUS:/i.test(text)) return text;
+    return buildOrderStatusMessage(orderTxid, text);
+  }
+
+  private formatNeedsRatingText(
+    request: OrderCoworkRequest | undefined,
+    content: string,
+  ): string {
+    const text = String(content || '').trim();
+    const orderTxid = typeof request?.orderTxid === 'string' ? request.orderTxid.trim() : '';
+    if (!orderTxid || /^\[NeedsRating:/i.test(text)) return text;
+    const withoutLegacyPrefix = text.replace(/^\[NeedsRating\]\s*/i, '').trim();
+    return buildNeedsRatingMessage(orderTxid, withoutLegacyPrefix);
   }
 
   private applyChainMetadataToMessage(

@@ -45,6 +45,7 @@ async function createLifecycleServiceForTest(options = {}) {
   const service = new ServiceOrderLifecycleService(store, {
     now: options.now || (() => 1_770_000_000_000),
     createRefundRequestPin: options.createRefundRequestPin,
+    createOrderEndPin: options.createOrderEndPin,
     resolveLocalMetabotGlobalMetaId: options.resolveLocalMetabotGlobalMetaId,
     onOrderEvent: options.onOrderEvent,
   });
@@ -257,7 +258,7 @@ test('markSellerOrderFirstResponseSent moves awaiting seller orders into in_prog
   assert.equal(updated?.firstResponseAt, now);
 });
 
-test('markBuyerOrderDelivered completes the buyer order and stores the delivery message pin', async () => {
+test('markBuyerOrderDelivered moves the buyer order into rating_pending and stores the delivery message pin', async () => {
   const now = 1_770_000_222_000;
   const { service } = await createLifecycleServiceForTest({
     now: () => now,
@@ -272,10 +273,59 @@ test('markBuyerOrderDelivered completes the buyer order and stores the delivery 
     deliveredAt: now,
   });
 
-  assert.equal(updated?.status, 'completed');
+  assert.equal(updated?.status, 'rating_pending');
   assert.equal(updated?.deliveryMessagePinId, 'delivery-pin-id');
   assert.equal(updated?.deliveredAt, now);
   assert.equal(updated?.firstResponseAt, now);
+});
+
+test('scanTimedOutOrders sends scoped seller ORDER_END after the rating deadline', async () => {
+  let currentNow = 1_770_000_000_000;
+  const orderTxid = 'c'.repeat(64);
+  const sentOrderEnds = [];
+  const events = [];
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createOrderEndPin: async (input) => {
+      sentOrderEnds.push(input);
+      return {
+        pinId: `${'d'.repeat(64)}i0`,
+        txids: ['d'.repeat(64)],
+      };
+    },
+    onOrderEvent: (event) => {
+      events.push(event);
+    },
+  });
+  const order = service.createSellerOrder(baseOrderInput({
+    orderMessagePinId: `${orderTxid}i0`,
+    orderMessageTxid: orderTxid,
+  }));
+  service.markSellerOrderDelivered({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    deliveryMessagePinId: 'delivery-pin-id',
+    deliveredAt: currentNow,
+  });
+  service.markOrderRatingRequested('seller', {
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    requestedAt: currentNow,
+  });
+
+  currentNow += 15 * 60_000;
+  await service.scanTimedOutOrders();
+  assert.equal(sentOrderEnds.length, 1);
+  assert.match(sentOrderEnds[0].message, new RegExp(`^\\[ORDER_END:${orderTxid} rating_timeout\\]`));
+
+  const updated = store.getOrderById(order.id);
+  assert.equal(updated?.status, 'completed');
+  assert.equal(updated?.orderEndReason, 'rating_timeout');
+  assert.equal(updated?.orderEndMessagePinId, `${'d'.repeat(64)}i0`);
+  assert.equal(updated?.orderEndedAt, currentNow);
+  assert.deepEqual(events.map((event) => event.type), ['order_ended']);
 });
 
 test('scanTimedOutOrders marks first-response timeout orders failed and moves them into refund_pending on successful refund request broadcast', async () => {

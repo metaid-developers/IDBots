@@ -3,7 +3,7 @@ import {
   type ServiceOrderRecord,
 } from '../serviceOrderStore';
 import { getTimedOutOrderTransition } from './serviceOrderState';
-import { buildRefundRequestPayload } from './serviceOrderProtocols.js';
+import { buildOrderEndMessage, buildRefundRequestPayload } from './serviceOrderProtocols.js';
 
 export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
 export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = 'self_order_not_allowed';
@@ -26,6 +26,7 @@ export interface CreateBuyerOrderInput {
   paymentCommitTxid?: string;
   coworkSessionId?: string | null;
   orderMessagePinId?: string | null;
+  orderMessageTxid?: string | null;
 }
 
 export interface CreateSellerOrderInput {
@@ -43,6 +44,7 @@ export interface CreateSellerOrderInput {
   paymentCommitTxid?: string;
   coworkSessionId?: string | null;
   orderMessagePinId?: string | null;
+  orderMessageTxid?: string | null;
 }
 
 export interface ServiceOrderPaymentMatchInput {
@@ -74,6 +76,16 @@ export interface MarkSellerOrderFirstResponseSentInput extends ServiceOrderPayme
   sentAt?: number;
 }
 
+export interface MarkOrderRatingRequestedInput extends ServiceOrderPaymentMatchInput {
+  requestedAt?: number;
+}
+
+export interface MarkOrderEndedInput extends ServiceOrderPaymentMatchInput {
+  reason?: string | null;
+  orderEndMessagePinId?: string | null;
+  endedAt?: number;
+}
+
 export interface AttachSellerCoworkSessionInput extends ServiceOrderPaymentMatchInput {
   coworkSessionId: string;
 }
@@ -86,9 +98,14 @@ interface ServiceOrderLifecycleServiceOptions {
     order: ServiceOrderRecord;
     payload: Record<string, unknown>;
   }) => Promise<{ pinId?: string | null; txid?: string | null }>;
+  createOrderEndPin?: (input: {
+    order: ServiceOrderRecord;
+    reason: string;
+    message: string;
+  }) => Promise<{ pinId?: string | null; txid?: string | null; txids?: string[] | null }>;
   refundRequestRetryDelayMs?: number;
   onOrderEvent?: (event: {
-    type: 'refund_requested' | 'refunded';
+    type: 'refund_requested' | 'refunded' | 'order_ended';
     order: ServiceOrderRecord;
   }) => void | Promise<void>;
 }
@@ -125,9 +142,14 @@ export class ServiceOrderLifecycleService {
     order: ServiceOrderRecord;
     payload: Record<string, unknown>;
   }) => Promise<{ pinId?: string | null; txid?: string | null }>;
+  private createOrderEndPin?: (input: {
+    order: ServiceOrderRecord;
+    reason: string;
+    message: string;
+  }) => Promise<{ pinId?: string | null; txid?: string | null; txids?: string[] | null }>;
   private refundRequestRetryDelayMs: number;
   private onOrderEvent?: (event: {
-    type: 'refund_requested' | 'refunded';
+    type: 'refund_requested' | 'refunded' | 'order_ended';
     order: ServiceOrderRecord;
   }) => void | Promise<void>;
 
@@ -142,6 +164,7 @@ export class ServiceOrderLifecycleService {
     this.buildRefundRequestPayload =
       options.buildRefundRequestPayload ?? ((order) => this.buildDefaultRefundRequestPayload(order));
     this.createRefundRequestPin = options.createRefundRequestPin;
+    this.createOrderEndPin = options.createOrderEndPin;
     this.refundRequestRetryDelayMs =
       options.refundRequestRetryDelayMs ?? DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS;
     this.onOrderEvent = options.onOrderEvent;
@@ -226,6 +249,7 @@ export class ServiceOrderLifecycleService {
       paymentCommitTxid: input.paymentCommitTxid,
       coworkSessionId: input.coworkSessionId ?? null,
       orderMessagePinId: input.orderMessagePinId ?? null,
+      orderMessageTxid: input.orderMessageTxid ?? null,
       status: 'awaiting_first_response',
       now: this.now(),
     });
@@ -252,6 +276,7 @@ export class ServiceOrderLifecycleService {
       paymentCommitTxid: input.paymentCommitTxid,
       coworkSessionId: input.coworkSessionId ?? null,
       orderMessagePinId: input.orderMessagePinId ?? null,
+      orderMessageTxid: input.orderMessageTxid ?? null,
       status: 'awaiting_first_response',
       now: this.now(),
     });
@@ -337,6 +362,38 @@ export class ServiceOrderLifecycleService {
     });
   }
 
+  markOrderRatingRequested(
+    role: 'buyer' | 'seller',
+    input: MarkOrderRatingRequestedInput
+  ): ServiceOrderRecord | null {
+    const order = this.store.findOrderByPayment({
+      role,
+      localMetabotId: input.localMetabotId,
+      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+      paymentTxid: input.paymentTxid,
+    });
+    if (!order) return null;
+    return this.store.markRatingRequested(order.id, input.requestedAt ?? this.now());
+  }
+
+  markOrderEnded(
+    role: 'buyer' | 'seller',
+    input: MarkOrderEndedInput
+  ): ServiceOrderRecord | null {
+    const order = this.store.findOrderByPayment({
+      role,
+      localMetabotId: input.localMetabotId,
+      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+      paymentTxid: input.paymentTxid,
+    });
+    if (!order) return null;
+    return this.store.markOrderEnded(order.id, {
+      reason: input.reason,
+      orderEndMessagePinId: input.orderEndMessagePinId,
+      endedAt: input.endedAt ?? this.now(),
+    });
+  }
+
   attachCoworkSessionToSellerOrder(
     input: AttachSellerCoworkSessionInput
   ): ServiceOrderRecord | null {
@@ -369,6 +426,44 @@ export class ServiceOrderLifecycleService {
     const retryCandidates = this.store.listRefundRequestRetryCandidates('buyer', now);
     for (const order of retryCandidates) {
       await this.tryCreateRefundRequest(order.id, now);
+    }
+
+    const ratingTimeoutCandidates = this.store.listRatingTimeoutCandidates('seller', now);
+    for (const order of ratingTimeoutCandidates) {
+      await this.tryEndRatingTimedOutOrder(order, now);
+    }
+  }
+
+  private async tryEndRatingTimedOutOrder(
+    order: ServiceOrderRecord,
+    endedAt: number
+  ): Promise<ServiceOrderRecord | null> {
+    if (order.role !== 'seller' || order.status !== 'rating_pending') return order;
+    if (!this.createOrderEndPin) return order;
+
+    const reason = 'rating_timeout';
+    const message = buildOrderEndMessage(
+      order.orderMessageTxid,
+      reason,
+      '等待买方评价超时，订单已结束。'
+    );
+    try {
+      const result = await this.createOrderEndPin({ order, reason, message });
+      const pinId = result.pinId
+        ?? result.txid
+        ?? (Array.isArray(result.txids) ? result.txids[0] : null)
+        ?? null;
+      const updated = this.store.markOrderEnded(order.id, {
+        reason,
+        orderEndMessagePinId: pinId,
+        endedAt,
+      });
+      if (updated) {
+        await this.emitOrderEndedEvents([updated]);
+      }
+      return updated;
+    } catch {
+      return order;
     }
   }
 
@@ -574,6 +669,16 @@ export class ServiceOrderLifecycleService {
     for (const order of orders) {
       await this.onOrderEvent({
         type: 'refunded',
+        order,
+      });
+    }
+  }
+
+  private async emitOrderEndedEvents(orders: ServiceOrderRecord[]): Promise<void> {
+    if (!this.onOrderEvent) return;
+    for (const order of orders) {
+      await this.onOrderEvent({
+        type: 'order_ended',
         order,
       });
     }

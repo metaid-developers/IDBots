@@ -1596,6 +1596,39 @@ export class CoworkStore implements MemoryBackend {
     return fallbackRow ? this.mapConversationMappingRow(fallbackRow) : null;
   }
 
+  findOrderSessionByOrderTxid(
+    metabotId: number,
+    peerGlobalMetaId: string,
+    orderTxid: string,
+    role?: 'buyer' | 'seller'
+  ): CoworkConversationMapping | null {
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    const normalizedOrderTxid = String(orderTxid || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/i.test(normalizedOrderTxid)) return null;
+    const roleClause = role ? 'AND m.metadata_json LIKE ?' : '';
+    const params: (string | number)[] = [
+      normalizedMetabotId,
+      peerGlobalMetaId,
+      `%"orderTxid":"${normalizedOrderTxid}"%`,
+    ];
+    if (role) {
+      params.push(`%"role":"${role}"%`);
+    }
+    const row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT m.channel, m.external_conversation_id, m.metabot_id, m.cowork_session_id, m.metadata_json, m.created_at, m.last_active_at
+      FROM cowork_conversation_mappings m
+      JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      WHERE m.channel = 'metaweb_order'
+        AND m.metabot_id = ?
+        AND s.peer_global_metaid = ?
+        AND m.metadata_json LIKE ?
+        ${roleClause}
+      ORDER BY m.last_active_at DESC
+      LIMIT 1
+    `, params);
+    return row ? this.mapConversationMappingRow(row) : null;
+  }
+
   updateConversationMappingMetadata(
     channel: string,
     externalConversationId: string,
@@ -2280,7 +2313,7 @@ export class CoworkStore implements MemoryBackend {
         FROM private_chat_messages
         WHERE pin_id = ?
           AND LOWER(TRIM(protocol)) IN ('simplemsg', '/protocols/simplemsg')
-          AND TRIM(content) LIKE '[DELIVERY]%'
+          AND TRIM(content) LIKE '[DELIVERY%'
         LIMIT 1
       `, [deliveryPinId]);
     } catch {
@@ -2337,8 +2370,8 @@ export class CoworkStore implements MemoryBackend {
           AND content IS NOT NULL
           AND TRIM(content) <> ''
           AND TRIM(content) NOT LIKE '[ORDER]%'
-          AND TRIM(content) NOT LIKE '[DELIVERY]%'
-          AND TRIM(content) NOT LIKE '[NeedsRating]%'
+          AND TRIM(content) NOT LIKE '[DELIVERY%'
+          AND TRIM(content) NOT LIKE '[NeedsRating%'
         ORDER BY id DESC
         LIMIT 20
       `, [peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId]);
@@ -2368,7 +2401,7 @@ export class CoworkStore implements MemoryBackend {
     if (!this.tableExists('service_orders')) return null;
     const content = String(row.content || '').trim();
     const isOrderMessage = content.startsWith('[ORDER]');
-    const isDeliveryMessage = content.startsWith('[DELIVERY]');
+    const isDeliveryMessage = content.startsWith('[DELIVERY]') || content.startsWith('[DELIVERY:');
     if (!isOrderMessage && !isDeliveryMessage) return null;
 
     const paymentTxid = normalizeA2AChainTxid(metadata.paymentTxid)

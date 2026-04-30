@@ -81,6 +81,24 @@ test('buildServiceOrderObserverConversationId scopes sessions by role, peer, and
   );
 });
 
+test('buildServiceOrderObserverConversationId uses order simplemsg txid when present', () => {
+  assert.equal(typeof buildServiceOrderObserverConversationId, 'function');
+  const orderTxid = 'f'.repeat(64);
+
+  const conversationId = buildServiceOrderObserverConversationId({
+    role: 'seller',
+    metabotId: 12,
+    peerGlobalMetaId: 'buyer-global-metaid',
+    paymentTxid: 'a'.repeat(64),
+    orderTxid,
+  });
+
+  assert.equal(
+    conversationId,
+    `metaweb_order:seller:12:buyer-global-metaid:${orderTxid.slice(0, 16)}`
+  );
+});
+
 test('recoverMissingRefundPendingOrderSessions recreates deleted seller refund sessions with restored order text', async () => {
   assert.equal(typeof recoverMissingRefundPendingOrderSessions, 'function');
   const sqlite = await createSqliteStore();

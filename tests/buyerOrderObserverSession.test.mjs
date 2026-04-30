@@ -24,6 +24,21 @@ test('buildBuyerOrderObserverConversationId scopes observer sessions by buyer, s
   );
 });
 
+test('buildBuyerOrderObserverConversationId prefers order simplemsg txid over payment txid', () => {
+  const orderTxid = 'f'.repeat(64);
+  const conversationId = buildBuyerOrderObserverConversationId({
+    metabotId: 12,
+    peerGlobalMetaId: 'seller-global-metaid',
+    paymentTxid: 'a'.repeat(64),
+    orderTxid,
+  });
+
+  assert.equal(
+    conversationId,
+    `metaweb_order:buyer:12:seller-global-metaid:${orderTxid.slice(0, 16)}`
+  );
+});
+
 test('ensureBuyerOrderObserverSession keeps payment txid separate from missing message txid', async () => {
   const sqlite = await createSqliteStore();
   try {
@@ -94,6 +109,39 @@ test('ensureBuyerOrderObserverSession writes order simplemsg metadata when it is
     assert.deepEqual(firstMessage?.metadata?.txids, [orderTxid]);
     assert.equal(firstMessage?.metadata?.pinId, `${orderTxid}i0`);
     assert.equal(firstMessage?.metadata?.paymentTxid, paymentTxid);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('ensureBuyerOrderObserverSession separates concurrent orders by order simplemsg txid', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const paymentTxid = 'd'.repeat(64);
+    const firstOrderTxid = '1'.repeat(64);
+    const secondOrderTxid = '2'.repeat(64);
+
+    const first = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 7,
+      peerGlobalMetaId: 'seller-global-metaid',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] first order\ntxid: ${paymentTxid}`,
+      orderMessagePinId: `${firstOrderTxid}i0`,
+      orderMessageTxid: firstOrderTxid,
+    });
+    const second = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 7,
+      peerGlobalMetaId: 'seller-global-metaid',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] second order\ntxid: ${paymentTxid}`,
+      orderMessagePinId: `${secondOrderTxid}i0`,
+      orderMessageTxid: secondOrderTxid,
+    });
+
+    assert.notEqual(first.coworkSessionId, second.coworkSessionId);
+    assert.equal(first.externalConversationId.endsWith(firstOrderTxid.slice(0, 16)), true);
+    assert.equal(second.externalConversationId.endsWith(secondOrderTxid.slice(0, 16)), true);
   } finally {
     sqlite.cleanup();
   }

@@ -68,6 +68,7 @@ export interface CoworkServiceOrderSummary {
   status:
     | 'awaiting_first_response'
     | 'in_progress'
+    | 'rating_pending'
     | 'completed'
     | 'failed'
     | 'refund_pending'
