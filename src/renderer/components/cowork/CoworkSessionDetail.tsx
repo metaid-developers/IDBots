@@ -23,6 +23,7 @@ import {
   ExclamationTriangleIcon,
   ChevronRightIcon,
   StopCircleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
@@ -37,6 +38,7 @@ import {
   shouldShowA2AServiceSessionId,
 } from './coworkSessionPresentation.js';
 import {
+  buildRefundStatusDismissKey,
   getRefundCardVariant,
   shouldShowRefundStatusCard,
 } from './coworkServiceOrderPresentation.js';
@@ -55,9 +57,34 @@ interface CoworkSessionDetailProps {
 }
 
 const AUTO_SCROLL_THRESHOLD = 120;
+const REFUND_STATUS_DISMISS_STORAGE_KEY = 'idbots.cowork.dismissedRefundStatusCards.v1';
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const ORDER_TAG_TXID_RE = /^\[(?:ORDER_STATUS|DELIVERY|NeedsRating):([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
 const ORDER_END_TAG_TXID_RE = /^\[ORDER_END:([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
+
+const readDismissedRefundStatusKeys = (): Set<string> => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return new Set();
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(REFUND_STATUS_DISMISS_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0));
+  } catch {
+    return new Set();
+  }
+};
+
+const persistDismissedRefundStatusKeys = (keys: Set<string>): void => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(REFUND_STATUS_DISMISS_STORAGE_KEY, JSON.stringify(Array.from(keys)));
+  } catch {
+    // Ignore storage failures; dismissal can still apply for the current renderer state.
+  }
+};
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -192,11 +219,13 @@ const RefundStatusCard: React.FC<{
   onProcessRefund?: () => void;
   isProcessingRefund?: boolean;
   refundActionError?: string | null;
+  onDismiss?: () => void;
 }> = ({
   summary,
   onProcessRefund,
   isProcessingRefund = false,
   refundActionError = null,
+  onDismiss,
 }) => {
   const handleCopyValue = useCallback((value: string) => {
     if (!value || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
@@ -301,6 +330,17 @@ const RefundStatusCard: React.FC<{
               </div>
             )}
           </div>
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:bg-black/10 hover:text-claude-text dark:hover:bg-white/10 dark:hover:text-claude-darkText"
+              title={i18nService.t('close')}
+              aria-label={i18nService.t('close')}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1762,6 +1802,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundActionError, setRefundActionError] = useState<string | null>(null);
+  const [dismissedRefundStatusKeys, setDismissedRefundStatusKeys] = useState<Set<string>>(() => readDismissedRefundStatusKeys());
   const [delegationBlocking, setDelegationBlocking] = useState(false);
   const [isEndingA2A, setIsEndingA2A] = useState(false);
   const [a2aEndError, setA2AEndError] = useState<string | null>(null);
@@ -1777,6 +1818,24 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     currentSession?.messages.filter((message) => !shouldHideControlMessage(message)) ?? []
   ), [currentSession?.messages]);
   const normalizedFocusedOrderTxid = normalizeOrderFocusTxid(focusedOrderTxid);
+  const refundStatusDismissKey = useMemo(() => (
+    buildRefundStatusDismissKey(currentSession?.id, currentSession?.serviceOrderSummary)
+  ), [
+    currentSession?.id,
+    currentSession?.serviceOrderSummary?.role,
+    currentSession?.serviceOrderSummary?.paymentTxid,
+    currentSession?.serviceOrderSummary?.refundRequestPinId,
+    currentSession?.serviceOrderSummary?.refundTxid,
+    currentSession?.serviceOrderSummary?.servicePinId,
+  ]);
+  const shouldRenderRefundStatusCard = Boolean(
+    isA2ASession
+    && currentSession?.serviceOrderSummary
+    && shouldShowRefundStatusCard(currentSession.serviceOrderSummary, {
+      dismissKey: refundStatusDismissKey,
+      dismissedKeys: dismissedRefundStatusKeys,
+    })
+  );
 
   // Fetch initial delegation blocking state when session changes
   useEffect(() => {
@@ -1885,6 +1944,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
     setIsProcessingRefund(false);
   }, [currentSession?.id, isProcessingRefund]);
+
+  const handleDismissRefundStatusCard = useCallback(() => {
+    if (!refundStatusDismissKey) return;
+    setDismissedRefundStatusKeys((previous) => {
+      if (previous.has(refundStatusDismissKey)) {
+        return previous;
+      }
+      const next = new Set(previous);
+      next.add(refundStatusDismissKey);
+      persistDismissedRefundStatusKeys(next);
+      return next;
+    });
+  }, [refundStatusDismissKey]);
 
   const handleEndA2APrivateChat = useCallback(async () => {
     if (!currentSession?.id || isEndingA2A || isA2AConversationEnded) return;
@@ -2726,12 +2798,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div ref={messagesEndRef} className="h-20" />
       </div>
 
-      {isA2ASession && currentSession.serviceOrderSummary && shouldShowRefundStatusCard(currentSession.serviceOrderSummary) && (
+      {shouldRenderRefundStatusCard && currentSession.serviceOrderSummary && (
         <RefundStatusCard
           summary={currentSession.serviceOrderSummary}
           onProcessRefund={handleProcessServiceRefund}
           isProcessingRefund={isProcessingRefund}
           refundActionError={refundActionError}
+          onDismiss={handleDismissRefundStatusCard}
         />
       )}
 
