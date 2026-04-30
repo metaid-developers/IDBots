@@ -71,6 +71,7 @@ const MEMORY_ROW_SELECT_COLUMNS = `
   id, text, fingerprint, confidence, is_explicit, status,
   created_at, updated_at, last_used_at, scope_kind, scope_key, usage_class, visibility
 `;
+const PRIVATE_CHAT_SIMPLEMSG_BACKFILL_TIME_WINDOW_MS = 10 * 60 * 1000;
 
 function normalizeMemoryGuardLevel(value: string | undefined): CoworkMemoryGuardLevel {
   if (value === 'strict' || value === 'standard' || value === 'relaxed') return value;
@@ -634,6 +635,7 @@ interface MetawebOrderMessageBackfillRow {
   metabot_id: number | string | null;
   peer_global_metaid: string | null;
   content: string;
+  message_created_at: number | string | null;
   metadata: string | null;
   external_conversation_id: string;
   mapping_metadata_json: string | null;
@@ -647,6 +649,7 @@ interface ServiceOrderSimplemsgBackfillRow {
 interface PrivateChatSimplemsgBackfillRow {
   pin_id: string | null;
   tx_id: string | null;
+  chain_timestamp: number | string | null;
 }
 
 interface CoworkUserMemoryRow {
@@ -2064,6 +2067,7 @@ export class CoworkStore implements MemoryBackend {
           s.metabot_id AS metabot_id,
           s.peer_global_metaid AS peer_global_metaid,
           m.content AS content,
+          m.created_at AS message_created_at,
           m.metadata AS metadata,
           cm.external_conversation_id AS external_conversation_id,
           cm.metadata_json AS mapping_metadata_json
@@ -2192,16 +2196,16 @@ export class CoworkStore implements MemoryBackend {
     let candidates: PrivateChatSimplemsgBackfillRow[] = [];
     try {
       candidates = this.getAll<PrivateChatSimplemsgBackfillRow>(`
-        SELECT pin_id, tx_id
+        SELECT pin_id, tx_id, chain_timestamp
         FROM private_chat_messages
         WHERE content = ?
-          AND protocol = 'simplemsg'
+          AND LOWER(TRIM(protocol)) IN ('simplemsg', '/protocols/simplemsg')
           AND (
             (? = 'incoming' AND from_global_metaid = ?)
             OR (? = 'outgoing' AND to_global_metaid = ?)
           )
         ORDER BY id DESC
-        LIMIT 3
+        LIMIT 20
       `, [content, direction, peerGlobalMetaId, direction, peerGlobalMetaId]);
     } catch {
       return null;
@@ -2212,8 +2216,24 @@ export class CoworkStore implements MemoryBackend {
       if (!pinId) continue;
       byPinId.set(pinId, candidate);
     }
-    if (byPinId.size !== 1) return null;
-    const [candidate] = Array.from(byPinId.values());
+    const uniqueCandidates = Array.from(byPinId.values());
+    if (uniqueCandidates.length !== 1) {
+      const messageCreatedAt = parseIdNumber(row.message_created_at);
+      if (messageCreatedAt == null) return null;
+      const closeCandidates = uniqueCandidates.filter((candidate) => {
+        const chainTimestampSec = parseIdNumber(candidate.chain_timestamp);
+        if (chainTimestampSec == null) return false;
+        const diffMs = Math.abs((chainTimestampSec * 1000) - messageCreatedAt);
+        return diffMs <= PRIVATE_CHAT_SIMPLEMSG_BACKFILL_TIME_WINDOW_MS;
+      });
+      if (closeCandidates.length !== 1) return null;
+      const [candidate] = closeCandidates;
+      return buildA2AChainMetadata({
+        txId: candidate.tx_id,
+        pinId: candidate.pin_id,
+      });
+    }
+    const [candidate] = uniqueCandidates;
     return buildA2AChainMetadata({
       txId: candidate.tx_id,
       pinId: candidate.pin_id,
