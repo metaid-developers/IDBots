@@ -124,10 +124,21 @@ async function ensureCanonicalPeerSession(
   if (existing) {
     const session = coworkStore.getSession(existing.coworkSessionId);
     if (session) {
-      coworkStore.touchConversationMapping('metaweb_private', externalConversationId, input.metabotId);
-      return { created: false, coworkSessionId: existing.coworkSessionId, externalConversationId };
+      const repaired = coworkStore.ensureCanonicalPeerSessionShape({
+        sessionId: existing.coworkSessionId,
+        metabotId: input.metabotId,
+        peerGlobalMetaId,
+        peerName: normalizeText(input.peerName) || null,
+        peerAvatar: normalizeText(input.peerAvatar) || null,
+      });
+      if (repaired) {
+        coworkStore.touchConversationMapping('metaweb_private', externalConversationId, input.metabotId);
+        return { created: false, coworkSessionId: existing.coworkSessionId, externalConversationId };
+      }
+      coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, input.metabotId);
+    } else {
+      coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, input.metabotId);
     }
-    coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, input.metabotId);
   }
 
   const config = coworkStore.getConfig();

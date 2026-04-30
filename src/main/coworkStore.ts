@@ -1695,6 +1695,62 @@ export class CoworkStore implements MemoryBackend {
     }
   }
 
+  ensureCanonicalPeerSessionShape(input: {
+    sessionId: string;
+    metabotId: number;
+    peerGlobalMetaId: string;
+    peerName?: string | null;
+    peerAvatar?: string | null;
+  }): boolean {
+    const sessionId = String(input.sessionId || '').trim();
+    const peerGlobalMetaId = String(input.peerGlobalMetaId || '').trim();
+    if (!sessionId || !peerGlobalMetaId) return false;
+
+    const session = this.getSession(sessionId);
+    if (!session) return false;
+
+    const existingPeer = String(session.peerGlobalMetaId || '').trim();
+    if (existingPeer && existingPeer !== peerGlobalMetaId) {
+      return false;
+    }
+
+    const existingMetabotId = parseIdNumber(session.metabotId);
+    if (existingMetabotId != null && existingMetabotId !== input.metabotId) {
+      return false;
+    }
+
+    const peerName = String(input.peerName || '').trim();
+    const peerAvatar = String(input.peerAvatar || '').trim();
+    this.db.run(`
+      UPDATE cowork_sessions
+      SET
+        session_type = 'a2a',
+        metabot_id = COALESCE(metabot_id, ?),
+        peer_global_metaid = ?,
+        peer_name = CASE
+          WHEN ? <> '' THEN ?
+          ELSE peer_name
+        END,
+        peer_avatar = CASE
+          WHEN ? <> '' THEN ?
+          ELSE peer_avatar
+        END
+      WHERE id = ?
+    `, [
+      input.metabotId,
+      peerGlobalMetaId,
+      peerName,
+      peerName,
+      peerAvatar,
+      peerAvatar,
+      sessionId,
+    ]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+    return true;
+  }
+
   deleteConversationMapping(channel: string, externalConversationId: string, metabotId?: number | null): void {
     const normalizedChannel = this.normalizeConversationChannel(channel);
     const normalizedConversationId = this.normalizeExternalConversationId(externalConversationId);
@@ -2038,8 +2094,8 @@ export class CoworkStore implements MemoryBackend {
       FROM cowork_messages
       WHERE session_id = ?
       ORDER BY
-        COALESCE(sequence, created_at) ASC,
         created_at ASC,
+        COALESCE(sequence, 0) ASC,
         ROWID ASC
     `, [sessionId]);
 
@@ -2175,6 +2231,8 @@ export class CoworkStore implements MemoryBackend {
       peer_global_metaid: string | null;
       peer_name: string | null;
       peer_avatar: string | null;
+      created_at: number | null;
+      updated_at: number | null;
     }
 
     const rows = this.getAll<OrderMappingRow>(`
@@ -2191,7 +2249,9 @@ export class CoworkStore implements MemoryBackend {
         s.session_type,
         s.peer_global_metaid,
         s.peer_name,
-        s.peer_avatar
+        s.peer_avatar,
+        s.created_at,
+        s.updated_at
       FROM cowork_conversation_mappings m
       LEFT JOIN cowork_sessions s ON s.id = m.cowork_session_id
       WHERE m.channel = 'metaweb_order'
@@ -2291,6 +2351,8 @@ export class CoworkStore implements MemoryBackend {
       execution_mode: string | null;
       peer_name: string | null;
       peer_avatar: string | null;
+      created_at: number | null;
+      updated_at: number | null;
     };
     mappingMetadata: CoworkMessageMetadata;
   }): string {
@@ -2300,9 +2362,22 @@ export class CoworkStore implements MemoryBackend {
       input.metabotId,
     );
     if (existing && this.getSession(existing.coworkSessionId)) {
-      return existing.coworkSessionId;
+      if (this.ensureCanonicalPeerSessionShape({
+        sessionId: existing.coworkSessionId,
+        metabotId: input.metabotId,
+        peerGlobalMetaId: input.peerGlobalMetaId,
+        peerName: typeof input.mappingMetadata.peerName === 'string'
+          ? input.mappingMetadata.peerName
+          : input.legacy.peer_name,
+        peerAvatar: typeof input.mappingMetadata.peerAvatar === 'string'
+          ? input.mappingMetadata.peerAvatar
+          : input.legacy.peer_avatar,
+      })) {
+        return existing.coworkSessionId;
+      }
+      this.deleteConversationMapping('metaweb_private', input.privateExternalConversationId, input.metabotId);
     }
-    if (existing) {
+    if (existing && !this.getSession(existing.coworkSessionId)) {
       this.deleteConversationMapping('metaweb_private', input.privateExternalConversationId, input.metabotId);
     }
 
@@ -2324,6 +2399,11 @@ export class CoworkStore implements MemoryBackend {
       peerName || null,
       peerAvatar || null,
     );
+    this.setSessionMigrationTimestamps(
+      session.id,
+      parseIdNumber(input.legacy.created_at) ?? Date.now(),
+      parseIdNumber(input.legacy.updated_at) ?? parseIdNumber(input.legacy.created_at) ?? Date.now(),
+    );
     this.upsertConversationMapping({
       channel: 'metaweb_private',
       externalConversationId: input.privateExternalConversationId,
@@ -2336,6 +2416,19 @@ export class CoworkStore implements MemoryBackend {
       }),
     });
     return session.id;
+  }
+
+  private setSessionMigrationTimestamps(sessionId: string, createdAt: number, updatedAt: number): void {
+    const normalizedCreatedAt = Number.isFinite(createdAt) ? Math.trunc(createdAt) : Date.now();
+    const normalizedUpdatedAt = Number.isFinite(updatedAt) ? Math.trunc(updatedAt) : normalizedCreatedAt;
+    this.db.run(`
+      UPDATE cowork_sessions
+      SET created_at = ?, updated_at = ?
+      WHERE id = ?
+    `, [normalizedCreatedAt, normalizedUpdatedAt, sessionId]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
   }
 
   private copyMissingOrderMessagesToCanonicalSession(input: {

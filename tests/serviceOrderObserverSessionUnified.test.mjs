@@ -143,6 +143,53 @@ test('ensureServiceOrderObserverSession relinks legacy order mapping to canonica
   }
 });
 
+test('ensureServiceOrderObserverSession repairs legacy private mappings that target standard local sessions', async () => {
+  const sqlite = await createSqliteStore();
+
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const orderTxid = '8'.repeat(64);
+    const legacyPrivateSession = store.createSession(
+      'Private-peer-repair',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      5,
+      'standard',
+      null,
+      null,
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: 'metaweb-private:peer-repair',
+      metabotId: 5,
+      coworkSessionId: legacyPrivateSession.id,
+      metadataJson: JSON.stringify({ peerGlobalMetaId: 'peer-repair' }),
+    });
+
+    const result = await ensureServiceOrderObserverSession(store, {
+      role: 'buyer',
+      metabotId: 5,
+      peerGlobalMetaId: 'peer-repair',
+      peerName: 'Peer Repair',
+      servicePaidTx: '9'.repeat(64),
+      orderTxid,
+      orderMessageTxid: orderTxid,
+      orderPayload: '[ORDER] repair session shape',
+    });
+
+    assert.equal(result.coworkSessionId, legacyPrivateSession.id);
+    const repaired = store.getSession(legacyPrivateSession.id);
+    assert.equal(repaired?.sessionType, 'a2a');
+    assert.equal(repaired?.peerGlobalMetaId, 'peer-repair');
+    assert.equal(repaired?.peerName, 'Peer Repair');
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
 test('canonical peer session source context prefers metaweb_private over order indexes', async () => {
   const sqlite = await createSqliteStore();
 

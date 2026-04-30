@@ -68,6 +68,7 @@ import {
   type A2AChainMetadata,
 } from './a2aChainMetadata';
 import {
+  buildCanonicalPrivateConversationExternalConversationId,
   buildOrderProtocolDisplayMetadata,
   classifySimplemsgContent,
   type SimplemsgProtocolTag,
@@ -753,7 +754,7 @@ function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string 
 }
 
 function buildPrivateConversationExternalConversationId(row: PrivateChatMessageRow): string {
-  return `metaweb-private:${normalizePrivateConversationPeerId(row)}`;
+  return buildCanonicalPrivateConversationExternalConversationId(normalizePrivateConversationPeerId(row));
 }
 
 function normalizeIdentity(value: unknown): string {
@@ -1009,8 +1010,20 @@ async function resolvePrivateConversationSession(
   if (existing) {
     const session = coworkStore.getSession(existing.coworkSessionId);
     if (session) {
-      coworkStore.touchConversationMapping('metaweb_private', externalConversationId, metabotId);
-      return { sessionId: existing.coworkSessionId, externalConversationId };
+      const repaired = coworkStore.ensureCanonicalPeerSessionShape({
+        sessionId: existing.coworkSessionId,
+        metabotId,
+        peerGlobalMetaId: peerId,
+        peerName: (row.from_name as string | null) ?? null,
+        peerAvatar: (row.from_avatar as string | null) ?? null,
+      });
+      if (repaired) {
+        coworkStore.touchConversationMapping('metaweb_private', externalConversationId, metabotId);
+        return { sessionId: existing.coworkSessionId, externalConversationId };
+      }
+      coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, metabotId);
+    } else {
+      coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, metabotId);
     }
   }
 
