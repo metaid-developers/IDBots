@@ -4507,7 +4507,7 @@ if (!gotTheLock) {
                 computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
               );
               const payloadStr = buildPrivateMessagePayload(peerGlobalMetaId, encrypted, replyPin);
-              await createPin(metabotStoreInst, metabotId, {
+              const byePin = await createPin(metabotStoreInst, metabotId, {
                 operation: 'create',
                 path: '/protocols/simplemsg',
                 encryption: '0',
@@ -4515,6 +4515,12 @@ if (!gotTheLock) {
                 contentType: 'application/json',
                 payload: payloadStr,
               });
+              attachSimplemsgMetadataToCoworkMessage(
+                coworkStoreInst,
+                sessionId,
+                result.endMessage,
+                { txids: byePin.txids, pinId: byePin.pinId }
+              );
               noticeSent = true;
             }
           }

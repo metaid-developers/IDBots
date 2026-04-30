@@ -1047,6 +1047,7 @@ export function endPrivateChatA2AConversation(params: {
   externalConversationId?: string;
   peerGlobalMetaId?: string | null;
   alreadyEnded?: boolean;
+  endMessage?: CoworkMessage;
 } {
   const session = params.coworkStore.getSession(params.sessionId);
   if (!session) return { success: false, error: 'Session not found' };
@@ -1088,7 +1089,7 @@ export function endPrivateChatA2AConversation(params: {
     }
   );
 
-  appendPrivateChatA2AMessage({
+  const endMessage = appendPrivateChatA2AMessage({
     coworkStore: params.coworkStore,
     sessionId: params.sessionId,
     externalConversationId: sourceContext.externalConversationId,
@@ -1127,6 +1128,7 @@ export function endPrivateChatA2AConversation(params: {
     success: true,
     externalConversationId: sourceContext.externalConversationId,
     peerGlobalMetaId: session.peerGlobalMetaId ?? (currentMetadata.peerGlobalMetaId as string | undefined) ?? null,
+    endMessage,
   };
 }
 

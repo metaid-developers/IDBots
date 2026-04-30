@@ -27,3 +27,10 @@ export function shouldShowA2AServiceSessionId(input) {
   if (input?.sessionType !== 'a2a') return false;
   return Boolean(input?.serviceOrderSummary);
 }
+
+export function buildPrivateA2ASessionDisplayId(localGlobalMetaId, peerGlobalMetaId) {
+  const localPrefix = typeof localGlobalMetaId === 'string' ? localGlobalMetaId.trim().slice(0, 8) : '';
+  const peerPrefix = typeof peerGlobalMetaId === 'string' ? peerGlobalMetaId.trim().slice(0, 8) : '';
+  if (!localPrefix || !peerPrefix) return '';
+  return `${localPrefix}-${peerPrefix}`;
+}

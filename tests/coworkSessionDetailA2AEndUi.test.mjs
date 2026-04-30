@@ -22,6 +22,29 @@ test('CoworkSessionDetail renders an end-conversation button for private A2A ses
   assert.match(source, /coworkService\.endA2APrivateChat\(currentSession\.id\)/);
 });
 
+test('manual A2A private-chat bye stores the simplemsg txid on the local bubble', () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, 'src', 'main', 'main.ts'),
+    'utf8'
+  );
+
+  assert.match(source, /const byePin = await createPin/);
+  assert.match(source, /attachSimplemsgMetadataToCoworkMessage\(/);
+  assert.match(source, /result\.endMessage/);
+  assert.match(source, /pinId: byePin\.pinId/);
+});
+
+test('CoworkSessionDetail renders ordinary private A2A sessionid with copy action', () => {
+  const source = fs.readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /buildPrivateA2ASessionDisplayId/);
+  assert.match(source, /showPrivateA2ASessionId/);
+  assert.match(source, /sessionMetabot\?\.globalmetaid/);
+  assert.match(source, /currentSession\.peerGlobalMetaId/);
+  assert.match(source, /handleCopyHeaderValue\(privateA2ASessionDisplayId\)/);
+  assert.match(source, /sessionid:/);
+});
+
 test('CoworkSessionDetail renders a resend digital delivery button for seller A2A service orders', () => {
   const source = fs.readFileSync(sourcePath, 'utf8');
 

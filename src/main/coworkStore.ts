@@ -632,6 +632,7 @@ interface CoworkMessageRow {
 interface MetawebOrderMessageBackfillRow {
   message_id: string;
   session_id: string;
+  message_type?: string | null;
   metabot_id: number | string | null;
   peer_global_metaid: string | null;
   content: string;
@@ -639,6 +640,10 @@ interface MetawebOrderMessageBackfillRow {
   metadata: string | null;
   external_conversation_id: string;
   mapping_metadata_json: string | null;
+}
+
+interface MetawebPrivateMessageBackfillRow extends MetawebOrderMessageBackfillRow {
+  local_global_metaid: string | null;
 }
 
 interface ServiceOrderSimplemsgBackfillRow {
@@ -773,6 +778,7 @@ export class CoworkStore implements MemoryBackend {
     this.ensureConversationMappingSchemaCompatibility();
     this.backfillScopedMemoryMetadata();
     this.backfillMetawebOrderSimplemsgMetadata();
+    this.backfillMetawebPrivateSimplemsgMetadata();
   }
 
   private ensureMemorySchemaCompatibility(): void {
@@ -2154,6 +2160,68 @@ export class CoworkStore implements MemoryBackend {
     return changed;
   }
 
+  backfillMetawebPrivateSimplemsgMetadata(): number {
+    if (
+      !this.tableExists('cowork_conversation_mappings')
+      || !this.tableExists('cowork_messages')
+      || !this.tableExists('private_chat_messages')
+    ) {
+      return 0;
+    }
+
+    const hasMetabotsTable = this.tableExists('metabots');
+    let rows: MetawebPrivateMessageBackfillRow[] = [];
+    try {
+      rows = this.getAll<MetawebPrivateMessageBackfillRow>(`
+        SELECT
+          m.id AS message_id,
+          m.session_id AS session_id,
+          m.type AS message_type,
+          s.metabot_id AS metabot_id,
+          s.peer_global_metaid AS peer_global_metaid,
+          ${hasMetabotsTable ? 'mb.globalmetaid' : 'NULL'} AS local_global_metaid,
+          m.content AS content,
+          m.created_at AS message_created_at,
+          m.metadata AS metadata,
+          cm.external_conversation_id AS external_conversation_id,
+          cm.metadata_json AS mapping_metadata_json
+        FROM cowork_messages m
+        INNER JOIN cowork_conversation_mappings cm
+          ON cm.cowork_session_id = m.session_id
+          AND cm.channel = 'metaweb_private'
+        LEFT JOIN cowork_sessions s ON s.id = m.session_id
+        ${hasMetabotsTable ? 'LEFT JOIN metabots mb ON mb.id = s.metabot_id' : ''}
+        WHERE m.type IN ('user', 'assistant')
+      `);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to scan metaweb_private messages for simplemsg metadata backfill:', error);
+      return 0;
+    }
+
+    let changed = 0;
+    for (const row of rows) {
+      const metadata = this.parseMessageMetadata(row.metadata);
+      const mappingMetadata = this.parseMessageMetadata(row.mapping_metadata_json);
+      const chainMetadata = this.resolveMetawebPrivateSimplemsgMetadata(row, metadata, mappingMetadata);
+      const merged = this.mergeBackfilledA2AMessageMetadata(metadata, chainMetadata);
+      if (!merged.changed) continue;
+
+      this.db.run(`
+        UPDATE cowork_messages
+        SET metadata = ?
+        WHERE id = ? AND session_id = ?
+      `, [JSON.stringify(merged.metadata), row.message_id, row.session_id]);
+      if ((this.db.getRowsModified?.() || 0) > 0) {
+        changed += 1;
+      }
+    }
+
+    if (changed > 0) {
+      this.saveDb();
+    }
+    return changed;
+  }
+
   private tableExists(tableName: string): boolean {
     const row = this.getOne<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
@@ -2384,6 +2452,95 @@ export class CoworkStore implements MemoryBackend {
         pinId: candidate.pin_id,
       });
     }
+    const [candidate] = uniqueCandidates;
+    return buildA2AChainMetadata({
+      txId: candidate.tx_id,
+      pinId: candidate.pin_id,
+    });
+  }
+
+  private resolveMetawebPrivateSimplemsgMetadata(
+    row: MetawebPrivateMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+    mappingMetadata: CoworkMessageMetadata,
+  ): A2AChainMetadata | null {
+    const content = String(row.content || '').trim();
+    if (!content) return null;
+    const direction = metadata.direction === 'incoming' || metadata.direction === 'outgoing'
+      ? metadata.direction
+      : row.message_type === 'user'
+        ? 'incoming'
+        : row.message_type === 'assistant'
+          ? 'outgoing'
+          : null;
+    if (!direction) return null;
+
+    const peerGlobalMetaId = String(
+      row.peer_global_metaid
+      || mappingMetadata.peerGlobalMetaId
+      || metadata.senderGlobalMetaId
+      || ''
+    ).trim();
+    if (!peerGlobalMetaId) return null;
+    const localGlobalMetaId = String(
+      row.local_global_metaid
+      || mappingMetadata.localGlobalMetaId
+      || mappingMetadata.serverBotGlobalMetaId
+      || ''
+    ).trim();
+
+    let candidates: PrivateChatSimplemsgBackfillRow[] = [];
+    try {
+      candidates = this.getAll<PrivateChatSimplemsgBackfillRow>(`
+        SELECT pin_id, tx_id, chain_timestamp
+        FROM private_chat_messages
+        WHERE content = ?
+          AND LOWER(TRIM(protocol)) IN ('simplemsg', '/protocols/simplemsg')
+          AND (
+            (
+              ? = 'incoming'
+              AND from_global_metaid = ?
+              AND (? = '' OR to_global_metaid = ?)
+            )
+            OR (
+              ? = 'outgoing'
+              AND to_global_metaid = ?
+              AND (? = '' OR from_global_metaid = ?)
+            )
+          )
+        ORDER BY id DESC
+        LIMIT 20
+      `, [
+        content,
+        direction,
+        peerGlobalMetaId,
+        localGlobalMetaId,
+        localGlobalMetaId,
+        direction,
+        peerGlobalMetaId,
+        localGlobalMetaId,
+        localGlobalMetaId,
+      ]);
+    } catch {
+      return null;
+    }
+
+    const byPinId = new Map<string, PrivateChatSimplemsgBackfillRow>();
+    for (const candidate of candidates) {
+      const pinId = typeof candidate.pin_id === 'string' ? candidate.pin_id.trim() : '';
+      if (!pinId) continue;
+      byPinId.set(pinId, candidate);
+    }
+    const uniqueCandidates = Array.from(byPinId.values());
+    if (uniqueCandidates.length !== 1) {
+      const candidate = this.selectNearestPrivateChatSimplemsgCandidate(row, uniqueCandidates);
+      if (!candidate) return null;
+      return buildA2AChainMetadata({
+        txId: candidate.tx_id,
+        pinId: candidate.pin_id,
+      });
+    }
+
     const [candidate] = uniqueCandidates;
     return buildA2AChainMetadata({
       txId: candidate.tx_id,

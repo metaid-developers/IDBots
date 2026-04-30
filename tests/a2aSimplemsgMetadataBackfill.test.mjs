@@ -13,6 +13,9 @@ const STATUS_TXID = 'f'.repeat(64);
 const OLD_STATUS_TXID = '9'.repeat(64);
 const DELIVERY_TXID = 'd'.repeat(64);
 const RATING_TXID = 'e'.repeat(64);
+const PRIVATE_INCOMING_TXID = '1'.repeat(64);
+const PRIVATE_OUTGOING_TXID = '2'.repeat(64);
+const PRIVATE_OLD_DUPLICATE_TXID = '3'.repeat(64);
 
 test('backfillMetawebOrderSimplemsgMetadata fills chain metadata without changing bubble content', async () => {
   const sqlite = await createSqliteStore();
@@ -463,6 +466,171 @@ test('backfillMetawebOrderSimplemsgMetadata turns seller upload-complete status 
     assert.equal(deliveryBubble.metadata.externalConversationId, externalConversationId);
     assert.equal(deliveryBubble.metadata.paymentTxid, PAYMENT_TXID);
     assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebPrivateSimplemsgMetadata fills ordinary private-chat bubble txids without changing content', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 1;
+    const localGlobalMetaId = 'idq14hmv23j5fnlx4ccnmvlyldjd38xjsechzwg9xz';
+    const peerGlobalMetaId = 'idq1g35d5yftpq3jv0ukejte7z76qdqp7sve8l2etm';
+    const externalConversationId = `metaweb-private:${peerGlobalMetaId}`;
+    sqlite.db.run(`
+      INSERT INTO metabots (
+        id, wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key,
+        name, enabled, metaid, globalmetaid, metabot_type, created_by, role, soul,
+        tools, skills, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      metabotId,
+      1,
+      'mvc-local',
+      'btc-local',
+      'doge-local',
+      'pub-local',
+      'chat-local',
+      'AI_Sunny',
+      1,
+      'metaid-local',
+      localGlobalMetaId,
+      'worker',
+      'test',
+      '',
+      '',
+      '[]',
+      '[]',
+      Date.now(),
+      Date.now(),
+    ]);
+    const session = store.createSession(
+      'Ordinary private chat',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Twin Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        peerGlobalMetaId,
+        peerName: 'Twin Bot',
+      }),
+    });
+
+    const incomingContent = 'Hey AISunny! 我是 Twin Bot，来跟你聊聊。';
+    const outgoingContent = '嘿 Twin Bot！Sunny 的数字主分身在此，很高兴认识你。';
+    const incomingMessage = store.addMessage(session.id, {
+      type: 'user',
+      content: incomingContent,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId,
+        direction: 'incoming',
+        senderGlobalMetaId: peerGlobalMetaId,
+        senderName: 'Twin Bot',
+      },
+    });
+    const outgoingMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: outgoingContent,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId,
+        direction: 'outgoing',
+      },
+    });
+    const incomingCreatedAt = 1_777_379_085_668;
+    const outgoingCreatedAt = 1_777_379_099_881;
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [
+      incomingCreatedAt,
+      incomingMessage.id,
+    ]);
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [
+      outgoingCreatedAt,
+      outgoingMessage.id,
+    ]);
+
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${PRIVATE_OLD_DUPLICATE_TXID}i0`,
+      PRIVATE_OLD_DUPLICATE_TXID,
+      'peer-metaid',
+      peerGlobalMetaId,
+      'local-metaid',
+      localGlobalMetaId,
+      '/protocols/simplemsg',
+      incomingContent,
+      Math.floor((incomingCreatedAt - 86_400_000) / 1000),
+      1,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${PRIVATE_INCOMING_TXID}i0`,
+      PRIVATE_INCOMING_TXID,
+      'peer-metaid',
+      peerGlobalMetaId,
+      'local-metaid',
+      localGlobalMetaId,
+      'simplemsg',
+      incomingContent,
+      Math.floor((incomingCreatedAt + 1_000) / 1000),
+      1,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${PRIVATE_OUTGOING_TXID}i0`,
+      PRIVATE_OUTGOING_TXID,
+      'local-metaid',
+      localGlobalMetaId,
+      'peer-metaid',
+      peerGlobalMetaId,
+      '/protocols/simplemsg',
+      outgoingContent,
+      Math.floor((outgoingCreatedAt + 2_000) / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebPrivateSimplemsgMetadata(), 2);
+
+    const updated = store.getSession(session.id);
+    const updatedIncoming = updated.messages.find((message) => message.id === incomingMessage.id);
+    const updatedOutgoing = updated.messages.find((message) => message.id === outgoingMessage.id);
+
+    assert.equal(updatedIncoming.content, incomingContent);
+    assert.equal(updatedIncoming.metadata.txid, PRIVATE_INCOMING_TXID);
+    assert.deepEqual(updatedIncoming.metadata.txids, [PRIVATE_INCOMING_TXID]);
+    assert.equal(updatedIncoming.metadata.pinId, `${PRIVATE_INCOMING_TXID}i0`);
+
+    assert.equal(updatedOutgoing.content, outgoingContent);
+    assert.equal(updatedOutgoing.metadata.txid, PRIVATE_OUTGOING_TXID);
+    assert.deepEqual(updatedOutgoing.metadata.txids, [PRIVATE_OUTGOING_TXID]);
+    assert.equal(updatedOutgoing.metadata.pinId, `${PRIVATE_OUTGOING_TXID}i0`);
+
+    assert.equal(store.backfillMetawebPrivateSimplemsgMetadata(), 0);
   } finally {
     sqlite.cleanup();
   }
