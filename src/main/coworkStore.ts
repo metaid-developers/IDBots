@@ -33,6 +33,7 @@ import {
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 import {
   buildA2AChainMetadata,
+  extractTxidFromA2AChainPinId,
   normalizeA2AChainTxid,
   type A2AChainMetadata,
 } from './services/a2aChainMetadata';
@@ -3284,12 +3285,75 @@ export class CoworkStore implements MemoryBackend {
           delete updated.txids;
         }
       }
-      Object.assign(updated, chainMetadata);
+      this.applyBackfilledA2AChainMetadata(updated, chainMetadata);
     }
     return {
       metadata: updated,
       changed: JSON.stringify(updated) !== before,
     };
+  }
+
+  private applyBackfilledA2AChainMetadata(
+    metadata: CoworkMessageMetadata,
+    chainMetadata: A2AChainMetadata,
+  ): void {
+    const existingTxids = this.collectA2AChainTxids(metadata);
+    const candidateTxids = this.collectA2AChainTxids(chainMetadata);
+    if (!this.areA2AChainTxidSetsCompatible(existingTxids, candidateTxids)) {
+      return;
+    }
+
+    const candidateTxid = normalizeA2AChainTxid(chainMetadata.txid);
+    const existingTxid = normalizeA2AChainTxid(metadata.txid);
+    if (candidateTxid && !existingTxid) {
+      metadata.txid = candidateTxid;
+    }
+
+    const candidateTxidsList = Array.isArray(chainMetadata.txids)
+      ? Array.from(new Set(chainMetadata.txids.map(normalizeA2AChainTxid).filter(Boolean)))
+      : [];
+    const existingTxidsList = Array.isArray(metadata.txids)
+      ? metadata.txids.map(normalizeA2AChainTxid).filter(Boolean)
+      : [];
+    if (candidateTxidsList.length > 0 && existingTxidsList.length === 0) {
+      metadata.txids = candidateTxidsList;
+    }
+
+    const candidatePinId = typeof chainMetadata.pinId === 'string' ? chainMetadata.pinId.trim() : '';
+    const existingPinId = typeof metadata.pinId === 'string' ? metadata.pinId.trim() : '';
+    if (candidatePinId && !existingPinId) {
+      metadata.pinId = candidatePinId;
+    }
+  }
+
+  private collectA2AChainTxids(metadata: Record<string, unknown>): Set<string> {
+    const txids = new Set<string>();
+    const txid = normalizeA2AChainTxid(metadata.txid);
+    if (txid) txids.add(txid);
+    if (Array.isArray(metadata.txids)) {
+      for (const item of metadata.txids) {
+        const normalized = normalizeA2AChainTxid(item);
+        if (normalized) txids.add(normalized);
+      }
+    }
+    const pinTxid = extractTxidFromA2AChainPinId(metadata.pinId);
+    if (pinTxid) txids.add(pinTxid);
+    return txids;
+  }
+
+  private areA2AChainTxidSetsCompatible(existingTxids: Set<string>, candidateTxids: Set<string>): boolean {
+    if (existingTxids.size === 0 || candidateTxids.size === 0) {
+      return true;
+    }
+    if (existingTxids.size !== candidateTxids.size) {
+      return false;
+    }
+    for (const candidateTxid of candidateTxids) {
+      if (!existingTxids.has(candidateTxid)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   deleteMessage(sessionId: string, messageId: string): void {

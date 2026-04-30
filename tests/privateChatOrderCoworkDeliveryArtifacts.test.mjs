@@ -33,6 +33,7 @@ class FakeCoworkStore {
     this.workingDirectory = workingDirectory;
     this.sessions = new Map();
     this.hiddenSessionIds = new Set();
+    this.mappingCalls = [];
     this.messageCounter = 0;
   }
 
@@ -60,7 +61,9 @@ class FakeCoworkStore {
     return this.sessions.get(sessionId) || null;
   }
 
-  upsertConversationMapping() {}
+  upsertConversationMapping(mapping) {
+    this.mappingCalls.push(mapping);
+  }
 
   setSessionHiddenFromList(sessionId, hidden) {
     if (hidden) {
@@ -443,4 +446,35 @@ test('runOrder isolates concurrent same-peer orders into separate execution sess
     notices.map((message) => message.metadata?.orderTxid),
     ['1'.repeat(64), '2'.repeat(64)],
   );
+});
+
+test('runOrder rejects metaweb_private orders that are missing a canonical peer display session', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-missing-display-'));
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 10,
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  await assert.rejects(
+    handler.runOrder({
+      metabotId: 1,
+      source: 'metaweb_private',
+      externalConversationId: 'metaweb_order:seller:1:peer:missing-display',
+      prompt: '[ORDER] missing display session',
+      systemPrompt: 'test system prompt',
+      peerGlobalMetaId: 'peer-gmid',
+      peerName: 'Sunny',
+      orderTxid: '3'.repeat(64),
+    }),
+    /canonical peer conversation session/i,
+  );
+
+  assert.equal(runner.startSessionCalls.length, 0);
+  assert.equal(store.sessions.size, 0);
+  assert.deepEqual(store.mappingCalls, []);
 });

@@ -473,6 +473,94 @@ test('backfillMetawebOrderSimplemsgMetadata turns seller upload-complete status 
   }
 });
 
+test('backfillMetawebOrderSimplemsgMetadata preserves existing non-payment chain metadata', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 3;
+    const peerGlobalMetaId = 'seller-preserve-chain-meta';
+    const existingTxid = '7'.repeat(64);
+    const externalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Order session with existing chain metadata',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Seller Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const message = store.addMessage(session.id, {
+      type: 'user',
+      content: `[ORDER] 查询天气\ntxid: ${PAYMENT_TXID}`,
+      metadata: {
+        sourceChannel: 'metaweb_order',
+        externalConversationId,
+        direction: 'outgoing',
+        txid: existingTxid,
+        txids: [existingTxid],
+        pinId: `${existingTxid}i0`,
+        paymentTxid: PAYMENT_TXID,
+      },
+    });
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, order_message_txid, cowork_session_id, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'preserve-existing-chain-order',
+      'buyer',
+      metabotId,
+      peerGlobalMetaId,
+      'service-weather',
+      'weather',
+      PAYMENT_TXID,
+      'mvc',
+      '1',
+      'SPACE',
+      'native',
+      `${ORDER_TXID}i0`,
+      ORDER_TXID,
+      session.id,
+      'completed',
+      now + 1000,
+      now + 2000,
+      now,
+      now,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+
+    const updated = store.getSession(session.id).messages.find((candidate) => candidate.id === message.id);
+    assert.equal(updated.metadata.txid, existingTxid);
+    assert.deepEqual(updated.metadata.txids, [existingTxid]);
+    assert.equal(updated.metadata.pinId, `${existingTxid}i0`);
+    assert.equal(updated.metadata.paymentTxid, PAYMENT_TXID);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
 test('backfillMetawebOrderSimplemsgMetadata turns legacy seller final result into delivery simplemsg bubble', async () => {
   const sqlite = await createSqliteStore();
   try {
@@ -1081,6 +1169,108 @@ test('backfillMetawebPrivateSimplemsgMetadata fills ordinary private-chat bubble
     assert.equal(updatedOutgoing.metadata.pinId, `${PRIVATE_OUTGOING_TXID}i0`);
 
     assert.equal(store.backfillMetawebPrivateSimplemsgMetadata(), 0);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebPrivateSimplemsgMetadata preserves existing non-payment chain metadata', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 4;
+    const localGlobalMetaId = 'idq1localpreservechainmetadata';
+    const peerGlobalMetaId = 'idq1peerpreservechainmetadata';
+    const existingTxid = '8'.repeat(64);
+    const inferredTxid = '9'.repeat(64);
+    const externalConversationId = `metaweb-private:${peerGlobalMetaId}`;
+    sqlite.db.run(`
+      INSERT INTO metabots (
+        id, wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key,
+        name, enabled, metaid, globalmetaid, metabot_type, created_by, role, soul,
+        tools, skills, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      metabotId,
+      1,
+      'mvc-local',
+      'btc-local',
+      'doge-local',
+      'pub-local',
+      'chat-local',
+      'AI_Sunny',
+      1,
+      'metaid-local',
+      localGlobalMetaId,
+      'worker',
+      'test',
+      '',
+      '',
+      '[]',
+      '[]',
+      Date.now(),
+      Date.now(),
+    ]);
+    const session = store.createSession(
+      'Private chat with existing chain metadata',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Twin Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({ peerGlobalMetaId }),
+    });
+
+    const content = '这条私聊已经有真实链上身份。';
+    const message = store.addMessage(session.id, {
+      type: 'user',
+      content,
+      metadata: {
+        sourceChannel: 'metaweb_private',
+        externalConversationId,
+        direction: 'incoming',
+        senderGlobalMetaId: peerGlobalMetaId,
+        txid: existingTxid,
+        txids: [existingTxid],
+        pinId: `${existingTxid}i0`,
+      },
+    });
+    const createdAt = 1_777_379_085_668;
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [createdAt, message.id]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${inferredTxid}i0`,
+      inferredTxid,
+      'peer-metaid',
+      peerGlobalMetaId,
+      'local-metaid',
+      localGlobalMetaId,
+      '/protocols/simplemsg',
+      content,
+      Math.floor((createdAt + 1_000) / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebPrivateSimplemsgMetadata(), 0);
+
+    const updated = store.getSession(session.id).messages.find((candidate) => candidate.id === message.id);
+    assert.equal(updated.metadata.txid, existingTxid);
+    assert.deepEqual(updated.metadata.txids, [existingTxid]);
+    assert.equal(updated.metadata.pinId, `${existingTxid}i0`);
   } finally {
     sqlite.cleanup();
   }

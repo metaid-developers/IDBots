@@ -127,9 +127,18 @@ export class PrivateChatOrderCowork extends EventEmitter {
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
     request.orderStartedAt = request.orderStartedAt ?? Date.now();
     const displaySessionId = this.normalizeSessionId(request.displaySessionId);
-    const sessionId = displaySessionId
-      ? this.createExecutionSession(request)
-      : this.normalizeSessionId(request.existingSessionId) || await this.createOrderSession(request);
+    const existingSessionId = this.normalizeSessionId(request.existingSessionId);
+    let sessionId: string;
+    if (displaySessionId) {
+      sessionId = this.createExecutionSession(request);
+    } else if (existingSessionId) {
+      sessionId = existingSessionId;
+    } else {
+      if (request.source === 'metaweb_private') {
+        throw new Error('Missing canonical peer conversation session for metaweb_private order execution');
+      }
+      sessionId = await this.createOrderSession(request);
+    }
     const visibleSessionId = this.getDisplaySessionId(sessionId, request);
     this.injectProcessingNotice(visibleSessionId, request);
     this.sessionIds.add(sessionId);
