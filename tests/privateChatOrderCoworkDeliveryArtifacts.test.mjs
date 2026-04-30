@@ -181,6 +181,76 @@ test('runOrder uploads image output artifacts and returns a metafile delivery su
   assert.equal(hasUploadNoticeEvent, true);
 });
 
+test('runOrder uses transmitted acknowledgement and status update chain metadata for local A2A bubbles', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-chain-metadata-'));
+  const imagePath = path.join(cwd, 'robot.png');
+  fs.writeFileSync(imagePath, 'png');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const ackTxid = 'a'.repeat(64);
+  const statusTxid = 'b'.repeat(64);
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    uploadDeliveryArtifact: async () => ({
+      pinId: 'c'.repeat(64) + 'i0',
+      uploadMode: 'direct',
+    }),
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb-order-chain-metadata',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 帮我生成一张机器人图片',
+    systemPrompt: 'test system prompt',
+    expectedOutputType: 'image',
+    processingNotice: {
+      content: '链上确认：我已收到订单，马上开始创作。',
+      metadata: {
+        txid: ackTxid,
+        txids: [ackTxid],
+        pinId: `${ackTxid}i0`,
+      },
+    },
+    sendStatusUpdate: async () => ({
+      txids: [statusTxid],
+      pinId: `${statusTxid}i0`,
+    }),
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-final',
+    type: 'assistant',
+    content: '机器人图片已生成，保存在 robot.png。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('complete', sessionId);
+
+  await runPromise;
+
+  const session = store.getSession(sessionId);
+  const acknowledgement = session.messages.find((message) => message.metadata?.orderProcessingNotice);
+  assert.ok(acknowledgement, 'expected processing acknowledgement bubble');
+  assert.equal(acknowledgement.content, '链上确认：我已收到订单，马上开始创作。');
+  assert.equal(acknowledgement.metadata.txid, ackTxid);
+  assert.equal(acknowledgement.metadata.pinId, `${ackTxid}i0`);
+
+  const uploadNotice = session.messages.find((message) => message.metadata?.orderDeliveryUploadNotice);
+  assert.ok(uploadNotice, 'expected upload status bubble');
+  assert.equal(uploadNotice.metadata.txid, statusTxid);
+  assert.deepEqual(uploadNotice.metadata.txids, [statusTxid]);
+  assert.equal(uploadNotice.metadata.pinId, `${statusTxid}i0`);
+});
+
 test('runOrder retries media delivery upload when the first PINID cannot be verified', async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-delivery-retry-'));
   const imagePath = path.join(cwd, 'portrait.png');

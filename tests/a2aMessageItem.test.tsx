@@ -14,6 +14,7 @@ const METAID_ACCELERATE_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-i
 const METAID_CONTENT_API_RE = /https:\/\/file\.metaid\.io\/metafile-indexer\/api\/v1\/files\/content\//;
 
 test('A2A normal message bubble renders markdown content', () => {
+  const txid = '1'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -21,7 +22,7 @@ test('A2A normal message bubble renders markdown content', () => {
         type: 'assistant',
         content: 'Hello **world**',
         timestamp: 1_744_444_444_000,
-        metadata: { direction: 'outgoing' },
+        metadata: { direction: 'outgoing', txid },
       }}
       metabotName="Local Bot"
     />
@@ -29,6 +30,28 @@ test('A2A normal message bubble renders markdown content', () => {
 
   assert.match(markup, /<strong[^>]*>world<\/strong>/);
   assert.doesNotMatch(markup, /\*\*world\*\*/);
+  assert.match(markup, /txid:/);
+  assert.match(markup, /Local Bot/);
+});
+
+test('A2A non-chain ordinary messages render as internal status instead of chat bubbles', () => {
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-local-only',
+        type: 'assistant',
+        content: '本地执行结果，还没有发到链上。',
+        timestamp: 1_744_444_444_000,
+        metadata: { direction: 'outgoing', isFinal: true },
+      }}
+      metabotName="Local Bot"
+    />
+  );
+
+  assert.match(markup, /本地执行结果，还没有发到链上。/);
+  assert.match(markup, /内部状态/);
+  assert.doesNotMatch(markup, /Local Bot/);
+  assert.doesNotMatch(markup, /rounded-2xl/);
 });
 
 test('A2A message bubble renders subtle txid label from message metadata', () => {
@@ -53,7 +76,7 @@ test('A2A message bubble renders subtle txid label from message metadata', () =>
   assert.match(markup, /class="[^"]*text-\[10px\][^"]*text-claude-textSecondary/);
 });
 
-test('A2A message txid resolver accepts pin ids and structured order text fallback', () => {
+test('A2A message txid resolver accepts message-chain metadata but ignores order payment txid fallback', () => {
   const pinTxid = 'a'.repeat(64);
   assert.equal(
     resolveA2AMessageTxid({
@@ -75,7 +98,7 @@ test('A2A message txid resolver accepts pin ids and structured order text fallba
       timestamp: 1,
       metadata: { direction: 'incoming' },
     }),
-    paymentTxid,
+    '',
   );
 
   const deliveryTxid = 'c'.repeat(64);
@@ -87,11 +110,24 @@ test('A2A message txid resolver accepts pin ids and structured order text fallba
       timestamp: 1,
       metadata: { direction: 'outgoing' },
     }),
-    deliveryTxid,
+    '',
+  );
+
+  const messageTxid = 'd'.repeat(64);
+  assert.equal(
+    resolveA2AMessageTxid({
+      id: 'msg-metadata',
+      type: 'assistant',
+      content: `[DELIVERY] {"paymentTxid":"${deliveryTxid}","result":"done"}`,
+      timestamp: 1,
+      metadata: { direction: 'outgoing', txid: messageTxid, paymentTxid },
+    }),
+    messageTxid,
   );
 });
 
 test('A2A delivery result renders markdown content inside the bubble', () => {
+  const txid = '2'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -99,7 +135,7 @@ test('A2A delivery result renders markdown content inside the bubble', () => {
         type: 'user',
         content: '[DELIVERY] {"result":"## Done\\n\\n- item one\\n- item two"}',
         timestamp: 1_744_444_445_000,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />
@@ -112,6 +148,7 @@ test('A2A delivery result renders markdown content inside the bubble', () => {
 });
 
 test('A2A delivery image keeps metafile text and renders image preview for .jpg', () => {
+  const txid = '3'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -119,7 +156,7 @@ test('A2A delivery image keeps metafile text and renders image preview for .jpg'
         type: 'user',
         content: '[DELIVERY] {"result":"这是给你处理好的图片： metafile://aabbccddeeff00112233445566778899i0.jpg"}',
         timestamp: 1_744_444_446_000,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />
@@ -136,6 +173,7 @@ test('A2A delivery image keeps metafile text and renders image preview for .jpg'
 });
 
 test('A2A delivery renders embedded player for .mp4 metafile', () => {
+  const txid = '4'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -143,7 +181,7 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
         type: 'user',
         content: '[DELIVERY] {"result":"视频交付： metafile://ffeeddccbbaa99887766554433221100i0.mp4"}',
         timestamp: 1_744_444_447_000,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />
@@ -159,6 +197,7 @@ test('A2A delivery renders embedded player for .mp4 metafile', () => {
 });
 
 test('A2A delivery previews modern image and video metafile extensions', () => {
+  const txid = '5'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -166,7 +205,7 @@ test('A2A delivery previews modern image and video metafile extensions', () => {
         type: 'user',
         content: '[DELIVERY] {"result":"交付： metafile://imagepin001i0.webp\\n视频： metafile://videopin001i0.webm"}',
         timestamp: 1_744_444_447_500,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />
@@ -181,6 +220,7 @@ test('A2A delivery previews modern image and video metafile extensions', () => {
 });
 
 test('A2A delivery renders embedded player for .mp3 metafile', () => {
+  const txid = '6'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -188,7 +228,7 @@ test('A2A delivery renders embedded player for .mp3 metafile', () => {
         type: 'user',
         content: '[DELIVERY] {"result":"音频交付： metafile://11223344556677889900aabbccddeeffi0.mp3"}',
         timestamp: 1_744_444_448_000,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />
@@ -244,6 +284,7 @@ test('A2A metafile download uses native save dialog API when available', async (
 });
 
 test('A2A media preview does not download a local preview before playback', () => {
+  const txid = '9'.repeat(64);
   const calls: unknown[] = [];
   const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
   (globalThis as typeof globalThis & { window?: unknown }).window = {
@@ -265,7 +306,7 @@ test('A2A media preview does not download a local preview before playback', () =
           type: 'user',
           content: '[DELIVERY] {"result":"视频交付： metafile://3b94a321a496a5a92e765acae78101d35ad42728b00b30d2ce085034eadcc1b0i0.mp4"}',
           timestamp: 1_744_444_447_000,
-          metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+          metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
         }}
         peerName="Peer Bot"
       />
@@ -334,6 +375,7 @@ test('A2A media preview fallback loads original content URL into a blob URL', as
 });
 
 test('A2A delivery renders pin id and download button for unsupported metafile extension', () => {
+  const txid = '7'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -341,7 +383,7 @@ test('A2A delivery renders pin id and download button for unsupported metafile e
         type: 'user',
         content: '[DELIVERY] {"result":"文档交付： metafile://cafebabefeed00112233445566778899i0.pdf"}',
         timestamp: 1_744_444_449_000,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />
@@ -353,6 +395,7 @@ test('A2A delivery renders pin id and download button for unsupported metafile e
 });
 
 test('A2A delivery renders pin id and download button for metafile without extension', () => {
+  const txid = '8'.repeat(64);
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
@@ -360,7 +403,7 @@ test('A2A delivery renders pin id and download button for metafile without exten
         type: 'user',
         content: '[DELIVERY] {"result":"原始交付： metafile://8899aabbccddeeff0011223344556677i0"}',
         timestamp: 1_744_444_450_000,
-        metadata: { direction: 'incoming', senderName: 'Peer Bot' },
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
       }}
       peerName="Peer Bot"
     />

@@ -35,8 +35,6 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.flac']);
 const TXID_RE = /^[0-9a-f]{64}$/i;
 const PIN_ID_TXID_RE = /^([0-9a-f]{64})i\d+$/i;
-const CONTENT_TXID_RE = /(?:^|\n)\s*(?:txid|交易\s*id|交易ID|transaction\s+id)\s*[:：=]\s*([0-9a-f]{64})\b/i;
-const STRUCTURED_MESSAGE_JSON_RE = /^\s*\[(?:ORDER|DELIVERY)\]\s*(\{[\s\S]*\})\s*$/i;
 const MIME_TYPE_BY_EXTENSION = new Map<string, string>([
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
@@ -106,25 +104,6 @@ const normalizePinIdCandidate = (value: unknown): string => {
   return match?.[1] ?? '';
 };
 
-const resolveStructuredContentTxid = (content: string): string => {
-  const jsonMatch = content.match(STRUCTURED_MESSAGE_JSON_RE);
-  if (!jsonMatch) return '';
-  try {
-    const payload = JSON.parse(jsonMatch[1]) as Record<string, unknown>;
-    return [
-      payload.txid,
-      payload.txId,
-      payload.paymentTxid,
-      payload.paymentTxId,
-      payload.servicePaidTx,
-      payload.servicePaymentCommitTxid,
-      payload.refundTxid,
-    ].map(normalizeTxidCandidate).find(Boolean) ?? '';
-  } catch {
-    return '';
-  }
-};
-
 export const formatA2ATxidPreview = (txid: string): string => {
   const normalized = normalizeTxidCandidate(txid);
   return normalized ? `${normalized.slice(0, 8)}....` : '';
@@ -142,8 +121,6 @@ export const resolveA2AMessageTxid = (message: CoworkMessage): string => {
     metadata.deliveryTxid,
     metadata.deliveryMessageTxid,
     metadata.orderMessageTxid,
-    metadata.paymentTxid,
-    metadata.refundTxid,
   ].map(normalizeTxidCandidate).find(Boolean);
   if (txidsCandidate) return txidsCandidate;
   if (directCandidate) return directCandidate;
@@ -159,11 +136,7 @@ export const resolveA2AMessageTxid = (message: CoworkMessage): string => {
   ].map(normalizePinIdCandidate).find(Boolean);
   if (pinCandidate) return pinCandidate;
 
-  const contentMatch = String(message.content || '').match(CONTENT_TXID_RE);
-  const contentCandidate = normalizeTxidCandidate(contentMatch?.[1]);
-  if (contentCandidate) return contentCandidate;
-
-  return resolveStructuredContentTxid(String(message.content || ''));
+  return '';
 };
 
 const copyTextToClipboard = (value: string): void => {
@@ -614,6 +587,19 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     );
   }
 
+  const txid = resolveA2AMessageTxid(message);
+  if (!txid) {
+    return (
+      <div className="px-4 py-1 flex justify-center">
+        <div className="max-w-[76%] px-3 py-1.5 text-xs leading-relaxed whitespace-pre-wrap break-words dark:text-claude-darkTextSecondary text-claude-textSecondary">
+          <div className="mb-0.5 font-medium">内部状态</div>
+          <div>{message.content}</div>
+          <div className="mt-0.5 text-[10px] opacity-70">{formatTime(message.timestamp)}</div>
+        </div>
+      </div>
+    );
+  }
+
   // user = incoming from peer MetaBot (left side)
   // assistant = outgoing from local MetaBot (right side)
   // direction in metadata takes priority over type for display direction
@@ -641,7 +627,6 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const contentToRender = shouldRenderDeliveryResult ? deliveryResult : message.content;
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = getA2AMarkdownClassName(isLocal);
-  const txid = resolveA2AMessageTxid(message);
   const txidPreview = formatA2ATxidPreview(txid);
 
   return (

@@ -24,7 +24,7 @@ test('buildBuyerOrderObserverConversationId scopes observer sessions by buyer, s
   );
 });
 
-test('ensureBuyerOrderObserverSession creates a dedicated metaweb_order a2a session with outgoing order metadata', async () => {
+test('ensureBuyerOrderObserverSession keeps payment txid separate from missing message txid', async () => {
   const sqlite = await createSqliteStore();
   try {
     const store = createCoworkStore(sqlite.db);
@@ -63,9 +63,37 @@ test('ensureBuyerOrderObserverSession creates a dedicated metaweb_order a2a sess
     assert.ok(firstMessage);
     assert.equal(firstMessage?.type, 'user');
     assert.equal(firstMessage?.metadata?.direction, 'outgoing');
-    assert.equal(firstMessage?.metadata?.txid, 'b'.repeat(64));
+    assert.equal(firstMessage?.metadata?.txid, undefined);
     assert.equal(firstMessage?.metadata?.paymentTxid, 'b'.repeat(64));
     assert.match(firstMessage?.content || '', /^\[ORDER\]/);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('ensureBuyerOrderObserverSession writes order simplemsg metadata when it is already known', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const paymentTxid = 'd'.repeat(64);
+    const orderTxid = 'e'.repeat(64);
+
+    const created = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 7,
+      peerGlobalMetaId: 'seller-global-metaid',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] 查询北京天气\n支付金额 0.0001 SPACE\ntxid: ${paymentTxid}`,
+      orderMessagePinId: `${orderTxid}i0`,
+      orderMessageTxids: [orderTxid],
+    });
+
+    const session = store.getSession(created.coworkSessionId);
+    const firstMessage = session?.messages?.[0] ?? null;
+    assert.ok(firstMessage);
+    assert.equal(firstMessage?.metadata?.txid, orderTxid);
+    assert.deepEqual(firstMessage?.metadata?.txids, [orderTxid]);
+    assert.equal(firstMessage?.metadata?.pinId, `${orderTxid}i0`);
+    assert.equal(firstMessage?.metadata?.paymentTxid, paymentTxid);
   } finally {
     sqlite.cleanup();
   }

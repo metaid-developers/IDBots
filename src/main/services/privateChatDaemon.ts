@@ -14,7 +14,7 @@ import {
 } from './metaWebCrypto';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import type { CoworkRunner } from '../libs/coworkRunner';
-import { PrivateChatOrderCowork } from './privateChatOrderCowork';
+import { PrivateChatOrderCowork, type OrderCoworkRequest } from './privateChatOrderCowork';
 import { buildOrderPrompts } from './orderPromptBuilder';
 import {
   checkOrderPaymentStatus,
@@ -58,6 +58,10 @@ import {
   verifyDeliveryArtifactUpload,
 } from './serviceDeliveryArtifacts.js';
 import type { ListenerConfig } from './metaWebListenerService';
+import {
+  buildA2AChainMetadata,
+  type A2AChainMetadata,
+} from './a2aChainMetadata';
 
 const POLL_INTERVAL_MS = 5_000;
 const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
@@ -115,40 +119,13 @@ const thinkingTasks = new Set<string>();
 let orderCowork: PrivateChatOrderCowork | null = null;
 const sentOrderDeliveryKeys = new Set<string>();
 const sentOrderRatingInviteKeys = new Set<string>();
-const CHAIN_TXID_RE = /^[0-9a-f]{64}$/i;
-const CHAIN_PIN_ID_RE = /^([0-9a-f]{64})i\d+$/i;
-
-const normalizeChainTxid = (value: unknown): string => {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return CHAIN_TXID_RE.test(normalized) ? normalized : '';
-};
-
-const normalizeChainPinId = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-
-const extractTxidFromChainPinId = (value: unknown): string => {
-  const normalized = normalizeChainPinId(value).toLowerCase();
-  return normalized.match(CHAIN_PIN_ID_RE)?.[1] ?? '';
-};
 
 export function buildPrivateChatA2AChainMetadata(input: {
   txId?: unknown;
   txids?: unknown;
   pinId?: unknown;
 }): CoworkMessageMetadata {
-  const explicitTxid = normalizeChainTxid(input.txId);
-  const txids = Array.isArray(input.txids)
-    ? input.txids.map(normalizeChainTxid).filter(Boolean)
-    : [];
-  const pinId = normalizeChainPinId(input.pinId);
-  const txid = explicitTxid || txids[0] || extractTxidFromChainPinId(pinId);
-  const allTxids = Array.from(new Set([txid, ...txids].filter(Boolean)));
-  const metadata: CoworkMessageMetadata = {};
-  if (txid) metadata.txid = txid;
-  if (allTxids.length > 0) metadata.txids = allTxids;
-  if (pinId) metadata.pinId = pinId;
-  return metadata;
+  return buildA2AChainMetadata(input) as CoworkMessageMetadata;
 }
 
 function buildOrderDispatchKey(
@@ -603,11 +580,11 @@ export async function sendSellerOrderAcknowledgement(params: {
   skillName?: string | null;
   paymentTxid?: string | null;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
-  sendEncryptedMsg: (text: string) => Promise<{ pinId?: string | null }>;
+  sendEncryptedMsg: (text: string) => Promise<{ pinId?: string | null; txids?: string[] | null }>;
   serviceOrderLifecycle?: Pick<ServiceOrderLifecycleService, 'markSellerOrderFirstResponseSent'> | null;
   emitLog?: (msg: string) => void;
   now?: () => number;
-}): Promise<{ text: string; pinId: string | null }> {
+}): Promise<{ text: string; pinId: string | null; txids: string[] }> {
   const peerName = params.peerName?.trim() || 'the client';
   const llmId = typeof params.metabot.llm_id === 'string' ? params.metabot.llm_id.trim() || undefined : undefined;
   const ackSystemPrompt = buildSellerOrderAcknowledgementSystemPrompt(params.metabot);
@@ -645,6 +622,7 @@ export async function sendSellerOrderAcknowledgement(params: {
   return {
     text: acknowledgementText,
     pinId: result.pinId ?? null,
+    txids: Array.isArray(result.txids) ? result.txids : [],
   };
 }
 
@@ -1069,6 +1047,7 @@ export function endPrivateChatA2AConversation(params: {
   externalConversationId?: string;
   peerGlobalMetaId?: string | null;
   alreadyEnded?: boolean;
+  endMessage?: CoworkMessage;
 } {
   const session = params.coworkStore.getSession(params.sessionId);
   if (!session) return { success: false, error: 'Session not found' };
@@ -1110,7 +1089,7 @@ export function endPrivateChatA2AConversation(params: {
     }
   );
 
-  appendPrivateChatA2AMessage({
+  const endMessage = appendPrivateChatA2AMessage({
     coworkStore: params.coworkStore,
     sessionId: params.sessionId,
     externalConversationId: sourceContext.externalConversationId,
@@ -1149,6 +1128,7 @@ export function endPrivateChatA2AConversation(params: {
     success: true,
     externalConversationId: sourceContext.externalConversationId,
     peerGlobalMetaId: session.peerGlobalMetaId ?? (currentMetadata.peerGlobalMetaId as string | undefined) ?? null,
+    endMessage,
   };
 }
 
@@ -1316,16 +1296,21 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const combinedMessage = `${ratingText.trim()}${pinLine}`;
 
   // Send combined message to B via simplemsg
+  let combinedMessageMetadata: A2AChainMetadata = {};
   try {
     const encrypted = ecdhEncrypt(combinedMessage, sharedSecretForReply);
     const payloadStr = buildPrivateMsgPayload(sellerGlobalMetaId, encrypted, '');
-    await createPin(metabotStore, metabot.id, {
+    const combinedMessageResult = await createPin(metabotStore, metabot.id, {
       operation: 'create',
       path: '/protocols/simplemsg',
       encryption: '0',
       version: '1.0.0',
       contentType: 'application/json',
       payload: payloadStr,
+    });
+    combinedMessageMetadata = buildA2AChainMetadata({
+      txids: combinedMessageResult.txids,
+      pinId: combinedMessageResult.pinId,
     });
     emitLog(`[Rating] Combined rating+farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
   } catch (e) {
@@ -1341,6 +1326,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
       externalConversationId: buyerOrderMapping.externalConversationId,
       direction: 'outgoing',
       suppressRunningStatus: true,
+      ...combinedMessageMetadata,
     },
   });
   if (emitToRenderer) {
@@ -1599,6 +1585,8 @@ async function processOne(
             serviceOutputType,
             serverBotGlobalMetaId: localGlobalMetaId || null,
             servicePaidTx: orderTrackingId,
+            orderMessagePinId: row.pin_id,
+            orderMessageTxid: row.tx_id,
             orderPayload: plaintext,
           });
           sellerOrderSessionId = ensuredObserverSession.coworkSessionId;
@@ -1638,9 +1626,10 @@ async function processOne(
         return await createSimpleMsgPin(payloadStr);
       };
 
+      let processingNotice: OrderCoworkRequest['processingNotice'] | undefined;
       if (source === 'metaweb_private' && fromGlobalMetaId) {
         try {
-          await sendSellerOrderAcknowledgement({
+          const acknowledgement = await sendSellerOrderAcknowledgement({
             metabot,
             peerGlobalMetaId: fromGlobalMetaId,
             peerName: (row.from_name as string | null) ?? null,
@@ -1652,6 +1641,13 @@ async function processOne(
             serviceOrderLifecycle,
             emitLog,
           });
+          processingNotice = {
+            content: acknowledgement.text,
+            metadata: buildPrivateChatA2AChainMetadata({
+              txids: acknowledgement.txids,
+              pinId: acknowledgement.pinId,
+            }),
+          };
         } catch (error) {
           emitLog(`[Order] Acknowledgement broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -1691,6 +1687,7 @@ async function processOne(
           peerName: (row.from_name as string | null) ?? null,
           peerAvatar: (row.from_avatar as string | null) ?? null,
           expectedOutputType: serviceOutputType,
+          processingNotice,
           sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
             ? sendEncryptedMsg
             : undefined,
@@ -1700,9 +1697,9 @@ async function processOne(
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         if (source === 'metaweb_private' && fromGlobalMetaId) {
           try {
-            await sendEncryptedMsg(failureNotice);
+            const failureResult = await sendEncryptedMsg(failureNotice);
             emitLog(`[Order] Failure notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
-            if (sellerOrderSessionId && emitToRenderer) {
+            if (sellerOrderSessionId) {
               const failureMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
                 content: failureNotice,
@@ -1711,9 +1708,15 @@ async function processOne(
                   externalConversationId,
                   direction: 'outgoing',
                   orderExecutionFailed: true,
+                  ...buildPrivateChatA2AChainMetadata({
+                    txids: failureResult.txids,
+                    pinId: failureResult.pinId,
+                  }),
                 },
               });
-              emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: failureMsg });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: failureMsg });
+              }
             }
           } catch (sendError) {
             emitLog(`[Order] Failure notice broadcast failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
@@ -1733,9 +1736,9 @@ async function processOne(
       if (trimmedReply && source === 'metaweb_private') {
         if (orderResult.isDeliverable === false) {
           try {
-            await sendEncryptedMsg(trimmedReply);
+            const fallbackResult = await sendEncryptedMsg(trimmedReply);
             emitLog(`[Order] Timeout fallback notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
-            if (sellerOrderSessionId && emitToRenderer) {
+            if (sellerOrderSessionId) {
               const fallbackMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
                 content: trimmedReply,
@@ -1744,9 +1747,15 @@ async function processOne(
                   externalConversationId,
                   direction: 'outgoing',
                   orderTimeoutFallback: true,
+                  ...buildPrivateChatA2AChainMetadata({
+                    txids: fallbackResult.txids,
+                    pinId: fallbackResult.pinId,
+                  }),
                 },
               });
-              emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: fallbackMsg });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: fallbackMsg });
+              }
             }
           } catch (error) {
             emitLog(`[Order] Timeout fallback notice broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1776,6 +1785,26 @@ async function processOne(
             if (orderDispatchKey) {
               sentOrderDeliveryKeys.add(orderDispatchKey);
             }
+            if (sellerOrderSessionId) {
+              const deliveryMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: deliveryText,
+                metadata: {
+                  sourceChannel: 'metaweb_order',
+                  externalConversationId,
+                  direction: 'outgoing',
+                  orderDeliveryMessage: true,
+                  paymentTxid: orderTrackingId || undefined,
+                  ...buildPrivateChatA2AChainMetadata({
+                    txids: deliveryResult.txids,
+                    pinId: deliveryResult.pinId,
+                  }),
+                },
+              });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: deliveryMsg });
+              }
+            }
             emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
           } catch (error) {
             emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1787,13 +1816,13 @@ async function processOne(
           emitLog(`[Order] Rating invite already sent for order ${orderTrackingId}, skipping duplicate send.`);
         } else {
           try {
-            await sendEncryptedMsg(trimmedInvite);
+            const inviteResult = await sendEncryptedMsg(trimmedInvite);
             if (orderDispatchKey) {
               sentOrderRatingInviteKeys.add(orderDispatchKey);
             }
             emitLog(`[Order] Rating invite sent to ${fromGlobalMetaId.slice(0, 12)}…`);
             // Add [NeedsRating] to B's own session so it appears in B's UI
-            if (sellerOrderSessionId && emitToRenderer) {
+            if (sellerOrderSessionId) {
               const inviteMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
                 content: trimmedInvite,
@@ -1801,9 +1830,15 @@ async function processOne(
                   sourceChannel: 'metaweb_order',
                   externalConversationId,
                   direction: 'outgoing',
+                  ...buildPrivateChatA2AChainMetadata({
+                    txids: inviteResult.txids,
+                    pinId: inviteResult.pinId,
+                  }),
                 },
               });
-              emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: inviteMsg });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: inviteMsg });
+              }
             }
           } catch (error) {
             emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1848,6 +1883,11 @@ async function processOne(
             senderName: (row.from_name as string | null) ?? undefined,
             senderAvatar: (row.from_avatar as string | null) ?? undefined,
             direction: 'incoming',
+            paymentTxid: paymentTxid || undefined,
+            ...buildPrivateChatA2AChainMetadata({
+              txId: row.tx_id,
+              pinId: row.pin_id,
+            }),
           },
         });
         coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);

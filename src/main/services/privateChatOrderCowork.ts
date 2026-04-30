@@ -15,6 +15,10 @@ import {
   resolveServiceDeliveryArtifact,
   uploadVerifiedDeliveryArtifact,
 } from './serviceDeliveryArtifacts.js';
+import {
+  buildA2AChainMetadata,
+  type A2AChainMetadata,
+} from './a2aChainMetadata';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -58,6 +62,10 @@ export interface OrderCoworkRequest {
   peerAvatar?: string | null;
   expectedOutputType?: string | null;
   orderStartedAt?: number | null;
+  processingNotice?: {
+    content: string;
+    metadata?: Record<string, unknown>;
+  };
   sendStatusUpdate?: (content: string) => Promise<unknown>;
 }
 
@@ -218,9 +226,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   private injectProcessingNotice(sessionId: string, request: OrderCoworkRequest): void {
     const peerName = request.peerName?.trim();
-    const content = peerName
+    const transmittedContent = request.processingNotice?.content?.trim();
+    const content = transmittedContent || (peerName
       ? `${peerName}，已收到你的服务订单，技能执行可能需要一些时间，正在处理，请耐心等待最终结果。`
-      : '已收到服务订单，技能执行可能需要一些时间，正在处理，请耐心等待最终结果。';
+      : '已收到服务订单，技能执行可能需要一些时间，正在处理，请耐心等待最终结果。');
     const notice = this.coworkStore.addMessage(sessionId, {
       type: 'assistant',
       content,
@@ -230,6 +239,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         direction: 'outgoing',
         excludeFromSandboxHistory: true,
         orderProcessingNotice: true,
+        ...(request.processingNotice?.metadata ?? {}),
       },
     });
     if (this.emitToRenderer) {
@@ -361,10 +371,13 @@ export class PrivateChatOrderCowork extends EventEmitter {
     }
 
     const uploadNotice = '技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。';
-    this.addOrderDeliveryStatusMessage(sessionId, uploadNotice, {
+    const uploadNoticeMessage = this.addOrderDeliveryStatusMessage(sessionId, uploadNotice, {
+      sourceChannel: request?.source,
+      externalConversationId: request?.externalConversationId,
       orderDeliveryUploadNotice: true,
     });
-    await this.sendOrderStatusUpdate(request, uploadNotice);
+    const uploadNoticeMetadata = await this.sendOrderStatusUpdate(request, uploadNotice);
+    this.applyChainMetadataToMessage(sessionId, uploadNoticeMessage, uploadNoticeMetadata);
 
     try {
       const verifiedUpload = await uploadVerifiedDeliveryArtifact({
@@ -375,10 +388,13 @@ export class PrivateChatOrderCowork extends EventEmitter {
         maxAttempts: 2,
         onRetry: async () => {
           const retryNotice = '数字成果链上上传校验失败，正在重新上传一次。';
-          this.addOrderDeliveryStatusMessage(sessionId, retryNotice, {
+          const retryNoticeMessage = this.addOrderDeliveryStatusMessage(sessionId, retryNotice, {
+            sourceChannel: request?.source,
+            externalConversationId: request?.externalConversationId,
             orderDeliveryUploadRetryNotice: true,
           });
-          await this.sendOrderStatusUpdate(request, retryNotice);
+          const retryNoticeMetadata = await this.sendOrderStatusUpdate(request, retryNotice);
+          this.applyChainMetadataToMessage(sessionId, retryNoticeMessage, retryNoticeMetadata);
         },
       });
       if (!verifiedUpload.ok) {
@@ -387,9 +403,6 @@ export class PrivateChatOrderCowork extends EventEmitter {
       const deliverySummary = buildMetafileDeliverySummary({
         artifact: artifactResult.artifact,
         upload: verifiedUpload.upload,
-      });
-      this.addOrderDeliveryStatusMessage(sessionId, deliverySummary, {
-        orderDeliveryUploadComplete: true,
       });
       return {
         serviceReply: [serviceReply, '', deliverySummary].filter(Boolean).join('\n\n'),
@@ -417,7 +430,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     sessionId: string,
     content: string,
     metadata: Record<string, unknown>,
-  ): void {
+  ): CoworkMessage {
     const message = this.coworkStore.addMessage(sessionId, {
       type: 'assistant',
       content,
@@ -430,17 +443,47 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (this.emitToRenderer) {
       this.emitToRenderer('cowork:stream:message', { sessionId, message });
     }
+    return message;
   }
 
   private async sendOrderStatusUpdate(
     request: OrderCoworkRequest | undefined,
     content: string,
-  ): Promise<void> {
-    if (!request?.sendStatusUpdate) return;
+  ): Promise<A2AChainMetadata | null> {
+    if (!request?.sendStatusUpdate) return null;
     try {
-      await request.sendStatusUpdate(content);
+      const result = await request.sendStatusUpdate(content);
+      if (!result || typeof result !== 'object') return null;
+      const record = result as Record<string, unknown>;
+      return buildA2AChainMetadata({
+        txId: record.txid ?? record.txId,
+        txids: record.txids,
+        pinId: record.pinId,
+      });
     } catch {
       // Status updates are best-effort; final delivery or failure notice still follows.
+      return null;
+    }
+  }
+
+  private applyChainMetadataToMessage(
+    sessionId: string,
+    message: CoworkMessage | null | undefined,
+    chainMetadata: A2AChainMetadata | null | undefined,
+  ): void {
+    if (!message || !chainMetadata || Object.keys(chainMetadata).length === 0) return;
+    const metadata = {
+      ...(message.metadata ?? {}),
+      ...chainMetadata,
+    };
+    this.coworkStore.updateMessage(sessionId, message.id, { metadata });
+    message.metadata = metadata;
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:messageUpdate', {
+        sessionId,
+        messageId: message.id,
+        metadata,
+      });
     }
   }
 

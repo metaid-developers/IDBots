@@ -1,5 +1,6 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import { buildA2AChainMetadata } from './a2aChainMetadata';
 
 export type ServiceOrderObserverRole = 'buyer' | 'seller';
 
@@ -21,6 +22,9 @@ export interface EnsureServiceOrderObserverSessionInput {
   serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
+  orderMessagePinId?: string | null;
+  orderMessageTxid?: string | null;
+  orderMessageTxids?: string[] | null;
   orderPayload?: string | null;
   recoveryNotice?: string | null;
 }
@@ -205,8 +209,12 @@ export async function ensureServiceOrderObserverSession(
       sourceChannel: 'metaweb_order',
       externalConversationId,
       direction: getOrderMessageDirection(input.role),
-      txid: normalizeText(input.servicePaidTx) || undefined,
       paymentTxid: normalizeText(input.servicePaidTx) || undefined,
+      ...buildA2AChainMetadata({
+        txId: input.orderMessageTxid,
+        txids: input.orderMessageTxids,
+        pinId: input.orderMessagePinId,
+      }),
     },
   });
 

@@ -32,6 +32,7 @@ import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
 import {
+  buildPrivateA2ASessionDisplayId,
   getCoworkSessionTitleClassName,
   shouldShowA2AServiceSessionId,
 } from './coworkSessionPresentation.js';
@@ -1703,7 +1704,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
-  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; llm_id: string | null } | null>(null);
+  const [sessionMetabot, setSessionMetabot] = useState<{ name: string; avatar: string | null; llm_id: string | null; globalmetaid: string | null } | null>(null);
   const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundActionError, setRefundActionError] = useState<string | null>(null);
@@ -1759,6 +1760,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         name: result.metabot.name,
         avatar: result.metabot.avatar ?? null,
         llm_id: result.metabot.llm_id ?? null,
+        globalmetaid: result.metabot.globalmetaid ?? null,
       });
     };
     void fetchMetaBot();
@@ -2272,6 +2274,15 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     sessionType: currentSession.sessionType,
     serviceOrderSummary: currentSession.serviceOrderSummary,
   });
+  const privateA2ASessionDisplayId = buildPrivateA2ASessionDisplayId(
+    sessionMetabot?.globalmetaid,
+    currentSession.peerGlobalMetaId,
+  );
+  const showPrivateA2ASessionId = (
+    isPrivateA2ASession
+    && !showA2AServiceSessionId
+    && Boolean(privateA2ASessionDisplayId)
+  );
 
   const renderConversationTurns = () => {
     if (turns.length === 0) {
@@ -2414,6 +2425,23 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               <button
                 type="button"
                 onClick={() => handleCopyHeaderValue(currentSession.id)}
+                className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-current hover:bg-black/10 dark:hover:bg-white/10"
+                title={i18nService.t('copyToClipboard')}
+                aria-label={i18nService.t('copyToClipboard')}
+              >
+                <DocumentDuplicateIcon className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {showPrivateA2ASessionId && (
+            <span className="non-draggable inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary opacity-75">
+              <span className="shrink-0">sessionid:</span>
+              <span className="min-w-0 max-w-[120px] truncate font-mono">
+                {privateA2ASessionDisplayId}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleCopyHeaderValue(privateA2ASessionDisplayId)}
                 className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-current hover:bg-black/10 dark:hover:bg-white/10"
                 title={i18nService.t('copyToClipboard')}
                 aria-label={i18nService.t('copyToClipboard')}
