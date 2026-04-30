@@ -2116,6 +2116,7 @@ export class CoworkStore implements MemoryBackend {
         SELECT
           m.id AS message_id,
           m.session_id AS session_id,
+          m.type AS message_type,
           s.metabot_id AS metabot_id,
           s.peer_global_metaid AS peer_global_metaid,
           m.content AS content,
@@ -2281,9 +2282,11 @@ export class CoworkStore implements MemoryBackend {
     mappingMetadata: CoworkMessageMetadata,
   ): MetawebOrderBackfillPatch | null {
     if (!this.tableExists('service_orders') || !this.tableExists('private_chat_messages')) return null;
-    if (metadata.orderDeliveryUploadComplete !== true) return null;
-    if (metadata.direction !== 'outgoing') return null;
     if (String(mappingMetadata.role || '').trim() !== 'seller') return null;
+    const isUploadCompleteDeliveryNotice = metadata.orderDeliveryUploadComplete === true;
+    const isLegacyFinalDeliveryResult = this.isLegacySellerFinalDeliveryResult(row, metadata);
+    if (!isUploadCompleteDeliveryNotice && !isLegacyFinalDeliveryResult) return null;
+    if (isUploadCompleteDeliveryNotice && metadata.direction !== 'outgoing') return null;
 
     let orderRow: SellerDeliverySimplemsgBackfillRow | undefined;
     try {
@@ -2324,6 +2327,18 @@ export class CoworkStore implements MemoryBackend {
       ? deliveryMessage.content.trim()
       : '';
     if (!transmittedContent) return null;
+    if (
+      isLegacyFinalDeliveryResult
+      && !this.deliverySimplemsgContainsResultText(transmittedContent, row.content)
+    ) {
+      return null;
+    }
+    if (
+      isLegacyFinalDeliveryResult
+      && this.sessionAlreadyHasDeliverySimplemsgBubble(row.session_id, row.message_id, deliveryPinId, transmittedContent)
+    ) {
+      return null;
+    }
 
     return {
       content: transmittedContent,
@@ -2341,8 +2356,91 @@ export class CoworkStore implements MemoryBackend {
           || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
           || undefined,
       },
-      removeMetadataKeys: ['orderDeliveryUploadComplete'],
+      removeMetadataKeys: isUploadCompleteDeliveryNotice ? ['orderDeliveryUploadComplete'] : undefined,
     };
+  }
+
+  private isLegacySellerFinalDeliveryResult(
+    row: MetawebOrderMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+  ): boolean {
+    const content = String(row.content || '').trim();
+    if (!content) return false;
+    if (content.startsWith('[ORDER]') || content.startsWith('[DELIVERY]') || content.startsWith('[DELIVERY:')) {
+      return false;
+    }
+    if (row.message_type !== 'assistant') return false;
+    if (metadata.isFinal !== true || metadata.isStreaming !== false) return false;
+    if (metadata.direction != null && metadata.direction !== 'outgoing') return false;
+    return true;
+  }
+
+  private deliverySimplemsgContainsResultText(transmittedContent: string, resultText: string): boolean {
+    const expected = String(resultText || '').replace(/\r\n/g, '\n').trim();
+    if (!expected) return false;
+
+    const tagEnd = transmittedContent.indexOf(']');
+    if (tagEnd < 0) return false;
+    const payload = transmittedContent.slice(tagEnd + 1).trim();
+    if (!payload.startsWith('{')) return false;
+
+    try {
+      const parsed = JSON.parse(payload) as { result?: unknown; content?: unknown; text?: unknown };
+      const candidates = [parsed.result, parsed.content, parsed.text]
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.replace(/\r\n/g, '\n').trim());
+      return candidates.some((value) => value.includes(expected));
+    } catch {
+      return false;
+    }
+  }
+
+  private sessionAlreadyHasDeliverySimplemsgBubble(
+    sessionId: string,
+    currentMessageId: string,
+    deliveryPinId: string,
+    transmittedContent: string,
+  ): boolean {
+    let rows: Array<{ content: string | null; metadata: string | null }> = [];
+    try {
+      rows = this.getAll<{ content: string | null; metadata: string | null }>(`
+        SELECT content, metadata
+        FROM cowork_messages
+        WHERE session_id = ?
+          AND id <> ?
+          AND (
+            content = ?
+            OR metadata LIKE '%orderDeliveryMessage%'
+            OR metadata LIKE '%orderDeliveryUploadComplete%'
+            OR metadata LIKE ?
+          )
+        LIMIT 20
+      `, [sessionId, currentMessageId, transmittedContent, `%${deliveryPinId}%`]);
+    } catch {
+      return false;
+    }
+
+    for (const candidate of rows) {
+      const candidateContent = typeof candidate.content === 'string' ? candidate.content.trim() : '';
+      if (candidateContent === transmittedContent) return true;
+      const candidateMetadata = this.parseMessageMetadata(candidate.metadata);
+      if (String(candidateMetadata.pinId || '').trim() === deliveryPinId) return true;
+      if (
+        candidateMetadata.orderDeliveryUploadComplete === true
+        && candidateContent
+        && this.deliverySimplemsgContainsResultText(transmittedContent, candidateContent)
+      ) {
+        return true;
+      }
+      if (
+        candidateMetadata.orderDeliveryMessage === true
+        && candidateContent
+        && this.deliverySimplemsgContainsResultText(transmittedContent, candidateContent)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private resolveSellerProcessingNoticeSimplemsgPatch(

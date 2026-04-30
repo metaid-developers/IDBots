@@ -16,6 +16,7 @@ const RATING_TXID = 'e'.repeat(64);
 const PRIVATE_INCOMING_TXID = '1'.repeat(64);
 const PRIVATE_OUTGOING_TXID = '2'.repeat(64);
 const PRIVATE_OLD_DUPLICATE_TXID = '3'.repeat(64);
+const OTHER_DELIVERY_TXID = '4'.repeat(64);
 
 test('backfillMetawebOrderSimplemsgMetadata fills chain metadata without changing bubble content', async () => {
   const sqlite = await createSqliteStore();
@@ -466,6 +467,453 @@ test('backfillMetawebOrderSimplemsgMetadata turns seller upload-complete status 
     assert.equal(deliveryBubble.metadata.externalConversationId, externalConversationId);
     assert.equal(deliveryBubble.metadata.paymentTxid, PAYMENT_TXID);
     assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebOrderSimplemsgMetadata turns legacy seller final result into delivery simplemsg bubble', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 2;
+    const buyerGlobalMetaId = 'buyer-global-metaid';
+    const sellerGlobalMetaId = 'seller-global-metaid';
+    const externalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Weather delivery session',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const localFinal = '## 北京当前天气\n\n☀️  晴天，**+27°C**';
+    const deliveryContent = `[DELIVERY] {"paymentTxid":"${PAYMENT_TXID}","serviceName":"weather","result":"${localFinal.replace(/\n/g, '\\n')}","deliveredAt":1777427686}`;
+    const finalMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: localFinal,
+      metadata: {
+        isFinal: true,
+        isStreaming: false,
+      },
+    });
+    const deliveredAt = 1_777_427_686_000;
+    sqlite.db.run('UPDATE cowork_messages SET created_at = ? WHERE id = ?', [
+      deliveredAt,
+      finalMessage.id,
+    ]);
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, cowork_session_id, status, first_response_deadline_at,
+        delivery_deadline_at, delivery_message_pin_id, delivered_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'seller-order-legacy-final',
+      'seller',
+      metabotId,
+      buyerGlobalMetaId,
+      'service-weather',
+      'weather',
+      PAYMENT_TXID,
+      'mvc',
+      '0.001',
+      'SPACE',
+      'native',
+      `${ORDER_TXID}i0`,
+      session.id,
+      'completed',
+      now + 60_000,
+      now + 120_000,
+      `${DELIVERY_TXID}i0`,
+      deliveredAt,
+      now,
+      now,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${DELIVERY_TXID}i0`,
+      DELIVERY_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      deliveryContent,
+      Math.floor(deliveredAt / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+
+    const updated = store.getSession(session.id);
+    const deliveryBubble = updated.messages.find((message) => message.id === finalMessage.id);
+
+    assert.equal(deliveryBubble.content, deliveryContent);
+    assert.equal(deliveryBubble.metadata.txid, DELIVERY_TXID);
+    assert.deepEqual(deliveryBubble.metadata.txids, [DELIVERY_TXID]);
+    assert.equal(deliveryBubble.metadata.pinId, `${DELIVERY_TXID}i0`);
+    assert.equal(deliveryBubble.metadata.orderDeliveryMessage, true);
+    assert.equal(deliveryBubble.metadata.sourceChannel, 'metaweb_order');
+    assert.equal(deliveryBubble.metadata.externalConversationId, externalConversationId);
+    assert.equal(deliveryBubble.metadata.direction, 'outgoing');
+    assert.equal(deliveryBubble.metadata.paymentTxid, PAYMENT_TXID);
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebOrderSimplemsgMetadata ignores unrelated existing delivery bubble while binding legacy final result', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 2;
+    const buyerGlobalMetaId = 'buyer-global-metaid';
+    const sellerGlobalMetaId = 'seller-global-metaid';
+    const externalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Multiple delivery session',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const existingDelivery = store.addMessage(session.id, {
+      type: 'assistant',
+      content: '上一笔订单已交付。',
+      metadata: {
+        sourceChannel: 'metaweb_order',
+        externalConversationId,
+        direction: 'outgoing',
+        orderDeliveryMessage: true,
+        pinId: `${OTHER_DELIVERY_TXID}i0`,
+        txid: OTHER_DELIVERY_TXID,
+        txids: [OTHER_DELIVERY_TXID],
+      },
+    });
+    const localFinal = '## 北京当前天气\n\n☀️  晴天，**+27°C**';
+    const deliveryContent = `[DELIVERY] {"paymentTxid":"${PAYMENT_TXID}","serviceName":"weather","result":"${localFinal.replace(/\n/g, '\\n')}","deliveredAt":1777427686}`;
+    const finalMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: localFinal,
+      metadata: {
+        isFinal: true,
+        isStreaming: false,
+      },
+    });
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, cowork_session_id, status, first_response_deadline_at,
+        delivery_deadline_at, delivery_message_pin_id, delivered_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'seller-order-with-prior-delivery',
+      'seller',
+      metabotId,
+      buyerGlobalMetaId,
+      'service-weather',
+      'weather',
+      PAYMENT_TXID,
+      'mvc',
+      '0.001',
+      'SPACE',
+      'native',
+      `${ORDER_TXID}i0`,
+      session.id,
+      'completed',
+      now + 60_000,
+      now + 120_000,
+      `${DELIVERY_TXID}i0`,
+      now,
+      now,
+      now,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${DELIVERY_TXID}i0`,
+      DELIVERY_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      deliveryContent,
+      Math.floor(now / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 1);
+
+    const updated = store.getSession(session.id);
+    const unchangedExisting = updated.messages.find((message) => message.id === existingDelivery.id);
+    const deliveryBubble = updated.messages.find((message) => message.id === finalMessage.id);
+
+    assert.equal(unchangedExisting.metadata.pinId, `${OTHER_DELIVERY_TXID}i0`);
+    assert.equal(deliveryBubble.content, deliveryContent);
+    assert.equal(deliveryBubble.metadata.pinId, `${DELIVERY_TXID}i0`);
+    assert.equal(deliveryBubble.metadata.orderDeliveryMessage, true);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebOrderSimplemsgMetadata does not bind unrelated legacy seller final text to delivery', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 2;
+    const buyerGlobalMetaId = 'buyer-global-metaid';
+    const sellerGlobalMetaId = 'seller-global-metaid';
+    const externalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Unrelated final session',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const unrelatedFinal = '内部工具整理完成。';
+    const deliveryContent = `[DELIVERY] {"paymentTxid":"${PAYMENT_TXID}","serviceName":"weather","result":"## 北京当前天气\\n\\n☀️  晴天，**+27°C**","deliveredAt":1777427686}`;
+    const finalMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: unrelatedFinal,
+      metadata: {
+        isFinal: true,
+        isStreaming: false,
+      },
+    });
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, cowork_session_id, status, first_response_deadline_at,
+        delivery_deadline_at, delivery_message_pin_id, delivered_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'seller-order-unrelated-final',
+      'seller',
+      metabotId,
+      buyerGlobalMetaId,
+      'service-weather',
+      'weather',
+      PAYMENT_TXID,
+      'mvc',
+      '0.001',
+      'SPACE',
+      'native',
+      `${ORDER_TXID}i0`,
+      session.id,
+      'completed',
+      now + 60_000,
+      now + 120_000,
+      `${DELIVERY_TXID}i0`,
+      now,
+      now,
+      now,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${DELIVERY_TXID}i0`,
+      DELIVERY_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      deliveryContent,
+      Math.floor(now / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+
+    const updated = store.getSession(session.id);
+    const unchanged = updated.messages.find((message) => message.id === finalMessage.id);
+
+    assert.equal(unchanged.content, unrelatedFinal);
+    assert.equal(unchanged.metadata.txid, undefined);
+    assert.equal(unchanged.metadata.pinId, undefined);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('backfillMetawebOrderSimplemsgMetadata does not match legacy final text outside delivery result fields', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 2;
+    const buyerGlobalMetaId = 'buyer-global-metaid';
+    const sellerGlobalMetaId = 'seller-global-metaid';
+    const externalConversationId = `metaweb_order:seller:${metabotId}:${buyerGlobalMetaId}:${PAYMENT_TXID.slice(0, 16)}`;
+    const session = store.createSession(
+      'Delivery metadata field session',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      buyerGlobalMetaId,
+      'Buyer Bot',
+      null,
+    );
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: buyerGlobalMetaId,
+        serverBotGlobalMetaId: sellerGlobalMetaId,
+        servicePaidTx: PAYMENT_TXID,
+      }),
+    });
+
+    const unrelatedFinal = 'weather';
+    const deliveryContent = `[DELIVERY] {"paymentTxid":"${PAYMENT_TXID}","serviceName":"weather","result":"## 北京当前天气\\n\\n☀️  晴天，**+27°C**","deliveredAt":1777427686}`;
+    const finalMessage = store.addMessage(session.id, {
+      type: 'assistant',
+      content: unrelatedFinal,
+      metadata: {
+        isFinal: true,
+        isStreaming: false,
+      },
+    });
+
+    const now = Date.now();
+    sqlite.db.run(`
+      INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, cowork_session_id, status, first_response_deadline_at,
+        delivery_deadline_at, delivery_message_pin_id, delivered_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      'seller-order-result-field-only',
+      'seller',
+      metabotId,
+      buyerGlobalMetaId,
+      'service-weather',
+      'weather',
+      PAYMENT_TXID,
+      'mvc',
+      '0.001',
+      'SPACE',
+      'native',
+      `${ORDER_TXID}i0`,
+      session.id,
+      'completed',
+      now + 60_000,
+      now + 120_000,
+      `${DELIVERY_TXID}i0`,
+      now,
+      now,
+      now,
+    ]);
+    sqlite.db.run(`
+      INSERT INTO private_chat_messages (
+        pin_id, tx_id, from_metaid, from_global_metaid, to_metaid, to_global_metaid,
+        protocol, content, chain_timestamp, is_processed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      `${DELIVERY_TXID}i0`,
+      DELIVERY_TXID,
+      'seller-metaid',
+      sellerGlobalMetaId,
+      'buyer-metaid',
+      buyerGlobalMetaId,
+      '/protocols/simplemsg',
+      deliveryContent,
+      Math.floor(now / 1000),
+      1,
+    ]);
+
+    assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
+
+    const updated = store.getSession(session.id);
+    const unchanged = updated.messages.find((message) => message.id === finalMessage.id);
+
+    assert.equal(unchanged.content, unrelatedFinal);
+    assert.equal(unchanged.metadata.txid, undefined);
+    assert.equal(unchanged.metadata.pinId, undefined);
   } finally {
     sqlite.cleanup();
   }
