@@ -67,6 +67,7 @@ import {
   buildA2AChainMetadata,
   type A2AChainMetadata,
 } from './a2aChainMetadata';
+import { classifySimplemsgContent } from './simplemsgPeerConversation';
 
 const POLL_INTERVAL_MS = 5_000;
 const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
@@ -1049,6 +1050,68 @@ export function appendPrivateChatA2AMessage(params: {
   }
 
   return message;
+}
+
+export async function handleActiveOrderOrdinaryPrivateChatSuppression(params: {
+  db: Database;
+  saveDb: SaveDbFn;
+  coworkStore: CoworkStore;
+  metabotId: number;
+  row: PrivateChatMessageRow;
+  plaintext: string;
+  fromGlobalMetaId?: string | null;
+  hasActiveOrderForPrivateChatSuppression?: (
+    localMetabotId: number,
+    counterpartyGlobalMetaId: string
+  ) => boolean;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: RendererEmitter;
+}): Promise<{ suppressed: boolean; message: CoworkMessage | null }> {
+  if (classifySimplemsgContent(params.plaintext).kind !== 'private_chat') {
+    return { suppressed: false, message: null };
+  }
+
+  const peerGlobalMetaId = normalizeIdentity(params.fromGlobalMetaId)
+    || normalizePrivateConversationPeerId(params.row);
+  if (!peerGlobalMetaId || !params.hasActiveOrderForPrivateChatSuppression) {
+    return { suppressed: false, message: null };
+  }
+
+  if (!params.hasActiveOrderForPrivateChatSuppression(params.metabotId, peerGlobalMetaId)) {
+    return { suppressed: false, message: null };
+  }
+
+  const { sessionId, externalConversationId } = await resolvePrivateConversationSession(
+    params.coworkStore,
+    params.metabotId,
+    params.row,
+    params.plaintext,
+  );
+  const message = appendPrivateChatA2AMessage({
+    coworkStore: params.coworkStore,
+    sessionId,
+    externalConversationId,
+    type: 'user',
+    content: params.plaintext,
+    senderGlobalMetaId: peerGlobalMetaId,
+    senderName: (params.row.from_name as string | null) ?? null,
+    senderAvatar: (params.row.from_avatar as string | null) ?? null,
+    extraMetadata: {
+      simplemsgKind: 'private_chat',
+      activeOrderDisplayOnly: true,
+      ...buildPrivateChatA2AChainMetadata({
+        txId: params.row.tx_id,
+        pinId: params.row.pin_id,
+      }),
+    },
+    emitToRenderer: params.emitToRenderer,
+  });
+
+  params.emitLog(
+    `[PrivateChat] Active service order with ${peerGlobalMetaId.slice(0, 12)}…, display-only ordinary private chat.`
+  );
+  markProcessed(params.db, params.row.id, params.saveDb);
+  return { suppressed: true, message };
 }
 
 export function endPrivateChatA2AConversation(params: {
@@ -2128,6 +2191,24 @@ async function processOne(
         return;
       }
       emitLog(`[PrivateChat] No buyer order session found for peer ${fromGlobalMetaId.slice(0, 12)}…, treating as regular private chat.`);
+    }
+
+    const activeOrderSuppression = await handleActiveOrderOrdinaryPrivateChatSuppression({
+      db,
+      saveDb,
+      coworkStore,
+      metabotId: metabot.id,
+      row,
+      plaintext,
+      fromGlobalMetaId,
+      hasActiveOrderForPrivateChatSuppression: serviceOrderLifecycle
+        ? serviceOrderLifecycle.hasActiveOrderForPrivateChatSuppression.bind(serviceOrderLifecycle)
+        : undefined,
+      emitLog,
+      emitToRenderer,
+    });
+    if (activeOrderSuppression.suppressed) {
+      return;
     }
 
     const externalConversationId = buildPrivateConversationExternalConversationId(row);

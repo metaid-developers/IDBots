@@ -192,6 +192,16 @@ export class ServiceOrderLifecycleService {
     }
   }
 
+  hasActiveOrderForPrivateChatSuppression(
+    localMetabotId: number,
+    counterpartyGlobalMetaId: string
+  ): boolean {
+    return this.store.hasActiveOrderForPrivateChatSuppression(
+      localMetabotId,
+      counterpartyGlobalMetaId,
+    );
+  }
+
   private assertNoPendingBuyerOrderForPayment(
     localMetabotId: number,
     counterpartyGlobalMetaId: string,

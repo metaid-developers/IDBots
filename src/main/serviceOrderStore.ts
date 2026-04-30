@@ -811,6 +811,33 @@ export class ServiceOrderStore {
     `, [role, now]).map((row) => this.mapRow(row));
   }
 
+  hasActiveOrderForPrivateChatSuppression(
+    localMetabotId: number,
+    counterpartyGlobalMetaid: string
+  ): boolean {
+    const normalizedPeer = String(counterpartyGlobalMetaid || '').trim();
+    if (!normalizedPeer) return false;
+
+    const row = this.getOne<{ found: number }>(`
+      SELECT 1 AS found
+      FROM service_orders
+      WHERE local_metabot_id = ?
+        AND counterparty_global_metaid = ?
+        AND (
+          status IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'refund_pending')
+          OR (
+            role = 'buyer'
+            AND status = 'failed'
+            AND refund_request_pin_id IS NULL
+            AND refund_txid IS NULL
+            AND refund_completed_at IS NULL
+          )
+        )
+      LIMIT 1
+    `, [localMetabotId, normalizedPeer]);
+    return Boolean(row);
+  }
+
   listRatingTimeoutCandidates(
     role: ServiceOrderRole,
     now: number
