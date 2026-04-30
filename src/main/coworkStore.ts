@@ -36,6 +36,7 @@ import {
   normalizeA2AChainTxid,
   type A2AChainMetadata,
 } from './services/a2aChainMetadata';
+import { buildOrderProtocolDisplayMetadata } from './services/simplemsgPeerConversation';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -1087,7 +1088,12 @@ export class CoworkStore implements MemoryBackend {
       FROM cowork_conversation_mappings
       WHERE cowork_session_id = ?
       ORDER BY
-        CASE WHEN channel = 'cowork_ui' THEN 1 ELSE 0 END ASC,
+        CASE
+          WHEN channel = 'metaweb_private' THEN 0
+          WHEN channel = 'metaweb_order' THEN 1
+          WHEN channel = 'cowork_ui' THEN 3
+          ELSE 2
+        END ASC,
         last_active_at DESC
       LIMIT 1
     `, [sessionId]);
@@ -2347,14 +2353,19 @@ export class CoworkStore implements MemoryBackend {
         pinId: deliveryPinId,
       }),
       extraMetadata: {
-        sourceChannel: 'metaweb_order',
-        externalConversationId: row.external_conversation_id,
-        direction: 'outgoing',
+        ...buildOrderProtocolDisplayMetadata({
+          peerGlobalMetaId: String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || ''),
+          direction: 'outgoing',
+          tag: 'DELIVERY',
+          orderTxid: typeof mappingMetadata.orderTxid === 'string' ? mappingMetadata.orderTxid : null,
+          orderRole: 'seller',
+          paymentTxid: normalizeA2AChainTxid(orderRow?.payment_txid)
+            || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
+            || undefined,
+          orderMappingExternalConversationId: row.external_conversation_id,
+        }),
         excludeFromSandboxHistory: true,
         orderDeliveryMessage: true,
-        paymentTxid: normalizeA2AChainTxid(orderRow?.payment_txid)
-          || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
-          || undefined,
       },
       removeMetadataKeys: isUploadCompleteDeliveryNotice ? ['orderDeliveryUploadComplete'] : undefined,
     };

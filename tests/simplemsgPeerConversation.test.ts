@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildCanonicalPrivateConversationExternalConversationId,
+  buildOrderProtocolDisplayMetadata,
   classifySimplemsgContent,
   isServiceOrderActiveForPrivateChatSuppression,
 } from '../src/main/services/simplemsgPeerConversation';
@@ -45,6 +46,34 @@ test('buildCanonicalPrivateConversationExternalConversationId uses peer global m
   assert.equal(
     buildCanonicalPrivateConversationExternalConversationId(' idq-peer '),
     'metaweb-private:idq-peer',
+  );
+});
+
+test('buildOrderProtocolDisplayMetadata marks order events inside peer conversations', () => {
+  assert.deepEqual(
+    buildOrderProtocolDisplayMetadata({
+      peerGlobalMetaId: 'peer-global',
+      direction: 'outgoing',
+      tag: 'DELIVERY',
+      orderTxid: 'a'.repeat(64),
+      orderRole: 'seller',
+      paymentTxid: 'b'.repeat(64),
+      orderMappingExternalConversationId: 'metaweb_order:seller:1:peer-global:aaaaaaaaaaaaaaaa',
+      extra: { pinId: 'pin-1' },
+    }),
+    {
+      sourceChannel: 'metaweb_private',
+      externalConversationId: 'metaweb-private:peer-global',
+      direction: 'outgoing',
+      simplemsgKind: 'order_protocol',
+      orderProtocolTag: 'DELIVERY',
+      orderTxid: 'a'.repeat(64),
+      orderRole: 'seller',
+      paymentTxid: 'b'.repeat(64),
+      orderPaymentTxid: 'b'.repeat(64),
+      orderMappingExternalConversationId: 'metaweb_order:seller:1:peer-global:aaaaaaaaaaaaaaaa',
+      pinId: 'pin-1',
+    },
   );
 });
 

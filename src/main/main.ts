@@ -123,9 +123,16 @@ import {
   buildOrderStatusMessage,
   buildRefundRequestPayload,
 } from './services/serviceOrderProtocols.js';
-import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
+import {
+  ensureBuyerOrderObserverSession,
+  reindexBuyerOrderObserverSessionByOrderTxid,
+} from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
 import { buildA2AChainMetadata } from './services/a2aChainMetadata';
+import {
+  buildOrderProtocolDisplayMetadata,
+  type SimplemsgProtocolTag,
+} from './services/simplemsgPeerConversation';
 import {
   buildDelegationOrderPayloadFromSettlement,
   resolveDelegationSettlement,
@@ -483,6 +490,21 @@ const attachSimplemsgMetadataToCoworkMessage = (
 const resolvePrimarySimplemsgTxid = (chain: { txId?: unknown; txids?: unknown; pinId?: unknown }): string => (
   buildA2AChainMetadata(chain).txid || ''
 );
+
+const buildServiceOrderDisplayMetadata = (
+  order: ServiceOrderRecord,
+  tag: SimplemsgProtocolTag,
+  direction: 'incoming' | 'outgoing',
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> => buildOrderProtocolDisplayMetadata({
+  peerGlobalMetaId: order.counterpartyGlobalMetaid,
+  direction,
+  tag,
+  orderTxid: order.orderMessageTxid,
+  orderRole: order.role,
+  paymentTxid: order.paymentTxid,
+  extra,
+});
 
 const emitProviderDiscoveryChanged = (snapshot: DiscoverySnapshot): void => {
   const windows = BrowserWindow.getAllWindows();
@@ -2946,14 +2968,13 @@ const executeDelegationPipeline = async (
       pinId: result.pinId,
     });
     if (buyerObserverExternalConversationId && orderMessageTxid) {
-      const mapping = coworkStoreInst.getConversationMapping('metaweb_order', buyerObserverExternalConversationId, metabotId);
-      const metadata = mapping ? JSON.parse(mapping.metadataJson || '{}') : null;
-      if (metadata) {
-        coworkStoreInst.updateConversationMappingMetadata('metaweb_order', buyerObserverExternalConversationId, metabotId, {
-          ...metadata,
-          orderTxid: orderMessageTxid,
-        });
-      }
+      buyerObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(coworkStoreInst, {
+        metabotId,
+        peerGlobalMetaId: providerGlobalMetaId,
+        paymentTxid,
+        orderTxid: orderMessageTxid,
+        currentExternalConversationId: buyerObserverExternalConversationId,
+      });
     }
   } catch (error) {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
@@ -2963,10 +2984,18 @@ const executeDelegationPipeline = async (
         content: isFreeDelegation
           ? `系统提示：免费服务订单发送失败。订单标识：${paymentTxid}。请稍后重试。`
           : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${paymentTxid}。请稍后重试或联系服务方处理退款。`,
-        metadata: {
-          sourceChannel: 'metaweb_order',
+        metadata: buildOrderProtocolDisplayMetadata({
+          peerGlobalMetaId: providerGlobalMetaId,
+          direction: 'outgoing',
+          tag: 'ORDER_STATUS',
+          orderTxid: orderMessageTxid,
+          orderRole: 'buyer',
+          paymentTxid,
+          orderMappingExternalConversationId: buyerObserverExternalConversationId,
+          extra: {
           refreshSessionSummary: true,
-        },
+          },
+        }),
       });
       emitCoworkStreamMessage(buyerObserverSessionId, failureMessage);
     }
@@ -3507,19 +3536,16 @@ async function sendRatingTimeoutOrderEndPin(input: {
     const message = getCoworkStore().addMessage(input.order.coworkSessionId, {
       type: 'assistant',
       content: input.message,
-      metadata: {
-        sourceChannel: 'metaweb_order',
-        direction: 'outgoing',
+      metadata: buildServiceOrderDisplayMetadata(input.order, 'ORDER_END', 'outgoing', {
         suppressRunningStatus: true,
         refreshSessionSummary: true,
         orderEndMessage: true,
         orderEndReason: input.reason,
-        paymentTxid: input.order.paymentTxid,
         ...buildA2AChainMetadata({
           txids: result.txids,
           pinId: result.pinId,
         }),
-      },
+      }),
     });
     emitCoworkStreamMessage(input.order.coworkSessionId, message);
   }
@@ -4725,13 +4751,11 @@ if (!gotTheLock) {
       const uploadNoticeMessage = coworkStoreInst.addMessage(sessionId, {
         type: 'assistant',
         content: uploadNotice,
-        metadata: {
-          sourceChannel: 'metaweb_order',
-          direction: 'outgoing',
+        metadata: buildServiceOrderDisplayMetadata(order, 'ORDER_STATUS', 'outgoing', {
           suppressRunningStatus: true,
           excludeFromSandboxHistory: true,
           orderDeliveryUploadNotice: true,
-        },
+        }),
       });
       BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
@@ -4763,7 +4787,7 @@ if (!gotTheLock) {
           computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
         );
         const failurePayloadStr = buildPrivateMessagePayload(peerGlobalMetaId, encryptedFailure, replyPin);
-        await createPin(metabotStoreInst, metabotId, {
+        const failurePin = await createPin(metabotStoreInst, metabotId, {
           operation: 'create',
           path: '/protocols/simplemsg',
           encryption: '0',
@@ -4774,13 +4798,15 @@ if (!gotTheLock) {
         const failureMessage = coworkStoreInst.addMessage(sessionId, {
           type: 'assistant',
           content: manualResendFailureReply,
-          metadata: {
-            sourceChannel: 'metaweb_order',
-            direction: 'outgoing',
+          metadata: buildServiceOrderDisplayMetadata(order, 'ORDER_STATUS', 'outgoing', {
             suppressRunningStatus: true,
             orderDeliveryFailed: true,
             refreshSessionSummary: true,
-          },
+            ...buildA2AChainMetadata({
+              txids: failurePin.txids,
+              pinId: failurePin.pinId,
+            }),
+          }),
         });
         BrowserWindow.getAllWindows().forEach((win) => {
           if (!win.isDestroyed()) {
@@ -4824,14 +4850,16 @@ if (!gotTheLock) {
       const deliveryMessage = coworkStoreInst.addMessage(sessionId, {
         type: 'assistant',
         content: deliveryText,
-        metadata: {
-          sourceChannel: 'metaweb_order',
-          direction: 'outgoing',
+        metadata: buildServiceOrderDisplayMetadata(order, 'DELIVERY', 'outgoing', {
           suppressRunningStatus: true,
           orderDeliveryResent: true,
           orderDeliveryUploadComplete: true,
           refreshSessionSummary: true,
-        },
+          ...buildA2AChainMetadata({
+            txids: deliveryPin.txids,
+            pinId: deliveryPin.pinId,
+          }),
+        }),
       });
       BrowserWindow.getAllWindows().forEach((win) => {
         if (!win.isDestroyed()) {
@@ -6941,14 +6969,13 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         pinId: result.pinId,
       });
       if (orderObserverExternalConversationId && orderMessageTxid) {
-        const mapping = getCoworkStore().getConversationMapping('metaweb_order', orderObserverExternalConversationId, metabotId);
-        const metadata = mapping ? JSON.parse(mapping.metadataJson || '{}') : null;
-        if (metadata) {
-          getCoworkStore().updateConversationMappingMetadata('metaweb_order', orderObserverExternalConversationId, metabotId, {
-            ...metadata,
-            orderTxid: orderMessageTxid,
-          });
-        }
+        orderObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(getCoworkStore(), {
+          metabotId,
+          peerGlobalMetaId: toGlobalMetaId,
+          paymentTxid: servicePaidTx,
+          orderTxid: orderMessageTxid,
+          currentExternalConversationId: orderObserverExternalConversationId,
+        });
       }
 
       try {
@@ -6991,10 +7018,18 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           content: isFreeServiceOrder
             ? `系统提示：免费服务订单发送失败。订单标识：${attemptedPaymentTxid || 'unknown'}。请稍后重试。`
             : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${attemptedPaymentTxid || 'unknown'}。请稍后重试或联系服务方处理退款。`,
-          metadata: {
-            sourceChannel: 'metaweb_order',
-            refreshSessionSummary: true,
-          },
+          metadata: buildOrderProtocolDisplayMetadata({
+            peerGlobalMetaId: typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '',
+            direction: 'outgoing',
+            tag: 'ORDER_STATUS',
+            orderTxid: null,
+            orderRole: 'buyer',
+            paymentTxid: attemptedPaymentTxid,
+            orderMappingExternalConversationId: null,
+            extra: {
+              refreshSessionSummary: true,
+            },
+          }),
         });
         emitCoworkStreamMessage(coworkSessionId, failureMessage);
       }

@@ -9,6 +9,7 @@ import {
 const {
   buildBuyerOrderObserverConversationId,
   ensureBuyerOrderObserverSession,
+  reindexBuyerOrderObserverSessionByOrderTxid,
 } = await import('../dist-electron/services/buyerOrderObserverSession.js');
 
 test('buildBuyerOrderObserverConversationId scopes observer sessions by buyer, seller, and txid', () => {
@@ -175,6 +176,45 @@ test('ensureBuyerOrderObserverSession reuses the same observer session for the s
     assert.equal(second.created, false);
     const session = store.getSession(first.coworkSessionId);
     assert.equal(session?.messages?.length, 1);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('reindexBuyerOrderObserverSessionByOrderTxid moves payment-prefixed mapping to order txid prefix', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const paymentTxid = 'a'.repeat(64);
+    const orderTxid = 'b'.repeat(64);
+
+    const created = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 11,
+      peerGlobalMetaId: 'seller-reindex',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] reindex after send\ntxid: ${paymentTxid}`,
+    });
+    assert.equal(created.externalConversationId.endsWith(paymentTxid.slice(0, 16)), true);
+
+    const movedExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(store, {
+      metabotId: 11,
+      peerGlobalMetaId: 'seller-reindex',
+      paymentTxid,
+      orderTxid,
+      currentExternalConversationId: created.externalConversationId,
+    });
+
+    assert.equal(
+      movedExternalConversationId,
+      `metaweb_order:buyer:11:seller-reindex:${orderTxid.slice(0, 16)}`,
+    );
+    assert.equal(
+      store.getConversationMapping('metaweb_order', created.externalConversationId, 11),
+      null,
+    );
+    const movedMapping = store.getConversationMapping('metaweb_order', movedExternalConversationId, 11);
+    assert.equal(movedMapping?.coworkSessionId, created.coworkSessionId);
+    assert.equal(JSON.parse(movedMapping?.metadataJson || '{}').orderTxid, orderTxid);
   } finally {
     sqlite.cleanup();
   }

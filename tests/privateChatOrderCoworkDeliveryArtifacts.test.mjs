@@ -357,3 +357,77 @@ test('runOrder rejects media delivery after one failed upload retry', async () =
   assert.match(result.serviceReply, /上传链上交付失败/);
   assert.match(result.serviceReply, /退款流程/);
 });
+
+test('runOrder isolates concurrent same-peer orders into separate execution sessions with one display session', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-concurrent-'));
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const displaySessionId = store.createTestSession(cwd);
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const first = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:1111111111111111',
+    displaySessionId,
+    prompt: '[ORDER] first order',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    orderTxid: '1'.repeat(64),
+  });
+  const second = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:2222222222222222',
+    displaySessionId,
+    prompt: '[ORDER] second order',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    orderTxid: '2'.repeat(64),
+  });
+
+  assert.equal(runner.startSessionCalls.length, 2);
+  const firstExecutionSessionId = runner.startSessionCalls[0].sessionId;
+  const secondExecutionSessionId = runner.startSessionCalls[1].sessionId;
+  assert.notEqual(firstExecutionSessionId, displaySessionId);
+  assert.notEqual(secondExecutionSessionId, displaySessionId);
+  assert.notEqual(firstExecutionSessionId, secondExecutionSessionId);
+
+  runner.emit('message', firstExecutionSessionId, {
+    id: 'assistant-first',
+    type: 'assistant',
+    content: 'first result',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('message', secondExecutionSessionId, {
+    id: 'assistant-second',
+    type: 'assistant',
+    content: 'second result',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('complete', secondExecutionSessionId);
+  runner.emit('complete', firstExecutionSessionId);
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult.serviceReply, 'first result');
+  assert.equal(secondResult.serviceReply, 'second result');
+
+  const displaySession = store.getSession(displaySessionId);
+  const notices = displaySession.messages.filter((message) => message.metadata?.orderProcessingNotice);
+  assert.equal(notices.length, 2);
+  assert.deepEqual(
+    notices.map((message) => message.metadata?.orderTxid),
+    ['1'.repeat(64), '2'.repeat(64)],
+  );
+});

@@ -1,7 +1,10 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
 import { generateSessionTitle } from '../libs/coworkUtil';
 import { buildA2AChainMetadata, normalizeA2AChainTxid } from './a2aChainMetadata';
-import { buildCanonicalPrivateConversationExternalConversationId } from './simplemsgPeerConversation';
+import {
+  buildCanonicalPrivateConversationExternalConversationId,
+  buildOrderProtocolDisplayMetadata,
+} from './simplemsgPeerConversation';
 
 export type ServiceOrderObserverRole = 'buyer' | 'seller';
 
@@ -245,20 +248,13 @@ export async function ensureServiceOrderObserverSession(
     paymentTxid: input.servicePaidTx,
     orderTxid: input.orderTxid || input.orderMessageTxid,
   });
-  const existing = coworkStore.getConversationMapping('metaweb_order', externalConversationId, input.metabotId);
+  let existing = coworkStore.getConversationMapping('metaweb_order', externalConversationId, input.metabotId);
   if (existing) {
     const existingSession = coworkStore.getSession(existing.coworkSessionId);
-    if (existingSession) {
-      return {
-        created: false,
-        recreated: false,
-        coworkSessionId: existing.coworkSessionId,
-        externalConversationId,
-        initialMessage: null,
-        recoveryMessage: null,
-      };
+    if (!existingSession) {
+      coworkStore.deleteConversationMapping('metaweb_order', externalConversationId, input.metabotId);
+      existing = null;
     }
-    coworkStore.deleteConversationMapping('metaweb_order', externalConversationId, input.metabotId);
   }
 
   const orderPayload = normalizeText(input.orderPayload) || buildServiceOrderFallbackPayload({
@@ -277,6 +273,7 @@ export async function ensureServiceOrderObserverSession(
   });
 
   const canonicalSession = await ensureCanonicalPeerSession(coworkStore, input, orderPayload);
+  const existingWasCanonical = existing?.coworkSessionId === canonicalSession.coworkSessionId;
 
   coworkStore.upsertConversationMapping({
     channel: 'metaweb_order',
@@ -295,7 +292,7 @@ export async function ensureServiceOrderObserverSession(
   const shouldAddInitialMessage = !hasMessageWithChainIdentity(
     canonicalStoreSession?.messages ?? [],
     chainMetadata,
-  );
+  ) && !existingWasCanonical;
   const orderTxid = normalizeText(input.orderTxid)
     || normalizeA2AChainTxid(input.orderMessageTxid)
     || normalizeA2AChainTxid(chainMetadata.txid)
@@ -305,16 +302,15 @@ export async function ensureServiceOrderObserverSession(
       type: 'user',
       content: orderPayload,
       metadata: {
-        sourceChannel: 'metaweb_private',
-        externalConversationId: canonicalSession.externalConversationId,
-        direction: getOrderMessageDirection(input.role),
-        paymentTxid: normalizeText(input.servicePaidTx) || undefined,
-        simplemsgKind: 'order_protocol',
-        orderProtocolTag: 'ORDER',
-        orderTxid: orderTxid || undefined,
-        orderRole: input.role,
-        orderPaymentTxid: normalizeText(input.servicePaidTx) || undefined,
-        orderMappingExternalConversationId: externalConversationId,
+        ...buildOrderProtocolDisplayMetadata({
+          peerGlobalMetaId: input.peerGlobalMetaId,
+          direction: getOrderMessageDirection(input.role),
+          tag: 'ORDER',
+          orderTxid,
+          orderRole: input.role,
+          paymentTxid: input.servicePaidTx,
+          orderMappingExternalConversationId: externalConversationId,
+        }),
         ...chainMetadata,
       },
     })

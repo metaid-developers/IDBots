@@ -87,3 +87,82 @@ test('ensureServiceOrderObserverSession reuses canonical peer session for concur
     sqlite.cleanup();
   }
 });
+
+test('ensureServiceOrderObserverSession relinks legacy order mapping to canonical peer private session', async () => {
+  const sqlite = await createSqliteStore();
+
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const orderTxid = 'c'.repeat(64);
+    const legacySession = store.createSession(
+      'Legacy order',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      3,
+      'a2a',
+      'peer-legacy',
+      'Peer Legacy',
+      null,
+    );
+    const externalConversationId = `metaweb_order:seller:3:peer-legacy:${orderTxid.slice(0, 16)}`;
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId,
+      metabotId: 3,
+      coworkSessionId: legacySession.id,
+      metadataJson: JSON.stringify({
+        role: 'seller',
+        peerGlobalMetaId: 'peer-legacy',
+        orderTxid,
+      }),
+    });
+
+    const result = await ensureServiceOrderObserverSession(store, {
+      role: 'seller',
+      metabotId: 3,
+      peerGlobalMetaId: 'peer-legacy',
+      peerName: 'Peer Legacy',
+      servicePaidTx: 'd'.repeat(64),
+      orderTxid,
+      orderMessageTxid: orderTxid,
+      orderPayload: '[ORDER] legacy relink',
+    });
+
+    assert.notEqual(result.coworkSessionId, legacySession.id);
+    const privateMapping = store.getConversationMapping('metaweb_private', 'metaweb-private:peer-legacy', 3);
+    assert.ok(privateMapping);
+    assert.equal(result.coworkSessionId, privateMapping.coworkSessionId);
+    assert.equal(
+      store.getConversationMapping('metaweb_order', externalConversationId, 3)?.coworkSessionId,
+      privateMapping.coworkSessionId,
+    );
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('canonical peer session source context prefers metaweb_private over order indexes', async () => {
+  const sqlite = await createSqliteStore();
+
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const orderTxid = 'e'.repeat(64);
+    const result = await ensureServiceOrderObserverSession(store, {
+      role: 'buyer',
+      metabotId: 4,
+      peerGlobalMetaId: 'seller-source-context',
+      servicePaidTx: 'f'.repeat(64),
+      orderTxid,
+      orderMessageTxid: orderTxid,
+      orderPayload: '[ORDER] source context',
+    });
+
+    const sourceContext = store.getConversationSourceContextBySession(result.coworkSessionId);
+    assert.equal(sourceContext.sourceChannel, 'metaweb_private');
+    assert.equal(sourceContext.externalConversationId, 'metaweb-private:seller-source-context');
+  } finally {
+    sqlite.cleanup();
+  }
+});

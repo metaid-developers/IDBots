@@ -23,6 +23,10 @@ import {
   buildA2AChainMetadata,
   type A2AChainMetadata,
 } from './a2aChainMetadata';
+import {
+  buildOrderProtocolDisplayMetadata,
+  type SimplemsgProtocolTag,
+} from './simplemsgPeerConversation';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -58,6 +62,7 @@ export interface OrderCoworkRequest {
   source: OrderSource;
   externalConversationId: string;
   existingSessionId?: string | null;
+  displaySessionId?: string | null;
   prompt: string;
   systemPrompt: string;
   title?: string;
@@ -121,9 +126,12 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
     request.orderStartedAt = request.orderStartedAt ?? Date.now();
-    const sessionId = request.existingSessionId?.trim()
-      || await this.createOrderSession(request);
-    this.injectProcessingNotice(sessionId, request);
+    const displaySessionId = this.normalizeSessionId(request.displaySessionId);
+    const sessionId = displaySessionId
+      ? this.createExecutionSession(request)
+      : this.normalizeSessionId(request.existingSessionId) || await this.createOrderSession(request);
+    const visibleSessionId = this.getDisplaySessionId(sessionId, request);
+    this.injectProcessingNotice(visibleSessionId, request);
     this.sessionIds.add(sessionId);
     const responsePromise = this.createAccumulatorPromise(sessionId, request);
 
@@ -146,7 +154,21 @@ export class PrivateChatOrderCowork extends EventEmitter {
     return responsePromise;
   }
 
-  private async createOrderSession(request: OrderCoworkRequest): Promise<string> {
+  private normalizeSessionId(value?: string | null): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private getDisplaySessionId(executionSessionId: string, request?: OrderCoworkRequest): string {
+    const displaySessionId = this.normalizeSessionId(request?.displaySessionId);
+    if (!displaySessionId || displaySessionId === executionSessionId) return executionSessionId;
+    return this.coworkStore.getSession(displaySessionId) ? displaySessionId : executionSessionId;
+  }
+
+  private hasSeparateDisplaySession(executionSessionId: string, request?: OrderCoworkRequest): boolean {
+    return this.getDisplaySessionId(executionSessionId, request) !== executionSessionId;
+  }
+
+  private resolveWorkspaceRoot(): string {
     const config = this.coworkStore.getConfig();
     let workspaceRoot = (config.workingDirectory || '').trim();
     // Fall back to the OS temp directory so orders can execute even without a configured workspace.
@@ -157,6 +179,29 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!fs.existsSync(resolvedRoot) || !fs.statSync(resolvedRoot).isDirectory()) {
       throw new Error(`IM 工作目录不存在或无效: ${resolvedRoot}`);
     }
+    return resolvedRoot;
+  }
+
+  private createExecutionSession(request: OrderCoworkRequest): string {
+    const resolvedRoot = this.resolveWorkspaceRoot();
+    const fallbackTitle = request.prompt.split('\n')[0].slice(0, 50) || 'Order Execution';
+    const session = this.coworkStore.createSession(
+      request.title?.trim() || fallbackTitle,
+      resolvedRoot,
+      request.systemPrompt,
+      'local',
+      [],
+      request.metabotId,
+      'a2a',
+      request.peerGlobalMetaId ?? null,
+      request.peerName ?? null,
+      request.peerAvatar ?? null
+    );
+    return session.id;
+  }
+
+  private async createOrderSession(request: OrderCoworkRequest): Promise<string> {
+    const resolvedRoot = this.resolveWorkspaceRoot();
 
     const fallbackTitle = request.prompt.split('\n')[0].slice(0, 50) || 'New Session';
     const generatedTitle = await generateSessionTitle(request.prompt).catch(() => null);
@@ -238,14 +283,11 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const notice = this.coworkStore.addMessage(sessionId, {
       type: 'assistant',
       content,
-      metadata: {
-        sourceChannel: request.source,
-        externalConversationId: request.externalConversationId,
-        direction: 'outgoing',
+      metadata: this.buildDisplayMetadata(request, 'ORDER_STATUS', {
         excludeFromSandboxHistory: true,
         orderProcessingNotice: true,
         ...(request.processingNotice?.metadata ?? {}),
-      },
+      }),
     });
     if (this.emitToRenderer) {
       this.emitToRenderer('cowork:stream:message', { sessionId, message: notice });
@@ -256,8 +298,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!this.sessionIds.has(sessionId)) return;
     const accumulator = this.accumulators.get(sessionId);
     if (accumulator) accumulator.messages.push(message);
-    // Forward to renderer so the A2A session updates live in the UI
-    if (this.emitToRenderer) {
+    // Execution sessions are internal when a canonical peer display session is provided.
+    if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, accumulator?.request)) {
       this.emitToRenderer('cowork:stream:message', { sessionId, message });
     }
   }
@@ -268,8 +310,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!accumulator) return;
     const index = accumulator.messages.findIndex((m) => m.id === messageId);
     if (index >= 0) accumulator.messages[index].content = content;
-    // Forward streaming content updates to renderer
-    if (this.emitToRenderer) {
+    if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, accumulator.request)) {
       this.emitToRenderer('cowork:stream:messageUpdate', { sessionId, messageId, content });
     }
   }
@@ -286,10 +327,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!this.sessionIds.has(sessionId)) return;
     const accumulator = this.accumulators.get(sessionId);
     if (!accumulator) return;
-    const serviceReply = this.formatReply(sessionId, accumulator.messages);
+    const serviceReply = this.formatReply(sessionId, accumulator.messages, accumulator.request);
     const request = accumulator.request;
     this.cleanupAccumulator(sessionId);
-    if (this.emitToRenderer) {
+    if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, request)) {
       this.emitToRenderer('cowork:stream:complete', { sessionId });
     }
     this.finalizeCompletedOrder(sessionId, serviceReply, accumulator.messages, request).then(async (finalized) => {
@@ -323,6 +364,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     messages: CoworkMessage[],
     request?: OrderCoworkRequest,
   ): Promise<OrderCoworkResult> {
+    const displaySessionId = this.getDisplaySessionId(sessionId, request);
     const outputType = normalizeServiceOutputType(request?.expectedOutputType);
     if (outputType === 'text') {
       return {
@@ -350,9 +392,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
         reason,
         '系统将自动转入退款流程，请勿对本次服务进行好评确认。',
       ].join('\n');
-      this.addOrderDeliveryStatusMessage(sessionId, failureReply, {
+      this.addOrderDeliveryStatusMessage(displaySessionId, failureReply, {
         orderDeliveryFailed: true,
-      });
+      }, request);
       return {
         serviceReply: failureReply,
         ratingInvite: '',
@@ -365,9 +407,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
         `服务方已生成 ${outputType} 数字成果，但当前运行时缺少链上上传能力。`,
         '系统将自动转入退款流程，请稍后重试或联系服务方。',
       ].join('\n');
-      this.addOrderDeliveryStatusMessage(sessionId, failureReply, {
+      this.addOrderDeliveryStatusMessage(displaySessionId, failureReply, {
         orderDeliveryFailed: true,
-      });
+      }, request);
       return {
         serviceReply: failureReply,
         ratingInvite: '',
@@ -376,13 +418,11 @@ export class PrivateChatOrderCowork extends EventEmitter {
     }
 
     const uploadNotice = this.formatOrderStatusText(request, '技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。');
-    const uploadNoticeMessage = this.addOrderDeliveryStatusMessage(sessionId, uploadNotice, {
-      sourceChannel: request?.source,
-      externalConversationId: request?.externalConversationId,
+    const uploadNoticeMessage = this.addOrderDeliveryStatusMessage(displaySessionId, uploadNotice, {
       orderDeliveryUploadNotice: true,
-    });
+    }, request);
     const uploadNoticeMetadata = await this.sendOrderStatusUpdate(request, uploadNotice);
-    this.applyChainMetadataToMessage(sessionId, uploadNoticeMessage, uploadNoticeMetadata);
+    this.applyChainMetadataToMessage(displaySessionId, uploadNoticeMessage, uploadNoticeMetadata);
 
     try {
       const verifiedUpload = await uploadVerifiedDeliveryArtifact({
@@ -393,13 +433,11 @@ export class PrivateChatOrderCowork extends EventEmitter {
         maxAttempts: 2,
         onRetry: async () => {
           const retryNotice = this.formatOrderStatusText(request, '数字成果链上上传校验失败，正在重新上传一次。');
-          const retryNoticeMessage = this.addOrderDeliveryStatusMessage(sessionId, retryNotice, {
-            sourceChannel: request?.source,
-            externalConversationId: request?.externalConversationId,
+          const retryNoticeMessage = this.addOrderDeliveryStatusMessage(displaySessionId, retryNotice, {
             orderDeliveryUploadRetryNotice: true,
-          });
+          }, request);
           const retryNoticeMetadata = await this.sendOrderStatusUpdate(request, retryNotice);
-          this.applyChainMetadataToMessage(sessionId, retryNoticeMessage, retryNoticeMetadata);
+          this.applyChainMetadataToMessage(displaySessionId, retryNoticeMessage, retryNoticeMetadata);
         },
       });
       if (!verifiedUpload.ok) {
@@ -420,9 +458,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
         error instanceof Error ? error.message : String(error),
         '系统将自动转入退款流程，请稍后重试或联系服务方。',
       ].filter(Boolean).join('\n');
-      this.addOrderDeliveryStatusMessage(sessionId, failureReply, {
+      this.addOrderDeliveryStatusMessage(displaySessionId, failureReply, {
         orderDeliveryFailed: true,
-      });
+      }, request);
       return {
         serviceReply: failureReply,
         ratingInvite: '',
@@ -435,15 +473,15 @@ export class PrivateChatOrderCowork extends EventEmitter {
     sessionId: string,
     content: string,
     metadata: Record<string, unknown>,
+    request?: OrderCoworkRequest,
   ): CoworkMessage {
     const message = this.coworkStore.addMessage(sessionId, {
       type: 'assistant',
       content,
-      metadata: {
-        direction: 'outgoing',
+      metadata: this.buildDisplayMetadata(request, 'ORDER_STATUS', {
         excludeFromSandboxHistory: true,
         ...metadata,
-      },
+      }),
     });
     if (this.emitToRenderer) {
       this.emitToRenderer('cowork:stream:message', { sessionId, message });
@@ -492,6 +530,30 @@ export class PrivateChatOrderCowork extends EventEmitter {
     return buildNeedsRatingMessage(orderTxid, withoutLegacyPrefix);
   }
 
+  private buildDisplayMetadata(
+    request: OrderCoworkRequest | undefined,
+    tag: SimplemsgProtocolTag,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    if (request?.source === 'metaweb_private' && request.peerGlobalMetaId) {
+      return buildOrderProtocolDisplayMetadata({
+        peerGlobalMetaId: request.peerGlobalMetaId,
+        direction: 'outgoing',
+        tag,
+        orderTxid: request.orderTxid,
+        orderRole: 'seller',
+        orderMappingExternalConversationId: request.externalConversationId,
+        extra,
+      });
+    }
+    return {
+      sourceChannel: request?.source,
+      externalConversationId: request?.externalConversationId,
+      direction: 'outgoing',
+      ...extra,
+    };
+  }
+
   private applyChainMetadataToMessage(
     sessionId: string,
     message: CoworkMessage | null | undefined,
@@ -518,7 +580,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const accumulator = this.accumulators.get(sessionId);
     if (!accumulator) return;
     this.cleanupAccumulator(sessionId);
-    if (this.emitToRenderer) {
+    if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, accumulator.request)) {
       this.emitToRenderer('cowork:stream:error', { sessionId, error });
     }
     accumulator.reject(new Error(error));
@@ -540,22 +602,20 @@ export class PrivateChatOrderCowork extends EventEmitter {
   private resolveTimeoutFallback(sessionId: string, accumulator: MessageAccumulator): void {
     this.coworkRunner.stopSession(sessionId, { finalStatus: 'completed' });
     const fallbackReply = this.buildTimeoutFallbackReply(accumulator.messages);
-    const fallbackMessage = this.coworkStore.addMessage(sessionId, {
+    const displaySessionId = this.getDisplaySessionId(sessionId, accumulator.request);
+    const fallbackMessage = this.coworkStore.addMessage(displaySessionId, {
       type: 'assistant',
       content: fallbackReply,
-      metadata: {
-        sourceChannel: accumulator.request?.source,
-        externalConversationId: accumulator.request?.externalConversationId,
-        direction: 'outgoing',
+      metadata: this.buildDisplayMetadata(accumulator.request, 'ORDER_STATUS', {
         excludeFromSandboxHistory: true,
         orderTimeoutFallback: true,
-      },
+      }),
     });
     accumulator.messages.push(fallbackMessage);
 
     if (this.emitToRenderer) {
-      this.emitToRenderer('cowork:stream:message', { sessionId, message: fallbackMessage });
-      this.emitToRenderer('cowork:stream:complete', { sessionId, timeoutFallback: true });
+      this.emitToRenderer('cowork:stream:message', { sessionId: displaySessionId, message: fallbackMessage });
+      this.emitToRenderer('cowork:stream:complete', { sessionId: displaySessionId, timeoutFallback: true });
     }
 
     accumulator.resolve({
@@ -664,7 +724,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
     return `${text.slice(0, TIMEOUT_FALLBACK_MAX_CHARS)}\n...[已截断]`;
   }
 
-  private formatReply(sessionId: string, messages: CoworkMessage[]): string {
+  private formatReply(sessionId: string, messages: CoworkMessage[], request?: OrderCoworkRequest): string {
     // Find the last non-thinking assistant message with content — that's the final answer.
     // We deliberately skip thinking blocks and intermediate streaming chunks so the buyer
     // only sees the clean result, not the full execution trace.
@@ -682,7 +742,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
           metadata: msg.metadata,
         });
         messages[i].content = cleaned;
-        if (this.emitToRenderer) {
+        if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, request)) {
           this.emitToRenderer('cowork:stream:messageUpdate', {
             sessionId,
             messageId: msg.id,

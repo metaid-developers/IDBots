@@ -1,5 +1,6 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
 import type { ServiceOrderRecord } from '../serviceOrderStore';
+import { buildOrderProtocolDisplayMetadata } from './simplemsgPeerConversation';
 
 export interface ServiceOrderCoworkPublishResult {
   message: CoworkMessage | null;
@@ -44,14 +45,20 @@ export function publishServiceOrderEventToCowork(
   const message = store.addMessage(order.coworkSessionId, {
     type: 'system',
     content: buildServiceOrderEventMessage(type, order),
-    metadata: {
-      sourceChannel: 'metaweb_order',
-      refreshSessionSummary: true,
-      serviceOrderEvent: type,
+    metadata: buildOrderProtocolDisplayMetadata({
+      peerGlobalMetaId: order.counterpartyGlobalMetaid,
+      direction: order.role === 'seller' ? 'incoming' : 'outgoing',
+      tag: 'ORDER_STATUS',
+      orderTxid: order.orderMessageTxid,
+      orderRole: order.role,
       paymentTxid: order.paymentTxid,
-      refundRequestPinId: order.refundRequestPinId,
-      refundTxid: order.refundTxid,
-    },
+      extra: {
+        refreshSessionSummary: true,
+        serviceOrderEvent: type,
+        refundRequestPinId: order.refundRequestPinId,
+        refundTxid: order.refundTxid,
+      },
+    }),
   });
 
   return {

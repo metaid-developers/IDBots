@@ -463,8 +463,9 @@ test('backfillMetawebOrderSimplemsgMetadata turns seller upload-complete status 
     assert.equal(deliveryBubble.metadata.pinId, `${DELIVERY_TXID}i0`);
     assert.equal(deliveryBubble.metadata.orderDeliveryMessage, true);
     assert.equal(deliveryBubble.metadata.orderDeliveryUploadComplete, undefined);
-    assert.equal(deliveryBubble.metadata.sourceChannel, 'metaweb_order');
-    assert.equal(deliveryBubble.metadata.externalConversationId, externalConversationId);
+    assert.equal(deliveryBubble.metadata.sourceChannel, 'metaweb_private');
+    assert.equal(deliveryBubble.metadata.externalConversationId, `metaweb-private:${buyerGlobalMetaId}`);
+    assert.equal(deliveryBubble.metadata.orderMappingExternalConversationId, externalConversationId);
     assert.equal(deliveryBubble.metadata.paymentTxid, PAYMENT_TXID);
     assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);
   } finally {
@@ -579,8 +580,9 @@ test('backfillMetawebOrderSimplemsgMetadata turns legacy seller final result int
     assert.deepEqual(deliveryBubble.metadata.txids, [DELIVERY_TXID]);
     assert.equal(deliveryBubble.metadata.pinId, `${DELIVERY_TXID}i0`);
     assert.equal(deliveryBubble.metadata.orderDeliveryMessage, true);
-    assert.equal(deliveryBubble.metadata.sourceChannel, 'metaweb_order');
-    assert.equal(deliveryBubble.metadata.externalConversationId, externalConversationId);
+    assert.equal(deliveryBubble.metadata.sourceChannel, 'metaweb_private');
+    assert.equal(deliveryBubble.metadata.externalConversationId, `metaweb-private:${buyerGlobalMetaId}`);
+    assert.equal(deliveryBubble.metadata.orderMappingExternalConversationId, externalConversationId);
     assert.equal(deliveryBubble.metadata.direction, 'outgoing');
     assert.equal(deliveryBubble.metadata.paymentTxid, PAYMENT_TXID);
     assert.equal(store.backfillMetawebOrderSimplemsgMetadata(), 0);

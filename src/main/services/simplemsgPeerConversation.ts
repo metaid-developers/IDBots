@@ -26,6 +26,34 @@ export function buildCanonicalPrivateConversationExternalConversationId(peerGlob
   return `metaweb-private:${String(peerGlobalMetaId || '').trim() || 'unknown-peer'}`;
 }
 
+export function buildOrderProtocolDisplayMetadata(input: {
+  peerGlobalMetaId: string;
+  direction: 'incoming' | 'outgoing';
+  tag: SimplemsgProtocolTag;
+  orderTxid?: string | null;
+  orderRole?: 'buyer' | 'seller' | string | null;
+  paymentTxid?: string | null;
+  orderMappingExternalConversationId?: string | null;
+  extra?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const orderTxid = String(input.orderTxid || '').trim();
+  const paymentTxid = String(input.paymentTxid || '').trim();
+  const orderRole = String(input.orderRole || '').trim();
+  const orderMappingExternalConversationId = String(input.orderMappingExternalConversationId || '').trim();
+  return {
+    ...(input.extra ?? {}),
+    sourceChannel: 'metaweb_private',
+    externalConversationId: buildCanonicalPrivateConversationExternalConversationId(input.peerGlobalMetaId),
+    direction: input.direction,
+    simplemsgKind: 'order_protocol',
+    orderProtocolTag: input.tag,
+    ...(orderTxid ? { orderTxid } : {}),
+    ...(orderRole ? { orderRole } : {}),
+    ...(paymentTxid ? { paymentTxid, orderPaymentTxid: paymentTxid } : {}),
+    ...(orderMappingExternalConversationId ? { orderMappingExternalConversationId } : {}),
+  };
+}
+
 export function classifySimplemsgContent(content: string): SimplemsgClassification {
   const text = String(content || '').trim();
   if (!text) return { kind: 'private_chat' };
