@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { CoworkMessage } from '../src/renderer/types/cowork';
 import {
+  buildOrderFocusRequestKey,
   findFocusedOrderMessageId,
   resolveMessageOrderTxid,
+  shouldRunOrderFocusRequest,
 } from '../src/renderer/components/cowork/CoworkSessionDetail';
 
 const makeMessage = (id: string, content: string, metadata: Record<string, unknown> = {}): CoworkMessage => ({
@@ -49,4 +51,16 @@ test('findFocusedOrderMessageId returns the first message for a focused order', 
   assert.equal(findFocusedOrderMessageId(messages, secondOrderTxid), 'second');
   assert.equal(findFocusedOrderMessageId(messages, '3'.repeat(64)), null);
   assert.equal(findFocusedOrderMessageId(messages, null), null);
+});
+
+test('order focus request helper only runs a session/order focus once', () => {
+  const orderTxid = 'a'.repeat(64);
+  const key = buildOrderFocusRequestKey(' session-1 ', ` ${orderTxid.toUpperCase()} `);
+
+  assert.equal(key, `session-1:${orderTxid}`);
+  assert.equal(shouldRunOrderFocusRequest(null, 'session-1', orderTxid), true);
+  assert.equal(shouldRunOrderFocusRequest(key, 'session-1', orderTxid), false);
+  assert.equal(shouldRunOrderFocusRequest(key, 'session-2', orderTxid), true);
+  assert.equal(shouldRunOrderFocusRequest(key, 'session-1', 'b'.repeat(64)), true);
+  assert.equal(shouldRunOrderFocusRequest(null, 'session-1', 'not-a-txid'), false);
 });

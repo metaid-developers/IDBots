@@ -46,6 +46,7 @@ interface CoworkSessionDetailProps {
   onContinue: (prompt: string, skillPrompt?: string) => void;
   onStop: () => void;
   focusedOrderTxid?: string | null;
+  onFocusedOrderConsumed?: (orderTxid: string) => void;
   onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -744,6 +745,24 @@ export const findFocusedOrderMessageId = (
   if (!normalizedFocus) return null;
   const match = messages.find((message) => resolveMessageOrderTxid(message) === normalizedFocus);
   return match?.id ?? null;
+};
+
+export const buildOrderFocusRequestKey = (
+  sessionId: unknown,
+  focusedOrderTxid?: string | null,
+): string | null => {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  const normalizedFocus = normalizeOrderFocusTxid(focusedOrderTxid);
+  return normalizedSessionId && normalizedFocus ? `${normalizedSessionId}:${normalizedFocus}` : null;
+};
+
+export const shouldRunOrderFocusRequest = (
+  lastConsumedFocusKey: string | null,
+  sessionId: unknown,
+  focusedOrderTxid?: string | null,
+): boolean => {
+  const focusKey = buildOrderFocusRequestKey(sessionId, focusedOrderTxid);
+  return Boolean(focusKey && focusKey !== lastConsumedFocusKey);
 };
 
 const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
@@ -1697,6 +1716,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onContinue,
   onStop,
   focusedOrderTxid,
+  onFocusedOrderConsumed,
   onNavigateHome,
   isSidebarCollapsed,
   onToggleSidebar,
@@ -1721,6 +1741,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const consumedOrderFocusKeyRef = useRef<string | null>(null);
+  const focusHighlightTimeoutRef = useRef<number | null>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [focusedOrderMessageId, setFocusedOrderMessageId] = useState<string | null>(null);
 
@@ -2289,6 +2311,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return mapSandboxGuestPathsInText(value, currentSession?.cwd);
   }, [currentSession?.cwd, currentSession?.executionMode]);
 
+  const clearFocusHighlightTimeout = useCallback(() => {
+    if (focusHighlightTimeoutRef.current != null) {
+      window.clearTimeout(focusHighlightTimeoutRef.current);
+      focusHighlightTimeoutRef.current = null;
+    }
+  }, []);
+
   // Auto scroll to bottom when new messages arrive or content updates (streaming)
   useEffect(() => {
     if (!shouldAutoScroll) {
@@ -2300,13 +2329,33 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, [currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll]);
 
   useEffect(() => {
-    if (!isA2ASession || !normalizedFocusedOrderTxid) {
+    consumedOrderFocusKeyRef.current = null;
+    clearFocusHighlightTimeout();
+    setFocusedOrderMessageId(null);
+  }, [currentSession?.id, clearFocusHighlightTimeout]);
+
+  useEffect(() => {
+    return () => {
+      clearFocusHighlightTimeout();
+    };
+  }, [clearFocusHighlightTimeout]);
+
+  useEffect(() => {
+    if (!isA2ASession) {
       setFocusedOrderMessageId(null);
       return;
     }
+    if (!normalizedFocusedOrderTxid) return;
+    if (!shouldRunOrderFocusRequest(consumedOrderFocusKeyRef.current, currentSession?.id, normalizedFocusedOrderTxid)) {
+      return;
+    }
     const messageId = findFocusedOrderMessageId(visibleA2AMessages, normalizedFocusedOrderTxid);
-    setFocusedOrderMessageId(messageId);
     if (!messageId) return;
+    const focusKey = buildOrderFocusRequestKey(currentSession?.id, normalizedFocusedOrderTxid);
+    if (!focusKey) return;
+    consumedOrderFocusKeyRef.current = focusKey;
+    clearFocusHighlightTimeout();
+    setFocusedOrderMessageId(messageId);
     setShouldAutoScroll(false);
     window.requestAnimationFrame(() => {
       messageElementRefs.current[messageId]?.scrollIntoView({
@@ -2314,7 +2363,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         block: 'center',
       });
     });
-  }, [isA2ASession, normalizedFocusedOrderTxid, visibleA2AMessages, currentSession?.id]);
+    focusHighlightTimeoutRef.current = window.setTimeout(() => {
+      setFocusedOrderMessageId((current) => (current === messageId ? null : current));
+      focusHighlightTimeoutRef.current = null;
+    }, 4000);
+    onFocusedOrderConsumed?.(normalizedFocusedOrderTxid);
+  }, [
+    isA2ASession,
+    normalizedFocusedOrderTxid,
+    visibleA2AMessages,
+    currentSession?.id,
+    clearFocusHighlightTimeout,
+    onFocusedOrderConsumed,
+  ]);
 
   if (!currentSession) {
     return null;

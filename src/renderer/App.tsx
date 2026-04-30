@@ -77,6 +77,15 @@ const App: React.FC = () => {
   const focusedOrderTxid = focusedOrderTarget?.sessionId === currentSessionId
     ? focusedOrderTarget.orderTxid
     : null;
+  const handleFocusedOrderConsumed = useCallback((orderTxid: string) => {
+    const normalizedOrderTxid = normalizeFocusedOrderTxid(orderTxid);
+    if (!normalizedOrderTxid) return;
+    setFocusedOrderTarget((current) => (
+      current?.sessionId === currentSessionId && current.orderTxid === normalizedOrderTxid
+        ? null
+        : current
+    ));
+  }, [currentSessionId]);
 
   const clearMockTimers = useCallback(() => {
     if (mockDownloadTimerRef.current != null) {
@@ -776,6 +785,7 @@ const App: React.FC = () => {
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
                 onRequestOnboarding={handleOpenOnboarding}
                 focusedOrderTxid={focusedOrderTxid}
+                onFocusedOrderConsumed={handleFocusedOrderConsumed}
               />
             )}
           </div>
