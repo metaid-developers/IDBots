@@ -11,6 +11,7 @@ export interface GigSquareRefundOrderRecord {
   servicePinId: string | null;
   serviceName: string;
   paymentTxid: string;
+  orderMessageTxid?: string | null;
   paymentAmount: string;
   paymentCurrency: string;
   status: ServiceOrderStatus;
@@ -30,6 +31,7 @@ export interface GigSquareRefundItem {
   servicePinId: string | null;
   serviceName: string;
   paymentTxid: string;
+  orderMessageTxid: string | null;
   paymentAmount: string;
   paymentCurrency: string;
   status: ServiceOrderStatus;
@@ -274,6 +276,7 @@ export class GigSquareRefundsService {
       servicePinId: normalizeOptionalText(order.servicePinId),
       serviceName: normalizeText(order.serviceName),
       paymentTxid: normalizeText(order.paymentTxid),
+      orderMessageTxid: normalizeOptionalText(order.orderMessageTxid),
       paymentAmount: normalizeText(order.paymentAmount),
       paymentCurrency: normalizeText(order.paymentCurrency),
       status: order.status,

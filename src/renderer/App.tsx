@@ -37,6 +37,16 @@ import { openSelectedMetaApp } from './components/metaapps/metaAppLaunch.js';
 import { shouldShowInitialOnboarding } from './components/onboarding/onboardingGate.js';
 import { normalizePreselectedSkillId } from './utils/newChatPreselect';
 
+type FocusedOrderTarget = {
+  sessionId: string;
+  orderTxid: string;
+};
+
+const normalizeFocusedOrderTxid = (value: unknown): string | null => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+};
+
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
@@ -52,6 +62,7 @@ const App: React.FC = () => {
   const [updateModalState, setUpdateModalState] = useState<'info' | 'downloading' | 'installing' | 'error'>('info');
   const [downloadProgress, setDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [focusedOrderTarget, setFocusedOrderTarget] = useState<FocusedOrderTarget | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const mockUpdateModeRef = useRef(false);
   const mockDownloadTimerRef = useRef<number | null>(null);
@@ -63,6 +74,9 @@ const App: React.FC = () => {
   const pendingPermissions = useSelector((state: RootState) => state.cowork.pendingPermissions);
   const pendingPermission = pendingPermissions[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
+  const focusedOrderTxid = focusedOrderTarget?.sessionId === currentSessionId
+    ? focusedOrderTarget.orderTxid
+    : null;
 
   const clearMockTimers = useCallback(() => {
     if (mockDownloadTimerRef.current != null) {
@@ -543,6 +557,7 @@ const App: React.FC = () => {
     const handleViewSession = async (event: Event) => {
       const { sessionId } = (event as CustomEvent).detail;
       if (sessionId) {
+        setFocusedOrderTarget(null);
         setMainView('cowork');
         await coworkService.loadSession(sessionId);
       }
@@ -553,8 +568,11 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleViewSession = async (event: Event) => {
-      const { sessionId } = (event as CustomEvent).detail;
+      const detail = (event as CustomEvent).detail ?? {};
+      const sessionId = typeof detail.sessionId === 'string' ? detail.sessionId.trim() : '';
+      const orderTxid = normalizeFocusedOrderTxid(detail.focusedOrderTxid ?? detail.orderTxid);
       if (sessionId) {
+        setFocusedOrderTarget(orderTxid ? { sessionId, orderTxid } : null);
         setMainView('cowork');
         await coworkService.loadSession(sessionId);
       }
@@ -757,6 +775,7 @@ const App: React.FC = () => {
                 onNewChat={handleBlankNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
                 onRequestOnboarding={handleOpenOnboarding}
+                focusedOrderTxid={focusedOrderTxid}
               />
             )}
           </div>

@@ -45,6 +45,7 @@ interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
   onContinue: (prompt: string, skillPrompt?: string) => void;
   onStop: () => void;
+  focusedOrderTxid?: string | null;
   onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -54,6 +55,8 @@ interface CoworkSessionDetailProps {
 
 const AUTO_SCROLL_THRESHOLD = 120;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
+const ORDER_TAG_TXID_RE = /^\[(?:ORDER_STATUS|DELIVERY|NeedsRating):([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
+const ORDER_END_TAG_TXID_RE = /^\[ORDER_END:([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -715,6 +718,32 @@ const shouldHideControlMessage = (message: CoworkMessage): boolean => {
     return true;
   }
   return typeof message.content === 'string' && message.content.includes(DELEGATION_CONTROL_PREFIX);
+};
+
+export const normalizeOrderFocusTxid = (value: unknown): string | null => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+};
+
+export const resolveMessageOrderTxid = (message: Pick<CoworkMessage, 'content' | 'metadata'>): string | null => {
+  const metadataTxid = normalizeOrderFocusTxid(message.metadata?.orderTxid);
+  if (metadataTxid) return metadataTxid;
+  const content = typeof message.content === 'string' ? message.content.trim() : '';
+  return normalizeOrderFocusTxid(
+    content.match(ORDER_TAG_TXID_RE)?.[1]
+      || content.match(ORDER_END_TAG_TXID_RE)?.[1]
+      || null
+  );
+};
+
+export const findFocusedOrderMessageId = (
+  messages: Pick<CoworkMessage, 'id' | 'content' | 'metadata'>[],
+  focusedOrderTxid?: string | null,
+): string | null => {
+  const normalizedFocus = normalizeOrderFocusTxid(focusedOrderTxid);
+  if (!normalizedFocus) return null;
+  const match = messages.find((message) => resolveMessageOrderTxid(message) === normalizedFocus);
+  return match?.id ?? null;
 };
 
 const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
@@ -1667,6 +1696,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onManageSkills,
   onContinue,
   onStop,
+  focusedOrderTxid,
   onNavigateHome,
   isSidebarCollapsed,
   onToggleSidebar,
@@ -1690,7 +1720,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const detailRootRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [focusedOrderMessageId, setFocusedOrderMessageId] = useState<string | null>(null);
 
   // Menu and action states
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -1719,6 +1751,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     && currentSession?.serviceOrderSummary?.role === 'seller'
     && NON_TEXT_SERVICE_OUTPUT_TYPES.includes(serviceOrderOutputType)
   );
+  const visibleA2AMessages = useMemo(() => (
+    currentSession?.messages.filter((message) => !shouldHideControlMessage(message)) ?? []
+  ), [currentSession?.messages]);
+  const normalizedFocusedOrderTxid = normalizeOrderFocusTxid(focusedOrderTxid);
 
   // Fetch initial delegation blocking state when session changes
   useEffect(() => {
@@ -2263,6 +2299,23 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   }, [currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll]);
 
+  useEffect(() => {
+    if (!isA2ASession || !normalizedFocusedOrderTxid) {
+      setFocusedOrderMessageId(null);
+      return;
+    }
+    const messageId = findFocusedOrderMessageId(visibleA2AMessages, normalizedFocusedOrderTxid);
+    setFocusedOrderMessageId(messageId);
+    if (!messageId) return;
+    setShouldAutoScroll(false);
+    window.requestAnimationFrame(() => {
+      messageElementRefs.current[messageId]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  }, [isA2ASession, normalizedFocusedOrderTxid, visibleA2AMessages, currentSession?.id]);
+
   if (!currentSession) {
     return null;
   }
@@ -2414,6 +2467,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           {isA2ASession && (
             <span className="inline-flex items-center rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
               {i18nService.t('coworkOnChainBadge')}
+            </span>
+          )}
+          {normalizedFocusedOrderTxid && (
+            <span className="non-draggable inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
+              order {normalizedFocusedOrderTxid.slice(0, 8)}
             </span>
           )}
           {showA2AServiceSessionId && (
@@ -2581,15 +2639,25 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         className="flex-1 overflow-y-auto min-h-0 pt-3"
       >
         {isA2ASession ? (
-          currentSession.messages.filter((msg) => !shouldHideControlMessage(msg)).map((msg) => (
-            <A2AMessageItem
+          visibleA2AMessages.map((msg) => (
+            <div
               key={msg.id}
-              message={msg}
-              peerName={currentSession.peerName}
-              peerAvatar={resolvedPeerAvatar}
-              metabotName={currentSession.metabotName}
-              metabotAvatar={currentSession.metabotAvatar}
-            />
+              ref={(element) => {
+                messageElementRefs.current[msg.id] = element;
+              }}
+              className={focusedOrderMessageId === msg.id
+                ? 'rounded-lg ring-2 ring-amber-500/40 ring-offset-2 ring-offset-claude-bg transition-shadow dark:ring-offset-claude-darkBg'
+                : undefined}
+              data-order-focus-target={focusedOrderMessageId === msg.id ? 'true' : undefined}
+            >
+              <A2AMessageItem
+                message={msg}
+                peerName={currentSession.peerName}
+                peerAvatar={resolvedPeerAvatar}
+                metabotName={currentSession.metabotName}
+                metabotAvatar={currentSession.metabotAvatar}
+              />
+            </div>
           ))
         ) : (
           renderConversationTurns()

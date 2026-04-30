@@ -102,6 +102,25 @@ const createEmptyPageResult = <T,>(pageSize: number): GigSquarePageResult<T> => 
   totalPages: 0,
 });
 
+export const dispatchGigSquareMyServiceOrderSessionView = (
+  sessionId: string | null | undefined,
+  orderTxid: string | null | undefined,
+  onClose: () => void,
+): void => {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId || typeof window === 'undefined') {
+    return;
+  }
+  const normalizedOrderTxid = String(orderTxid || '').trim();
+  window.dispatchEvent(new CustomEvent('cowork:viewSession', {
+    detail: {
+      sessionId: normalizedSessionId,
+      ...(normalizedOrderTxid ? { focusedOrderTxid: normalizedOrderTxid } : {}),
+    },
+  }));
+  onClose();
+};
+
 const normalizeTimestampMs = (value: number | null | undefined): number | null => {
   if (!value || !Number.isFinite(value) || value <= 0) return null;
   return value < UNIX_SECONDS_MAX ? Math.trunc(value * 1000) : Math.trunc(value);
@@ -520,15 +539,8 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     onBackToList?.();
   }, [onBackToList, view]);
 
-  const handleViewSession = useCallback((sessionId: string | null) => {
-    const normalizedSessionId = String(sessionId || '').trim();
-    if (!normalizedSessionId || typeof window === 'undefined') {
-      return;
-    }
-    window.dispatchEvent(new CustomEvent('cowork:viewSession', {
-      detail: { sessionId: normalizedSessionId },
-    }));
-    onClose();
+  const handleViewSession = useCallback((order: GigSquareMyServiceOrderDetail) => {
+    dispatchGigSquareMyServiceOrderSessionView(order.coworkSessionId, order.orderMessageTxid, onClose);
   }, [onClose]);
 
   const handleOpenModify = useCallback((service: GigSquareMyServiceSummary) => {
@@ -1205,7 +1217,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                       <div className="shrink-0 xl:w-40">
                         <button
                           type="button"
-                          onClick={() => handleViewSession(order.coworkSessionId)}
+                          onClick={() => handleViewSession(order)}
                           disabled={sessionAction.disabled}
                           title={sessionAction.key ? i18nService.t(sessionAction.key) : undefined}
                           className="btn-idchat-primary w-full whitespace-nowrap px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"

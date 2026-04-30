@@ -76,14 +76,19 @@ export async function copyGigSquareRefundPaymentTxid(
 
 export const dispatchGigSquareRefundSessionView = (
   sessionId: string | null | undefined,
+  orderTxid: string | null | undefined,
   onClose: () => void
 ): void => {
   const normalizedSessionId = String(sessionId || '').trim();
   if (!normalizedSessionId || typeof window === 'undefined') {
     return;
   }
+  const normalizedOrderTxid = String(orderTxid || '').trim();
   window.dispatchEvent(new CustomEvent('cowork:viewSession', {
-    detail: { sessionId: normalizedSessionId },
+    detail: {
+      sessionId: normalizedSessionId,
+      ...(normalizedOrderTxid ? { focusedOrderTxid: normalizedOrderTxid } : {}),
+    },
   }));
   onClose();
 };
@@ -223,8 +228,8 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
     onTabChange?.(tab);
   }, [activeTab, onTabChange]);
 
-  const handleViewSession = useCallback((sessionId: string | null) => {
-    dispatchGigSquareRefundSessionView(sessionId, onClose);
+  const handleViewSession = useCallback((item: GigSquareRefundItem) => {
+    dispatchGigSquareRefundSessionView(item.coworkSessionId, item.orderMessageTxid, onClose);
   }, [onClose]);
 
   const emptyCopy = resolvedTab === 'pendingForMe'
@@ -395,7 +400,7 @@ const GigSquareRefundsModal: React.FC<GigSquareRefundsModalProps> = ({
                         {item.coworkSessionId && (
                           <button
                             type="button"
-                            onClick={() => handleViewSession(item.coworkSessionId)}
+                            onClick={() => handleViewSession(item)}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-claude-border px-2.5 py-1.5 text-[11px] font-medium text-claude-textSecondary transition hover:bg-claude-surfaceHover dark:border-claude-darkBorder dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover"
                           >
                             <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />

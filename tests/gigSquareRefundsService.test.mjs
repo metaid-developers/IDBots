@@ -56,6 +56,7 @@ test('listRefunds groups seller and buyer refund rows and counts seller pending 
         servicePinId: 'svc-1',
         serviceName: 'Weather',
         paymentTxid: '1'.repeat(64),
+        orderMessageTxid: '5'.repeat(64),
         paymentAmount: '1.5',
         paymentCurrency: 'SPACE',
         status: 'refund_pending',
@@ -153,6 +154,7 @@ test('listRefunds groups seller and buyer refund rows and counts seller pending 
   assert.equal(result.pendingForMe[0].counterpartyAvatar, 'https://example.com/buyer-1.png');
   assert.equal(result.pendingForMe[0].coworkSessionId, 'session-recovered');
   assert.equal(result.pendingForMe[0].paymentTxid, '1'.repeat(64));
+  assert.equal(result.pendingForMe[0].orderMessageTxid, '5'.repeat(64));
   assert.equal(result.pendingForMe[1].coworkSessionId, 'session-known');
   assert.equal(result.initiatedByMe[0].counterpartyName, 'seller-global-1');
   assert.equal(result.initiatedByMe[0].canProcessRefund, false);
