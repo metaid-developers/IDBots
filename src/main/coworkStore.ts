@@ -31,6 +31,11 @@ import {
   type MemoryVisibility,
 } from './memory/memoryScope';
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
+import {
+  buildA2AChainMetadata,
+  normalizeA2AChainTxid,
+  type A2AChainMetadata,
+} from './services/a2aChainMetadata';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -623,6 +628,27 @@ interface CoworkMessageRow {
   sequence: number | null;
 }
 
+interface MetawebOrderMessageBackfillRow {
+  message_id: string;
+  session_id: string;
+  metabot_id: number | string | null;
+  peer_global_metaid: string | null;
+  content: string;
+  metadata: string | null;
+  external_conversation_id: string;
+  mapping_metadata_json: string | null;
+}
+
+interface ServiceOrderSimplemsgBackfillRow {
+  order_message_pin_id: string | null;
+  delivery_message_pin_id: string | null;
+}
+
+interface PrivateChatSimplemsgBackfillRow {
+  pin_id: string | null;
+  tx_id: string | null;
+}
+
 interface CoworkUserMemoryRow {
   id: string;
   text: string;
@@ -730,6 +756,7 @@ export class CoworkStore implements MemoryBackend {
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
     this.backfillScopedMemoryMetadata();
+    this.backfillMetawebOrderSimplemsgMetadata();
   }
 
   private ensureMemorySchemaCompatibility(): void {
@@ -2021,6 +2048,202 @@ export class CoworkStore implements MemoryBackend {
     `, values);
 
     this.saveDb();
+  }
+
+  backfillMetawebOrderSimplemsgMetadata(): number {
+    if (!this.tableExists('cowork_conversation_mappings') || !this.tableExists('cowork_messages')) {
+      return 0;
+    }
+
+    let rows: MetawebOrderMessageBackfillRow[] = [];
+    try {
+      rows = this.getAll<MetawebOrderMessageBackfillRow>(`
+        SELECT
+          m.id AS message_id,
+          m.session_id AS session_id,
+          s.metabot_id AS metabot_id,
+          s.peer_global_metaid AS peer_global_metaid,
+          m.content AS content,
+          m.metadata AS metadata,
+          cm.external_conversation_id AS external_conversation_id,
+          cm.metadata_json AS mapping_metadata_json
+        FROM cowork_messages m
+        INNER JOIN cowork_conversation_mappings cm
+          ON cm.cowork_session_id = m.session_id
+          AND cm.channel = 'metaweb_order'
+        LEFT JOIN cowork_sessions s ON s.id = m.session_id
+        WHERE m.type IN ('user', 'assistant')
+      `);
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to scan metaweb_order messages for simplemsg metadata backfill:', error);
+      return 0;
+    }
+
+    let changed = 0;
+    for (const row of rows) {
+      const metadata = this.parseMessageMetadata(row.metadata);
+      const mappingMetadata = this.parseMessageMetadata(row.mapping_metadata_json);
+      const serviceOrderMetadata = this.resolveServiceOrderSimplemsgMetadata(row, metadata, mappingMetadata);
+      const privateChatMetadata = serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0
+        ? null
+        : this.resolvePrivateChatSimplemsgMetadata(row, metadata, mappingMetadata);
+      const chainMetadata = serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0
+        ? serviceOrderMetadata
+        : privateChatMetadata;
+      const merged = this.mergeBackfilledA2AMessageMetadata(metadata, chainMetadata);
+      if (!merged.changed) continue;
+
+      this.db.run(`
+        UPDATE cowork_messages
+        SET metadata = ?
+        WHERE id = ? AND session_id = ?
+      `, [JSON.stringify(merged.metadata), row.message_id, row.session_id]);
+      if ((this.db.getRowsModified?.() || 0) > 0) {
+        changed += 1;
+      }
+    }
+
+    if (changed > 0) {
+      this.saveDb();
+    }
+    return changed;
+  }
+
+  private tableExists(tableName: string): boolean {
+    const row = this.getOne<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+      [tableName]
+    );
+    return Boolean(row?.name);
+  }
+
+  private parseMessageMetadata(value: string | null | undefined): CoworkMessageMetadata {
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as CoworkMessageMetadata
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private resolveServiceOrderSimplemsgMetadata(
+    row: MetawebOrderMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+    mappingMetadata: CoworkMessageMetadata,
+  ): A2AChainMetadata | null {
+    if (!this.tableExists('service_orders')) return null;
+    const content = String(row.content || '').trim();
+    const isOrderMessage = content.startsWith('[ORDER]');
+    const isDeliveryMessage = content.startsWith('[DELIVERY]');
+    if (!isOrderMessage && !isDeliveryMessage) return null;
+
+    const paymentTxid = normalizeA2AChainTxid(metadata.paymentTxid)
+      || normalizeA2AChainTxid(mappingMetadata.servicePaidTx);
+    let orderRow: ServiceOrderSimplemsgBackfillRow | undefined;
+    try {
+      orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
+        SELECT order_message_pin_id, delivery_message_pin_id
+        FROM service_orders
+        WHERE cowork_session_id = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `, [row.session_id]);
+
+      const peerGlobalMetaId = String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || '').trim();
+      const metabotId = parseIdNumber(row.metabot_id);
+      if (!orderRow && metabotId != null && peerGlobalMetaId && paymentTxid) {
+        orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
+          SELECT order_message_pin_id, delivery_message_pin_id
+          FROM service_orders
+          WHERE local_metabot_id = ?
+            AND counterparty_global_metaid = ?
+            AND payment_txid = ?
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `, [metabotId, peerGlobalMetaId, paymentTxid]);
+      }
+    } catch {
+      return null;
+    }
+
+    if (!orderRow) return null;
+    const pinId = isOrderMessage ? orderRow.order_message_pin_id : orderRow.delivery_message_pin_id;
+    return buildA2AChainMetadata({ pinId });
+  }
+
+  private resolvePrivateChatSimplemsgMetadata(
+    row: MetawebOrderMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+    mappingMetadata: CoworkMessageMetadata,
+  ): A2AChainMetadata | null {
+    if (!this.tableExists('private_chat_messages')) return null;
+    const content = String(row.content || '').trim();
+    if (!content) return null;
+    const direction = metadata.direction === 'incoming' || metadata.direction === 'outgoing'
+      ? metadata.direction
+      : null;
+    if (!direction) return null;
+    const peerGlobalMetaId = String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || '').trim();
+    if (!peerGlobalMetaId) return null;
+
+    let candidates: PrivateChatSimplemsgBackfillRow[] = [];
+    try {
+      candidates = this.getAll<PrivateChatSimplemsgBackfillRow>(`
+        SELECT pin_id, tx_id
+        FROM private_chat_messages
+        WHERE content = ?
+          AND protocol = 'simplemsg'
+          AND (
+            (? = 'incoming' AND from_global_metaid = ?)
+            OR (? = 'outgoing' AND to_global_metaid = ?)
+          )
+        ORDER BY id DESC
+        LIMIT 3
+      `, [content, direction, peerGlobalMetaId, direction, peerGlobalMetaId]);
+    } catch {
+      return null;
+    }
+    const byPinId = new Map<string, PrivateChatSimplemsgBackfillRow>();
+    for (const candidate of candidates) {
+      const pinId = typeof candidate.pin_id === 'string' ? candidate.pin_id.trim() : '';
+      if (!pinId) continue;
+      byPinId.set(pinId, candidate);
+    }
+    if (byPinId.size !== 1) return null;
+    const [candidate] = Array.from(byPinId.values());
+    return buildA2AChainMetadata({
+      txId: candidate.tx_id,
+      pinId: candidate.pin_id,
+    });
+  }
+
+  private mergeBackfilledA2AMessageMetadata(
+    metadata: CoworkMessageMetadata,
+    chainMetadata: A2AChainMetadata | null | undefined,
+  ): { metadata: CoworkMessageMetadata; changed: boolean } {
+    const before = JSON.stringify(metadata);
+    const updated: CoworkMessageMetadata = { ...metadata };
+    const paymentTxid = normalizeA2AChainTxid(updated.paymentTxid);
+    const existingTxid = normalizeA2AChainTxid(updated.txid);
+    if (paymentTxid && existingTxid === paymentTxid) {
+      delete updated.txid;
+    }
+    if (paymentTxid && Array.isArray(updated.txids)) {
+      const normalizedTxids = updated.txids.map(normalizeA2AChainTxid).filter(Boolean);
+      if (normalizedTxids.length > 0 && normalizedTxids.every((txid) => txid === paymentTxid)) {
+        delete updated.txids;
+      }
+    }
+    if (chainMetadata && Object.keys(chainMetadata).length > 0) {
+      Object.assign(updated, chainMetadata);
+    }
+    return {
+      metadata: updated,
+      changed: JSON.stringify(updated) !== before,
+    };
   }
 
   deleteMessage(sessionId: string, messageId: string): void {

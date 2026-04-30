@@ -53,7 +53,7 @@ test('A2A message bubble renders subtle txid label from message metadata', () =>
   assert.match(markup, /class="[^"]*text-\[10px\][^"]*text-claude-textSecondary/);
 });
 
-test('A2A message txid resolver accepts pin ids and structured order text fallback', () => {
+test('A2A message txid resolver accepts message-chain metadata but ignores order payment txid fallback', () => {
   const pinTxid = 'a'.repeat(64);
   assert.equal(
     resolveA2AMessageTxid({
@@ -75,7 +75,7 @@ test('A2A message txid resolver accepts pin ids and structured order text fallba
       timestamp: 1,
       metadata: { direction: 'incoming' },
     }),
-    paymentTxid,
+    '',
   );
 
   const deliveryTxid = 'c'.repeat(64);
@@ -87,7 +87,19 @@ test('A2A message txid resolver accepts pin ids and structured order text fallba
       timestamp: 1,
       metadata: { direction: 'outgoing' },
     }),
-    deliveryTxid,
+    '',
+  );
+
+  const messageTxid = 'd'.repeat(64);
+  assert.equal(
+    resolveA2AMessageTxid({
+      id: 'msg-metadata',
+      type: 'assistant',
+      content: `[DELIVERY] {"paymentTxid":"${deliveryTxid}","result":"done"}`,
+      timestamp: 1,
+      metadata: { direction: 'outgoing', txid: messageTxid, paymentTxid },
+    }),
+    messageTxid,
   );
 });
 

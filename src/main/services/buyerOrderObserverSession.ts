@@ -21,6 +21,9 @@ export interface EnsureBuyerOrderObserverSessionInput {
   serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
+  orderMessagePinId?: string | null;
+  orderMessageTxid?: string | null;
+  orderMessageTxids?: string[] | null;
   orderPayload?: string | null;
 }
 
@@ -70,6 +73,9 @@ export async function ensureBuyerOrderObserverSession(
     serviceOutputType: input.serviceOutputType,
     serverBotGlobalMetaId: input.serverBotGlobalMetaId,
     servicePaidTx: input.servicePaidTx,
+    orderMessagePinId: input.orderMessagePinId,
+    orderMessageTxid: input.orderMessageTxid,
+    orderMessageTxids: input.orderMessageTxids,
     orderPayload: input.orderPayload,
   });
 

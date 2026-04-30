@@ -8,7 +8,7 @@ import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
 import { SqliteStore } from './sqliteStore';
 import { isSqliteWasmBoundsError, runWithSqliteWasmRecovery } from './sqliteRecovery';
-import { CoworkStore } from './coworkStore';
+import { CoworkStore, type CoworkMessage } from './coworkStore';
 import { McpStore, type McpServerFormData } from './mcpStore';
 import type { MemoryBackend } from './memory/memoryBackend';
 import {
@@ -121,6 +121,7 @@ import { fetchProtocolPinsFromIndexer } from './services/protocolPinFetch';
 import { buildDeliveryMessage, buildRefundRequestPayload } from './services/serviceOrderProtocols.js';
 import { ensureBuyerOrderObserverSession } from './services/buyerOrderObserverSession';
 import { ensureServiceOrderObserverSession } from './services/serviceOrderObserverSession';
+import { buildA2AChainMetadata } from './services/a2aChainMetadata';
 import {
   buildDelegationOrderPayloadFromSettlement,
   resolveDelegationSettlement,
@@ -432,6 +433,47 @@ const emitCoworkStreamMessage = (sessionId: string, message: unknown): void => {
       }
     }
   });
+};
+
+const emitCoworkStreamMessageUpdate = (
+  sessionId: string,
+  messageId: string,
+  update: { content?: string; metadata?: Record<string, unknown> },
+): void => {
+  const payload = {
+    sessionId,
+    messageId,
+    ...(update.content !== undefined ? { content: truncateIpcString(update.content, IPC_UPDATE_CONTENT_MAX_CHARS) } : {}),
+    ...(update.metadata !== undefined ? { metadata: sanitizeIpcPayload(update.metadata) } : {}),
+  };
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win) => {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send('cowork:stream:messageUpdate', payload);
+      } catch (error) {
+        console.error('Failed to forward cowork message update:', error);
+      }
+    }
+  });
+};
+
+const attachSimplemsgMetadataToCoworkMessage = (
+  coworkStore: CoworkStore,
+  sessionId: string | null | undefined,
+  message: CoworkMessage | null | undefined,
+  chain: { txId?: unknown; txids?: unknown; pinId?: unknown },
+): void => {
+  if (!sessionId || !message) return;
+  const chainMetadata = buildA2AChainMetadata(chain);
+  if (Object.keys(chainMetadata).length === 0) return;
+  const metadata = {
+    ...(message.metadata ?? {}),
+    ...chainMetadata,
+  };
+  coworkStore.updateMessage(sessionId, message.id, { metadata });
+  message.metadata = metadata;
+  emitCoworkStreamMessageUpdate(sessionId, message.id, { metadata });
 };
 
 const emitProviderDiscoveryChanged = (snapshot: DiscoverySnapshot): void => {
@@ -2834,6 +2876,7 @@ const executeDelegationPipeline = async (
   });
 
   let buyerObserverSessionId: string | null = null;
+  let buyerObserverInitialMessage: CoworkMessage | null = null;
   try {
     const observerSession = await ensureBuyerOrderObserverSession(coworkStoreInst, {
       metabotId,
@@ -2855,6 +2898,7 @@ const executeDelegationPipeline = async (
       orderPayload,
     });
     buyerObserverSessionId = observerSession.coworkSessionId;
+    buyerObserverInitialMessage = observerSession.initialMessage;
     if (observerSession.initialMessage) {
       emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
     }
@@ -2882,6 +2926,10 @@ const executeDelegationPipeline = async (
     });
 
     orderPinId = result.pinId ?? null;
+    attachSimplemsgMetadataToCoworkMessage(coworkStoreInst, buyerObserverSessionId, buyerObserverInitialMessage, {
+      txids: result.txids,
+      pinId: result.pinId,
+    });
   } catch (error) {
     console.error(LOG_TAG, 'Failed to send ORDER message:', error);
     if (buyerObserverSessionId) {
@@ -6717,6 +6765,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         return { success: false, error: 'MetaBot wallet mnemonic is missing' };
       }
 
+      let orderObserverInitialMessage: CoworkMessage | null = null;
       try {
         const observerSession = await ensureBuyerOrderObserverSession(getCoworkStore(), {
           metabotId,
@@ -6738,6 +6787,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           orderPayload,
         });
         coworkSessionId = observerSession.coworkSessionId;
+        orderObserverInitialMessage = observerSession.initialMessage;
         if (observerSession.initialMessage) {
           emitCoworkStreamMessage(observerSession.coworkSessionId, observerSession.initialMessage);
         }
@@ -6760,6 +6810,10 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         version: '1.0.0',
         contentType: 'application/json',
         payload: payloadStr,
+      });
+      attachSimplemsgMetadataToCoworkMessage(getCoworkStore(), coworkSessionId, orderObserverInitialMessage, {
+        txids: result.txids,
+        pinId: result.pinId,
       });
 
       try {
