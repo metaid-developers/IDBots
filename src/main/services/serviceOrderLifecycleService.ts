@@ -355,6 +355,9 @@ export class ServiceOrderLifecycleService {
       failedAt
     );
     if (!failedOrder) return null;
+    if (failedOrder.status !== 'failed') {
+      return failedOrder;
+    }
     return await this.tryCreateRefundRequest(failedOrder.id, failedAt);
   }
 
@@ -525,6 +528,9 @@ export class ServiceOrderLifecycleService {
     const order = this.store.getOrderById(orderId);
     if (!order || order.role !== 'buyer') return order;
     if (order.status === 'refund_pending' || order.status === 'refunded' || order.refundRequestPinId) {
+      return order;
+    }
+    if (order.status !== 'failed') {
       return order;
     }
     if (this.isZeroAmount(order.paymentAmount)) {

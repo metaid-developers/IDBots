@@ -93,3 +93,36 @@ test('buyer failed refund retry remains active until refund request exists', asy
     sqlite.cleanup();
   }
 });
+
+test('completed and delivered orders are not reopened into timeout refund states', async () => {
+  const sqlite = await createSqliteStore();
+
+  try {
+    const store = new ServiceOrderStore(sqlite.db, () => {});
+    const delivered = createOrder(store, {
+      status: 'in_progress',
+      paymentTxid: '6'.repeat(64),
+    });
+    store.markDelivered(delivered.id, {
+      deliveryMessagePinId: 'delivery-pin-id',
+      deliveredAt: 1_770_000_001_000,
+    });
+
+    const afterFailed = store.markFailed(delivered.id, 'first_response_timeout', 1_770_000_002_000);
+    assert.equal(afterFailed?.status, 'rating_pending');
+    assert.equal(afterFailed?.failureReason, null);
+
+    const completed = store.markOrderEnded(delivered.id, {
+      reason: 'rated',
+      orderEndMessagePinId: 'order-end-pin-id',
+      endedAt: 1_770_000_003_000,
+    });
+    assert.equal(completed?.status, 'completed');
+
+    const afterRefund = store.markRefundPending(delivered.id, 'refund-request-pin-id', 1_770_000_004_000);
+    assert.equal(afterRefund?.status, 'completed');
+    assert.equal(afterRefund?.refundRequestPinId, null);
+  } finally {
+    sqlite.cleanup();
+  }
+});

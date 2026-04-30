@@ -1077,7 +1077,17 @@ export class ServiceOrderStore {
   markFailed(orderId: string, failureReason: string, failedAt: number): ServiceOrderRecord | null {
     const order = this.getOrderById(orderId);
     if (!order) return null;
-    if (order.status === 'refund_pending' || order.status === 'refunded') {
+    if (
+      order.status === 'rating_pending'
+      || order.status === 'completed'
+      || order.status === 'refund_pending'
+      || order.status === 'refunded'
+      || order.deliveryMessagePinId
+      || order.deliveredAt
+      || order.ratingRequestedAt
+      || order.orderEndedAt
+      || order.orderEndMessagePinId
+    ) {
       return order;
     }
 
@@ -1101,7 +1111,12 @@ export class ServiceOrderStore {
   ): ServiceOrderRecord | null {
     const order = this.getOrderById(orderId);
     if (!order) return null;
-    if (order.status === 'refunded') {
+    if (
+      order.status === 'completed'
+      || order.status === 'refunded'
+      || order.orderEndedAt
+      || order.orderEndMessagePinId
+    ) {
       return order;
     }
 
