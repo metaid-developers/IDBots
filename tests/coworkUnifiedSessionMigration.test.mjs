@@ -5,6 +5,7 @@ import {
   createCoworkStore,
   createSqliteStore,
   getColumns,
+  getIndexNames,
   getRow,
 } from './memoryTestUtils.mjs';
 
@@ -16,6 +17,10 @@ test('schema and listSessions hide sessions marked hidden_from_session_list', as
   const sqlite = await createSqliteStore();
   try {
     assert.equal(getColumns(sqlite.db, 'cowork_sessions').includes('hidden_from_session_list'), true);
+    assert.equal(
+      getIndexNames(sqlite.db, 'cowork_messages').includes('idx_cowork_messages_session_created_at'),
+      true,
+    );
     const store = createCoworkStore(sqlite.db);
     const visible = store.createSession('Visible peer', process.cwd(), '', 'local', [], 1, 'a2a', 'peer', 'Peer', null);
     const hidden = store.createSession('Hidden order', process.cwd(), '', 'local', [], 1, 'a2a', 'peer', 'Peer', null);

@@ -797,10 +797,26 @@ export class CoworkStore implements MemoryBackend {
     this.ensureMemorySchemaCompatibility();
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
+    this.ensureCoworkMessageIndexes();
     this.migrateMetawebOrderSessionsToPeerConversations();
     this.backfillScopedMemoryMetadata();
     this.backfillMetawebOrderSimplemsgMetadata();
     this.backfillMetawebPrivateSimplemsgMetadata();
+  }
+
+  private ensureCoworkMessageIndexes(): void {
+    if (!this.tableExists('cowork_messages')) {
+      return;
+    }
+    try {
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
+        ON cowork_messages(session_id, created_at DESC)
+      `);
+      this.saveDb();
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_messages indexes:', error);
+    }
   }
 
   private ensureMemorySchemaCompatibility(): void {
@@ -2036,13 +2052,14 @@ export class CoworkStore implements MemoryBackend {
         s.hidden_from_session_list,
         s.created_at,
         s.updated_at,
-        COALESCE(message_activity.last_message_at, s.updated_at) AS activity_at
+        COALESCE((
+          SELECT m.created_at
+          FROM cowork_messages m INDEXED BY idx_cowork_messages_session_created_at
+          WHERE m.session_id = s.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ), s.updated_at) AS activity_at
       FROM cowork_sessions s
-      LEFT JOIN (
-        SELECT session_id, MAX(created_at) AS last_message_at
-        FROM cowork_messages
-        GROUP BY session_id
-      ) message_activity ON message_activity.session_id = s.id
       WHERE COALESCE(s.hidden_from_session_list, 0) = 0
       ORDER BY s.pinned DESC, activity_at DESC, s.updated_at DESC
     `);

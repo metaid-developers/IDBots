@@ -285,6 +285,10 @@ export class SqliteStore {
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_id ON cowork_messages(session_id);
     `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
+      ON cowork_messages(session_id, created_at DESC);
+    `);
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS cowork_config (
