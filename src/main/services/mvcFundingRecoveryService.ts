@@ -370,6 +370,58 @@ export async function recoverMvcFundingCandidatesFromAddressHistory(params: {
   return recovered;
 }
 
+/**
+ * Fetch the current MVC UTXO set for an address from Metalet.
+ * Used to cross-reference recovered funding candidates against live provider state.
+ */
+export async function fetchMvcAddressUtxos(address: string): Promise<MvcCachedFundingUtxo[]> {
+  const normalizedAddress = String(address || '').trim();
+  if (!normalizedAddress) return [];
+
+  const all: MvcCachedFundingUtxo[] = [];
+  let flag: string | undefined;
+  while (true) {
+    const params = new URLSearchParams({ address: normalizedAddress, net: NET, ...(flag ? { flag } : {}) });
+    const response = await fetch(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`);
+    const json = await response.json() as {
+      code?: number;
+      data?: { list?: Array<{ txid: string; outIndex: number; value: number; height: number; flag?: string }> };
+    };
+    const list = json?.data?.list ?? [];
+    if (!list.length) break;
+    for (const item of list) {
+      const txId = String(item.txid || '').trim().toLowerCase();
+      const outputIndex = Number(item.outIndex);
+      const satoshis = Number(item.value);
+      const height = Number(item.height ?? -1);
+      if (!/^[0-9a-f]{64}$/.test(txId)) continue;
+      if (!Number.isInteger(outputIndex) || outputIndex < 0) continue;
+      if (!Number.isFinite(satoshis) || satoshis < MIN_MVC_FUNDING_SATOSHIS) continue;
+      all.push({ txId, outputIndex, satoshis, address: normalizedAddress, height: Number.isFinite(height) ? height : -1 });
+    }
+    flag = String(list[list.length - 1]?.flag || '').trim();
+    if (!flag) break;
+  }
+  return all;
+}
+
+/**
+ * Filter recovered funding candidates to only those confirmed by the current provider UTXO set.
+ * Prevents phantom UTXOs (from dropped/rejected transactions) from wasting broadcast attempts.
+ */
+export function filterRecoveredCandidatesByProvider(
+  recovered: readonly MvcCachedFundingUtxo[],
+  providerUtxos: readonly MvcCachedFundingUtxo[],
+): MvcCachedFundingUtxo[] {
+  if (recovered.length === 0 || providerUtxos.length === 0) return [];
+  const providerOutpoints = new Set(
+    providerUtxos.map((utxo) => getMvcCachedFundingOutpointKey(utxo)),
+  );
+  return recovered.filter((candidate) =>
+    providerOutpoints.has(getMvcCachedFundingOutpointKey(candidate)),
+  );
+}
+
 export function mergeMvcFundingCandidates(
   primary: readonly MvcCachedFundingUtxo[],
   secondary: readonly MvcCachedFundingUtxo[],

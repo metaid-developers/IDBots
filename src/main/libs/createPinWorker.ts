@@ -127,6 +127,7 @@ async function broadcastTx(rawTx: string): Promise<string> {
 
 const RETRYABLE_MVC_BROADCAST_ATTEMPTS = 3;
 const RETRYABLE_MVC_BROADCAST_DELAY_MS = 750;
+const STALE_PROVIDER_ERROR_MESSAGE = 'MVC funding inputs are stale on the provider; wait for the UTXO set to refresh and retry.';
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 interface RpcPayload {
@@ -289,6 +290,10 @@ function isInsufficientFeeError(message: string): boolean {
   );
 }
 
+function isProviderStaleFundingError(message: string): boolean {
+  return String(message || '').includes(STALE_PROVIDER_ERROR_MESSAGE);
+}
+
 function resolveWorkerFeeRate(payload: RpcPayload, networkKind: string): number {
   if (payload.feeRate != null && Number.isFinite(payload.feeRate) && payload.feeRate > 0) {
     return Math.floor(payload.feeRate);
@@ -379,6 +384,7 @@ async function main(): Promise<void> {
     RETRYABLE_MVC_BROADCAST_ATTEMPTS,
     Math.min(24, preferredFundingUtxos.length + RETRYABLE_MVC_BROADCAST_ATTEMPTS),
   );
+  let didReprobeAfterStale = false;
   for (let attempt = 1; attempt <= maxBroadcastAttempts; attempt++) {
     let pickedForAttempt: SA_utxo[] = [];
     try {
@@ -400,7 +406,20 @@ async function main(): Promise<void> {
         preferredOutpoints: Array.from(preferredOutpoints),
         excludedOutpoints: Array.from(excludedOutpoints),
       });
-      ensureFreshMvcFundingCandidates(usableUtxos, excludedOutpoints);
+      try {
+        ensureFreshMvcFundingCandidates(usableUtxos, excludedOutpoints);
+      } catch (staleErr) {
+        if (!didReprobeAfterStale && excludedOutpoints.size > 0 && usableUtxos.length > 0) {
+          didReprobeAfterStale = true;
+          logStep('All known UTXOs excluded, clearing exclusions to reprobe provider set', {
+            attempt,
+            excludedOutpoints: Array.from(excludedOutpoints),
+          });
+          excludedOutpoints.clear();
+        } else {
+          throw staleErr;
+        }
+      }
 
       const txComposer = new TxComposer();
       txComposer.appendP2PKHOutput({
