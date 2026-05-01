@@ -9,6 +9,7 @@ import {
 const {
   buildBuyerOrderObserverConversationId,
   ensureBuyerOrderObserverSession,
+  reindexBuyerOrderObserverSessionByOrderTxid,
 } = await import('../dist-electron/services/buyerOrderObserverSession.js');
 
 test('buildBuyerOrderObserverConversationId scopes observer sessions by buyer, seller, and txid', () => {
@@ -21,6 +22,21 @@ test('buildBuyerOrderObserverConversationId scopes observer sessions by buyer, s
   assert.equal(
     conversationId,
     `metaweb_order:buyer:12:seller-global-metaid:${'a'.repeat(16)}`
+  );
+});
+
+test('buildBuyerOrderObserverConversationId prefers order simplemsg txid over payment txid', () => {
+  const orderTxid = 'f'.repeat(64);
+  const conversationId = buildBuyerOrderObserverConversationId({
+    metabotId: 12,
+    peerGlobalMetaId: 'seller-global-metaid',
+    paymentTxid: 'a'.repeat(64),
+    orderTxid,
+  });
+
+  assert.equal(
+    conversationId,
+    `metaweb_order:buyer:12:seller-global-metaid:${orderTxid.slice(0, 16)}`
   );
 });
 
@@ -99,6 +115,45 @@ test('ensureBuyerOrderObserverSession writes order simplemsg metadata when it is
   }
 });
 
+test('ensureBuyerOrderObserverSession indexes concurrent orders into one peer session by order simplemsg txid', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const paymentTxid = 'd'.repeat(64);
+    const firstOrderTxid = '1'.repeat(64);
+    const secondOrderTxid = '2'.repeat(64);
+
+    const first = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 7,
+      peerGlobalMetaId: 'seller-global-metaid',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] first order\ntxid: ${paymentTxid}`,
+      orderMessagePinId: `${firstOrderTxid}i0`,
+      orderMessageTxid: firstOrderTxid,
+    });
+    const second = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 7,
+      peerGlobalMetaId: 'seller-global-metaid',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] second order\ntxid: ${paymentTxid}`,
+      orderMessagePinId: `${secondOrderTxid}i0`,
+      orderMessageTxid: secondOrderTxid,
+    });
+
+    assert.equal(first.coworkSessionId, second.coworkSessionId);
+    assert.notEqual(first.externalConversationId, second.externalConversationId);
+    assert.equal(first.externalConversationId.endsWith(firstOrderTxid.slice(0, 16)), true);
+    assert.equal(second.externalConversationId.endsWith(secondOrderTxid.slice(0, 16)), true);
+
+    const firstMapping = store.getConversationMapping('metaweb_order', first.externalConversationId, 7);
+    const secondMapping = store.getConversationMapping('metaweb_order', second.externalConversationId, 7);
+    assert.equal(firstMapping?.coworkSessionId, first.coworkSessionId);
+    assert.equal(secondMapping?.coworkSessionId, first.coworkSessionId);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
 test('ensureBuyerOrderObserverSession reuses the same observer session for the same txid', async () => {
   const sqlite = await createSqliteStore();
   try {
@@ -121,6 +176,45 @@ test('ensureBuyerOrderObserverSession reuses the same observer session for the s
     assert.equal(second.created, false);
     const session = store.getSession(first.coworkSessionId);
     assert.equal(session?.messages?.length, 1);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
+test('reindexBuyerOrderObserverSessionByOrderTxid moves payment-prefixed mapping to order txid prefix', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    const store = createCoworkStore(sqlite.db);
+    const paymentTxid = 'a'.repeat(64);
+    const orderTxid = 'b'.repeat(64);
+
+    const created = await ensureBuyerOrderObserverSession(store, {
+      metabotId: 11,
+      peerGlobalMetaId: 'seller-reindex',
+      servicePaidTx: paymentTxid,
+      orderPayload: `[ORDER] reindex after send\ntxid: ${paymentTxid}`,
+    });
+    assert.equal(created.externalConversationId.endsWith(paymentTxid.slice(0, 16)), true);
+
+    const movedExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(store, {
+      metabotId: 11,
+      peerGlobalMetaId: 'seller-reindex',
+      paymentTxid,
+      orderTxid,
+      currentExternalConversationId: created.externalConversationId,
+    });
+
+    assert.equal(
+      movedExternalConversationId,
+      `metaweb_order:buyer:11:seller-reindex:${orderTxid.slice(0, 16)}`,
+    );
+    assert.equal(
+      store.getConversationMapping('metaweb_order', created.externalConversationId, 11),
+      null,
+    );
+    const movedMapping = store.getConversationMapping('metaweb_order', movedExternalConversationId, 11);
+    assert.equal(movedMapping?.coworkSessionId, created.coworkSessionId);
+    assert.equal(JSON.parse(movedMapping?.metadataJson || '{}').orderTxid, orderTxid);
   } finally {
     sqlite.cleanup();
   }

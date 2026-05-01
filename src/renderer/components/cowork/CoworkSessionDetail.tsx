@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
@@ -23,6 +23,7 @@ import {
   ExclamationTriangleIcon,
   ChevronRightIcon,
   StopCircleIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
@@ -37,6 +38,7 @@ import {
   shouldShowA2AServiceSessionId,
 } from './coworkSessionPresentation.js';
 import {
+  buildRefundStatusDismissKey,
   getRefundCardVariant,
   shouldShowRefundStatusCard,
 } from './coworkServiceOrderPresentation.js';
@@ -45,6 +47,8 @@ interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
   onContinue: (prompt: string, skillPrompt?: string) => void;
   onStop: () => void;
+  focusedOrderTxid?: string | null;
+  onFocusedOrderConsumed?: (orderTxid: string) => void;
   onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -53,7 +57,34 @@ interface CoworkSessionDetailProps {
 }
 
 const AUTO_SCROLL_THRESHOLD = 120;
+const REFUND_STATUS_DISMISS_STORAGE_KEY = 'idbots.cowork.dismissedRefundStatusCards.v1';
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
+const ORDER_TAG_TXID_RE = /^\[(?:ORDER_STATUS|DELIVERY|NeedsRating):([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
+const ORDER_END_TAG_TXID_RE = /^\[ORDER_END:([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
+
+const readDismissedRefundStatusKeys = (): Set<string> => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return new Set();
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(REFUND_STATUS_DISMISS_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0));
+  } catch {
+    return new Set();
+  }
+};
+
+const persistDismissedRefundStatusKeys = (keys: Set<string>): void => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(REFUND_STATUS_DISMISS_STORAGE_KEY, JSON.stringify(Array.from(keys)));
+  } catch {
+    // Ignore storage failures; dismissal can still apply for the current renderer state.
+  }
+};
 
 const sanitizeExportFileName = (value: string): string => {
   const sanitized = value.replace(INVALID_FILE_NAME_PATTERN, ' ').replace(/\s+/g, ' ').trim();
@@ -188,11 +219,13 @@ const RefundStatusCard: React.FC<{
   onProcessRefund?: () => void;
   isProcessingRefund?: boolean;
   refundActionError?: string | null;
+  onDismiss?: () => void;
 }> = ({
   summary,
   onProcessRefund,
   isProcessingRefund = false,
   refundActionError = null,
+  onDismiss,
 }) => {
   const handleCopyValue = useCallback((value: string) => {
     if (!value || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
@@ -297,6 +330,17 @@ const RefundStatusCard: React.FC<{
               </div>
             )}
           </div>
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md dark:text-claude-darkTextSecondary text-claude-textSecondary transition-colors hover:bg-black/10 hover:text-claude-text dark:hover:bg-white/10 dark:hover:text-claude-darkText"
+              title={i18nService.t('close')}
+              aria-label={i18nService.t('close')}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -716,6 +760,59 @@ const shouldHideControlMessage = (message: CoworkMessage): boolean => {
   }
   return typeof message.content === 'string' && message.content.includes(DELEGATION_CONTROL_PREFIX);
 };
+
+export const normalizeOrderFocusTxid = (value: unknown): string | null => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : null;
+};
+
+export const resolveMessageOrderTxid = (message: Pick<CoworkMessage, 'content' | 'metadata'>): string | null => {
+  const metadataTxid = normalizeOrderFocusTxid(message.metadata?.orderTxid);
+  if (metadataTxid) return metadataTxid;
+  const content = typeof message.content === 'string' ? message.content.trim() : '';
+  return normalizeOrderFocusTxid(
+    content.match(ORDER_TAG_TXID_RE)?.[1]
+      || content.match(ORDER_END_TAG_TXID_RE)?.[1]
+      || null
+  );
+};
+
+export const findFocusedOrderMessageId = (
+  messages: Pick<CoworkMessage, 'id' | 'content' | 'metadata'>[],
+  focusedOrderTxid?: string | null,
+): string | null => {
+  const normalizedFocus = normalizeOrderFocusTxid(focusedOrderTxid);
+  if (!normalizedFocus) return null;
+  const match = messages.find((message) => resolveMessageOrderTxid(message) === normalizedFocus);
+  return match?.id ?? null;
+};
+
+export const buildOrderFocusRequestKey = (
+  sessionId: unknown,
+  focusedOrderTxid?: string | null,
+): string | null => {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  const normalizedFocus = normalizeOrderFocusTxid(focusedOrderTxid);
+  return normalizedSessionId && normalizedFocus ? `${normalizedSessionId}:${normalizedFocus}` : null;
+};
+
+export const shouldRunOrderFocusRequest = (
+  lastConsumedFocusKey: string | null,
+  sessionId: unknown,
+  focusedOrderTxid?: string | null,
+): boolean => {
+  const focusKey = buildOrderFocusRequestKey(sessionId, focusedOrderTxid);
+  return Boolean(focusKey && focusKey !== lastConsumedFocusKey);
+};
+
+export const resolveAutoScrollBehavior = (
+  previousSessionId: string | null,
+  currentSessionId: string | null,
+): ScrollBehavior => (
+  previousSessionId && currentSessionId && previousSessionId === currentSessionId
+    ? 'smooth'
+    : 'auto'
+);
 
 const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
   const items: DisplayItem[] = [];
@@ -1667,6 +1764,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onManageSkills,
   onContinue,
   onStop,
+  focusedOrderTxid,
+  onFocusedOrderConsumed,
   onNavigateHome,
   isSidebarCollapsed,
   onToggleSidebar,
@@ -1690,7 +1789,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const detailRootRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const consumedOrderFocusKeyRef = useRef<string | null>(null);
+  const lastAutoScrollSessionIdRef = useRef<string | null>(null);
+  const skipNextAutoScrollEffectRef = useRef(false);
+  const focusHighlightTimeoutRef = useRef<number | null>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [focusedOrderMessageId, setFocusedOrderMessageId] = useState<string | null>(null);
 
   // Menu and action states
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -1708,6 +1813,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [fetchedPeerAvatar, setFetchedPeerAvatar] = useState<string | null>(null);
   const [isProcessingRefund, setIsProcessingRefund] = useState(false);
   const [refundActionError, setRefundActionError] = useState<string | null>(null);
+  const [dismissedRefundStatusKeys, setDismissedRefundStatusKeys] = useState<Set<string>>(() => readDismissedRefundStatusKeys());
   const [delegationBlocking, setDelegationBlocking] = useState(false);
   const [isEndingA2A, setIsEndingA2A] = useState(false);
   const [a2aEndError, setA2AEndError] = useState<string | null>(null);
@@ -1718,6 +1824,28 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     isPrivateA2ASession
     && currentSession?.serviceOrderSummary?.role === 'seller'
     && NON_TEXT_SERVICE_OUTPUT_TYPES.includes(serviceOrderOutputType)
+  );
+  const visibleA2AMessages = useMemo(() => (
+    currentSession?.messages.filter((message) => !shouldHideControlMessage(message)) ?? []
+  ), [currentSession?.messages]);
+  const normalizedFocusedOrderTxid = normalizeOrderFocusTxid(focusedOrderTxid);
+  const refundStatusDismissKey = useMemo(() => (
+    buildRefundStatusDismissKey(currentSession?.id, currentSession?.serviceOrderSummary)
+  ), [
+    currentSession?.id,
+    currentSession?.serviceOrderSummary?.role,
+    currentSession?.serviceOrderSummary?.paymentTxid,
+    currentSession?.serviceOrderSummary?.refundRequestPinId,
+    currentSession?.serviceOrderSummary?.refundTxid,
+    currentSession?.serviceOrderSummary?.servicePinId,
+  ]);
+  const shouldRenderRefundStatusCard = Boolean(
+    isA2ASession
+    && currentSession?.serviceOrderSummary
+    && shouldShowRefundStatusCard(currentSession.serviceOrderSummary, {
+      dismissKey: refundStatusDismissKey,
+      dismissedKeys: dismissedRefundStatusKeys,
+    })
   );
 
   // Fetch initial delegation blocking state when session changes
@@ -1828,6 +1956,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setIsProcessingRefund(false);
   }, [currentSession?.id, isProcessingRefund]);
 
+  const handleDismissRefundStatusCard = useCallback(() => {
+    if (!refundStatusDismissKey) return;
+    setDismissedRefundStatusKeys((previous) => {
+      if (previous.has(refundStatusDismissKey)) {
+        return previous;
+      }
+      const next = new Set(previous);
+      next.add(refundStatusDismissKey);
+      persistDismissedRefundStatusKeys(next);
+      return next;
+    });
+  }, [refundStatusDismissKey]);
+
   const handleEndA2APrivateChat = useCallback(async () => {
     if (!currentSession?.id || isEndingA2A || isA2AConversationEnded) return;
     setIsEndingA2A(true);
@@ -1862,8 +2003,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   }, [isRenaming, currentSession?.title]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const sessionId = currentSession?.id ?? null;
+    if (!sessionId) {
+      lastAutoScrollSessionIdRef.current = null;
+      return;
+    }
     setShouldAutoScroll(true);
+    messagesEndRef.current?.scrollIntoView({
+      behavior: resolveAutoScrollBehavior(lastAutoScrollSessionIdRef.current, sessionId),
+    });
+    skipNextAutoScrollEffectRef.current = true;
+    lastAutoScrollSessionIdRef.current = sessionId;
   }, [currentSession?.id]);
 
   // Focus rename input when entering rename mode
@@ -2253,15 +2404,79 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     return mapSandboxGuestPathsInText(value, currentSession?.cwd);
   }, [currentSession?.cwd, currentSession?.executionMode]);
 
+  const clearFocusHighlightTimeout = useCallback(() => {
+    if (focusHighlightTimeoutRef.current != null) {
+      window.clearTimeout(focusHighlightTimeoutRef.current);
+      focusHighlightTimeoutRef.current = null;
+    }
+  }, []);
+
   // Auto scroll to bottom when new messages arrive or content updates (streaming)
   useEffect(() => {
     if (!shouldAutoScroll) {
       return;
     }
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (skipNextAutoScrollEffectRef.current) {
+      skipNextAutoScrollEffectRef.current = false;
+      return;
     }
-  }, [currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll]);
+    if (messagesEndRef.current) {
+      const sessionId = currentSession?.id ?? null;
+      messagesEndRef.current.scrollIntoView({
+        behavior: resolveAutoScrollBehavior(lastAutoScrollSessionIdRef.current, sessionId),
+      });
+      lastAutoScrollSessionIdRef.current = sessionId;
+    }
+  }, [currentSession?.id, currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll]);
+
+  useEffect(() => {
+    consumedOrderFocusKeyRef.current = null;
+    clearFocusHighlightTimeout();
+    setFocusedOrderMessageId(null);
+  }, [currentSession?.id, clearFocusHighlightTimeout]);
+
+  useEffect(() => {
+    return () => {
+      clearFocusHighlightTimeout();
+    };
+  }, [clearFocusHighlightTimeout]);
+
+  useEffect(() => {
+    if (!isA2ASession) {
+      setFocusedOrderMessageId(null);
+      return;
+    }
+    if (!normalizedFocusedOrderTxid) return;
+    if (!shouldRunOrderFocusRequest(consumedOrderFocusKeyRef.current, currentSession?.id, normalizedFocusedOrderTxid)) {
+      return;
+    }
+    const messageId = findFocusedOrderMessageId(visibleA2AMessages, normalizedFocusedOrderTxid);
+    if (!messageId) return;
+    const focusKey = buildOrderFocusRequestKey(currentSession?.id, normalizedFocusedOrderTxid);
+    if (!focusKey) return;
+    consumedOrderFocusKeyRef.current = focusKey;
+    clearFocusHighlightTimeout();
+    setFocusedOrderMessageId(messageId);
+    setShouldAutoScroll(false);
+    window.requestAnimationFrame(() => {
+      messageElementRefs.current[messageId]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+    focusHighlightTimeoutRef.current = window.setTimeout(() => {
+      setFocusedOrderMessageId((current) => (current === messageId ? null : current));
+      focusHighlightTimeoutRef.current = null;
+    }, 4000);
+    onFocusedOrderConsumed?.(normalizedFocusedOrderTxid);
+  }, [
+    isA2ASession,
+    normalizedFocusedOrderTxid,
+    visibleA2AMessages,
+    currentSession?.id,
+    clearFocusHighlightTimeout,
+    onFocusedOrderConsumed,
+  ]);
 
   if (!currentSession) {
     return null;
@@ -2414,6 +2629,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           {isA2ASession && (
             <span className="inline-flex items-center rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
               {i18nService.t('coworkOnChainBadge')}
+            </span>
+          )}
+          {normalizedFocusedOrderTxid && (
+            <span className="non-draggable inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:text-amber-300">
+              order {normalizedFocusedOrderTxid.slice(0, 8)}
             </span>
           )}
           {showA2AServiceSessionId && (
@@ -2581,15 +2801,25 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         className="flex-1 overflow-y-auto min-h-0 pt-3"
       >
         {isA2ASession ? (
-          currentSession.messages.filter((msg) => !shouldHideControlMessage(msg)).map((msg) => (
-            <A2AMessageItem
+          visibleA2AMessages.map((msg) => (
+            <div
               key={msg.id}
-              message={msg}
-              peerName={currentSession.peerName}
-              peerAvatar={resolvedPeerAvatar}
-              metabotName={currentSession.metabotName}
-              metabotAvatar={currentSession.metabotAvatar}
-            />
+              ref={(element) => {
+                messageElementRefs.current[msg.id] = element;
+              }}
+              className={focusedOrderMessageId === msg.id
+                ? 'rounded-lg ring-2 ring-amber-500/40 ring-offset-2 ring-offset-claude-bg transition-shadow dark:ring-offset-claude-darkBg'
+                : undefined}
+              data-order-focus-target={focusedOrderMessageId === msg.id ? 'true' : undefined}
+            >
+              <A2AMessageItem
+                message={msg}
+                peerName={currentSession.peerName}
+                peerAvatar={resolvedPeerAvatar}
+                metabotName={currentSession.metabotName}
+                metabotAvatar={currentSession.metabotAvatar}
+              />
+            </div>
           ))
         ) : (
           renderConversationTurns()
@@ -2597,12 +2827,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div ref={messagesEndRef} className="h-20" />
       </div>
 
-      {isA2ASession && currentSession.serviceOrderSummary && shouldShowRefundStatusCard(currentSession.serviceOrderSummary) && (
+      {shouldRenderRefundStatusCard && currentSession.serviceOrderSummary && (
         <RefundStatusCard
           summary={currentSession.serviceOrderSummary}
           onProcessRefund={handleProcessServiceRefund}
           isProcessingRefund={isProcessingRefund}
           refundActionError={refundActionError}
+          onDismiss={handleDismissRefundStatusCard}
         />
       )}
 

@@ -33,9 +33,14 @@ import {
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 import {
   buildA2AChainMetadata,
+  extractTxidFromA2AChainPinId,
   normalizeA2AChainTxid,
   type A2AChainMetadata,
 } from './services/a2aChainMetadata';
+import {
+  buildCanonicalPrivateConversationExternalConversationId,
+  buildOrderProtocolDisplayMetadata,
+} from './services/simplemsgPeerConversation';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -457,6 +462,7 @@ export interface CoworkSession {
   peerName?: string | null;
   /** Remote peer MetaBot's avatar data URL (A2A sessions only) */
   peerAvatar?: string | null;
+  hiddenFromSessionList?: boolean;
   /** Local MetaBot's display name (populated from metabots table) */
   metabotName?: string | null;
   /** Local MetaBot's avatar data URL (populated from metabots table) */
@@ -472,6 +478,7 @@ export interface CoworkSessionSummary {
   updatedAt: number;
   sessionType?: CoworkSessionType;
   peerName?: string | null;
+  hiddenFromSessionList?: boolean;
 }
 
 export type CoworkUserMemoryStatus = 'created' | 'stale' | 'deleted';
@@ -649,11 +656,25 @@ interface MetawebPrivateMessageBackfillRow extends MetawebOrderMessageBackfillRo
 interface ServiceOrderSimplemsgBackfillRow {
   order_message_pin_id: string | null;
   delivery_message_pin_id: string | null;
+  payment_txid?: string | null;
+  order_message_txid?: string | null;
 }
 
-interface SellerDeliverySimplemsgBackfillRow {
-  payment_txid: string | null;
-  delivery_message_pin_id: string | null;
+interface ServiceOrderSimplemsgBackfillMatchRow extends ServiceOrderSimplemsgBackfillRow {
+  match_count?: number | string | null;
+}
+
+interface OrderBackfillIdentifiers {
+  messageMappingExternalId: string;
+  messageOrderTxid: string;
+  mappingOrderTxid: string;
+  messagePaymentTxid: string;
+  mappingPaymentTxid: string;
+  orderMessageTxid: string;
+  paymentTxid: string;
+  role: 'buyer' | 'seller' | '';
+  peerGlobalMetaId: string;
+  metabotId: number | null;
 }
 
 interface PrivateChatSimplemsgBackfillRow {
@@ -776,9 +797,26 @@ export class CoworkStore implements MemoryBackend {
     this.ensureMemorySchemaCompatibility();
     this.ensureMemoryPolicySchemaCompatibility();
     this.ensureConversationMappingSchemaCompatibility();
+    this.ensureCoworkMessageIndexes();
+    this.migrateMetawebOrderSessionsToPeerConversations();
     this.backfillScopedMemoryMetadata();
     this.backfillMetawebOrderSimplemsgMetadata();
     this.backfillMetawebPrivateSimplemsgMetadata();
+  }
+
+  private ensureCoworkMessageIndexes(): void {
+    if (!this.tableExists('cowork_messages')) {
+      return;
+    }
+    try {
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_cowork_messages_session_created_at
+        ON cowork_messages(session_id, created_at DESC)
+      `);
+      this.saveDb();
+    } catch (error) {
+      console.warn('[CoworkStore] Failed to verify cowork_messages indexes:', error);
+    }
   }
 
   private ensureMemorySchemaCompatibility(): void {
@@ -804,6 +842,10 @@ export class CoworkStore implements MemoryBackend {
       }
       if (!sessionColumns.includes('peer_avatar')) {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN peer_avatar TEXT;');
+        changed = true;
+      }
+      if (!sessionColumns.includes('hidden_from_session_list')) {
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN hidden_from_session_list INTEGER NOT NULL DEFAULT 0;');
         changed = true;
       }
     } catch (error) {
@@ -1087,7 +1129,12 @@ export class CoworkStore implements MemoryBackend {
       FROM cowork_conversation_mappings
       WHERE cowork_session_id = ?
       ORDER BY
-        CASE WHEN channel = 'cowork_ui' THEN 1 ELSE 0 END ASC,
+        CASE
+          WHEN channel = 'metaweb_private' THEN 0
+          WHEN channel = 'metaweb_order' THEN 1
+          WHEN channel = 'cowork_ui' THEN 3
+          ELSE 2
+        END ASC,
         last_active_at DESC
       LIMIT 1
     `, [sessionId]);
@@ -1596,6 +1643,39 @@ export class CoworkStore implements MemoryBackend {
     return fallbackRow ? this.mapConversationMappingRow(fallbackRow) : null;
   }
 
+  findOrderSessionByOrderTxid(
+    metabotId: number,
+    peerGlobalMetaId: string,
+    orderTxid: string,
+    role?: 'buyer' | 'seller'
+  ): CoworkConversationMapping | null {
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    const normalizedOrderTxid = String(orderTxid || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/i.test(normalizedOrderTxid)) return null;
+    const roleClause = role ? 'AND m.metadata_json LIKE ?' : '';
+    const params: (string | number)[] = [
+      normalizedMetabotId,
+      peerGlobalMetaId,
+      `%"orderTxid":"${normalizedOrderTxid}"%`,
+    ];
+    if (role) {
+      params.push(`%"role":"${role}"%`);
+    }
+    const row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT m.channel, m.external_conversation_id, m.metabot_id, m.cowork_session_id, m.metadata_json, m.created_at, m.last_active_at
+      FROM cowork_conversation_mappings m
+      JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      WHERE m.channel = 'metaweb_order'
+        AND m.metabot_id = ?
+        AND s.peer_global_metaid = ?
+        AND m.metadata_json LIKE ?
+        ${roleClause}
+      ORDER BY m.last_active_at DESC
+      LIMIT 1
+    `, params);
+    return row ? this.mapConversationMappingRow(row) : null;
+  }
+
   updateConversationMappingMetadata(
     channel: string,
     externalConversationId: string,
@@ -1629,6 +1709,62 @@ export class CoworkStore implements MemoryBackend {
     if ((this.db.getRowsModified?.() || 0) > 0) {
       this.saveDb();
     }
+  }
+
+  ensureCanonicalPeerSessionShape(input: {
+    sessionId: string;
+    metabotId: number;
+    peerGlobalMetaId: string;
+    peerName?: string | null;
+    peerAvatar?: string | null;
+  }): boolean {
+    const sessionId = String(input.sessionId || '').trim();
+    const peerGlobalMetaId = String(input.peerGlobalMetaId || '').trim();
+    if (!sessionId || !peerGlobalMetaId) return false;
+
+    const session = this.getSession(sessionId);
+    if (!session) return false;
+
+    const existingPeer = String(session.peerGlobalMetaId || '').trim();
+    if (existingPeer && existingPeer !== peerGlobalMetaId) {
+      return false;
+    }
+
+    const existingMetabotId = parseIdNumber(session.metabotId);
+    if (existingMetabotId != null && existingMetabotId !== input.metabotId) {
+      return false;
+    }
+
+    const peerName = String(input.peerName || '').trim();
+    const peerAvatar = String(input.peerAvatar || '').trim();
+    this.db.run(`
+      UPDATE cowork_sessions
+      SET
+        session_type = 'a2a',
+        metabot_id = COALESCE(metabot_id, ?),
+        peer_global_metaid = ?,
+        peer_name = CASE
+          WHEN ? <> '' THEN ?
+          ELSE peer_name
+        END,
+        peer_avatar = CASE
+          WHEN ? <> '' THEN ?
+          ELSE peer_avatar
+        END
+      WHERE id = ?
+    `, [
+      input.metabotId,
+      peerGlobalMetaId,
+      peerName,
+      peerName,
+      peerAvatar,
+      peerAvatar,
+      sessionId,
+    ]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+    return true;
   }
 
   deleteConversationMapping(channel: string, externalConversationId: string, metabotId?: number | null): void {
@@ -1743,13 +1879,14 @@ export class CoworkStore implements MemoryBackend {
       peer_global_metaid?: string | null;
       peer_name?: string | null;
       peer_avatar?: string | null;
+      hidden_from_session_list?: number | null;
       created_at: number;
       updated_at: number;
     }
 
     const row = this.getOne<SessionRow>(`
       SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
-             session_type, peer_global_metaid, peer_name, peer_avatar, created_at, updated_at
+             session_type, peer_global_metaid, peer_name, peer_avatar, hidden_from_session_list, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `, [id]);
@@ -1803,6 +1940,7 @@ export class CoworkStore implements MemoryBackend {
       peerGlobalMetaId: row.peer_global_metaid ?? null,
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
+      hiddenFromSessionList: Boolean(row.hidden_from_session_list),
       metabotName,
       metabotAvatar,
     };
@@ -1878,6 +2016,25 @@ export class CoworkStore implements MemoryBackend {
     this.saveDb();
   }
 
+  setSessionHiddenFromList(id: string, hidden: boolean): void {
+    this.db.run('UPDATE cowork_sessions SET hidden_from_session_list = ?, updated_at = ? WHERE id = ?', [
+      hidden ? 1 : 0,
+      Date.now(),
+      id,
+    ]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+  }
+
+  isSessionHiddenFromList(id: string): boolean {
+    const row = this.getOne<{ hidden_from_session_list?: number | null }>(
+      'SELECT hidden_from_session_list FROM cowork_sessions WHERE id = ? LIMIT 1',
+      [id],
+    );
+    return Boolean(row?.hidden_from_session_list);
+  }
+
   listSessions(): CoworkSessionSummary[] {
     interface SessionSummaryRow {
       id: string;
@@ -1886,14 +2043,33 @@ export class CoworkStore implements MemoryBackend {
       pinned: number | null;
       session_type?: string | null;
       peer_name?: string | null;
+      hidden_from_session_list?: number | null;
       created_at: number;
       updated_at: number;
+      activity_at?: number | null;
     }
 
     const rows = this.getAll<SessionSummaryRow>(`
-      SELECT id, title, status, pinned, session_type, peer_name, created_at, updated_at
-      FROM cowork_sessions
-      ORDER BY pinned DESC, updated_at DESC
+      SELECT
+        s.id,
+        s.title,
+        s.status,
+        s.pinned,
+        s.session_type,
+        s.peer_name,
+        s.hidden_from_session_list,
+        s.created_at,
+        s.updated_at,
+        COALESCE((
+          SELECT m.created_at
+          FROM cowork_messages m INDEXED BY idx_cowork_messages_session_created_at
+          WHERE m.session_id = s.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ), s.updated_at) AS activity_at
+      FROM cowork_sessions s
+      WHERE COALESCE(s.hidden_from_session_list, 0) = 0
+      ORDER BY s.pinned DESC, activity_at DESC, s.updated_at DESC
     `);
 
     return rows.map(row => ({
@@ -1902,9 +2078,10 @@ export class CoworkStore implements MemoryBackend {
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
       createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      updatedAt: parseIdNumber(row.activity_at) ?? row.updated_at,
       sessionType: (row.session_type === 'agent_agent' ? 'a2a' : row.session_type as CoworkSessionType) || 'standard',
       peerName: row.peer_name ?? null,
+      hiddenFromSessionList: Boolean(row.hidden_from_session_list),
     }));
   }
 
@@ -1958,8 +2135,8 @@ export class CoworkStore implements MemoryBackend {
       FROM cowork_messages
       WHERE session_id = ?
       ORDER BY
-        COALESCE(sequence, created_at) ASC,
         created_at ASC,
+        COALESCE(sequence, 0) ASC,
         ROWID ASC
     `, [sessionId]);
 
@@ -2072,6 +2249,388 @@ export class CoworkStore implements MemoryBackend {
     this.saveDb();
   }
 
+  migrateMetawebOrderSessionsToPeerConversations(): number {
+    if (
+      !this.tableExists('cowork_conversation_mappings')
+      || !this.tableExists('cowork_sessions')
+      || !this.tableExists('cowork_messages')
+    ) {
+      return 0;
+    }
+
+    interface OrderMappingRow {
+      channel: string;
+      external_conversation_id: string;
+      metabot_id: number | string | null;
+      cowork_session_id: string;
+      metadata_json: string | null;
+      title: string | null;
+      cwd: string | null;
+      system_prompt: string | null;
+      execution_mode: string | null;
+      session_type: string | null;
+      peer_global_metaid: string | null;
+      peer_name: string | null;
+      peer_avatar: string | null;
+      created_at: number | null;
+      updated_at: number | null;
+    }
+
+    const rows = this.getAll<OrderMappingRow>(`
+      SELECT
+        m.channel,
+        m.external_conversation_id,
+        m.metabot_id,
+        m.cowork_session_id,
+        m.metadata_json,
+        s.title,
+        s.cwd,
+        s.system_prompt,
+        s.execution_mode,
+        s.session_type,
+        s.peer_global_metaid,
+        s.peer_name,
+        s.peer_avatar,
+        s.created_at,
+        s.updated_at
+      FROM cowork_conversation_mappings m
+      LEFT JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      WHERE m.channel = 'metaweb_order'
+    `);
+
+    let changed = 0;
+    const createdCanonicalByKey = new Map<string, string>();
+    for (const row of rows) {
+      const metabotId = this.normalizeMappingMetabotId(parseIdNumber(row.metabot_id));
+      const mappingMetadata = this.parseMessageMetadata(row.metadata_json);
+      const peerGlobalMetaId = this.resolveMetawebOrderPeerGlobalMetaId(row, mappingMetadata);
+      if (!peerGlobalMetaId) continue;
+
+      const privateExternalConversationId = buildCanonicalPrivateConversationExternalConversationId(peerGlobalMetaId);
+      const canonicalKey = `${metabotId}:${privateExternalConversationId}`;
+      let canonicalSessionId = createdCanonicalByKey.get(canonicalKey) || '';
+      if (!canonicalSessionId) {
+        canonicalSessionId = this.ensureCanonicalPrivateSessionForOrderMigration({
+          metabotId,
+          peerGlobalMetaId,
+          privateExternalConversationId,
+          legacy: row,
+          mappingMetadata,
+        });
+        createdCanonicalByKey.set(canonicalKey, canonicalSessionId);
+      }
+      if (!canonicalSessionId) continue;
+
+      if (row.cowork_session_id !== canonicalSessionId) {
+        const copied = this.copyMissingOrderMessagesToCanonicalSession({
+          fromSessionId: row.cowork_session_id,
+          toSessionId: canonicalSessionId,
+          privateExternalConversationId,
+          orderExternalConversationId: row.external_conversation_id,
+          mappingMetadata,
+        });
+        changed += copied;
+
+        this.db.run(`
+          UPDATE cowork_conversation_mappings
+          SET cowork_session_id = ?, last_active_at = ?
+          WHERE channel = 'metaweb_order'
+            AND external_conversation_id = ?
+            AND metabot_id = ?
+            AND cowork_session_id <> ?
+        `, [canonicalSessionId, Date.now(), row.external_conversation_id, metabotId, canonicalSessionId]);
+        if ((this.db.getRowsModified?.() || 0) > 0) changed += 1;
+
+        if (this.tableExists('service_orders')) {
+          this.db.run(`
+            UPDATE service_orders
+            SET cowork_session_id = ?, updated_at = ?
+            WHERE cowork_session_id = ?
+          `, [canonicalSessionId, Date.now(), row.cowork_session_id]);
+          if ((this.db.getRowsModified?.() || 0) > 0) changed += 1;
+        }
+
+        this.db.run(`
+          UPDATE cowork_sessions
+          SET hidden_from_session_list = 1
+          WHERE id = ?
+            AND COALESCE(hidden_from_session_list, 0) = 0
+        `, [row.cowork_session_id]);
+        if ((this.db.getRowsModified?.() || 0) > 0) changed += 1;
+      }
+    }
+
+    if (changed > 0) {
+      this.saveDb();
+    }
+    return changed;
+  }
+
+  private resolveMetawebOrderPeerGlobalMetaId(
+    row: { external_conversation_id: string; peer_global_metaid: string | null },
+    mappingMetadata: CoworkMessageMetadata,
+  ): string {
+    const fromMetadata = typeof mappingMetadata.peerGlobalMetaId === 'string'
+      ? mappingMetadata.peerGlobalMetaId.trim()
+      : '';
+    const fromSession = typeof row.peer_global_metaid === 'string'
+      ? row.peer_global_metaid.trim()
+      : '';
+    const fromConversationId = String(row.external_conversation_id || '').match(/^metaweb_order:[^:]+:[^:]+:([^:]+):/)?.[1] ?? '';
+    return fromMetadata || fromSession || fromConversationId;
+  }
+
+  private ensureCanonicalPrivateSessionForOrderMigration(input: {
+    metabotId: number;
+    peerGlobalMetaId: string;
+    privateExternalConversationId: string;
+    legacy: {
+      cowork_session_id: string;
+      title: string | null;
+      cwd: string | null;
+      system_prompt: string | null;
+      execution_mode: string | null;
+      peer_name: string | null;
+      peer_avatar: string | null;
+      created_at: number | null;
+      updated_at: number | null;
+    };
+    mappingMetadata: CoworkMessageMetadata;
+  }): string {
+    const existing = this.getConversationMapping(
+      'metaweb_private',
+      input.privateExternalConversationId,
+      input.metabotId,
+    );
+    if (existing && this.getSession(existing.coworkSessionId)) {
+      if (this.ensureCanonicalPeerSessionShape({
+        sessionId: existing.coworkSessionId,
+        metabotId: input.metabotId,
+        peerGlobalMetaId: input.peerGlobalMetaId,
+        peerName: typeof input.mappingMetadata.peerName === 'string'
+          ? input.mappingMetadata.peerName
+          : input.legacy.peer_name,
+        peerAvatar: typeof input.mappingMetadata.peerAvatar === 'string'
+          ? input.mappingMetadata.peerAvatar
+          : input.legacy.peer_avatar,
+      })) {
+        return existing.coworkSessionId;
+      }
+      this.deleteConversationMapping('metaweb_private', input.privateExternalConversationId, input.metabotId);
+    }
+    if (existing && !this.getSession(existing.coworkSessionId)) {
+      this.deleteConversationMapping('metaweb_private', input.privateExternalConversationId, input.metabotId);
+    }
+
+    const peerName = typeof input.mappingMetadata.peerName === 'string'
+      ? input.mappingMetadata.peerName.trim()
+      : input.legacy.peer_name;
+    const peerAvatar = typeof input.mappingMetadata.peerAvatar === 'string'
+      ? input.mappingMetadata.peerAvatar.trim()
+      : input.legacy.peer_avatar;
+    const session = this.createSession(
+      peerName || input.legacy.title || `Private-${input.peerGlobalMetaId.slice(0, 12)}`,
+      input.legacy.cwd || getDefaultWorkingDirectory(),
+      '',
+      (input.legacy.execution_mode as CoworkExecutionMode) || 'local',
+      [],
+      input.metabotId,
+      'a2a',
+      input.peerGlobalMetaId,
+      peerName || null,
+      peerAvatar || null,
+    );
+    this.setSessionMigrationTimestamps(
+      session.id,
+      parseIdNumber(input.legacy.created_at) ?? Date.now(),
+      parseIdNumber(input.legacy.updated_at) ?? parseIdNumber(input.legacy.created_at) ?? Date.now(),
+    );
+    this.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: input.privateExternalConversationId,
+      metabotId: input.metabotId,
+      coworkSessionId: session.id,
+      metadataJson: JSON.stringify({
+        peerGlobalMetaId: input.peerGlobalMetaId,
+        peerName: peerName || null,
+        peerAvatar: peerAvatar || null,
+      }),
+    });
+    return session.id;
+  }
+
+  private setSessionMigrationTimestamps(sessionId: string, createdAt: number, updatedAt: number): void {
+    const normalizedCreatedAt = Number.isFinite(createdAt) ? Math.trunc(createdAt) : Date.now();
+    const normalizedUpdatedAt = Number.isFinite(updatedAt) ? Math.trunc(updatedAt) : normalizedCreatedAt;
+    this.db.run(`
+      UPDATE cowork_sessions
+      SET created_at = ?, updated_at = ?
+      WHERE id = ?
+    `, [normalizedCreatedAt, normalizedUpdatedAt, sessionId]);
+    if ((this.db.getRowsModified?.() || 0) > 0) {
+      this.saveDb();
+    }
+  }
+
+  private copyMissingOrderMessagesToCanonicalSession(input: {
+    fromSessionId: string;
+    toSessionId: string;
+    privateExternalConversationId: string;
+    orderExternalConversationId: string;
+    mappingMetadata: CoworkMessageMetadata;
+  }): number {
+    const existingMessages = this.getSessionMessages(input.toSessionId);
+    const identityIndex = this.buildMessageIdentityIndex(existingMessages);
+    const legacyMessages = this.getAll<{
+      type: CoworkMessageType;
+      content: string;
+      metadata: string | null;
+      created_at: number;
+      sequence: number | null;
+    }>(`
+      SELECT type, content, metadata, created_at, sequence
+      FROM cowork_messages
+      WHERE session_id = ?
+      ORDER BY COALESCE(sequence, 0) ASC, created_at ASC, rowid ASC
+    `, [input.fromSessionId]);
+
+    let copied = 0;
+    for (const message of legacyMessages) {
+      const metadata = this.parseMessageMetadata(message.metadata);
+      const identities = this.getMessageIdentities(metadata);
+      if (this.messageIdentityExists(identityIndex, identities, message.content)) {
+        continue;
+      }
+
+      const copiedMetadata: CoworkMessageMetadata = {
+        ...metadata,
+        sourceChannel: 'metaweb_private',
+        externalConversationId: input.privateExternalConversationId,
+        orderMappingExternalConversationId: input.orderExternalConversationId,
+      };
+      if (!copiedMetadata.orderTxid && typeof input.mappingMetadata.orderTxid === 'string') {
+        copiedMetadata.orderTxid = input.mappingMetadata.orderTxid;
+      }
+      if (!copiedMetadata.orderRole && typeof input.mappingMetadata.role === 'string') {
+        copiedMetadata.orderRole = input.mappingMetadata.role;
+      }
+      if (!copiedMetadata.paymentTxid && typeof input.mappingMetadata.servicePaidTx === 'string') {
+        copiedMetadata.paymentTxid = input.mappingMetadata.servicePaidTx;
+        copiedMetadata.orderPaymentTxid = input.mappingMetadata.servicePaidTx;
+      }
+
+      const created = this.insertMigratedMessage(input.toSessionId, {
+        type: message.type,
+        content: message.content,
+        metadata: copiedMetadata,
+        timestamp: message.created_at,
+      });
+      const createdIdentities = this.getMessageIdentities(created.metadata ?? {});
+      this.addMessageIdentitiesToIndex(
+        identityIndex,
+        createdIdentities,
+        created.content,
+        Boolean(createdIdentities.pinId || createdIdentities.txids.size > 0),
+      );
+      copied += 1;
+    }
+    return copied;
+  }
+
+  private insertMigratedMessage(
+    sessionId: string,
+    message: Omit<CoworkMessage, 'id'>,
+  ): CoworkMessage {
+    const id = uuidv4();
+    const timestamp = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
+    const sequenceRow = this.db.exec(`
+      SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq
+      FROM cowork_messages
+      WHERE session_id = ?
+    `, [sessionId]);
+    const sequence = sequenceRow[0]?.values[0]?.[0] as number || 1;
+    this.db.run(`
+      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      sessionId,
+      message.type,
+      message.content,
+      message.metadata ? JSON.stringify(message.metadata) : null,
+      timestamp,
+      sequence,
+    ]);
+    this.db.run('UPDATE cowork_sessions SET updated_at = MAX(updated_at, ?) WHERE id = ?', [timestamp, sessionId]);
+    return {
+      id,
+      type: message.type,
+      content: message.content,
+      timestamp,
+      metadata: message.metadata,
+    };
+  }
+
+  private buildMessageIdentityIndex(messages: CoworkMessage[]): {
+    pinIds: Set<string>;
+    txids: Set<string>;
+    contentKeys: Set<string>;
+  } {
+    const index = {
+      pinIds: new Set<string>(),
+      txids: new Set<string>(),
+      contentKeys: new Set<string>(),
+    };
+    for (const message of messages) {
+      this.addMessageIdentitiesToIndex(index, this.getMessageIdentities(message.metadata ?? {}), message.content);
+    }
+    return index;
+  }
+
+  private addMessageIdentitiesToIndex(
+    index: { pinIds: Set<string>; txids: Set<string>; contentKeys: Set<string> },
+    identities: { pinId: string; txids: Set<string> },
+    content: string,
+    includeContentKey = true,
+  ): void {
+    if (identities.pinId) index.pinIds.add(identities.pinId);
+    for (const txid of identities.txids) index.txids.add(txid);
+    if (includeContentKey && !identities.pinId && identities.txids.size === 0) {
+      const contentKey = String(content || '').trim();
+      if (contentKey) index.contentKeys.add(contentKey);
+    }
+  }
+
+  private getMessageIdentities(metadata: CoworkMessageMetadata): { pinId: string; txids: Set<string> } {
+    const pinId = typeof metadata.pinId === 'string' ? metadata.pinId.trim() : '';
+    const txids = new Set<string>();
+    const txid = normalizeA2AChainTxid(metadata.txid);
+    if (txid) txids.add(txid);
+    if (Array.isArray(metadata.txids)) {
+      for (const item of metadata.txids) {
+        const normalized = normalizeA2AChainTxid(item);
+        if (normalized) txids.add(normalized);
+      }
+    }
+    return { pinId, txids };
+  }
+
+  private messageIdentityExists(
+    index: { pinIds: Set<string>; txids: Set<string>; contentKeys: Set<string> },
+    identities: { pinId: string; txids: Set<string> },
+    content: string,
+  ): boolean {
+    if (identities.pinId && index.pinIds.has(identities.pinId)) return true;
+    for (const txid of identities.txids) {
+      if (index.txids.has(txid)) return true;
+    }
+    if (!identities.pinId && identities.txids.size === 0) {
+      const contentKey = String(content || '').trim();
+      return Boolean(contentKey && index.contentKeys.has(contentKey));
+    }
+    return false;
+  }
+
   backfillMetawebOrderSimplemsgMetadata(): number {
     if (!this.tableExists('cowork_conversation_mappings') || !this.tableExists('cowork_messages')) {
       return 0;
@@ -2083,6 +2642,7 @@ export class CoworkStore implements MemoryBackend {
         SELECT
           m.id AS message_id,
           m.session_id AS session_id,
+          m.type AS message_type,
           s.metabot_id AS metabot_id,
           s.peer_global_metaid AS peer_global_metaid,
           m.content AS content,
@@ -2119,6 +2679,13 @@ export class CoworkStore implements MemoryBackend {
         || (serviceOrderMetadata && Object.keys(serviceOrderMetadata).length > 0
         ? serviceOrderMetadata
         : privateChatMetadata);
+      const hasChainMetadata = Boolean(chainMetadata && Object.keys(chainMetadata).length > 0);
+      const hasMessagePatch = Boolean(
+        messagePatch?.content
+        || messagePatch?.extraMetadata
+        || (messagePatch?.removeMetadataKeys?.length ?? 0) > 0,
+      );
+      if (!hasChainMetadata && !hasMessagePatch) continue;
       const merged = this.mergeBackfilledA2AMessageMetadata(metadata, chainMetadata);
       const patchedMetadata: CoworkMessageMetadata = { ...merged.metadata };
       if (messagePatch?.removeMetadataKeys) {
@@ -2242,31 +2809,216 @@ export class CoworkStore implements MemoryBackend {
     }
   }
 
+  private normalizeOrderBackfillRole(value: unknown): 'buyer' | 'seller' | '' {
+    const role = String(value || '').trim();
+    return role === 'buyer' || role === 'seller' ? role : '';
+  }
+
+  private extractOrderProtocolTagTxid(content: string): string {
+    return normalizeA2AChainTxid(
+      content.match(/^\[(?:DELIVERY|ORDER_STATUS|NeedsRating|ORDER_END):([0-9a-f]{64})(?:[\s\]]|[^\]]*\])/i)?.[1],
+    );
+  }
+
+  private extractPaymentTxidFromSimplemsgContent(content: string): string {
+    return normalizeA2AChainTxid(
+      content.match(/\bpaymentTxid["']?\s*[:=]\s*["']?([0-9a-f]{64})/i)?.[1],
+    ) || normalizeA2AChainTxid(
+      content.match(/\btxid\s*:\s*([0-9a-f]{64})/i)?.[1],
+    );
+  }
+
+  private getOrderBackfillIdentifiers(
+    row: MetawebOrderMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+    mappingMetadata: CoworkMessageMetadata,
+  ): OrderBackfillIdentifiers {
+    const content = String(row.content || '').trim();
+    const messageOrderTxid = normalizeA2AChainTxid(metadata.orderTxid)
+      || this.extractOrderProtocolTagTxid(content);
+    const mappingOrderTxid = normalizeA2AChainTxid(mappingMetadata.orderTxid);
+    const messagePaymentTxid = normalizeA2AChainTxid(metadata.paymentTxid)
+      || normalizeA2AChainTxid(metadata.orderPaymentTxid)
+      || this.extractPaymentTxidFromSimplemsgContent(content);
+    const mappingPaymentTxid = normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
+      || normalizeA2AChainTxid(mappingMetadata.paymentTxid)
+      || normalizeA2AChainTxid(mappingMetadata.orderPaymentTxid);
+
+    return {
+      messageMappingExternalId: String(metadata.orderMappingExternalConversationId || '').trim(),
+      messageOrderTxid,
+      mappingOrderTxid,
+      messagePaymentTxid,
+      mappingPaymentTxid,
+      orderMessageTxid: messageOrderTxid || mappingOrderTxid,
+      paymentTxid: messagePaymentTxid || mappingPaymentTxid,
+      role: this.normalizeOrderBackfillRole(metadata.orderRole) || this.normalizeOrderBackfillRole(mappingMetadata.role),
+      peerGlobalMetaId: String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || '').trim(),
+      metabotId: parseIdNumber(row.metabot_id),
+    };
+  }
+
+  private countMetawebOrderMappingsForSession(sessionId: string): number {
+    try {
+      const row = this.getOne<{ count: number | string | null }>(`
+        SELECT COUNT(DISTINCT external_conversation_id) AS count
+        FROM cowork_conversation_mappings
+        WHERE cowork_session_id = ?
+          AND channel = 'metaweb_order'
+      `, [sessionId]);
+      return parseIdNumber(row?.count) ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private isMetawebOrderMappingApplicableToMessage(
+    row: MetawebOrderMessageBackfillRow,
+    identifiers: OrderBackfillIdentifiers,
+  ): boolean {
+    if (
+      identifiers.messageMappingExternalId
+      && identifiers.messageMappingExternalId !== row.external_conversation_id
+    ) {
+      return false;
+    }
+    if (
+      identifiers.messageOrderTxid
+      && identifiers.mappingOrderTxid
+      && identifiers.messageOrderTxid !== identifiers.mappingOrderTxid
+    ) {
+      return false;
+    }
+    if (
+      identifiers.messagePaymentTxid
+      && identifiers.mappingPaymentTxid
+      && identifiers.messagePaymentTxid !== identifiers.mappingPaymentTxid
+    ) {
+      return false;
+    }
+
+    if (this.countMetawebOrderMappingsForSession(row.session_id) <= 1) {
+      return true;
+    }
+    if (identifiers.messageMappingExternalId === row.external_conversation_id) {
+      return true;
+    }
+    if (identifiers.messageOrderTxid && identifiers.messageOrderTxid === identifiers.mappingOrderTxid) {
+      return true;
+    }
+    if (identifiers.messagePaymentTxid && identifiers.messagePaymentTxid === identifiers.mappingPaymentTxid) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveServiceOrderBackfillRow(input: {
+    row: MetawebOrderMessageBackfillRow;
+    metadata: CoworkMessageMetadata;
+    mappingMetadata: CoworkMessageMetadata;
+    requiredRole?: 'buyer' | 'seller';
+    requireDeliveryPin?: boolean;
+    orderByDelivery?: boolean;
+  }): ServiceOrderSimplemsgBackfillRow | null {
+    if (!this.tableExists('service_orders')) return null;
+    const identifiers = this.getOrderBackfillIdentifiers(input.row, input.metadata, input.mappingMetadata);
+    if (!this.isMetawebOrderMappingApplicableToMessage(input.row, identifiers)) return null;
+
+    const role = input.requiredRole || identifiers.role;
+    const roleClause = role ? 'AND role = ?' : '';
+    const deliveryClause = input.requireDeliveryPin
+      ? "AND delivery_message_pin_id IS NOT NULL AND TRIM(delivery_message_pin_id) <> ''"
+      : '';
+    const orderBy = input.orderByDelivery
+      ? 'ORDER BY delivered_at DESC, updated_at DESC'
+      : 'ORDER BY updated_at DESC';
+    const selectColumns = 'payment_txid, order_message_txid, order_message_pin_id, delivery_message_pin_id';
+
+    const buildParams = (chainTxid: string): (string | number)[] => {
+      const params: (string | number)[] = [
+        identifiers.metabotId ?? 0,
+        identifiers.peerGlobalMetaId,
+        chainTxid,
+      ];
+      if (role) params.push(role);
+      return params;
+    };
+
+    try {
+      if (identifiers.metabotId != null && identifiers.peerGlobalMetaId && identifiers.orderMessageTxid) {
+        const orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
+          SELECT ${selectColumns}
+          FROM service_orders
+          WHERE local_metabot_id = ?
+            AND counterparty_global_metaid = ?
+            AND order_message_txid = ?
+            ${roleClause}
+            ${deliveryClause}
+          ${orderBy}
+          LIMIT 1
+        `, buildParams(identifiers.orderMessageTxid));
+        if (orderRow) return orderRow;
+      }
+
+      if (identifiers.metabotId != null && identifiers.peerGlobalMetaId && identifiers.paymentTxid) {
+        const paymentRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
+          SELECT ${selectColumns}
+          FROM service_orders
+          WHERE local_metabot_id = ?
+            AND counterparty_global_metaid = ?
+            AND payment_txid = ?
+            ${roleClause}
+            ${deliveryClause}
+          ${orderBy}
+          LIMIT 1
+        `, buildParams(identifiers.paymentTxid));
+        if (paymentRow) return paymentRow;
+      }
+
+      if (identifiers.orderMessageTxid || identifiers.paymentTxid) {
+        return null;
+      }
+
+      const fallbackParams: (string | number)[] = [input.row.session_id];
+      if (role) fallbackParams.push(role);
+      const fallback = this.getOne<ServiceOrderSimplemsgBackfillMatchRow>(`
+        SELECT
+          COUNT(*) AS match_count,
+          MAX(payment_txid) AS payment_txid,
+          MAX(order_message_txid) AS order_message_txid,
+          MAX(order_message_pin_id) AS order_message_pin_id,
+          MAX(delivery_message_pin_id) AS delivery_message_pin_id
+        FROM service_orders
+        WHERE cowork_session_id = ?
+          ${roleClause}
+          ${deliveryClause}
+      `, fallbackParams);
+      return parseIdNumber(fallback?.match_count) === 1 ? fallback : null;
+    } catch {
+      return null;
+    }
+  }
+
   private resolveSellerDeliverySimplemsgPatch(
     row: MetawebOrderMessageBackfillRow,
     metadata: CoworkMessageMetadata,
     mappingMetadata: CoworkMessageMetadata,
   ): MetawebOrderBackfillPatch | null {
     if (!this.tableExists('service_orders') || !this.tableExists('private_chat_messages')) return null;
-    if (metadata.orderDeliveryUploadComplete !== true) return null;
-    if (metadata.direction !== 'outgoing') return null;
     if (String(mappingMetadata.role || '').trim() !== 'seller') return null;
+    const isUploadCompleteDeliveryNotice = metadata.orderDeliveryUploadComplete === true;
+    const isLegacyFinalDeliveryResult = this.isLegacySellerFinalDeliveryResult(row, metadata);
+    if (!isUploadCompleteDeliveryNotice && !isLegacyFinalDeliveryResult) return null;
+    if (isUploadCompleteDeliveryNotice && metadata.direction !== 'outgoing') return null;
 
-    let orderRow: SellerDeliverySimplemsgBackfillRow | undefined;
-    try {
-      orderRow = this.getOne<SellerDeliverySimplemsgBackfillRow>(`
-        SELECT payment_txid, delivery_message_pin_id
-        FROM service_orders
-        WHERE cowork_session_id = ?
-          AND role = 'seller'
-          AND delivery_message_pin_id IS NOT NULL
-          AND TRIM(delivery_message_pin_id) <> ''
-        ORDER BY delivered_at DESC, updated_at DESC
-        LIMIT 1
-      `, [row.session_id]);
-    } catch {
-      return null;
-    }
+    const orderRow = this.resolveServiceOrderBackfillRow({
+      row,
+      metadata,
+      mappingMetadata,
+      requiredRole: 'seller',
+      requireDeliveryPin: true,
+      orderByDelivery: true,
+    });
 
     const deliveryPinId = typeof orderRow?.delivery_message_pin_id === 'string'
       ? orderRow.delivery_message_pin_id.trim()
@@ -2280,7 +3032,7 @@ export class CoworkStore implements MemoryBackend {
         FROM private_chat_messages
         WHERE pin_id = ?
           AND LOWER(TRIM(protocol)) IN ('simplemsg', '/protocols/simplemsg')
-          AND TRIM(content) LIKE '[DELIVERY]%'
+          AND TRIM(content) LIKE '[DELIVERY%'
         LIMIT 1
       `, [deliveryPinId]);
     } catch {
@@ -2291,6 +3043,18 @@ export class CoworkStore implements MemoryBackend {
       ? deliveryMessage.content.trim()
       : '';
     if (!transmittedContent) return null;
+    if (
+      isLegacyFinalDeliveryResult
+      && !this.deliverySimplemsgContainsResultText(transmittedContent, row.content)
+    ) {
+      return null;
+    }
+    if (
+      isLegacyFinalDeliveryResult
+      && this.sessionAlreadyHasDeliverySimplemsgBubble(row.session_id, row.message_id, deliveryPinId, transmittedContent)
+    ) {
+      return null;
+    }
 
     return {
       content: transmittedContent,
@@ -2299,17 +3063,105 @@ export class CoworkStore implements MemoryBackend {
         pinId: deliveryPinId,
       }),
       extraMetadata: {
-        sourceChannel: 'metaweb_order',
-        externalConversationId: row.external_conversation_id,
-        direction: 'outgoing',
+        ...buildOrderProtocolDisplayMetadata({
+          peerGlobalMetaId: String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || ''),
+          direction: 'outgoing',
+          tag: 'DELIVERY',
+          orderTxid: typeof mappingMetadata.orderTxid === 'string' ? mappingMetadata.orderTxid : null,
+          orderRole: 'seller',
+          paymentTxid: normalizeA2AChainTxid(orderRow?.payment_txid)
+            || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
+            || undefined,
+          orderMappingExternalConversationId: row.external_conversation_id,
+        }),
         excludeFromSandboxHistory: true,
         orderDeliveryMessage: true,
-        paymentTxid: normalizeA2AChainTxid(orderRow?.payment_txid)
-          || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
-          || undefined,
       },
-      removeMetadataKeys: ['orderDeliveryUploadComplete'],
+      removeMetadataKeys: isUploadCompleteDeliveryNotice ? ['orderDeliveryUploadComplete'] : undefined,
     };
+  }
+
+  private isLegacySellerFinalDeliveryResult(
+    row: MetawebOrderMessageBackfillRow,
+    metadata: CoworkMessageMetadata,
+  ): boolean {
+    const content = String(row.content || '').trim();
+    if (!content) return false;
+    if (content.startsWith('[ORDER]') || content.startsWith('[DELIVERY]') || content.startsWith('[DELIVERY:')) {
+      return false;
+    }
+    if (row.message_type !== 'assistant') return false;
+    if (metadata.isFinal !== true || metadata.isStreaming !== false) return false;
+    if (metadata.direction != null && metadata.direction !== 'outgoing') return false;
+    return true;
+  }
+
+  private deliverySimplemsgContainsResultText(transmittedContent: string, resultText: string): boolean {
+    const expected = String(resultText || '').replace(/\r\n/g, '\n').trim();
+    if (!expected) return false;
+
+    const tagEnd = transmittedContent.indexOf(']');
+    if (tagEnd < 0) return false;
+    const payload = transmittedContent.slice(tagEnd + 1).trim();
+    if (!payload.startsWith('{')) return false;
+
+    try {
+      const parsed = JSON.parse(payload) as { result?: unknown; content?: unknown; text?: unknown };
+      const candidates = [parsed.result, parsed.content, parsed.text]
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.replace(/\r\n/g, '\n').trim());
+      return candidates.some((value) => value.includes(expected));
+    } catch {
+      return false;
+    }
+  }
+
+  private sessionAlreadyHasDeliverySimplemsgBubble(
+    sessionId: string,
+    currentMessageId: string,
+    deliveryPinId: string,
+    transmittedContent: string,
+  ): boolean {
+    let rows: Array<{ content: string | null; metadata: string | null }> = [];
+    try {
+      rows = this.getAll<{ content: string | null; metadata: string | null }>(`
+        SELECT content, metadata
+        FROM cowork_messages
+        WHERE session_id = ?
+          AND id <> ?
+          AND (
+            content = ?
+            OR metadata LIKE '%orderDeliveryMessage%'
+            OR metadata LIKE '%orderDeliveryUploadComplete%'
+            OR metadata LIKE ?
+          )
+        LIMIT 20
+      `, [sessionId, currentMessageId, transmittedContent, `%${deliveryPinId}%`]);
+    } catch {
+      return false;
+    }
+
+    for (const candidate of rows) {
+      const candidateContent = typeof candidate.content === 'string' ? candidate.content.trim() : '';
+      if (candidateContent === transmittedContent) return true;
+      const candidateMetadata = this.parseMessageMetadata(candidate.metadata);
+      if (String(candidateMetadata.pinId || '').trim() === deliveryPinId) return true;
+      if (
+        candidateMetadata.orderDeliveryUploadComplete === true
+        && candidateContent
+        && this.deliverySimplemsgContainsResultText(transmittedContent, candidateContent)
+      ) {
+        return true;
+      }
+      if (
+        candidateMetadata.orderDeliveryMessage === true
+        && candidateContent
+        && this.deliverySimplemsgContainsResultText(transmittedContent, candidateContent)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private resolveSellerProcessingNoticeSimplemsgPatch(
@@ -2337,8 +3189,8 @@ export class CoworkStore implements MemoryBackend {
           AND content IS NOT NULL
           AND TRIM(content) <> ''
           AND TRIM(content) NOT LIKE '[ORDER]%'
-          AND TRIM(content) NOT LIKE '[DELIVERY]%'
-          AND TRIM(content) NOT LIKE '[NeedsRating]%'
+          AND TRIM(content) NOT LIKE '[DELIVERY%'
+          AND TRIM(content) NOT LIKE '[NeedsRating%'
         ORDER BY id DESC
         LIMIT 20
       `, [peerGlobalMetaId, localGlobalMetaId, localGlobalMetaId]);
@@ -2365,41 +3217,12 @@ export class CoworkStore implements MemoryBackend {
     metadata: CoworkMessageMetadata,
     mappingMetadata: CoworkMessageMetadata,
   ): A2AChainMetadata | null {
-    if (!this.tableExists('service_orders')) return null;
     const content = String(row.content || '').trim();
     const isOrderMessage = content.startsWith('[ORDER]');
-    const isDeliveryMessage = content.startsWith('[DELIVERY]');
+    const isDeliveryMessage = content.startsWith('[DELIVERY]') || content.startsWith('[DELIVERY:');
     if (!isOrderMessage && !isDeliveryMessage) return null;
 
-    const paymentTxid = normalizeA2AChainTxid(metadata.paymentTxid)
-      || normalizeA2AChainTxid(mappingMetadata.servicePaidTx);
-    let orderRow: ServiceOrderSimplemsgBackfillRow | undefined;
-    try {
-      orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
-        SELECT order_message_pin_id, delivery_message_pin_id
-        FROM service_orders
-        WHERE cowork_session_id = ?
-        ORDER BY updated_at DESC
-        LIMIT 1
-      `, [row.session_id]);
-
-      const peerGlobalMetaId = String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || '').trim();
-      const metabotId = parseIdNumber(row.metabot_id);
-      if (!orderRow && metabotId != null && peerGlobalMetaId && paymentTxid) {
-        orderRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
-          SELECT order_message_pin_id, delivery_message_pin_id
-          FROM service_orders
-          WHERE local_metabot_id = ?
-            AND counterparty_global_metaid = ?
-            AND payment_txid = ?
-          ORDER BY updated_at DESC
-          LIMIT 1
-        `, [metabotId, peerGlobalMetaId, paymentTxid]);
-      }
-    } catch {
-      return null;
-    }
-
+    const orderRow = this.resolveServiceOrderBackfillRow({ row, metadata, mappingMetadata });
     if (!orderRow) return null;
     const pinId = isOrderMessage ? orderRow.order_message_pin_id : orderRow.delivery_message_pin_id;
     return buildA2AChainMetadata({ pinId });
@@ -2584,24 +3407,90 @@ export class CoworkStore implements MemoryBackend {
   ): { metadata: CoworkMessageMetadata; changed: boolean } {
     const before = JSON.stringify(metadata);
     const updated: CoworkMessageMetadata = { ...metadata };
-    const paymentTxid = normalizeA2AChainTxid(updated.paymentTxid);
-    const existingTxid = normalizeA2AChainTxid(updated.txid);
-    if (paymentTxid && existingTxid === paymentTxid) {
-      delete updated.txid;
-    }
-    if (paymentTxid && Array.isArray(updated.txids)) {
-      const normalizedTxids = updated.txids.map(normalizeA2AChainTxid).filter(Boolean);
-      if (normalizedTxids.length > 0 && normalizedTxids.every((txid) => txid === paymentTxid)) {
-        delete updated.txids;
-      }
-    }
     if (chainMetadata && Object.keys(chainMetadata).length > 0) {
-      Object.assign(updated, chainMetadata);
+      const paymentTxid = normalizeA2AChainTxid(updated.paymentTxid);
+      const existingTxid = normalizeA2AChainTxid(updated.txid);
+      if (paymentTxid && existingTxid === paymentTxid) {
+        delete updated.txid;
+      }
+      if (paymentTxid && Array.isArray(updated.txids)) {
+        const normalizedTxids = updated.txids.map(normalizeA2AChainTxid).filter(Boolean);
+        if (normalizedTxids.length > 0 && normalizedTxids.every((txid) => txid === paymentTxid)) {
+          delete updated.txids;
+        }
+      }
+      if (paymentTxid && extractTxidFromA2AChainPinId(updated.pinId) === paymentTxid) {
+        delete updated.pinId;
+      }
+      this.applyBackfilledA2AChainMetadata(updated, chainMetadata);
     }
     return {
       metadata: updated,
       changed: JSON.stringify(updated) !== before,
     };
+  }
+
+  private applyBackfilledA2AChainMetadata(
+    metadata: CoworkMessageMetadata,
+    chainMetadata: A2AChainMetadata,
+  ): void {
+    const existingTxids = this.collectA2AChainTxids(metadata);
+    const candidateTxids = this.collectA2AChainTxids(chainMetadata);
+    if (!this.areA2AChainTxidSetsCompatible(existingTxids, candidateTxids)) {
+      return;
+    }
+
+    const candidateTxid = normalizeA2AChainTxid(chainMetadata.txid);
+    const existingTxid = normalizeA2AChainTxid(metadata.txid);
+    if (candidateTxid && !existingTxid) {
+      metadata.txid = candidateTxid;
+    }
+
+    const candidateTxidsList = Array.isArray(chainMetadata.txids)
+      ? Array.from(new Set(chainMetadata.txids.map(normalizeA2AChainTxid).filter(Boolean)))
+      : [];
+    const existingTxidsList = Array.isArray(metadata.txids)
+      ? metadata.txids.map(normalizeA2AChainTxid).filter(Boolean)
+      : [];
+    if (candidateTxidsList.length > 0 && existingTxidsList.length === 0) {
+      metadata.txids = candidateTxidsList;
+    }
+
+    const candidatePinId = typeof chainMetadata.pinId === 'string' ? chainMetadata.pinId.trim() : '';
+    const existingPinId = typeof metadata.pinId === 'string' ? metadata.pinId.trim() : '';
+    if (candidatePinId && !existingPinId) {
+      metadata.pinId = candidatePinId;
+    }
+  }
+
+  private collectA2AChainTxids(metadata: Record<string, unknown>): Set<string> {
+    const txids = new Set<string>();
+    const txid = normalizeA2AChainTxid(metadata.txid);
+    if (txid) txids.add(txid);
+    if (Array.isArray(metadata.txids)) {
+      for (const item of metadata.txids) {
+        const normalized = normalizeA2AChainTxid(item);
+        if (normalized) txids.add(normalized);
+      }
+    }
+    const pinTxid = extractTxidFromA2AChainPinId(metadata.pinId);
+    if (pinTxid) txids.add(pinTxid);
+    return txids;
+  }
+
+  private areA2AChainTxidSetsCompatible(existingTxids: Set<string>, candidateTxids: Set<string>): boolean {
+    if (existingTxids.size === 0 || candidateTxids.size === 0) {
+      return true;
+    }
+    if (existingTxids.size !== candidateTxids.size) {
+      return false;
+    }
+    for (const candidateTxid of candidateTxids) {
+      if (!existingTxids.has(candidateTxid)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   deleteMessage(sessionId: string, messageId: string): void {

@@ -2,6 +2,7 @@ import { Database } from 'sql.js';
 import { v4 as uuidv4 } from 'uuid';
 import {
   computeOrderDeadlines,
+  SERVICE_ORDER_RATING_TIMEOUT_MS,
   type ServiceOrderStatus,
 } from './services/serviceOrderState';
 import { parseGigSquareSettlementAsset } from './shared/gigSquareSettlementAsset.js';
@@ -22,6 +23,7 @@ interface ServiceOrderRow {
   mrc20_id: string | null;
   payment_commit_txid: string | null;
   order_message_pin_id: string | null;
+  order_message_txid: string | null;
   cowork_session_id: string | null;
   status: string;
   first_response_deadline_at: number;
@@ -29,6 +31,11 @@ interface ServiceOrderRow {
   first_response_at: number | null;
   delivery_message_pin_id: string | null;
   delivered_at: number | null;
+  rating_requested_at: number | null;
+  rating_deadline_at: number | null;
+  order_end_message_pin_id: string | null;
+  order_ended_at: number | null;
+  order_end_reason: string | null;
   failed_at: number | null;
   failure_reason: string | null;
   refund_request_pin_id: string | null;
@@ -60,6 +67,7 @@ export interface ServiceOrderRecord {
   mrc20Id: string | null;
   paymentCommitTxid: string | null;
   orderMessagePinId: string | null;
+  orderMessageTxid: string | null;
   coworkSessionId: string | null;
   status: ServiceOrderStatus;
   firstResponseDeadlineAt: number;
@@ -67,6 +75,11 @@ export interface ServiceOrderRecord {
   firstResponseAt: number | null;
   deliveryMessagePinId: string | null;
   deliveredAt: number | null;
+  ratingRequestedAt: number | null;
+  ratingDeadlineAt: number | null;
+  orderEndMessagePinId: string | null;
+  orderEndedAt: number | null;
+  orderEndReason: string | null;
   failedAt: number | null;
   failureReason: string | null;
   refundRequestPinId: string | null;
@@ -113,6 +126,7 @@ export interface ServiceOrderCreateInput {
   mrc20Id?: string;
   paymentCommitTxid?: string;
   orderMessagePinId?: string | null;
+  orderMessageTxid?: string | null;
   coworkSessionId?: string | null;
   status?: ServiceOrderStatus;
   now?: number;
@@ -152,6 +166,17 @@ function derivePaymentCurrency(chain: string): string {
 function normalizeOptionalText(value: unknown): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || null;
+}
+
+function normalizeOrderMessageTxid(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/i.test(normalized) ? normalized : null;
+}
+
+function deriveOrderMessageTxidFromPinId(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const match = normalized.match(/^([0-9a-f]{64})i\d+$/i);
+  return match?.[1] ?? null;
 }
 
 function resolveStructuredSettlement(input: {
@@ -214,13 +239,19 @@ const SERVICE_ORDER_TABLE_SQL = `
     mrc20_id TEXT,
     payment_commit_txid TEXT,
     order_message_pin_id TEXT,
+    order_message_txid TEXT,
     cowork_session_id TEXT,
-    status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')),
+    status TEXT NOT NULL CHECK (status IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded')),
     first_response_deadline_at INTEGER NOT NULL,
     delivery_deadline_at INTEGER NOT NULL,
     first_response_at INTEGER,
     delivery_message_pin_id TEXT,
     delivered_at INTEGER,
+    rating_requested_at INTEGER,
+    rating_deadline_at INTEGER,
+    order_end_message_pin_id TEXT,
+    order_ended_at INTEGER,
+    order_end_reason TEXT,
     failed_at INTEGER,
     failure_reason TEXT,
     refund_request_pin_id TEXT,
@@ -253,6 +284,12 @@ export class ServiceOrderStore {
       ON service_orders(status, updated_at DESC);
     `);
     this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_service_orders_order_message_txid
+      ON service_orders(local_metabot_id, role, order_message_txid);
+    `);
+    this.db.run('DROP TRIGGER IF EXISTS trg_service_orders_status_insert;');
+    this.db.run('DROP TRIGGER IF EXISTS trg_service_orders_status_update;');
+    this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_role_insert
       BEFORE INSERT ON service_orders
       WHEN NEW.role NOT IN ('buyer', 'seller')
@@ -271,7 +308,7 @@ export class ServiceOrderStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_insert
       BEFORE INSERT ON service_orders
-      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded')
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.status');
       END;
@@ -279,7 +316,7 @@ export class ServiceOrderStore {
     this.db.run(`
       CREATE TRIGGER IF NOT EXISTS trg_service_orders_status_update
       BEFORE UPDATE OF status ON service_orders
-      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'completed', 'failed', 'refund_pending', 'refunded')
+      WHEN NEW.status NOT IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded')
       BEGIN
         SELECT RAISE(ABORT, 'Invalid service_orders.status');
       END;
@@ -354,9 +391,26 @@ export class ServiceOrderStore {
       && columns.includes('mrc20_ticker')
       && columns.includes('mrc20_id')
       && columns.includes('payment_commit_txid')
+      && columns.includes('order_message_txid')
+      && columns.includes('rating_requested_at')
+      && columns.includes('rating_deadline_at')
+      && columns.includes('order_end_message_pin_id')
+      && columns.includes('order_ended_at')
+      && columns.includes('order_end_reason')
     ) {
       return;
     }
+
+    const legacy = (column: string, fallback: string) => (
+      columns.includes(column) ? column : fallback
+    );
+    const orderMessageTxidExpr = columns.includes('order_message_txid')
+      ? 'order_message_txid'
+      : `CASE
+          WHEN length(trim(COALESCE(order_message_pin_id, ''))) >= 66
+            THEN lower(substr(trim(order_message_pin_id), 1, 64))
+          ELSE NULL
+        END`;
 
     this.db.run('BEGIN TRANSACTION;');
     try {
@@ -366,9 +420,10 @@ export class ServiceOrderStore {
         INSERT INTO service_orders (
           id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
           payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
-          mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
+          mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, order_message_txid, cowork_session_id,
           status, first_response_deadline_at, delivery_deadline_at, first_response_at,
-          delivery_message_pin_id, delivered_at, failed_at, failure_reason, refund_request_pin_id,
+          delivery_message_pin_id, delivered_at, rating_requested_at, rating_deadline_at,
+          order_end_message_pin_id, order_ended_at, order_end_reason, failed_at, failure_reason, refund_request_pin_id,
           refund_finalize_pin_id, refund_txid, refund_requested_at, refund_completed_at,
           refund_apply_retry_count, next_retry_at, created_at, updated_at
         )
@@ -392,18 +447,27 @@ export class ServiceOrderStore {
             WHEN lower(trim(payment_chain)) = 'doge' OR upper(trim(payment_currency)) = 'DOGE' THEN 'DOGE'
             ELSE 'SPACE'
           END,
-          'native',
-          NULL,
-          NULL,
-          NULL,
+          ${legacy('settlement_kind', "'native'")},
+          ${legacy('mrc20_ticker', 'NULL')},
+          ${legacy('mrc20_id', 'NULL')},
+          ${legacy('payment_commit_txid', 'NULL')},
           order_message_pin_id,
+          ${orderMessageTxidExpr},
           cowork_session_id,
-          status,
+          CASE
+            WHEN status IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'completed', 'failed', 'refund_pending', 'refunded') THEN status
+            ELSE 'awaiting_first_response'
+          END,
           first_response_deadline_at,
           delivery_deadline_at,
           first_response_at,
           delivery_message_pin_id,
           delivered_at,
+          ${legacy('rating_requested_at', 'NULL')},
+          ${legacy('rating_deadline_at', 'NULL')},
+          ${legacy('order_end_message_pin_id', 'NULL')},
+          ${legacy('order_ended_at', 'NULL')},
+          ${legacy('order_end_reason', 'NULL')},
           failed_at,
           failure_reason,
           refund_request_pin_id,
@@ -563,6 +627,7 @@ export class ServiceOrderStore {
       mrc20Id: row.mrc20_id,
       paymentCommitTxid: row.payment_commit_txid,
       orderMessagePinId: row.order_message_pin_id,
+      orderMessageTxid: row.order_message_txid,
       coworkSessionId: row.cowork_session_id,
       status: row.status as ServiceOrderStatus,
       firstResponseDeadlineAt: row.first_response_deadline_at,
@@ -570,6 +635,11 @@ export class ServiceOrderStore {
       firstResponseAt: row.first_response_at,
       deliveryMessagePinId: row.delivery_message_pin_id,
       deliveredAt: row.delivered_at,
+      ratingRequestedAt: row.rating_requested_at,
+      ratingDeadlineAt: row.rating_deadline_at,
+      orderEndMessagePinId: row.order_end_message_pin_id,
+      orderEndedAt: row.order_ended_at,
+      orderEndReason: row.order_end_reason,
       failedAt: row.failed_at,
       failureReason: row.failure_reason,
       refundRequestPinId: row.refund_request_pin_id,
@@ -597,6 +667,8 @@ export class ServiceOrderStore {
     const paymentCommitTxid = settlement.settlementKind === 'mrc20'
       ? normalizeOptionalText(input.paymentCommitTxid)
       : null;
+    const orderMessageTxid = normalizeOrderMessageTxid(input.orderMessageTxid)
+      || deriveOrderMessageTxidFromPinId(input.orderMessagePinId);
     const existing = this.getOne<ServiceOrderRow>(
       `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
       [input.localMetabotId, input.role, input.paymentTxid]
@@ -609,12 +681,13 @@ export class ServiceOrderStore {
         INSERT INTO service_orders (
           id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
           payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
-          mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, cowork_session_id,
+          mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, order_message_txid, cowork_session_id,
           status, first_response_deadline_at, delivery_deadline_at, first_response_at, delivery_message_pin_id,
-          delivered_at, failed_at, failure_reason, refund_request_pin_id, refund_finalize_pin_id, refund_txid,
+          delivered_at, rating_requested_at, rating_deadline_at, order_end_message_pin_id, order_ended_at,
+          order_end_reason, failed_at, failure_reason, refund_request_pin_id, refund_finalize_pin_id, refund_txid,
           refund_requested_at, refund_completed_at, refund_apply_retry_count, next_retry_at, created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
         );
       `, [
         id,
@@ -632,6 +705,7 @@ export class ServiceOrderStore {
         settlement.mrc20Id,
         paymentCommitTxid,
         input.orderMessagePinId ?? null,
+        orderMessageTxid,
         input.coworkSessionId ?? null,
         input.status ?? 'awaiting_first_response',
         deadlines.firstResponseDeadlineAt,
@@ -737,6 +811,49 @@ export class ServiceOrderStore {
     `, [role, now]).map((row) => this.mapRow(row));
   }
 
+  hasActiveOrderForPrivateChatSuppression(
+    localMetabotId: number,
+    counterpartyGlobalMetaid: string
+  ): boolean {
+    const normalizedPeer = String(counterpartyGlobalMetaid || '').trim();
+    if (!normalizedPeer) return false;
+
+    const row = this.getOne<{ found: number }>(`
+      SELECT 1 AS found
+      FROM service_orders
+      WHERE local_metabot_id = ?
+        AND counterparty_global_metaid = ?
+        AND (
+          status IN ('awaiting_first_response', 'in_progress', 'rating_pending', 'refund_pending')
+          OR (
+            role = 'buyer'
+            AND status = 'failed'
+            AND refund_request_pin_id IS NULL
+            AND refund_txid IS NULL
+            AND refund_completed_at IS NULL
+          )
+        )
+      LIMIT 1
+    `, [localMetabotId, normalizedPeer]);
+    return Boolean(row);
+  }
+
+  listRatingTimeoutCandidates(
+    role: ServiceOrderRole,
+    now: number
+  ): ServiceOrderRecord[] {
+    return this.getAll<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND status = 'rating_pending'
+        AND rating_deadline_at IS NOT NULL
+        AND rating_deadline_at <= ?
+        AND order_ended_at IS NULL
+      ORDER BY rating_deadline_at ASC, updated_at ASC, created_at ASC
+    `, [role, now]).map((row) => this.mapRow(row));
+  }
+
   findOrderByPayment(input: ServiceOrderLookupByPaymentInput): ServiceOrderRecord | null {
     const row = this.getOne<ServiceOrderRow>(`
       SELECT *
@@ -752,6 +869,27 @@ export class ServiceOrderStore {
       input.counterpartyGlobalMetaid,
       input.paymentTxid,
     ]);
+    return row ? this.mapRow(row) : null;
+  }
+
+  findOrderByOrderMessageTxid(
+    role: ServiceOrderRole,
+    localMetabotId: number,
+    counterpartyGlobalMetaid: string,
+    orderMessageTxid: string
+  ): ServiceOrderRecord | null {
+    const normalizedTxid = normalizeOrderMessageTxid(orderMessageTxid);
+    if (!normalizedTxid) return null;
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND local_metabot_id = ?
+        AND counterparty_global_metaid = ?
+        AND order_message_txid = ?
+      ORDER BY updated_at DESC, created_at DESC, id DESC
+      LIMIT 1
+    `, [role, localMetabotId, counterpartyGlobalMetaid, normalizedTxid]);
     return row ? this.mapRow(row) : null;
   }
 
@@ -853,7 +991,10 @@ export class ServiceOrderStore {
     this.db.run(`
       UPDATE service_orders
       SET
-        status = 'completed',
+        status = CASE
+          WHEN status = 'completed' THEN status
+          ELSE 'rating_pending'
+        END,
         first_response_at = COALESCE(first_response_at, ?),
         delivery_message_pin_id = COALESCE(?, delivery_message_pin_id),
         delivered_at = ?,
@@ -870,10 +1011,81 @@ export class ServiceOrderStore {
     return this.getOrderById(orderId);
   }
 
+  markRatingRequested(orderId: string, requestedAt: number): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'failed' || order.status === 'refund_pending' || order.status === 'refunded' || order.status === 'completed') {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = 'rating_pending',
+        rating_requested_at = COALESCE(rating_requested_at, ?),
+        rating_deadline_at = COALESCE(rating_deadline_at, ?),
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      requestedAt,
+      requestedAt + SERVICE_ORDER_RATING_TIMEOUT_MS,
+      requestedAt,
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
+  markOrderEnded(
+    orderId: string,
+    input: {
+      reason?: string | null;
+      orderEndMessagePinId?: string | null;
+      endedAt: number;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+    if (order.status === 'refunded') {
+      return order;
+    }
+
+    const reason = String(input.reason || '').trim() || null;
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        status = CASE
+          WHEN status IN ('failed', 'refund_pending') THEN status
+          ELSE 'completed'
+        END,
+        order_end_message_pin_id = COALESCE(?, order_end_message_pin_id),
+        order_ended_at = COALESCE(order_ended_at, ?),
+        order_end_reason = COALESCE(order_end_reason, ?),
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      input.orderEndMessagePinId ?? null,
+      input.endedAt,
+      reason,
+      input.endedAt,
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
   markFailed(orderId: string, failureReason: string, failedAt: number): ServiceOrderRecord | null {
     const order = this.getOrderById(orderId);
     if (!order) return null;
-    if (order.status === 'refund_pending' || order.status === 'refunded') {
+    if (
+      order.status === 'completed'
+      || order.status === 'refund_pending'
+      || order.status === 'refunded'
+      || order.deliveryMessagePinId
+      || order.deliveredAt
+      || order.orderEndedAt
+      || order.orderEndMessagePinId
+    ) {
       return order;
     }
 
@@ -897,7 +1109,14 @@ export class ServiceOrderStore {
   ): ServiceOrderRecord | null {
     const order = this.getOrderById(orderId);
     if (!order) return null;
-    if (order.status === 'refunded') {
+    if (
+      order.status === 'completed'
+      || order.status === 'refunded'
+      || order.deliveryMessagePinId
+      || order.deliveredAt
+      || order.orderEndedAt
+      || order.orderEndMessagePinId
+    ) {
       return order;
     }
 

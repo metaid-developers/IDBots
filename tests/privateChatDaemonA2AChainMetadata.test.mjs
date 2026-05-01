@@ -39,6 +39,30 @@ test('sendSellerOrderAcknowledgement returns the simplemsg chain metadata from t
   assert.equal(lifecycleCalls[0].sentAt, 1234);
 });
 
+test('sendSellerOrderAcknowledgement wraps transmitted acknowledgements in ORDER_STATUS when order txid is known', async () => {
+  const orderTxid = 'a'.repeat(64);
+  const messageTxid = 'b'.repeat(64);
+  const result = await sendSellerOrderAcknowledgement({
+    metabot: { id: 7, name: 'SellerBot', llm_id: null },
+    peerGlobalMetaId: 'idq1peer',
+    peerName: 'AI_Sunny',
+    plaintext: '[ORDER] 请生成图片',
+    skillName: 'seedream',
+    paymentTxid: 'e'.repeat(64),
+    orderTxid,
+    performChat: async () => ' 我已收到你的图片订单，马上开始处理。 ',
+    sendEncryptedMsg: async (text) => {
+      assert.equal(text, `[ORDER_STATUS:${orderTxid}] 我已收到你的图片订单，马上开始处理。`);
+      return {
+        pinId: `${messageTxid}i0`,
+        txids: [messageTxid],
+      };
+    },
+  });
+
+  assert.equal(result.text, `[ORDER_STATUS:${orderTxid}] 我已收到你的图片订单，马上开始处理。`);
+});
+
 test('buildPrivateChatA2AChainMetadata derives txid from pin id when txids are unavailable', () => {
   const txid = 'f'.repeat(64);
   assert.deepEqual(

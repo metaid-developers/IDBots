@@ -42,9 +42,14 @@ import {
 } from './serviceOrderLifecycleService';
 import {
   buildDeliveryMessage,
+  buildOrderEndMessage,
+  buildOrderStatusMessage,
   buildCoworkDeliveryResultMessage,
   cleanServiceResultText,
   parseDeliveryMessage,
+  parseNeedsRatingMessage,
+  parseOrderEndMessage,
+  parseOrderStatusMessage,
 } from './serviceOrderProtocols.js';
 import { createPinWithMvcSubsidyRetry, isMvcInsufficientBalanceError } from './privateChatSubsidizedPin';
 import {
@@ -62,11 +67,20 @@ import {
   buildA2AChainMetadata,
   type A2AChainMetadata,
 } from './a2aChainMetadata';
+import {
+  buildCanonicalPrivateConversationExternalConversationId,
+  buildOrderProtocolDisplayMetadata,
+  classifySimplemsgContent,
+  type SimplemsgProtocolTag,
+} from './simplemsgPeerConversation';
 
 const POLL_INTERVAL_MS = 5_000;
 const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
 const PRIVATE_CHAT_MAX_INCOMING_TURNS = 50;
 const PRIVATE_CHAT_CONTEXT_MAX_MESSAGES = 80;
+const RATING_PROMPT_ORIGINAL_REQUEST_MAX_CHARS = 1200;
+const RATING_PROMPT_SERVICE_RESULT_MAX_CHARS = 6000;
+const RATING_PROMPT_EXCERPT_TAIL_CHARS = 1200;
 
 export interface PrivateChatMessageRow {
   id: number;
@@ -218,6 +232,50 @@ type ResolveLocalServiceOutputTypeFn = (input: {
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
+}
+
+function normalizeOrderMessageTxid(value: unknown): string {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/i.test(normalized) ? normalized : '';
+}
+
+function resolveOrderProtocolTxid(plaintext: string): string {
+  return normalizeOrderMessageTxid(
+    parseOrderStatusMessage(plaintext)?.orderTxid
+      || parseDeliveryMessage(plaintext)?.orderTxid
+      || parseNeedsRatingMessage(plaintext)?.orderTxid
+      || parseOrderEndMessage(plaintext)?.orderTxid
+  );
+}
+
+function buildOrderA2ADisplayMetadata(input: {
+  peerGlobalMetaId: string;
+  direction: 'incoming' | 'outgoing';
+  content: string;
+  fallbackTag?: SimplemsgProtocolTag;
+  orderTxid?: string | null;
+  orderRole?: 'buyer' | 'seller' | string | null;
+  paymentTxid?: string | null;
+  orderMappingExternalConversationId?: string | null;
+  extra?: CoworkMessageMetadata | null;
+}): CoworkMessageMetadata {
+  const classification = classifySimplemsgContent(input.content);
+  const tag = classification.kind === 'order_protocol'
+    ? classification.tag
+    : input.fallbackTag ?? 'ORDER_STATUS';
+  const orderTxid = input.orderTxid
+    || (classification.kind === 'order_protocol' ? classification.orderTxid : null)
+    || null;
+  return buildOrderProtocolDisplayMetadata({
+    peerGlobalMetaId: input.peerGlobalMetaId,
+    direction: input.direction,
+    tag,
+    orderTxid,
+    orderRole: input.orderRole,
+    paymentTxid: input.paymentTxid,
+    orderMappingExternalConversationId: input.orderMappingExternalConversationId,
+    extra: input.extra,
+  }) as CoworkMessageMetadata;
 }
 
 function getCurrencyFromChain(chain?: string): string {
@@ -399,6 +457,7 @@ export async function waitBeforePrivateChatReply(
 }
 
 function isPrivateA2AMessage(message: CoworkMessage): boolean {
+  if (message.metadata?.orderExecutionTrace === true) return false;
   return message.metadata?.sourceChannel === 'metaweb_private'
     && (message.type === 'user' || message.type === 'assistant');
 }
@@ -579,6 +638,7 @@ export async function sendSellerOrderAcknowledgement(params: {
   plaintext: string;
   skillName?: string | null;
   paymentTxid?: string | null;
+  orderTxid?: string | null;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
   sendEncryptedMsg: (text: string) => Promise<{ pinId?: string | null; txids?: string[] | null }>;
   serviceOrderLifecycle?: Pick<ServiceOrderLifecycleService, 'markSellerOrderFirstResponseSent'> | null;
@@ -607,7 +667,10 @@ export async function sendSellerOrderAcknowledgement(params: {
     );
   }
 
-  const result = await params.sendEncryptedMsg(acknowledgementText);
+  const transmittedText = params.orderTxid
+    ? buildOrderStatusMessage(params.orderTxid, acknowledgementText)
+    : acknowledgementText;
+  const result = await params.sendEncryptedMsg(transmittedText);
   const sentAt = params.now ? params.now() : Date.now();
   if (params.serviceOrderLifecycle && params.paymentTxid) {
     params.serviceOrderLifecycle.markSellerOrderFirstResponseSent({
@@ -620,7 +683,7 @@ export async function sendSellerOrderAcknowledgement(params: {
   params.emitLog?.(`[Order] Acknowledgement sent to ${params.peerGlobalMetaId.slice(0, 12)}…`);
 
   return {
-    text: acknowledgementText,
+    text: transmittedText,
     pinId: result.pinId ?? null,
     txids: Array.isArray(result.txids) ? result.txids : [],
   };
@@ -695,7 +758,7 @@ function normalizePrivateConversationPeerId(row: PrivateChatMessageRow): string 
 }
 
 function buildPrivateConversationExternalConversationId(row: PrivateChatMessageRow): string {
-  return `metaweb-private:${normalizePrivateConversationPeerId(row)}`;
+  return buildCanonicalPrivateConversationExternalConversationId(normalizePrivateConversationPeerId(row));
 }
 
 function normalizeIdentity(value: unknown): string {
@@ -951,8 +1014,20 @@ async function resolvePrivateConversationSession(
   if (existing) {
     const session = coworkStore.getSession(existing.coworkSessionId);
     if (session) {
-      coworkStore.touchConversationMapping('metaweb_private', externalConversationId, metabotId);
-      return { sessionId: existing.coworkSessionId, externalConversationId };
+      const repaired = coworkStore.ensureCanonicalPeerSessionShape({
+        sessionId: existing.coworkSessionId,
+        metabotId,
+        peerGlobalMetaId: peerId,
+        peerName: (row.from_name as string | null) ?? null,
+        peerAvatar: (row.from_avatar as string | null) ?? null,
+      });
+      if (repaired) {
+        coworkStore.touchConversationMapping('metaweb_private', externalConversationId, metabotId);
+        return { sessionId: existing.coworkSessionId, externalConversationId };
+      }
+      coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, metabotId);
+    } else {
+      coworkStore.deleteConversationMapping('metaweb_private', externalConversationId, metabotId);
     }
   }
 
@@ -1026,6 +1101,68 @@ export function appendPrivateChatA2AMessage(params: {
   }
 
   return message;
+}
+
+export async function handleActiveOrderOrdinaryPrivateChatSuppression(params: {
+  db: Database;
+  saveDb: SaveDbFn;
+  coworkStore: CoworkStore;
+  metabotId: number;
+  row: PrivateChatMessageRow;
+  plaintext: string;
+  fromGlobalMetaId?: string | null;
+  hasActiveOrderForPrivateChatSuppression?: (
+    localMetabotId: number,
+    counterpartyGlobalMetaId: string
+  ) => boolean;
+  emitLog: (msg: string) => void;
+  emitToRenderer?: RendererEmitter;
+}): Promise<{ suppressed: boolean; message: CoworkMessage | null }> {
+  if (classifySimplemsgContent(params.plaintext).kind !== 'private_chat') {
+    return { suppressed: false, message: null };
+  }
+
+  const peerGlobalMetaId = normalizeIdentity(params.fromGlobalMetaId)
+    || normalizePrivateConversationPeerId(params.row);
+  if (!peerGlobalMetaId || !params.hasActiveOrderForPrivateChatSuppression) {
+    return { suppressed: false, message: null };
+  }
+
+  if (!params.hasActiveOrderForPrivateChatSuppression(params.metabotId, peerGlobalMetaId)) {
+    return { suppressed: false, message: null };
+  }
+
+  const { sessionId, externalConversationId } = await resolvePrivateConversationSession(
+    params.coworkStore,
+    params.metabotId,
+    params.row,
+    params.plaintext,
+  );
+  const message = appendPrivateChatA2AMessage({
+    coworkStore: params.coworkStore,
+    sessionId,
+    externalConversationId,
+    type: 'user',
+    content: params.plaintext,
+    senderGlobalMetaId: peerGlobalMetaId,
+    senderName: (params.row.from_name as string | null) ?? null,
+    senderAvatar: (params.row.from_avatar as string | null) ?? null,
+    extraMetadata: {
+      simplemsgKind: 'private_chat',
+      activeOrderDisplayOnly: true,
+      ...buildPrivateChatA2AChainMetadata({
+        txId: params.row.tx_id,
+        pinId: params.row.pin_id,
+      }),
+    },
+    emitToRenderer: params.emitToRenderer,
+  });
+
+  params.emitLog(
+    `[PrivateChat] Active service order with ${peerGlobalMetaId.slice(0, 12)}…, display-only ordinary private chat.`
+  );
+  markProcessed(params.db, params.row.id, params.saveDb);
+  return { suppressed: true, message };
 }
 
 export function endPrivateChatA2AConversation(params: {
@@ -1141,6 +1278,7 @@ interface RatingFlowParams {
   sharedSecretForReply: string;
   createPin: (metabotStore: MetabotStore, metabot_id: number, payload: MetaidDataPayload) => Promise<{ txids: string[]; pinId?: string }>;
   performChat: (systemPrompt: string, userMessage: string, llmId?: string | null) => Promise<string>;
+  serviceOrderLifecycle?: ServiceOrderLifecycleService | null;
   emitLog: (msg: string) => void;
   emitToRenderer?: (channel: string, data: unknown) => void;
 }
@@ -1175,13 +1313,161 @@ export function buildBuyerRatingSystemPrompt(input: {
   return [
     input.personaLines,
     'You are the buyer who paid for this service. Write a genuine rating and farewell message in your own voice as the paying client.',
-    `Your original request was: "${input.originalRequest.slice(0, 300)}"`,
-    `The service result delivered: "${input.serviceResult.slice(0, 500)}"`,
+    `Your original request was: "${formatRatingPromptText(input.originalRequest, RATING_PROMPT_ORIGINAL_REQUEST_MAX_CHARS)}"`,
+    `The service result delivered: "${formatRatingPromptText(input.serviceResult, RATING_PROMPT_SERVICE_RESULT_MAX_CHARS)}"`,
     mediaAcceptanceRules,
     'You MUST include a numeric score from 1 to 5 (5 is best). Format it clearly, e.g. "评分：4分" or "I give this 4 out of 5".',
     'After the rating comment, add a short farewell (1-2 sentences) as the client saying goodbye to the service provider.',
     'Your total message should be 10-300 characters.',
   ].filter(Boolean).join('\n');
+}
+
+function formatRatingPromptText(value: string, maxChars: number): string {
+  const text = String(value || '').trim();
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  const excerptNotice = [
+    '',
+    '[System excerpt note: middle content omitted only to keep the prompt short.',
+    'Do not treat this prompt-side omission as missing or incomplete delivery.]',
+    '',
+  ].join('\n');
+  const tailLength = Math.min(RATING_PROMPT_EXCERPT_TAIL_CHARS, Math.floor(maxChars / 3));
+  const headLength = Math.max(0, maxChars - excerptNotice.length - tailLength);
+  return [
+    text.slice(0, headLength).trimEnd(),
+    excerptNotice.trim(),
+    text.slice(-tailLength).trimStart(),
+  ].filter(Boolean).join('\n\n');
+}
+
+function getMessageMetadataRecord(message: CoworkMessage): Record<string, unknown> {
+  return message.metadata && typeof message.metadata === 'object'
+    ? message.metadata as Record<string, unknown>
+    : {};
+}
+
+function getMessageOrderTxid(message: CoworkMessage): string {
+  const metadataTxid = normalizeOrderMessageTxid(getMessageMetadataRecord(message).orderTxid);
+  if (metadataTxid) return metadataTxid;
+  return resolveOrderProtocolTxid(String(message.content || ''));
+}
+
+function messageMatchesOrderTxid(message: CoworkMessage, orderTxid: string): boolean {
+  const normalizedOrderTxid = normalizeOrderMessageTxid(orderTxid);
+  return Boolean(normalizedOrderTxid && getMessageOrderTxid(message) === normalizedOrderTxid);
+}
+
+function findOrderRequestMessage(messages: CoworkMessage[], orderTxid?: string | null): CoworkMessage | null {
+  const normalizedOrderTxid = normalizeOrderMessageTxid(orderTxid);
+  if (normalizedOrderTxid) {
+    return messages.find((message) => (
+      typeof message.content === 'string'
+      && isOrderMessage(message.content)
+      && messageMatchesOrderTxid(message, normalizedOrderTxid)
+    )) ?? null;
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const metadata = getMessageMetadataRecord(message);
+    if (
+      message.type === 'user'
+      && metadata.direction === 'outgoing'
+      && typeof message.content === 'string'
+      && isOrderMessage(message.content)
+    ) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function findDeliveryMessageForRating(messages: CoworkMessage[], orderTxid?: string | null): CoworkMessage | null {
+  const normalizedOrderTxid = normalizeOrderMessageTxid(orderTxid);
+  if (normalizedOrderTxid) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (typeof message.content !== 'string') continue;
+      if (!parseDeliveryMessage(message.content)) continue;
+      if (messageMatchesOrderTxid(message, normalizedOrderTxid)) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const metadata = getMessageMetadataRecord(message);
+    if (
+      message.type === 'assistant'
+      && metadata.direction === 'incoming'
+      && typeof message.content === 'string'
+      && parseDeliveryMessage(message.content)
+    ) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function extractRatingDeliveryResult(message: CoworkMessage | null): string {
+  const content = String(message?.content || '').trim();
+  if (!content) return '';
+  const parsedDelivery = parseDeliveryMessage(content);
+  if (parsedDelivery && typeof parsedDelivery.result === 'string') {
+    return parsedDelivery.result;
+  }
+  return cleanServiceResultText(content) || content;
+}
+
+function findFallbackIncomingServiceResult(messages: CoworkMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const metadata = getMessageMetadataRecord(message);
+    const content = String(message.content || '').trim();
+    if (message.type !== 'assistant' || metadata.direction !== 'incoming' || !content) continue;
+    if (parseNeedsRatingMessage(content) || parseOrderEndMessage(content) || parseOrderStatusMessage(content)) continue;
+    const parsedDelivery = parseDeliveryMessage(content);
+    if (parsedDelivery && typeof parsedDelivery.result === 'string') {
+      return parsedDelivery.result;
+    }
+    return cleanServiceResultText(content) || content;
+  }
+  return '';
+}
+
+function getOrderMessageContentForTxid(messages: CoworkMessage[], orderTxid?: string | null): string {
+  return String(findOrderRequestMessage(messages, orderTxid)?.content || '').trim();
+}
+
+export function resolveBuyerRatingContext(input: {
+  messages: CoworkMessage[];
+  orderTxid?: string | null;
+  fallbackOriginalRequest?: string | null;
+  fallbackServiceResult?: string | null;
+}): { originalRequest: string; serviceResult: string } {
+  const messages = Array.isArray(input.messages) ? input.messages : [];
+  const orderPayload = getOrderMessageContentForTxid(messages, input.orderTxid);
+  const originalRequest = (
+    extractOrderRequestText(orderPayload)
+    || orderPayload
+    || String(input.fallbackOriginalRequest || '').trim()
+  ).trim();
+  const scopedDeliveryMessage = findDeliveryMessageForRating(messages, input.orderTxid);
+  const hasScopedOrderTxid = Boolean(normalizeOrderMessageTxid(input.orderTxid));
+  const serviceResult = (
+    extractRatingDeliveryResult(scopedDeliveryMessage)
+    || String(input.fallbackServiceResult || '').trim()
+    || (hasScopedOrderTxid ? '' : findFallbackIncomingServiceResult(messages))
+  ).trim();
+  return {
+    originalRequest,
+    serviceResult,
+  };
 }
 
 export function isOrderDeliveryFailureNotice(plaintext: string): boolean {
@@ -1197,7 +1483,7 @@ export function isOrderDeliveryFailureNotice(plaintext: string): boolean {
 
 async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const { metabot, metabotStore, coworkStore, buyerOrderMapping, sellerGlobalMetaId,
-    sharedSecretForReply, createPin, performChat, emitLog, emitToRenderer } = params;
+    sharedSecretForReply, createPin, performChat, serviceOrderLifecycle, emitLog, emitToRenderer } = params;
 
   // Parse order metadata stored when buyer sent the order
   const orderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
@@ -1207,6 +1493,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const serviceSkill = typeof orderMeta.serviceSkill === 'string' ? orderMeta.serviceSkill : '';
   const serverBotGlobalMetaId = typeof orderMeta.serverBotGlobalMetaId === 'string' ? orderMeta.serverBotGlobalMetaId : sellerGlobalMetaId;
   const servicePaidTx = typeof orderMeta.servicePaidTx === 'string' ? orderMeta.servicePaidTx : '';
+  const orderTxid = typeof orderMeta.orderTxid === 'string' ? orderMeta.orderTxid : '';
   const serviceOutputType = typeof orderMeta.serviceOutputType === 'string'
     ? orderMeta.serviceOutputType
     : '';
@@ -1214,25 +1501,16 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   // Retrieve session messages to find original request and service result
   const session = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
   const messages = session?.messages ?? [];
-
-  // A's original outgoing request (first outgoing user message)
-  const originalRequest = messages.find(
-    (m) => m.type === 'user' && (m.metadata as Record<string, unknown>)?.direction === 'outgoing'
-  )?.content ?? '';
-
-  // B's service result: last incoming assistant message before the [NeedsRating] message
-  // (the [NeedsRating] message itself is the last incoming, so we want the one before it)
-  const incomingAssistant = messages.filter(
-    (m) => m.type === 'assistant' && (m.metadata as Record<string, unknown>)?.direction === 'incoming'
-  );
-  const serviceResultCandidate = incomingAssistant.length >= 2
-    ? incomingAssistant[incomingAssistant.length - 2].content
-    : incomingAssistant[incomingAssistant.length - 1]?.content ?? '';
-  const parsedDelivery = parseDeliveryMessage(serviceResultCandidate);
-  const serviceResult =
-    parsedDelivery && typeof parsedDelivery.result === 'string'
-      ? parsedDelivery.result
-      : serviceResultCandidate;
+  const ratingContext = resolveBuyerRatingContext({
+    messages,
+    orderTxid,
+  });
+  const originalRequest = ratingContext.originalRequest;
+  const serviceResult = ratingContext.serviceResult;
+  if (orderTxid && (!originalRequest || !serviceResult)) {
+    emitLog(`[Rating] Missing scoped order context for order ${orderTxid.slice(0, 12)}…, skipping auto-rating to avoid cross-order history leakage.`);
+    return;
+  }
 
   // Build A's persona
   const buyerMetabot = metabotStore.getMetabotById(metabot.id);
@@ -1293,7 +1571,10 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
 
   // Build combined message: rating text + on-chain pin reference
   const pinLine = ratingPinId ? `\n\n我的评分已记录在链上（pin ID: ${ratingPinId}）。` : '';
-  const combinedMessage = `${ratingText.trim()}${pinLine}`;
+  const combinedMessageBody = `${ratingText.trim()}${pinLine}`;
+  const combinedMessage = orderTxid
+    ? buildOrderEndMessage(orderTxid, 'rated', combinedMessageBody)
+    : combinedMessageBody;
 
   // Send combined message to B via simplemsg
   let combinedMessageMetadata: A2AChainMetadata = {};
@@ -1313,6 +1594,16 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
       pinId: combinedMessageResult.pinId,
     });
     emitLog(`[Rating] Combined rating+farewell sent to ${sellerGlobalMetaId.slice(0, 12)}…`);
+    if (serviceOrderLifecycle && servicePaidTx) {
+      serviceOrderLifecycle.markOrderEnded('buyer', {
+        localMetabotId: metabot.id,
+        counterpartyGlobalMetaId: sellerGlobalMetaId,
+        paymentTxid: servicePaidTx,
+        reason: 'rated',
+        orderEndMessagePinId: combinedMessageResult.pinId ?? null,
+        endedAt: Date.now(),
+      });
+    }
   } catch (e) {
     emitLog(`[Rating] Combined message send failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -1321,13 +1612,20 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   const combinedMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
     type: 'user',
     content: combinedMessage,
-    metadata: {
-      sourceChannel: 'metaweb_order',
-      externalConversationId: buyerOrderMapping.externalConversationId,
+    metadata: buildOrderA2ADisplayMetadata({
+      peerGlobalMetaId: sellerGlobalMetaId,
       direction: 'outgoing',
-      suppressRunningStatus: true,
-      ...combinedMessageMetadata,
-    },
+      content: combinedMessage,
+      fallbackTag: 'ORDER_END',
+      orderTxid,
+      orderRole: 'buyer',
+      paymentTxid: servicePaidTx,
+      orderMappingExternalConversationId: buyerOrderMapping.externalConversationId,
+      extra: {
+        suppressRunningStatus: true,
+        ...combinedMessageMetadata,
+      },
+    }),
   });
   if (emitToRenderer) {
     emitToRenderer('cowork:stream:message', { sessionId: buyerOrderMapping.coworkSessionId, message: combinedMsg });
@@ -1522,6 +1820,7 @@ async function processOne(
       });
       const isFreeOrder = payment.reason === 'free_order_no_payment_required';
       const orderTrackingId = txid || (isFreeOrder ? orderReferenceId : null);
+      const orderMessageTxid = normalizeOrderMessageTxid(row.tx_id);
       const orderPeerGlobalMetaId = fromGlobalMetaId || normalizePrivateConversationPeerId(row);
       if (!payment.paid) {
         emitLog(`[Order] Payment not confirmed for txid=${txid || orderReferenceId || 'n/a'} (reason=${payment.reason})`);
@@ -1559,6 +1858,7 @@ async function processOne(
             mrc20Id: payment.mrc20Id,
             paymentCommitTxid: payment.paymentCommitTxid,
             orderMessagePinId: row.pin_id,
+            orderMessageTxid,
           });
         } catch (error) {
           emitLog(`[Order] Failed to create seller order row: ${error instanceof Error ? error.message : String(error)}`);
@@ -1585,6 +1885,7 @@ async function processOne(
             serviceOutputType,
             serverBotGlobalMetaId: localGlobalMetaId || null,
             servicePaidTx: orderTrackingId,
+            orderTxid: orderMessageTxid,
             orderMessagePinId: row.pin_id,
             orderMessageTxid: row.tx_id,
             orderPayload: plaintext,
@@ -1636,6 +1937,7 @@ async function processOne(
             plaintext,
             skillName: serviceName,
             paymentTxid: orderTrackingId,
+            orderTxid: orderMessageTxid,
             performChat,
             sendEncryptedMsg,
             serviceOrderLifecycle,
@@ -1680,13 +1982,14 @@ async function processOne(
           metabotId: metabot.id,
           source,
           externalConversationId,
-          existingSessionId: sellerOrderSessionId,
+          displaySessionId: sellerOrderSessionId,
           prompt: prompts.userPrompt,
           systemPrompt: prompts.systemPrompt,
           peerGlobalMetaId: fromGlobalMetaId || null,
           peerName: (row.from_name as string | null) ?? null,
           peerAvatar: (row.from_avatar as string | null) ?? null,
           expectedOutputType: serviceOutputType,
+          orderTxid: orderMessageTxid,
           processingNotice,
           sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
             ? sendEncryptedMsg
@@ -1694,25 +1997,35 @@ async function processOne(
         });
       } catch (error) {
         const failureNotice = buildOrderExecutionFailureNotice(error);
+        const transmittedFailureNotice = orderMessageTxid
+          ? buildOrderStatusMessage(orderMessageTxid, failureNotice)
+          : failureNotice;
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         if (source === 'metaweb_private' && fromGlobalMetaId) {
           try {
-            const failureResult = await sendEncryptedMsg(failureNotice);
+            const failureResult = await sendEncryptedMsg(transmittedFailureNotice);
             emitLog(`[Order] Failure notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
             if (sellerOrderSessionId) {
               const failureMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
-                content: failureNotice,
-                metadata: {
-                  sourceChannel: 'metaweb_order',
-                  externalConversationId,
+                content: transmittedFailureNotice,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
                   direction: 'outgoing',
-                  orderExecutionFailed: true,
-                  ...buildPrivateChatA2AChainMetadata({
-                    txids: failureResult.txids,
-                    pinId: failureResult.pinId,
-                  }),
-                },
+                  content: transmittedFailureNotice,
+                  fallbackTag: 'ORDER_STATUS',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  paymentTxid: orderTrackingId,
+                  orderMappingExternalConversationId: externalConversationId,
+                  extra: {
+                    orderExecutionFailed: true,
+                    ...buildPrivateChatA2AChainMetadata({
+                      txids: failureResult.txids,
+                      pinId: failureResult.pinId,
+                    }),
+                  },
+                }),
               });
               if (emitToRenderer) {
                 emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: failureMsg });
@@ -1733,25 +2046,36 @@ async function processOne(
 
       const trimmedReply = (orderResult.serviceReply || '').trim();
       const trimmedInvite = (orderResult.ratingInvite || '').trim();
+      let deliveryBroadcastFailed = false;
       if (trimmedReply && source === 'metaweb_private') {
         if (orderResult.isDeliverable === false) {
           try {
-            const fallbackResult = await sendEncryptedMsg(trimmedReply);
+            const transmittedFallbackReply = orderMessageTxid
+              ? buildOrderStatusMessage(orderMessageTxid, trimmedReply)
+              : trimmedReply;
+            const fallbackResult = await sendEncryptedMsg(transmittedFallbackReply);
             emitLog(`[Order] Timeout fallback notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
             if (sellerOrderSessionId) {
               const fallbackMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
-                content: trimmedReply,
-                metadata: {
-                  sourceChannel: 'metaweb_order',
-                  externalConversationId,
+                content: transmittedFallbackReply,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
                   direction: 'outgoing',
-                  orderTimeoutFallback: true,
-                  ...buildPrivateChatA2AChainMetadata({
-                    txids: fallbackResult.txids,
-                    pinId: fallbackResult.pinId,
-                  }),
-                },
+                  content: transmittedFallbackReply,
+                  fallbackTag: 'ORDER_STATUS',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  paymentTxid: orderTrackingId,
+                  orderMappingExternalConversationId: externalConversationId,
+                  extra: {
+                    orderTimeoutFallback: true,
+                    ...buildPrivateChatA2AChainMetadata({
+                      txids: fallbackResult.txids,
+                      pinId: fallbackResult.pinId,
+                    }),
+                  },
+                }),
               });
               if (emitToRenderer) {
                 emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: fallbackMsg });
@@ -1763,15 +2087,15 @@ async function processOne(
         } else if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
           emitLog(`[Order] Delivery already sent for order ${orderTrackingId}, skipping duplicate send.`);
         } else {
+          const deliverySentAtSec = Math.floor(Date.now() / 1000);
+          const deliveryText = buildDeliveryMessage({
+            paymentTxid: orderTrackingId,
+            servicePinId: serviceId,
+            serviceName,
+            result: trimmedReply,
+            deliveredAt: deliverySentAtSec,
+          }, orderMessageTxid);
           try {
-            const deliverySentAtSec = Math.floor(Date.now() / 1000);
-            const deliveryText = buildDeliveryMessage({
-              paymentTxid: orderTrackingId,
-              servicePinId: serviceId,
-              serviceName,
-              result: trimmedReply,
-              deliveredAt: deliverySentAtSec,
-            });
             const deliveryResult = await sendEncryptedMsg(deliveryText);
             if (serviceOrderLifecycle && orderTrackingId) {
               serviceOrderLifecycle.markSellerOrderDelivered({
@@ -1789,17 +2113,23 @@ async function processOne(
               const deliveryMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
                 content: deliveryText,
-                metadata: {
-                  sourceChannel: 'metaweb_order',
-                  externalConversationId,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
                   direction: 'outgoing',
-                  orderDeliveryMessage: true,
-                  paymentTxid: orderTrackingId || undefined,
-                  ...buildPrivateChatA2AChainMetadata({
-                    txids: deliveryResult.txids,
-                    pinId: deliveryResult.pinId,
-                  }),
-                },
+                  content: deliveryText,
+                  fallbackTag: 'DELIVERY',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  paymentTxid: orderTrackingId,
+                  orderMappingExternalConversationId: externalConversationId,
+                  extra: {
+                    orderDeliveryMessage: true,
+                    ...buildPrivateChatA2AChainMetadata({
+                      txids: deliveryResult.txids,
+                      pinId: deliveryResult.pinId,
+                    }),
+                  },
+                }),
               });
               if (emitToRenderer) {
                 emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: deliveryMsg });
@@ -1807,16 +2137,61 @@ async function processOne(
             }
             emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
           } catch (error) {
+            deliveryBroadcastFailed = true;
             emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
+            if (sellerOrderSessionId) {
+              const failureReason = error instanceof Error ? error.message : String(error);
+              const localFailureText = orderMessageTxid
+                ? buildOrderStatusMessage(orderMessageTxid, [
+                  '服务结果已生成，但链上交付消息发送失败；以下结果仅保留在本地会话中。',
+                  failureReason,
+                  '',
+                  deliveryText,
+                ].join('\n'))
+                : [
+                  '服务结果已生成，但链上交付消息发送失败；以下结果仅保留在本地会话中。',
+                  failureReason,
+                  '',
+                  deliveryText,
+                ].join('\n');
+              const localFailureMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: localFailureText,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
+                  direction: 'outgoing',
+                  content: localFailureText,
+                  fallbackTag: 'ORDER_STATUS',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  paymentTxid: orderTrackingId,
+                  orderMappingExternalConversationId: externalConversationId,
+                  extra: {
+                    excludeFromSandboxHistory: true,
+                    orderDeliveryBroadcastFailed: true,
+                  },
+                }),
+              });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: localFailureMsg });
+              }
+            }
           }
         }
       }
-      if (trimmedInvite && source === 'metaweb_private') {
+      if (trimmedInvite && source === 'metaweb_private' && !deliveryBroadcastFailed) {
         if (orderDispatchKey && sentOrderRatingInviteKeys.has(orderDispatchKey)) {
           emitLog(`[Order] Rating invite already sent for order ${orderTrackingId}, skipping duplicate send.`);
         } else {
           try {
             const inviteResult = await sendEncryptedMsg(trimmedInvite);
+            if (serviceOrderLifecycle && orderTrackingId) {
+              serviceOrderLifecycle.markOrderRatingRequested('seller', {
+                localMetabotId: metabot.id,
+                counterpartyGlobalMetaId: orderPeerGlobalMetaId,
+                paymentTxid: orderTrackingId,
+              });
+            }
             if (orderDispatchKey) {
               sentOrderRatingInviteKeys.add(orderDispatchKey);
             }
@@ -1826,15 +2201,20 @@ async function processOne(
               const inviteMsg = coworkStore.addMessage(sellerOrderSessionId, {
                 type: 'assistant',
                 content: trimmedInvite,
-                metadata: {
-                  sourceChannel: 'metaweb_order',
-                  externalConversationId,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
                   direction: 'outgoing',
-                  ...buildPrivateChatA2AChainMetadata({
+                  content: trimmedInvite,
+                  fallbackTag: 'NeedsRating',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  paymentTxid: orderTrackingId,
+                  orderMappingExternalConversationId: externalConversationId,
+                  extra: buildPrivateChatA2AChainMetadata({
                     txids: inviteResult.txids,
                     pinId: inviteResult.pinId,
                   }),
-                },
+                }),
               });
               if (emitToRenderer) {
                 emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: inviteMsg });
@@ -1853,15 +2233,26 @@ async function processOne(
       return;
     }
 
-    // Check if this is an order reply arriving on the buyer side.
-    // If we have a metaweb_order session where the sender is the peer (seller), add the
-    // message as an observer entry and skip LLM reply — the human just watches.
+    // Route explicit order protocol messages by the original [ORDER] simplemsg txid.
+    // Legacy delivery/rating messages without txid keep the old single-open-order fallback.
     if (fromGlobalMetaId) {
-      const buyerOrderMapping = coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId);
+      const delivery = parseDeliveryMessage(plaintext);
+      const isNeedsRating = isNeedsRatingMessage(plaintext);
+      const orderEnd = parseOrderEndMessage(plaintext);
+      const orderProtocolTxid = resolveOrderProtocolTxid(plaintext);
+      const buyerOrderMapping = orderProtocolTxid
+        ? coworkStore.findOrderSessionByOrderTxid(
+          metabot.id,
+          fromGlobalMetaId,
+          orderProtocolTxid,
+          orderEnd ? undefined : 'buyer'
+        )
+        : (delivery || isNeedsRating || orderEnd)
+          ? coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId)
+          : null;
       if (buyerOrderMapping) {
-        emitLog(`[PrivateChat] Order reply from seller ${fromGlobalMetaId.slice(0, 12)}…, attaching to buyer session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
+        emitLog(`[PrivateChat] Order protocol message from ${fromGlobalMetaId.slice(0, 12)}…, attaching to session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
         const buyerOrderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
-        const isNeedsRating = isNeedsRatingMessage(plaintext);
         if (isNeedsRating && buyerOrderMeta.needsRatingHandled === true) {
           emitLog(`[Rating] Duplicate [NeedsRating] detected for session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…, skipping.`);
           markProcessed(db, row.id, saveDb);
@@ -1871,24 +2262,33 @@ async function processOne(
           typeof buyerOrderMeta.servicePaidTx === 'string'
             ? buyerOrderMeta.servicePaidTx.trim()
             : '';
-        const delivery = parseDeliveryMessage(plaintext);
         const deliveryFailureNotice = isOrderDeliveryFailureNotice(plaintext);
+        const observerRole = String(buyerOrderMeta.role || '').trim();
+        const observerOrderTxid = typeof buyerOrderMeta.orderTxid === 'string'
+          ? buyerOrderMeta.orderTxid.trim()
+          : orderProtocolTxid;
         const replyMsg = coworkStore.addMessage(buyerOrderMapping.coworkSessionId, {
-          type: 'assistant',
+          type: observerRole === 'seller' ? 'user' : 'assistant',
           content: plaintext,
-          metadata: {
-            sourceChannel: 'metaweb_order',
-            externalConversationId: buyerOrderMapping.externalConversationId,
-            senderGlobalMetaId: fromGlobalMetaId,
-            senderName: (row.from_name as string | null) ?? undefined,
-            senderAvatar: (row.from_avatar as string | null) ?? undefined,
+          metadata: buildOrderA2ADisplayMetadata({
+            peerGlobalMetaId: fromGlobalMetaId,
             direction: 'incoming',
-            paymentTxid: paymentTxid || undefined,
-            ...buildPrivateChatA2AChainMetadata({
-              txId: row.tx_id,
-              pinId: row.pin_id,
-            }),
-          },
+            content: plaintext,
+            fallbackTag: deliveryFailureNotice ? 'ORDER_STATUS' : undefined,
+            orderTxid: observerOrderTxid,
+            orderRole: observerRole || 'buyer',
+            paymentTxid,
+            orderMappingExternalConversationId: buyerOrderMapping.externalConversationId,
+            extra: {
+              senderGlobalMetaId: fromGlobalMetaId,
+              senderName: (row.from_name as string | null) ?? undefined,
+              senderAvatar: (row.from_avatar as string | null) ?? undefined,
+              ...buildPrivateChatA2AChainMetadata({
+                txId: row.tx_id,
+                pinId: row.pin_id,
+              }),
+            },
+          }),
         });
         coworkStore.touchConversationMapping('metaweb_order', buyerOrderMapping.externalConversationId, metabot.id);
         if (emitToRenderer) {
@@ -1896,12 +2296,31 @@ async function processOne(
         }
 
         if (serviceOrderLifecycle && paymentTxid) {
-          if (delivery && typeof delivery.paymentTxid === 'string') {
+          if (orderEnd) {
+            serviceOrderLifecycle.markOrderEnded(observerRole === 'seller' ? 'seller' : 'buyer', {
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid,
+              reason: orderEnd.reason,
+              orderEndMessagePinId: row.pin_id,
+              endedAt: Date.now(),
+            });
+          } else if (isNeedsRating) {
+            serviceOrderLifecycle.markOrderRatingRequested('buyer', {
+              localMetabotId: metabot.id,
+              counterpartyGlobalMetaId: fromGlobalMetaId,
+              paymentTxid,
+              requestedAt: Date.now(),
+            });
+          } else if (delivery && (typeof delivery.paymentTxid === 'string' || paymentTxid)) {
+            const deliveryPaymentTxid = typeof delivery.paymentTxid === 'string' && delivery.paymentTxid.trim()
+              ? delivery.paymentTxid.trim()
+              : paymentTxid;
             const buyerOrderSession = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
-            const buyerOrderPayload = buyerOrderSession?.messages.find((message) => (
-              typeof message.content === 'string'
-              && isOrderMessage(message.content)
-            ))?.content ?? '';
+            const buyerOrderPayload = getOrderMessageContentForTxid(
+              buyerOrderSession?.messages ?? [],
+              observerOrderTxid || orderProtocolTxid,
+            );
             const expectedOutputType = resolveBuyerOrderOutputType({
               buyerOrderMeta,
               orderPayload: buyerOrderPayload,
@@ -1912,11 +2331,11 @@ async function processOne(
               const failedOrder = await serviceOrderLifecycle.markBuyerOrderFailedAndRequestRefund({
                 localMetabotId: metabot.id,
                 counterpartyGlobalMetaId: fromGlobalMetaId,
-                paymentTxid: delivery.paymentTxid,
+                paymentTxid: deliveryPaymentTxid,
                 failureReason: SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
                 failedAt: Date.now(),
               });
-              emitLog(`[Order] Buyer order ${delivery.paymentTxid.slice(0, 12)}… entered refund flow after missing ${normalizeServiceOutputType(expectedOutputType)} artifact.`);
+              emitLog(`[Order] Buyer order ${deliveryPaymentTxid.slice(0, 12)}… entered refund flow after missing ${normalizeServiceOutputType(expectedOutputType)} artifact.`);
               if (
                 failedOrder &&
                 failedOrder.coworkSessionId &&
@@ -1939,7 +2358,7 @@ async function processOne(
               const deliveredOrder = serviceOrderLifecycle.markBuyerOrderDelivered({
                 localMetabotId: metabot.id,
                 counterpartyGlobalMetaId: fromGlobalMetaId,
-                paymentTxid: delivery.paymentTxid,
+                paymentTxid: deliveryPaymentTxid,
                 deliveryMessagePinId: row.pin_id,
                 deliveredAt:
                   typeof delivery.deliveredAt === 'number'
@@ -2030,6 +2449,7 @@ async function processOne(
             sharedSecretForReply,
             createPin,
             performChat: performChatCompletionForOrchestrator,
+            serviceOrderLifecycle,
             emitLog,
             emitToRenderer,
           }).catch((e) => {
@@ -2041,6 +2461,24 @@ async function processOne(
         return;
       }
       emitLog(`[PrivateChat] No buyer order session found for peer ${fromGlobalMetaId.slice(0, 12)}…, treating as regular private chat.`);
+    }
+
+    const activeOrderSuppression = await handleActiveOrderOrdinaryPrivateChatSuppression({
+      db,
+      saveDb,
+      coworkStore,
+      metabotId: metabot.id,
+      row,
+      plaintext,
+      fromGlobalMetaId,
+      hasActiveOrderForPrivateChatSuppression: serviceOrderLifecycle
+        ? serviceOrderLifecycle.hasActiveOrderForPrivateChatSuppression.bind(serviceOrderLifecycle)
+        : undefined,
+      emitLog,
+      emitToRenderer,
+    });
+    if (activeOrderSuppression.suppressed) {
+      return;
     }
 
     const externalConversationId = buildPrivateConversationExternalConversationId(row);

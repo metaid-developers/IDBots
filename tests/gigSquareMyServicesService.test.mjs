@@ -158,6 +158,7 @@ test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
         servicePinId: 'svc-1',
         status: 'completed',
         paymentTxid: 'paid-1',
+        orderMessageTxid: 'd'.repeat(64),
         paymentAmount: '2.5',
         paymentCurrency: 'SPACE',
         counterpartyGlobalMetaid: 'buyer-1',
@@ -182,6 +183,7 @@ test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {
   assert.equal(result.items[0].rating?.comment, 'Excellent');
   assert.equal(result.items[0].rating?.pinId, `${'b'.repeat(64)}i0`);
   assert.equal(result.items[0].rating?.raterGlobalMetaId, 'buyer-1');
+  assert.equal(result.items[0].orderMessageTxid, 'd'.repeat(64));
 });
 
 test('buildMyServiceOrderDetails prefers rating with matching buyer identity over newer mismatched tx match', () => {

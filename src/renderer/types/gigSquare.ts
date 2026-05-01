@@ -99,6 +99,7 @@ export type GigSquareMyServiceOrderDetail = {
   id: string;
   status: string;
   paymentTxid: string | null;
+  orderMessageTxid: string | null;
   paymentAmount: string;
   paymentCurrency: string;
   servicePinId: string | null;
@@ -118,6 +119,7 @@ export type GigSquareRefundItem = {
   servicePinId: string | null;
   serviceName: string;
   paymentTxid: string;
+  orderMessageTxid: string | null;
   paymentAmount: string;
   paymentCurrency: string;
   status: 'refund_pending' | 'refunded';

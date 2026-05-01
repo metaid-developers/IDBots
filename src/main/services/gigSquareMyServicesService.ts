@@ -33,6 +33,7 @@ export interface GigSquareMyServiceOrderSource {
   id: string;
   status: string;
   paymentTxid?: string | null;
+  orderMessageTxid?: string | null;
   paymentAmount?: string | null;
   paymentCurrency?: string | null;
   servicePinId?: string | null;
@@ -93,6 +94,7 @@ export interface GigSquareMyServiceOrderDetail {
   id: string;
   status: string;
   paymentTxid: string | null;
+  orderMessageTxid: string | null;
   paymentAmount: string;
   paymentCurrency: string;
   servicePinId: string | null;
@@ -357,10 +359,12 @@ export function buildMyServiceOrderDetails(input: {
     })
     .map((order) => {
       const paymentTxid = toSafeString(order.paymentTxid).trim();
+      const orderMessageTxid = toSafeString(order.orderMessageTxid).trim();
       return {
         id: order.id,
         status: order.status,
         paymentTxid: paymentTxid || null,
+        orderMessageTxid: orderMessageTxid || null,
         paymentAmount: toSafeString(order.paymentAmount).trim(),
         paymentCurrency: toSafeString(order.paymentCurrency).trim(),
         servicePinId: toSafeString(order.servicePinId).trim() || null,

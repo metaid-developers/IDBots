@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import GigSquareMyServicesModal from '../src/renderer/components/gigSquare/GigSquareMyServicesModal';
+import GigSquareMyServicesModal, {
+  dispatchGigSquareMyServiceOrderSessionView,
+} from '../src/renderer/components/gigSquare/GigSquareMyServicesModal';
 
 test('empty-state modal renders go-publish CTA', () => {
   const markup = renderToStaticMarkup(
@@ -120,4 +122,38 @@ test('detail view renders completed\\/refunded order rows and a disabled session
   assert.match(markup, /评价 Txid|Rating Txid/);
   assert.match(markup, /复制到剪贴板/);
   assert.match(markup, /本机无对应会话记录/);
+});
+
+test('my-service order session helper dispatches focused order view and closes the modal', () => {
+  const events: Array<{ type: string; detail: unknown }> = [];
+  const originalWindow = globalThis.window;
+  const onCloseCalls: string[] = [];
+
+  globalThis.window = {
+    dispatchEvent(event: Event) {
+      const customEvent = event as CustomEvent;
+      events.push({
+        type: event.type,
+        detail: customEvent.detail,
+      });
+      return true;
+    },
+  } as Window & typeof globalThis;
+
+  try {
+    dispatchGigSquareMyServiceOrderSessionView(' session-42 ', ` ${'c'.repeat(64)} `, () => {
+      onCloseCalls.push('closed');
+    });
+  } finally {
+    globalThis.window = originalWindow;
+  }
+
+  assert.deepEqual(events, [{
+    type: 'cowork:viewSession',
+    detail: {
+      sessionId: 'session-42',
+      focusedOrderTxid: 'c'.repeat(64),
+    },
+  }]);
+  assert.deepEqual(onCloseCalls, ['closed']);
 });

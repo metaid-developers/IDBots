@@ -45,6 +45,7 @@ async function createLifecycleServiceForTest(options = {}) {
   const service = new ServiceOrderLifecycleService(store, {
     now: options.now || (() => 1_770_000_000_000),
     createRefundRequestPin: options.createRefundRequestPin,
+    createOrderEndPin: options.createOrderEndPin,
     resolveLocalMetabotGlobalMetaId: options.resolveLocalMetabotGlobalMetaId,
     onOrderEvent: options.onOrderEvent,
   });
@@ -257,7 +258,7 @@ test('markSellerOrderFirstResponseSent moves awaiting seller orders into in_prog
   assert.equal(updated?.firstResponseAt, now);
 });
 
-test('markBuyerOrderDelivered completes the buyer order and stores the delivery message pin', async () => {
+test('markBuyerOrderDelivered moves the buyer order into rating_pending and stores the delivery message pin', async () => {
   const now = 1_770_000_222_000;
   const { service } = await createLifecycleServiceForTest({
     now: () => now,
@@ -272,10 +273,59 @@ test('markBuyerOrderDelivered completes the buyer order and stores the delivery 
     deliveredAt: now,
   });
 
-  assert.equal(updated?.status, 'completed');
+  assert.equal(updated?.status, 'rating_pending');
   assert.equal(updated?.deliveryMessagePinId, 'delivery-pin-id');
   assert.equal(updated?.deliveredAt, now);
   assert.equal(updated?.firstResponseAt, now);
+});
+
+test('scanTimedOutOrders sends scoped seller ORDER_END after the rating deadline', async () => {
+  let currentNow = 1_770_000_000_000;
+  const orderTxid = 'c'.repeat(64);
+  const sentOrderEnds = [];
+  const events = [];
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createOrderEndPin: async (input) => {
+      sentOrderEnds.push(input);
+      return {
+        pinId: `${'d'.repeat(64)}i0`,
+        txids: ['d'.repeat(64)],
+      };
+    },
+    onOrderEvent: (event) => {
+      events.push(event);
+    },
+  });
+  const order = service.createSellerOrder(baseOrderInput({
+    orderMessagePinId: `${orderTxid}i0`,
+    orderMessageTxid: orderTxid,
+  }));
+  service.markSellerOrderDelivered({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    deliveryMessagePinId: 'delivery-pin-id',
+    deliveredAt: currentNow,
+  });
+  service.markOrderRatingRequested('seller', {
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    paymentTxid: order.paymentTxid,
+    requestedAt: currentNow,
+  });
+
+  currentNow += 15 * 60_000;
+  await service.scanTimedOutOrders();
+  assert.equal(sentOrderEnds.length, 1);
+  assert.match(sentOrderEnds[0].message, new RegExp(`^\\[ORDER_END:${orderTxid} rating_timeout\\]`));
+
+  const updated = store.getOrderById(order.id);
+  assert.equal(updated?.status, 'completed');
+  assert.equal(updated?.orderEndReason, 'rating_timeout');
+  assert.equal(updated?.orderEndMessagePinId, `${'d'.repeat(64)}i0`);
+  assert.equal(updated?.orderEndedAt, currentNow);
+  assert.deepEqual(events.map((event) => event.type), ['order_ended']);
 });
 
 test('scanTimedOutOrders marks first-response timeout orders failed and moves them into refund_pending on successful refund request broadcast', async () => {
@@ -426,6 +476,99 @@ test('markBuyerOrderFailedAndRequestRefund moves explicit delivery failures into
     seenEvents.sort(),
     ['refund_requested:buyer', 'refund_requested:seller']
   );
+});
+
+test('markBuyerOrderFailedAndRequestRefund does not reopen completed rated orders', async () => {
+  const now = 1_770_000_555_000;
+  let refundRequestCount = 0;
+  const seenEvents = [];
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+    createRefundRequestPin: async () => {
+      refundRequestCount += 1;
+      return { pinId: 'late-refund-request-pin-id' };
+    },
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}`);
+    },
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    coworkSessionId: 'buyer-session-id',
+    paymentTxid: '7'.repeat(64),
+  }));
+  service.createSellerOrder(baseOrderInput({
+    coworkSessionId: 'seller-session-id',
+    paymentTxid: buyerOrder.paymentTxid,
+  }));
+  service.markBuyerOrderDelivered({
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    deliveryMessagePinId: 'delivery-pin-id',
+    deliveredAt: now,
+  });
+  service.markOrderEnded('buyer', {
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    reason: 'rated',
+    orderEndMessagePinId: 'order-end-pin-id',
+    endedAt: now + 1,
+  });
+
+  const updated = await service.markBuyerOrderFailedAndRequestRefund({
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    failureReason: 'first_response_timeout',
+    failedAt: now + 2,
+  });
+
+  assert.equal(updated?.status, 'completed');
+  assert.equal(updated?.failureReason, null);
+  assert.equal(updated?.refundRequestPinId, null);
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'completed');
+  assert.equal(store.listOrdersByPaymentTxid(buyerOrder.paymentTxid).find((order) => order.role === 'seller')?.status, 'awaiting_first_response');
+  assert.equal(refundRequestCount, 0);
+  assert.deepEqual(seenEvents, []);
+});
+
+test('markBuyerOrderFailedAndRequestRefund still refunds undelivered rating_pending orders', async () => {
+  const now = 1_770_000_556_000;
+  let refundRequestInput = null;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+    createRefundRequestPin: async (input) => {
+      refundRequestInput = input;
+      return { pinId: 'undelivered-rating-refund-pin-id' };
+    },
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    coworkSessionId: 'buyer-session-id',
+    paymentTxid: '8'.repeat(64),
+  }));
+  service.markOrderRatingRequested('buyer', {
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    requestedAt: now,
+  });
+
+  const updated = await service.markBuyerOrderFailedAndRequestRefund({
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    paymentTxid: buyerOrder.paymentTxid,
+    failureReason: 'delivery_timeout',
+    failedAt: now + 1,
+  });
+
+  assert.equal(updated?.status, 'refund_pending');
+  assert.equal(updated?.failureReason, 'delivery_timeout');
+  assert.equal(updated?.refundRequestPinId, 'undelivered-rating-refund-pin-id');
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'refund_pending');
+  assert.equal(refundRequestInput?.payload.failureReason, 'delivery_timeout');
 });
 
 test('scanTimedOutOrders records retry metadata when refund request broadcast fails', async () => {

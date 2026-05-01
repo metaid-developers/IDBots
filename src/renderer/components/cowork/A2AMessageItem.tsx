@@ -24,7 +24,8 @@ const formatTime = (timestamp: number): string => {
 };
 
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
-const DELIVERY_PREFIX = '[DELIVERY]';
+const DELIVERY_TAG_RE = /^\[DELIVERY(?::[0-9a-fA-F]{64})?\]/;
+const ORDER_PROTOCOL_TAG_RE = /^\[(ORDER_STATUS|NeedsRating|ORDER_END)(?::[0-9a-fA-F]{64})?(?:\s+[A-Za-z0-9_-]+)?\]\s*/i;
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const METAID_ACCELERATE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
 const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
@@ -69,11 +70,12 @@ type ParsedMetafile = {
 
 const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
   const trimmed = String(content || '').trim();
-  if (!trimmed.startsWith(DELIVERY_PREFIX)) {
+  const tagMatch = trimmed.match(DELIVERY_TAG_RE);
+  if (!tagMatch) {
     return null;
   }
 
-  const jsonPart = trimmed.slice(DELIVERY_PREFIX.length).trim();
+  const jsonPart = trimmed.slice(tagMatch[0].length).trim();
   if (!jsonPart) {
     return null;
   }
@@ -88,6 +90,10 @@ const parseDeliveryPayload = (content: string): DeliveryPayload | null => {
     return null;
   }
 };
+
+const stripOrderProtocolTag = (content: string): string => (
+  String(content || '').trim().replace(ORDER_PROTOCOL_TAG_RE, '').trim()
+);
 
 const normalizeMetafileCandidate = (candidate: string): string => {
   return String(candidate || '').trim().replace(/[),.;:!?]+$/, '');
@@ -624,7 +630,9 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     ? deliveryPayload.result.trim()
     : '';
   const shouldRenderDeliveryResult = deliveryResult.length > 0;
-  const contentToRender = shouldRenderDeliveryResult ? deliveryResult : message.content;
+  const contentToRender = shouldRenderDeliveryResult
+    ? deliveryResult
+    : stripOrderProtocolTag(message.content);
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = getA2AMarkdownClassName(isLocal);
   const txidPreview = formatA2ATxidPreview(txid);

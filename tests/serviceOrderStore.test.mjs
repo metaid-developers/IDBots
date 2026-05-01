@@ -86,6 +86,49 @@ test('store creates and reloads buyer orders without mutating existing cowork da
   assert.equal(afterMessageRow, beforeMessageRow);
 });
 
+test('store persists order simplemsg txid and closes only after explicit order end', async () => {
+  const { store } = await createServiceOrderStoreForTest();
+  const orderTxid = 'f'.repeat(64);
+  const deliveryTxid = 'e'.repeat(64);
+  const order = store.createOrder({
+    role: 'buyer',
+    localMetabotId: 1,
+    counterpartyGlobalMetaid: 'counterparty-global-metaid',
+    serviceName: 'service-name',
+    paymentTxid: 'a'.repeat(64),
+    paymentAmount: '1.23',
+    orderMessagePinId: `${orderTxid}i0`,
+    orderMessageTxid: orderTxid,
+  });
+
+  assert.equal(order.orderMessageTxid, orderTxid);
+  assert.equal(store.findOrderByOrderMessageTxid('buyer', 1, 'counterparty-global-metaid', orderTxid)?.id, order.id);
+
+  const deliveredAt = 1_770_000_000_000;
+  const delivered = store.markDelivered(order.id, {
+    deliveryMessagePinId: `${deliveryTxid}i0`,
+    deliveredAt,
+  });
+  assert.equal(delivered?.status, 'rating_pending');
+  assert.equal(delivered?.deliveredAt, deliveredAt);
+  assert.equal(delivered?.orderEndedAt, null);
+
+  const ratingRequested = store.markRatingRequested(order.id, deliveredAt + 10_000);
+  assert.equal(ratingRequested?.status, 'rating_pending');
+  assert.equal(ratingRequested?.ratingRequestedAt, deliveredAt + 10_000);
+  assert.equal(ratingRequested?.ratingDeadlineAt, deliveredAt + 10_000 + 15 * 60_000);
+
+  const ended = store.markOrderEnded(order.id, {
+    reason: 'rated',
+    orderEndMessagePinId: `${'b'.repeat(64)}i0`,
+    endedAt: deliveredAt + 20_000,
+  });
+  assert.equal(ended?.status, 'completed');
+  assert.equal(ended?.orderEndReason, 'rated');
+  assert.equal(ended?.orderEndMessagePinId, `${'b'.repeat(64)}i0`);
+  assert.equal(ended?.orderEndedAt, deliveredAt + 20_000);
+});
+
 test('store createOrder defaults to SLA deadlines based on current time', async () => {
   const { store } = await createServiceOrderStoreForTest();
   const now = Date.now();

@@ -147,6 +147,72 @@ test('A2A delivery result renders markdown content inside the bubble', () => {
   assert.doesNotMatch(markup, />## Done</);
 });
 
+test('A2A delivery result supports order-scoped DELIVERY tags', () => {
+  const txid = '2'.repeat(64);
+  const orderTxid = 'a'.repeat(64);
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-2-scoped',
+        type: 'user',
+        content: `[DELIVERY:${orderTxid}] {"result":"## Done\\n\\n- item one"}`,
+        timestamp: 1_744_444_445_000,
+        metadata: { direction: 'incoming', senderName: 'Peer Bot', txid },
+      }}
+      peerName="Peer Bot"
+    />
+  );
+
+  assert.match(markup, /<h2[^>]*>Done<\/h2>/);
+  assert.match(markup, /<li[^>]*>item one<\/li>/);
+  assert.doesNotMatch(markup, /\[DELIVERY:/);
+});
+
+test('A2A order protocol messages hide routing tags in chat bubbles', () => {
+  const txid = '6'.repeat(64);
+  const orderTxid = 'a'.repeat(64);
+  const cases = [
+    {
+      content: `[ORDER_STATUS:${orderTxid}] 正在上传链上交付。`,
+      visible: '正在上传链上交付。',
+      hidden: '[ORDER_STATUS:',
+    },
+    {
+      content: `[NeedsRating:${orderTxid}] 请评价本次服务。`,
+      visible: '请评价本次服务。',
+      hidden: '[NeedsRating:',
+    },
+    {
+      content: `[ORDER_END:${orderTxid} rated] 评分：5分。`,
+      visible: '评分：5分。',
+      hidden: '[ORDER_END:',
+    },
+    {
+      content: '[ORDER_END rating_timeout] 等待评价超时，订单已结束。',
+      visible: '等待评价超时，订单已结束。',
+      hidden: '[ORDER_END rating_timeout]',
+    },
+  ];
+
+  for (const item of cases) {
+    const markup = renderToStaticMarkup(
+      <A2AMessageItem
+        message={{
+          id: `msg-${item.hidden}`,
+          type: 'assistant',
+          content: item.content,
+          timestamp: 1_744_444_445_500,
+          metadata: { direction: 'outgoing', txid },
+        }}
+        metabotName="Local Bot"
+      />
+    );
+
+    assert.match(markup, new RegExp(item.visible.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(markup, new RegExp(item.hidden.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
 test('A2A delivery image keeps metafile text and renders image preview for .jpg', () => {
   const txid = '3'.repeat(64);
   const markup = renderToStaticMarkup(

@@ -2391,7 +2391,10 @@ export class CoworkRunner extends EventEmitter {
   private getSystemPromptProfileForSession(sessionId: string): SystemPromptProfile {
     const session = this.store.getSession(sessionId);
     const sourceContext = this.store.getConversationSourceContextBySession(sessionId);
-    if (session?.sessionType === 'a2a' && sourceContext.sourceChannel === 'metaweb_order') {
+    if (
+      session?.sessionType === 'a2a'
+      && (sourceContext.sourceChannel === 'metaweb_order' || session.hiddenFromSessionList)
+    ) {
       return SERVICE_ORDER_A2A_SYSTEM_PROMPT_PROFILE;
     }
     return DEFAULT_SYSTEM_PROMPT_PROFILE;

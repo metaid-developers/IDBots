@@ -16,6 +16,7 @@ function createRefunds(overrides?: Partial<GigSquareRefundCollections>): GigSqua
       servicePinId: 'service-pin-1',
       serviceName: 'Weather Analyst',
       paymentTxid: 'a'.repeat(64),
+      orderMessageTxid: 'c'.repeat(64),
       paymentAmount: '1.5',
       paymentCurrency: 'SPACE',
       status: 'refund_pending',
@@ -38,6 +39,7 @@ function createRefunds(overrides?: Partial<GigSquareRefundCollections>): GigSqua
       servicePinId: 'service-pin-2',
       serviceName: 'Translate Desk',
       paymentTxid: 'b'.repeat(64),
+      orderMessageTxid: 'd'.repeat(64),
       paymentAmount: '0.75',
       paymentCurrency: 'DOGE',
       status: 'refund_pending',
@@ -122,7 +124,7 @@ test('view session helper dispatches cowork:viewSession and closes the modal', (
   } as Window & typeof globalThis;
 
   try {
-    dispatchGigSquareRefundSessionView(' session-99 ', () => {
+    dispatchGigSquareRefundSessionView(' session-99 ', ` ${'a'.repeat(64)} `, () => {
       onCloseCalls.push('closed');
     });
   } finally {
@@ -131,7 +133,10 @@ test('view session helper dispatches cowork:viewSession and closes the modal', (
 
   assert.deepEqual(events, [{
     type: 'cowork:viewSession',
-    detail: { sessionId: 'session-99' },
+    detail: {
+      sessionId: 'session-99',
+      focusedOrderTxid: 'a'.repeat(64),
+    },
   }]);
   assert.deepEqual(onCloseCalls, ['closed']);
 });

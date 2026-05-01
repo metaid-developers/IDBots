@@ -29,7 +29,10 @@ import type {
   CoworkStartOptions,
   CoworkContinueOptions,
 } from '../types/cowork';
-import { shouldMarkSessionRunningFromStreamMessage } from './coworkStreamPresentation';
+import {
+  shouldMarkSessionRunningFromStreamMessage,
+  shouldRegisterStreamSessionFromFetch,
+} from './coworkStreamPresentation';
 
 class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
@@ -77,17 +80,19 @@ class CoworkService {
           const result = await window.electron?.cowork?.getSession(sessionId);
           if (result?.success && result.session) {
             const s = result.session;
-            store.dispatch(registerBackgroundSession({
-              id: s.id,
-              title: s.title,
-              status: s.status,
-              pinned: s.pinned ?? false,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-              sessionType: s.sessionType,
-              peerName: s.peerName ?? null,
-              serviceOrderSummary: s.serviceOrderSummary ?? null,
-            }));
+            if (shouldRegisterStreamSessionFromFetch(s)) {
+              store.dispatch(registerBackgroundSession({
+                id: s.id,
+                title: s.title,
+                status: s.status,
+                pinned: s.pinned ?? false,
+                createdAt: s.createdAt,
+                updatedAt: s.updatedAt,
+                sessionType: s.sessionType,
+                peerName: s.peerName ?? null,
+                serviceOrderSummary: s.serviceOrderSummary ?? null,
+              }));
+            }
           }
         } catch { /* ignore */ }
       }

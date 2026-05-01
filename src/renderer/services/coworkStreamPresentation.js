@@ -4,3 +4,7 @@ export function shouldMarkSessionRunningFromStreamMessage(message) {
   }
   return message.metadata?.suppressRunningStatus !== true;
 }
+
+export function shouldRegisterStreamSessionFromFetch(session) {
+  return session?.hiddenFromSessionList !== true;
+}
