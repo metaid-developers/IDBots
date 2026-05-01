@@ -61,6 +61,8 @@ const REFUND_STATUS_DISMISS_STORAGE_KEY = 'idbots.cowork.dismissedRefundStatusCa
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const ORDER_TAG_TXID_RE = /^\[(?:ORDER_STATUS|DELIVERY|NeedsRating):([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
 const ORDER_END_TAG_TXID_RE = /^\[ORDER_END:([0-9a-f]{64})(?:\s+[^\]]*)?\]/i;
+const ORDER_START_CONTENT_RE = /^\[ORDER\]/i;
+const ORDER_END_CONTENT_RE = /^\[ORDER_END(?::[0-9a-fA-F]{64})?(?:\s+[A-Za-z0-9_-]+)?\]/i;
 
 const readDismissedRefundStatusKeys = (): Set<string> => {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -2801,26 +2803,60 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         className="flex-1 overflow-y-auto min-h-0 pt-3"
       >
         {isA2ASession ? (
-          visibleA2AMessages.map((msg) => (
-            <div
-              key={msg.id}
-              ref={(element) => {
-                messageElementRefs.current[msg.id] = element;
-              }}
-              className={focusedOrderMessageId === msg.id
-                ? 'rounded-lg ring-2 ring-amber-500/40 ring-offset-2 ring-offset-claude-bg transition-shadow dark:ring-offset-claude-darkBg'
-                : undefined}
-              data-order-focus-target={focusedOrderMessageId === msg.id ? 'true' : undefined}
-            >
-              <A2AMessageItem
-                message={msg}
-                peerName={currentSession.peerName}
-                peerAvatar={resolvedPeerAvatar}
-                metabotName={currentSession.metabotName}
-                metabotAvatar={currentSession.metabotAvatar}
-              />
-            </div>
-          ))
+          visibleA2AMessages.flatMap((msg, index, arr) => {
+            const content = typeof msg.content === 'string' ? msg.content : '';
+            const isOrderStart = ORDER_START_CONTENT_RE.test(content.trim());
+            const isOrderEnd = ORDER_END_CONTENT_RE.test(content.trim());
+            const items: Array<{ type: 'separator-start' | 'separator-end' | 'message'; key: string; message?: CoworkMessage }> = [];
+
+            if (isOrderStart && index > 0) {
+              items.push({ type: 'separator-start', key: `order-start-before-${msg.id}` });
+            }
+            items.push({ type: 'message', key: msg.id, message: msg });
+
+            const nextMsg = arr[index + 1];
+            const nextContent = nextMsg && typeof nextMsg.content === 'string' ? nextMsg.content : '';
+            const nextIsOrderStart = nextContent ? ORDER_START_CONTENT_RE.test(nextContent.trim()) : false;
+            if (isOrderEnd && !nextIsOrderStart) {
+              items.push({ type: 'separator-end', key: `order-end-after-${msg.id}` });
+            }
+
+            return items;
+          }).map((item) => {
+            if (item.type === 'separator-start' || item.type === 'separator-end') {
+              const label = item.type === 'separator-start' ? 'Order Start' : 'Order End';
+              return (
+                <div key={item.key} className="flex items-center gap-3 px-4 py-1">
+                  <div className="flex-1 h-px dark:bg-white/10 bg-black/10" />
+                  <span className="text-[10px] leading-4 dark:text-claude-darkTextSecondary text-claude-textSecondary opacity-70 font-mono select-none">
+                    {label}
+                  </span>
+                  <div className="flex-1 h-px dark:bg-white/10 bg-black/10" />
+                </div>
+              );
+            }
+            const msg = item.message!;
+            return (
+              <div
+                key={msg.id}
+                ref={(element) => {
+                  messageElementRefs.current[msg.id] = element;
+                }}
+                className={focusedOrderMessageId === msg.id
+                  ? 'rounded-lg ring-2 ring-amber-500/40 ring-offset-2 ring-offset-claude-bg transition-shadow dark:ring-offset-claude-darkBg'
+                  : undefined}
+                data-order-focus-target={focusedOrderMessageId === msg.id ? 'true' : undefined}
+              >
+                <A2AMessageItem
+                  message={msg}
+                  peerName={currentSession.peerName}
+                  peerAvatar={resolvedPeerAvatar}
+                  metabotName={currentSession.metabotName}
+                  metabotAvatar={currentSession.metabotAvatar}
+                />
+              </div>
+            );
+          })
         ) : (
           renderConversationTurns()
         )}
