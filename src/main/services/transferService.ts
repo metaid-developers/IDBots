@@ -26,6 +26,8 @@ import {
   mergeMvcFundingCandidates,
   recoverMvcFundingCandidatesFromAddressHistory,
   recoverMvcFundingCandidatesFromPinHistory,
+  fetchMvcAddressUtxos,
+  filterRecoveredCandidatesByProvider,
 } from './mvcFundingRecoveryService';
 import { requestMvcGasSubsidy } from './mvcSubsidyService';
 import { broadcastBtcTx as broadcastBtcTxViaProvider, fetchBtcUtxos as fetchBtcUtxosViaProvider } from '../libs/btcApi';
@@ -510,11 +512,39 @@ export async function buildMvcTransferSessionSnapshot(
     recoveredOutpoints: recoveredFundingUtxos.map((utxo) => getMvcCachedFundingOutpointKey(utxo)),
   });
 
+  // Cross-reference recovered candidates against the live provider to filter out phantom
+  // UTXOs from dropped/rejected transactions.
+  let providerValidatedUtxos = recoveredFundingUtxos;
+  try {
+    const providerUtxos = await fetchMvcAddressUtxos(mvcAddress);
+    const providerOutpoints = new Set(providerUtxos.map((u) => `${u.txId}:${u.outputIndex}`));
+    providerValidatedUtxos = filterRecoveredCandidatesByProvider(recoveredFundingUtxos, providerUtxos);
+    if (providerValidatedUtxos.length < recoveredFundingUtxos.length) {
+      console.warn('[Transfer] Filtered out phantom recovered UTXOs not confirmed by provider', {
+        metabotId,
+        mvcAddress,
+        providerOutpoints: Array.from(providerOutpoints),
+        recoveredOutpoints: recoveredFundingUtxos.map((utxo) => getMvcCachedFundingOutpointKey(utxo)),
+        validatedOutpoints: providerValidatedUtxos.map((utxo) => getMvcCachedFundingOutpointKey(utxo)),
+      });
+    }
+  } catch (error) {
+    console.warn('[Transfer] Failed to cross-reference recovered UTXOs against provider; using all recovered', {
+      metabotId,
+      mvcAddress,
+      error: getErrorMessage(error),
+    });
+  }
+
+  if (providerValidatedUtxos.length === 0) {
+    return sessionSnapshot;
+  }
+
   return {
     excludeOutpoints: sessionSnapshot.excludeOutpoints,
     preferredFundingUtxos: mergeMvcFundingCandidates(
       sessionSnapshot.preferredFundingUtxos,
-      recoveredFundingUtxos,
+      providerValidatedUtxos,
     ),
   };
 }
@@ -590,6 +620,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
   }
 
   if (!params.requestFreshFunding) {
+    clearMvcExcludedOutpoints(params.metabotId);
     return {
       workerResult: createTerminalMvcStaleFundingFailure(params.metabotId),
       sessionSnapshot: latestSnapshot,
@@ -600,6 +631,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
 
   const requestedFreshFunding = await params.requestFreshFunding();
   if (!requestedFreshFunding) {
+    clearMvcExcludedOutpoints(params.metabotId);
     return {
       workerResult: createTerminalMvcStaleFundingFailure(params.metabotId),
       sessionSnapshot: latestSnapshot,
@@ -624,7 +656,7 @@ export async function runMvcTransferWorkerWithSessionRecovery(params: {
     ? refreshedFailure.staleOutpoints
     : [];
   if (isMvcProviderStaleFundingMessage(refreshedFailure.error) && refreshedStaleOutpoints.length > 0) {
-    recordMvcSpentOutpoints(params.metabotId, refreshedStaleOutpoints);
+    clearMvcExcludedOutpoints(params.metabotId);
     return {
       workerResult: createTerminalMvcStaleFundingFailure(params.metabotId),
       sessionSnapshot: refreshedSnapshot,
@@ -756,8 +788,10 @@ export async function executeTransfer(
           } else {
             const failureResult = workerResult as MvcTransferWorkerFailure;
             const isInsufficient = String(failureResult.error || '').toLowerCase().includes('not enough balance');
-            if (isInsufficient) {
-              // Provider balance/index state may have drifted; do not carry stale exclusions across requests.
+            const isTerminalStale = String(failureResult.error || '').includes('所有已知 MVC 手续费输入都已失效');
+            if (isInsufficient || isTerminalStale) {
+              // Provider balance/index state may have drifted or all known UTXOs excluded;
+              // do not carry stale exclusions across requests.
               clearMvcExcludedOutpoints(params.metabotId);
             } else {
               recordMvcSpentOutpoints(params.metabotId, failureResult.staleOutpoints);

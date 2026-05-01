@@ -195,6 +195,7 @@ async function main(): Promise<void> {
   const preferredOutpoints = new Set(preferredFundingUtxos.map((utxo) => getUtxoOutpointKey(utxo)));
   let lastError: unknown = null;
   let didReprobeAfterInsufficient = false;
+  let didReprobeAfterStale = false;
 
   for (let attempt = 1; attempt <= RETRYABLE_MVC_BROADCAST_ATTEMPTS; attempt++) {
     let pickedForAttempt: SpendableMvcUtxo[] = [];
@@ -290,6 +291,22 @@ async function main(): Promise<void> {
           blacklistedOutpoints: pickedOutpoints,
           excludedOutpoints: Array.from(excludedOutpoints),
         });
+        await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
+        continue;
+      }
+      if (
+        attempt < RETRYABLE_MVC_BROADCAST_ATTEMPTS
+        && !didReprobeAfterStale
+        && isProviderStaleFundingError(message)
+        && excludedOutpoints.size > 0
+      ) {
+        didReprobeAfterStale = true;
+        logStep('Reprobing MVC transfer with provider UTXO set after all known UTXOs excluded', {
+          attempt,
+          error: message,
+          excludedOutpoints: Array.from(excludedOutpoints),
+        });
+        excludedOutpoints.clear();
         await new Promise((resolve) => setTimeout(resolve, RETRYABLE_MVC_BROADCAST_DELAY_MS));
         continue;
       }
