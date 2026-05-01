@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
@@ -804,6 +804,15 @@ export const shouldRunOrderFocusRequest = (
   const focusKey = buildOrderFocusRequestKey(sessionId, focusedOrderTxid);
   return Boolean(focusKey && focusKey !== lastConsumedFocusKey);
 };
+
+export const resolveAutoScrollBehavior = (
+  previousSessionId: string | null,
+  currentSessionId: string | null,
+): ScrollBehavior => (
+  previousSessionId && currentSessionId && previousSessionId === currentSessionId
+    ? 'smooth'
+    : 'auto'
+);
 
 const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
   const items: DisplayItem[] = [];
@@ -1782,6 +1791,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const consumedOrderFocusKeyRef = useRef<string | null>(null);
+  const lastAutoScrollSessionIdRef = useRef<string | null>(null);
+  const skipNextAutoScrollEffectRef = useRef(false);
   const focusHighlightTimeoutRef = useRef<number | null>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [focusedOrderMessageId, setFocusedOrderMessageId] = useState<string | null>(null);
@@ -1992,8 +2003,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   }, [isRenaming, currentSession?.title]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const sessionId = currentSession?.id ?? null;
+    if (!sessionId) {
+      lastAutoScrollSessionIdRef.current = null;
+      return;
+    }
     setShouldAutoScroll(true);
+    messagesEndRef.current?.scrollIntoView({
+      behavior: resolveAutoScrollBehavior(lastAutoScrollSessionIdRef.current, sessionId),
+    });
+    skipNextAutoScrollEffectRef.current = true;
+    lastAutoScrollSessionIdRef.current = sessionId;
   }, [currentSession?.id]);
 
   // Focus rename input when entering rename mode
@@ -2395,10 +2416,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     if (!shouldAutoScroll) {
       return;
     }
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (skipNextAutoScrollEffectRef.current) {
+      skipNextAutoScrollEffectRef.current = false;
+      return;
     }
-  }, [currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll]);
+    if (messagesEndRef.current) {
+      const sessionId = currentSession?.id ?? null;
+      messagesEndRef.current.scrollIntoView({
+        behavior: resolveAutoScrollBehavior(lastAutoScrollSessionIdRef.current, sessionId),
+      });
+      lastAutoScrollSessionIdRef.current = sessionId;
+    }
+  }, [currentSession?.id, currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll]);
 
   useEffect(() => {
     consumedOrderFocusKeyRef.current = null;

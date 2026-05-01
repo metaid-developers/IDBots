@@ -17,8 +17,8 @@ const sourcePath = path.join(
 test('CoworkSessionDetail only renders refund status cards for A2A sessions', () => {
   const source = fs.readFileSync(sourcePath, 'utf8');
 
-  assert.match(
-    source,
-    /\{isA2ASession\s*&&\s*currentSession\.serviceOrderSummary\s*&&\s*shouldShowRefundStatusCard\(currentSession\.serviceOrderSummary\)\s*&&\s*\(/
-  );
+  assert.match(source, /const shouldRenderRefundStatusCard = Boolean\(/);
+  assert.match(source, /isA2ASession\s*&&\s*currentSession\?\.serviceOrderSummary/);
+  assert.match(source, /shouldShowRefundStatusCard\(currentSession\.serviceOrderSummary/);
+  assert.match(source, /\{shouldRenderRefundStatusCard && currentSession\.serviceOrderSummary && \(/);
 });

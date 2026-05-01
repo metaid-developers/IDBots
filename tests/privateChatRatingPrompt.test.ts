@@ -24,6 +24,50 @@ test('buildBuyerRatingSystemPrompt instructs buyer to reject missing image deliv
   assert.match(prompt, /refund/i);
 });
 
+test('buildBuyerRatingSystemPrompt includes complete medium-length text delivery for rating', () => {
+  const days = Array.from({ length: 5 }, (_, index) => {
+    const day = index + 1;
+    return [
+      `## Day ${day}`,
+      `Weather details for day ${day}.`,
+      `Temperature range ${10 + day}C to ${20 + day}C.`,
+      `Travel advice for day ${day}.`,
+      'Extra details: '.padEnd(140, String(day)),
+    ].join('\n');
+  }).join('\n\n');
+
+  assert.ok(days.length > 500, 'fixture should exceed the old 500 character prompt limit');
+
+  const prompt = buildBuyerRatingSystemPrompt({
+    originalRequest: 'I need a complete five day forecast for my trip.',
+    serviceResult: days,
+    expectedOutputType: 'text',
+  });
+
+  assert.match(prompt, /Day 1/);
+  assert.match(prompt, /Day 5/);
+  assert.match(prompt, /Travel advice for day 5/);
+});
+
+test('buildBuyerRatingSystemPrompt marks prompt-side excerpts without hiding the delivery ending', () => {
+  const serviceResult = [
+    'BEGIN COMPLETE DELIVERY',
+    'A'.repeat(7000),
+    'END COMPLETE DELIVERY WITH FINAL DAY SUMMARY',
+  ].join('\n');
+
+  const prompt = buildBuyerRatingSystemPrompt({
+    originalRequest: 'Please review a long complete delivery.',
+    serviceResult,
+    expectedOutputType: 'text',
+  });
+
+  assert.match(prompt, /BEGIN COMPLETE DELIVERY/);
+  assert.match(prompt, /END COMPLETE DELIVERY WITH FINAL DAY SUMMARY/);
+  assert.match(prompt, /prompt-side omission/i);
+  assert.match(prompt, /Do not treat this prompt-side omission as missing or incomplete delivery/i);
+});
+
 test('isOrderDeliveryFailureNotice detects explicit missing media delivery notices', () => {
   assert.equal(
     isOrderDeliveryFailureNotice('服务方未能按约定交付 image 数字成果。\n系统将自动转入退款流程，请勿对本次服务进行好评确认。'),

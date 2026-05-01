@@ -78,6 +78,9 @@ const POLL_INTERVAL_MS = 5_000;
 const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
 const PRIVATE_CHAT_MAX_INCOMING_TURNS = 50;
 const PRIVATE_CHAT_CONTEXT_MAX_MESSAGES = 80;
+const RATING_PROMPT_ORIGINAL_REQUEST_MAX_CHARS = 1200;
+const RATING_PROMPT_SERVICE_RESULT_MAX_CHARS = 6000;
+const RATING_PROMPT_EXCERPT_TAIL_CHARS = 1200;
 
 export interface PrivateChatMessageRow {
   id: number;
@@ -1310,13 +1313,34 @@ export function buildBuyerRatingSystemPrompt(input: {
   return [
     input.personaLines,
     'You are the buyer who paid for this service. Write a genuine rating and farewell message in your own voice as the paying client.',
-    `Your original request was: "${input.originalRequest.slice(0, 300)}"`,
-    `The service result delivered: "${input.serviceResult.slice(0, 500)}"`,
+    `Your original request was: "${formatRatingPromptText(input.originalRequest, RATING_PROMPT_ORIGINAL_REQUEST_MAX_CHARS)}"`,
+    `The service result delivered: "${formatRatingPromptText(input.serviceResult, RATING_PROMPT_SERVICE_RESULT_MAX_CHARS)}"`,
     mediaAcceptanceRules,
     'You MUST include a numeric score from 1 to 5 (5 is best). Format it clearly, e.g. "评分：4分" or "I give this 4 out of 5".',
     'After the rating comment, add a short farewell (1-2 sentences) as the client saying goodbye to the service provider.',
     'Your total message should be 10-300 characters.',
   ].filter(Boolean).join('\n');
+}
+
+function formatRatingPromptText(value: string, maxChars: number): string {
+  const text = String(value || '').trim();
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  const excerptNotice = [
+    '',
+    '[System excerpt note: middle content omitted only to keep the prompt short.',
+    'Do not treat this prompt-side omission as missing or incomplete delivery.]',
+    '',
+  ].join('\n');
+  const tailLength = Math.min(RATING_PROMPT_EXCERPT_TAIL_CHARS, Math.floor(maxChars / 3));
+  const headLength = Math.max(0, maxChars - excerptNotice.length - tailLength);
+  return [
+    text.slice(0, headLength).trimEnd(),
+    excerptNotice.trim(),
+    text.slice(-tailLength).trimStart(),
+  ].filter(Boolean).join('\n\n');
 }
 
 function getMessageMetadataRecord(message: CoworkMessage): Record<string, unknown> {
