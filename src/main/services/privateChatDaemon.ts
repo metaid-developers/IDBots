@@ -1319,6 +1319,133 @@ export function buildBuyerRatingSystemPrompt(input: {
   ].filter(Boolean).join('\n');
 }
 
+function getMessageMetadataRecord(message: CoworkMessage): Record<string, unknown> {
+  return message.metadata && typeof message.metadata === 'object'
+    ? message.metadata as Record<string, unknown>
+    : {};
+}
+
+function getMessageOrderTxid(message: CoworkMessage): string {
+  const metadataTxid = normalizeOrderMessageTxid(getMessageMetadataRecord(message).orderTxid);
+  if (metadataTxid) return metadataTxid;
+  return resolveOrderProtocolTxid(String(message.content || ''));
+}
+
+function messageMatchesOrderTxid(message: CoworkMessage, orderTxid: string): boolean {
+  const normalizedOrderTxid = normalizeOrderMessageTxid(orderTxid);
+  return Boolean(normalizedOrderTxid && getMessageOrderTxid(message) === normalizedOrderTxid);
+}
+
+function findOrderRequestMessage(messages: CoworkMessage[], orderTxid?: string | null): CoworkMessage | null {
+  const normalizedOrderTxid = normalizeOrderMessageTxid(orderTxid);
+  if (normalizedOrderTxid) {
+    return messages.find((message) => (
+      typeof message.content === 'string'
+      && isOrderMessage(message.content)
+      && messageMatchesOrderTxid(message, normalizedOrderTxid)
+    )) ?? null;
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const metadata = getMessageMetadataRecord(message);
+    if (
+      message.type === 'user'
+      && metadata.direction === 'outgoing'
+      && typeof message.content === 'string'
+      && isOrderMessage(message.content)
+    ) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function findDeliveryMessageForRating(messages: CoworkMessage[], orderTxid?: string | null): CoworkMessage | null {
+  const normalizedOrderTxid = normalizeOrderMessageTxid(orderTxid);
+  if (normalizedOrderTxid) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (typeof message.content !== 'string') continue;
+      if (!parseDeliveryMessage(message.content)) continue;
+      if (messageMatchesOrderTxid(message, normalizedOrderTxid)) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const metadata = getMessageMetadataRecord(message);
+    if (
+      message.type === 'assistant'
+      && metadata.direction === 'incoming'
+      && typeof message.content === 'string'
+      && parseDeliveryMessage(message.content)
+    ) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function extractRatingDeliveryResult(message: CoworkMessage | null): string {
+  const content = String(message?.content || '').trim();
+  if (!content) return '';
+  const parsedDelivery = parseDeliveryMessage(content);
+  if (parsedDelivery && typeof parsedDelivery.result === 'string') {
+    return parsedDelivery.result;
+  }
+  return cleanServiceResultText(content) || content;
+}
+
+function findFallbackIncomingServiceResult(messages: CoworkMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const metadata = getMessageMetadataRecord(message);
+    const content = String(message.content || '').trim();
+    if (message.type !== 'assistant' || metadata.direction !== 'incoming' || !content) continue;
+    if (parseNeedsRatingMessage(content) || parseOrderEndMessage(content) || parseOrderStatusMessage(content)) continue;
+    const parsedDelivery = parseDeliveryMessage(content);
+    if (parsedDelivery && typeof parsedDelivery.result === 'string') {
+      return parsedDelivery.result;
+    }
+    return cleanServiceResultText(content) || content;
+  }
+  return '';
+}
+
+function getOrderMessageContentForTxid(messages: CoworkMessage[], orderTxid?: string | null): string {
+  return String(findOrderRequestMessage(messages, orderTxid)?.content || '').trim();
+}
+
+export function resolveBuyerRatingContext(input: {
+  messages: CoworkMessage[];
+  orderTxid?: string | null;
+  fallbackOriginalRequest?: string | null;
+  fallbackServiceResult?: string | null;
+}): { originalRequest: string; serviceResult: string } {
+  const messages = Array.isArray(input.messages) ? input.messages : [];
+  const orderPayload = getOrderMessageContentForTxid(messages, input.orderTxid);
+  const originalRequest = (
+    extractOrderRequestText(orderPayload)
+    || orderPayload
+    || String(input.fallbackOriginalRequest || '').trim()
+  ).trim();
+  const scopedDeliveryMessage = findDeliveryMessageForRating(messages, input.orderTxid);
+  const hasScopedOrderTxid = Boolean(normalizeOrderMessageTxid(input.orderTxid));
+  const serviceResult = (
+    extractRatingDeliveryResult(scopedDeliveryMessage)
+    || String(input.fallbackServiceResult || '').trim()
+    || (hasScopedOrderTxid ? '' : findFallbackIncomingServiceResult(messages))
+  ).trim();
+  return {
+    originalRequest,
+    serviceResult,
+  };
+}
+
 export function isOrderDeliveryFailureNotice(plaintext: string): boolean {
   const text = String(plaintext || '');
   if (!text.trim()) return false;
@@ -1350,25 +1477,16 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   // Retrieve session messages to find original request and service result
   const session = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
   const messages = session?.messages ?? [];
-
-  // A's original outgoing request (first outgoing user message)
-  const originalRequest = messages.find(
-    (m) => m.type === 'user' && (m.metadata as Record<string, unknown>)?.direction === 'outgoing'
-  )?.content ?? '';
-
-  // B's service result: last incoming assistant message before the [NeedsRating] message
-  // (the [NeedsRating] message itself is the last incoming, so we want the one before it)
-  const incomingAssistant = messages.filter(
-    (m) => m.type === 'assistant' && (m.metadata as Record<string, unknown>)?.direction === 'incoming'
-  );
-  const serviceResultCandidate = incomingAssistant.length >= 2
-    ? incomingAssistant[incomingAssistant.length - 2].content
-    : incomingAssistant[incomingAssistant.length - 1]?.content ?? '';
-  const parsedDelivery = parseDeliveryMessage(serviceResultCandidate);
-  const serviceResult =
-    parsedDelivery && typeof parsedDelivery.result === 'string'
-      ? parsedDelivery.result
-      : serviceResultCandidate;
+  const ratingContext = resolveBuyerRatingContext({
+    messages,
+    orderTxid,
+  });
+  const originalRequest = ratingContext.originalRequest;
+  const serviceResult = ratingContext.serviceResult;
+  if (orderTxid && (!originalRequest || !serviceResult)) {
+    emitLog(`[Rating] Missing scoped order context for order ${orderTxid.slice(0, 12)}…, skipping auto-rating to avoid cross-order history leakage.`);
+    return;
+  }
 
   // Build A's persona
   const buyerMetabot = metabotStore.getMetabotById(metabot.id);
@@ -2175,10 +2293,10 @@ async function processOne(
               ? delivery.paymentTxid.trim()
               : paymentTxid;
             const buyerOrderSession = coworkStore.getSession(buyerOrderMapping.coworkSessionId);
-            const buyerOrderPayload = buyerOrderSession?.messages.find((message) => (
-              typeof message.content === 'string'
-              && isOrderMessage(message.content)
-            ))?.content ?? '';
+            const buyerOrderPayload = getOrderMessageContentForTxid(
+              buyerOrderSession?.messages ?? [],
+              observerOrderTxid || orderProtocolTxid,
+            );
             const expectedOutputType = resolveBuyerOrderOutputType({
               buyerOrderMeta,
               orderPayload: buyerOrderPayload,

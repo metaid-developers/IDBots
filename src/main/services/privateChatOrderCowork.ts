@@ -385,6 +385,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
       });
     }).catch(() => {
       // Fallback if LLM fails
+      if (!serviceReply?.trim()) {
+        accumulator.resolve({
+          serviceReply: this.buildMissingTextDeliveryFailureReply(),
+          ratingInvite: '',
+          isDeliverable: false,
+        });
+        return;
+      }
       accumulator.resolve({
         serviceReply,
         ratingInvite: this.formatNeedsRatingText(request, '[NeedsRating] 服务已完成，请给个评价吧！'),
@@ -531,15 +539,27 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   private async finalizeCompletedOrder(
     sessionId: string,
-    serviceReply: string,
+    serviceReply: string | null,
     messages: CoworkMessage[],
     request?: OrderCoworkRequest,
   ): Promise<OrderCoworkResult> {
     const displaySessionId = this.getDisplaySessionId(sessionId, request);
     const outputType = normalizeServiceOutputType(request?.expectedOutputType);
+    const trimmedServiceReply = String(serviceReply || '').trim();
     if (outputType === 'text') {
+      if (!trimmedServiceReply) {
+        const failureReply = this.buildMissingTextDeliveryFailureReply();
+        this.addOrderDeliveryStatusMessage(displaySessionId, failureReply, {
+          orderDeliveryFailed: true,
+        }, request);
+        return {
+          serviceReply: failureReply,
+          ratingInvite: '',
+          isDeliverable: false,
+        };
+      }
       return {
-        serviceReply,
+        serviceReply: trimmedServiceReply,
         ratingInvite: '',
         isDeliverable: true,
       };
@@ -619,7 +639,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         upload: verifiedUpload.upload,
       });
       return {
-        serviceReply: [serviceReply, '', deliverySummary].filter(Boolean).join('\n\n'),
+        serviceReply: [trimmedServiceReply, '', deliverySummary].filter(Boolean).join('\n\n'),
         ratingInvite: '',
         isDeliverable: true,
       };
@@ -895,7 +915,15 @@ export class PrivateChatOrderCowork extends EventEmitter {
     return `${text.slice(0, TIMEOUT_FALLBACK_MAX_CHARS)}\n...[已截断]`;
   }
 
-  private formatReply(sessionId: string, messages: CoworkMessage[], request?: OrderCoworkRequest): string {
+  private buildMissingTextDeliveryFailureReply(): string {
+    return [
+      '服务方未能按约定交付 text 服务结果。',
+      '技能执行结束，但没有生成可交付的最终回复。',
+      '系统将自动转入退款流程，请勿对本次服务进行好评确认。',
+    ].join('\n');
+  }
+
+  private formatReply(sessionId: string, messages: CoworkMessage[], request?: OrderCoworkRequest): string | null {
     // Find the last non-thinking assistant message with content — that's the final answer.
     // We deliberately skip thinking blocks and intermediate streaming chunks so the buyer
     // only sees the clean result, not the full execution trace.
@@ -926,7 +954,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       }
       return cleaned;
     }
-    return '处理完成，但没有生成回复。';
+    return null;
   }
 
   private async buildRatingInvite(serviceReply: string, request?: OrderCoworkRequest): Promise<string> {

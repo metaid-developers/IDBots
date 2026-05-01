@@ -5,6 +5,7 @@ import {
   buildBuyerRatingSystemPrompt,
   deliveryResultHasExpectedArtifact,
   isOrderDeliveryFailureNotice,
+  resolveBuyerRatingContext,
   resolveBuyerOrderOutputType,
   resolveSellerOrderOutputType,
 } from '../src/main/services/privateChatDaemon';
@@ -26,6 +27,10 @@ test('buildBuyerRatingSystemPrompt instructs buyer to reject missing image deliv
 test('isOrderDeliveryFailureNotice detects explicit missing media delivery notices', () => {
   assert.equal(
     isOrderDeliveryFailureNotice('服务方未能按约定交付 image 数字成果。\n系统将自动转入退款流程，请勿对本次服务进行好评确认。'),
+    true
+  );
+  assert.equal(
+    isOrderDeliveryFailureNotice('服务方未能按约定交付 text 服务结果。\n技能执行结束，但没有生成可交付的最终回复。\n系统将自动转入退款流程，请勿对本次服务进行好评确认。'),
     true
   );
   assert.equal(
@@ -96,4 +101,110 @@ test('resolveSellerOrderOutputType falls back to the local service output type f
   });
 
   assert.equal(outputType, 'image');
+});
+
+test('resolveBuyerRatingContext scopes request and delivery by order txid in a unified peer session', () => {
+  const oldWeatherOrderTxid = '1'.repeat(64);
+  const currentWeatherOrderTxid = '2'.repeat(64);
+  const oldImageOrderTxid = '3'.repeat(64);
+  const currentImageOrderTxid = '4'.repeat(64);
+  const messages = [
+    {
+      id: 'old-weather-order',
+      type: 'user',
+      content: '[ORDER] 查询广州天气',
+      metadata: { direction: 'outgoing', orderTxid: oldWeatherOrderTxid },
+    },
+    {
+      id: 'old-weather-delivery',
+      type: 'assistant',
+      content: `[DELIVERY:${oldWeatherOrderTxid}] {"result":"广州天气：晴，30°C"} `,
+      metadata: { direction: 'incoming', orderTxid: oldWeatherOrderTxid },
+    },
+    {
+      id: 'old-image-order',
+      type: 'user',
+      content: '[ORDER] 生成火箭发射图片',
+      metadata: { direction: 'outgoing', orderTxid: oldImageOrderTxid },
+    },
+    {
+      id: 'old-image-delivery',
+      type: 'assistant',
+      content: `[DELIVERY:${oldImageOrderTxid}] {"result":"火箭发射图片：metafile://rocketi0.png"} `,
+      metadata: { direction: 'incoming', orderTxid: oldImageOrderTxid },
+    },
+    {
+      id: 'current-weather-order',
+      type: 'user',
+      content: '[ORDER] 查询新加坡天气',
+      metadata: { direction: 'outgoing', orderTxid: currentWeatherOrderTxid },
+    },
+    {
+      id: 'current-weather-delivery',
+      type: 'assistant',
+      content: `[DELIVERY:${currentWeatherOrderTxid}] {"result":"新加坡天气：多云，29°C"} `,
+      metadata: { direction: 'incoming', orderTxid: currentWeatherOrderTxid },
+    },
+    {
+      id: 'current-image-order',
+      type: 'user',
+      content: '[ORDER] 生成一张小狗跳舞图片',
+      metadata: { direction: 'outgoing', orderTxid: currentImageOrderTxid },
+    },
+    {
+      id: 'current-image-delivery',
+      type: 'assistant',
+      content: `[DELIVERY:${currentImageOrderTxid}] {"result":"小狗跳舞图片：metafile://dogi0.png"} `,
+      metadata: { direction: 'incoming', orderTxid: currentImageOrderTxid },
+    },
+    {
+      id: 'current-image-needs-rating',
+      type: 'assistant',
+      content: `[NeedsRating:${currentImageOrderTxid}] 请评价本次服务`,
+      metadata: { direction: 'incoming', orderTxid: currentImageOrderTxid },
+    },
+  ];
+
+  const weatherContext = resolveBuyerRatingContext({
+    messages,
+    orderTxid: currentWeatherOrderTxid,
+  });
+  assert.match(weatherContext.originalRequest, /新加坡天气/);
+  assert.match(weatherContext.serviceResult, /新加坡天气/);
+  assert.doesNotMatch(weatherContext.originalRequest, /广州天气/);
+  assert.doesNotMatch(weatherContext.serviceResult, /广州天气/);
+
+  const imageContext = resolveBuyerRatingContext({
+    messages,
+    orderTxid: currentImageOrderTxid,
+  });
+  assert.match(imageContext.originalRequest, /小狗跳舞/);
+  assert.match(imageContext.serviceResult, /小狗跳舞/);
+  assert.doesNotMatch(imageContext.originalRequest, /火箭发射/);
+  assert.doesNotMatch(imageContext.serviceResult, /火箭发射/);
+});
+
+test('resolveBuyerRatingContext does not fall back to unrelated orders when an order txid is provided', () => {
+  const knownOrderTxid = '5'.repeat(64);
+  const missingOrderTxid = '6'.repeat(64);
+  const context = resolveBuyerRatingContext({
+    orderTxid: missingOrderTxid,
+    messages: [
+      {
+        id: 'known-order',
+        type: 'user',
+        content: '[ORDER] 查询广州天气',
+        metadata: { direction: 'outgoing', orderTxid: knownOrderTxid },
+      },
+      {
+        id: 'known-delivery',
+        type: 'assistant',
+        content: `[DELIVERY:${knownOrderTxid}] {"result":"广州天气：晴，30°C"} `,
+        metadata: { direction: 'incoming', orderTxid: knownOrderTxid },
+      },
+    ],
+  });
+
+  assert.equal(context.originalRequest, '');
+  assert.equal(context.serviceResult, '');
 });

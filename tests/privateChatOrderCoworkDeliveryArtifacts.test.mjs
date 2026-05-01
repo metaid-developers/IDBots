@@ -545,6 +545,69 @@ test('runOrder mirrors internal execution messages into the canonical seller dis
   );
 });
 
+test('runOrder treats completed text orders without a final assistant reply as non-deliverable', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-text-no-final-'));
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const displaySessionId = store.createTestSession(cwd);
+  let ratingInviteCalls = 0;
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    buildRatingInvite: async () => {
+      ratingInviteCalls += 1;
+      return '[NeedsRating] 请评价本次服务。';
+    },
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:text-no-final',
+    displaySessionId,
+    prompt: '[ORDER] 查询纽约未来 5 天天气',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    expectedOutputType: 'text',
+    orderTxid: '7'.repeat(64),
+  });
+
+  const executionSessionId = runner.startSessionCalls[0].sessionId;
+  runner.emit('message', executionSessionId, {
+    id: 'assistant-thinking',
+    type: 'assistant',
+    content: 'The weather command returned HTML; I need to extract the forecast.',
+    timestamp: Date.now(),
+    metadata: { isThinking: true },
+  });
+  runner.emit('message', executionSessionId, {
+    id: 'tool-result',
+    type: 'tool_result',
+    content: '<html><body>New York: ☀ +27°C</body></html>',
+    timestamp: Date.now(),
+    metadata: { isError: false },
+  });
+  runner.emit('complete', executionSessionId);
+
+  const result = await runPromise;
+  assert.equal(result.isDeliverable, false);
+  assert.equal(result.ratingInvite, '');
+  assert.equal(ratingInviteCalls, 0);
+  assert.doesNotMatch(result.serviceReply, /处理完成，但没有生成回复/);
+  assert.match(result.serviceReply, /未能按约定交付 text 服务结果/);
+  assert.match(result.serviceReply, /没有生成可交付的最终回复/);
+  assert.match(result.serviceReply, /退款流程/);
+
+  const displaySession = store.getSession(displaySessionId);
+  const failureNotice = displaySession.messages.find((message) => message.metadata?.orderDeliveryFailed);
+  assert.ok(failureNotice, 'expected a local order failure notice');
+  assert.equal(failureNotice.metadata?.orderTxid, '7'.repeat(64));
+});
+
 test('runOrder continues media execution once when the first turn ends before generating an artifact', async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-media-continuation-'));
   const imagePath = path.join(cwd, 'metabot_avatar.png');
