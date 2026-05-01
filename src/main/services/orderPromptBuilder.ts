@@ -65,6 +65,9 @@ export function buildOrderPrompts(params: {
       ? `- After generation, include the local file path in your final result. IDBots will upload that file on-chain after your skill finishes.`
       : null,
     expectedOutputType !== 'text'
+      ? `- Do not stop after saying you are starting, preparing, or going to generate the ${expectedOutputType}. You must run the required skill/tool/command and produce the actual local file before finalizing.`
+      : null,
+    expectedOutputType !== 'text'
       ? `- If you cannot generate a valid ${expectedOutputType} file, do not claim success. State clearly that the agreed digital deliverable was not produced.`
       : null,
     `- Return only the substantive deliverable that should be forwarded to the end user.`,

@@ -454,6 +454,7 @@ export async function waitBeforePrivateChatReply(
 }
 
 function isPrivateA2AMessage(message: CoworkMessage): boolean {
+  if (message.metadata?.orderExecutionTrace === true) return false;
   return message.metadata?.sourceChannel === 'metaweb_private'
     && (message.type === 'user' || message.type === 'assistant');
 }

@@ -30,6 +30,9 @@ import {
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
+  mirroredMessageIds: Map<string, string>;
+  missingArtifactContinuationAttempts: number;
+  activeRunPromise?: Promise<void>;
   resolve: (result: OrderCoworkResult) => void;
   reject: (error: Error) => void;
   timeoutId?: NodeJS.Timeout;
@@ -80,11 +83,13 @@ export interface OrderCoworkRequest {
 }
 
 const DEFAULT_TIMEOUT_MS = 240_000;
+const MAX_MISSING_ARTIFACT_CONTINUATION_ATTEMPTS = 1;
 const TIMEOUT_FALLBACK_MAX_LINES = 8;
 const TIMEOUT_FALLBACK_MAX_CHARS = 900;
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const HTML_TAG_RE = /<[^>]+>/g;
 const HTML_ENTITY_RE = /&(nbsp|amp|lt|gt|quot|#39);/gi;
+const EXPLICIT_MEDIA_FAILURE_RE = /(无法|不能|未能|缺少|失败|报错|错误|被拒绝|not able|unable|cannot|can't|failed|failure|missing|error|denied|rejected)/i;
 
 export class PrivateChatOrderCowork extends EventEmitter {
   private coworkRunner: CoworkRunner;
@@ -149,7 +154,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       throw new Error(`Order cowork session ${sessionId} not found`);
     }
 
-    this.coworkRunner.startSession(sessionId, request.prompt, {
+    const startPromise = this.coworkRunner.startSession(sessionId, request.prompt, {
       skipInitialUserMessage: true,
       workspaceRoot: session.cwd,
       confirmationMode: 'text',
@@ -157,7 +162,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
       autoApprove: true,
       disableMemoryUpdates: true,
       disableRemoteServicesPrompt: true,
-    }).catch((error) => {
+    });
+    this.setAccumulatorRunPromise(sessionId, startPromise);
+    startPromise.catch((error) => {
       this.rejectAccumulator(sessionId, error instanceof Error ? error : new Error(String(error)));
     });
 
@@ -279,12 +286,19 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
       this.accumulators.set(sessionId, {
         messages: [],
+        mirroredMessageIds: new Map(),
+        missingArtifactContinuationAttempts: 0,
         resolve,
         reject,
         timeoutId,
         request,
       });
     });
+  }
+
+  private setAccumulatorRunPromise(sessionId: string, runPromise: Promise<void>): void {
+    const accumulator = this.accumulators.get(sessionId);
+    if (accumulator) accumulator.activeRunPromise = runPromise;
   }
 
   private injectProcessingNotice(sessionId: string, request: OrderCoworkRequest): void {
@@ -312,7 +326,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const accumulator = this.accumulators.get(sessionId);
     if (accumulator) accumulator.messages.push(message);
     // Execution sessions are internal when a canonical peer display session is provided.
-    if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, accumulator?.request)) {
+    if (accumulator && this.hasSeparateDisplaySession(sessionId, accumulator.request)) {
+      this.mirrorExecutionMessageToDisplaySession(sessionId, message, accumulator);
+    } else if (this.emitToRenderer) {
       this.emitToRenderer('cowork:stream:message', { sessionId, message });
     }
   }
@@ -323,7 +339,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!accumulator) return;
     const index = accumulator.messages.findIndex((m) => m.id === messageId);
     if (index >= 0) accumulator.messages[index].content = content;
-    if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, accumulator.request)) {
+    if (this.hasSeparateDisplaySession(sessionId, accumulator.request)) {
+      this.updateMirroredExecutionMessage(sessionId, messageId, content, accumulator);
+    } else if (this.emitToRenderer) {
       this.emitToRenderer('cowork:stream:messageUpdate', { sessionId, messageId, content });
     }
   }
@@ -342,6 +360,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (!accumulator) return;
     const serviceReply = this.formatReply(sessionId, accumulator.messages, accumulator.request);
     const request = accumulator.request;
+    if (this.shouldContinueForMissingDeliveryArtifact(sessionId, accumulator)) {
+      this.startMissingArtifactContinuation(sessionId, accumulator);
+      return;
+    }
     this.cleanupAccumulator(sessionId);
     if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, request)) {
       this.emitToRenderer('cowork:stream:complete', { sessionId });
@@ -369,6 +391,142 @@ export class PrivateChatOrderCowork extends EventEmitter {
         isDeliverable: true,
       });
     });
+  }
+
+  private mirrorExecutionMessageToDisplaySession(
+    executionSessionId: string,
+    message: CoworkMessage,
+    accumulator: MessageAccumulator,
+  ): void {
+    const displaySessionId = this.getDisplaySessionId(executionSessionId, accumulator.request);
+    if (displaySessionId === executionSessionId) return;
+    const mirrored = this.coworkStore.addMessage(displaySessionId, {
+      type: message.type,
+      content: message.content,
+      metadata: this.buildExecutionTraceMetadata(message, accumulator.request),
+    });
+    accumulator.mirroredMessageIds.set(message.id, mirrored.id);
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:message', { sessionId: displaySessionId, message: mirrored });
+    }
+  }
+
+  private updateMirroredExecutionMessage(
+    executionSessionId: string,
+    sourceMessageId: string,
+    content: string,
+    accumulator: MessageAccumulator,
+  ): void {
+    const displaySessionId = this.getDisplaySessionId(executionSessionId, accumulator.request);
+    const mirroredMessageId = accumulator.mirroredMessageIds.get(sourceMessageId);
+    if (!mirroredMessageId || displaySessionId === executionSessionId) return;
+    this.coworkStore.updateMessage(displaySessionId, mirroredMessageId, { content });
+    if (this.emitToRenderer) {
+      this.emitToRenderer('cowork:stream:messageUpdate', {
+        sessionId: displaySessionId,
+        messageId: mirroredMessageId,
+        content,
+      });
+    }
+  }
+
+  private buildExecutionTraceMetadata(
+    message: CoworkMessage,
+    request?: OrderCoworkRequest,
+  ): Record<string, unknown> {
+    const metadata = {
+      ...(message.metadata ?? {}),
+      sourceChannel: 'metaweb_order_execution',
+      externalConversationId: request?.externalConversationId,
+      orderTxid: request?.orderTxid ?? undefined,
+      orderRole: request?.source === 'metaweb_private' ? 'seller' : undefined,
+      orderExecutionTrace: true,
+      excludeFromSandboxHistory: true,
+      suppressRunningStatus: true,
+    };
+    delete (metadata as Record<string, unknown>).direction;
+    delete (metadata as Record<string, unknown>).senderGlobalMetaId;
+    delete (metadata as Record<string, unknown>).senderName;
+    delete (metadata as Record<string, unknown>).senderAvatar;
+    return metadata;
+  }
+
+  private shouldContinueForMissingDeliveryArtifact(
+    sessionId: string,
+    accumulator: MessageAccumulator,
+  ): boolean {
+    if (accumulator.missingArtifactContinuationAttempts >= MAX_MISSING_ARTIFACT_CONTINUATION_ATTEMPTS) {
+      return false;
+    }
+    const outputType = normalizeServiceOutputType(accumulator.request?.expectedOutputType);
+    if (outputType === 'text') return false;
+
+    const session = this.coworkStore.getSession(sessionId);
+    const cwd = session?.cwd || this.coworkStore.getConfig().workingDirectory || os.tmpdir();
+    const artifactResult = resolveServiceDeliveryArtifact({
+      outputType,
+      cwd,
+      orderStartedAt: accumulator.request?.orderStartedAt ?? Date.now(),
+      messages: accumulator.messages,
+    });
+    if (artifactResult.status !== 'missing') return false;
+
+    const latestAssistant = this.extractLatestAssistantDeliverable(accumulator.messages) || '';
+    if (EXPLICIT_MEDIA_FAILURE_RE.test(latestAssistant)) return false;
+
+    return true;
+  }
+
+  private startMissingArtifactContinuation(
+    sessionId: string,
+    accumulator: MessageAccumulator,
+  ): void {
+    accumulator.missingArtifactContinuationAttempts += 1;
+    const request = accumulator.request;
+    const session = this.coworkStore.getSession(sessionId);
+    const prompt = this.buildMissingArtifactContinuationPrompt(request);
+    const previousRun = accumulator.activeRunPromise;
+    const startContinuation = () => {
+      if (this.accumulators.get(sessionId) !== accumulator) return;
+      let continuationPromise: Promise<void>;
+      try {
+        continuationPromise = this.coworkRunner.startSession(sessionId, prompt, {
+          skipInitialUserMessage: true,
+          workspaceRoot: session?.cwd,
+          confirmationMode: 'text',
+          systemPrompt: request?.systemPrompt,
+          autoApprove: true,
+          disableMemoryUpdates: true,
+          disableRemoteServicesPrompt: true,
+        });
+      } catch (error) {
+        this.rejectAccumulator(sessionId, error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      accumulator.activeRunPromise = continuationPromise;
+      continuationPromise.catch((error) => {
+        this.rejectAccumulator(sessionId, error instanceof Error ? error : new Error(String(error)));
+      });
+    };
+
+    if (previousRun) {
+      previousRun.catch(() => undefined).then(startContinuation);
+      return;
+    }
+    queueMicrotask(startContinuation);
+  }
+
+  private buildMissingArtifactContinuationPrompt(request?: OrderCoworkRequest): string {
+    const outputType = normalizeServiceOutputType(request?.expectedOutputType);
+    const orderTxid = typeof request?.orderTxid === 'string' ? request.orderTxid.trim() : '';
+    return [
+      `The paid service order is not complete yet because no ${outputType} file exists for delivery.`,
+      orderTxid ? `Order txid: ${orderTxid}.` : '',
+      `Continue executing the required skill now. You MUST generate a real ${outputType} file in the current workspace before giving the final answer.`,
+      `Do not answer with only progress, intent, acknowledgement, or "started generating".`,
+      `Use the service skill/tool/command now. After the file exists, final answer must include the local file path.`,
+      `If you truly cannot generate a valid ${outputType} file, state the concrete failure reason instead of claiming success.`,
+    ].filter(Boolean).join('\n');
   }
 
   private async finalizeCompletedOrder(
@@ -755,7 +913,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
           metadata: msg.metadata,
         });
         messages[i].content = cleaned;
-        if (this.emitToRenderer && !this.hasSeparateDisplaySession(sessionId, request)) {
+        const accumulator = this.accumulators.get(sessionId);
+        if (accumulator && this.hasSeparateDisplaySession(sessionId, request)) {
+          this.updateMirroredExecutionMessage(sessionId, msg.id, cleaned, accumulator);
+        } else if (this.emitToRenderer) {
           this.emitToRenderer('cowork:stream:messageUpdate', {
             sessionId,
             messageId: msg.id,

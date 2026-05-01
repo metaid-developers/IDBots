@@ -303,6 +303,44 @@ test('private chat prompt includes recent A2A context and topic-ending policy', 
   assert.match(prompt, /<contactMemories \/>/);
 });
 
+test('private chat A2A analysis ignores internal order execution trace messages', () => {
+  const analysis = analyzePrivateChatA2AConversation({
+    messages: [
+      {
+        id: 'm1',
+        type: 'user',
+        content: '请生成头像',
+        timestamp: 1_770_000_000_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private', senderName: 'Peer Bot' },
+      },
+      {
+        id: 'm2',
+        type: 'assistant',
+        content: '正在读取图片生成技能。',
+        timestamp: 1_770_000_001_000,
+        metadata: {
+          sourceChannel: 'metaweb_private',
+          orderExecutionTrace: true,
+          excludeFromSandboxHistory: true,
+        },
+      },
+      {
+        id: 'm3',
+        type: 'assistant',
+        content: '头像已生成。',
+        timestamp: 1_770_000_002_000,
+        metadata: { direction: 'outgoing', sourceChannel: 'metaweb_private' },
+      },
+    ],
+    now: 1_770_000_002_000,
+  });
+
+  assert.deepEqual(
+    analysis.contextMessages.map((message) => message.content),
+    ['请生成头像', '头像已生成。'],
+  );
+});
+
 test('regular private chat skips placeholder latest messages without an LLM reply', () => {
   assert.equal(shouldSkipPrivateChatAutoReplyText('Thinking...'), true);
   assert.equal(shouldSkipPrivateChatAutoReplyText(' thinking… '), true);
@@ -628,5 +666,42 @@ test('prior A2A outbound detection counts previous local private chat turns', ()
       metabotId: 7,
     }),
     true,
+  );
+});
+
+test('prior A2A outbound detection ignores internal order execution traces', () => {
+  const coworkStore = {
+    getConversationMapping(channel, externalConversationId, metabotId) {
+      assert.equal(channel, 'metaweb_private');
+      assert.equal(externalConversationId, 'metaweb-private:peer-global');
+      assert.equal(metabotId, 7);
+      return { coworkSessionId: 'session-1' };
+    },
+    getSession(sessionId) {
+      assert.equal(sessionId, 'session-1');
+      return {
+        messages: [
+          {
+            id: 'm1',
+            type: 'assistant',
+            content: '正在执行图片生成技能。',
+            timestamp: 1,
+            metadata: {
+              sourceChannel: 'metaweb_private',
+              orderExecutionTrace: true,
+              excludeFromSandboxHistory: true,
+            },
+          },
+        ],
+      };
+    },
+  };
+
+  assert.equal(
+    hasPriorPrivateChatA2AOutbound(coworkStore, {
+      externalConversationId: 'metaweb-private:peer-global',
+      metabotId: 7,
+    }),
+    false,
   );
 });
