@@ -18,9 +18,25 @@ interface A2AMessageItemProps {
 
 const formatTime = (timestamp: number): string => {
   const d = new Date(timestamp);
+  const now = new Date();
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
+  const timeStr = `${hh}:${mm}`;
+
+  if (d.getFullYear() < now.getFullYear()) {
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${month}-${day} ${timeStr}`;
+  }
+
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs > 24 * 60 * 60 * 1000) {
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${month}-${day} ${timeStr}`;
+  }
+
+  return timeStr;
 };
 
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
