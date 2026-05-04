@@ -229,15 +229,14 @@ test('ending a private chat A2A conversation marks the mapping closed and emits 
 
 test('private chat reply delay scales with active incoming turn count', async () => {
   assert.equal(getPrivateChatReplyDelayMs(1), 5000);
-  assert.equal(getPrivateChatReplyDelayMs(10), 5000);
-  assert.equal(getPrivateChatReplyDelayMs(11), 10000);
-  assert.equal(getPrivateChatReplyDelayMs(20), 10000);
-  assert.equal(getPrivateChatReplyDelayMs(21), 15000);
-  assert.equal(getPrivateChatReplyDelayMs(30), 15000);
-  assert.equal(getPrivateChatReplyDelayMs(31), 20000);
-  assert.equal(getPrivateChatReplyDelayMs(40), 20000);
-  assert.equal(getPrivateChatReplyDelayMs(41), 25000);
-  assert.equal(getPrivateChatReplyDelayMs(50), 25000);
+  assert.equal(getPrivateChatReplyDelayMs(5), 5000);
+  assert.equal(getPrivateChatReplyDelayMs(6), 10000);
+  assert.equal(getPrivateChatReplyDelayMs(10), 10000);
+  assert.equal(getPrivateChatReplyDelayMs(11), 15000);
+  assert.equal(getPrivateChatReplyDelayMs(20), 15000);
+  assert.equal(getPrivateChatReplyDelayMs(21), 30000);
+  assert.equal(getPrivateChatReplyDelayMs(30), 30000);
+  assert.equal(getPrivateChatReplyDelayMs(50), 30000);
 
   const delays = [];
   await waitBeforePrivateChatReply(21, (ms) => {
@@ -245,7 +244,7 @@ test('private chat reply delay scales with active incoming turn count', async ()
     return Promise.resolve();
   });
 
-  assert.deepEqual(delays, [15000]);
+  assert.deepEqual(delays, [30000]);
 });
 
 test('private chat prompt includes recent A2A context and topic-ending policy', () => {
@@ -296,7 +295,7 @@ test('private chat prompt includes recent A2A context and topic-ending policy', 
   assert.match(prompt, /Thinking\.\.\./);
   assert.match(prompt, /\.\.\.\./);
   assert.match(prompt, /say exactly "bye"/i);
-  assert.match(prompt, /50 turns/i);
+  assert.match(prompt, /30 turns/i);
   assert.match(prompt, /Peer Bot: 我们讨论一下比特币生态的索引器吧/);
   assert.match(prompt, /Local Bot: 可以，先从链上数据可用性说起。/);
   assert.match(prompt, /Peer Bot: 那缓存策略呢？/);

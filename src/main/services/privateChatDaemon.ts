@@ -76,7 +76,8 @@ import {
 
 const POLL_INTERVAL_MS = 5_000;
 const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
-const PRIVATE_CHAT_MAX_INCOMING_TURNS = 50;
+const PRIVATE_CHAT_MAX_INCOMING_TURNS = 30;
+const PRIVATE_CHAT_CLOSING_PHASE_TURNS = 20;
 const PRIVATE_CHAT_CONTEXT_MAX_MESSAGES = 80;
 const RATING_PROMPT_ORIGINAL_REQUEST_MAX_CHARS = 1200;
 const RATING_PROMPT_SERVICE_RESULT_MAX_CHARS = 6000;
@@ -436,11 +437,10 @@ export function getPrivateChatReplyDelayMs(incomingTurnCount: number): number {
   const count = Number.isFinite(incomingTurnCount)
     ? Math.max(1, Math.floor(incomingTurnCount))
     : 1;
-  if (count <= 10) return 5_000;
-  if (count <= 20) return 10_000;
-  if (count <= 30) return 15_000;
-  if (count <= 40) return 20_000;
-  return 25_000;
+  if (count <= 5) return 5_000;
+  if (count <= 10) return 10_000;
+  if (count <= 20) return 15_000;
+  return 30_000;
 }
 
 export async function waitBeforePrivateChatReply(
@@ -554,8 +554,12 @@ export function buildPrivateChatA2ASystemPrompt(params: {
         return `${speaker}: ${message.content}`;
       })
     : ['(no prior messages in this active private-chat session)'];
+  const closingPhaseRule = params.analysis.incomingTurnCount > PRIVATE_CHAT_CLOSING_PHASE_TURNS && !params.analysis.shouldForceBye
+    ? '- The conversation is entering the closing phase. Guide the discussion toward a natural conclusion. If there is no valuable discussion or pending questions, politely begin wrapping up the conversation.'
+    : '';
+
   const forceByeRule = params.analysis.shouldForceBye
-    ? '- This active conversation has reached the 50 turns limit. Reply exactly "bye" now, with no other text.'
+    ? '- This active conversation has reached the 30 turns limit. Reply exactly "bye" now, with no other text.'
     : '- If the conversation no longer seems likely to produce useful new information, end the topic by replying exactly "bye".';
 
   return [
@@ -571,8 +575,9 @@ export function buildPrivateChatA2ASystemPrompt(params: {
     '- If the latest message is clearly meaningless placeholder or closing content, such as "Thinking...", "....", or "bye", do not reply.',
     '- Do not claim local tool access or execute local skills in this regular private chat.',
     forceByeRule,
+    closingPhaseRule,
     '- When you say "bye", say exactly "bye" and nothing else.',
-    `- Active incoming turn count: ${params.analysis.incomingTurnCount}/50 turns.`,
+    `- Active incoming turn count: ${params.analysis.incomingTurnCount}/${PRIVATE_CHAT_MAX_INCOMING_TURNS} turns.`,
     '',
     '## Active Private Chat Context',
     ...contextLines,
@@ -1103,68 +1108,6 @@ export function appendPrivateChatA2AMessage(params: {
   return message;
 }
 
-export async function handleActiveOrderOrdinaryPrivateChatSuppression(params: {
-  db: Database;
-  saveDb: SaveDbFn;
-  coworkStore: CoworkStore;
-  metabotId: number;
-  row: PrivateChatMessageRow;
-  plaintext: string;
-  fromGlobalMetaId?: string | null;
-  hasActiveOrderForPrivateChatSuppression?: (
-    localMetabotId: number,
-    counterpartyGlobalMetaId: string
-  ) => boolean;
-  emitLog: (msg: string) => void;
-  emitToRenderer?: RendererEmitter;
-}): Promise<{ suppressed: boolean; message: CoworkMessage | null }> {
-  if (classifySimplemsgContent(params.plaintext).kind !== 'private_chat') {
-    return { suppressed: false, message: null };
-  }
-
-  const peerGlobalMetaId = normalizeIdentity(params.fromGlobalMetaId)
-    || normalizePrivateConversationPeerId(params.row);
-  if (!peerGlobalMetaId || !params.hasActiveOrderForPrivateChatSuppression) {
-    return { suppressed: false, message: null };
-  }
-
-  if (!params.hasActiveOrderForPrivateChatSuppression(params.metabotId, peerGlobalMetaId)) {
-    return { suppressed: false, message: null };
-  }
-
-  const { sessionId, externalConversationId } = await resolvePrivateConversationSession(
-    params.coworkStore,
-    params.metabotId,
-    params.row,
-    params.plaintext,
-  );
-  const message = appendPrivateChatA2AMessage({
-    coworkStore: params.coworkStore,
-    sessionId,
-    externalConversationId,
-    type: 'user',
-    content: params.plaintext,
-    senderGlobalMetaId: peerGlobalMetaId,
-    senderName: (params.row.from_name as string | null) ?? null,
-    senderAvatar: (params.row.from_avatar as string | null) ?? null,
-    extraMetadata: {
-      simplemsgKind: 'private_chat',
-      activeOrderDisplayOnly: true,
-      ...buildPrivateChatA2AChainMetadata({
-        txId: params.row.tx_id,
-        pinId: params.row.pin_id,
-      }),
-    },
-    emitToRenderer: params.emitToRenderer,
-  });
-
-  params.emitLog(
-    `[PrivateChat] Active service order with ${peerGlobalMetaId.slice(0, 12)}…, display-only ordinary private chat.`
-  );
-  markProcessed(params.db, params.row.id, params.saveDb);
-  return { suppressed: true, message };
-}
-
 export function endPrivateChatA2AConversation(params: {
   coworkStore: Pick<
     CoworkStore,
@@ -1632,6 +1575,112 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   }
 }
 
+/**
+ * Resolve the plaintext for an outgoing private chat message stored by the listener.
+ * The listener may have kept the ciphertext when it couldn't decrypt (the peer's
+ * chatPublicKey is often missing from toUserInfo for outgoing messages).
+ * We try to decrypt here using the peer's chatPubkey from a previous incoming message.
+ */
+async function resolveOutgoingPrivateChatPlaintext(params: {
+  db: Database;
+  row: PrivateChatMessageRow;
+  metabot: { id: number };
+  metabotStore: MetabotStore;
+  toGlobalMetaId: string;
+  emitLog: (msg: string) => void;
+}): Promise<string | null> {
+  const content = String(params.row.content ?? '').trim();
+  if (!content) return null;
+
+  // Already plaintext — listener decrypted successfully.
+  if (!content.startsWith('U2FsdGVkX1')) return content;
+
+  // Ciphertext — try to decrypt using the peer's chatPubkey (local history → chain API fallback).
+  const peerChatPubkey = await resolvePeerChatPubkey(
+    params.db,
+    params.toGlobalMetaId,
+    params.emitLog
+  );
+  if (!peerChatPubkey) {
+    params.emitLog(
+      `[PrivateChat] Outgoing message ${params.row.id}: cannot decrypt — no peer chatPubkey for ${params.toGlobalMetaId.slice(0, 12)}…`
+    );
+    return null;
+  }
+
+  try {
+    const wallet = params.metabotStore.getMetabotWalletByMetabotId(params.metabot.id);
+    if (!wallet?.mnemonic?.trim()) return null;
+    const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
+      wallet.mnemonic,
+      wallet.path ?? "m/44'/10001'/0'/0/0"
+    );
+    const sharedSecret = computeEcdhSharedSecretSha256(privateKeyBuffer, peerChatPubkey);
+    const plain = ecdhDecrypt(content, sharedSecret);
+    if (plain && plain !== content) return plain;
+  } catch (e) {
+    params.emitLog(
+      `[PrivateChat] Outgoing message ${params.row.id}: decrypt failed: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Resolve the peer's chatPubkey for ECDH decryption.
+ * 1) Look up from a previous incoming private_chat_messages row (fast, local).
+ * 2) Fall back to the MetaID chain API.
+ */
+async function resolvePeerChatPubkey(
+  db: Database,
+  peerGlobalMetaId: string,
+  emitLog: (msg: string) => void
+): Promise<string> {
+  // 1) Local: from a previous incoming message where the peer is the sender.
+  const localResult = db.exec(
+    `SELECT from_chat_pubkey
+     FROM private_chat_messages
+     WHERE from_global_metaid = ?
+       AND from_chat_pubkey IS NOT NULL
+       AND from_chat_pubkey != ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [peerGlobalMetaId]
+  );
+  const localRow = localResult[0]?.values?.[0];
+  if (typeof localRow?.[0] === 'string' && localRow[0].trim()) {
+    return localRow[0].trim();
+  }
+
+  // 2) Fallback: fetch from MetaID chain.
+  try {
+    const url = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(peerGlobalMetaId)}`;
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      emitLog(`[PrivateChat] Peer chatPubkey API returned HTTP ${res.status} for ${peerGlobalMetaId.slice(0, 12)}…`);
+      return '';
+    }
+    const json = await res.json() as Record<string, unknown>;
+    // Unwrap { data: {...} } envelope if present.
+    const data = (json.data && typeof json.data === 'object' ? json.data : json) as Record<string, unknown>;
+    // Try common key names.
+    const candidates = [data.chatpubkey, data.chatPubkey, data.chatPublicKey, data.pubkey];
+    for (const c of candidates) {
+      if (typeof c === 'string' && c.trim()) return c.trim();
+    }
+    emitLog(`[PrivateChat] Peer chatPubkey not found in API response for ${peerGlobalMetaId.slice(0, 12)}…`);
+  } catch (e) {
+    emitLog(
+      `[PrivateChat] Peer chatPubkey API fetch failed for ${peerGlobalMetaId.slice(0, 12)}…: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
+  return '';
+}
+
 async function processOne(
   row: PrivateChatMessageRow,
   db: Database,
@@ -1655,6 +1704,63 @@ async function processOne(
     const toGlobalMetaId = (row.to_global_metaid ?? row.to_metaid ?? '').trim();
     if (!toGlobalMetaId) {
       emitLog(`[PrivateChat] Skip message ${row.id}: no to_global_metaid`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+
+    // Outgoing path: this message was sent FROM a local metabot TO a peer.
+    // The listener stores it but may keep the ciphertext when decryption fails
+    // (toUserInfo.chatPublicKey is often missing for the outgoing direction).
+    // Decrypt and sync into the A2A session so the outgoing message is visible locally.
+    const outgoingFromMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
+    const senderMetabot = outgoingFromMetaId
+      ? metabotStore.getMetabotByGlobalMetaId(outgoingFromMetaId)
+      : null;
+    if (senderMetabot) {
+      const externalConversationId = buildPrivateConversationExternalConversationId(row);
+      const mapping = coworkStore.getConversationMapping(
+        'metaweb_private',
+        externalConversationId,
+        senderMetabot.id
+      );
+      if (mapping) {
+        const plaintext = await resolveOutgoingPrivateChatPlaintext({
+          db,
+          row,
+          metabot: senderMetabot,
+          metabotStore,
+          toGlobalMetaId,
+          emitLog,
+        });
+        if (plaintext) {
+          const chainMetadata = buildPrivateChatA2AChainMetadata({
+            txId: row.tx_id,
+            pinId: row.pin_id,
+          });
+          appendPrivateChatA2AMessage({
+            coworkStore,
+            sessionId: mapping.coworkSessionId,
+            externalConversationId,
+            type: 'assistant',
+            content: plaintext,
+            senderGlobalMetaId: outgoingFromMetaId,
+            senderName: senderMetabot.name ?? null,
+            extraMetadata: {
+              simplemsgKind: 'private_chat',
+              ...chainMetadata,
+            },
+            emitToRenderer,
+          });
+          coworkStore.touchConversationMapping(
+            'metaweb_private',
+            externalConversationId,
+            senderMetabot.id
+          );
+          emitLog(
+            `[PrivateChat] Synced outgoing message to A2A session for peer ${toGlobalMetaId.slice(0, 12)}…`
+          );
+        }
+      }
       markProcessed(db, row.id, saveDb);
       return;
     }
@@ -2461,24 +2567,6 @@ async function processOne(
         return;
       }
       emitLog(`[PrivateChat] No buyer order session found for peer ${fromGlobalMetaId.slice(0, 12)}…, treating as regular private chat.`);
-    }
-
-    const activeOrderSuppression = await handleActiveOrderOrdinaryPrivateChatSuppression({
-      db,
-      saveDb,
-      coworkStore,
-      metabotId: metabot.id,
-      row,
-      plaintext,
-      fromGlobalMetaId,
-      hasActiveOrderForPrivateChatSuppression: serviceOrderLifecycle
-        ? serviceOrderLifecycle.hasActiveOrderForPrivateChatSuppression.bind(serviceOrderLifecycle)
-        : undefined,
-      emitLog,
-      emitToRenderer,
-    });
-    if (activeOrderSuppression.suppressed) {
-      return;
     }
 
     const externalConversationId = buildPrivateConversationExternalConversationId(row);
