@@ -1737,27 +1737,44 @@ async function processOne(
             txId: row.tx_id,
             pinId: row.pin_id,
           });
-          appendPrivateChatA2AMessage({
-            coworkStore,
-            sessionId: mapping.coworkSessionId,
-            externalConversationId,
-            type: 'assistant',
-            content: plaintext,
-            senderGlobalMetaId: outgoingFromMetaId,
-            senderName: senderMetabot.name ?? null,
-            extraMetadata: {
-              simplemsgKind: 'private_chat',
-              ...chainMetadata,
-            },
-            emitToRenderer,
-          });
+          const chainPinId = chainMetadata.pinId ?? '';
+          const chainTxid = chainMetadata.txid ?? '';
+          const session = coworkStore.getSession(mapping.coworkSessionId);
+          const alreadySynced = chainPinId || chainTxid
+            ? session?.messages.some((m) => {
+                const meta = (m.metadata ?? {}) as Record<string, unknown>;
+                const mp = typeof meta.pinId === 'string' ? meta.pinId.trim() : '';
+                const mt = typeof meta.txid === 'string' ? (meta.txid as string).trim() : '';
+                return (chainPinId && mp === chainPinId) || (chainTxid && mt === chainTxid);
+              })
+            : false;
+          if (alreadySynced) {
+            emitLog(
+              `[PrivateChat] Outgoing sync: message already tracked in session, skipping duplicate.`
+            );
+          } else {
+            appendPrivateChatA2AMessage({
+              coworkStore,
+              sessionId: mapping.coworkSessionId,
+              externalConversationId,
+              type: 'assistant',
+              content: plaintext,
+              senderGlobalMetaId: outgoingFromMetaId,
+              senderName: senderMetabot.name ?? null,
+              extraMetadata: {
+                simplemsgKind: 'private_chat',
+                ...chainMetadata,
+              },
+              emitToRenderer,
+            });
+            emitLog(
+              `[PrivateChat] Synced outgoing message to A2A session for peer ${toGlobalMetaId.slice(0, 12)}…`
+            );
+          }
           coworkStore.touchConversationMapping(
             'metaweb_private',
             externalConversationId,
             senderMetabot.id
-          );
-          emitLog(
-            `[PrivateChat] Synced outgoing message to A2A session for peer ${toGlobalMetaId.slice(0, 12)}…`
           );
         }
       }
