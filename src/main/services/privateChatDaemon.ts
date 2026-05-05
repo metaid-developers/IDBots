@@ -1717,7 +1717,7 @@ async function processOne(
       ? metabotStore.getMetabotByGlobalMetaId(outgoingFromMetaId)
       : null;
     if (senderMetabot) {
-      const externalConversationId = buildPrivateConversationExternalConversationId(row);
+      const externalConversationId = buildCanonicalPrivateConversationExternalConversationId(toGlobalMetaId);
       const mapping = coworkStore.getConversationMapping(
         'metaweb_private',
         externalConversationId,

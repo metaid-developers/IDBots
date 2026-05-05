@@ -1544,21 +1544,13 @@ export class CoworkStore implements MemoryBackend {
     if (!normalizedChannel || !normalizedConversationId) return null;
     const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
 
-    let row = this.getOne<CoworkConversationMappingRow>(`
+    const row = this.getOne<CoworkConversationMappingRow>(`
       SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
       FROM cowork_conversation_mappings
       WHERE channel = ? AND external_conversation_id = ? AND metabot_id = ?
       LIMIT 1
     `, [normalizedChannel, normalizedConversationId, normalizedMetabotId]);
 
-    if (!row && normalizedMetabotId !== 0) {
-      row = this.getOne<CoworkConversationMappingRow>(`
-        SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
-        FROM cowork_conversation_mappings
-        WHERE channel = ? AND external_conversation_id = ? AND metabot_id = 0
-        LIMIT 1
-      `, [normalizedChannel, normalizedConversationId]);
-    }
 
     return row ? this.mapConversationMappingRow(row) : null;
   }
