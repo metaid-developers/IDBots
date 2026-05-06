@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## File edits in worktrees
 
-When the current working directory is a git worktree (under `.claude/worktrees/`), all Edit/Write calls must use paths under this worktree root — not the main repo path. Before editing, check that the file path matches the worktree directory shown at the top of the session context.
+When the session working directory is a git worktree, all Edit/Write file paths must stay under the worktree root, not the parent repo. Before each edit, verify the path prefix matches the working directory shown in the session context.
 
 ## Project
 
