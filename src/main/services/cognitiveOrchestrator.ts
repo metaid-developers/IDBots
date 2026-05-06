@@ -6,6 +6,7 @@
  */
 
 import type { Database } from 'sql.js';
+import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -878,13 +879,18 @@ export function startOrchestrator(
   getMetabotById: GetMetabotByIdFn,
   performChatCompletion: PerformChatCompletionFn,
   broadcastGroupChat: BroadcastGroupChatFn,
-  options?: OrchestratorOptions
+  options?: OrchestratorOptions,
+  onWasmBoundsError?: () => void,
 ): void {
   stopOrchestrator();
   tickCount = 0;
   tickIntervalId = setInterval(() => {
     tick(db, saveDb, getMetabotById, performChatCompletion, broadcastGroupChat, options).catch((err) => {
       console.error('[Orchestrator] tick error:', err);
+      if (isSqliteWasmBoundsError(err)) {
+        stopOrchestrator();
+        onWasmBoundsError?.();
+      }
     });
   }, TICK_INTERVAL_MS);
 }

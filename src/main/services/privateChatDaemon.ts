@@ -5,6 +5,7 @@
  */
 
 import type { Database } from 'sql.js';
+import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { getPrivateKeyBufferForEcdh } from './metabotWalletService';
 import {
   computeEcdhSharedSecret,
@@ -2826,7 +2827,8 @@ export function startPrivateChatDaemon(
   getSkillsPrompt?: GetSellerOrderSkillsPromptFn,
   emitToRenderer?: (channel: string, data: unknown) => void,
   getListenerConfig?: GetListenerConfigFn,
-  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn
+  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
+  onWasmBoundsError?: () => void,
 ): void {
   stopPrivateChatDaemon();
   orderCowork = new PrivateChatOrderCowork({
@@ -2847,10 +2849,24 @@ export function startPrivateChatDaemon(
   });
   const performChat = performChatCompletionForOrchestrator;
   const tick = () => {
-    const rows = parsePrivateChatRows(db);
+    let rows: PrivateChatMessageRow[];
+    try {
+      rows = parsePrivateChatRows(db);
+    } catch (e) {
+      console.error('[PrivateChat] parsePrivateChatRows error:', e);
+      if (isSqliteWasmBoundsError(e)) {
+        stopPrivateChatDaemon();
+        onWasmBoundsError?.();
+      }
+      return;
+    }
     for (const row of rows) {
       processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer, getListenerConfig, resolveLocalServiceOutputType).catch((e) => {
         console.error('[PrivateChat] processOne error:', e);
+        if (isSqliteWasmBoundsError(e)) {
+          stopPrivateChatDaemon();
+          onWasmBoundsError?.();
+        }
       });
     }
   };

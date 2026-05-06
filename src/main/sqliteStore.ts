@@ -1446,6 +1446,17 @@ export class SqliteStore {
     fs.writeFileSync(this.dbPath, buffer);
   }
 
+  /** Run VACUUM and PRAGMA optimize to reduce SQLite internal fragmentation and WASM memory pressure. */
+  vacuum(): void {
+    try {
+      this.db.run('PRAGMA optimize;');
+      this.db.run('VACUUM;');
+      this.save();
+    } catch (error) {
+      console.warn('[SqliteStore] VACUUM failed:', error);
+    }
+  }
+
   close(): void {
     this.db.close();
   }
