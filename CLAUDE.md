@@ -2,15 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## CRITICAL: File Path Isolation
+## File edits in worktrees
 
-This is a **git worktree**. All edits MUST use paths under this worktree root:
-
-```
-/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.claude/worktrees/eloquent-torvalds-40b6df/
-```
-
-Do NOT edit files under the main repo path `/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/` — that is the `main` branch and must stay clean. Before every Edit/Write call, verify the path starts with the worktree root above.
+When the current working directory is a git worktree (under `.claude/worktrees/`), all Edit/Write calls must use paths under this worktree root — not the main repo path. Before editing, check that the file path matches the worktree directory shown at the top of the session context.
 
 ## Project
 
