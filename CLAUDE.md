@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: File Path Isolation
+
+This is a **git worktree**. All edits MUST use paths under this worktree root:
+
+```
+/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/.claude/worktrees/eloquent-torvalds-40b6df/
+```
+
+Do NOT edit files under the main repo path `/Users/tusm/Documents/MetaID_Projects/IDBots/IDBots/` — that is the `main` branch and must stay clean. Before every Edit/Write call, verify the path starts with the worktree root above.
+
 ## Project
 
 IDBots is a local-first desktop platform for on-chain AI agents ("MetaBots") built on the MetaID protocol. It pairs an Electron 40 + React 18 desktop app with an embedded `man-p2p` P2P data-sync runtime.
