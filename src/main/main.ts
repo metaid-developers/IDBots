@@ -2382,7 +2382,8 @@ const restartSqliteBackedDaemons = (input: {
         skillsRoots: skillMgr.getAllSkillRoots(),
         runSkillTurnViaCowork: (params) =>
           runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
-      }
+      },
+      () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
     );
 
     startPrivateChatDaemon(
@@ -2403,7 +2404,8 @@ const restartSqliteBackedDaemons = (input: {
         });
       },
       getListenerConfigFromStore,
-      resolveGigSquareLocalServiceOutputType
+      resolveGigSquareLocalServiceOutputType,
+      () => triggerDaemonWasmRecovery('privateChatDaemon')
     );
 
     if (input.restartListener) {
@@ -2423,6 +2425,13 @@ const restartSqliteBackedDaemons = (input: {
   } catch (error) {
     console.warn('[SQLiteRecovery] Failed to restart sqlite-backed daemons:', error);
   }
+};
+
+const triggerDaemonWasmRecovery = (daemonName: string) => {
+  const error = new Error('WASM memory access out of bounds');
+  recoverSqliteStore(error, daemonName).catch((recoveryError) => {
+    console.error(`[SQLiteRecovery] Recovery for ${daemonName} failed:`, recoveryError);
+  });
 };
 
 const recoverSqliteStore = async (error: unknown, operationName: string): Promise<void> => {
@@ -8280,7 +8289,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         skillsRoots: skillMgr.getAllSkillRoots(),
         runSkillTurnViaCowork: (params) =>
           runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
-      }
+      },
+      () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
     );
 
     // Start Private Chat Daemon (ECDH decrypt, ping/pong intercept, LLM reply + broadcast)
@@ -8302,7 +8312,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         });
       },
       getListenerConfigFromStore,
-      resolveGigSquareLocalServiceOutputType
+      resolveGigSquareLocalServiceOutputType,
+      () => triggerDaemonWasmRecovery('privateChatDaemon')
     );
 
     void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {
@@ -8317,6 +8328,16 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     setInterval(() => {
       void syncServiceRefundProtocols();
     }, SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS);
+
+    // Periodic SQLite maintenance to reduce WASM memory fragmentation
+    const SQLITE_MAINTENANCE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+    setInterval(() => {
+      try {
+        getStore().vacuum();
+      } catch (e) {
+        console.warn('[SQLiteMaintenance] Periodic VACUUM failed:', e);
+      }
+    }, SQLITE_MAINTENANCE_INTERVAL_MS);
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager().startAllEnabled().catch((error) => {

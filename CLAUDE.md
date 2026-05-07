@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## File edits in worktrees
+
+When the session working directory is a git worktree, all Edit/Write file paths must stay under the worktree root, not the parent repo. Before each edit, verify the path prefix matches the working directory shown in the session context.
+
 ## Project
 
 IDBots is a local-first desktop platform for on-chain AI agents ("MetaBots") built on the MetaID protocol. It pairs an Electron 40 + React 18 desktop app with an embedded `man-p2p` P2P data-sync runtime.
