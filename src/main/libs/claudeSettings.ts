@@ -308,6 +308,7 @@ export function buildEnvForConfig(config: CoworkApiConfig): Record<string, strin
   baseEnv.ANTHROPIC_API_KEY = config.apiKey;
   baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
   baseEnv.ANTHROPIC_MODEL = config.model;
+  baseEnv.ANTHROPIC_SMALL_FAST_MODEL = config.model;
 
   return baseEnv;
 }
