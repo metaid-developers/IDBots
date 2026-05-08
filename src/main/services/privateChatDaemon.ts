@@ -2814,6 +2814,8 @@ async function processOne(
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+/** sql.js Database must not be used concurrently; skip overlapping ticks. */
+let privateChatPollTickRunning = false;
 
 export function startPrivateChatDaemon(
   db: Database,
@@ -2848,30 +2850,55 @@ export function startPrivateChatDaemon(
     verifyDeliveryArtifactUpload,
   });
   const performChat = performChatCompletionForOrchestrator;
-  const tick = () => {
-    let rows: PrivateChatMessageRow[];
+  const runPollTick = async (): Promise<void> => {
+    if (privateChatPollTickRunning) return;
+    privateChatPollTickRunning = true;
     try {
-      rows = parsePrivateChatRows(db);
-    } catch (e) {
-      console.error('[PrivateChat] parsePrivateChatRows error:', e);
-      if (isSqliteWasmBoundsError(e)) {
-        stopPrivateChatDaemon();
-        onWasmBoundsError?.();
-      }
-      return;
-    }
-    for (const row of rows) {
-      processOne(row, db, saveDb, coworkStore, metabotStore, createPin, performChat, emitLog, orderCowork, serviceOrderLifecycle, getSkillsPrompt, emitToRenderer, getListenerConfig, resolveLocalServiceOutputType).catch((e) => {
-        console.error('[PrivateChat] processOne error:', e);
+      let rows: PrivateChatMessageRow[];
+      try {
+        rows = parsePrivateChatRows(db);
+      } catch (e) {
+        console.error('[PrivateChat] parsePrivateChatRows error:', e);
         if (isSqliteWasmBoundsError(e)) {
           stopPrivateChatDaemon();
           onWasmBoundsError?.();
         }
-      });
+        return;
+      }
+      for (const row of rows) {
+        try {
+          await processOne(
+            row,
+            db,
+            saveDb,
+            coworkStore,
+            metabotStore,
+            createPin,
+            performChat,
+            emitLog,
+            orderCowork,
+            serviceOrderLifecycle,
+            getSkillsPrompt,
+            emitToRenderer,
+            getListenerConfig,
+            resolveLocalServiceOutputType,
+          );
+        } catch (e) {
+          console.error('[PrivateChat] processOne error:', e);
+          if (isSqliteWasmBoundsError(e)) {
+            stopPrivateChatDaemon();
+            onWasmBoundsError?.();
+          }
+        }
+      }
+    } finally {
+      privateChatPollTickRunning = false;
     }
   };
-  pollTimer = setInterval(tick, POLL_INTERVAL_MS);
-  tick();
+  pollTimer = setInterval(() => {
+    void runPollTick();
+  }, POLL_INTERVAL_MS);
+  void runPollTick();
   emitLog('[PrivateChat] Daemon started.');
 }
 
@@ -2880,6 +2907,7 @@ export function stopPrivateChatDaemon(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  privateChatPollTickRunning = false;
   orderCowork = null;
   thinkingTasks.clear();
 }

@@ -4520,6 +4520,7 @@ if (!gotTheLock) {
     activeSkillIds?: string[];
     metabotId?: number | null;
   }) => {
+    return withSqliteRecovery('cowork:session:start', async () => {
     try {
       const coworkStoreInstance = getCoworkStore();
       const config = coworkStoreInstance.getConfig();
@@ -4573,11 +4574,13 @@ if (!gotTheLock) {
       };
       return { success: true, session: sessionWithMessages };
     } catch (error) {
+      if (isSqliteWasmBoundsError(error)) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to start session',
       };
     }
+    });
   });
 
   ipcMain.handle('cowork:session:continue', async (_event, options: {
@@ -4586,6 +4589,7 @@ if (!gotTheLock) {
     systemPrompt?: string;
     activeSkillIds?: string[];
   }) => {
+    return withSqliteRecovery('cowork:session:continue', async () => {
     try {
       const runner = getCoworkRunner();
       const session = getCoworkStore().getSession(options.sessionId);
@@ -4600,11 +4604,13 @@ if (!gotTheLock) {
 
       return { success: true, session };
     } catch (error) {
+      if (isSqliteWasmBoundsError(error)) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to continue session',
       };
     }
+    });
   });
 
   ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
@@ -4917,79 +4923,95 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
-    try {
-      const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.deleteSession(sessionId);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete session',
-      };
-    }
+    return withSqliteRecovery('cowork:session:delete', async () => {
+      try {
+        const coworkStoreInstance = getCoworkStore();
+        coworkStoreInstance.deleteSession(sessionId);
+        return { success: true };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to delete session',
+        };
+      }
+    });
   });
 
   ipcMain.handle('cowork:session:pin', async (_event, options: { sessionId: string; pinned: boolean }) => {
-    try {
-      const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.setSessionPinned(options.sessionId, options.pinned);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update session pin',
-      };
-    }
+    return withSqliteRecovery('cowork:session:pin', async () => {
+      try {
+        const coworkStoreInstance = getCoworkStore();
+        coworkStoreInstance.setSessionPinned(options.sessionId, options.pinned);
+        return { success: true };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update session pin',
+        };
+      }
+    });
   });
 
   ipcMain.handle('cowork:session:rename', async (_event, options: { sessionId: string; title: string }) => {
-    try {
-      const title = options.title.trim();
-      if (!title) {
-        return { success: false, error: 'Title is required' };
+    return withSqliteRecovery('cowork:session:rename', async () => {
+      try {
+        const title = options.title.trim();
+        if (!title) {
+          return { success: false, error: 'Title is required' };
+        }
+        const coworkStoreInstance = getCoworkStore();
+        coworkStoreInstance.updateSession(options.sessionId, { title });
+        return { success: true };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to rename session',
+        };
       }
-      const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.updateSession(options.sessionId, { title });
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to rename session',
-      };
-    }
+    });
   });
 
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
-    try {
-      repairSelfDirectedServiceOrders();
-      const session = enrichCoworkSessionWithServiceOrderSummary(
-        getCoworkStore().getSession(sessionId)
-      );
-      return { success: true, session };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get session',
-      };
-    }
+    return withSqliteRecovery('cowork:session:get', async () => {
+      try {
+        repairSelfDirectedServiceOrders();
+        const session = enrichCoworkSessionWithServiceOrderSummary(
+          getCoworkStore().getSession(sessionId)
+        );
+        return { success: true, session };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get session',
+        };
+      }
+    });
   });
 
   ipcMain.handle('cowork:session:list', async () => {
-    try {
-      repairSelfDirectedServiceOrders();
-      const sessions = getCoworkStore().listSessions().map((session) =>
-        enrichCoworkSessionWithServiceOrderSummary(session)
-      );
-      return { success: true, sessions };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list sessions',
-      };
-    }
+    return withSqliteRecovery('cowork:session:list', async () => {
+      try {
+        repairSelfDirectedServiceOrders();
+        const sessions = getCoworkStore().listSessions().map((session) =>
+          enrichCoworkSessionWithServiceOrderSummary(session)
+        );
+        return { success: true, sessions };
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) throw error;
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to list sessions',
+        };
+      }
+    });
   });
 
   ipcMain.handle('cowork:session:processServiceRefund', async (_event, sessionId: string) => {
+    return withSqliteRecovery('cowork:session:processServiceRefund', async () => {
     try {
       const order = resolveServiceOrderForSession(sessionId);
       if (!order) {
@@ -5006,11 +5028,13 @@ if (!gotTheLock) {
         session,
       };
     } catch (error) {
+      if (isSqliteWasmBoundsError(error)) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to process service refund',
       };
     }
+    });
   });
 
   ipcMain.handle('cowork:session:readLocalImage', async (_event, options: { path: string; maxBytes?: number }) => {

@@ -114,6 +114,8 @@ export type RunSkillTurnViaCoworkFn = (params: {
 }) => Promise<string>;
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
+/** sql.js Database must not be used concurrently; skip overlapping orchestrator ticks. */
+let orchestratorPollTickRunning = false;
 /** Task IDs currently in LLM/broadcast pipeline; skip them in tick to avoid duplicate triggers */
 const thinkingTasks = new Set<number>();
 
@@ -843,18 +845,20 @@ async function tick(
 
       if (shouldReply) {
         thinkingTasks.add(task.id);
-        runReplyPipeline(
-          task,
-          db,
-          saveDb,
-          getMetabotById,
-          performChatCompletion,
-          broadcastGroupChat,
-          options,
-          reason
-        ).finally(() => {
+        try {
+          await runReplyPipeline(
+            task,
+            db,
+            saveDb,
+            getMetabotById,
+            performChatCompletion,
+            broadcastGroupChat,
+            options,
+            reason,
+          );
+        } finally {
           thinkingTasks.delete(task.id);
-        });
+        }
         break;
       }
     }
@@ -885,13 +889,19 @@ export function startOrchestrator(
   stopOrchestrator();
   tickCount = 0;
   tickIntervalId = setInterval(() => {
-    tick(db, saveDb, getMetabotById, performChatCompletion, broadcastGroupChat, options).catch((err) => {
-      console.error('[Orchestrator] tick error:', err);
-      if (isSqliteWasmBoundsError(err)) {
-        stopOrchestrator();
-        onWasmBoundsError?.();
-      }
-    });
+    if (orchestratorPollTickRunning) return;
+    orchestratorPollTickRunning = true;
+    void tick(db, saveDb, getMetabotById, performChatCompletion, broadcastGroupChat, options)
+      .catch((err) => {
+        console.error('[Orchestrator] tick error:', err);
+        if (isSqliteWasmBoundsError(err)) {
+          stopOrchestrator();
+          onWasmBoundsError?.();
+        }
+      })
+      .finally(() => {
+        orchestratorPollTickRunning = false;
+      });
   }, TICK_INTERVAL_MS);
 }
 
@@ -903,6 +913,7 @@ export function stopOrchestrator(): void {
     clearInterval(tickIntervalId);
     tickIntervalId = null;
   }
+  orchestratorPollTickRunning = false;
   thinkingTasks.clear();
 }
 

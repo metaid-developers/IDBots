@@ -1,4 +1,6 @@
 const SQLITE_WASM_BOUNDS_PATTERN = /memory access out of bounds/i;
+/** sql.js / SQLite WASM often surfaces concurrent DB misuse as this message (see privateChatDaemon tick). */
+const SQLITE_WASM_API_MISUSE_PATTERN = /bad parameter or other API misuse/i;
 
 const getErrorText = (error: unknown): string => {
   if (error instanceof Error) {
@@ -24,7 +26,11 @@ export function isSqliteWasmBoundsError(error: unknown): boolean {
 
   while (current && !visited.has(current)) {
     visited.add(current);
-    if (SQLITE_WASM_BOUNDS_PATTERN.test(getErrorText(current))) {
+    const text = getErrorText(current);
+    if (
+      SQLITE_WASM_BOUNDS_PATTERN.test(text)
+      || SQLITE_WASM_API_MISUSE_PATTERN.test(text)
+    ) {
       return true;
     }
     current = current instanceof Error ? current.cause : undefined;
