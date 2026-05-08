@@ -13,6 +13,8 @@ let evaluatePrivateChatAutoReplyPolicy;
 let hasPriorNonHandshakePrivateChatOutbound;
 let hasPriorPrivateChatA2AOutbound;
 let buildPrivateChatA2AChainMetadata;
+let isPrivateChatHandshakePlaintext;
+let shouldContinuePrivateChatInboundAfterOutgoingSync;
 try {
   ({
     appendPrivateChatA2AMessage,
@@ -27,6 +29,8 @@ try {
     hasPriorNonHandshakePrivateChatOutbound,
     hasPriorPrivateChatA2AOutbound,
     buildPrivateChatA2AChainMetadata,
+    isPrivateChatHandshakePlaintext,
+    shouldContinuePrivateChatInboundAfterOutgoingSync,
   } = await import('../dist-electron/main/services/privateChatDaemon.js'));
 } catch {
   ({
@@ -42,6 +46,8 @@ try {
     hasPriorNonHandshakePrivateChatOutbound,
     hasPriorPrivateChatA2AOutbound,
     buildPrivateChatA2AChainMetadata,
+    isPrivateChatHandshakePlaintext,
+    shouldContinuePrivateChatInboundAfterOutgoingSync,
   } = await import('../dist-electron/services/privateChatDaemon.js'));
 }
 
@@ -340,6 +346,49 @@ test('private chat A2A analysis ignores internal order execution trace messages'
   );
 });
 
+test('private chat A2A analysis ignores transport handshake messages', () => {
+  const analysis = analyzePrivateChatA2AConversation({
+    messages: [
+      {
+        id: 'ping',
+        type: 'assistant',
+        content: 'ping',
+        timestamp: 1_770_000_000_000,
+        metadata: {
+          direction: 'outgoing',
+          sourceChannel: 'metaweb_private',
+          simplemsgKind: 'private_chat',
+        },
+      },
+      {
+        id: 'pong',
+        type: 'user',
+        content: 'pong',
+        timestamp: 1_770_000_001_000,
+        metadata: {
+          direction: 'incoming',
+          sourceChannel: 'metaweb_private',
+          simplemsgKind: 'private_chat',
+        },
+      },
+      {
+        id: 'real',
+        type: 'user',
+        content: '请查一下北京天气',
+        timestamp: 1_770_000_002_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+      },
+    ],
+    now: 1_770_000_002_000,
+  });
+
+  assert.deepEqual(
+    analysis.contextMessages.map((message) => message.content),
+    ['请查一下北京天气'],
+  );
+  assert.equal(analysis.incomingTurnCount, 1);
+});
+
 test('regular private chat skips placeholder latest messages without an LLM reply', () => {
   assert.equal(shouldSkipPrivateChatAutoReplyText('Thinking...'), true);
   assert.equal(shouldSkipPrivateChatAutoReplyText(' thinking… '), true);
@@ -348,6 +397,38 @@ test('regular private chat skips placeholder latest messages without an LLM repl
   assert.equal(shouldSkipPrivateChatAutoReplyText('bye'), true);
   assert.equal(shouldSkipPrivateChatAutoReplyText('I am thinking about indexer caching.'), false);
   assert.equal(shouldSkipPrivateChatAutoReplyText('Can you compare these options?'), false);
+});
+
+test('private chat handshake plaintext is classified as transport-only', () => {
+  assert.equal(isPrivateChatHandshakePlaintext('ping'), true);
+  assert.equal(isPrivateChatHandshakePlaintext(' pong! '), true);
+  assert.equal(isPrivateChatHandshakePlaintext('Ping.'), true);
+  assert.equal(isPrivateChatHandshakePlaintext('[ORDER] ping'), false);
+  assert.equal(isPrivateChatHandshakePlaintext('ping the seller after delivery'), false);
+});
+
+test('local-to-local outgoing simplemsg continues through inbound recipient handling', () => {
+  assert.equal(
+    shouldContinuePrivateChatInboundAfterOutgoingSync({
+      senderMetabotId: 2,
+      recipientMetabotId: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldContinuePrivateChatInboundAfterOutgoingSync({
+      senderMetabotId: 2,
+      recipientMetabotId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldContinuePrivateChatInboundAfterOutgoingSync({
+      senderMetabotId: 2,
+      recipientMetabotId: 2,
+    }),
+    false,
+  );
 });
 
 test('regular private chat skips older turns when a newer peer message exists', () => {

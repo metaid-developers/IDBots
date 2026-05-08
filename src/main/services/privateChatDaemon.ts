@@ -405,6 +405,25 @@ function normalizeHandshakeWord(value: string): string {
   return value.toLowerCase().replace(/[^a-z]/g, '');
 }
 
+export function isPrivateChatHandshakePlaintext(value: string): boolean {
+  const handshakeWord = normalizeHandshakeWord(String(value || '').trim());
+  return handshakeWord === 'ping' || handshakeWord === 'pong';
+}
+
+function normalizeMetabotId(value: unknown): number | null {
+  const id = Number(value);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+export function shouldContinuePrivateChatInboundAfterOutgoingSync(input: {
+  senderMetabotId?: unknown;
+  recipientMetabotId?: unknown;
+}): boolean {
+  const senderMetabotId = normalizeMetabotId(input.senderMetabotId);
+  const recipientMetabotId = normalizeMetabotId(input.recipientMetabotId);
+  return Boolean(senderMetabotId && recipientMetabotId && senderMetabotId !== recipientMetabotId);
+}
+
 function buildPrivateReplySystemPrompt(metabot: {
   name: string;
   role?: string | null;
@@ -459,6 +478,7 @@ export async function waitBeforePrivateChatReply(
 
 function isPrivateA2AMessage(message: CoworkMessage): boolean {
   if (message.metadata?.orderExecutionTrace === true) return false;
+  if (isPrivateChatHandshakePlaintext(String(message.content || ''))) return false;
   return message.metadata?.sourceChannel === 'metaweb_private'
     && (message.type === 'user' || message.type === 'assistant');
 }
@@ -1708,11 +1728,14 @@ async function processOne(
       markProcessed(db, row.id, saveDb);
       return;
     }
+    const recipientMetabot = metabotStore.getMetabotByGlobalMetaId(toGlobalMetaId);
 
     // Outgoing path: this message was sent FROM a local metabot TO a peer.
     // The listener stores it but may keep the ciphertext when decryption fails
     // (toUserInfo.chatPublicKey is often missing for the outgoing direction).
-    // Decrypt and sync into the A2A session so the outgoing message is visible locally.
+    // Decrypt and sync into the sender's A2A session so the outgoing message is visible locally.
+    // For local-to-local simplemsg rows, continue afterward so the recipient MetaBot can
+    // process the same row as an incoming message.
     const outgoingFromMetaId = (row.from_global_metaid || row.from_metaid || '').trim();
     const senderMetabot = outgoingFromMetaId
       ? metabotStore.getMetabotByGlobalMetaId(outgoingFromMetaId)
@@ -1734,6 +1757,7 @@ async function processOne(
           emitLog,
         });
         if (plaintext) {
+          const isHandshake = isPrivateChatHandshakePlaintext(plaintext);
           const chainMetadata = buildPrivateChatA2AChainMetadata({
             txId: row.tx_id,
             pinId: row.pin_id,
@@ -1749,7 +1773,11 @@ async function processOne(
                 return (chainPinId && mp === chainPinId) || (chainTxid && mt === chainTxid);
               })
             : false;
-          if (alreadySynced) {
+          if (isHandshake) {
+            emitLog(
+              `[PrivateChat] Outgoing sync: skipping transport handshake ${normalizeHandshakeWord(plaintext)}.`
+            );
+          } else if (alreadySynced) {
             emitLog(
               `[PrivateChat] Outgoing sync: message already tracked in session, skipping duplicate.`
             );
@@ -1772,18 +1800,30 @@ async function processOne(
               `[PrivateChat] Synced outgoing message to A2A session for peer ${toGlobalMetaId.slice(0, 12)}…`
             );
           }
-          coworkStore.touchConversationMapping(
-            'metaweb_private',
-            externalConversationId,
-            senderMetabot.id
-          );
+          if (!isHandshake) {
+            coworkStore.touchConversationMapping(
+              'metaweb_private',
+              externalConversationId,
+              senderMetabot.id
+            );
+          }
         }
       }
-      markProcessed(db, row.id, saveDb);
-      return;
+
+      if (!shouldContinuePrivateChatInboundAfterOutgoingSync({
+        senderMetabotId: senderMetabot.id,
+        recipientMetabotId: recipientMetabot?.id ?? null,
+      })) {
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+
+      emitLog(
+        `[PrivateChat] Outgoing local message is addressed to local MetaBot ${recipientMetabot?.id}; continuing inbound processing.`
+      );
     }
 
-    const metabot = metabotStore.getMetabotByGlobalMetaId(toGlobalMetaId);
+    const metabot = recipientMetabot;
     if (!metabot) {
       emitLog(`[PrivateChat] Skip message ${row.id}: no MetaBot for to_global_metaid ${toGlobalMetaId.slice(0, 12)}…`);
       markProcessed(db, row.id, saveDb);

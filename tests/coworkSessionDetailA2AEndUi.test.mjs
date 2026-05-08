@@ -45,6 +45,17 @@ test('CoworkSessionDetail renders ordinary private A2A sessionid with copy actio
   assert.match(source, /sessionid:/);
 });
 
+test('CoworkSessionDetail hides A2A transport handshake bubbles', () => {
+  const source = fs.readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /isA2ATransportHandshakeMessage/);
+  assert.match(source, /sourceChannel === 'metaweb_private'/);
+  assert.match(source, /normalizedContent === 'ping'/);
+  assert.match(source, /normalizedContent === 'pong'/);
+  assert.match(source, /shouldHideControlMessage\(message\)/);
+  assert.match(source, /isA2ATransportHandshakeMessage\(message\)/);
+});
+
 test('CoworkSessionDetail renders a resend digital delivery button for seller A2A service orders', () => {
   const source = fs.readFileSync(sourcePath, 'utf8');
 

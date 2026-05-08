@@ -757,10 +757,24 @@ type ConversationTurn = {
 };
 
 const shouldHideControlMessage = (message: CoworkMessage): boolean => {
+  if (isA2ATransportHandshakeMessage(message)) {
+    return true;
+  }
   if (message.metadata?.isDelegationInternal) {
     return true;
   }
   return typeof message.content === 'string' && message.content.includes(DELEGATION_CONTROL_PREFIX);
+};
+
+const isA2ATransportHandshakeMessage = (message: CoworkMessage): boolean => {
+  const isMetawebPrivate = message.metadata?.sourceChannel === 'metaweb_private';
+  if (!isMetawebPrivate) {
+    return false;
+  }
+  const normalizedContent = typeof message.content === 'string'
+    ? message.content.trim().toLowerCase().replace(/[^a-z]/g, '')
+    : '';
+  return normalizedContent === 'ping' || normalizedContent === 'pong';
 };
 
 export const normalizeOrderFocusTxid = (value: unknown): string | null => {
