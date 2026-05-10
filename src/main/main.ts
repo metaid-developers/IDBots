@@ -166,7 +166,7 @@ import {
 import {
   buildMetafileDeliverySummary,
   normalizeServiceOutputType,
-  resolveServiceDeliveryArtifact,
+  resolveServiceDeliveryArtifactForOrder,
   uploadVerifiedDeliveryArtifact,
   verifyDeliveryArtifactUpload,
 } from './services/serviceDeliveryArtifacts.js';
@@ -4732,10 +4732,10 @@ if (!gotTheLock) {
         throw new Error('This service order does not require a non-text digital delivery artifact');
       }
 
-      const artifactResult = resolveServiceDeliveryArtifact({
+      const artifactResult = resolveServiceDeliveryArtifactForOrder({
         outputType,
         cwd: session.cwd,
-        orderStartedAt: order.createdAt,
+        order,
         messages: session.messages,
       });
       if (artifactResult.status !== 'found') {

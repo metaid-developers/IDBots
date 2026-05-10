@@ -383,6 +383,77 @@ test('runOrder rejects media delivery after one failed upload retry', async () =
   assert.match(result.serviceReply, /退款流程/);
 });
 
+test('runOrder scopes media artifact resolution to the current order metadata', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-delivery-scoped-'));
+  const currentImagePath = path.join(cwd, 'blackhole_spaceship.png');
+  const staleImagePath = path.join(cwd, 'rocket_launch.png');
+  fs.writeFileSync(currentImagePath, 'current image');
+  fs.writeFileSync(staleImagePath, 'stale image');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+  const currentOrderTxid = '1'.repeat(64);
+  const currentPaymentTxid = '2'.repeat(64);
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      return {
+        pinId: 'a'.repeat(64) + 'i0',
+        uploadMode: 'direct',
+      };
+    },
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb-order-scoped-image',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 生成黑洞飞船图片',
+    systemPrompt: 'test system prompt',
+    expectedOutputType: 'image',
+    orderTxid: currentOrderTxid,
+    paymentTxid: currentPaymentTxid,
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-current-image',
+    type: 'assistant',
+    content: `当前订单图片：${currentImagePath}`,
+    timestamp: 100,
+    metadata: {
+      orderTxid: currentOrderTxid,
+      paymentTxid: currentPaymentTxid,
+    },
+  });
+  runner.emit('message', sessionId, {
+    id: 'assistant-stale-image',
+    type: 'assistant',
+    content: `旧订单图片：${staleImagePath}`,
+    timestamp: 200,
+    metadata: {
+      orderTxid: '3'.repeat(64),
+      paymentTxid: '4'.repeat(64),
+    },
+  });
+  runner.emit('complete', sessionId);
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, true);
+  assert.equal(uploadCalls.length, 1);
+  assert.equal(uploadCalls[0].filePath, currentImagePath);
+  assert.match(result.serviceReply, /blackhole_spaceship\.png/);
+});
+
 test('runOrder isolates concurrent same-peer orders into separate execution sessions with one display session', async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-concurrent-'));
   const runner = new FakeCoworkRunner();
@@ -489,6 +560,7 @@ test('runOrder mirrors internal execution messages into the canonical seller dis
     peerGlobalMetaId: 'peer-gmid',
     peerName: 'Sunny',
     orderTxid: '4'.repeat(64),
+    paymentTxid: 'p'.repeat(64),
   });
 
   const executionSessionId = runner.startSessionCalls[0].sessionId;
@@ -527,6 +599,11 @@ test('runOrder mirrors internal execution messages into the canonical seller dis
   assert.equal(mirroredTrace.metadata?.sourceChannel, 'metaweb_order_execution');
   assert.equal(mirroredTrace.metadata?.direction, undefined);
   assert.equal(mirroredTrace.metadata?.orderTxid, '4'.repeat(64));
+  assert.equal(mirroredTrace.metadata?.paymentTxid, 'p'.repeat(64));
+
+  const processingNotice = displaySession.messages.find((message) => message.metadata?.orderProcessingNotice);
+  assert.ok(processingNotice, 'expected processing notice in display session');
+  assert.equal(processingNotice.metadata?.paymentTxid, 'p'.repeat(64));
 
   assert.equal(
     rendererEvents.some((event) =>
@@ -741,6 +818,229 @@ test('runOrder does not continue media execution when the assistant reports an e
   assert.equal(runner.startSessionCalls.length, 1);
   assert.equal(result.isDeliverable, false);
   assert.match(result.serviceReply, /未找到符合 image 交付格式的数字成果/);
+});
+
+test('runOrder uploads an existing media artifact when the execution timeout fires before completion', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-timeout-delivery-'));
+  const imagePath = path.join(cwd, 'blackhole_spaceship.png');
+  fs.writeFileSync(imagePath, 'png');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 20,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      return {
+        pinId: 'e'.repeat(64) + 'i0',
+        uploadMode: 'direct',
+      };
+    },
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:timeout-after-image',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 生成黑洞飞船图片',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    expectedOutputType: 'image',
+    orderTxid: '8'.repeat(64),
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-final-before-timeout',
+    type: 'assistant',
+    content: `图片生成成功。文件路径: ${imagePath}`,
+    timestamp: Date.now(),
+    metadata: {},
+  });
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, true);
+  assert.equal(uploadCalls.length, 1);
+  assert.equal(uploadCalls[0].filePath, imagePath);
+  assert.match(result.serviceReply, /metafile:\/\/e{64}i0\.png/);
+  assert.equal(runner.stopSessionCalls.length, 1);
+});
+
+test('runOrder uploads a generated media artifact from cwd when timeout fires without an explicit path', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-timeout-generated-delivery-'));
+  const imagePath = path.join(cwd, 'nebula_gate.png');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 40,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      return {
+        pinId: 'f'.repeat(64) + 'i0',
+        uploadMode: 'direct',
+      };
+    },
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:timeout-generated-image',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 生成星云传送门图片',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    expectedOutputType: 'image',
+    orderTxid: '9'.repeat(64),
+  });
+
+  fs.writeFileSync(imagePath, 'png');
+  runner.emit('message', sessionId, {
+    id: 'assistant-final-without-path-before-timeout',
+    type: 'assistant',
+    content: '图片生成成功，准备交付。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, true);
+  assert.equal(uploadCalls.length, 1);
+  assert.equal(uploadCalls[0].filePath, imagePath);
+  assert.equal(uploadCalls[0].source, 'generated');
+  assert.match(result.serviceReply, /metafile:\/\/f{64}i0\.png/);
+  assert.doesNotMatch(result.serviceReply, /本次服务执行超时/);
+  assert.equal(runner.stopSessionCalls.length, 1);
+});
+
+test('runOrder keeps timeout media delivery when rating invite generation fails', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-timeout-rating-failure-'));
+  const imagePath = path.join(cwd, 'blackhole_spaceship.png');
+  fs.writeFileSync(imagePath, 'png');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 20,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      return {
+        pinId: 'b'.repeat(64) + 'i0',
+        uploadMode: 'direct',
+      };
+    },
+    buildRatingInvite: async () => {
+      throw new Error('rating model unavailable');
+    },
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:timeout-rating-failure',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 生成黑洞飞船图片',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    expectedOutputType: 'image',
+    orderTxid: 'a'.repeat(64),
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-final-before-timeout-rating-failure',
+    type: 'assistant',
+    content: `图片生成成功。文件路径: ${imagePath}`,
+    timestamp: Date.now(),
+    metadata: {},
+  });
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, true);
+  assert.equal(uploadCalls.length, 1);
+  assert.equal(uploadCalls[0].filePath, imagePath);
+  assert.match(result.serviceReply, /metafile:\/\/b{64}i0\.png/);
+  assert.match(result.ratingInvite, /\[NeedsRating:/);
+  assert.doesNotMatch(result.serviceReply, /本次服务执行超时/);
+});
+
+test('runOrder keeps timeout fallback for non-media other artifacts', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-timeout-other-'));
+  const archivePath = path.join(cwd, 'bundle.zip');
+  fs.writeFileSync(archivePath, 'zip');
+
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const sessionId = store.createTestSession(cwd);
+  const uploadCalls = [];
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 20,
+    uploadDeliveryArtifact: async (artifact) => {
+      uploadCalls.push(artifact);
+      return {
+        pinId: 'c'.repeat(64) + 'i0',
+        uploadMode: 'direct',
+      };
+    },
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:timeout-other',
+    existingSessionId: sessionId,
+    prompt: '[ORDER] 打包项目文件',
+    systemPrompt: 'test system prompt',
+    peerGlobalMetaId: 'peer-gmid',
+    peerName: 'Sunny',
+    expectedOutputType: 'other',
+    orderTxid: 'b'.repeat(64),
+  });
+
+  runner.emit('message', sessionId, {
+    id: 'assistant-other-before-timeout',
+    type: 'assistant',
+    content: `压缩包已生成。文件路径: ${archivePath}`,
+    timestamp: Date.now(),
+    metadata: {},
+  });
+
+  const result = await runPromise;
+
+  assert.equal(result.isDeliverable, false);
+  assert.equal(uploadCalls.length, 0);
+  assert.match(result.serviceReply, /本次服务执行超时/);
 });
 
 test('runOrder rejects metaweb_private orders that are missing a canonical peer display session', async () => {

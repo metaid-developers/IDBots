@@ -82,6 +82,126 @@ function normalizeMentionedPath(candidate, cwd) {
   return path.resolve(cwd || process.cwd(), expanded);
 }
 
+function normalizeScopeValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function parseMessageMetadata(message) {
+  const metadata = message?.metadata;
+  if (!metadata) return {};
+  if (typeof metadata === 'object' && !Array.isArray(metadata)) {
+    return metadata;
+  }
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function getMessageTime(message) {
+  const raw = message?.created_at ?? message?.createdAt ?? message?.timestamp;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function metadataMatchesOrderScope(metadata, scope) {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const orderTxid = scope.orderTxid;
+  const paymentTxid = scope.paymentTxid;
+  const metadataOrderTxids = [
+    metadata.orderTxid,
+    metadata.orderMessageTxid,
+    metadata.orderMessageTxID,
+  ].map(normalizeScopeValue).filter(Boolean);
+  const metadataPaymentTxids = [
+    metadata.paymentTxid,
+    metadata.orderPaymentTxid,
+    metadata.paymentTxID,
+  ].map(normalizeScopeValue).filter(Boolean);
+  return Boolean(
+    (orderTxid && metadataOrderTxids.includes(orderTxid))
+    || (paymentTxid && metadataPaymentTxids.includes(paymentTxid))
+  );
+}
+
+function contentMatchesOrderScope(content, scope) {
+  const text = normalizeScopeValue(content);
+  if (!text) return false;
+  return Boolean(
+    (scope.orderTxid && text.includes(scope.orderTxid))
+    || (scope.paymentTxid && text.includes(scope.paymentTxid))
+  );
+}
+
+function filterMessagesForOrderScope(messages, input) {
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  const scope = {
+    orderTxid: normalizeScopeValue(input?.orderTxid),
+    paymentTxid: normalizeScopeValue(input?.paymentTxid),
+  };
+  if (!scope.orderTxid && !scope.paymentTxid) {
+    return sourceMessages;
+  }
+
+  const scoped = sourceMessages.filter((message) => {
+    const metadata = parseMessageMetadata(message);
+    return metadataMatchesOrderScope(metadata, scope)
+      || contentMatchesOrderScope(message?.content, scope);
+  });
+  if (scoped.length > 0) {
+    return scoped;
+  }
+
+  return filterMessagesForOrderTimeWindow(sourceMessages, input);
+}
+
+function filterMessagesForOrderTimeWindow(messages, input) {
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  const startedAt = Number(input?.orderStartedAt);
+  const endedAt = Number(input?.orderCompletedAt ?? input?.orderEndedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) {
+    return [];
+  }
+  return sourceMessages.filter((message) => {
+    const messageTime = getMessageTime(message);
+    if (!messageTime) return false;
+    if (messageTime < startedAt - 2000) return false;
+    if (Number.isFinite(endedAt) && endedAt > 0 && messageTime > endedAt + 5000) return false;
+    return true;
+  });
+}
+
+function isNonArtifactStatusMessage(message) {
+  const metadata = parseMessageMetadata(message);
+  const orderProtocolTag = normalizeScopeValue(metadata.orderProtocolTag);
+  if (
+    orderProtocolTag === 'delivery'
+    || orderProtocolTag === 'order_status'
+    || orderProtocolTag === 'needsrating'
+    || orderProtocolTag === 'order_end'
+  ) {
+    return true;
+  }
+  if (
+    metadata.orderDeliveryMessage === true
+    || metadata.orderDeliveryUploadNotice === true
+    || metadata.orderDeliveryUploadRetryNotice === true
+    || metadata.orderDeliveryFailed === true
+    || metadata.orderDeliveryResent === true
+    || metadata.orderDeliveryUploadComplete === true
+    || metadata.orderProcessingNotice === true
+    || metadata.orderTimeoutFallback === true
+  ) {
+    return true;
+  }
+  return /^\s*\[(?:DELIVERY|ORDER_STATUS|NeedsRating|ORDER_END)(?::|\]|\s)/i.test(String(message?.content || ''));
+}
+
 function makeArtifact(filePath, deliveryKind, source) {
   let stat;
   try {
@@ -130,22 +250,33 @@ function collectExplicitPathCandidates(messages, cwd) {
     'gi',
   );
 
-  for (const message of messages || []) {
+  for (const [messageIndex, message] of (messages || []).entries()) {
     const content = String(message?.content || '');
     if (!content.trim()) continue;
+    const messageTime = getMessageTime(message) || messageIndex;
     for (const match of content.matchAll(regex)) {
       const resolved = normalizeMentionedPath(match[1], cwd);
       if (!resolved || seen.has(resolved)) continue;
       seen.add(resolved);
-      candidates.push(resolved);
+      candidates.push({
+        filePath: resolved,
+        messageTime,
+        index: candidates.length,
+      });
     }
   }
-  return candidates;
+  return candidates
+    .sort((left, right) => (
+      right.messageTime - left.messageTime
+      || right.index - left.index
+    ))
+    .map((candidate) => candidate.filePath);
 }
 
-function scanGeneratedCandidates(cwd, outputType, orderStartedAt) {
+function scanGeneratedCandidates(cwd, outputType, orderStartedAt, orderCompletedAt) {
   const root = path.resolve(String(cwd || process.cwd()));
   const startedAt = Number.isFinite(Number(orderStartedAt)) ? Number(orderStartedAt) : 0;
+  const completedAt = Number.isFinite(Number(orderCompletedAt)) ? Number(orderCompletedAt) : 0;
   const candidates = [];
 
   function walk(dir, depth) {
@@ -176,6 +307,7 @@ function scanGeneratedCandidates(cwd, outputType, orderStartedAt) {
         continue;
       }
       if (startedAt && stat.mtimeMs < startedAt - 2000) continue;
+      if (completedAt && stat.mtimeMs > completedAt + 5000) continue;
       candidates.push({ filePath, mtimeMs: stat.mtimeMs });
     }
   }
@@ -192,6 +324,17 @@ function resolveCandidate(filePath, outputType, source) {
   return makeArtifact(filePath, deliveryKind, source);
 }
 
+function resolveExplicitCandidates(messages, cwd, outputType) {
+  const explicitCandidates = collectExplicitPathCandidates(messages, cwd);
+  for (const candidate of explicitCandidates) {
+    const resolved = resolveCandidate(candidate, outputType, 'explicit');
+    if (resolved?.status === 'invalid' || resolved?.status === 'found') {
+      return resolved;
+    }
+  }
+  return null;
+}
+
 export function resolveServiceDeliveryArtifact(input) {
   const outputType = normalizeServiceOutputType(input?.outputType);
   if (outputType === 'text') {
@@ -199,16 +342,24 @@ export function resolveServiceDeliveryArtifact(input) {
   }
 
   const cwd = path.resolve(String(input?.cwd || process.cwd()));
-  const explicitCandidates = collectExplicitPathCandidates(input?.messages || [], cwd);
-  for (const candidate of explicitCandidates) {
-    const resolved = resolveCandidate(candidate, outputType, 'explicit');
-    if (resolved?.status === 'invalid' || resolved?.status === 'found') {
-      return resolved;
+  const scopedMessages = filterMessagesForOrderScope(input?.messages || [], input);
+  let explicitMessages = scopedMessages.filter((message) => !isNonArtifactStatusMessage(message));
+  let explicitResult = resolveExplicitCandidates(explicitMessages, cwd, outputType);
+  if (explicitResult) {
+    return explicitResult;
+  }
+
+  const timeWindowMessages = filterMessagesForOrderTimeWindow(input?.messages || [], input)
+    .filter((message) => !isNonArtifactStatusMessage(message));
+  if (timeWindowMessages.length > 0) {
+    explicitResult = resolveExplicitCandidates(timeWindowMessages, cwd, outputType);
+    if (explicitResult) {
+      return explicitResult;
     }
   }
 
   if (outputType === 'image' || outputType === 'video' || outputType === 'audio') {
-    for (const candidate of scanGeneratedCandidates(cwd, outputType, input?.orderStartedAt)) {
+    for (const candidate of scanGeneratedCandidates(cwd, outputType, input?.orderStartedAt, input?.orderCompletedAt ?? input?.orderEndedAt)) {
       const resolved = resolveCandidate(candidate, outputType, 'generated');
       if (resolved?.status === 'invalid' || resolved?.status === 'found') {
         return resolved;
@@ -217,6 +368,43 @@ export function resolveServiceDeliveryArtifact(input) {
   }
 
   return { status: 'missing', reason: 'no_matching_file' };
+}
+
+function firstPositiveFiniteNumber(values, fallback) {
+  for (const value of values) {
+    const numberValue = Number(value);
+    if (Number.isFinite(numberValue) && numberValue > 0) {
+      return numberValue;
+    }
+  }
+  return fallback;
+}
+
+export function buildServiceDeliveryArtifactResolutionInput(input) {
+  const order = input?.order || {};
+  const now = Number.isFinite(Number(input?.now)) ? Number(input.now) : Date.now();
+  return {
+    outputType: input?.outputType,
+    cwd: input?.cwd,
+    orderStartedAt: firstPositiveFiniteNumber([
+      input?.orderStartedAt,
+      order.createdAt,
+    ], undefined),
+    orderCompletedAt: firstPositiveFiniteNumber([
+      input?.orderCompletedAt,
+      input?.orderEndedAt,
+      order.deliveredAt,
+      order.failedAt,
+      order.orderEndedAt,
+    ], now),
+    orderTxid: order.orderMessageTxid || order.orderTxid || input?.orderTxid,
+    paymentTxid: order.paymentTxid || input?.paymentTxid,
+    messages: input?.messages,
+  };
+}
+
+export function resolveServiceDeliveryArtifactForOrder(input) {
+  return resolveServiceDeliveryArtifact(buildServiceDeliveryArtifactResolutionInput(input));
 }
 
 function formatBytes(size) {
