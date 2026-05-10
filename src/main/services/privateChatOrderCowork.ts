@@ -74,6 +74,7 @@ export interface OrderCoworkRequest {
   peerAvatar?: string | null;
   expectedOutputType?: string | null;
   orderTxid?: string | null;
+  paymentTxid?: string | null;
   orderStartedAt?: number | null;
   processingNotice?: {
     content: string;
@@ -90,6 +91,7 @@ const ANSI_ESCAPE_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const HTML_TAG_RE = /<[^>]+>/g;
 const HTML_ENTITY_RE = /&(nbsp|amp|lt|gt|quot|#39);/gi;
 const EXPLICIT_MEDIA_FAILURE_RE = /(无法|不能|未能|缺少|失败|报错|错误|被拒绝|not able|unable|cannot|can't|failed|failure|missing|error|denied|rejected)/i;
+const TIMEOUT_FINALIZABLE_OUTPUT_TYPES = new Set(['image', 'video', 'audio']);
 
 export class PrivateChatOrderCowork extends EventEmitter {
   private coworkRunner: CoworkRunner;
@@ -280,8 +282,13 @@ export class PrivateChatOrderCowork extends EventEmitter {
       const timeoutId = setTimeout(() => {
         const acc = this.accumulators.get(sessionId);
         if (!acc) return;
-        this.cleanupAccumulator(sessionId);
-        this.resolveTimeoutFallback(sessionId, acc);
+        this.resolveTimeoutFallback(sessionId, acc).catch((error) => {
+          acc.resolve({
+            serviceReply: error instanceof Error ? error.message : String(error),
+            ratingInvite: '',
+            isDeliverable: false,
+          });
+        });
       }, this.timeoutMs);
 
       this.accumulators.set(sessionId, {
@@ -377,7 +384,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         });
         return;
       }
-      const ratingInvite = await this.buildRatingInvite(finalized.serviceReply, request);
+      const ratingInvite = await this.buildRatingInviteSafely(finalized.serviceReply, request);
       accumulator.resolve({
         serviceReply: finalized.serviceReply,
         ratingInvite: this.formatNeedsRatingText(request, ratingInvite),
@@ -447,6 +454,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       sourceChannel: 'metaweb_order_execution',
       externalConversationId: request?.externalConversationId,
       orderTxid: request?.orderTxid ?? undefined,
+      paymentTxid: request?.paymentTxid ?? undefined,
       orderRole: request?.source === 'metaweb_private' ? 'seller' : undefined,
       orderExecutionTrace: true,
       excludeFromSandboxHistory: true,
@@ -475,6 +483,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
       outputType,
       cwd,
       orderStartedAt: accumulator.request?.orderStartedAt ?? Date.now(),
+      orderTxid: accumulator.request?.orderTxid,
+      paymentTxid: accumulator.request?.paymentTxid,
       messages: accumulator.messages,
     });
     if (artifactResult.status !== 'missing') return false;
@@ -571,6 +581,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
       outputType,
       cwd,
       orderStartedAt: request?.orderStartedAt ?? Date.now(),
+      orderCompletedAt: Date.now(),
+      orderTxid: request?.orderTxid,
+      paymentTxid: request?.paymentTxid,
       messages,
     });
 
@@ -733,6 +746,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         tag,
         orderTxid: request.orderTxid,
         orderRole: 'seller',
+        paymentTxid: request.paymentTxid,
         orderMappingExternalConversationId: request.externalConversationId,
         extra,
       });
@@ -741,6 +755,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       sourceChannel: request?.source,
       externalConversationId: request?.externalConversationId,
       direction: 'outgoing',
+      paymentTxid: request?.paymentTxid ?? undefined,
       ...extra,
     };
   }
@@ -790,10 +805,74 @@ export class PrivateChatOrderCowork extends EventEmitter {
     this.accumulators.delete(sessionId);
   }
 
-  private resolveTimeoutFallback(sessionId: string, accumulator: MessageAccumulator): void {
+  private shouldAttemptTimeoutFinalization(
+    sessionId: string,
+    accumulator: MessageAccumulator,
+  ): boolean {
+    const outputType = normalizeServiceOutputType(accumulator.request?.expectedOutputType);
+    if (!TIMEOUT_FINALIZABLE_OUTPUT_TYPES.has(outputType)) return false;
+    if (!this.uploadDeliveryArtifact) return false;
+
+    const session = this.coworkStore.getSession(sessionId);
+    const cwd = session?.cwd || this.coworkStore.getConfig().workingDirectory || os.tmpdir();
+    const artifactResult = resolveServiceDeliveryArtifact({
+      outputType,
+      cwd,
+      orderStartedAt: accumulator.request?.orderStartedAt ?? Date.now(),
+      orderCompletedAt: Date.now(),
+      orderTxid: accumulator.request?.orderTxid,
+      paymentTxid: accumulator.request?.paymentTxid,
+      messages: accumulator.messages,
+    });
+    return artifactResult.status === 'found' || artifactResult.status === 'invalid';
+  }
+
+  private async resolveTimeoutFallback(sessionId: string, accumulator: MessageAccumulator): Promise<void> {
+    if (this.accumulators.get(sessionId) !== accumulator) return;
+    this.cleanupAccumulator(sessionId);
     this.coworkRunner.stopSession(sessionId, { finalStatus: 'completed' });
-    const fallbackReply = this.buildTimeoutFallbackReply(accumulator.messages);
     const displaySessionId = this.getDisplaySessionId(sessionId, accumulator.request);
+
+    if (this.shouldAttemptTimeoutFinalization(sessionId, accumulator)) {
+      const serviceReply = this.formatReply(sessionId, accumulator.messages, accumulator.request);
+      let finalized: OrderCoworkResult | null = null;
+      try {
+        finalized = await this.finalizeCompletedOrder(
+          sessionId,
+          serviceReply,
+          accumulator.messages,
+          accumulator.request,
+        );
+      } catch {
+        // Fall through to the timeout status fallback if finalization itself crashes.
+      }
+      if (finalized) {
+        if (this.emitToRenderer) {
+          try {
+            this.emitToRenderer('cowork:stream:complete', { sessionId: displaySessionId, timeoutFinalized: true });
+          } catch {
+            // Renderer notifications must not change an already finalized delivery result.
+          }
+        }
+        if (!finalized.isDeliverable) {
+          accumulator.resolve({
+            serviceReply: finalized.serviceReply,
+            ratingInvite: '',
+            isDeliverable: false,
+          });
+          return;
+        }
+        const ratingInvite = await this.buildRatingInviteSafely(finalized.serviceReply, accumulator.request);
+        accumulator.resolve({
+          serviceReply: finalized.serviceReply,
+          ratingInvite: this.formatNeedsRatingText(accumulator.request, ratingInvite),
+          isDeliverable: true,
+        });
+        return;
+      }
+    }
+
+    const fallbackReply = this.buildTimeoutFallbackReply(accumulator.messages);
     const fallbackMessage = this.coworkStore.addMessage(displaySessionId, {
       type: 'assistant',
       content: fallbackReply,
@@ -983,5 +1062,13 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
     const text = await performChatCompletionForOrchestrator(systemPrompt, '请生成邀评消息。', llmId);
     return `[NeedsRating] ${text.trim()}`;
+  }
+
+  private async buildRatingInviteSafely(serviceReply: string, request?: OrderCoworkRequest): Promise<string> {
+    try {
+      return await this.buildRatingInvite(serviceReply, request);
+    } catch {
+      return '[NeedsRating] 服务已完成，请给个评价吧！';
+    }
   }
 }

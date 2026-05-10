@@ -2154,6 +2154,7 @@ async function processOne(
           peerAvatar: (row.from_avatar as string | null) ?? null,
           expectedOutputType: serviceOutputType,
           orderTxid: orderMessageTxid,
+          paymentTxid: orderTrackingId,
           processingNotice,
           sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
             ? sendEncryptedMsg

@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   buildMetafileDeliverySummary,
   resolveServiceDeliveryArtifact,
+  resolveServiceDeliveryArtifactForOrder,
   verifyDeliveryArtifactUpload,
 } from '../src/main/services/serviceDeliveryArtifacts.js';
 
@@ -88,6 +89,232 @@ test('resolveServiceDeliveryArtifact requires an explicit file mention for other
   assert.equal(explicit.status, 'found');
   assert.equal(explicit.artifact.filePath, path.join(cwd, 'archive.zip'));
   assert.equal(explicit.artifact.deliveryKind, 'other');
+});
+
+test('resolveServiceDeliveryArtifact scopes explicit file references to the current order', () => {
+  const cwd = makeTempDir();
+  const oldImagePath = path.join(cwd, 'rocket_launch.png');
+  const currentImagePath = path.join(cwd, 'blackhole_spaceship.png');
+  writeFile(oldImagePath, 'old image');
+  writeFile(currentImagePath, 'current image');
+
+  const result = resolveServiceDeliveryArtifact({
+    outputType: 'image',
+    cwd,
+    orderStartedAt: Date.now() - 1000,
+    orderTxid: 'b'.repeat(64),
+    paymentTxid: 'c'.repeat(64),
+    messages: [
+      {
+        type: 'assistant',
+        content: '旧订单图片：rocket_launch.png',
+        metadata: {
+          orderTxid: 'a'.repeat(64),
+          paymentTxid: 'old-payment',
+        },
+      },
+      {
+        type: 'assistant',
+        content: '当前订单图片：blackhole_spaceship.png',
+        metadata: {
+          orderTxid: 'b'.repeat(64),
+          paymentTxid: 'c'.repeat(64),
+        },
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, currentImagePath);
+});
+
+test('resolveServiceDeliveryArtifact ignores prior delivery summaries when resending an order artifact', () => {
+  const cwd = makeTempDir();
+  const wrongImagePath = path.join(cwd, 'rocket_launch.png');
+  const currentImagePath = path.join(cwd, 'blackhole_spaceship.png');
+  writeFile(wrongImagePath, 'wrong image');
+  writeFile(currentImagePath, 'current image');
+
+  const orderTxid = 'd'.repeat(64);
+  const paymentTxid = 'e'.repeat(64);
+  const result = resolveServiceDeliveryArtifact({
+    outputType: 'image',
+    cwd,
+    orderStartedAt: Date.now() - 1000,
+    orderTxid,
+    paymentTxid,
+    messages: [
+      {
+        type: 'assistant',
+        content: `图片生成成功。文件路径: ${currentImagePath}`,
+        metadata: {
+          orderTxid,
+          paymentTxid,
+          orderExecutionTrace: true,
+        },
+        created_at: 100,
+      },
+      {
+        type: 'assistant',
+        content: `数字成果已生成并上传链上交付。\n文件名: rocket_launch.png\n格式: image/png`,
+        metadata: {
+          orderTxid,
+          paymentTxid,
+          orderDeliveryMessage: true,
+        },
+        created_at: 200,
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, currentImagePath);
+});
+
+test('resolveServiceDeliveryArtifactForOrder applies order scope for resend lookups', () => {
+  const cwd = makeTempDir();
+  const wrongImagePath = path.join(cwd, 'rocket_launch.png');
+  const currentImagePath = path.join(cwd, 'blackhole_spaceship.png');
+  writeFile(wrongImagePath, 'wrong image');
+  writeFile(currentImagePath, 'current image');
+
+  const orderTxid = 'f'.repeat(64);
+  const paymentTxid = '1'.repeat(64);
+  const result = resolveServiceDeliveryArtifactForOrder({
+    outputType: 'image',
+    cwd,
+    order: {
+      createdAt: Date.now() - 1000,
+      updatedAt: Date.now(),
+      orderMessageTxid: orderTxid,
+      paymentTxid,
+    },
+    messages: [
+      {
+        type: 'assistant',
+        content: '旧订单图片：rocket_launch.png',
+        metadata: {
+          orderTxid: 'a'.repeat(64),
+          paymentTxid: 'old-payment',
+        },
+      },
+      {
+        type: 'assistant',
+        content: '当前订单图片：blackhole_spaceship.png',
+        metadata: {
+          orderTxid,
+          paymentTxid,
+        },
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, currentImagePath);
+});
+
+test('resolveServiceDeliveryArtifactForOrder scans generated files after stale order updatedAt', () => {
+  const cwd = makeTempDir();
+  const now = Date.now();
+  const imagePath = path.join(cwd, 'late-render.png');
+  writeFile(imagePath, 'png');
+
+  const result = resolveServiceDeliveryArtifactForOrder({
+    outputType: 'image',
+    cwd,
+    now: now + 1000,
+    order: {
+      createdAt: now - 60_000,
+      updatedAt: now - 50_000,
+      orderMessageTxid: '2'.repeat(64),
+      paymentTxid: '3'.repeat(64),
+    },
+    messages: [
+      {
+        type: 'assistant',
+        content: '图片生成成功。',
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, imagePath);
+  assert.equal(result.artifact.source, 'generated');
+});
+
+test('resolveServiceDeliveryArtifact falls back to order time window when scoped messages are only status notices', () => {
+  const cwd = makeTempDir();
+  const archivePath = path.join(cwd, 'delivery.zip');
+  writeFile(archivePath, 'zip');
+
+  const orderTxid = '4'.repeat(64);
+  const paymentTxid = '5'.repeat(64);
+  const result = resolveServiceDeliveryArtifact({
+    outputType: 'other',
+    cwd,
+    orderStartedAt: 1000,
+    orderCompletedAt: 3000,
+    orderTxid,
+    paymentTxid,
+    messages: [
+      {
+        type: 'assistant',
+        content: `[ORDER_STATUS:${orderTxid}] 数字成果已生成，正在上传。`,
+        metadata: {
+          orderTxid,
+          paymentTxid,
+          orderProtocolTag: 'ORDER_STATUS',
+          orderDeliveryUploadNotice: true,
+        },
+        created_at: 1200,
+      },
+      {
+        type: 'tool_result',
+        content: 'Generated file: delivery.zip',
+        created_at: 1500,
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, archivePath);
+});
+
+test('resolveServiceDeliveryArtifact falls back to time window when scoped messages have no artifact path', () => {
+  const cwd = makeTempDir();
+  const archivePath = path.join(cwd, 'handoff.zip');
+  writeFile(archivePath, 'zip');
+
+  const orderTxid = '6'.repeat(64);
+  const paymentTxid = '7'.repeat(64);
+  const result = resolveServiceDeliveryArtifact({
+    outputType: 'other',
+    cwd,
+    orderStartedAt: 1000,
+    orderCompletedAt: 3000,
+    orderTxid,
+    paymentTxid,
+    messages: [
+      {
+        type: 'assistant',
+        content: '当前订单正在整理文件。',
+        metadata: {
+          orderTxid,
+          paymentTxid,
+          orderExecutionTrace: true,
+        },
+        created_at: 1200,
+      },
+      {
+        type: 'tool_result',
+        content: 'Generated file: handoff.zip',
+        created_at: 1500,
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'found');
+  assert.equal(result.artifact.filePath, archivePath);
 });
 
 test('resolveServiceDeliveryArtifact rejects delivery files larger than 20 MiB', () => {
