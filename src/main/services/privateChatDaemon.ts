@@ -203,6 +203,12 @@ function tryDecryptWithSecret(cipherText: string, secret: string): string | null
   return plain;
 }
 
+function rethrowSqliteWasmBoundsError(error: unknown): void {
+  if (isSqliteWasmBoundsError(error)) {
+    throw error;
+  }
+}
+
 function markProcessed(db: Database, id: number, saveDb: SaveDbFn): void {
   db.run('UPDATE private_chat_messages SET is_processed = 1 WHERE id = ?', [id]);
   saveDb();
@@ -688,6 +694,7 @@ export async function sendSellerOrderAcknowledgement(params: {
       await params.performChat(ackSystemPrompt, ackUserPrompt, llmId)
     );
   } catch (error) {
+    rethrowSqliteWasmBoundsError(error);
     params.emitLog?.(
       `[Order] Acknowledgement generation failed: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -1059,7 +1066,12 @@ async function resolvePrivateConversationSession(
 
   const workspace = coworkStore.getConfig().workingDirectory;
   const fallbackTitle = firstMessage.split('\n')[0].slice(0, 50) || `Private-${peerId.slice(0, 12)}`;
-  const generatedTitle = await generateSessionTitle(firstMessage).catch(() => null);
+  let generatedTitle: string | null = null;
+  try {
+    generatedTitle = await generateSessionTitle(firstMessage);
+  } catch (error) {
+    rethrowSqliteWasmBoundsError(error);
+  }
   const title = generatedTitle?.trim() || fallbackTitle;
   const session = coworkStore.createSession(
     title,
@@ -1530,6 +1542,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
     ratingPinId = (ratingResult as { pinId?: string }).pinId ?? ratingResult.txids?.[0] ?? '';
     emitLog(`[Rating] skill-service-rate published: pinId=${ratingPinId}`);
   } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
     emitLog(`[Rating] Failed to publish skill-service-rate: ${e instanceof Error ? e.message : String(e)}`);
   }
 
@@ -1569,6 +1582,7 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
       });
     }
   } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
     emitLog(`[Rating] Combined message send failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
@@ -1640,6 +1654,7 @@ async function resolveOutgoingPrivateChatPlaintext(params: {
     const plain = ecdhDecrypt(content, sharedSecret);
     if (plain && plain !== content) return plain;
   } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
     params.emitLog(
       `[PrivateChat] Outgoing message ${params.row.id}: decrypt failed: ${e instanceof Error ? e.message : String(e)}`
     );
@@ -1694,6 +1709,7 @@ async function resolvePeerChatPubkey(
     }
     emitLog(`[PrivateChat] Peer chatPubkey not found in API response for ${peerGlobalMetaId.slice(0, 12)}…`);
   } catch (e) {
+    rethrowSqliteWasmBoundsError(e);
     emitLog(
       `[PrivateChat] Peer chatPubkey API fetch failed for ${peerGlobalMetaId.slice(0, 12)}…: ${e instanceof Error ? e.message : String(e)}`
     );
@@ -1716,7 +1732,8 @@ async function processOne(
   getSkillsPrompt?: GetSellerOrderSkillsPromptFn,
   emitToRenderer?: (channel: string, data: unknown) => void,
   getListenerConfig?: GetListenerConfigFn,
-  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn
+  resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
+  onWasmBoundsError?: () => void
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -1854,6 +1871,7 @@ async function processOne(
     try {
       privateKeyBuffer = await getPrivateKeyBufferForEcdh(wallet.mnemonic, wallet.path ?? "m/44'/10001'/0'/0/0");
     } catch (e) {
+      rethrowSqliteWasmBoundsError(e);
       emitLog(`[PrivateChat] Skip message ${row.id}: getPrivateKeyBufferForEcdh failed: ${e instanceof Error ? e.message : e}`);
       markProcessed(db, row.id, saveDb);
       return;
@@ -1865,6 +1883,7 @@ async function processOne(
       sharedSecretSha256 = computeEcdhSharedSecretSha256(privateKeyBuffer, fromChatPubkey);
       sharedSecretRaw = computeEcdhSharedSecret(privateKeyBuffer, fromChatPubkey);
     } catch (e) {
+      rethrowSqliteWasmBoundsError(e);
       emitLog(`[PrivateChat] Skip message ${row.id}: invalid peer public key (${fromChatPubkey.slice(0, 16)}…): ${e instanceof Error ? e.message : e}`);
       markProcessed(db, row.id, saveDb);
       return;
@@ -1936,6 +1955,7 @@ async function processOne(
         await createSimpleMsgPin(payloadStr);
         emitLog(`[PrivateChat] Ping -> Pong to ${fromGlobalMetaId.slice(0, 12)}…`);
       } catch (e) {
+        rethrowSqliteWasmBoundsError(e);
         const suffix = isMvcInsufficientBalanceError(e)
           ? ' (auto-subsidy retry failed)'
           : '';
@@ -2025,6 +2045,7 @@ async function processOne(
             orderMessageTxid,
           });
         } catch (error) {
+          rethrowSqliteWasmBoundsError(error);
           emitLog(`[Order] Failed to create seller order row: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -2065,6 +2086,7 @@ async function processOne(
                 coworkSessionId: ensuredObserverSession.coworkSessionId,
               });
             } catch (error) {
+              rethrowSqliteWasmBoundsError(error);
               emitLog(`[Order] Failed to persist seller session link: ${error instanceof Error ? error.message : String(error)}`);
             }
           }
@@ -2075,6 +2097,7 @@ async function processOne(
             });
           }
         } catch (error) {
+          rethrowSqliteWasmBoundsError(error);
           emitLog(`[Order] Failed to ensure seller order session: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -2115,6 +2138,7 @@ async function processOne(
             }),
           };
         } catch (error) {
+          rethrowSqliteWasmBoundsError(error);
           emitLog(`[Order] Acknowledgement broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -2161,6 +2185,7 @@ async function processOne(
             : undefined,
         });
       } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
         const failureNotice = buildOrderExecutionFailureNotice(error);
         const transmittedFailureNotice = orderMessageTxid
           ? buildOrderStatusMessage(orderMessageTxid, failureNotice)
@@ -2197,6 +2222,7 @@ async function processOne(
               }
             }
           } catch (sendError) {
+            rethrowSqliteWasmBoundsError(sendError);
             emitLog(`[Order] Failure notice broadcast failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
           }
         }
@@ -2247,6 +2273,7 @@ async function processOne(
               }
             }
           } catch (error) {
+            rethrowSqliteWasmBoundsError(error);
             emitLog(`[Order] Timeout fallback notice broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
           }
         } else if (orderDispatchKey && sentOrderDeliveryKeys.has(orderDispatchKey)) {
@@ -2302,6 +2329,7 @@ async function processOne(
             }
             emitLog(`[Order] Service reply sent to ${fromGlobalMetaId.slice(0, 12)}…`);
           } catch (error) {
+            rethrowSqliteWasmBoundsError(error);
             deliveryBroadcastFailed = true;
             emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
             if (sellerOrderSessionId) {
@@ -2386,6 +2414,7 @@ async function processOne(
               }
             }
           } catch (error) {
+            rethrowSqliteWasmBoundsError(error);
             emitLog(`[Order] Rating invite broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
@@ -2605,7 +2634,7 @@ async function processOne(
             },
           );
           emitLog(`[Rating] Received [NeedsRating] from ${fromGlobalMetaId.slice(0, 12)}…, starting auto-rating flow`);
-          handleRatingFlow({
+          const ratingWork = handleRatingFlow({
             metabot,
             metabotStore,
             coworkStore,
@@ -2618,8 +2647,14 @@ async function processOne(
             emitLog,
             emitToRenderer,
           }).catch((e) => {
+            if (isSqliteWasmBoundsError(e)) {
+              void stopPrivateChatDaemon();
+              onWasmBoundsError?.();
+              return;
+            }
             emitLog(`[Rating] Rating flow failed: ${e instanceof Error ? e.message : String(e)}`);
           });
+          trackPrivateChatDetachedWork(ratingWork);
         }
 
         markProcessed(db, row.id, saveDb);
@@ -2765,6 +2800,7 @@ async function processOne(
         ? 'bye'
         : await performChat(systemPrompt, plaintext, llmId);
     } catch (e) {
+      rethrowSqliteWasmBoundsError(e);
       emitLog(`[PrivateChat] LLM failed for message ${row.id}: ${e instanceof Error ? e.message : e}`);
       markProcessed(db, row.id, saveDb);
       return;
@@ -2801,6 +2837,7 @@ async function processOne(
           `[PrivateChat] Memory updates: total=${result.totalChanges} created=${result.created} updated=${result.updated} deleted=${result.deleted} skipped=${result.skipped}`
         );
       } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
         emitLog(`[PrivateChat] Memory update failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -2831,6 +2868,7 @@ async function processOne(
       }
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
     } catch (e) {
+      rethrowSqliteWasmBoundsError(e);
       emitLog(`[PrivateChat] Failed to broadcast reply: ${e instanceof Error ? e.message : e}`);
     }
 
@@ -2857,6 +2895,16 @@ async function processOne(
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 /** sql.js Database must not be used concurrently; skip overlapping ticks. */
 let privateChatPollTickRunning = false;
+let privateChatDaemonGeneration = 0;
+let privateChatActiveTickPromise: Promise<void> | null = null;
+const privateChatDetachedWork = new Set<Promise<void>>();
+
+function trackPrivateChatDetachedWork(work: Promise<void>): void {
+  privateChatDetachedWork.add(work);
+  void work.finally(() => {
+    privateChatDetachedWork.delete(work);
+  });
+}
 
 export function startPrivateChatDaemon(
   db: Database,
@@ -2873,7 +2921,8 @@ export function startPrivateChatDaemon(
   resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
   onWasmBoundsError?: () => void,
 ): void {
-  stopPrivateChatDaemon();
+  void stopPrivateChatDaemon();
+  const daemonGeneration = ++privateChatDaemonGeneration;
   orderCowork = new PrivateChatOrderCowork({
     coworkRunner,
     coworkStore,
@@ -2892,49 +2941,69 @@ export function startPrivateChatDaemon(
   });
   const performChat = performChatCompletionForOrchestrator;
   const runPollTick = async (): Promise<void> => {
+    if (daemonGeneration !== privateChatDaemonGeneration) return;
     if (privateChatPollTickRunning) return;
     privateChatPollTickRunning = true;
-    try {
-      let rows: PrivateChatMessageRow[];
+    const runActiveTickWork = async (): Promise<void> => {
       try {
-        rows = parsePrivateChatRows(db);
-      } catch (e) {
-        console.error('[PrivateChat] parsePrivateChatRows error:', e);
-        if (isSqliteWasmBoundsError(e)) {
-          stopPrivateChatDaemon();
-          onWasmBoundsError?.();
-        }
-        return;
-      }
-      for (const row of rows) {
+        let rows: PrivateChatMessageRow[];
         try {
-          await processOne(
-            row,
-            db,
-            saveDb,
-            coworkStore,
-            metabotStore,
-            createPin,
-            performChat,
-            emitLog,
-            orderCowork,
-            serviceOrderLifecycle,
-            getSkillsPrompt,
-            emitToRenderer,
-            getListenerConfig,
-            resolveLocalServiceOutputType,
-          );
+          rows = parsePrivateChatRows(db);
         } catch (e) {
-          console.error('[PrivateChat] processOne error:', e);
+          console.error('[PrivateChat] parsePrivateChatRows error:', e);
           if (isSqliteWasmBoundsError(e)) {
-            stopPrivateChatDaemon();
+            void stopPrivateChatDaemon();
             onWasmBoundsError?.();
           }
+          return;
+        }
+        for (const row of rows) {
+          if (daemonGeneration !== privateChatDaemonGeneration) {
+            return;
+          }
+          try {
+            await processOne(
+              row,
+              db,
+              saveDb,
+              coworkStore,
+              metabotStore,
+              createPin,
+              performChat,
+              emitLog,
+              orderCowork,
+              serviceOrderLifecycle,
+              getSkillsPrompt,
+              emitToRenderer,
+              getListenerConfig,
+              resolveLocalServiceOutputType,
+              onWasmBoundsError,
+            );
+          } catch (e) {
+            console.error('[PrivateChat] processOne error:', e);
+            if (isSqliteWasmBoundsError(e)) {
+              void stopPrivateChatDaemon();
+              onWasmBoundsError?.();
+              return;
+            }
+          }
+        }
+      } finally {
+        if (daemonGeneration === privateChatDaemonGeneration) {
+          privateChatPollTickRunning = false;
+        }
+        if (privateChatActiveTickPromise === activeTick) {
+          privateChatActiveTickPromise = null;
         }
       }
-    } finally {
-      privateChatPollTickRunning = false;
-    }
+    };
+    const activeTick = new Promise<void>((resolve, reject) => {
+      queueMicrotask(() => {
+        runActiveTickWork().then(resolve, reject);
+      });
+    });
+    privateChatActiveTickPromise = activeTick;
+    await activeTick;
   };
   pollTimer = setInterval(() => {
     void runPollTick();
@@ -2943,7 +3012,10 @@ export function startPrivateChatDaemon(
   emitLog('[PrivateChat] Daemon started.');
 }
 
-export function stopPrivateChatDaemon(): void {
+export async function stopPrivateChatDaemon(options?: { waitForTick?: boolean }): Promise<void> {
+  privateChatDaemonGeneration += 1;
+  const activeTickPromise = privateChatActiveTickPromise;
+  const detachedWork = [...privateChatDetachedWork];
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
@@ -2951,4 +3023,8 @@ export function stopPrivateChatDaemon(): void {
   privateChatPollTickRunning = false;
   orderCowork = null;
   thinkingTasks.clear();
+  if (options?.waitForTick) {
+    await activeTickPromise?.catch(() => undefined);
+    await Promise.allSettled(detachedWork);
+  }
 }

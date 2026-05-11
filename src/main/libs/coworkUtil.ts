@@ -9,6 +9,7 @@ import type { OpenAICompatProxyTarget } from './coworkOpenAICompatProxy';
 import { getInternalApiBaseURL } from './coworkOpenAICompatProxy';
 import { coworkLog } from './coworkLogger';
 import { resolveElectronExecutablePath } from './runtimePaths';
+import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 
 function appendEnvPath(current: string | undefined, additions: string[]): string | undefined {
   const items = new Set<string>();
@@ -1179,6 +1180,9 @@ Output only the title, nothing else.`,
     console.error('Claude SDK returned non-success result:', result);
     return 'New Session';
   } catch (error) {
+    if (isSqliteWasmBoundsError(error)) {
+      throw error;
+    }
     console.error('Failed to generate session title:', error);
     console.error('Claude Code path:', claudeCodePath);
     console.error('Is packaged:', app.isPackaged);

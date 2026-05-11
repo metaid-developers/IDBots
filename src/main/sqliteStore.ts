@@ -7,6 +7,7 @@ import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
+import { writeFileAtomicSync } from './libs/atomicFile';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -205,6 +206,7 @@ export class SqliteStore {
   private db: Database;
   private dbPath: string;
   private emitter = new EventEmitter();
+  private isClosed = false;
   private static sqlPromise: Promise<SqlJsStatic> | null = null;
 
   private constructor(db: Database, dbPath: string) {
@@ -1441,14 +1443,23 @@ export class SqliteStore {
   }
 
   save() {
+    this.assertOpen();
     const data = this.db.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(this.dbPath, buffer);
+    writeFileAtomicSync(this.dbPath, buffer);
   }
 
-  /** Run VACUUM and PRAGMA optimize to reduce SQLite internal fragmentation and WASM memory pressure. */
+  /** Run lightweight SQLite maintenance without rewriting the whole database file. */
+  optimize(): void {
+    this.assertOpen();
+    this.db.run('PRAGMA optimize;');
+    this.save();
+  }
+
+  /** Run VACUUM only from explicit maintenance flows; this rewrites the in-memory database. */
   vacuum(): void {
     try {
+      this.assertOpen();
       this.db.run('PRAGMA optimize;');
       this.db.run('VACUUM;');
       this.save();
@@ -1457,8 +1468,22 @@ export class SqliteStore {
     }
   }
 
+  healthCheck(): boolean {
+    try {
+      this.assertOpen();
+      const result = this.db.exec('PRAGMA quick_check(1);');
+      return String(result[0]?.values?.[0]?.[0] ?? '').toLowerCase() === 'ok';
+    } catch {
+      return false;
+    }
+  }
+
   close(): void {
+    if (this.isClosed) {
+      return;
+    }
     this.db.close();
+    this.isClosed = true;
   }
 
   onDidChange<T = unknown>(key: string, callback: (newValue: T | undefined, oldValue: T | undefined) => void) {
@@ -1471,6 +1496,7 @@ export class SqliteStore {
   }
 
   get<T = unknown>(key: string): T | undefined {
+    this.assertOpen();
     const result = this.db.exec('SELECT value FROM kv WHERE key = ?', [key]);
     if (!result[0]?.values[0]) return undefined;
     const value = result[0].values[0][0] as string;
@@ -1483,6 +1509,7 @@ export class SqliteStore {
   }
 
   set<T = unknown>(key: string, value: T): void {
+    this.assertOpen();
     const oldValue = this.get<T>(key);
     const now = Date.now();
     this.db.run(`
@@ -1497,6 +1524,7 @@ export class SqliteStore {
   }
 
   delete(key: string): void {
+    this.assertOpen();
     const oldValue = this.get(key);
     this.db.run('DELETE FROM kv WHERE key = ?', [key]);
     this.save();
@@ -1505,12 +1533,19 @@ export class SqliteStore {
 
   // Expose database for cowork operations
   getDatabase(): Database {
+    this.assertOpen();
     return this.db;
   }
 
   // Expose save method for external use (e.g., CoworkStore)
   getSaveFunction(): () => void {
     return () => this.save();
+  }
+
+  private assertOpen(): void {
+    if (this.isClosed) {
+      throw new Error('Database closed');
+    }
   }
 
   private tryReadLegacyMemoryText(): string {

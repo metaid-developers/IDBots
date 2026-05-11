@@ -15,6 +15,10 @@ type RefreshOptions = {
   rebroadcast?: boolean;
 };
 
+type PollingOptions = {
+  onRefreshError?: (error: unknown, phase: 'initial' | 'interval') => void | Promise<void>;
+};
+
 type ResolvedRefreshOptions = {
   rebroadcast: boolean;
 };
@@ -188,15 +192,25 @@ export class ProviderDiscoveryService {
     };
   }
 
-  startPolling(getServices: () => any[]): void {
+  startPolling(getServices: () => any[], options?: PollingOptions): void {
     this.stopPolling();
     this.getServices = getServices;
+    const onRefreshError = options?.onRefreshError;
+    const handleRefreshError = (phase: 'initial' | 'interval', error: unknown): void => {
+      if (onRefreshError) {
+        void Promise.resolve(onRefreshError(error, phase)).catch((handlerError) => {
+          console.warn('[ProviderDiscovery] refresh error handler failed:', handlerError);
+        });
+        return;
+      }
+      console.warn(`[ProviderDiscovery] ${phase} refresh failed:`, error);
+    };
     void this.refreshNow().catch((error) => {
-      console.warn('[ProviderDiscovery] initial refresh failed:', error);
+      handleRefreshError('initial', error);
     });
     this.intervalId = setInterval(() => {
       void this.refreshNow().catch((error) => {
-        console.warn('[ProviderDiscovery] interval refresh failed:', error);
+        handleRefreshError('interval', error);
       });
     }, PRESENCE_POLL_INTERVAL_MS);
     this.intervalId.unref?.();
@@ -248,6 +262,10 @@ export class ProviderDiscoveryService {
     });
 
     return this.refreshPromise;
+  }
+
+  async waitForRefresh(): Promise<void> {
+    await this.refreshPromise?.catch(() => undefined);
   }
 
   dispose(): void {

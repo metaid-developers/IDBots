@@ -1,5 +1,6 @@
 import type { CoworkMessage, CoworkStore } from '../coworkStore';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { buildA2AChainMetadata, normalizeA2AChainTxid } from './a2aChainMetadata';
 import {
   buildCanonicalPrivateConversationExternalConversationId,
@@ -146,7 +147,12 @@ async function ensureCanonicalPeerSession(
   const fallbackTitle = normalizeText(input.peerName)
     || firstMessage.split('\n')[0].slice(0, 50)
     || `Private-${peerGlobalMetaId.slice(0, 12)}`;
-  const generatedTitle = await generateSessionTitle(firstMessage || fallbackTitle).catch(() => null);
+  const generatedTitle = await generateSessionTitle(firstMessage || fallbackTitle).catch((error) => {
+    if (isSqliteWasmBoundsError(error)) {
+      throw error;
+    }
+    return null;
+  });
   const sessionTitle = generatedTitle?.trim() || fallbackTitle;
   const session = coworkStore.createSession(
     sessionTitle,

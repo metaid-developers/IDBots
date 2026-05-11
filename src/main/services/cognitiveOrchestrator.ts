@@ -116,6 +116,8 @@ export type RunSkillTurnViaCoworkFn = (params: {
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
 /** sql.js Database must not be used concurrently; skip overlapping orchestrator ticks. */
 let orchestratorPollTickRunning = false;
+let orchestratorGeneration = 0;
+let orchestratorActiveTickPromise: Promise<void> | null = null;
 /** Task IDs currently in LLM/broadcast pipeline; skip them in tick to avoid duplicate triggers */
 const thinkingTasks = new Set<number>();
 
@@ -126,6 +128,24 @@ function parseMentionArray(mentionJson: string | null): string[] {
     return Array.isArray(arr) ? arr.map(String) : [];
   } catch {
     return [];
+  }
+}
+
+function parseAllowedSkillIds(allowedSkillsJson: string | null): string[] {
+  if (allowedSkillsJson == null || allowedSkillsJson === '') return [];
+  try {
+    const arr = JSON.parse(allowedSkillsJson);
+    return Array.isArray(arr)
+      ? arr.map(String).map((id) => id.trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function rethrowSqliteWasmBoundsError(error: unknown): void {
+  if (isSqliteWasmBoundsError(error)) {
+    throw error;
   }
 }
 
@@ -481,6 +501,7 @@ function runBashOnce(
       });
     });
   })().catch((error) => {
+    rethrowSqliteWasmBoundsError(error);
     const message = error instanceof Error ? error.message : String(error);
     return { code: -1, output: `Error: ${message}` };
   });
@@ -571,9 +592,10 @@ async function runReplyPipeline(
     ownerGlobalMetaid
   );
 
+  const allowedSkillIds = parseAllowedSkillIds(task.allowed_skills);
   const skillsPrompt =
     triggerReason === 'Boss' && getSkillsPromptForIds && allowedRoots.length > 0
-      ? getSkillsPromptForIds([])
+      ? getSkillsPromptForIds(allowedSkillIds)
       : null;
   const useToolLoop = Boolean(skillsPrompt);
 
@@ -593,6 +615,7 @@ async function runReplyPipeline(
         if (isLatestFromPrivileged) {
           await broadcastGroupChat(task.metabot_id, task.group_id, metabot.name, '响应中…');
         }
+        console.log('[Orchestrator] Using Cowork for skill turn');
         replyText = await runSkillTurnViaCowork({
           systemPrompt,
           userMessage,
@@ -604,6 +627,7 @@ async function runReplyPipeline(
           latestMessageSenderGlobalmetaid,
         });
       } catch (err) {
+        rethrowSqliteWasmBoundsError(err);
         console.error('[Orchestrator] runSkillTurnViaCowork failed:', err instanceof Error ? err.message : err);
         return;
       }
@@ -627,6 +651,7 @@ async function runReplyPipeline(
             tools,
           });
         } catch (err) {
+          rethrowSqliteWasmBoundsError(err);
           console.error('[Orchestrator] chatCompletionWithTools failed:', err instanceof Error ? err.message : err);
           return;
         }
@@ -658,6 +683,7 @@ async function runReplyPipeline(
                 observation = `Unknown tool: ${tc.name}`;
               }
             } catch (err) {
+              rethrowSqliteWasmBoundsError(err);
               observation = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
             }
             chatMessages.push({
@@ -680,6 +706,7 @@ async function runReplyPipeline(
     try {
       replyText = await performChatCompletion(systemPrompt, userMessage, metabot.llm_id ?? undefined);
     } catch (err) {
+      rethrowSqliteWasmBoundsError(err);
       console.error('[Orchestrator] LLM call failed:', err instanceof Error ? err.message : err);
       return;
     }
@@ -694,6 +721,7 @@ async function runReplyPipeline(
   try {
     await broadcastGroupChat(task.metabot_id, task.group_id, metabot.name, trimmed);
   } catch (err) {
+    rethrowSqliteWasmBoundsError(err);
     console.error('[Orchestrator] Broadcast failed:', err instanceof Error ? err.message : err);
     return;
   }
@@ -886,35 +914,48 @@ export function startOrchestrator(
   options?: OrchestratorOptions,
   onWasmBoundsError?: () => void,
 ): void {
-  stopOrchestrator();
+  void stopOrchestrator();
+  const activeGeneration = ++orchestratorGeneration;
   tickCount = 0;
   tickIntervalId = setInterval(() => {
+    if (activeGeneration !== orchestratorGeneration) return;
     if (orchestratorPollTickRunning) return;
     orchestratorPollTickRunning = true;
-    void tick(db, saveDb, getMetabotById, performChatCompletion, broadcastGroupChat, options)
+    const activeTick = tick(db, saveDb, getMetabotById, performChatCompletion, broadcastGroupChat, options)
       .catch((err) => {
         console.error('[Orchestrator] tick error:', err);
         if (isSqliteWasmBoundsError(err)) {
-          stopOrchestrator();
+          void stopOrchestrator();
           onWasmBoundsError?.();
         }
       })
       .finally(() => {
-        orchestratorPollTickRunning = false;
+        if (activeGeneration === orchestratorGeneration) {
+          orchestratorPollTickRunning = false;
+        }
+        if (orchestratorActiveTickPromise === activeTick) {
+          orchestratorActiveTickPromise = null;
+        }
       });
+    orchestratorActiveTickPromise = activeTick;
+    void activeTick;
   }, TICK_INTERVAL_MS);
 }
 
 /**
  * Stop the daemon and clear the interval.
  */
-export function stopOrchestrator(): void {
+export async function stopOrchestrator(options?: { waitForTick?: boolean }): Promise<void> {
+  orchestratorGeneration += 1;
   if (tickIntervalId != null) {
     clearInterval(tickIntervalId);
     tickIntervalId = null;
   }
   orchestratorPollTickRunning = false;
   thinkingTasks.clear();
+  if (options?.waitForTick && orchestratorActiveTickPromise) {
+    await orchestratorActiveTickPromise.catch(() => undefined);
+  }
 }
 
 /** Export for test script: run a single tick with injected deps. Pass options.chatWithToolsOverride to mock tool-loop LLM. */

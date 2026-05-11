@@ -199,3 +199,80 @@ test('provider discovery only emits on material changes unless rebroadcast is re
   assert.equal(snapshots.length, 2);
   assert.deepEqual(snapshots[0], snapshots[1]);
 });
+
+test('ProviderDiscoveryService forwards polling refresh errors to caller', async () => {
+  const { ProviderDiscoveryService } = loadProviderDiscoveryService();
+  const wasmError = new WebAssembly.RuntimeError('memory access out of bounds');
+  let handledError = null;
+  let handledPhase = null;
+
+  const handled = new Promise((resolve) => {
+    const service = new ProviderDiscoveryService({
+      presence: {
+        fetchOnlineStatus: async () => ({ list: [] }),
+      },
+      now: () => 1_700_000_000_000,
+    });
+
+    service.startPolling(
+      () => {
+        throw wasmError;
+      },
+      {
+        onRefreshError: (error, phase) => {
+          handledError = error;
+          handledPhase = phase;
+          service.dispose();
+          resolve();
+        },
+      },
+    );
+  });
+
+  await handled;
+
+  assert.equal(handledError, wasmError);
+  assert.equal(handledPhase, 'initial');
+});
+
+test('ProviderDiscoveryService waitForRefresh waits for an active refresh', async () => {
+  const { ProviderDiscoveryService } = loadProviderDiscoveryService();
+  let releasePresence;
+  let waitSettled = false;
+  const service = new ProviderDiscoveryService({
+    presence: {
+      fetchOnlineStatus: async () => {
+        await new Promise((resolve) => {
+          releasePresence = resolve;
+        });
+        return {
+          list: [{ globalMetaId: 'meta-1', isOnline: true, lastSeenAt: 1_700_000_000_000 }],
+        };
+      },
+    },
+    now: () => 1_700_000_000_000,
+  });
+
+  service.startPolling(() => [
+    {
+      providerGlobalMetaId: 'meta-1',
+      providerAddress: 'addr-1',
+      status: 1,
+      available: 1,
+    },
+  ]);
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const waitPromise = service.waitForRefresh().then(() => {
+    waitSettled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(waitSettled, false);
+
+  releasePresence();
+  await waitPromise;
+  service.dispose();
+
+  assert.equal(waitSettled, true);
+  assert.equal(service.getDiscoverySnapshot().availableServices.length, 1);
+});
