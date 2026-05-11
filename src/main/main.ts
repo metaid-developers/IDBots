@@ -7,7 +7,12 @@ import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
 import { SqliteStore } from './sqliteStore';
-import { isSqliteWasmBoundsError, runWithSqliteWasmRecovery } from './sqliteRecovery';
+import { isSqliteWasmBoundsError } from './sqliteRecovery';
+import {
+  SQLiteRecoveryCoordinator,
+  SqliteDatabaseUnavailableError,
+} from './sqliteRecoveryLifecycle';
+import { SqliteBackgroundJobRunner } from './sqliteBackgroundJobs';
 import { CoworkStore, type CoworkMessage } from './coworkStore';
 import { McpStore, type McpServerFormData } from './mcpStore';
 import type { MemoryBackend } from './memory/memoryBackend';
@@ -271,6 +276,8 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
 const RESTORE_MNEMONIC_WORDS = 12;
 const SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS = 60_000;
 const SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS = 60_000;
+const GIG_SQUARE_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const SQLITE_MAINTENANCE_INTERVAL_MS = 30 * 60 * 1000;
 const SERVICE_REFUND_REQUEST_PATH = '/protocols/service-refund-request';
 const SERVICE_REFUND_FINALIZE_PATH = '/protocols/service-refund-finalize';
 const SERVICE_REFUND_SYNC_SIZE = 200;
@@ -1248,6 +1255,7 @@ async function syncGigSquareRemoteData(): Promise<void> {
   await syncRemoteSkillServiceRatings();
   if (providerDiscoveryService) {
     await providerDiscoveryService.refreshNow().catch((error) => {
+      rethrowSqliteWasmBoundsError(error);
       console.warn('[ProviderDiscovery] Refresh after GigSquare sync failed:', error);
     });
   }
@@ -1633,6 +1641,7 @@ async function syncGigSquareMyServicesData(options?: { refresh?: boolean }): Pro
         try {
           await syncGigSquareRemoteData();
         } catch (error) {
+          rethrowSqliteWasmBoundsError(error);
           console.warn('[GigSquare] My services remote refresh failed', error);
         }
       }
@@ -2110,6 +2119,13 @@ let idchatPresenceService: IdchatPresenceService | null = null;
 let providerDiscoveryService: ProviderDiscoveryService | null = null;
 let providerPingService: ProviderPingService | null = null;
 let privateChatHistorySyncService: PrivateChatHistorySyncService | null = null;
+let sqliteRecoveryCoordinator: SQLiteRecoveryCoordinator<SqliteStore> | null = null;
+let sqliteBackgroundJobRunner: SqliteBackgroundJobRunner | null = null;
+let sqliteBackgroundJobsStarted = false;
+let gigSquareSyncInterval: ReturnType<typeof setInterval> | null = null;
+let serviceOrderTimeoutScanInterval: ReturnType<typeof setInterval> | null = null;
+let serviceRefundSyncInterval: ReturnType<typeof setInterval> | null = null;
+let sqliteMaintenanceInterval: ReturnType<typeof setInterval> | null = null;
 
 const listPendingPrivateMessages = (): Array<Record<string, unknown>> => {
   const db = getStore().getDatabase();
@@ -2290,7 +2306,19 @@ const getStore = (): SqliteStore => {
   return store;
 };
 
-let sqliteRecoveryPromise: Promise<void> | null = null;
+interface SqliteBackedRestartState {
+  restartScheduler: boolean;
+  restartListener: boolean;
+  restartImGateways: boolean;
+  restartBackgroundJobs: boolean;
+}
+
+let sqliteRecoveryRestartState: SqliteBackedRestartState = {
+  restartScheduler: false,
+  restartListener: false,
+  restartImGateways: false,
+  restartBackgroundJobs: false,
+};
 
 const resetSqliteBackedSingletons = async (): Promise<void> => {
   if (coworkRunner) {
@@ -2306,6 +2334,9 @@ const resetSqliteBackedSingletons = async (): Promise<void> => {
     });
   }
   stopMetaWebListener();
+  if (providerDiscoveryService) {
+    providerDiscoveryService.dispose();
+  }
   coworkStore = null;
   mcpStore = null;
   coworkRunner = null;
@@ -2318,95 +2349,231 @@ const resetSqliteBackedSingletons = async (): Promise<void> => {
   serviceRefundSettlementService = null;
   gigSquareRefundsService = null;
   gigSquareSchemaReady = false;
+  providerDiscoveryService = null;
+  idchatPresenceService = null;
   providerPingService = null;
   privateChatHistorySyncService = null;
 };
 
-const restartSqliteBackedDaemons = (input: {
-  restartScheduler: boolean;
-  restartListener: boolean;
-  restartImGateways: boolean;
-}): void => {
-  try {
-    if (scheduler) {
-      scheduler.stop();
-      scheduler = null;
-    }
-    stopCognitiveOrchestrator();
-    stopPrivateChatDaemon();
+const runSqliteBackgroundJob = (
+  operationName: string,
+  failureMessage: string,
+  operation: () => void | Promise<void>,
+): void => {
+  getSqliteBackgroundJobRunner().run(operationName, failureMessage, operation);
+};
 
+const stopSqliteBackgroundJobs = async (options?: { waitForActiveJobs?: boolean }): Promise<void> => {
+  const providerRefreshPromise = providerDiscoveryService?.waitForRefresh();
+  if (gigSquareSyncInterval) {
+    clearInterval(gigSquareSyncInterval);
+    gigSquareSyncInterval = null;
+  }
+  if (serviceOrderTimeoutScanInterval) {
+    clearInterval(serviceOrderTimeoutScanInterval);
+    serviceOrderTimeoutScanInterval = null;
+  }
+  if (serviceRefundSyncInterval) {
+    clearInterval(serviceRefundSyncInterval);
+    serviceRefundSyncInterval = null;
+  }
+  if (sqliteMaintenanceInterval) {
+    clearInterval(sqliteMaintenanceInterval);
+    sqliteMaintenanceInterval = null;
+  }
+  if (providerDiscoveryService) {
+    providerDiscoveryService.stopPolling();
+  }
+  sqliteBackgroundJobsStarted = false;
+  if (options?.waitForActiveJobs) {
+    await Promise.allSettled([
+      getSqliteBackgroundJobRunner().waitForActiveJobs(),
+      providerRefreshPromise ?? Promise.resolve(),
+    ]);
+  }
+};
+
+const startProviderDiscoveryPolling = (): void => {
+  try {
+    getProviderDiscoveryService().startPolling(
+      () => {
+        try {
+          return listCurrentRemoteGigSquareServices();
+        } catch (error) {
+          rethrowSqliteWasmBoundsError(error);
+          return [];
+        }
+      },
+      {
+        onRefreshError: async (error) => {
+          if (isSqliteWasmBoundsError(error)) {
+            await recoverSqliteStore(error, 'providerDiscovery:refresh');
+            return;
+          }
+          console.warn('[ProviderDiscovery] refresh failed:', error);
+        },
+      },
+    );
+  } catch (error) {
+    console.warn('[ProviderDiscovery] Failed to start polling:', error);
+  }
+};
+
+const startSqliteBackgroundJobs = async (): Promise<void> => {
+  await stopSqliteBackgroundJobs({ waitForActiveJobs: true });
+  sqliteBackgroundJobsStarted = true;
+
+  runSqliteBackgroundJob(
+    'gigSquare:initialSync',
+    '[GigSquare] Initial sync failed',
+    syncGigSquareRemoteData,
+  );
+  gigSquareSyncInterval = setInterval(() => {
+    runSqliteBackgroundJob(
+      'gigSquare:periodicSync',
+      '[GigSquare] Periodic sync failed',
+      syncGigSquareRemoteData,
+    );
+  }, GIG_SQUARE_SYNC_INTERVAL_MS);
+
+  startProviderDiscoveryPolling();
+
+  runSqliteBackgroundJob(
+    'serviceOrder:initialTimeoutScan',
+    '[ServiceOrder] Initial timeout scan failed',
+    () => getServiceOrderLifecycleService().scanTimedOutOrders(),
+  );
+  serviceOrderTimeoutScanInterval = setInterval(() => {
+    runSqliteBackgroundJob(
+      'serviceOrder:periodicTimeoutScan',
+      '[ServiceOrder] Periodic timeout scan failed',
+      () => getServiceOrderLifecycleService().scanTimedOutOrders(),
+    );
+  }, SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS);
+
+  runSqliteBackgroundJob(
+    'serviceOrder:initialRefundSync',
+    '[ServiceOrder] Initial refund sync failed',
+    syncServiceRefundProtocols,
+  );
+  serviceRefundSyncInterval = setInterval(() => {
+    runSqliteBackgroundJob(
+      'serviceOrder:periodicRefundSync',
+      '[ServiceOrder] Periodic refund sync failed',
+      syncServiceRefundProtocols,
+    );
+  }, SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS);
+
+  sqliteMaintenanceInterval = setInterval(() => {
+    runSqliteBackgroundJob(
+      'sqlite:periodicOptimize',
+      '[SQLiteMaintenance] Periodic optimize failed',
+      () => {
+        getStore().optimize();
+      },
+    );
+  }, SQLITE_MAINTENANCE_INTERVAL_MS);
+};
+
+const startSqliteDaemons = (): void => {
+  const skillMgr = getSkillManager();
+  startCognitiveOrchestrator(
+    getStore().getDatabase(),
+    getStore().getSaveFunction(),
+    (id: number) => {
+      const m = getMetabotStore().getMetabotById(id);
+      return m
+        ? {
+            id: m.id,
+            name: m.name,
+            role: m.role ?? '',
+            soul: m.soul ?? '',
+            llm_id: m.llm_id ?? null,
+            globalmetaid: m.globalmetaid ?? null,
+            metaid: m.metaid,
+            boss_global_metaid: m.boss_global_metaid ?? null,
+          }
+        : null;
+    },
+    performChatCompletionForOrchestrator,
+    async (metabotId: number, groupId: string, nickName: string, content: string) => {
+      const encryptedContent = encryptGroupMessageECB(content, groupId);
+      const payload = {
+        groupId,
+        nickName,
+        content: encryptedContent,
+        contentType: 'text/plain',
+        encryption: 'aes',
+        timestamp: Date.now(),
+      };
+      await createPin(getMetabotStore(), metabotId, {
+        operation: 'create',
+        path: '/protocols/simplegroupchat',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+      });
+    },
+    {
+      getSkillsPromptForIds: (ids: string[]) =>
+        skillMgr.buildAutoRoutingPromptForSkillIds(
+          ids.length > 0 ? ids : skillMgr.listSkills().map((s) => s.id),
+        ),
+      skillsRoots: skillMgr.getAllSkillRoots(),
+      runSkillTurnViaCowork: (params) =>
+        runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
+    },
+    () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
+  );
+
+  startPrivateChatDaemon(
+    getStore().getDatabase(),
+    getStore().getSaveFunction(),
+    getCoworkStore(),
+    getMetabotStore(),
+    getCoworkRunner(),
+    createPin,
+    (msg) => console.log(msg),
+    getServiceOrderLifecycleService(),
+    async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
+    (channel, data) => {
+      BrowserWindow.getAllWindows().forEach(win => {
+        if (!win.isDestroyed()) {
+          try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
+        }
+      });
+    },
+    getListenerConfigFromStore,
+    resolveGigSquareLocalServiceOutputType,
+    () => triggerDaemonWasmRecovery('privateChatDaemon')
+  );
+};
+
+const stopSqliteBackedServicesForRecovery = async (): Promise<SqliteBackedRestartState> => {
+  const restartState = {
+    restartScheduler: Boolean(scheduler),
+    restartListener: isListenerRunning(),
+    restartImGateways: Boolean(imGatewayManager),
+    restartBackgroundJobs: sqliteBackgroundJobsStarted,
+  };
+
+  await stopSqliteBackgroundJobs({ waitForActiveJobs: true });
+  if (scheduler) {
+    scheduler.stop();
+    scheduler = null;
+  }
+  await stopCognitiveOrchestrator({ waitForTick: true });
+  await stopPrivateChatDaemon({ waitForTick: true });
+  await resetSqliteBackedSingletons();
+  return restartState;
+};
+
+const startSqliteBackedServicesAfterRecovery = async (input: SqliteBackedRestartState): Promise<void> => {
+  try {
     if (input.restartScheduler) {
       getScheduler().start();
     }
 
-    const skillMgr = getSkillManager();
-    startCognitiveOrchestrator(
-      getStore().getDatabase(),
-      getStore().getSaveFunction(),
-      (id: number) => {
-        const m = getMetabotStore().getMetabotById(id);
-        return m
-          ? {
-              id: m.id,
-              name: m.name,
-              role: m.role ?? '',
-              soul: m.soul ?? '',
-              llm_id: m.llm_id ?? null,
-              globalmetaid: m.globalmetaid ?? null,
-              metaid: m.metaid,
-              boss_global_metaid: m.boss_global_metaid ?? null,
-            }
-          : null;
-      },
-      performChatCompletionForOrchestrator,
-      async (metabotId: number, groupId: string, nickName: string, content: string) => {
-        const encryptedContent = encryptGroupMessageECB(content, groupId);
-        const payload = {
-          groupId,
-          nickName,
-          content: encryptedContent,
-          contentType: 'text/plain',
-          encryption: 'aes',
-          timestamp: Date.now(),
-        };
-        await createPin(getMetabotStore(), metabotId, {
-          operation: 'create',
-          path: '/protocols/simplegroupchat',
-          contentType: 'application/json',
-          payload: JSON.stringify(payload),
-        });
-      },
-      {
-        getSkillsPromptForIds: (_ids: string[]) =>
-          skillMgr.buildAutoRoutingPromptForSkillIds(skillMgr.listSkills().map((s) => s.id)),
-        skillsRoots: skillMgr.getAllSkillRoots(),
-        runSkillTurnViaCowork: (params) =>
-          runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
-      },
-      () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
-    );
-
-    startPrivateChatDaemon(
-      getStore().getDatabase(),
-      getStore().getSaveFunction(),
-      getCoworkStore(),
-      getMetabotStore(),
-      getCoworkRunner(),
-      createPin,
-      (msg) => console.log(msg),
-      getServiceOrderLifecycleService(),
-      async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
-      (channel, data) => {
-        BrowserWindow.getAllWindows().forEach(win => {
-          if (!win.isDestroyed()) {
-            try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
-          }
-        });
-      },
-      getListenerConfigFromStore,
-      resolveGigSquareLocalServiceOutputType,
-      () => triggerDaemonWasmRecovery('privateChatDaemon')
-    );
+    startSqliteDaemons();
 
     if (input.restartListener) {
       const listenerConfig = getListenerConfigFromStore();
@@ -2422,9 +2589,74 @@ const restartSqliteBackedDaemons = (input: {
         console.warn('[SQLiteRecovery] Failed to restart IM gateways:', imError);
       });
     }
+
+    if (input.restartBackgroundJobs) {
+      await startSqliteBackgroundJobs();
+    }
   } catch (error) {
-    console.warn('[SQLiteRecovery] Failed to restart sqlite-backed daemons:', error);
+    console.warn('[SQLiteRecovery] Failed to restart sqlite-backed services:', error);
   }
+};
+
+const getSqliteRecoveryCoordinator = (): SQLiteRecoveryCoordinator<SqliteStore> => {
+  if (!sqliteRecoveryCoordinator) {
+    sqliteRecoveryCoordinator = new SQLiteRecoveryCoordinator<SqliteStore>({
+      getStore: () => store,
+      clearStore: () => {
+        store = null;
+        storeInitPromise = null;
+        setStoreGetter(() => store);
+      },
+      closeStore: (storeToClose) => {
+        try {
+          storeToClose.close();
+        } catch (closeError) {
+          console.warn('[SQLiteRecovery] Failed to close damaged SQLite database:', closeError);
+        }
+      },
+      resetRuntime: () => {
+        SqliteStore.resetSqlJsRuntimeForRecovery();
+      },
+      openStore: async () => {
+        storeInitPromise = null;
+        return initStore();
+      },
+      publishStore: (nextStore) => {
+        store = nextStore;
+        setStoreGetter(() => store);
+      },
+      stopServices: async () => {
+        sqliteRecoveryRestartState = await stopSqliteBackedServicesForRecovery();
+      },
+      startServices: () => {
+        return startSqliteBackedServicesAfterRecovery(sqliteRecoveryRestartState);
+      },
+      isRecoverableError: isSqliteWasmBoundsError,
+      logWarn: (message, recoveryError) => console.warn(message, recoveryError),
+      logInfo: (message) => console.info(message),
+      logError: (message, recoveryError) => console.error(message, recoveryError),
+    });
+  }
+  return sqliteRecoveryCoordinator;
+};
+
+const getSqliteBackgroundJobRunner = (): SqliteBackgroundJobRunner => {
+  if (!sqliteBackgroundJobRunner) {
+    sqliteBackgroundJobRunner = new SqliteBackgroundJobRunner({
+      getState: () => getSqliteRecoveryCoordinator().getState(),
+      recover: recoverSqliteStore,
+      isRecoverableError: isSqliteWasmBoundsError,
+      isUnavailableError: (error) => error instanceof SqliteDatabaseUnavailableError,
+      logWarn: (message, error) => {
+        if (error === undefined) {
+          console.warn(message);
+          return;
+        }
+        console.warn(message, error);
+      },
+    });
+  }
+  return sqliteBackgroundJobRunner;
 };
 
 const triggerDaemonWasmRecovery = (daemonName: string) => {
@@ -2435,39 +2667,13 @@ const triggerDaemonWasmRecovery = (daemonName: string) => {
 };
 
 const recoverSqliteStore = async (error: unknown, operationName: string): Promise<void> => {
-  if (!sqliteRecoveryPromise) {
-    sqliteRecoveryPromise = (async () => {
-      console.warn(`[SQLiteRecovery] Recovering after sql.js wasm failure during ${operationName}:`, error);
-      const shouldRestartScheduler = Boolean(scheduler);
-      const shouldRestartListener = isListenerRunning();
-      const shouldRestartImGateways = Boolean(imGatewayManager);
-      await resetSqliteBackedSingletons();
-      try {
-        store?.close();
-      } catch (closeError) {
-        console.warn('[SQLiteRecovery] Failed to close damaged SQLite database:', closeError);
-      }
-      SqliteStore.resetSqlJsRuntimeForRecovery();
-      storeInitPromise = null;
-      store = await initStore();
-      setStoreGetter(() => store);
-      restartSqliteBackedDaemons({
-        restartScheduler: shouldRestartScheduler,
-        restartListener: shouldRestartListener,
-        restartImGateways: shouldRestartImGateways,
-      });
-      console.info(`[SQLiteRecovery] SQLite store recovered for ${operationName}.`);
-    })().finally(() => {
-      sqliteRecoveryPromise = null;
-    });
-  }
-  await sqliteRecoveryPromise;
+  await getSqliteRecoveryCoordinator().recover(error, operationName);
 };
 
 const withSqliteRecovery = <T>(
   operationName: string,
   operation: () => T | Promise<T>,
-): Promise<T> => runWithSqliteWasmRecovery(operationName, operation, recoverSqliteStore);
+): Promise<T> => getSqliteRecoveryCoordinator().runWithRecovery(operationName, operation);
 
 const rethrowSqliteWasmBoundsError = (error: unknown): void => {
   if (isSqliteWasmBoundsError(error)) {
@@ -3652,6 +3858,7 @@ const getServiceOrderLifecycleService = () => {
           }
           if (type === 'refund_requested') {
             await recoverMissingRefundPendingOrderObserverSessions().catch((error) => {
+              rethrowSqliteWasmBoundsError(error);
               console.warn('[ServiceOrder] Failed to recover refund observer sessions', error);
             });
           }
@@ -3732,6 +3939,7 @@ const getServiceRefundSyncService = () => {
         onOrderEvent: async ({ type, order }) => {
           if (type === 'refund_requested') {
             await recoverMissingRefundPendingOrderObserverSessions().catch((error) => {
+              rethrowSqliteWasmBoundsError(error);
               console.warn('[ServiceOrder] Failed to recover refund observer sessions', error);
             });
           }
@@ -3868,18 +4076,21 @@ const syncServiceRefundProtocols = async (): Promise<void> => {
   try {
     await service.syncRequestPins();
   } catch (error) {
+    rethrowSqliteWasmBoundsError(error);
     console.warn('[ServiceOrder] Refund request sync failed', error);
   }
 
   try {
     await recoverMissingRefundPendingOrderObserverSessions();
   } catch (error) {
+    rethrowSqliteWasmBoundsError(error);
     console.warn('[ServiceOrder] Refund session recovery scan failed', error);
   }
 
   try {
     await service.syncFinalizePins();
   } catch (error) {
+    rethrowSqliteWasmBoundsError(error);
     console.warn('[ServiceOrder] Refund finalize sync failed', error);
   }
 };
@@ -6590,35 +6801,47 @@ if (!gotTheLock) {
         payload: payloadJson,
       });
 
+      const localServiceRecord = {
+        id: result.pinId,
+        pinId: result.pinId,
+        txid: result.txids?.[0] || '',
+        metabotId,
+        providerGlobalMetaId: metabot.globalmetaid,
+        providerSkill: normalizedDraft.providerSkill,
+        serviceName: normalizedDraft.serviceName,
+        displayName: normalizedDraft.displayName,
+        description: normalizedDraft.description,
+        serviceIcon: serviceIconUri || null,
+        price: normalizedDraft.price,
+        currency: normalizedCurrency,
+        skillDocument: '',
+        inputType: 'text',
+        outputType: normalizedDraft.outputType,
+        endpoint: 'simplemsg',
+        payloadJson,
+      };
       let warning: string | undefined;
       try {
-        insertGigSquareServiceRow({
-          id: result.pinId,
-          pinId: result.pinId,
-          txid: result.txids?.[0] || '',
-          metabotId,
-          providerGlobalMetaId: metabot.globalmetaid,
-          providerSkill: normalizedDraft.providerSkill,
-          serviceName: normalizedDraft.serviceName,
-          displayName: normalizedDraft.displayName,
-          description: normalizedDraft.description,
-          serviceIcon: serviceIconUri || null,
-          price: normalizedDraft.price,
-          currency: normalizedCurrency,
-          skillDocument: '',
-          inputType: 'text',
-          outputType: normalizedDraft.outputType,
-          endpoint: 'simplemsg',
-          payloadJson,
+        await withSqliteRecovery('gigSquare:publishServiceLocalInsert', () => {
+          insertGigSquareServiceRow(localServiceRecord);
         });
       } catch (err) {
+        if (isSqliteWasmBoundsError(err)) {
+          await recoverSqliteStore(err, 'gigSquare:publishServiceLocalInsert:retryFailed').catch((recoveryError) => {
+            console.warn('[GigSquare] Failed to recover after local service record save retry', recoveryError);
+          });
+        }
         warning = err instanceof Error ? err.message : 'Failed to save local record';
         console.warn('[GigSquare] Failed to save local record', warning);
       }
 
       // Sync remote skill services 10s after broadcast so the new pin is indexed
       setTimeout(() => {
-        void syncRemoteSkillServices().catch(() => {});
+        runSqliteBackgroundJob(
+          'gigSquare:publishServiceDelayedSync',
+          '[GigSquare] Delayed publish-service sync failed',
+          syncRemoteSkillServices,
+        );
       }, 10000);
 
       return { success: true, txids: result.txids, pinId: result.pinId, warning };
@@ -8253,115 +8476,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     // 创建窗口
     createWindow();
 
-    // Service Square: sync remote skill services on startup and every 10 minutes
-    void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Initial sync failed', e));
-    setInterval(() => {
-      void syncGigSquareRemoteData().catch((e) => console.warn('[GigSquare] Periodic sync failed', e));
-    }, 10 * 60 * 1000);
-
-    // Start idchat-backed provider discovery for online service availability
-    try {
-      getProviderDiscoveryService().startPolling(() => {
-        try {
-          return listCurrentRemoteGigSquareServices();
-        } catch { return []; }
-      });
-    } catch (e) { console.warn('[ProviderDiscovery] Failed to start polling:', e); }
-
-    // Start Cognitive Orchestrator daemon (group chat mission control; tick every 10s)
-    // Local skills (Cowork / Read-Bash) only when trigger is Boss (supervisor or metabot owner GlobalMetaID).
-    const skillMgr = getSkillManager();
-    startCognitiveOrchestrator(
-      getStore().getDatabase(),
-      getStore().getSaveFunction(),
-      (id: number) => {
-        const m = getMetabotStore().getMetabotById(id);
-        return m
-          ? {
-              id: m.id,
-              name: m.name,
-              role: m.role ?? '',
-              soul: m.soul ?? '',
-              llm_id: m.llm_id ?? null,
-              globalmetaid: m.globalmetaid ?? null,
-              metaid: m.metaid,
-              boss_global_metaid: m.boss_global_metaid ?? null,
-            }
-          : null;
-      },
-      performChatCompletionForOrchestrator,
-      async (metabotId: number, groupId: string, nickName: string, content: string) => {
-        const encryptedContent = encryptGroupMessageECB(content, groupId);
-        const payload = {
-          groupId,
-          nickName,
-          content: encryptedContent,
-          contentType: 'text/plain',
-          encryption: 'aes',
-          timestamp: Date.now(),
-        };
-        await createPin(getMetabotStore(), metabotId, {
-          operation: 'create',
-          path: '/protocols/simplegroupchat',
-          contentType: 'application/json',
-          payload: JSON.stringify(payload),
-        });
-      },
-      {
-        getSkillsPromptForIds: (_ids: string[]) =>
-          skillMgr.buildAutoRoutingPromptForSkillIds(skillMgr.listSkills().map((s) => s.id)),
-        skillsRoots: skillMgr.getAllSkillRoots(),
-        runSkillTurnViaCowork: (params) =>
-          runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
-      },
-      () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
-    );
-
-    // Start Private Chat Daemon (ECDH decrypt, ping/pong intercept, LLM reply + broadcast)
-    startPrivateChatDaemon(
-      getStore().getDatabase(),
-      getStore().getSaveFunction(),
-      getCoworkStore(),
-      getMetabotStore(),
-      getCoworkRunner(),
-      createPin,
-      (msg) => console.log(msg),
-      getServiceOrderLifecycleService(),
-      async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
-      (channel, data) => {
-        BrowserWindow.getAllWindows().forEach(win => {
-          if (!win.isDestroyed()) {
-            try { win.webContents.send(channel as string, data); } catch { /* ignore */ }
-          }
-        });
-      },
-      getListenerConfigFromStore,
-      resolveGigSquareLocalServiceOutputType,
-      () => triggerDaemonWasmRecovery('privateChatDaemon')
-    );
-
-    void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {
-      console.warn('[ServiceOrder] Initial timeout scan failed', error);
-    });
-    setInterval(() => {
-      void getServiceOrderLifecycleService().scanTimedOutOrders().catch((error) => {
-        console.warn('[ServiceOrder] Periodic timeout scan failed', error);
-      });
-    }, SERVICE_ORDER_TIMEOUT_SCAN_INTERVAL_MS);
-    void syncServiceRefundProtocols();
-    setInterval(() => {
-      void syncServiceRefundProtocols();
-    }, SERVICE_ORDER_REFUND_SYNC_INTERVAL_MS);
-
-    // Periodic SQLite maintenance to reduce WASM memory fragmentation
-    const SQLITE_MAINTENANCE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-    setInterval(() => {
-      try {
-        getStore().vacuum();
-      } catch (e) {
-        console.warn('[SQLiteMaintenance] Periodic VACUUM failed:', e);
-      }
-    }, SQLITE_MAINTENANCE_INTERVAL_MS);
+    await startSqliteBackgroundJobs();
+    startSqliteDaemons();
 
     // Auto-reconnect IM bots that were enabled before restart
     getIMGatewayManager().startAllEnabled().catch((error) => {

@@ -8,6 +8,7 @@ import type { MetabotStore } from '../metabotStore';
 import type { OrderSource } from './orderPayment';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { generateSessionTitle } from '../libs/coworkUtil';
+import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import {
   buildNeedsRatingMessage,
   buildOrderStatusMessage,
@@ -226,7 +227,12 @@ export class PrivateChatOrderCowork extends EventEmitter {
     const resolvedRoot = this.resolveWorkspaceRoot();
 
     const fallbackTitle = request.prompt.split('\n')[0].slice(0, 50) || 'New Session';
-    const generatedTitle = await generateSessionTitle(request.prompt).catch(() => null);
+    const generatedTitle = await generateSessionTitle(request.prompt).catch((error) => {
+      if (isSqliteWasmBoundsError(error)) {
+        throw error;
+      }
+      return null;
+    });
     const title = generatedTitle?.trim() || request.title?.trim() || fallbackTitle;
 
     const session = this.coworkStore.createSession(
@@ -283,6 +289,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
         const acc = this.accumulators.get(sessionId);
         if (!acc) return;
         this.resolveTimeoutFallback(sessionId, acc).catch((error) => {
+          if (isSqliteWasmBoundsError(error)) {
+            acc.reject(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
           acc.resolve({
             serviceReply: error instanceof Error ? error.message : String(error),
             ratingInvite: '',
@@ -390,7 +400,11 @@ export class PrivateChatOrderCowork extends EventEmitter {
         ratingInvite: this.formatNeedsRatingText(request, ratingInvite),
         isDeliverable: true,
       });
-    }).catch(() => {
+    }).catch((error) => {
+      if (isSqliteWasmBoundsError(error)) {
+        accumulator.reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
       // Fallback if LLM fails
       if (!serviceReply?.trim()) {
         accumulator.resolve({
@@ -657,6 +671,9 @@ export class PrivateChatOrderCowork extends EventEmitter {
         isDeliverable: true,
       };
     } catch (error) {
+      if (isSqliteWasmBoundsError(error)) {
+        throw error;
+      }
       const failureReply = [
         `服务方已生成 ${outputType} 数字成果，但上传链上交付失败。`,
         error instanceof Error ? error.message : String(error),
@@ -707,7 +724,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
         txids: record.txids,
         pinId: record.pinId,
       });
-    } catch {
+    } catch (error) {
+      if (isSqliteWasmBoundsError(error)) {
+        throw error;
+      }
       // Status updates are best-effort; final delivery or failure notice still follows.
       return null;
     }
@@ -843,7 +863,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
           accumulator.messages,
           accumulator.request,
         );
-      } catch {
+      } catch (error) {
+        if (isSqliteWasmBoundsError(error)) {
+          throw error;
+        }
         // Fall through to the timeout status fallback if finalization itself crashes.
       }
       if (finalized) {
@@ -1067,7 +1090,10 @@ export class PrivateChatOrderCowork extends EventEmitter {
   private async buildRatingInviteSafely(serviceReply: string, request?: OrderCoworkRequest): Promise<string> {
     try {
       return await this.buildRatingInvite(serviceReply, request);
-    } catch {
+    } catch (error) {
+      if (isSqliteWasmBoundsError(error)) {
+        throw error;
+      }
       return '[NeedsRating] 服务已完成，请给个评价吧！';
     }
   }

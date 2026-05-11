@@ -45,6 +45,11 @@ tests/*
 !tests/transferServiceMvcRecovery.test.mjs
 !tests/metaidCoreMvcRecovery.test.mjs
 !tests/metabotPostBuzzSkill.test.mjs
+!tests/sqliteRecoveryLifecycle.test.mjs
+!tests/atomicFile.test.mjs
+!tests/sqliteBackgroundJobs.test.mjs
+!tests/providerDiscoveryService.test.mjs
+!tests/sqliteWasmRethrowGuards.test.mjs
 
 # Local DB (never commit)
 *.sqlite
