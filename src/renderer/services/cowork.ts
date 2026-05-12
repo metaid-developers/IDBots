@@ -252,16 +252,17 @@ class CoworkService {
     return { success: false, error: result.error || 'Failed to end A2A private chat' };
   }
 
-  async resendA2ADeliveryArtifact(sessionId: string): Promise<{ success: boolean; deliveryPinId?: string | null; error?: string }> {
+  async resendA2ADeliveryArtifact(input: string | { sessionId: string; orderTxid?: string | null }): Promise<{ success: boolean; deliveryPinId?: string | null; error?: string }> {
+    const request = typeof input === 'string' ? { sessionId: input } : input;
     const cowork = window.electron?.cowork;
     if (!cowork?.resendA2ADeliveryArtifact) {
       return { success: false, error: 'A2A delivery resend API not available' };
     }
 
     try {
-      const result = await cowork.resendA2ADeliveryArtifact(sessionId);
+      const result = await cowork.resendA2ADeliveryArtifact(request);
       if (result?.success) {
-        await this.loadSession(sessionId);
+        await this.loadSession(request.sessionId);
         await this.loadSessions();
         return {
           success: true,

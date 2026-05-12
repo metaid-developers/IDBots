@@ -4159,13 +4159,79 @@ const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | 
   return matched;
 };
 
+const normalizeA2AOrderTxid = (value: unknown): string => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{64}$/i.test(normalized) ? normalized : '';
+};
+
+const getCoworkMessageOrderTxid = (message: CoworkMessage): string => {
+  const metadata = message.metadata ?? {};
+  const metadataCandidate = [
+    metadata.orderTxid,
+    metadata.orderMessageTxid,
+  ].map(normalizeA2AOrderTxid).find(Boolean);
+  if (metadataCandidate) {
+    return metadataCandidate;
+  }
+
+  const tagMatch = String(message.content || '')
+    .trim()
+    .match(/^\[(?:ORDER_STATUS|DELIVERY|NeedsRating|ORDER_END):([0-9a-f]{64})(?:\s+[^\]]*)?\]/i);
+  return normalizeA2AOrderTxid(tagMatch?.[1]);
+};
+
+const resolveServiceOrderForSessionAndOrderTxid = (
+  sessionId: string,
+  orderTxid?: string | null,
+): ServiceOrderRecord | null => {
+  const normalizedOrderTxid = normalizeA2AOrderTxid(orderTxid);
+  if (!normalizedOrderTxid) {
+    return resolveServiceOrderForSession(sessionId);
+  }
+
+  const session = getCoworkStore().getSession(sessionId);
+  if (!session || session.metabotId == null) {
+    return null;
+  }
+
+  const peerGlobalMetaId = toSafeString(session.peerGlobalMetaId).trim();
+  if (!peerGlobalMetaId) {
+    return null;
+  }
+
+  const orderStore = getServiceOrderStore();
+  const directMatch = orderStore.findOrderByOrderMessageTxid(
+    'seller',
+    session.metabotId,
+    peerGlobalMetaId,
+    normalizedOrderTxid,
+  );
+  if (directMatch) {
+    if (!directMatch.coworkSessionId) {
+      return orderStore.setCoworkSessionId(directMatch.id, sessionId);
+    }
+    return directMatch;
+  }
+
+  const sessionMatch = resolveServiceOrderForSession(sessionId);
+  if (sessionMatch?.role === 'seller' && normalizeA2AOrderTxid(sessionMatch.orderMessageTxid) === normalizedOrderTxid) {
+    return sessionMatch;
+  }
+  return null;
+};
+
 const resolveSessionOrderPayload = (
-  session: NonNullable<ReturnType<CoworkStore['getSession']>> | null
+  session: NonNullable<ReturnType<CoworkStore['getSession']>> | null,
+  orderTxid?: string | null,
 ): string => {
-  const message = session?.messages.find((item) => (
+  const orderMessages = session?.messages.filter((item) => (
     typeof item.content === 'string'
     && item.content.trim().toUpperCase().startsWith('[ORDER]')
-  ));
+  )) ?? [];
+  const normalizedOrderTxid = normalizeA2AOrderTxid(orderTxid);
+  const message = normalizedOrderTxid
+    ? orderMessages.find((item) => getCoworkMessageOrderTxid(item) === normalizedOrderTxid)
+    : orderMessages[0];
   return toSafeString(message?.content).trim();
 };
 
@@ -4173,7 +4239,7 @@ const resolveSessionServiceOrderOutputType = (
   session: NonNullable<ReturnType<CoworkStore['getSession']>> | null,
   order?: ServiceOrderRecord | null,
 ): string | null => {
-  const orderPayload = resolveSessionOrderPayload(session);
+  const orderPayload = resolveSessionOrderPayload(session, order?.orderMessageTxid ?? null);
   const explicit = normalizeOrderOutputType(extractOrderOutputType(orderPayload) || '');
   if (explicit) {
     return explicit;
@@ -4926,14 +4992,38 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:resendA2ADeliveryArtifact', async (_event, sessionId: string) => {
+  const normalizeA2ADeliveryArtifactResendInput = (
+    input: unknown,
+    legacyOrderTxid?: unknown,
+  ): { sessionId: string; orderTxid: string | null } => {
+    if (typeof input === 'string') {
+      return {
+        sessionId: input.trim(),
+        orderTxid: normalizeA2AOrderTxid(legacyOrderTxid) || null,
+      };
+    }
+    if (input && typeof input === 'object') {
+      const record = input as Record<string, unknown>;
+      return {
+        sessionId: toSafeString(record.sessionId).trim(),
+        orderTxid: normalizeA2AOrderTxid(record.orderTxid) || null,
+      };
+    }
+    return { sessionId: '', orderTxid: null };
+  };
+
+  ipcMain.handle('cowork:session:resendA2ADeliveryArtifact', async (_event, input: unknown, legacyOrderTxid?: unknown) => {
     try {
+      const { sessionId, orderTxid } = normalizeA2ADeliveryArtifactResendInput(input, legacyOrderTxid);
+      if (!sessionId) {
+        throw new Error('A2A session id is required');
+      }
       const coworkStoreInst = getCoworkStore();
       const session = coworkStoreInst.getSession(sessionId);
       if (!session) {
         throw new Error('A2A session not found');
       }
-      const order = resolveServiceOrderForSession(sessionId);
+      const order = resolveServiceOrderForSessionAndOrderTxid(sessionId, orderTxid);
       if (!order || order.role !== 'seller') {
         throw new Error('Only seller-side service order sessions can resend digital delivery');
       }

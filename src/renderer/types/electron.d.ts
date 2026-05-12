@@ -495,7 +495,7 @@ interface IElectronAPI {
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     endA2APrivateChat: (sessionId: string) => Promise<{ success: boolean; noticeSent?: boolean; error?: string }>;
-    resendA2ADeliveryArtifact: (sessionId: string) => Promise<{ success: boolean; deliveryPinId?: string | null; error?: string }>;
+    resendA2ADeliveryArtifact: (input: string | { sessionId: string; orderTxid?: string | null }) => Promise<{ success: boolean; deliveryPinId?: string | null; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) => Promise<{ success: boolean; error?: string }>;
     renameSession: (options: { sessionId: string; title: string }) => Promise<{ success: boolean; error?: string }>;

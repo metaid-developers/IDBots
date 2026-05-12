@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CoworkMessage } from '../../types/cowork';
-import { ChevronDownIcon, ChevronRightIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronRightIcon, DocumentDuplicateIcon, ShareIcon } from '@heroicons/react/24/outline';
+import { i18nService } from '../../services/i18n';
 import { getDefaultMetabotAvatarUrl } from '../../utils/rendererAssetPaths';
 import MarkdownContent from '../MarkdownContent';
 
@@ -14,6 +15,9 @@ interface A2AMessageItemProps {
   metabotName?: string | null;
   /** Local MetaBot avatar data URL */
   metabotAvatar?: string | null;
+  canResendDigitalDelivery?: boolean;
+  isResendingDigitalDelivery?: boolean;
+  onResendDigitalDelivery?: (orderTxid: string) => void;
 }
 
 const formatTime = (timestamp: number): string => {
@@ -42,6 +46,7 @@ const formatTime = (timestamp: number): string => {
 const DEFAULT_METABOT_AVATAR = getDefaultMetabotAvatarUrl();
 const DELIVERY_TAG_RE = /^\[DELIVERY(?::[0-9a-fA-F]{64})?\]/;
 const ORDER_PROTOCOL_TAG_RE = /^\[(ORDER_STATUS|NeedsRating|ORDER_END)(?::[0-9a-fA-F]{64})?(?:\s+[A-Za-z0-9_-]+)?\]\s*/i;
+const ORDER_PROTOCOL_TXID_TAG_RE = /^\[(?:ORDER_STATUS|DELIVERY|NeedsRating|ORDER_END):([0-9a-fA-F]{64})(?:\s+[A-Za-z0-9_-]+)?\]/i;
 const METAID_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/content';
 const METAID_ACCELERATE_CONTENT_BASE = 'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content';
 const METAFILE_URI_REGEX = /metafile:\/\/[^\s<>"'`]+/gi;
@@ -159,6 +164,34 @@ export const resolveA2AMessageTxid = (message: CoworkMessage): string => {
   if (pinCandidate) return pinCandidate;
 
   return '';
+};
+
+export const getA2AMessageOrderTxid = (message: CoworkMessage): string => {
+  const metadata = message.metadata ?? {};
+  const metadataCandidate = [
+    metadata.orderTxid,
+    metadata.orderMessageTxid,
+  ].map(normalizeTxidCandidate).find(Boolean);
+  if (metadataCandidate) {
+    return metadataCandidate;
+  }
+
+  const tagMatch = String(message.content || '').trim().match(ORDER_PROTOCOL_TXID_TAG_RE);
+  return normalizeTxidCandidate(tagMatch?.[1]);
+};
+
+export const shouldShowA2AResendDigitalDeliveryAction = (
+  message: CoworkMessage,
+  canResendDigitalDelivery?: boolean,
+): boolean => {
+  if (!canResendDigitalDelivery) return false;
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.orderDeliveryUploadNotice === true
+    && metadata.direction === 'outgoing'
+    && metadata.orderRole === 'seller'
+    && Boolean(getA2AMessageOrderTxid(message))
+  );
 };
 
 const copyTextToClipboard = (value: string): void => {
@@ -569,12 +602,36 @@ const MetafilePreviewCard: React.FC<{ item: ParsedMetafile }> = ({ item }) => {
   );
 };
 
+const ResendDigitalDeliveryButton: React.FC<{
+  orderTxid: string;
+  isResending?: boolean;
+  onResend: (orderTxid: string) => void;
+}> = ({
+  orderTxid,
+  isResending = false,
+  onResend,
+}) => (
+  <button
+    type="button"
+    data-order-txid={orderTxid}
+    onClick={() => onResend(orderTxid)}
+    disabled={isResending}
+    className="mt-1 inline-flex h-7 items-center gap-1 rounded-md border border-blue-500/30 px-2.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:text-blue-400"
+  >
+    <ShareIcon className="h-3.5 w-3.5" />
+    {isResending ? i18nService.t('a2aResendingDigitalDelivery') : i18nService.t('a2aResendDigitalDelivery')}
+  </button>
+);
+
 const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   message,
   peerName,
   peerAvatar,
   metabotName,
   metabotAvatar,
+  canResendDigitalDelivery = false,
+  isResendingDigitalDelivery = false,
+  onResendDigitalDelivery,
 }) => {
   // tool_use / tool_result: compact collapsible block (collapsed by default)
   if (message.type === 'tool_use' || message.type === 'tool_result') {
@@ -610,12 +667,29 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   }
 
   const txid = resolveA2AMessageTxid(message);
+  const resendOrderTxid = getA2AMessageOrderTxid(message);
+  const shouldRenderResendAction = (
+    Boolean(onResendDigitalDelivery)
+    && shouldShowA2AResendDigitalDeliveryAction(message, canResendDigitalDelivery)
+  );
+  const renderResendAction = () => (
+    shouldRenderResendAction && onResendDigitalDelivery ? (
+      <ResendDigitalDeliveryButton
+        orderTxid={resendOrderTxid}
+        isResending={isResendingDigitalDelivery}
+        onResend={onResendDigitalDelivery}
+      />
+    ) : null
+  );
+
   if (!txid) {
+    const internalContent = stripOrderProtocolTag(message.content);
     return (
       <div className="px-4 py-1 flex justify-center">
         <div className="max-w-[76%] px-3 py-1.5 text-xs leading-relaxed whitespace-pre-wrap break-words dark:text-claude-darkTextSecondary text-claude-textSecondary">
           <div className="mb-0.5 font-medium">内部状态</div>
-          <div>{message.content}</div>
+          <div>{internalContent}</div>
+          {renderResendAction()}
           <div className="mt-0.5 text-[10px] opacity-70">{formatTime(message.timestamp)}</div>
         </div>
       </div>
@@ -690,6 +764,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
             </button>
           </div>
         )}
+        {renderResendAction()}
         <span className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5 px-1">
           {formatTime(message.timestamp)}
         </span>

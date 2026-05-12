@@ -56,15 +56,31 @@ test('CoworkSessionDetail hides A2A transport handshake bubbles', () => {
   assert.match(source, /isA2ATransportHandshakeMessage\(message\)/);
 });
 
-test('CoworkSessionDetail renders a resend digital delivery button for seller A2A service orders', () => {
+test('CoworkSessionDetail wires resend digital delivery to order-scoped A2A messages', () => {
   const source = fs.readFileSync(sourcePath, 'utf8');
 
   assert.match(source, /a2aResendDigitalDelivery/);
   assert.match(source, /handleResendDigitalDelivery/);
-  assert.match(source, /coworkService\.resendA2ADeliveryArtifact\(currentSession\.id\)/);
+  assert.match(source, /onResendDigitalDelivery=\{handleResendDigitalDelivery\}/);
+  assert.match(source, /canResendDigitalDelivery=\{canResendDigitalDelivery\}/);
+  assert.match(source, /coworkService\.resendA2ADeliveryArtifact\(\{\s*sessionId: currentSession\.id,\s*orderTxid,/s);
   assert.match(source, /serviceOrderSummary\?\.role === 'seller'/);
   assert.match(source, /NON_TEXT_SERVICE_OUTPUT_TYPES\.includes/);
+  assert.doesNotMatch(source, /onClick=\{handleResendDigitalDelivery\}/);
   assert.doesNotMatch(source, /outputType !== 'text'/);
+});
+
+test('manual A2A delivery resend IPC accepts an order-scoped request', () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, 'src', 'main', 'main.ts'),
+    'utf8'
+  );
+
+  assert.match(source, /normalizeA2ADeliveryArtifactResendInput/);
+  assert.match(source, /resolveServiceOrderForSessionAndOrderTxid/);
+  assert.match(source, /findOrderByOrderMessageTxid\(\s*'seller'/s);
+  assert.match(source, /orderTxid/);
+  assert.doesNotMatch(source, /ipcMain\.handle\('cowork:session:resendA2ADeliveryArtifact', async \(_event, sessionId: string\)/);
 });
 
 test('manual A2A delivery resend failure sends a refund-flow notice to the buyer', () => {
