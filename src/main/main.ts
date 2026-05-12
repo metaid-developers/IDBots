@@ -190,6 +190,7 @@ import {
   buildMyServiceOrderDetails,
   buildMyServiceSummaries,
   clampPageSize,
+  getMyServicePinIds,
   type GigSquareMyServiceRating,
 } from './services/gigSquareMyServicesService';
 import { resolveSellerOrderServiceMatch } from './services/gigSquareMyServicesRepairService';
@@ -6525,23 +6526,28 @@ if (!gotTheLock) {
       if (!currentPinId) {
         return { success: false, error: 'Service not found' };
       }
+      const servicePinIds = getMyServicePinIds(service);
+      const servicePinIdSet = new Set(servicePinIds);
 
       const ratingsByPaymentTxid = new Map<string, GigSquareMyServiceRating[]>();
-      for (const rating of listGigSquareRatingsFromDb(currentPinId)) {
-        const paymentTxid = toSafeString(rating.servicePaidTx).trim();
-        if (!paymentTxid) continue;
-        const list = ratingsByPaymentTxid.get(paymentTxid) ?? [];
-        list.push(rating);
-        ratingsByPaymentTxid.set(paymentTxid, list);
+      for (const ratingServiceId of servicePinIds) {
+        for (const rating of listGigSquareRatingsFromDb(ratingServiceId)) {
+          const paymentTxid = toSafeString(rating.servicePaidTx).trim();
+          if (!paymentTxid) continue;
+          const list = ratingsByPaymentTxid.get(paymentTxid) ?? [];
+          list.push(rating);
+          ratingsByPaymentTxid.set(paymentTxid, list);
+        }
       }
 
       const sellerOrders = getServiceOrderStore()
         .listOrdersByStatuses('seller', ['completed', 'refunded'])
-        .filter((order) => toSafeString(order.servicePinId).trim() === currentPinId);
+        .filter((order) => servicePinIdSet.has(toSafeString(order.servicePinId).trim()));
       const page = normalizePositiveInteger(params?.page, 1);
       const pageSize = clampPageSize(toSafeNumber(params?.pageSize), GIG_SQUARE_MY_SERVICE_ORDERS_PAGE_SIZE);
       const detailPage = buildMyServiceOrderDetails({
         serviceId: currentPinId,
+        servicePinIds,
         sellerOrders,
         ratingsByPaymentTxid,
         page,
