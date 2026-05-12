@@ -44,7 +44,7 @@ test('buildMyServiceOrderDetails only returns completed and refunded seller orde
   assert.deepEqual(result.items.map((item) => item.id), ['2', '1']);
 });
 
-test('buildMyServiceSummaries aggregates seller counts and revenue totals per owned service price instead of raw order payment amounts', () => {
+test('buildMyServiceSummaries aggregates seller counts and revenue totals from recorded order payments', () => {
   const result = buildMyServiceSummaries({
     ownedGlobalMetaIds: new Set(['owned-global']),
     services: [{
@@ -73,13 +73,13 @@ test('buildMyServiceSummaries aggregates seller counts and revenue totals per ow
 
   assert.equal(result.items[0].successCount, 1);
   assert.equal(result.items[0].refundCount, 1);
-  assert.equal(result.items[0].grossRevenue, '10');
-  assert.equal(result.items[0].netIncome, '10');
+  assert.equal(result.items[0].grossRevenue, '4.75');
+  assert.equal(result.items[0].netIncome, '3.5');
   assert.equal(result.items[0].ratingAvg, 4.5);
   assert.equal(result.items[0].ratingCount, 2);
 });
 
-test('buildMyServiceSummaries ignores anomalous seller payment amounts when computing revenue', () => {
+test('buildMyServiceSummaries keeps historical order revenue when the current service price changes', () => {
   const result = buildMyServiceSummaries({
     ownedGlobalMetaIds: new Set(['owned-global']),
     services: [{
@@ -87,7 +87,7 @@ test('buildMyServiceSummaries ignores anomalous seller payment amounts when comp
       displayName: 'Weather',
       serviceName: 'weather-service',
       description: 'desc',
-      price: '0.0001',
+      price: '0',
       currency: 'SPACE',
       providerMetaId: 'meta-1',
       providerGlobalMetaId: 'owned-global',
@@ -101,8 +101,8 @@ test('buildMyServiceSummaries ignores anomalous seller payment amounts when comp
     pageSize: 8,
   });
 
-  assert.equal(result.items[0].grossRevenue, '0.0001');
-  assert.equal(result.items[0].netIncome, '0.0001');
+  assert.equal(result.items[0].grossRevenue, '3.8794796');
+  assert.equal(result.items[0].netIncome, '3.8794796');
 });
 
 test('buildMyServiceSummaries aggregates metrics across current, source, and historical chain pins', () => {
@@ -130,8 +130,8 @@ test('buildMyServiceSummaries aggregates metrics across current, source, and his
       updatedAt: 123,
     }],
     sellerOrders: [
-      { id: 'old-order', servicePinId: 'svc-root', status: 'completed', paymentAmount: '99' },
-      { id: 'mid-order', servicePinId: 'svc-m1', status: 'refunded', paymentAmount: '99' },
+      { id: 'old-order', servicePinId: 'svc-root', status: 'completed', paymentAmount: '0.5' },
+      { id: 'mid-order', servicePinId: 'svc-m1', status: 'refunded', paymentAmount: '0.75' },
       { id: 'current-order', servicePinId: 'svc-m2', status: 'completed', paymentAmount: '1' },
     ],
     page: 1,
@@ -144,8 +144,8 @@ test('buildMyServiceSummaries aggregates metrics across current, source, and his
   assert.deepEqual(result.items[0].chainPinIds, ['svc-root', 'svc-m1', 'svc-m2']);
   assert.equal(result.items[0].successCount, 2);
   assert.equal(result.items[0].refundCount, 1);
-  assert.equal(result.items[0].grossRevenue, '4');
-  assert.equal(result.items[0].netIncome, '4');
+  assert.equal(result.items[0].grossRevenue, '2.25');
+  assert.equal(result.items[0].netIncome, '1.5');
   assert.equal(result.items[0].creatorMetabotId, 7);
   assert.equal(result.items[0].creatorMetabotName, 'Caster Bot');
   assert.equal(result.items[0].creatorMetabotAvatar, 'avatar://caster');

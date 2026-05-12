@@ -280,6 +280,8 @@ export function buildMyServiceSummaries(input: {
   const orderStatsByServiceId = new Map<string, {
     successCount: number;
     refundCount: number;
+    grossRevenueUnits: bigint;
+    netIncomeUnits: bigint;
   }>();
 
   for (const order of input.sellerOrders) {
@@ -288,9 +290,14 @@ export function buildMyServiceSummaries(input: {
     const existing = orderStatsByServiceId.get(serviceId) ?? {
       successCount: 0,
       refundCount: 0,
+      grossRevenueUnits: 0n,
+      netIncomeUnits: 0n,
     };
+    const amountUnits = parseDecimalToUnits(order.paymentAmount);
+    existing.grossRevenueUnits += amountUnits;
     if (order.status === COMPLETED_STATUS) {
       existing.successCount += 1;
+      existing.netIncomeUnits += amountUnits;
     } else if (order.status === REFUNDED_STATUS) {
       existing.refundCount += 1;
     }
@@ -318,14 +325,15 @@ export function buildMyServiceSummaries(input: {
         return {
           successCount: acc.successCount + item.successCount,
           refundCount: acc.refundCount + item.refundCount,
+          grossRevenueUnits: acc.grossRevenueUnits + item.grossRevenueUnits,
+          netIncomeUnits: acc.netIncomeUnits + item.netIncomeUnits,
         };
       }, {
         successCount: 0,
         refundCount: 0,
+        grossRevenueUnits: 0n,
+        netIncomeUnits: 0n,
       });
-      const servicePriceUnits = parseDecimalToUnits(service.price);
-      const completedCount = BigInt(stats.successCount);
-      const recognizedRevenueUnits = servicePriceUnits * completedCount;
       return {
         id: currentPinId,
         currentPinId,
@@ -355,8 +363,8 @@ export function buildMyServiceSummaries(input: {
         blockedReason: toSafeString(service.blockedReason).trim() || null,
         successCount: stats.successCount,
         refundCount: stats.refundCount,
-        grossRevenue: formatUnitsToDecimal(recognizedRevenueUnits),
-        netIncome: formatUnitsToDecimal(recognizedRevenueUnits),
+        grossRevenue: formatUnitsToDecimal(stats.grossRevenueUnits),
+        netIncome: formatUnitsToDecimal(stats.netIncomeUnits),
         ratingAvg: toSafeNumber(service.ratingAvg),
         ratingCount: toSafeNumber(service.ratingCount),
         updatedAt: toSafeNumber(service.updatedAt),
