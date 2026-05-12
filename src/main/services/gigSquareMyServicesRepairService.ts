@@ -1,4 +1,4 @@
-import { extractOrderSkillId, extractOrderSkillName } from './orderPayment';
+import { extractOrderSkillId, extractOrderSkillName, extractOrderTxid } from './orderPayment';
 
 export interface SellerOrderRepairServiceSource {
   id: string;
@@ -27,9 +27,15 @@ export interface SellerOrderServiceMatch {
   matchedBy: 'existing' | 'rating_txid' | 'order_text_service_id' | 'skill_price_time' | 'price_time';
 }
 
+export interface SellerOrderPaymentAmountRepair {
+  paymentAmount: string;
+  paymentCurrency: string;
+}
+
 const DECIMAL_SCALE = 8n;
 const DECIMAL_MULTIPLIER = 10n ** DECIMAL_SCALE;
 const LEGACY_PLACEHOLDER_SERVICE_NAMES = new Set(['service order']);
+const ORDER_PAYMENT_AMOUNT_RE = /(?:支付金额|payment(?:\s+amount)?)\s*[:：=]?\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z0-9-]+)/i;
 
 const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -44,6 +50,8 @@ const toSafeNumber = (value: unknown): number => {
 };
 
 const normalizeSkillToken = (value: unknown): string => toSafeString(value).trim().toLowerCase();
+
+const normalizePaymentCurrency = (value: unknown): string => toSafeString(value).trim().toUpperCase();
 
 const parseDecimalToUnits = (value: string | null | undefined): bigint => {
   const normalized = toSafeString(value).trim();
@@ -68,13 +76,46 @@ const isExactMoneyMatch = (
   order: SellerOrderRepairSource,
   service: SellerOrderRepairServiceSource
 ): boolean => {
-  const orderCurrency = normalizeSkillToken(order.paymentCurrency).toUpperCase();
-  const serviceCurrency = normalizeSkillToken(service.currency).toUpperCase();
+  const orderCurrency = normalizePaymentCurrency(order.paymentCurrency);
+  const serviceCurrency = normalizePaymentCurrency(service.currency);
   if (orderCurrency && serviceCurrency && orderCurrency !== serviceCurrency) {
     return false;
   }
   return parseDecimalToUnits(order.paymentAmount) === parseDecimalToUnits(service.price);
 };
+
+export function resolveSellerOrderPaymentAmountRepair(input: {
+  order: SellerOrderRepairSource;
+  orderText?: string | null;
+}): SellerOrderPaymentAmountRepair | null {
+  const text = toSafeString(input.orderText).trim();
+  if (!text) return null;
+
+  const declaredTxid = toSafeString(extractOrderTxid(text)).trim().toLowerCase();
+  const orderPaymentTxid = toSafeString(input.order.paymentTxid).trim().toLowerCase();
+  if (declaredTxid && orderPaymentTxid && declaredTxid !== orderPaymentTxid) {
+    return null;
+  }
+
+  const match = text.match(ORDER_PAYMENT_AMOUNT_RE);
+  const paymentAmount = toSafeString(match?.[1]).trim();
+  const paymentCurrency = normalizePaymentCurrency(match?.[2]);
+  if (!paymentAmount || !paymentCurrency) return null;
+
+  const currentCurrency = normalizePaymentCurrency(input.order.paymentCurrency);
+  if (currentCurrency && paymentCurrency !== currentCurrency) {
+    return null;
+  }
+
+  if (parseDecimalToUnits(paymentAmount) === parseDecimalToUnits(input.order.paymentAmount)) {
+    return null;
+  }
+
+  return {
+    paymentAmount,
+    paymentCurrency,
+  };
+}
 
 const compareVersionDistance = (
   left: SellerOrderRepairServiceSource,

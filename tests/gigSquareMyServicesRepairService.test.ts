@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveSellerOrderServiceMatch } from '../src/main/services/gigSquareMyServicesRepairService';
+import {
+  resolveSellerOrderPaymentAmountRepair,
+  resolveSellerOrderServiceMatch,
+} from '../src/main/services/gigSquareMyServicesRepairService';
 
 test('resolveSellerOrderServiceMatch prefers rating tx matches over heuristic candidates', () => {
   const match = resolveSellerOrderServiceMatch({
@@ -94,4 +97,43 @@ test('resolveSellerOrderServiceMatch falls back to skill plus price and prefers 
     serviceName: 'weather-service',
     matchedBy: 'skill_price_time',
   });
+});
+
+test('resolveSellerOrderPaymentAmountRepair restores seller amount from order message metadata', () => {
+  const paymentTxid = '0db14a224bb14ac0687c0f96dc4b24e045d675750ab145d77e2a729c11157730';
+  const repair = resolveSellerOrderPaymentAmountRepair({
+    order: {
+      id: 'seller-weather-order',
+      paymentTxid,
+      paymentAmount: '3.8789796',
+      paymentCurrency: 'SPACE',
+    },
+    orderText: `[ORDER] 帮我用 weather 技能查一下天气，已经转了你 0.0001 SPACE，交易 ID 是 ${paymentTxid}。具体想查的是 “北京天气如何”。
+
+支付金额 0.0001 SPACE
+txid: ${paymentTxid}
+service id: e5121555fd87634383bf9b90c87c7fbe44d207f57a6ef0acbdbd9b14eb8ab5edi0
+skill name: weather`,
+  });
+
+  assert.deepEqual(repair, {
+    paymentAmount: '0.0001',
+    paymentCurrency: 'SPACE',
+  });
+});
+
+test('resolveSellerOrderPaymentAmountRepair ignores order text for a different payment txid', () => {
+  const repair = resolveSellerOrderPaymentAmountRepair({
+    order: {
+      id: 'seller-weather-order',
+      paymentTxid: '0'.repeat(64),
+      paymentAmount: '3.8789796',
+      paymentCurrency: 'SPACE',
+    },
+    orderText: `[ORDER] 支付金额 0.0001 SPACE
+txid: ${'1'.repeat(64)}
+service id: e5121555fd87634383bf9b90c87c7fbe44d207f57a6ef0acbdbd9b14eb8ab5edi0`,
+  });
+
+  assert.equal(repair, null);
 });

@@ -193,7 +193,10 @@ import {
   getMyServicePinIds,
   type GigSquareMyServiceRating,
 } from './services/gigSquareMyServicesService';
-import { resolveSellerOrderServiceMatch } from './services/gigSquareMyServicesRepairService';
+import {
+  resolveSellerOrderPaymentAmountRepair,
+  resolveSellerOrderServiceMatch,
+} from './services/gigSquareMyServicesRepairService';
 import {
   resolveCurrentMarketplaceServices,
   resolveServiceActionAvailability,
@@ -1614,15 +1617,27 @@ function repairSellerOrdersForGigSquareMyServices(): void {
     }
 
     if (
-      toSafeString(order.servicePinId).trim() === match.serviceId
-      && toSafeString(order.serviceName).trim() === match.serviceName
+      toSafeString(order.servicePinId).trim() !== match.serviceId
+      || toSafeString(order.serviceName).trim() !== match.serviceName
     ) {
-      continue;
+      store.repairOrderServiceReference(order.id, {
+        servicePinId: match.serviceId,
+        serviceName: match.serviceName,
+      });
     }
-    store.repairOrderServiceReference(order.id, {
-      servicePinId: match.serviceId,
-      serviceName: match.serviceName,
+
+    const paymentRepair = resolveSellerOrderPaymentAmountRepair({
+      order: {
+        id: order.id,
+        paymentTxid: order.paymentTxid,
+        paymentAmount: order.paymentAmount,
+        paymentCurrency: order.paymentCurrency,
+      },
+      orderText,
     });
+    if (paymentRepair) {
+      store.repairOrderPaymentAmount(order.id, paymentRepair);
+    }
   }
 }
 
