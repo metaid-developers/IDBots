@@ -1300,6 +1300,42 @@ export class ServiceOrderStore {
     return this.getOrderById(orderId);
   }
 
+  repairOrderPaymentAmount(
+    orderId: string,
+    input: {
+      paymentAmount: string;
+      paymentCurrency: string;
+    }
+  ): ServiceOrderRecord | null {
+    const order = this.getOrderById(orderId);
+    if (!order) return null;
+
+    const normalizedAmount = String(input.paymentAmount || '').trim();
+    const normalizedCurrency = String(input.paymentCurrency || '').trim().toUpperCase();
+    if (!normalizedAmount || !normalizedCurrency) {
+      return order;
+    }
+    if (order.paymentAmount === normalizedAmount && order.paymentCurrency === normalizedCurrency) {
+      return order;
+    }
+
+    this.db.run(`
+      UPDATE service_orders
+      SET
+        payment_amount = ?,
+        payment_currency = ?,
+        updated_at = ?
+      WHERE id = ?
+    `, [
+      normalizedAmount,
+      normalizedCurrency,
+      Date.now(),
+      orderId,
+    ]);
+    this.saveDb();
+    return this.getOrderById(orderId);
+  }
+
   recordRefundTransfer(
     orderId: string,
     input: {

@@ -1,11 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const packageJsonPath = path.join(process.cwd(), 'package.json');
 const skillManagerPath = path.join(process.cwd(), 'src', 'main', 'skillManager.ts');
 const coworkRunnerPath = path.join(process.cwd(), 'src', 'main', 'libs', 'coworkRunner.ts');
+const claudeSdkCliPatchScriptPath = path.join(process.cwd(), 'scripts', 'patch-claude-sdk-cli.js');
+
+const CYGPATH_SNIPPET =
+  'BS=(A)=>{let Q=g4([A]);return NL(`cygpath -u ${Q}`,{shell:dM1()}).toString().trim()},B0Q=(A)=>{let Q=g4([A]);return NL(`cygpath -w ${Q}`,{shell:dM1()}).toString().trim()};';
+
+const EXPLORE_AGENT_SNIPPET =
+  'FT={agentType:"Explore",whenToUse:"Fast agent specialized for exploring codebases.",disallowedTools:[P6,eZ1,S6,NG,EC],source:"built-in",baseDir:"built-in",model:"haiku",getSystemPrompt:()=>JH5,criticalSystemReminder_EXPERIMENTAL:"CRITICAL: This is a READ-ONLY task. You CANNOT edit, write, or create files."}';
+
+function createClaudeSdkCliFixture() {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-claude-sdk-patch-'));
+  const cliDir = path.join(tempDir, 'node_modules', '@anthropic-ai', 'claude-agent-sdk');
+  fs.mkdirSync(cliDir, { recursive: true });
+  const cliPath = path.join(cliDir, 'cli.js');
+  fs.writeFileSync(
+    cliPath,
+    ['before', CYGPATH_SNIPPET, EXPLORE_AGENT_SNIPPET, 'after'].join('\n'),
+    'utf8',
+  );
+  return { tempDir, cliPath };
+}
 
 test('skillManager runtime YAML parser must be declared as production dependency', () => {
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
@@ -78,5 +100,26 @@ test('DeepSeek missing reasoning_content failures reset stale resume state once'
     source,
     /DeepSeek thinking history lost reasoning_content; retrying with fresh session/,
     'DeepSeek missing reasoning_content should trigger one fresh-session retry instead of leaving the run stuck',
+  );
+});
+
+test('Claude SDK CLI patch makes the built-in Explore sub-agent inherit the main model', (t) => {
+  const { tempDir, cliPath } = createClaudeSdkCliFixture();
+  t.after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  execFileSync(process.execPath, [claudeSdkCliPatchScriptPath], { cwd: tempDir, stdio: 'pipe' });
+
+  const patched = fs.readFileSync(cliPath, 'utf8');
+  assert.match(
+    patched,
+    /agentType:"Explore"[\s\S]*?model:"inherit"/,
+    'Explore should inherit the parent Cowork model instead of forcing Claude Haiku',
+  );
+  assert.doesNotMatch(
+    patched,
+    /agentType:"Explore"[\s\S]*?model:"haiku"/,
+    'Explore must not keep the SDK default haiku override',
   );
 });

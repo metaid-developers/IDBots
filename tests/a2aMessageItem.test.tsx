@@ -5,8 +5,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import A2AMessageItem, {
   createMetafileMediaObjectUrl,
   formatA2ATxidPreview,
+  getA2AMessageOrderTxid,
   parseMetafileUri,
   resolveA2AMessageTxid,
+  shouldShowA2AResendDigitalDeliveryAction,
   triggerMetafileDownload,
 } from '../src/renderer/components/cowork/A2AMessageItem';
 
@@ -211,6 +213,89 @@ test('A2A order protocol messages hide routing tags in chat bubbles', () => {
     assert.match(markup, new RegExp(item.visible.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.doesNotMatch(markup, new RegExp(item.hidden.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
+});
+
+test('A2A upload notice renders an order-scoped resend digital delivery action', () => {
+  const orderTxid = 'a'.repeat(64);
+  const markup = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-upload-notice',
+        type: 'assistant',
+        content: `[ORDER_STATUS:${orderTxid}] 技能执行完毕，数字成果已生成，正在将数字成果上传链上交付，请耐心等待。`,
+        timestamp: 1_744_444_445_500,
+        metadata: {
+          direction: 'outgoing',
+          orderRole: 'seller',
+          orderDeliveryUploadNotice: true,
+          orderTxid,
+        },
+      }}
+      metabotName="Local Bot"
+      canResendDigitalDelivery
+      isResendingDigitalDelivery={false}
+      onResendDigitalDelivery={() => {}}
+    />
+  );
+
+  assert.equal(
+    getA2AMessageOrderTxid({
+      id: 'msg-upload-notice',
+      type: 'assistant',
+      content: `[ORDER_STATUS:${orderTxid}] upload`,
+      timestamp: 1,
+      metadata: { orderTxid },
+    }),
+    orderTxid
+  );
+  assert.equal(
+    shouldShowA2AResendDigitalDeliveryAction({
+      id: 'msg-upload-notice',
+      type: 'assistant',
+      content: `[ORDER_STATUS:${orderTxid}] upload`,
+      timestamp: 1,
+      metadata: { direction: 'outgoing', orderRole: 'seller', orderDeliveryUploadNotice: true },
+    }, true),
+    true
+  );
+  assert.match(markup, /再次发送数字成果/);
+  assert.match(markup, new RegExp(`data-order-txid="${orderTxid}"`));
+  assert.doesNotMatch(markup, /\[ORDER_STATUS:/);
+  assert.match(markup, /内部状态/);
+});
+
+test('A2A upload notice hides resend action when it is not tied to a seller order', () => {
+  const orderTxid = 'b'.repeat(64);
+  assert.equal(
+    shouldShowA2AResendDigitalDeliveryAction({
+      id: 'msg-notice-without-flag',
+      type: 'assistant',
+      content: `[ORDER_STATUS:${orderTxid}] upload`,
+      timestamp: 1,
+      metadata: { direction: 'outgoing', orderRole: 'seller' },
+    }, true),
+    false
+  );
+  assert.equal(
+    shouldShowA2AResendDigitalDeliveryAction({
+      id: 'msg-notice-without-order',
+      type: 'assistant',
+      content: 'upload',
+      timestamp: 1,
+      metadata: { direction: 'outgoing', orderRole: 'seller', orderDeliveryUploadNotice: true },
+    }, true),
+    false
+  );
+  assert.equal(
+    shouldShowA2AResendDigitalDeliveryAction({
+      id: 'msg-buyer-notice',
+      type: 'assistant',
+      content: `[ORDER_STATUS:${orderTxid}] upload`,
+      timestamp: 1,
+      metadata: { direction: 'incoming', orderRole: 'buyer', orderDeliveryUploadNotice: true },
+    }, true),
+    false
+  );
 });
 
 test('A2A delivery image keeps metafile text and renders image preview for .jpg', () => {

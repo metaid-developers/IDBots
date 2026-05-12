@@ -44,7 +44,7 @@ test('buildMyServiceOrderDetails only returns completed and refunded seller orde
   assert.deepEqual(result.items.map((item) => item.id), ['2', '1']);
 });
 
-test('buildMyServiceSummaries aggregates seller counts and revenue totals per owned service price instead of raw order payment amounts', () => {
+test('buildMyServiceSummaries aggregates seller counts and revenue totals from recorded order payments', () => {
   const result = buildMyServiceSummaries({
     ownedGlobalMetaIds: new Set(['owned-global']),
     services: [{
@@ -73,13 +73,13 @@ test('buildMyServiceSummaries aggregates seller counts and revenue totals per ow
 
   assert.equal(result.items[0].successCount, 1);
   assert.equal(result.items[0].refundCount, 1);
-  assert.equal(result.items[0].grossRevenue, '10');
-  assert.equal(result.items[0].netIncome, '10');
+  assert.equal(result.items[0].grossRevenue, '4.75');
+  assert.equal(result.items[0].netIncome, '3.5');
   assert.equal(result.items[0].ratingAvg, 4.5);
   assert.equal(result.items[0].ratingCount, 2);
 });
 
-test('buildMyServiceSummaries ignores anomalous seller payment amounts when computing revenue', () => {
+test('buildMyServiceSummaries keeps historical order revenue when the current service price changes', () => {
   const result = buildMyServiceSummaries({
     ownedGlobalMetaIds: new Set(['owned-global']),
     services: [{
@@ -87,7 +87,7 @@ test('buildMyServiceSummaries ignores anomalous seller payment amounts when comp
       displayName: 'Weather',
       serviceName: 'weather-service',
       description: 'desc',
-      price: '0.0001',
+      price: '0',
       currency: 'SPACE',
       providerMetaId: 'meta-1',
       providerGlobalMetaId: 'owned-global',
@@ -101,17 +101,18 @@ test('buildMyServiceSummaries ignores anomalous seller payment amounts when comp
     pageSize: 8,
   });
 
-  assert.equal(result.items[0].grossRevenue, '0.0001');
-  assert.equal(result.items[0].netIncome, '0.0001');
+  assert.equal(result.items[0].grossRevenue, '3.8794796');
+  assert.equal(result.items[0].netIncome, '3.8794796');
 });
 
-test('buildMyServiceSummaries uses current pin for metrics and preserves creator/action metadata', () => {
+test('buildMyServiceSummaries aggregates metrics across current, source, and historical chain pins', () => {
   const result = buildMyServiceSummaries({
     ownedGlobalMetaIds: new Set(['owned-global']),
     services: [{
       id: 'svc-m2',
       currentPinId: 'svc-m2',
       sourceServicePinId: 'svc-root',
+      chainPinIds: ['svc-root', 'svc-m1', 'svc-m2'],
       displayName: 'Weather V2',
       serviceName: 'weather-service',
       description: 'desc',
@@ -129,7 +130,8 @@ test('buildMyServiceSummaries uses current pin for metrics and preserves creator
       updatedAt: 123,
     }],
     sellerOrders: [
-      { id: 'old-order', servicePinId: 'svc-root', status: 'completed', paymentAmount: '99' },
+      { id: 'old-order', servicePinId: 'svc-root', status: 'completed', paymentAmount: '0.5' },
+      { id: 'mid-order', servicePinId: 'svc-m1', status: 'refunded', paymentAmount: '0.75' },
       { id: 'current-order', servicePinId: 'svc-m2', status: 'completed', paymentAmount: '1' },
     ],
     page: 1,
@@ -139,14 +141,38 @@ test('buildMyServiceSummaries uses current pin for metrics and preserves creator
   assert.equal(result.items[0].id, 'svc-m2');
   assert.equal(result.items[0].currentPinId, 'svc-m2');
   assert.equal(result.items[0].sourceServicePinId, 'svc-root');
-  assert.equal(result.items[0].successCount, 1);
-  assert.equal(result.items[0].grossRevenue, '2');
+  assert.deepEqual(result.items[0].chainPinIds, ['svc-root', 'svc-m1', 'svc-m2']);
+  assert.equal(result.items[0].successCount, 2);
+  assert.equal(result.items[0].refundCount, 1);
+  assert.equal(result.items[0].grossRevenue, '2.25');
+  assert.equal(result.items[0].netIncome, '1.5');
   assert.equal(result.items[0].creatorMetabotId, 7);
   assert.equal(result.items[0].creatorMetabotName, 'Caster Bot');
   assert.equal(result.items[0].creatorMetabotAvatar, 'avatar://caster');
   assert.equal(result.items[0].canModify, true);
   assert.equal(result.items[0].canRevoke, true);
   assert.equal(result.items[0].blockedReason, null);
+});
+
+test('buildMyServiceOrderDetails returns orders from every pin in the current service chain', () => {
+  const result = buildMyServiceOrderDetails({
+    serviceId: 'svc-m2',
+    servicePinIds: ['svc-root', 'svc-m1', 'svc-m2'],
+    sellerOrders: [
+      { id: 'root-order', servicePinId: 'svc-root', status: 'completed', updatedAt: 100 },
+      { id: 'mid-order', servicePinId: 'svc-m1', status: 'refunded', updatedAt: 300 },
+      { id: 'current-order', servicePinId: 'svc-m2', status: 'completed', updatedAt: 200 },
+      { id: 'other-order', servicePinId: 'svc-other', status: 'completed', updatedAt: 400 },
+    ],
+    ratingsByPaymentTxid: new Map(),
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    ['mid-order', 'current-order', 'root-order']
+  );
 });
 
 test('buildMyServiceOrderDetails joins rating detail by payment txid', () => {

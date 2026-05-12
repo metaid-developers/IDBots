@@ -53,6 +53,7 @@ export type GigSquareMyServiceSummary = {
   id: string;
   currentPinId: string;
   sourceServicePinId: string;
+  chainPinIds?: string[];
   serviceName: string;
   displayName: string;
   description: string;

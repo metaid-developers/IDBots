@@ -2,6 +2,7 @@ export interface GigSquareMyServiceSource {
   id: string;
   currentPinId?: string;
   sourceServicePinId?: string;
+  chainPinIds?: string[];
   serviceName?: string;
   displayName?: string;
   description?: string;
@@ -60,6 +61,7 @@ export interface GigSquareMyServiceSummary {
   id: string;
   currentPinId: string;
   sourceServicePinId: string;
+  chainPinIds: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -210,6 +212,18 @@ const isClosedSellerStatus = (status: string): boolean => {
   return status === COMPLETED_STATUS || status === REFUNDED_STATUS;
 };
 
+export const getMyServicePinIds = (service: {
+  id?: string | null;
+  currentPinId?: string | null;
+  sourceServicePinId?: string | null;
+  chainPinIds?: unknown;
+}): string[] => [...new Set([
+  ...(Array.isArray(service.chainPinIds) ? service.chainPinIds : []),
+  service.sourceServicePinId,
+  service.id,
+  service.currentPinId,
+].map((value) => toSafeString(value).trim()).filter(Boolean))];
+
 const getOrderFinalizedAt = (order: GigSquareMyServiceOrderSource): number => {
   if (order.status === REFUNDED_STATUS) {
     return toSafeNumber(order.refundCompletedAt ?? order.updatedAt ?? order.createdAt);
@@ -266,6 +280,8 @@ export function buildMyServiceSummaries(input: {
   const orderStatsByServiceId = new Map<string, {
     successCount: number;
     refundCount: number;
+    grossRevenueUnits: bigint;
+    netIncomeUnits: bigint;
   }>();
 
   for (const order of input.sellerOrders) {
@@ -274,9 +290,14 @@ export function buildMyServiceSummaries(input: {
     const existing = orderStatsByServiceId.get(serviceId) ?? {
       successCount: 0,
       refundCount: 0,
+      grossRevenueUnits: 0n,
+      netIncomeUnits: 0n,
     };
+    const amountUnits = parseDecimalToUnits(order.paymentAmount);
+    existing.grossRevenueUnits += amountUnits;
     if (order.status === COMPLETED_STATUS) {
       existing.successCount += 1;
+      existing.netIncomeUnits += amountUnits;
     } else if (order.status === REFUNDED_STATUS) {
       existing.refundCount += 1;
     }
@@ -292,14 +313,32 @@ export function buildMyServiceSummaries(input: {
     .map((service) => {
       const currentPinId = toSafeString(service.currentPinId ?? service.id).trim() || toSafeString(service.id).trim();
       const sourceServicePinId = toSafeString(service.sourceServicePinId).trim() || currentPinId;
-      const stats = orderStatsByServiceId.get(currentPinId);
-      const servicePriceUnits = parseDecimalToUnits(service.price);
-      const completedCount = BigInt(stats?.successCount ?? 0);
-      const recognizedRevenueUnits = servicePriceUnits * completedCount;
+      const chainPinIds = getMyServicePinIds({
+        id: service.id,
+        currentPinId,
+        sourceServicePinId,
+        chainPinIds: service.chainPinIds,
+      });
+      const stats = chainPinIds.reduce((acc, servicePinId) => {
+        const item = orderStatsByServiceId.get(servicePinId);
+        if (!item) return acc;
+        return {
+          successCount: acc.successCount + item.successCount,
+          refundCount: acc.refundCount + item.refundCount,
+          grossRevenueUnits: acc.grossRevenueUnits + item.grossRevenueUnits,
+          netIncomeUnits: acc.netIncomeUnits + item.netIncomeUnits,
+        };
+      }, {
+        successCount: 0,
+        refundCount: 0,
+        grossRevenueUnits: 0n,
+        netIncomeUnits: 0n,
+      });
       return {
         id: currentPinId,
         currentPinId,
         sourceServicePinId,
+        chainPinIds,
         serviceName: toSafeString(service.serviceName).trim(),
         displayName: toSafeString(service.displayName).trim() || toSafeString(service.serviceName).trim() || 'Service',
         description: toSafeString(service.description).trim(),
@@ -322,10 +361,10 @@ export function buildMyServiceSummaries(input: {
         canModify: Boolean(service.canModify),
         canRevoke: Boolean(service.canRevoke),
         blockedReason: toSafeString(service.blockedReason).trim() || null,
-        successCount: stats?.successCount ?? 0,
-        refundCount: stats?.refundCount ?? 0,
-        grossRevenue: formatUnitsToDecimal(recognizedRevenueUnits),
-        netIncome: formatUnitsToDecimal(recognizedRevenueUnits),
+        successCount: stats.successCount,
+        refundCount: stats.refundCount,
+        grossRevenue: formatUnitsToDecimal(stats.grossRevenueUnits),
+        netIncome: formatUnitsToDecimal(stats.netIncomeUnits),
         ratingAvg: toSafeNumber(service.ratingAvg),
         ratingCount: toSafeNumber(service.ratingCount),
         updatedAt: toSafeNumber(service.updatedAt),
@@ -337,14 +376,20 @@ export function buildMyServiceSummaries(input: {
 
 export function buildMyServiceOrderDetails(input: {
   serviceId: string;
+  servicePinIds?: string[];
   sellerOrders: GigSquareMyServiceOrderSource[];
   ratingsByPaymentTxid: Map<string, GigSquareMyServiceRating | GigSquareMyServiceRating[]>;
   page: number;
   pageSize: number;
 }): GigSquarePageResult<GigSquareMyServiceOrderDetail> {
   const normalizedServiceId = toSafeString(input.serviceId).trim();
+  const servicePinIdSet = new Set(
+    [normalizedServiceId, ...(input.servicePinIds ?? [])]
+      .map((value) => toSafeString(value).trim())
+      .filter(Boolean)
+  );
   const items = input.sellerOrders
-    .filter((order) => toSafeString(order.servicePinId).trim() === normalizedServiceId && isClosedSellerStatus(order.status))
+    .filter((order) => servicePinIdSet.has(toSafeString(order.servicePinId).trim()) && isClosedSellerStatus(order.status))
     .sort((left, right) => {
       const finalizedSort = compareNumbersDesc(getOrderFinalizedAt(left), getOrderFinalizedAt(right));
       if (finalizedSort !== 0) return finalizedSort;
