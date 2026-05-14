@@ -10,6 +10,15 @@ interface SchedulerDeps {
   getCoworkRunner: () => CoworkRunner;
   getIMGatewayManager?: () => IMGatewayManager | null;
   getSkillsPrompt?: () => Promise<string | null>;
+  isRecoverableSqliteError?: (error: unknown) => boolean;
+  recoverSqlite?: (error: unknown, operationName: string) => void | Promise<void>;
+}
+
+class SchedulerStoppedError extends Error {
+  constructor() {
+    super('Scheduler was stopped');
+    this.name = 'SchedulerStoppedError';
+  }
 }
 
 export class Scheduler {
@@ -18,11 +27,14 @@ export class Scheduler {
   private getCoworkRunner: () => CoworkRunner;
   private getIMGatewayManager: (() => IMGatewayManager | null) | null;
   private getSkillsPrompt: (() => Promise<string | null>) | null;
+  private isRecoverableSqliteError: ((error: unknown) => boolean) | null;
+  private recoverSqlite: ((error: unknown, operationName: string) => void | Promise<void>) | null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private activeTasks: Map<string, AbortController> = new Map();
   // Track cowork session IDs for running tasks so we can stop them
   private taskSessionIds: Map<string, string> = new Map();
+  private stopGeneration = 0;
 
   private static readonly MAX_TIMER_INTERVAL_MS = 60_000;
   private static readonly MAX_CONSECUTIVE_ERRORS = 5;
@@ -33,6 +45,8 @@ export class Scheduler {
     this.getCoworkRunner = deps.getCoworkRunner;
     this.getIMGatewayManager = deps.getIMGatewayManager ?? null;
     this.getSkillsPrompt = deps.getSkillsPrompt ?? null;
+    this.isRecoverableSqliteError = deps.isRecoverableSqliteError ?? null;
+    this.recoverSqlite = deps.recoverSqlite ?? null;
   }
 
   // --- Lifecycle ---
@@ -45,6 +59,7 @@ export class Scheduler {
   }
 
   stop(): void {
+    this.stopGeneration += 1;
     this.running = false;
     if (this.timer) {
       clearTimeout(this.timer);
@@ -71,7 +86,17 @@ export class Scheduler {
   private scheduleNext(): void {
     if (!this.running) return;
 
-    const nextDueMs = this.store.getNextDueTimeMs();
+    let nextDueMs: number | null;
+    try {
+      nextDueMs = this.store.getNextDueTimeMs();
+    } catch (error) {
+      void this.handleSchedulerError(error, 'scheduledTask:scheduleNext').then((handled) => {
+        if (!handled) {
+          this.scheduleRetryAfterError();
+        }
+      });
+      return;
+    }
     const now = Date.now();
 
     let delayMs: number;
@@ -86,28 +111,78 @@ export class Scheduler {
 
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.tick();
+      this.runTick();
     }, delayMs);
   }
 
-  private async tick(): Promise<void> {
-    if (!this.running) return;
+  private scheduleRetryAfterError(): void {
+    if (!this.running || this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.runTick();
+    }, Scheduler.MAX_TIMER_INTERVAL_MS);
+  }
+
+  private runTick(): void {
+    const tickGeneration = this.stopGeneration;
+    let shouldScheduleNext = true;
+
+    void this.tick(tickGeneration)
+      .catch(async (error) => {
+        shouldScheduleNext = !(await this.handleSchedulerError(error, 'scheduledTask:tick'));
+      })
+      .finally(() => {
+        if (shouldScheduleNext && this.running && tickGeneration === this.stopGeneration) {
+          this.scheduleNext();
+        }
+      });
+  }
+
+  private async tick(tickGeneration: number): Promise<void> {
+    if (!this.running || tickGeneration !== this.stopGeneration) return;
 
     const now = Date.now();
     const dueTasks = this.store.getDueTasks(now);
+    if (!this.running || tickGeneration !== this.stopGeneration) return;
 
-    const executions = dueTasks.map((task) => this.executeTask(task, 'scheduled'));
-    await Promise.allSettled(executions);
+    const executions = dueTasks.map((task) => this.executeTask(task, 'scheduled', tickGeneration));
+    await Promise.all(executions);
+  }
 
-    this.scheduleNext();
+  private isRecoverableSqliteFailure(error: unknown): boolean {
+    return Boolean(this.isRecoverableSqliteError?.(error));
+  }
+
+  private async handleSchedulerError(error: unknown, operationName: string): Promise<boolean> {
+    if (this.isRecoverableSqliteFailure(error) && this.recoverSqlite) {
+      try {
+        await this.recoverSqlite(error, operationName);
+      } catch (recoveryError) {
+        console.error(`[Scheduler] SQLite recovery failed for ${operationName}:`, recoveryError);
+      }
+      return true;
+    }
+
+    console.error(`[Scheduler] ${operationName} failed:`, error);
+    return false;
+  }
+
+  private assertExecutionCurrent(executionGeneration: number): void {
+    if (executionGeneration !== this.stopGeneration) {
+      throw new SchedulerStoppedError();
+    }
   }
 
   // --- Task Execution ---
 
   async executeTask(
     task: ScheduledTask,
-    trigger: 'scheduled' | 'manual'
+    trigger: 'scheduled' | 'manual',
+    executionGeneration: number = this.stopGeneration,
   ): Promise<void> {
+    if (trigger === 'scheduled' && (!this.running || executionGeneration !== this.stopGeneration)) {
+      return;
+    }
     if (this.activeTasks.has(task.id)) {
       console.log(`[Scheduler] Task ${task.id} already running, skipping`);
       return;
@@ -137,75 +212,80 @@ export class Scheduler {
     let error: string | null = null;
 
     try {
-      sessionId = await this.startCoworkSession(task);
+      sessionId = await this.startCoworkSession(task, executionGeneration);
       success = true;
     } catch (err: unknown) {
-      error = err instanceof Error ? err.message : String(err);
-      console.error(`[Scheduler] Task ${task.id} failed:`, error);
+      if (!(err instanceof SchedulerStoppedError)) {
+        error = err instanceof Error ? err.message : String(err);
+        console.error(`[Scheduler] Task ${task.id} failed:`, error);
+      }
     } finally {
       const durationMs = Date.now() - startTime;
       this.activeTasks.delete(task.id);
       this.taskSessionIds.delete(task.id);
 
-      // Check if task still exists (may have been deleted while running)
-      const taskStillExists = this.store.getTask(task.id) !== null;
+      if (executionGeneration === this.stopGeneration) {
+        // Check if task still exists (may have been deleted while running)
+        const taskStillExists = this.store.getTask(task.id) !== null;
 
-      if (taskStillExists) {
-        // Update run record
-        this.store.completeRun(
-          run.id,
-          success ? 'success' : 'error',
-          sessionId,
-          durationMs,
-          error
-        );
-
-        // Update task state
-        this.store.markTaskCompleted(
-          task.id,
-          success,
-          durationMs,
-          error,
-          task.schedule
-        );
-
-        // Auto-disable on too many consecutive errors
-        const updatedTask = this.store.getTask(task.id);
-        if (updatedTask && updatedTask.state.consecutiveErrors >= Scheduler.MAX_CONSECUTIVE_ERRORS) {
-          this.store.toggleTask(task.id, false);
-          console.warn(
-            `[Scheduler] Task ${task.id} auto-disabled after ${Scheduler.MAX_CONSECUTIVE_ERRORS} consecutive errors`
+        if (taskStillExists) {
+          // Update run record
+          this.store.completeRun(
+            run.id,
+            success ? 'success' : 'error',
+            sessionId,
+            durationMs,
+            error
           );
+
+          // Update task state
+          this.store.markTaskCompleted(
+            task.id,
+            success,
+            durationMs,
+            error,
+            task.schedule
+          );
+
+          // Auto-disable on too many consecutive errors
+          const updatedTask = this.store.getTask(task.id);
+          if (updatedTask && updatedTask.state.consecutiveErrors >= Scheduler.MAX_CONSECUTIVE_ERRORS) {
+            this.store.toggleTask(task.id, false);
+            console.warn(
+              `[Scheduler] Task ${task.id} auto-disabled after ${Scheduler.MAX_CONSECUTIVE_ERRORS} consecutive errors`
+            );
+          }
+
+          // Disable one-shot 'at' tasks after execution
+          if (task.schedule.type === 'at') {
+            this.store.toggleTask(task.id, false);
+          }
+
+          // Prune old run history
+          this.store.pruneRuns(task.id, 100);
+
+          // Send IM notifications
+          if (task.notifyPlatforms && task.notifyPlatforms.length > 0) {
+            await this.sendNotifications(task, success, durationMs, error);
+          }
+
+          // Emit final updates
+          this.emitTaskStatusUpdate(task.id);
+          const updatedRun = this.store.getRun(run.id);
+          if (updatedRun) {
+            this.emitRunUpdate(updatedRun);
+          }
+        } else {
+          console.log(`[Scheduler] Task ${task.id} was deleted during execution, skipping post-run updates`);
         }
 
-        // Disable one-shot 'at' tasks after execution
-        if (task.schedule.type === 'at') {
-          this.store.toggleTask(task.id, false);
-        }
-
-        // Prune old run history
-        this.store.pruneRuns(task.id, 100);
-
-        // Send IM notifications
-        if (task.notifyPlatforms && task.notifyPlatforms.length > 0) {
-          await this.sendNotifications(task, success, durationMs, error);
-        }
-
-        // Emit final updates
-        this.emitTaskStatusUpdate(task.id);
-        const updatedRun = this.store.getRun(run.id);
-        if (updatedRun) {
-          this.emitRunUpdate(updatedRun);
-        }
-      } else {
-        console.log(`[Scheduler] Task ${task.id} was deleted during execution, skipping post-run updates`);
+        this.reschedule();
       }
-
-      this.reschedule();
     }
   }
 
-  private async startCoworkSession(task: ScheduledTask): Promise<string> {
+  private async startCoworkSession(task: ScheduledTask, executionGeneration: number): Promise<string> {
+    this.assertExecutionCurrent(executionGeneration);
     const config = this.coworkStore.getConfig();
     const cwd = task.workingDirectory || config.workingDirectory;
     const baseSystemPrompt = task.systemPrompt || config.systemPrompt;
@@ -217,6 +297,7 @@ export class Scheduler {
         console.warn('[Scheduler] Failed to build skills prompt for scheduled task:', error);
       }
     }
+    this.assertExecutionCurrent(executionGeneration);
     const systemPrompt = [skillsPrompt, baseSystemPrompt]
       .filter((prompt): prompt is string => Boolean(prompt?.trim()))
       .join('\n\n');
@@ -244,11 +325,13 @@ export class Scheduler {
     // Start the session with normal permission flow (no auto-approve).
     this.taskSessionIds.set(task.id, session.id);
     const runner = this.getCoworkRunner();
+    this.assertExecutionCurrent(executionGeneration);
     await runner.startSession(session.id, task.prompt, {
       skipInitialUserMessage: true,
       disableMemoryUpdates: true,
       confirmationMode: 'text',
     });
+    this.assertExecutionCurrent(executionGeneration);
 
     return session.id;
   }
@@ -288,9 +371,16 @@ export class Scheduler {
   // --- Manual Execution ---
 
   async runManually(taskId: string): Promise<void> {
-    const task = this.store.getTask(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
-    await this.executeTask(task, 'manual');
+    try {
+      const task = this.store.getTask(taskId);
+      if (!task) throw new Error(`Task not found: ${taskId}`);
+      await this.executeTask(task, 'manual');
+    } catch (error) {
+      const handled = await this.handleSchedulerError(error, 'scheduledTask:manualRun');
+      if (!handled) {
+        throw error;
+      }
+    }
   }
 
   stopTask(taskId: string): boolean {

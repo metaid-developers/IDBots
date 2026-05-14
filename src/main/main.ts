@@ -4325,6 +4325,8 @@ const getScheduler = () => {
       getSkillsPrompt: async () => {
         return getSkillManager().buildAutoRoutingPrompt();
       },
+      isRecoverableSqliteError: isSqliteWasmBoundsError,
+      recoverSqlite: recoverSqliteStore,
     });
   }
   return scheduler;
