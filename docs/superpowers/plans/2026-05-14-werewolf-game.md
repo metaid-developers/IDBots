@@ -652,7 +652,13 @@ export function createEngine(store) {
     if (!timers.has(gameId)) {
       timers.set(gameId, createTimeout(() => {
         const game = store.load(gameId);
-        if (!game || game.status !== 'playing') return;
+        if (!game) return;
+        // Registration timeout: emit with synthetic phase
+        if (game.status === 'registration') {
+          emitter.emit('registrationTimeout', game);
+          return;
+        }
+        if (game.status !== 'playing') return;
         const currentPhase = game.rounds.at(-1)?.phases.at(-1);
         if (!currentPhase) return;
         emitter.emit('phaseTimeout', game, currentPhase);
@@ -887,6 +893,22 @@ export function createEngine(store) {
   }
 
   /**
+   * Handle a player leaving mid-game. Equivalent to killPlayer but with reason tracking.
+   */
+  function playerLeave(gameId, globalMetaId, reason = 'quit') {
+    const game = store.load(gameId);
+    if (!game) throw new Error(`Game not found: ${gameId}`);
+
+    const player = game.players.find(p => p.globalMetaId === globalMetaId);
+    if (!player) throw new Error(`Player not found: ${globalMetaId}`);
+
+    player.status = 'dead';
+    player.leaveReason = reason;
+    store.save(game);
+    return game;
+  }
+
+  /**
    * Mark a player's potion as used.
    */
   function usePotion(gameId, globalMetaId, potionType) {
@@ -957,6 +979,7 @@ export function createEngine(store) {
     recordAction,
     recordJudgeReply,
     killPlayer,
+    playerLeave,
     usePotion,
     finishGame,
 
@@ -1654,7 +1677,7 @@ node "$SKILLS_ROOT/metabot-werewolf-judge/scripts/index.js" \
   --target-metabot-name <metabot名称>
 ```
 
-脚本会进入事件循环，持续监听群聊和私信，驱动游戏直到结束。
+脚本是**无状态 CLI 工具**，每次调用执行单个 `--action` 操作后退出。LLM 根据本 SKILL.md 的指令来驱动游戏循环：阅读群聊消息、决定何时调用哪个 action、发送群聊/私信。（脚本本身不包含事件循环。）
 ```
 
 - [ ] **Step 2: Commit**
@@ -1834,7 +1857,19 @@ function main() {
           throw new Error('--game-id, --from, --type, --target required');
         }
 
-        const game = engine.recordAction(gameId, { from, type, target });
+        // Validation: check that from and target are valid player globalMetaIds
+        const game = engine.getGame(gameId);
+        if (!game) throw new Error('Game not found');
+
+        const fromPlayer = game.players.find(p => p.globalMetaId === from);
+        if (!fromPlayer) throw new Error(`Player not found: ${from}`);
+        if (fromPlayer.status !== 'alive') throw new Error(`Player ${fromPlayer.name} is not alive`);
+
+        const targetPlayer = game.players.find(p => p.globalMetaId === target);
+        if (!targetPlayer) throw new Error(`Target player not found: ${target}`);
+        if (targetPlayer.status !== 'alive') throw new Error(`Target player ${targetPlayer.name} is not alive`);
+
+        engine.recordAction(gameId, { from, type, target });
         console.log(JSON.stringify({ ok: true }));
         break;
       }
@@ -1918,6 +1953,19 @@ function main() {
         break;
       }
 
+      case 'player-leave': {
+        const gameId = args['game-id'];
+        const metaId = args['player-metaid'];
+        const reason = args.reason || 'quit';
+
+        if (!gameId || !metaId) throw new Error('--game-id, --player-metaid required');
+
+        const game = engine.playerLeave(gameId, metaId, reason);
+        const player = game.players.find(p => p.globalMetaId === metaId);
+        console.log(JSON.stringify({ ok: true, player: { name: player?.name, status: player?.status, reason } }));
+        break;
+      }
+
       case 'cancel-game': {
         const gameId = args['game-id'];
         const reason = args.reason || '游戏取消';
@@ -1967,8 +2015,8 @@ function main() {
           availableActions: [
             'check-active', 'create-game', 'register-player', 'assign-roles',
             'get-game', 'get-current-phase', 'record-action', 'record-reply',
-            'complete-phase', 'kill-player', 'use-potion', 'finish-game',
-            'cancel-game', 'get-active-players',
+            'complete-phase', 'kill-player', 'player-leave', 'use-potion',
+            'finish-game', 'cancel-game', 'get-active-players',
           ],
         }));
         process.exit(1);
