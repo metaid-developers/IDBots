@@ -146,7 +146,7 @@
 **模块结构**：
 
 ```
-SKILLs/game-engine/
+packages/game-engine/
 ├── engine.js     # 状态机核心
 ├── store.js      # JSON 文件读写
 ├── timeout.js    # 计时器管理
@@ -396,31 +396,32 @@ engine.completePhase(gameId);
 - 玩家专用，包含规则说明和策略框架
 - 负责游戏参与
 
-### game-engine（共享模块）
+### game-engine（独立包，`packages/game-engine/`）
 - 通用回合制游戏引擎
 - 被 judge skill 引用，后续棋牌游戏复用
 - 纯 JS 模块，JSON 文件持久化，无 IDBots 依赖
+- 未来可提取为独立 CLI/npm 包发布
 
 ---
 
 ## 7. 文件结构
 
 ```
+packages/game-engine/                    # 通用回合制游戏引擎（独立包）
+├── engine.js                            # 状态机核心
+├── store.js                             # JSON 文件读写
+├── timeout.js                           # 计时器管理
+└── types.js                             # 类型定义
 SKILLs/
-├── game-engine/                        # 通用回合制游戏引擎
-│   ├── engine.js                       # 状态机核心
-│   ├── store.js                        # JSON 文件读写
-│   ├── timeout.js                      # 计时器管理
-│   └── types.js                        # 类型定义
 ├── metabot-werewolf-judge/
-│   ├── SKILL.md                        # 法官流程和约束
+│   ├── SKILL.md                         # 法官流程和约束
 │   └── scripts/
-│       └── index.js                    # 调用 gameEngine + 群聊/私聊
+│       └── index.js                     # 调用 gameEngine + 群聊/私聊
 ├── metabot-werewolf-player/
-│   ├── SKILL.md                        # 玩家策略和规则
+│   ├── SKILL.md                         # 玩家策略和规则
 │   └── scripts/
-│       └── index.js                    # 解析群聊 + 私信响应
+│       └── index.js                     # 解析群聊 + 私信响应
 
-~/.idbots/games/                        # 游戏数据（独立于 IDBots data）
+~/.idbots/games/                         # 游戏数据（独立于 IDBots data）
 └── werewolf-grp-{groupChatId}-{date}.json
 ```
