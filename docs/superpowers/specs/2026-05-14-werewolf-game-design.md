@@ -36,7 +36,7 @@
 报名阶段 → 角色分配 → 循环 [夜晚 → 天亮 → 讨论 → 投票 → 黄昏] → 游戏结束
 ```
 
-**报名阶段**：法官在群聊宣布开局，玩家私信报名，先到先得，超时截止。
+**报名阶段**：法官在群聊宣布开局，玩家私信报名，先到先得，超时截止。报名人数超过角色数时，多余玩家自动成为村民（角色表中 `villager` 可有多人）。
 
 **角色分配**：报名截止后，法官随机分配角色并私信通知每个玩家。此后 `status` 变为 `playing`。
 
@@ -124,6 +124,13 @@
 - 夜晚阶段：仅拥有夜晚能力的角色（狼人/预言家/女巫）可私信法官行动
 - 法官在夜晚上唯一可向群聊发送的消息是阶段公告
 - 各阶段通过 `[GM]` 公告驱动，玩家 metabot 通过解析公告识别阶段切换
+- **注册阶段补充**：报名期间玩家可私信法官 `join`，群聊仅允许法官发公告
+
+**权限执行策略**：采用**约定 + 法官过滤**的混合模式——
+- 玩家 metabot 通过 SKILL.md 的规则约束使其在错误阶段不发言/不私信（LLM 指令合规）
+- 法官 skill 对收到的消息做阶段校验：非当前阶段允许的私信类型 → 忽略并回复提示
+- 死亡玩家在群聊发言 → 法官发布 `[GM]` 警告提醒，不计数
+- 核心假设：MetaBot 遵循 skill 指令（和人类遵守规则一样），法官是最终裁判。不追求代码级强制拦截，模拟现实中的"法官维持秩序"模式
 
 **不负责**：
 - ❌ 游戏规则逻辑（角色能力等，由 skill 负责）
@@ -158,19 +165,36 @@ engine.on('actionReceived', (game, phase, action) => {
 });
 
 engine.on('phaseTimeout', (game, phase) => {
-  // 阶段超时时触发。Judge Skill 强制推进（未行动者视为弃权）。
+  // 阶段超时时触发（仅 night/discussion/vote 阶段）。Judge Skill 强制推进。
 });
 
 engine.on('gameFinished', (game, result) => {
   // 胜负判定后触发。Judge Skill 公告结果 + 公开私信记录。
 });
+
+// Judge Skill 主动调用：
+engine.completePhase(gameId);
+// 用于 dawn 和 dusk（纯公告阶段）：法官公告完毕后立即调用，引擎切换到下一阶段。
+// 也用于 judge 在收到所有必要行动后提前结束 night/discussion/vote（不等 timeout）。
 ```
+
+**阶段过渡机制总结**：
+
+| 阶段 | 结束方式 |
+|------|----------|
+| night | timeout 到期 **或** 法官收到所有行动后调用 `completePhase()` |
+| dawn | 法官公告完毕 → 调用 `completePhase()` |
+| discussion | timeout 到期 **或** 法官认为讨论充分后调用 `completePhase()` |
+| vote | timeout 到期 **或** 所有存活玩家已投票后调用 `completePhase()` |
+| dusk | 法官公告投票结果 + 胜负检查后 → 调用 `completePhase()`（进入下一轮 night）**或** 触发 `gameFinished` |
 
 **游戏活跃检测**：Judge Skill 在开局前做双重检查：
 1. 扫描群聊最近 N 条消息中是否有 `[GM]` 公告（防止 chat history 截断）
 2. 扫描 `~/.idbots/games/` 目录下是否有同 groupChatId 且 `status != "finished"` 的 JSON 文件（权威判定）
 
 **阶段识别方式**：玩家 metabot 通过解析群聊中的 `[GM]` 公告来识别当前阶段（纯自然语言驱动，不直接访问 JSON 文件）。
+
+**名称映射**：消息协议中使用玩家显示名（`kill 小红`），gameEngine JSON 中使用 `globalMetaId`。Judge Skill 内部维护 `{ name → globalMetaId }` 映射表（从报名阶段建立），所有消息解析时先做名称到 ID 的转换，存入 JSON 时使用 ID。
 
 **游戏数据存储路径**：`~/.idbots/games/{gameId}.json`（独立于 IDBots 用户数据）
 
