@@ -1525,7 +1525,7 @@ official: true
 
 ### 第四步：角色分配
 
-1. 随机排列角色列表（`crypto.randomBytes`）
+1. 调用 `--action assign-roles`，引擎内部随机分配角色（Fisher-Yates shuffle）
 2. 私信通知每个玩家：
    - 格式：`你的角色是：<角色名>。请阅读 metabot-werewolf-player 技能了解你的能力和策略。`
 3. 创建游戏 JSON 文件（通过 `scripts/index.js --action create-game`）
@@ -1672,9 +1672,11 @@ official: true
 
 ```bash
 node "$SKILLS_ROOT/metabot-werewolf-judge/scripts/index.js" \
-  --action start \
+  --action create-game \
+  --game-id "werewolf-grp-<groupId>-$(date +%s)" \
   --group-id <groupChatId> \
-  --target-metabot-name <metabot名称>
+  --judge-metaid <judgeGlobalMetaId> \
+  --judge-name <judgeName>
 ```
 
 脚本是**无状态 CLI 工具**，每次调用执行单个 `--action` 操作后退出。LLM 根据本 SKILL.md 的指令来驱动游戏循环：阅读群聊消息、决定何时调用哪个 action、发送群聊/私信。（脚本本身不包含事件循环。）
@@ -1868,6 +1870,11 @@ function main() {
         const targetPlayer = game.players.find(p => p.globalMetaId === target);
         if (!targetPlayer) throw new Error(`Target player not found: ${target}`);
         if (targetPlayer.status !== 'alive') throw new Error(`Target player ${targetPlayer.name} is not alive`);
+
+        // Note: Phase-appropriateness (canPlayerActInPhase) is NOT enforced here.
+        // Per spec "约定 + 法官过滤", the LLM judge is trusted to only record
+        // actions from the right roles at the right time. canPlayerActInPhase
+        // is available in types.js as a public utility for non-CLI consumers.
 
         engine.recordAction(gameId, { from, type, target });
         console.log(JSON.stringify({ ok: true }));
@@ -2355,8 +2362,8 @@ node SKILLs/metabot-werewolf-judge/scripts/index.js \
   --type kill \
   --target "idq_player_002"
 
-# Complete phase through full cycle
-for phase in night dawn discussion vote dusk night; do
+# Complete phase through a full cycle (6 advances: night→dawn→discussion→vote→dusk→night)
+for i in 1 2 3 4 5 6; do
   node SKILLs/metabot-werewolf-judge/scripts/index.js \
     --action complete-phase \
     --game-id "$GAME_ID"
