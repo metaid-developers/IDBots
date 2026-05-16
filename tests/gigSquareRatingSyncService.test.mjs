@@ -213,7 +213,7 @@ test('syncGigSquareRatings normalizes second-based created_at for an already-see
   assert.equal(createdAt, 1_710_000_000_000);
 });
 
-test('syncGigSquareRatings keeps scanning the first page after latestPinId to enrich older seen rows', async () => {
+test('syncGigSquareRatings keeps scanning the first page after latestPinId without seeding backfill', async () => {
   const db = await createSqlDatabase();
   createRatingTables(db);
   db.run(
@@ -285,11 +285,7 @@ test('syncGigSquareRatings keeps scanning the first page after latestPinId to en
         };
       }
 
-      assert.equal(cursor, 'cursor-2');
-      return {
-        list: [],
-        nextCursor: null,
-      };
+      throw new Error(`unexpected backfill fetch for ${cursor}`);
     },
     setLatestPinId: () => {},
     setBackfillCursor: () => {},
@@ -310,7 +306,57 @@ test('syncGigSquareRatings keeps scanning the first page after latestPinId to en
   )[0].values[0];
   assert.deepEqual(aggregateRow, [11 / 3, 3]);
 
-  assert.deepEqual(fetchCalls, [undefined, 'cursor-2']);
+  assert.deepEqual(fetchCalls, [undefined]);
+});
+
+test('syncGigSquareRatings continues a persisted backfill cursor even when incremental hits latest', async () => {
+  const db = await createSqlDatabase();
+  createRatingTables(db);
+  db.run(
+    'INSERT INTO remote_skill_service (id, rating_avg, rating_count) VALUES (?, ?, ?)',
+    ['svc-1', 0, 0]
+  );
+
+  const fetchCalls = [];
+  const savedBackfillCursors = [];
+  let clearedBackfillCursor = false;
+
+  await syncGigSquareRatings({
+    db,
+    latestPinId: 'pin-latest',
+    backfillCursor: 'persisted-cursor',
+    maxPages: 5,
+    fetchPage: async (cursor) => {
+      fetchCalls.push(cursor);
+      if (!cursor) {
+        return {
+          list: [{
+            id: 'pin-latest',
+            timestamp: 1_710_000_000,
+            contentSummary: JSON.stringify({
+              serviceID: 'svc-1',
+              rate: '5',
+            }),
+          }],
+          nextCursor: 'cursor-from-first-page',
+        };
+      }
+      assert.equal(cursor, 'persisted-cursor');
+      return {
+        list: [],
+        nextCursor: null,
+      };
+    },
+    setLatestPinId: () => {},
+    setBackfillCursor: (cursor) => savedBackfillCursors.push(cursor),
+    clearBackfillCursor: () => {
+      clearedBackfillCursor = true;
+    },
+  });
+
+  assert.deepEqual(fetchCalls, [undefined, 'persisted-cursor']);
+  assert.deepEqual(savedBackfillCursors, []);
+  assert.equal(clearedBackfillCursor, true);
 });
 
 test('repairServiceRatingAggregate recovers aggregates when rating details arrive before the service row', async () => {

@@ -289,7 +289,7 @@ export async function syncGigSquareRatings(
   console.debug(`${LOG_PREFIX} incremental: processed ${processedCount} ratings, hitLatest=${hitLatest}`);
 
   let backfillCursor = input.backfillCursor;
-  if (!backfillCursor && lastIncrementalNextCursor) {
+  if (!backfillCursor && !hitLatest && lastIncrementalNextCursor) {
     backfillCursor = lastIncrementalNextCursor;
   }
 
