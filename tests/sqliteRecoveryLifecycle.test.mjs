@@ -55,6 +55,7 @@ test('SQLiteRecoveryCoordinator leaves services stopped and store unpublished wh
   const order = [];
   const oldStore = { id: 'old', closed: false };
   let currentStore = oldStore;
+  const fatalFailures = [];
 
   const coordinator = new SQLiteRecoveryCoordinator({
     getStore: () => currentStore,
@@ -75,6 +76,7 @@ test('SQLiteRecoveryCoordinator leaves services stopped and store unpublished wh
     stopServices: () => order.push('stop'),
     startServices: () => order.push('start'),
     isRecoverableError: () => true,
+    handleRecoveryFailure: (error, operationName) => fatalFailures.push({ error, operationName }),
   });
 
   await assert.rejects(
@@ -85,6 +87,9 @@ test('SQLiteRecoveryCoordinator leaves services stopped and store unpublished wh
   assert.deepEqual(order, ['stop', 'clear', 'close:old', 'reset', 'open']);
   assert.equal(currentStore, null);
   assert.equal(coordinator.getState(), 'failed');
+  assert.equal(fatalFailures.length, 1);
+  assert.equal(fatalFailures[0].operationName, 'privateChatDaemon');
+  assert.match(fatalFailures[0].error.message, /memory access out of bounds/);
 
   await assert.rejects(
     () => coordinator.runWithRecovery('metabot:list', async () => 'ok'),

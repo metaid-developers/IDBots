@@ -2142,6 +2142,7 @@ let gigSquareSyncInterval: ReturnType<typeof setInterval> | null = null;
 let serviceOrderTimeoutScanInterval: ReturnType<typeof setInterval> | null = null;
 let serviceRefundSyncInterval: ReturnType<typeof setInterval> | null = null;
 let sqliteMaintenanceInterval: ReturnType<typeof setInterval> | null = null;
+let sqliteRecoveryRelaunchRequested = false;
 
 const listPendingPrivateMessages = (): Array<Record<string, unknown>> => {
   const db = getStore().getDatabase();
@@ -2648,12 +2649,50 @@ const getSqliteRecoveryCoordinator = (): SQLiteRecoveryCoordinator<SqliteStore> 
         return startSqliteBackedServicesAfterRecovery(sqliteRecoveryRestartState);
       },
       isRecoverableError: isSqliteWasmBoundsError,
+      handleRecoveryFailure: (recoveryError, operationName) => {
+        requestRelaunchAfterSqliteRecoveryFailure(recoveryError, operationName);
+      },
       logWarn: (message, recoveryError) => console.warn(message, recoveryError),
       logInfo: (message) => console.info(message),
       logError: (message, recoveryError) => console.error(message, recoveryError),
     });
   }
   return sqliteRecoveryCoordinator;
+};
+
+const requestRelaunchAfterSqliteRecoveryFailure = (
+  recoveryError: unknown,
+  operationName: string,
+): void => {
+  if (sqliteRecoveryRelaunchRequested) {
+    return;
+  }
+  sqliteRecoveryRelaunchRequested = true;
+
+  console.error(
+    `[SQLiteRecovery] In-process recovery failed during ${operationName}; relaunching IDBots to reset sql.js WASM runtime.`,
+    recoveryError,
+  );
+
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.webContents.send('sqlite:relaunch-required', {
+        operationName,
+        message: recoveryError instanceof Error ? recoveryError.message : String(recoveryError),
+      });
+    } catch {
+      // Relaunch is already scheduled; renderer notification is best-effort.
+    }
+  }
+
+  setTimeout(() => {
+    try {
+      app.relaunch();
+    } finally {
+      app.exit(0);
+    }
+  }, 500).unref?.();
 };
 
 const getSqliteBackgroundJobRunner = (): SqliteBackgroundJobRunner => {

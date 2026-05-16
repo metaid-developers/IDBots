@@ -17,6 +17,7 @@ export interface SQLiteRecoveryCoordinatorDeps<TStore> {
   stopServices: () => void | Promise<void>;
   startServices: () => void | Promise<void>;
   isRecoverableError: (error: unknown) => boolean;
+  handleRecoveryFailure?: (error: unknown, operationName: string) => void | Promise<void>;
   logWarn?: (message: string, error?: unknown) => void;
   logInfo?: (message: string) => void;
   logError?: (message: string, error?: unknown) => void;
@@ -111,6 +112,11 @@ export class SQLiteRecoveryCoordinator<TStore> {
         // Keep the first recovery error as the actionable failure.
       }
       this.deps.logError?.(`[SQLiteRecovery] Recovery for ${operationName} failed:`, recoveryError);
+      try {
+        await this.deps.handleRecoveryFailure?.(recoveryError, operationName);
+      } catch (failureHandlerError) {
+        this.deps.logError?.('[SQLiteRecovery] Recovery failure handler failed:', failureHandlerError);
+      }
       throw recoveryError;
     } finally {
       this.recoveryPromise = null;
