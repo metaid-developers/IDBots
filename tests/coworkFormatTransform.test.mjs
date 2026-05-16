@@ -176,6 +176,144 @@ test('DeepSeek stream tool calls carry reasoning_content for future request hydr
   assert.equal(request.messages[0].reasoning_content, 'need to inspect the file first');
 });
 
+test('DeepSeek stream caches reasoning_content when MCP tool call arrives before reasoning delta', async () => {
+  const { __openAICompatProxyTestUtils } = await import('../dist-electron/libs/coworkOpenAICompatProxy.js');
+  const {
+    createStreamState,
+    processOpenAIChunk,
+    hydrateDeepSeekReasoningForRequest,
+    resetDeepSeekReasoningCache,
+  } = __openAICompatProxyTestUtils;
+  resetDeepSeekReasoningCache();
+
+  const state = createStreamState({ preserveDeepSeekReasoning: true });
+  const recorder = createWritableRecorder();
+
+  processOpenAIChunk(recorder.res, state, {
+    id: 'chatcmpl_reasoning_tool_late',
+    model: 'deepseek-v4-pro',
+    choices: [{
+      delta: {
+        tool_calls: [{
+          index: 0,
+          id: 'call_00_mcp_playwright',
+          type: 'function',
+          function: {
+            name: 'mcp_Playwright__playwright_navigate',
+            arguments: '{"url":"https://finance.sina.com.cn/wm/2026-05-08/demo.html"}',
+          },
+        }],
+      },
+    }],
+  });
+  processOpenAIChunk(recorder.res, state, {
+    id: 'chatcmpl_reasoning_tool_late',
+    model: 'deepseek-v4-pro',
+    choices: [{
+      delta: {
+        reasoning_content: 'need to open the Sina finance article first',
+      },
+    }],
+  });
+
+  const request = {
+    model: 'deepseek-v4-pro',
+    messages: [{
+      role: 'assistant',
+      content: null,
+      tool_calls: [{
+        id: 'call_00_mcp_playwright',
+        type: 'function',
+        function: {
+          name: 'mcp_Playwright__playwright_navigate',
+          arguments: '{"url":"https://finance.sina.com.cn/wm/2026-05-08/demo.html"}',
+        },
+      }],
+    }],
+  };
+
+  const hydrateResult = hydrateDeepSeekReasoningForRequest(request, 'deepseek', 'https://api.deepseek.com');
+
+  assert.deepEqual(hydrateResult, { ok: true, hydratedCount: 1, missingCount: 0 });
+  assert.equal(request.messages[0].reasoning_content, 'need to open the Sina finance article first');
+});
+
+test('DeepSeek request hydration prefers complete cached reasoning over partial inline tool metadata', async () => {
+  const { __openAICompatProxyTestUtils } = await import('../dist-electron/libs/coworkOpenAICompatProxy.js');
+  const {
+    createStreamState,
+    processOpenAIChunk,
+    hydrateDeepSeekReasoningForRequest,
+    resetDeepSeekReasoningCache,
+  } = __openAICompatProxyTestUtils;
+  resetDeepSeekReasoningCache();
+
+  const state = createStreamState({ preserveDeepSeekReasoning: true });
+  const recorder = createWritableRecorder();
+
+  processOpenAIChunk(recorder.res, state, {
+    id: 'chatcmpl_reasoning_tool_partial',
+    model: 'deepseek-v4-pro',
+    choices: [{ delta: { reasoning_content: 'need to navigate first' } }],
+  });
+  processOpenAIChunk(recorder.res, state, {
+    id: 'chatcmpl_reasoning_tool_partial',
+    model: 'deepseek-v4-pro',
+    choices: [{
+      delta: {
+        tool_calls: [{
+          index: 0,
+          id: 'call_00_mcp_playwright_partial',
+          type: 'function',
+          function: {
+            name: 'mcp_Playwright__playwright_navigate',
+            arguments: '{"url":"https://finance.sina.com.cn/wm/2026-05-08/demo.html"}',
+          },
+        }],
+      },
+    }],
+  });
+  processOpenAIChunk(recorder.res, state, {
+    id: 'chatcmpl_reasoning_tool_partial',
+    model: 'deepseek-v4-pro',
+    choices: [{ delta: { reasoning_content: ', then inspect the loaded article' } }],
+  });
+
+  const toolUseStart = parseSSEEvents(recorder.chunks.join('')).find((item) => (
+    item.event === 'content_block_start'
+    && item.data.content_block?.type === 'tool_use'
+  ));
+  assert.equal(
+    toolUseStart.data.content_block.extra_content.deepseek.reasoning_content,
+    'need to navigate first',
+  );
+
+  const request = {
+    model: 'deepseek-v4-pro',
+    messages: [{
+      role: 'assistant',
+      content: null,
+      tool_calls: [{
+        id: 'call_00_mcp_playwright_partial',
+        type: 'function',
+        extra_content: toolUseStart.data.content_block.extra_content,
+        function: {
+          name: 'mcp_Playwright__playwright_navigate',
+          arguments: '{"url":"https://finance.sina.com.cn/wm/2026-05-08/demo.html"}',
+        },
+      }],
+    }],
+  };
+
+  const hydrateResult = hydrateDeepSeekReasoningForRequest(request, 'deepseek', 'https://api.deepseek.com');
+
+  assert.deepEqual(hydrateResult, { ok: true, hydratedCount: 1, missingCount: 0 });
+  assert.equal(
+    request.messages[0].reasoning_content,
+    'need to navigate first, then inspect the loaded article',
+  );
+});
+
 test('non-DeepSeek stream tool calls do not receive DeepSeek reasoning metadata', async () => {
   const { __openAICompatProxyTestUtils } = await import('../dist-electron/libs/coworkOpenAICompatProxy.js');
   const {

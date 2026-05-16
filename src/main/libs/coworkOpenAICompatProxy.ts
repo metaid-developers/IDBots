@@ -215,9 +215,7 @@ function attachDeepSeekReasoningToExtraContent(extraContent: unknown, reasoningC
   const output: Record<string, unknown> = extraObj ? { ...extraObj } : {};
   const existingDeepSeek = toOptionalObject(output.deepseek);
   const nextDeepSeek: Record<string, unknown> = existingDeepSeek ? { ...existingDeepSeek } : {};
-  if (!toString(nextDeepSeek.reasoning_content)) {
-    nextDeepSeek.reasoning_content = reasoningContent;
-  }
+  nextDeepSeek.reasoning_content = reasoningContent;
   output.deepseek = nextDeepSeek;
   return output;
 }
@@ -263,6 +261,25 @@ function cacheDeepSeekReasoningFromToolCalls(toolCalls: unknown, reasoningConten
       continue;
     }
     cacheDeepSeekReasoningForToolCall(toString(toolCallObj.id), reasoningContent);
+  }
+}
+
+function cacheDeepSeekReasoningForStreamToolCalls(state: StreamState): void {
+  if (!state.preserveDeepSeekReasoning || !state.currentDeepSeekReasoningContent.trim()) {
+    return;
+  }
+
+  for (const toolCall of Object.values(state.toolCalls)) {
+    if (!toolCall.id) {
+      continue;
+    }
+
+    toolCall.extraContent = attachDeepSeekReasoningToExtraContent(
+      toolCall.extraContent,
+      state.currentDeepSeekReasoningContent
+    );
+    cacheToolCallExtraContent(toolCall.id, toolCall.extraContent);
+    cacheDeepSeekReasoningForToolCall(toolCall.id, state.currentDeepSeekReasoningContent);
   }
 }
 
@@ -316,17 +333,17 @@ function resolveDeepSeekReasoningForToolCalls(toolCalls: unknown): string {
       continue;
     }
 
+    const toolCallId = toString(toolCallObj.id);
+    const cachedReasoning = toolCallId ? deepSeekReasoningByToolCallId.get(toolCallId) : undefined;
+    if (cachedReasoning) {
+      return cachedReasoning;
+    }
+
     const inlineReasoning = extractDeepSeekReasoningFromExtraContent(
       normalizeToolCallExtraContent(toolCallObj)
     );
     if (inlineReasoning) {
       return inlineReasoning;
-    }
-
-    const toolCallId = toString(toolCallObj.id);
-    const cachedReasoning = toolCallId ? deepSeekReasoningByToolCallId.get(toolCallId) : undefined;
-    if (cachedReasoning) {
-      return cachedReasoning;
     }
   }
 
@@ -1501,6 +1518,7 @@ function processOpenAIChunk(
   if (deltaReasoning) {
     if (state.preserveDeepSeekReasoning) {
       state.currentDeepSeekReasoningContent += deltaReasoning;
+      cacheDeepSeekReasoningForStreamToolCalls(state);
     }
     ensureThinkingBlock(res, state);
     emitSSE(res, 'content_block_delta', {
