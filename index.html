@@ -4,6 +4,111 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IDBots</title>
+    <script id="idbots-dev-network-recovery">
+      (function() {
+        var hostname = window.location.hostname;
+        var isDevServer = window.location.protocol === 'http:'
+          && (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1');
+        if (!isDevServer) {
+          return;
+        }
+
+        var reloadTimer = null;
+        var pendingReload = false;
+        var storageKey = 'idbots.devNetworkRecovery.lastReloadAt';
+        var minReloadIntervalMs = 3000;
+
+        function stringify(value, seen) {
+          if (!value || seen.indexOf(value) >= 0) {
+            return '';
+          }
+          seen.push(value);
+          if (typeof value === 'string') {
+            return value;
+          }
+          var parts = [];
+          if (value.message) parts.push(String(value.message));
+          if (value.stack) parts.push(String(value.stack));
+          if (value.filename) parts.push(String(value.filename));
+          if (value.reason) parts.push(stringify(value.reason, seen));
+          if (value.error) parts.push(stringify(value.error, seen));
+          if (value.cause) parts.push(stringify(value.cause, seen));
+          if (value.target) {
+            parts.push(String(value.target.src || value.target.href || ''));
+          }
+          return parts.filter(Boolean).join('\n');
+        }
+
+        function isDevModuleNetworkFailure(event) {
+          var text = stringify(event, []);
+          return /ERR_NETWORK_CHANGED|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Failed to load module script/i.test(text);
+        }
+
+        function reloadNow(reason) {
+          reloadTimer = null;
+          if (!pendingReload) {
+            return;
+          }
+          if (navigator.onLine === false) {
+            return;
+          }
+
+          var now = Date.now();
+          var lastReloadAt = 0;
+          try {
+            lastReloadAt = Number(sessionStorage.getItem(storageKey) || '0');
+          } catch (error) {
+            lastReloadAt = 0;
+          }
+
+          if (now - lastReloadAt < minReloadIntervalMs) {
+            reloadTimer = setTimeout(function() {
+              reloadNow(reason);
+            }, minReloadIntervalMs - (now - lastReloadAt));
+            return;
+          }
+
+          pendingReload = false;
+          try {
+            sessionStorage.setItem(storageKey, String(now));
+          } catch (error) {
+            // Session storage is best-effort; reload is still the recovery action.
+          }
+          console.warn('[IDBots] Reloading dev renderer after network-interrupted module load:', reason);
+          window.location.reload();
+        }
+
+        function scheduleReload(reason) {
+          pendingReload = true;
+          if (reloadTimer !== null || navigator.onLine === false) {
+            return;
+          }
+          reloadTimer = setTimeout(function() {
+            reloadNow(reason);
+          }, 1000);
+        }
+
+        window.addEventListener('error', function(event) {
+          if (isDevModuleNetworkFailure(event)) {
+            scheduleReload('window.error');
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (isDevModuleNetworkFailure(event)) {
+            scheduleReload('unhandledrejection');
+          }
+        });
+
+        window.addEventListener('online', function() {
+          if (pendingReload && reloadTimer === null) {
+            reloadTimer = setTimeout(function() {
+              reloadNow('online');
+            }, 500);
+          }
+        });
+      })();
+    </script>
     <script>
       // 在页面加载前预设主题，避免闪烁
       (function() {
