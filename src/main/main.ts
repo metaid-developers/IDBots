@@ -178,7 +178,7 @@ import {
 import { publishServiceOrderEventToCowork as publishServiceOrderEventToCoworkStore } from './services/serviceOrderCoworkBridge';
 import {
   buildRemoteSkillServiceUpsertStatement,
-  isRemoteSkillServiceListSemanticMiss,
+  fetchRemoteSkillServicePageFromManapi,
   parseRemoteSkillServiceRow,
   syncRemoteSkillServicesWithCursor,
 } from './services/gigSquareRemoteServiceSync';
@@ -1161,24 +1161,11 @@ async function syncRemoteSkillServices(): Promise<void> {
     const db = sqliteStore.getDatabase();
     await syncRemoteSkillServicesWithCursor({
       pageSize: GIG_SQUARE_SYNC_SIZE,
-      fetchPage: async (cursor?: string) => {
-        const url = new URL('https://manapi.metaid.io/pin/path/list');
-        url.searchParams.set('path', GIG_SQUARE_SERVICE_PATH);
-        url.searchParams.set('size', String(GIG_SQUARE_SYNC_SIZE));
-        if (cursor) url.searchParams.set('cursor', cursor);
-        const localPath = `/api/pin/path/list${url.search}`;
-        const response = await fetchJsonWithFallbackOnMiss(
-          localPath,
-          url.toString(),
-          isRemoteSkillServiceListSemanticMiss,
-        );
-        if (!response.ok) throw new Error(`Sync failed: ${response.status}`);
-        const json = await response.json();
-        return {
-          list: Array.isArray(json?.data?.list) ? json.data.list as Record<string, unknown>[] : [],
-          nextCursor: typeof json?.data?.nextCursor === 'string' ? json.data.nextCursor : null,
-        };
-      },
+      fetchPage: async (cursor?: string) => fetchRemoteSkillServicePageFromManapi({
+        protocolPath: GIG_SQUARE_SERVICE_PATH,
+        pageSize: GIG_SQUARE_SYNC_SIZE,
+        cursor,
+      }),
       upsertService: (parsed) => {
         const statement = buildRemoteSkillServiceUpsertStatement(parsed);
         db.run(statement.sql, sanitizeDbParams(statement.params));
@@ -1218,28 +1205,11 @@ async function syncRemoteSkillServiceRatings(): Promise<void> {
     latestPinId: kvGet(GIG_SQUARE_RATING_LATEST_PIN_KEY),
     backfillCursor: kvGet(GIG_SQUARE_RATING_BACKFILL_CURSOR_KEY),
     maxPages: GIG_SQUARE_RATING_MAX_PAGES,
-    fetchPage: async (cursor?: string) => {
-      const url = new URL('https://manapi.metaid.io/pin/path/list');
-      url.searchParams.set('path', GIG_SQUARE_RATING_PATH);
-      url.searchParams.set('size', String(GIG_SQUARE_RATING_SYNC_SIZE));
-      if (cursor) url.searchParams.set('cursor', cursor);
-
-      const resp = await fetchJsonWithFallbackOnMiss(
-        `/api/pin/path/list${url.search}`,
-        url.toString(),
-        isEmptyListDataPayload
-      );
-      if (!resp.ok) {
-        throw new Error(`Sync failed: ${resp.status}`);
-      }
-
-      const json = await resp.json() as Record<string, unknown>;
-      const data = json?.data as Record<string, unknown> | undefined;
-      return {
-        list: Array.isArray(data?.list) ? data.list as Record<string, unknown>[] : [],
-        nextCursor: typeof data?.nextCursor === 'string' ? data.nextCursor : null,
-      };
-    },
+    fetchPage: async (cursor?: string) => fetchRemoteSkillServicePageFromManapi({
+      protocolPath: GIG_SQUARE_RATING_PATH,
+      pageSize: GIG_SQUARE_RATING_SYNC_SIZE,
+      cursor,
+    }),
     setLatestPinId: (pinId: string) => {
       kvSet(GIG_SQUARE_RATING_LATEST_PIN_KEY, pinId);
     },

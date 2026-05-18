@@ -1,8 +1,10 @@
 import { parseGigSquareSettlementAsset } from '../shared/gigSquareSettlementAsset.js';
 
 type RemoteSkillServiceItem = Record<string, unknown>;
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 const DEFAULT_REMOTE_SKILL_SERVICE_SYNC_MAX_PAGES = 1000;
 const UNIX_SECONDS_MAX = 10_000_000_000;
+const MANAPI_PATH_LIST_URL = 'https://manapi.metaid.io/pin/path/list';
 
 export type ParsedRemoteSkillServiceRow = {
   id: string;
@@ -44,6 +46,18 @@ export type ParsedRemoteSkillServiceRow = {
 export type RemoteSkillServiceUpsertStatement = {
   sql: string;
   params: Array<string | number | null>;
+};
+
+export type RemoteSkillServicePathListPage = {
+  list: RemoteSkillServiceItem[];
+  nextCursor: string | null;
+};
+
+export type FetchRemoteSkillServicePageInput = {
+  protocolPath: string;
+  pageSize: number;
+  cursor?: string | null;
+  fetchImpl?: FetchLike;
 };
 
 const toSafeString = (value: unknown): string => {
@@ -122,6 +136,32 @@ const getRemoteSkillServiceList = (payload: unknown): RemoteSkillServiceItem[] =
   const list = (data as { list?: unknown }).list;
   return Array.isArray(list) ? list as RemoteSkillServiceItem[] : [];
 };
+
+export async function fetchRemoteSkillServicePageFromManapi(
+  input: FetchRemoteSkillServicePageInput
+): Promise<RemoteSkillServicePathListPage> {
+  const url = new URL(MANAPI_PATH_LIST_URL);
+  url.searchParams.set('path', input.protocolPath);
+  url.searchParams.set('size', String(input.pageSize));
+  const cursor = toSafeString(input.cursor).trim();
+  if (cursor) {
+    url.searchParams.set('cursor', cursor);
+  }
+
+  const response = await (input.fetchImpl ?? fetch)(url.toString());
+  if (!response.ok) {
+    throw new Error(`Sync failed: ${response.status}`);
+  }
+
+  const json = await response.json() as { data?: { list?: unknown; nextCursor?: unknown } };
+  const data = json?.data;
+  return {
+    list: Array.isArray(data?.list) ? data.list as RemoteSkillServiceItem[] : [],
+    nextCursor: typeof data?.nextCursor === 'string' && data.nextCursor.trim()
+      ? data.nextCursor
+      : null,
+  };
+}
 
 export const isRemoteSkillServiceListSemanticMiss = (payload: unknown): boolean => {
   const list = getRemoteSkillServiceList(payload);

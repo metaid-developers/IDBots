@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 
 const {
   buildRemoteSkillServiceUpsertStatement,
+  fetchRemoteSkillServicePageFromManapi,
   isRemoteSkillServiceListSemanticMiss,
   syncRemoteSkillServicesWithCursor,
   parseRemoteSkillServiceItem,
@@ -308,6 +309,42 @@ test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutat
       }],
     },
   }), false);
+});
+
+test('fetchRemoteSkillServicePageFromManapi reads the authoritative manapi path list directly', async () => {
+  assert.equal(typeof fetchRemoteSkillServicePageFromManapi, 'function');
+
+  const requestedUrls = [];
+  const page = await fetchRemoteSkillServicePageFromManapi({
+    protocolPath: '/protocols/skill-service',
+    pageSize: 200,
+    cursor: 'cursor-2',
+    fetchImpl: async (url) => {
+      requestedUrls.push(String(url));
+      return new Response(JSON.stringify({
+        code: 1,
+        data: {
+          list: [{ id: 'svc-remote-1' }],
+          nextCursor: 'cursor-3',
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  assert.equal(requestedUrls.length, 1);
+  const requestedUrl = new URL(requestedUrls[0]);
+  assert.equal(requestedUrl.origin, 'https://manapi.metaid.io');
+  assert.equal(requestedUrl.pathname, '/pin/path/list');
+  assert.equal(requestedUrl.searchParams.get('path'), '/protocols/skill-service');
+  assert.equal(requestedUrl.searchParams.get('size'), '200');
+  assert.equal(requestedUrl.searchParams.get('cursor'), 'cursor-2');
+  assert.deepEqual(page, {
+    list: [{ id: 'svc-remote-1' }],
+    nextCursor: 'cursor-3',
+  });
 });
 
 test('buildRemoteSkillServiceUpsertStatement emits one placeholder per remote_skill_service column', () => {
