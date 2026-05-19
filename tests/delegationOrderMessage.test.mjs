@@ -51,6 +51,8 @@ test('buildDelegationOrderPayload omits txid for free orders and keeps an order 
   assert.match(payload, /支付金额 0 SPACE/);
   assert.match(payload, new RegExp(`order id: ${orderId}`));
   assert.doesNotMatch(payload, /txid:/i);
+  assert.doesNotMatch(payload, /payment chain:/i);
+  assert.doesNotMatch(payload, /settlement kind:/i);
 });
 
 test('buildDelegationOrderPayload falls back to the service name when providerSkill is unavailable', () => {

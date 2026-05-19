@@ -162,6 +162,32 @@ test('buildGigSquareOrderPayload appends structured MRC20 settlement metadata li
   assert.match(payload, new RegExp(`commit txid:\\s*${'c'.repeat(64)}`, 'i'));
 });
 
+test('buildGigSquareOrderPayload omits payment settlement metadata for free orders', () => {
+  const orderId = 'free-order-e32f3577f163fd06';
+  const payload = buildGigSquareOrderPayload({
+    naturalOrderText: '想请你帮我查询一下北京现在的天气。',
+    rawRequest: '查询北京现在的天气。',
+    price: '0',
+    currency: 'SPACE',
+    txid: '',
+    orderReference: orderId,
+    serviceId: 'service-weather',
+    skillName: 'weather',
+    paymentChain: 'mvc',
+    settlementKind: 'native',
+    outputType: 'text',
+  });
+
+  assert.match(payload, /支付金额 0 SPACE/);
+  assert.match(payload, new RegExp(`order id:\\s*${orderId}`, 'i'));
+  assert.doesNotMatch(payload, /txid:/i);
+  assert.doesNotMatch(payload, /payment chain:/i);
+  assert.doesNotMatch(payload, /settlement kind:/i);
+  assert.match(payload, /service id: service-weather/);
+  assert.match(payload, /skill name: weather/);
+  assert.match(payload, /output type:\s*text/i);
+});
+
 test('buildGigSquareOrderPayload appends expected output type metadata', () => {
   const payload = buildGigSquareOrderPayload({
     naturalOrderText: '请帮我生成一张火箭发射的图片。',

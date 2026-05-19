@@ -42,6 +42,13 @@ function normalizeOutputType(value) {
   return '';
 }
 
+function isZeroAmount(value) {
+  const raw = normalizeSingleLineText(value);
+  if (!raw) return false;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) && numeric === 0;
+}
+
 function resolveOrderSettlementMetadata(input) {
   const normalizedCurrency = normalizeSingleLineText(input?.currency).toUpperCase();
   const currencyMrc20Match = normalizedCurrency.match(/^([A-Z0-9]+)-MRC20$/);
@@ -151,6 +158,7 @@ export function buildOrderPayload(input) {
   const paymentTxid = normalizeSingleLineText(input?.paymentTxid);
   const orderReference = normalizeSingleLineText(input?.orderReference);
   const settlement = resolveOrderSettlementMetadata(input);
+  const omitPaymentSettlementMetadata = !paymentTxid && orderReference && isZeroAmount(input?.price);
 
   const metadataLines = [
     `支付金额 ${String(input?.price || '').trim()} ${String(input?.currency || '').trim()}`,
@@ -160,19 +168,19 @@ export function buildOrderPayload(input) {
   } else if (orderReference) {
     metadataLines.push(`order id: ${orderReference}`);
   }
-  if (settlement.paymentChain) {
+  if (!omitPaymentSettlementMetadata && settlement.paymentChain) {
     metadataLines.push(`payment chain: ${settlement.paymentChain}`);
   }
-  if (settlement.settlementKind) {
+  if (!omitPaymentSettlementMetadata && settlement.settlementKind) {
     metadataLines.push(`settlement kind: ${settlement.settlementKind}`);
   }
-  if (settlement.mrc20Ticker) {
+  if (!omitPaymentSettlementMetadata && settlement.mrc20Ticker) {
     metadataLines.push(`mrc20 ticker: ${settlement.mrc20Ticker}`);
   }
-  if (settlement.mrc20Id) {
+  if (!omitPaymentSettlementMetadata && settlement.mrc20Id) {
     metadataLines.push(`mrc20 id: ${settlement.mrc20Id}`);
   }
-  if (settlement.paymentCommitTxid) {
+  if (!omitPaymentSettlementMetadata && settlement.paymentCommitTxid) {
     metadataLines.push(`commit txid: ${settlement.paymentCommitTxid}`);
   }
   metadataLines.push(
