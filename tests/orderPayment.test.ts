@@ -47,6 +47,28 @@ test('extractOrderReferenceId parses free-order structured order id metadata', (
   assert.equal(extractOrderReferenceId(text), 'c'.repeat(64));
 });
 
+test('extractOrderReferenceId accepts synthetic free-order ids with safe delimiters', () => {
+  const text = [
+    '[ORDER] 帮我查询北京天气。',
+    '支付金额 0 SPACE',
+    'order id: free-order-e32f3577f163fd06',
+    'service id: svc-weather',
+    'skill name: weather',
+  ].join('\n');
+
+  assert.equal(extractOrderReferenceId(text), 'free-order-e32f3577f163fd06');
+});
+
+test('extractOrderReferenceId rejects unsafe free-order ids', () => {
+  const text = [
+    '[ORDER] 帮我查询北京天气。',
+    '支付金额 0 SPACE',
+    'order id: ../../etc/passwd',
+  ].join('\n');
+
+  assert.equal(extractOrderReferenceId(text), null);
+});
+
 test('extractOrderRequestText prefers the explicit raw_request block over the display summary line', () => {
   const rawRequest = [
     '请帮我查询一下东京今天从早到晚的天气变化，并告诉我是否适合晚上外出散步。',

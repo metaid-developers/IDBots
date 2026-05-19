@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const {
   checkOrderPaymentStatus,
+  extractOrderReferenceId,
   extractOrderTxid,
 } = require('../dist-electron/services/orderPayment.js');
 
@@ -66,6 +67,27 @@ test('extractOrderTxid accepts trailing annotations and ignores commit txid line
   ].join('\n');
 
   assert.equal(extractOrderTxid(plaintext), revealTxid);
+});
+
+test('extractOrderReferenceId accepts synthetic free-order ids with safe delimiters', () => {
+  const plaintext = [
+    '[ORDER] 帮我查询北京天气',
+    '支付金额 0 SPACE',
+    'order id: free-order-e32f3577f163fd06',
+    'payment chain: mvc',
+  ].join('\n');
+
+  assert.equal(extractOrderReferenceId(plaintext), 'free-order-e32f3577f163fd06');
+});
+
+test('extractOrderReferenceId rejects unsafe free-order ids', () => {
+  const plaintext = [
+    '[ORDER] 帮我查询北京天气',
+    '支付金额 0 SPACE',
+    'order id: ../../etc/passwd',
+  ].join('\n');
+
+  assert.equal(extractOrderReferenceId(plaintext), null);
 });
 
 test('checkOrderPaymentStatus routes MRC20 orders through dedicated verifier and returns settlement metadata', async () => {
