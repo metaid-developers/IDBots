@@ -1,4 +1,4 @@
-import { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from './sqliteTypes';
 import type {
   Metabot,
   MetabotInsert,

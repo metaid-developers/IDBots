@@ -3,11 +3,14 @@ import { EventEmitter } from 'events';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
+import initSqlJs, { SqlJsStatic } from 'sql.js';
+import type { Database as SqlJsDatabase } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
 import { writeFileAtomicSync } from './libs/atomicFile';
+import { createNativeSqliteDatabase } from './nativeSqliteDatabase';
+import type { SqliteDatabase } from './sqliteTypes';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -46,7 +49,9 @@ function getWasmPath(): string {
   return resolveSqlJsWasmPath();
 }
 
-function listTableColumns(db: Database, tableName: string): string[] {
+type SqliteBackendKind = 'native' | 'sqljs';
+
+function listTableColumns(db: SqliteDatabase, tableName: string): string[] {
   const result = db.exec(`PRAGMA table_info(${tableName});`);
   if (!result[0]?.values) return [];
   return result[0].values.map((row) => String(row[1] || ''));
@@ -96,7 +101,7 @@ const SERVICE_ORDER_TABLE_SQL = `
   );
 `;
 
-function migrateLegacyServiceOrdersTable(db: Database): void {
+function migrateLegacyServiceOrdersTable(db: SqliteDatabase): void {
   const columns = listTableColumns(db, 'service_orders');
   if (columns.length === 0) return;
   if (
@@ -203,20 +208,32 @@ function migrateLegacyServiceOrdersTable(db: Database): void {
 }
 
 export class SqliteStore {
-  private db: Database;
+  private db: SqliteDatabase;
   private dbPath: string;
+  private backendKind: SqliteBackendKind;
   private emitter = new EventEmitter();
   private isClosed = false;
   private static sqlPromise: Promise<SqlJsStatic> | null = null;
 
-  private constructor(db: Database, dbPath: string) {
+  private constructor(db: SqliteDatabase, dbPath: string, backendKind: SqliteBackendKind) {
     this.db = db;
     this.dbPath = dbPath;
+    this.backendKind = backendKind;
   }
 
   static async create(userDataPath?: string): Promise<SqliteStore> {
     const basePath = userDataPath ?? app.getPath('userData');
     const dbPath = path.join(basePath, DB_FILENAME);
+    fs.mkdirSync(basePath, { recursive: true });
+
+    if (process.env.IDBOTS_SQLITE_BACKEND !== 'sqljs') {
+      const nativeDb = createNativeSqliteDatabase(dbPath);
+      if (nativeDb) {
+        const store = new SqliteStore(nativeDb, dbPath, 'native');
+        store.initializeTables(basePath);
+        return store;
+      }
+    }
 
     // Initialize SQL.js with WASM file path (cached promise for reuse)
     if (!SqliteStore.sqlPromise) {
@@ -228,21 +245,25 @@ export class SqliteStore {
     const SQL = await SqliteStore.sqlPromise;
 
     // Load existing database or create new one
-    let db: Database;
+    let db: SqlJsDatabase;
     if (fs.existsSync(dbPath)) {
       const buffer = fs.readFileSync(dbPath);
-      db = new SQL.Database(buffer);
+      db = new SQL.Database(buffer) as SqlJsDatabase;
     } else {
-      db = new SQL.Database();
+      db = new SQL.Database() as SqlJsDatabase;
     }
 
-    const store = new SqliteStore(db, dbPath);
+    const store = new SqliteStore(db as unknown as SqliteDatabase, dbPath, 'sqljs');
     store.initializeTables(basePath);
     return store;
   }
 
   static resetSqlJsRuntimeForRecovery(): void {
     SqliteStore.sqlPromise = null;
+  }
+
+  getBackendKind(): SqliteBackendKind {
+    return this.backendKind;
   }
 
   private initializeTables(basePath: string) {
@@ -1444,7 +1465,13 @@ export class SqliteStore {
 
   save() {
     this.assertOpen();
+    if (this.backendKind === 'native') {
+      return;
+    }
     const data = this.db.export();
+    if (!data) {
+      throw new Error('SQLite backend does not support export');
+    }
     const buffer = Buffer.from(data);
     writeFileAtomicSync(this.dbPath, buffer);
   }
@@ -1532,7 +1559,7 @@ export class SqliteStore {
   }
 
   // Expose database for cowork operations
-  getDatabase(): Database {
+  getDatabase(): SqliteDatabase {
     this.assertOpen();
     return this.db;
   }
@@ -1550,12 +1577,24 @@ export class SqliteStore {
 
   private tryReadLegacyMemoryText(): string {
     // Prefer app-bound paths so behavior is consistent when started from different directories or packaged.
-    const candidates = [
-      path.join(app.getAppPath(), 'MEMORY.md'),
-      path.join(app.getPath('userData'), 'MEMORY.md'),
-      path.join(app.getAppPath(), 'memory.md'),
-      path.join(app.getPath('userData'), 'memory.md'),
-    ];
+    const candidates: string[] = [];
+    try {
+      if (app?.getAppPath) {
+        candidates.push(
+          path.join(app.getAppPath(), 'MEMORY.md'),
+          path.join(app.getAppPath(), 'memory.md'),
+        );
+      }
+      if (app?.getPath) {
+        const userDataPath = app.getPath('userData');
+        candidates.push(
+          path.join(userDataPath, 'MEMORY.md'),
+          path.join(userDataPath, 'memory.md'),
+        );
+      }
+    } catch {
+      // Tests can instantiate SqliteStore outside Electron; skip app-bound legacy paths.
+    }
 
     for (const candidate of candidates) {
       try {

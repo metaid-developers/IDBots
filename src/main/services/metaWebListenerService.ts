@@ -4,7 +4,7 @@
  * to group_chat_messages, private_chat_messages, protocol_events. Emits logs to renderer.
  */
 
-import type { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 import { SocketIOClient } from './metaWebSocket';
 import {
   decryptGroupMessage,

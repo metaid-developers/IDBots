@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from './sqliteTypes';
 
 export interface McpServerRecord {
   id: string;

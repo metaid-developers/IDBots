@@ -3,7 +3,7 @@
  * SQLite operations for IM configuration storage
  */
 
-import { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 import {
   IMGatewayConfig,
   DingTalkConfig,

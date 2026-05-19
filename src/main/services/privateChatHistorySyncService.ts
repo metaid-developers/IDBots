@@ -1,4 +1,4 @@
-import type { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 
 export interface PrivateChatHistoryEndpoint {
   baseUrl: string;

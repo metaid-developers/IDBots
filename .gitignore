@@ -48,6 +48,8 @@ tests/*
 !tests/sqliteRecoveryLifecycle.test.mjs
 !tests/atomicFile.test.mjs
 !tests/sqliteBackgroundJobs.test.mjs
+!tests/sqliteNativeStore.test.mjs
+!tests/waitElectronDevBuild.test.mjs
 !tests/providerDiscoveryService.test.mjs
 !tests/sqliteWasmRethrowGuards.test.mjs
 

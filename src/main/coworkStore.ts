@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from './sqliteTypes';
 import { v4 as uuidv4 } from 'uuid';
 import {
   extractTurnMemoryChanges,

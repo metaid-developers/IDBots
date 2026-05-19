@@ -23,7 +23,7 @@ import {
   IMConnectivityTestResult,
   IMConnectivityVerdict,
 } from './types';
-import type { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 import type { CoworkRunner } from '../libs/coworkRunner';
 import type { CoworkStore } from '../coworkStore';
 

@@ -4,7 +4,7 @@
  * (metabot_id, group_id), UPDATE it; otherwise INSERT.
  */
 
-import type { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 import type { MetabotStore } from '../metabotStore';
 
 export interface AssignGroupChatTaskParams {

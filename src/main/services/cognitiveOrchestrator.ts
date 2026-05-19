@@ -5,7 +5,7 @@
  * Task 12.4: Cowork-style skill list + Read/Bash only (no per-skill OpenAI tools), Boss trigger only.
  */
 
-import type { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import fs from 'fs';
 import path from 'path';

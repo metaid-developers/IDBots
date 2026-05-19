@@ -4,7 +4,7 @@
  * SDD Task 14: encrypted private chat daemon and MetaSwarm handshake.
  */
 
-import type { Database } from 'sql.js';
+import type { SqliteDatabase as Database } from '../sqliteTypes';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { getPrivateKeyBufferForEcdh } from './metabotWalletService';
 import {
