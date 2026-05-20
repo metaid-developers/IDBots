@@ -129,6 +129,104 @@ function main() {
   assert.equal(publishZipInvalidRes.json?.success, false);
   assert.equal(publishZipInvalidRes.json?.error?.code, 'invalid_payload');
 
+  const registryHome = path.join(tempRoot, 'registry-home');
+  const createMetaidRes = runSkill({
+    action: 'registry_create',
+    payload: {
+      registryHome,
+      kbId: 'metaid-cn',
+      title: 'MetaID Wiki',
+      aliases: ['metaid'],
+      setDefault: true,
+    },
+  });
+  assert.equal(createMetaidRes.code, 0, createMetaidRes.stdout || createMetaidRes.stderr);
+  assert.equal(createMetaidRes.json?.success, true);
+  const metaidRoot = createMetaidRes.json?.data?.project?.rootDir;
+  assert.ok(metaidRoot);
+  fs.writeFileSync(
+    path.join(metaidRoot, 'raw', 'intro.md'),
+    '# MetaID 简介\n\nMetaID 是用于组织链上身份、内容和应用数据的开放协议。\n',
+    'utf8'
+  );
+
+  const absorbDefaultRes = runSkill({
+    action: 'absorb',
+    payload: {
+      registryHome,
+    },
+  });
+  assert.equal(absorbDefaultRes.code, 0, absorbDefaultRes.stdout || absorbDefaultRes.stderr);
+  assert.equal(absorbDefaultRes.json?.success, true);
+  assert.equal(absorbDefaultRes.json?.kbId, 'metaid-cn');
+
+  const queryDefaultRes = runSkill({
+    action: 'query',
+    payload: {
+      registryHome,
+      question: 'MetaID 是什么？',
+      minScore: 0.01,
+    },
+  });
+  assert.equal(queryDefaultRes.code, 0, queryDefaultRes.stdout || queryDefaultRes.stderr);
+  assert.equal(queryDefaultRes.json?.success, true);
+  assert.equal(queryDefaultRes.json?.kbId, 'metaid-cn');
+  assert.equal(queryDefaultRes.json?.data?.insufficient, false);
+
+  const createIdbotsRes = runSkill({
+    action: 'registry_create',
+    payload: {
+      registryHome,
+      kbId: 'idbots-feature-cn',
+      title: 'IDBots 功能 Wiki',
+      aliases: ['idbots'],
+      setDefault: false,
+    },
+  });
+  assert.equal(createIdbotsRes.code, 0, createIdbotsRes.stdout || createIdbotsRes.stderr);
+  assert.equal(createIdbotsRes.json?.success, true);
+  const idbotsRoot = createIdbotsRes.json?.data?.project?.rootDir;
+  fs.writeFileSync(
+    path.join(idbotsRoot, 'raw', 'features.md'),
+    '# IDBots 功能\n\nIDBots 支持本地 MetaBot 管理、技能调用、GigSquare 服务发布和 P2P 状态查看。\n',
+    'utf8'
+  );
+
+  const absorbAliasRes = runSkill({
+    action: 'absorb',
+    payload: {
+      registryHome,
+      wiki: 'idbots',
+    },
+  });
+  assert.equal(absorbAliasRes.code, 0, absorbAliasRes.stdout || absorbAliasRes.stderr);
+  assert.equal(absorbAliasRes.json?.success, true);
+  assert.equal(absorbAliasRes.json?.kbId, 'idbots-feature-cn');
+
+  const setDefaultRes = runSkill({
+    action: 'registry_set_default',
+    payload: {
+      registryHome,
+      wiki: 'idbots',
+    },
+  });
+  assert.equal(setDefaultRes.code, 0, setDefaultRes.stdout || setDefaultRes.stderr);
+  assert.equal(setDefaultRes.json?.success, true);
+  assert.equal(setDefaultRes.json?.data?.defaultKbId, 'idbots-feature-cn');
+
+  const queryNewDefaultRes = runSkill({
+    action: 'query',
+    payload: {
+      registryHome,
+      question: 'IDBots 支持哪些功能？',
+      minScore: 0.01,
+    },
+  });
+  assert.equal(queryNewDefaultRes.code, 0, queryNewDefaultRes.stdout || queryNewDefaultRes.stderr);
+  assert.equal(queryNewDefaultRes.json?.success, true);
+  assert.equal(queryNewDefaultRes.json?.kbId, 'idbots-feature-cn');
+  assert.equal(queryNewDefaultRes.json?.data?.insufficient, false);
+
   process.stdout.write('metabot-llm-wiki self-test passed\n');
 }
 

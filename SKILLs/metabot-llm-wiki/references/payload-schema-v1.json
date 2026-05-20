@@ -2,11 +2,16 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "metabot-llm-wiki payload schema v1",
   "type": "object",
-  "required": ["action", "kbId"],
+  "required": ["action"],
   "properties": {
     "action": {
       "type": "string",
       "enum": [
+        "registry_create",
+        "registry_list",
+        "registry_set_default",
+        "registry_resolve",
+        "registry_remove",
         "init",
         "ingest",
         "index",

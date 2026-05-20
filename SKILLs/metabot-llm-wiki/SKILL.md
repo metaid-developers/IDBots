@@ -1,25 +1,33 @@
 ---
 name: metabot-llm-wiki
-description: 构建与维护本地 LLM Wiki（RAG-first）。支持 raw 文档导入、增量 ingest/index、带引用 query、静态 wiki 站点构建，以及 ZIP-first 发布流程（bundle_zip -> publish_zip -> publish_snapshot）。
+description: 构建与维护本地多项目 LLM Wiki（RAG-first）。支持 skill-local registry.json 管理多个 wiki、raw 文档导入、增量 ingest/index、带引用 query、静态 wiki 站点构建，以及 ZIP-first 发布流程（bundle_zip -> publish_zip -> publish_snapshot）。
 official: true
 ---
 
 # MetaBot LLM Wiki (RAG-first + Wiki-second)
 
-这个技能用于在 IDBots 中构建一个可持续维护的本地知识库，并生成可发布的静态 Wiki 快照。
+这个技能用于构建多个可持续维护的本地知识库，并生成可发布的静态 Wiki 快照。
+
+默认把 wiki 项目登记在 skill-local registry：
+
+- 默认 registry 文件：`~/.metabot-llm-wiki/registry.json`
+- 可用 `METABOT_LLM_WIKI_HOME` 或 `payload.registryHome` 指定 registry home
+- 每个项目包含 `kbId`、`rootDir`、`title`、`aliases`
+
+当 action 未显式传 `kbId` 时，先从 registry 解析：
+
+1. `payload.wiki/wikiName/project/projectName/name` 匹配 `kbId/title/aliases`
+2. 没有指定项目时使用 `defaultKbId`
+3. 没有默认且只有一个项目时使用唯一项目
+4. 多个项目且无默认时报 `registry_ambiguous`
 
 默认流程：
 
-1. `init` 初始化知识库目录
-2. 把原始文档放入 `raw/`
-3. `ingest` 解析原始文档
-4. `index` 构建索引
-5. `query` 带引用检索问答
-6. `wiki_build` 生成静态站点
-7. `bundle_zip` 打包为单个 ZIP
-8. `publish_zip` 上传 ZIP 到链上文件系统（metafile://）
-9. `publish_snapshot` 发布快照元数据 pin（可选）
-10. 或直接用 `publish_all` 一键执行 6-9
+1. `registry_create` 创建或登记 wiki 项目
+2. 把原始文档放入该项目的 `raw/`
+3. `absorb` 执行增量 `ingest + index`
+4. `query` 带引用检索问答
+5. `publish_all` 生成静态 wiki、打包 ZIP，并按参数选择是否上传/上链
 
 `publish_all` 默认会在检测到未完成索引时自动执行一次增量 `absorb`，确保可以从新库直接发布。
 
@@ -76,6 +84,11 @@ node "$SKILLS_ROOT/metabot-llm-wiki/scripts/index.js" --payload '<JSON>'
 
 ## Action 列表
 
+- `registry_create`
+- `registry_list`
+- `registry_set_default`
+- `registry_resolve`
+- `registry_remove`
 - `init`
 - `ingest`
 - `index`
@@ -87,6 +100,54 @@ node "$SKILLS_ROOT/metabot-llm-wiki/scripts/index.js" --payload '<JSON>'
 - `publish_snapshot`
 - `publish_all`
 
+## Registry 示例
+
+创建 MetaID Wiki，并设为默认：
+
+```json
+{
+  "action": "registry_create",
+  "payload": {
+    "title": "MetaID Wiki",
+    "kbId": "metaid-cn",
+    "aliases": ["metaid", "MetaID"],
+    "setDefault": true
+  }
+}
+```
+
+列出所有 Wiki：
+
+```json
+{
+  "action": "registry_list",
+  "payload": {}
+}
+```
+
+不传 `kbId` 查询默认 Wiki：
+
+```json
+{
+  "action": "query",
+  "payload": {
+    "question": "MetaID 的核心机制是什么？"
+  }
+}
+```
+
+指定别名查询某个 Wiki：
+
+```json
+{
+  "action": "query",
+  "payload": {
+    "wiki": "metaid",
+    "question": "MetaID 的核心机制是什么？"
+  }
+}
+```
+
 ## publish_all 示例
 
 本地预演：
@@ -94,9 +155,8 @@ node "$SKILLS_ROOT/metabot-llm-wiki/scripts/index.js" --payload '<JSON>'
 ```json
 {
   "action": "publish_all",
-  "kbId": "legal-cn",
   "payload": {
-    "rootDir": "/path/to/legal-cn",
+    "wiki": "metaid",
     "uploadZip": false,
     "snapshotOnChain": false
   }
@@ -108,9 +168,8 @@ node "$SKILLS_ROOT/metabot-llm-wiki/scripts/index.js" --payload '<JSON>'
 ```json
 {
   "action": "publish_all",
-  "kbId": "legal-cn",
   "payload": {
-    "rootDir": "/path/to/legal-cn",
+    "wiki": "metaid",
     "uploadZip": true,
     "snapshotOnChain": true
   }

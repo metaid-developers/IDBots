@@ -4,6 +4,11 @@
 /**
  * MetaBot LLM Wiki skill runtime (RAG-first + Wiki-second)
  * Actions:
+ * - registry_create
+ * - registry_list
+ * - registry_set_default
+ * - registry_resolve
+ * - registry_remove
  * - init
  * - ingest
  * - index
@@ -13,16 +18,23 @@
  * - bundle_zip
  * - publish_zip
  * - publish_snapshot
+ * - publish_all
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const os = require('node:os');
 const { parseArgs } = require('node:util');
 const { spawnSync } = require('node:child_process');
 const yazl = require('yazl');
 
 const ACTIONS = new Set([
+  'registry_create',
+  'registry_list',
+  'registry_set_default',
+  'registry_resolve',
+  'registry_remove',
   'init',
   'ingest',
   'index',
@@ -35,6 +47,14 @@ const ACTIONS = new Set([
   'publish_all',
 ]);
 
+const REGISTRY_ACTIONS = new Set([
+  'registry_create',
+  'registry_list',
+  'registry_set_default',
+  'registry_resolve',
+  'registry_remove',
+]);
+
 const DEFAULT_CHUNK_SIZE = 1200;
 const DEFAULT_CHUNK_OVERLAP = 180;
 const DEFAULT_TOP_K = 8;
@@ -42,6 +62,8 @@ const DEFAULT_MIN_SCORE = 0.18;
 const DEFAULT_HYBRID_ALPHA = 0.65;
 const DEFAULT_EMBEDDING_MODEL = 'BAAI/bge-m3';
 const DEFAULT_WIKI_SNAPSHOT_PATH = '/protocols/llm-wiki-snapshot';
+const DEFAULT_REGISTRY_DIR = '.metabot-llm-wiki';
+const REGISTRY_FILE_NAME = 'registry.json';
 const SUPPORTED_EXTENSIONS = new Set(['.md', '.txt', '.json', '.csv', '.pdf', '.docx']);
 
 class SkillError extends Error {
@@ -143,6 +165,174 @@ function parseOptionalBooleanFlag(value, fieldName) {
   throw new SkillError('invalid_payload', `${fieldName} must be boolean (true/false).`);
 }
 
+function normalizeLookup(value) {
+  return safeTrim(value).toLowerCase();
+}
+
+function normalizeStringArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => safeTrim(item)).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => safeTrim(item))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function slugifyKbId(value) {
+  const raw = safeTrim(value);
+  const slug = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug || `wiki-${hashString(raw || nowTs()).slice(0, 8)}`;
+}
+
+function resolveRegistryHome(payload = {}) {
+  return path.resolve(
+    safeTrim(payload.registryHome)
+      || safeTrim(process.env.METABOT_LLM_WIKI_HOME)
+      || path.join(os.homedir(), DEFAULT_REGISTRY_DIR)
+  );
+}
+
+function resolveRegistryFile(payload = {}) {
+  return path.resolve(
+    safeTrim(payload.registryFile)
+      || path.join(resolveRegistryHome(payload), REGISTRY_FILE_NAME)
+  );
+}
+
+function normalizeRegistry(raw) {
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const projectsInput = Array.isArray(input.projects) ? input.projects : [];
+  const projects = projectsInput
+    .map((project) => {
+      const kbId = safeTrim(project?.kbId);
+      const rootDir = safeTrim(project?.rootDir);
+      if (!kbId || !rootDir) return null;
+      return {
+        kbId,
+        title: safeTrim(project.title) || kbId,
+        rootDir: path.resolve(rootDir),
+        aliases: [...new Set(normalizeStringArray(project.aliases))],
+        createdAt: safeTrim(project.createdAt) || nowIso(),
+        updatedAt: safeTrim(project.updatedAt) || nowIso(),
+      };
+    })
+    .filter(Boolean);
+
+  const defaultKbId = safeTrim(input.defaultKbId);
+  return {
+    version: 1,
+    defaultKbId: projects.some((project) => project.kbId === defaultKbId) ? defaultKbId : '',
+    projects,
+  };
+}
+
+function loadRegistry(payload = {}) {
+  const registryFile = resolveRegistryFile(payload);
+  const registry = normalizeRegistry(readJson(registryFile, { version: 1, defaultKbId: '', projects: [] }));
+  return {
+    registryFile,
+    registryHome: path.dirname(registryFile),
+    registry,
+  };
+}
+
+function saveRegistry(payload, registry) {
+  const registryFile = resolveRegistryFile(payload);
+  const normalized = normalizeRegistry(registry);
+  writeJson(registryFile, normalized);
+  return {
+    registryFile,
+    registryHome: path.dirname(registryFile),
+    registry: normalized,
+  };
+}
+
+function getRegistryLookup(input) {
+  return safeTrim(input.kbId)
+    || safeTrim(input.payload.kbId)
+    || safeTrim(input.payload.wiki)
+    || safeTrim(input.payload.wikiName)
+    || safeTrim(input.payload.project)
+    || safeTrim(input.payload.projectName)
+    || safeTrim(input.payload.name);
+}
+
+function findRegistryProject(registry, lookup) {
+  const wanted = normalizeLookup(lookup);
+  if (!wanted) return null;
+  return registry.projects.find((project) => {
+    if (normalizeLookup(project.kbId) === wanted) return true;
+    if (normalizeLookup(project.title) === wanted) return true;
+    return project.aliases.some((alias) => normalizeLookup(alias) === wanted);
+  }) || null;
+}
+
+function resolveRegistryProject(input, options = {}) {
+  const { registryFile, registryHome, registry } = loadRegistry(input.payload);
+  const lookup = getRegistryLookup(input);
+
+  if (lookup) {
+    const project = findRegistryProject(registry, lookup);
+    if (project) return { registryFile, registryHome, registry, project, reason: 'lookup' };
+    if (options.allowMissingLookup) {
+      return { registryFile, registryHome, registry, project: null, reason: 'missing_lookup' };
+    }
+    throw new SkillError('registry_not_found', `No LLM Wiki project found for "${lookup}".`);
+  }
+
+  if (registry.defaultKbId) {
+    const project = findRegistryProject(registry, registry.defaultKbId);
+    if (project) return { registryFile, registryHome, registry, project, reason: 'default' };
+  }
+
+  if (registry.projects.length === 1) {
+    return { registryFile, registryHome, registry, project: registry.projects[0], reason: 'single_project' };
+  }
+
+  if (registry.projects.length === 0) {
+    throw new SkillError('registry_empty', 'No LLM Wiki projects are registered. Create one with registry_create first.');
+  }
+
+  throw new SkillError('registry_ambiguous', 'Multiple LLM Wiki projects exist and no default is set. Pass kbId/wiki or run registry_set_default.');
+}
+
+function applyRegistryProjectToInput(input, project, resolvedBy) {
+  return {
+    ...input,
+    kbId: project.kbId,
+    payload: {
+      ...input.payload,
+      rootDir: safeTrim(input.payload.rootDir) || project.rootDir,
+      siteTitle: safeTrim(input.payload.siteTitle) || project.title,
+      resolvedKbId: project.kbId,
+      resolvedBy,
+    },
+  };
+}
+
+function resolveInputContext(input) {
+  if (REGISTRY_ACTIONS.has(input.action)) return input;
+
+  if (safeTrim(input.kbId)) {
+    const resolved = resolveRegistryProject(input, { allowMissingLookup: true });
+    if (resolved.project) {
+      return applyRegistryProjectToInput(input, resolved.project, 'registry_lookup');
+    }
+    return input;
+  }
+
+  const resolved = resolveRegistryProject(input);
+  return applyRegistryProjectToInput(input, resolved.project, `registry_${resolved.reason}`);
+}
+
 function resolveSnapshotOnChainMode(payload) {
   const snapshotOnChain = parseOptionalBooleanFlag(payload.snapshotOnChain, 'payload.snapshotOnChain');
   if (snapshotOnChain !== undefined) {
@@ -215,14 +405,10 @@ function parseInput(rawInput) {
     throw new SkillError('invalid_payload', `Unsupported action "${action}".`);
   }
 
-  const kbId = safeTrim(rawInput.kbId);
-  if (!kbId) {
-    throw new SkillError('invalid_payload', 'kbId is required.');
-  }
-
   const payload = rawInput.payload && typeof rawInput.payload === 'object'
     ? rawInput.payload
     : {};
+  const kbId = safeTrim(rawInput.kbId) || safeTrim(payload.kbId);
 
   return {
     action,
@@ -523,6 +709,150 @@ function ensureKbStructure(paths) {
   ensureDir(paths.wikiSiteDir);
   ensureDir(paths.manifestsDir);
   ensureDir(paths.logsDir);
+}
+
+function actionRegistryCreate(input) {
+  const startedAt = nowTs();
+  const registryState = loadRegistry(input.payload);
+  const registry = registryState.registry;
+  const title = safeTrim(input.payload.title) || safeTrim(input.payload.name) || safeTrim(input.kbId) || 'LLM Wiki';
+  const kbId = safeTrim(input.kbId) || safeTrim(input.payload.kbId) || slugifyKbId(title);
+  const rootDir = safeTrim(input.payload.rootDir)
+    ? path.resolve(input.payload.rootDir)
+    : path.join(registryState.registryHome, 'projects', kbId);
+  const aliases = [...new Set(normalizeStringArray(input.payload.aliases))];
+  const existingIndex = registry.projects.findIndex((project) => project.kbId === kbId);
+  const existing = existingIndex >= 0 ? registry.projects[existingIndex] : null;
+  const now = nowIso();
+  const project = {
+    kbId,
+    title,
+    rootDir,
+    aliases,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+
+  if (existingIndex >= 0) {
+    registry.projects[existingIndex] = project;
+  } else {
+    registry.projects.push(project);
+  }
+  registry.projects.sort((a, b) => a.kbId.localeCompare(b.kbId));
+
+  const setDefaultFlag = parseOptionalBooleanFlag(input.payload.setDefault, 'payload.setDefault');
+  if (setDefaultFlag === true || !registry.defaultKbId || registry.projects.length === 1) {
+    registry.defaultKbId = kbId;
+  }
+
+  const saved = saveRegistry(input.payload, registry);
+  const paths = resolvePaths(kbId, { rootDir });
+  ensureKbStructure(paths);
+
+  const config = normalizeConfig(input.payload.config || {});
+  saveConfig(paths, config);
+  const state = loadState(paths, kbId);
+  saveState(paths, {
+    ...state,
+    kbId,
+    createdAt: state.createdAt || nowTs(),
+  });
+
+  return {
+    message: existing ? 'LLM Wiki project updated' : 'LLM Wiki project registered',
+    data: {
+      project,
+      defaultKbId: saved.registry.defaultKbId,
+      registryFile: saved.registryFile,
+      directories: {
+        raw: paths.rawDir,
+        work: paths.workDir,
+        index: paths.indexDir,
+        wikiSite: paths.wikiSiteDir,
+        manifests: paths.manifestsDir,
+        logs: paths.logsDir,
+      },
+    },
+    metrics: {
+      elapsedMs: nowTs() - startedAt,
+    },
+  };
+}
+
+function actionRegistryList(input) {
+  const startedAt = nowTs();
+  const { registryFile, registry } = loadRegistry(input.payload);
+  return {
+    message: 'LLM Wiki registry loaded',
+    data: {
+      registryFile,
+      defaultKbId: registry.defaultKbId,
+      projects: registry.projects,
+      count: registry.projects.length,
+    },
+    metrics: {
+      elapsedMs: nowTs() - startedAt,
+    },
+  };
+}
+
+function actionRegistryResolve(input) {
+  const startedAt = nowTs();
+  const resolved = resolveRegistryProject(input);
+  return {
+    message: 'LLM Wiki project resolved',
+    data: {
+      project: resolved.project,
+      resolvedBy: resolved.reason,
+      registryFile: resolved.registryFile,
+      defaultKbId: resolved.registry.defaultKbId,
+    },
+    metrics: {
+      elapsedMs: nowTs() - startedAt,
+    },
+  };
+}
+
+function actionRegistrySetDefault(input) {
+  const startedAt = nowTs();
+  const resolved = resolveRegistryProject(input);
+  const registry = resolved.registry;
+  registry.defaultKbId = resolved.project.kbId;
+  const saved = saveRegistry(input.payload, registry);
+  return {
+    message: 'Default LLM Wiki project updated',
+    data: {
+      defaultKbId: saved.registry.defaultKbId,
+      project: resolved.project,
+      registryFile: saved.registryFile,
+    },
+    metrics: {
+      elapsedMs: nowTs() - startedAt,
+    },
+  };
+}
+
+function actionRegistryRemove(input) {
+  const startedAt = nowTs();
+  const resolved = resolveRegistryProject(input);
+  const registry = resolved.registry;
+  registry.projects = registry.projects.filter((project) => project.kbId !== resolved.project.kbId);
+  if (registry.defaultKbId === resolved.project.kbId) {
+    registry.defaultKbId = '';
+  }
+  const saved = saveRegistry(input.payload, registry);
+  return {
+    message: 'LLM Wiki project removed from registry',
+    data: {
+      removed: resolved.project,
+      defaultKbId: saved.registry.defaultKbId,
+      registryFile: saved.registryFile,
+      deletedFiles: false,
+    },
+    metrics: {
+      elapsedMs: nowTs() - startedAt,
+    },
+  };
 }
 
 function actionInit(input, paths, state) {
@@ -1641,6 +1971,16 @@ function actionAbsorb(input, paths, state) {
 
 async function dispatchAction(input, paths, state) {
   switch (input.action) {
+    case 'registry_create':
+      return actionRegistryCreate(input);
+    case 'registry_list':
+      return actionRegistryList(input);
+    case 'registry_set_default':
+      return actionRegistrySetDefault(input);
+    case 'registry_resolve':
+      return actionRegistryResolve(input);
+    case 'registry_remove':
+      return actionRegistryRemove(input);
     case 'init':
       return actionInit(input, paths, state);
     case 'ingest':
@@ -1679,7 +2019,7 @@ async function main() {
     process.stdout.write(
       'metabot-llm-wiki\n' +
       'Usage: node scripts/index.js --payload \'<json>\'\n' +
-      'Actions: init | ingest | index | query | absorb | wiki_build | bundle_zip | publish_zip | publish_snapshot | publish_all\n'
+      'Actions: registry_create | registry_list | registry_set_default | registry_resolve | registry_remove | init | ingest | index | query | absorb | wiki_build | bundle_zip | publish_zip | publish_snapshot | publish_all\n'
     );
     process.exit(0);
   }
@@ -1687,10 +2027,10 @@ async function main() {
   let input = null;
   try {
     const raw = parsePayload(values.payload);
-    input = parseInput(raw);
+    input = resolveInputContext(parseInput(raw));
 
-    const paths = resolvePaths(input.kbId, input.payload);
-    const state = loadState(paths, input.kbId);
+    const paths = input.kbId ? resolvePaths(input.kbId, input.payload) : null;
+    const state = paths ? loadState(paths, input.kbId) : null;
     const result = await dispatchAction(input, paths, state);
     const envelope = buildResponseEnvelope({
       action: input.action,
