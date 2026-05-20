@@ -103,6 +103,26 @@ test('DeepSeek missing reasoning_content failures reset stale resume state once'
   );
 });
 
+test('CoworkRunner uses MetaBot DeepSeek automation model for local service execution', () => {
+  const source = fs.readFileSync(coworkRunnerPath, 'utf8');
+
+  assert.match(
+    source,
+    /resolveApiConfigForModel/,
+    'CoworkRunner should be able to resolve a MetaBot-scoped automation model',
+  );
+  assert.match(
+    source,
+    /getSessionAutomationModelOverride/,
+    'CoworkRunner should inspect the session MetaBot before local execution',
+  );
+  assert.match(
+    source,
+    /getEnhancedEnvWithTmpdir\(\s*cwd,\s*'local',\s*apiConfig\s*\)/,
+    'CoworkRunner should pass the resolved API config into the child process environment',
+  );
+});
+
 test('Claude SDK CLI patch makes the built-in Explore sub-agent inherit the main model', (t) => {
   const { tempDir, cliPath } = createClaudeSdkCliFixture();
   t.after(() => {

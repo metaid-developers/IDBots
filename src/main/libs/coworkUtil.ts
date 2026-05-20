@@ -1059,8 +1059,11 @@ export function getSkillsRoot(): string {
  * Get enhanced environment variables (including proxy configuration)
  * Async function to fetch system proxy and inject into environment variables
  */
-export async function getEnhancedEnv(target: OpenAICompatProxyTarget = 'local'): Promise<Record<string, string | undefined>> {
-  const config = getCurrentApiConfig(target);
+export async function getEnhancedEnv(
+  target: OpenAICompatProxyTarget = 'local',
+  apiConfigOverride?: ReturnType<typeof getCurrentApiConfig>
+): Promise<Record<string, string | undefined>> {
+  const config = apiConfigOverride ?? getCurrentApiConfig(target);
   const env = config
     ? buildEnvForConfig(config)
     : { ...process.env };
@@ -1133,9 +1136,10 @@ export function ensureCoworkTempDir(cwd: string): string {
  */
 export async function getEnhancedEnvWithTmpdir(
   cwd: string,
-  target: OpenAICompatProxyTarget = 'local'
+  target: OpenAICompatProxyTarget = 'local',
+  apiConfigOverride?: ReturnType<typeof getCurrentApiConfig>
 ): Promise<Record<string, string | undefined>> {
-  const env = await getEnhancedEnv(target);
+  const env = await getEnhancedEnv(target, apiConfigOverride);
   const tempDir = ensureCoworkTempDir(cwd);
 
   // Set temp directory environment variables for all platforms

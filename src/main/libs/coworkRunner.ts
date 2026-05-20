@@ -8,7 +8,7 @@ import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus } from '../coworkStore';
-import { getClaudeCodePath, getCurrentApiConfig, resolveCurrentModelLimits } from './claudeSettings';
+import { getClaudeCodePath, getCurrentApiConfig, resolveApiConfigForModel, resolveCurrentModelLimits } from './claudeSettings';
 import { loadClaudeSdk } from './claudeSdk';
 import { getEnhancedEnv, getEnhancedEnvWithTmpdir, getSkillsRoot } from './coworkUtil';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
@@ -705,7 +705,7 @@ export interface CoworkRunnerOptions {
   /** When set, fetches MetaBot by id for persona injection into system prompt. */
   /** When set, returns the XML block for available remote services to inject into the system prompt. */
   getRemoteServicesPrompt?: () => string | null;
-  getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
+  getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null; llm_id?: string | null } | null;
   /** When set, returns enabled user-configured MCP servers for local execution. */
   mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   /** When set, opens a local MetaApp and returns the resolved local URL. */
@@ -718,7 +718,7 @@ export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   private getRemoteServicesPrompt?: () => string | null;
-  private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null } | null;
+  private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null; llm_id?: string | null } | null;
   private mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
@@ -2461,6 +2461,17 @@ export class CoworkRunner extends EventEmitter {
     return `${identityBlock}\n${instructionBlock}`;
   }
 
+  private getSessionAutomationModelOverride(sessionId: string): string | null {
+    if (!this.getMetabotById) return null;
+    const session = this.store.getSession(sessionId);
+    const metabotId = session?.metabotId;
+    if (metabotId == null || typeof metabotId !== 'number') return null;
+    const metabot = this.getMetabotById(metabotId);
+    const llmId = metabot?.llm_id?.trim();
+    if (!llmId) return null;
+    return llmId.toLowerCase() === 'deepseek' ? llmId : null;
+  }
+
   private escapeXmlText(value: string): string {
     return value
       .replace(/&/g, '&amp;')
@@ -3097,9 +3108,13 @@ export class CoworkRunner extends EventEmitter {
     activeSession.contextOverflowDetected = false;
     activeSession.contextOverflowRetryAllowed = false;
 
-    const apiConfig = getCurrentApiConfig('local');
+    const automationModelOverride = this.getSessionAutomationModelOverride(sessionId);
+    const apiConfigResolution = automationModelOverride
+      ? resolveApiConfigForModel(automationModelOverride, 'local')
+      : { config: getCurrentApiConfig('local') };
+    const apiConfig = apiConfigResolution.config;
     if (!apiConfig) {
-      this.handleError(sessionId, 'API configuration not found. Please configure model settings.');
+      this.handleError(sessionId, apiConfigResolution.error ?? 'API configuration not found. Please configure model settings.');
       this.clearPendingPermissions(sessionId);
       this.activeSessions.delete(sessionId);
       return;
@@ -3107,7 +3122,7 @@ export class CoworkRunner extends EventEmitter {
     const modelLimits = resolveCurrentModelLimits(apiConfig.model);
 
     const claudeCodePath = getClaudeCodePath();
-    const envVars = await getEnhancedEnvWithTmpdir(cwd, 'local');
+    const envVars = await getEnhancedEnvWithTmpdir(cwd, 'local', apiConfig);
     // So the SDK's forked process uses the correct Electron exe on Windows (avoids process.execPath returning e.g. lDBots.exe)
     envVars.IDBOTS_ELECTRON_PATH = resolveElectronExecutablePath();
     const skillEnvOverrides = await this.getSkillSessionEnvOverrides?.(sessionId);

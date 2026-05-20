@@ -93,6 +93,18 @@ function providerRequiresApiKey(providerName: string): boolean {
   return providerName !== 'ollama';
 }
 
+const DEEPSEEK_PROVIDER_KEY = 'deepseek';
+const DEEPSEEK_AUTOMATION_MODEL_ID = 'deepseek-v4-flash';
+
+export function resolveAutomationModelOverride(modelId?: string | null): string | null {
+  const normalized = modelId?.trim();
+  if (!normalized) return null;
+  if (normalized.toLowerCase() === DEEPSEEK_PROVIDER_KEY) {
+    return DEEPSEEK_AUTOMATION_MODEL_ID;
+  }
+  return normalized;
+}
+
 /**
  * Resolve which provider and model to use. When overrideModelId is provided (e.g. MetaBot's llm_id),
  * find the enabled provider that offers that model; otherwise use app default or first available.
@@ -102,6 +114,8 @@ function resolveMatchedProvider(
   overrideModelId?: string | null
 ): { matched: MatchedProvider | null; error?: string } {
   const providers = appConfig.providers ?? {};
+  const requestedOverride = overrideModelId?.trim() || null;
+  const isDeepSeekAutomationProviderKey = requestedOverride?.toLowerCase() === DEEPSEEK_PROVIDER_KEY;
 
   const resolveFallbackModel = (): string | undefined => {
     for (const provider of Object.values(providers)) {
@@ -114,7 +128,7 @@ function resolveMatchedProvider(
   };
 
   const modelId =
-    (overrideModelId?.trim() || null) || appConfig.model?.defaultModel || resolveFallbackModel();
+    resolveAutomationModelOverride(requestedOverride) || appConfig.model?.defaultModel || resolveFallbackModel();
   if (!modelId) {
     return { matched: null, error: 'No available model configured in enabled providers.' };
   }
@@ -130,8 +144,8 @@ function resolveMatchedProvider(
 
   // When overrideModelId is given (e.g. MetaBot llm_id "deepseek"), exact model id may not match.
   // Fallback 1: treat as provider key (e.g. "deepseek" -> provider "deepseek", use its first or default model).
-  if (!providerEntry && overrideModelId?.trim()) {
-    const key = overrideModelId.trim().toLowerCase();
+  if (!providerEntry && requestedOverride && !isDeepSeekAutomationProviderKey) {
+    const key = requestedOverride.toLowerCase();
     const byProviderKey = Object.entries(providers).find(
       ([name, provider]) =>
         name.toLowerCase() === key && provider?.enabled && provider?.models?.length
@@ -151,8 +165,8 @@ function resolveMatchedProvider(
   }
 
   // Fallback 2: match by model id prefix (e.g. "deepseek" -> "deepseek-chat").
-  if (!providerEntry && overrideModelId?.trim()) {
-    const prefix = overrideModelId.trim().toLowerCase();
+  if (!providerEntry && requestedOverride && !isDeepSeekAutomationProviderKey) {
+    const prefix = requestedOverride.toLowerCase();
     for (const [providerName, provider] of Object.entries(providers)) {
       if (!provider?.enabled || !provider.models) continue;
       const firstMatch = provider.models.find((m) => m.id.toLowerCase().startsWith(prefix));
