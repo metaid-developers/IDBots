@@ -108,7 +108,6 @@ export function loadNativeSqliteModule(): NativeSqliteModule | null {
       }
       return emitWarning.call(process, warning as string, ...(args as [string?, string?, string?]));
     }) as typeof process.emitWarning;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     return require('node:sqlite') as NativeSqliteModule;
   } catch {
     return null;
