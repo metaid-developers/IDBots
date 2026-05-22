@@ -4,20 +4,29 @@ import { RootState } from '../../store';
 import { setViewMode } from '../../store/slices/scheduledTaskSlice';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { i18nService } from '../../services/i18n';
-import type { ScheduledTask, Schedule } from '../../types/scheduledTask';
+import type { ScheduledTask, Schedule, ScheduledTaskRun } from '../../types/scheduledTask';
 import type { Metabot } from '../../types/metabot';
 import TaskRunHistory from './TaskRunHistory';
 import { PencilIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { parseScheduleToFormState } from './taskFormSchedule';
+
+const EMPTY_RUNS: ScheduledTaskRun[] = [];
+
+function formatIntervalLabel(value: number, unit: string): string {
+  const unitKey = unit === 'minutes' ? 'scheduledTasksFormIntervalMinutes' :
+    unit === 'hours' ? 'scheduledTasksFormIntervalHours' : 'scheduledTasksFormIntervalDays';
+  return `${i18nService.t('scheduledTasksScheduleEvery')} ${value} ${i18nService.t(unitKey)}`;
+}
 
 function formatScheduleLabel(schedule: Schedule): string {
+  const parsed = parseScheduleToFormState(schedule);
+  if (parsed.mode === 'interval') {
+    return formatIntervalLabel(parsed.intervalValue, parsed.intervalUnit);
+  }
+
   switch (schedule.type) {
     case 'at':
       return `${i18nService.t('scheduledTasksScheduleAtLabel')}: ${schedule.datetime ? new Date(schedule.datetime).toLocaleString() : '-'}`;
-    case 'interval': {
-      const unitKey = schedule.unit === 'minutes' ? 'scheduledTasksFormIntervalMinutes' :
-        schedule.unit === 'hours' ? 'scheduledTasksFormIntervalHours' : 'scheduledTasksFormIntervalDays';
-      return `${i18nService.t('scheduledTasksScheduleEvery')} ${schedule.value ?? 0} ${i18nService.t(unitKey)}`;
-    }
     case 'cron':
       return `${i18nService.t('scheduledTasksScheduleCronLabel')}: ${schedule.expression ?? ''}`;
     default:
@@ -32,7 +41,7 @@ interface TaskDetailProps {
 
 const TaskDetail: React.FC<TaskDetailProps> = ({ task, onRequestDelete }) => {
   const dispatch = useDispatch();
-  const runs = useSelector((state: RootState) => state.scheduledTask.runs[task.id] ?? []);
+  const runs = useSelector((state: RootState) => state.scheduledTask.runs[task.id] ?? EMPTY_RUNS);
   const [metabots, setMetabots] = useState<Metabot[]>([]);
 
   useEffect(() => {

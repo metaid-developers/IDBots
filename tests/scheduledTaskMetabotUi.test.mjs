@@ -41,3 +41,10 @@ test('scheduled task detail displays the configured execution MetaBot', () => {
   assert.match(source, /metabotNameById/);
   assert.match(source, /task\.metabotId/);
 });
+
+test('scheduled task detail uses a stable empty runs selector fallback', () => {
+  const source = fs.readFileSync(taskDetailPath, 'utf8');
+
+  assert.match(source, /EMPTY_RUNS/);
+  assert.doesNotMatch(source, /runs\[task\.id\]\s*\?\?\s*\[\]/);
+});
