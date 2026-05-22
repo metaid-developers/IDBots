@@ -93,6 +93,8 @@ function createScheduler({
       toggleTask: () => {},
       pruneRuns: () => {},
       getRun: () => null,
+      getTaskSessionId: () => null,
+      setTaskSessionId: () => {},
       ...scheduledTaskStore,
     },
     coworkStore: {
@@ -102,6 +104,7 @@ function createScheduler({
         executionMode: 'local',
       }),
       createSession: () => ({ id: 'session-1' }),
+      getSession: () => null,
       updateSession: () => {},
       addMessage: () => {},
     },
@@ -263,4 +266,84 @@ test('Scheduler does not write task completion state through a stale store after
   await execution;
 
   assert.equal(staleStoreReads, 0);
+});
+
+test('Scheduler reuses one cowork session for repeated runs of the same scheduled task', async () => {
+  const task = createTask({ id: 'recurring-task', metabotId: 7 });
+  const runs = new Map();
+  const completedRuns = [];
+  let runIndex = 0;
+  const createdSessions = [];
+  const runnerCalls = [];
+  let storedTaskSessionId = null;
+  const scheduler = createScheduler({
+    scheduledTaskStore: {
+      getTask: () => task,
+      getTaskSessionId: () => storedTaskSessionId,
+      setTaskSessionId: (_taskId, sessionId) => {
+        storedTaskSessionId = sessionId;
+      },
+      createRun: (taskId, trigger) => {
+        const run = {
+          id: `run-${++runIndex}`,
+          taskId,
+          sessionId: null,
+          status: 'running',
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+          durationMs: null,
+          error: null,
+          trigger,
+        };
+        runs.set(run.id, run);
+        return run;
+      },
+      completeRun: (runId, status, sessionId, durationMs, error) => {
+        const run = runs.get(runId);
+        const completed = { ...run, status, sessionId, durationMs, error };
+        runs.set(runId, completed);
+        completedRuns.push(completed);
+        return completed;
+      },
+      getRun: (runId) => runs.get(runId) ?? null,
+    },
+    coworkRunner: {
+      startSession: async (sessionId, prompt, options) => {
+        runnerCalls.push({ sessionId, prompt, options });
+      },
+      stopSession: () => {},
+    },
+  });
+  scheduler.coworkStore.createSession = (title, cwd, systemPrompt, executionMode, activeSkillIds, metabotId) => {
+    const session = { id: `session-${createdSessions.length + 1}` };
+    createdSessions.push({ title, cwd, systemPrompt, executionMode, activeSkillIds, metabotId, session });
+    return session;
+  };
+  scheduler.coworkStore.getSession = (sessionId) => {
+    const record = createdSessions.find((item) => item.session.id === sessionId);
+    if (!record) return null;
+    return {
+      ...record.session,
+      title: record.title,
+      claudeSessionId: null,
+      status: 'idle',
+      pinned: false,
+      cwd: record.cwd,
+      systemPrompt: record.systemPrompt,
+      executionMode: record.executionMode,
+      activeSkillIds: record.activeSkillIds,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      metabotId: record.metabotId,
+    };
+  };
+
+  await scheduler.executeTask(task, 'manual');
+  await scheduler.executeTask(task, 'manual');
+
+  assert.equal(createdSessions.length, 1);
+  assert.equal(createdSessions[0].metabotId, 7);
+  assert.deepEqual(runnerCalls.map((call) => call.sessionId), ['session-1', 'session-1']);
+  assert.deepEqual(completedRuns.map((run) => run.sessionId), ['session-1', 'session-1']);
 });

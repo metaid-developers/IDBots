@@ -4,6 +4,7 @@ import { RootState } from '../../store';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { i18nService } from '../../services/i18n';
 import type { ScheduledTask, Schedule, ScheduledTaskInput, NotifyPlatform } from '../../types/scheduledTask';
+import type { Metabot } from '../../types/metabot';
 
 interface TaskFormProps {
   mode: 'create' | 'edit';
@@ -83,6 +84,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
   const [prompt, setPrompt] = useState(task?.prompt ?? '');
   const [workingDirectory, setWorkingDirectory] = useState(task?.workingDirectory ?? '');
   const [expiresAt, setExpiresAt] = useState(task?.expiresAt ?? '');
+  const [metabots, setMetabots] = useState<Metabot[]>([]);
+  const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(defaultMetabotId);
   const [notifyPlatforms, setNotifyPlatforms] = useState<NotifyPlatform[]>(task?.notifyPlatforms ?? []);
   const [notifyDropdownOpen, setNotifyDropdownOpen] = useState(false);
   const notifyDropdownRef = useRef<HTMLDivElement>(null);
@@ -99,6 +102,32 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMetabots = async () => {
+      try {
+        const result = await window.electron?.metabot?.list?.();
+        if (cancelled || !result?.success || !result.list) return;
+        const enabledMetabots = result.list.filter((metabot) => metabot.enabled);
+        setMetabots(enabledMetabots);
+        setSelectedMetabotId((current) => {
+          if (current != null && enabledMetabots.some((metabot) => metabot.id === current)) {
+            return current;
+          }
+          if (defaultMetabotId != null && enabledMetabots.some((metabot) => metabot.id === defaultMetabotId)) {
+            return defaultMetabotId;
+          }
+          const twin = enabledMetabots.find((metabot) => metabot.metabot_type === 'twin');
+          return twin?.id ?? enabledMetabots[0]?.id ?? null;
+        });
+      } catch {
+        // Keep the existing default if the list cannot be loaded.
+      }
+    };
+    void loadMetabots();
+    return () => { cancelled = true; };
+  }, [defaultMetabotId]);
 
   const buildSchedule = (): Schedule => {
     const [hour, min] = scheduleTime.split(':').map(Number);
@@ -120,6 +149,9 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
     if (!prompt.trim()) newErrors.prompt = i18nService.t('scheduledTasksFormValidationPromptRequired');
     if (!(workingDirectory.trim() || defaultWorkingDirectory.trim())) {
       newErrors.workingDirectory = i18nService.t('scheduledTasksFormValidationWorkingDirectoryRequired');
+    }
+    if (metabots.length > 0 && selectedMetabotId == null) {
+      newErrors.metabot = i18nService.t('scheduledTasksFormValidationMetabotRequired');
     }
     if (scheduleMode === 'once') {
       if (!scheduleDate || !scheduleTime) {
@@ -147,7 +179,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         workingDirectory: workingDirectory.trim() || defaultWorkingDirectory,
         systemPrompt: '',
         executionMode: task?.executionMode ?? 'auto',
-        metabotId: defaultMetabotId,
+        metabotId: selectedMetabotId,
         expiresAt: expiresAt || null,
         notifyPlatforms,
         enabled: task?.enabled ?? true,
@@ -221,6 +253,28 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
           placeholder={i18nService.t('scheduledTasksFormPromptPlaceholder')}
         />
         {errors.prompt && <p className={errorClass}>{errors.prompt}</p>}
+      </div>
+
+      {/* MetaBot */}
+      <div>
+        <label className={labelClass}>{i18nService.t('scheduledTasksFormMetabot')}</label>
+        <select
+          value={selectedMetabotId ?? ''}
+          onChange={(e) => setSelectedMetabotId(e.target.value ? Number(e.target.value) : null)}
+          className={inputClass}
+          disabled={metabots.length === 0}
+        >
+          {metabots.length === 0 ? (
+            <option value="">{i18nService.t('metabotCreateFirstPrompt')}</option>
+          ) : (
+            metabots.map((metabot) => (
+              <option key={metabot.id} value={metabot.id}>
+                {metabot.name} ({metabot.metabot_type})
+              </option>
+            ))
+          )}
+        </select>
+        {errors.metabot && <p className={errorClass}>{errors.metabot}</p>}
       </div>
 
       {/* Schedule */}
