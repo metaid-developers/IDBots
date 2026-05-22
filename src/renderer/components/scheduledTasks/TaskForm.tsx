@@ -3,7 +3,14 @@ import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { scheduledTaskService } from '../../services/scheduledTask';
 import { i18nService } from '../../services/i18n';
-import type { ScheduledTask, Schedule, ScheduledTaskInput, NotifyPlatform } from '../../types/scheduledTask';
+import type { ScheduledTask, ScheduledTaskInput, NotifyPlatform } from '../../types/scheduledTask';
+import type { Metabot } from '../../types/metabot';
+import {
+  buildScheduleFromFormState,
+  type IntervalUnit,
+  parseScheduleToFormState,
+  type ScheduleMode,
+} from './taskFormSchedule';
 
 interface TaskFormProps {
   mode: 'create' | 'edit';
@@ -12,56 +19,8 @@ interface TaskFormProps {
   onSaved: () => void;
 }
 
-type ScheduleMode = 'once' | 'daily' | 'weekly' | 'monthly';
-
 const NOTIFY_PLATFORMS: NotifyPlatform[] = ['dingtalk', 'feishu', 'telegram', 'discord'];
 const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const; // 0=Sunday
-
-// Parse existing schedule into UI state
-function parseScheduleToUI(schedule: Schedule): {
-  mode: ScheduleMode;
-  date: string;
-  time: string;
-  weekday: number;
-  monthDay: number;
-} {
-  const defaults = { mode: 'once' as ScheduleMode, date: '', time: '09:00', weekday: 1, monthDay: 1 };
-
-  if (schedule.type === 'at') {
-    const dt = schedule.datetime ?? '';
-    // datetime-local format: "YYYY-MM-DDTHH:MM"
-    if (dt.includes('T')) {
-      return { ...defaults, mode: 'once', date: dt.slice(0, 10), time: dt.slice(11, 16) };
-    }
-    return { ...defaults, mode: 'once', date: dt.slice(0, 10) };
-  }
-
-  if (schedule.type === 'cron' && schedule.expression) {
-    const parts = schedule.expression.trim().split(/\s+/);
-    if (parts.length >= 5) {
-      const [min, hour, dom, , dow] = parts;
-      const timeStr = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
-
-      if (dow !== '*' && dom === '*') {
-        // Weekly: M H * * DOW
-        return { ...defaults, mode: 'weekly', time: timeStr, weekday: parseInt(dow) || 0 };
-      }
-      if (dom !== '*' && dow === '*') {
-        // Monthly: M H DOM * *
-        return { ...defaults, mode: 'monthly', time: timeStr, monthDay: parseInt(dom) || 1 };
-      }
-      // Daily: M H * * *
-      return { ...defaults, mode: 'daily', time: timeStr };
-    }
-  }
-
-  // Fallback for interval type - treat as daily
-  if (schedule.type === 'interval') {
-    return { ...defaults, mode: 'daily' };
-  }
-
-  return defaults;
-}
 
 const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) => {
   const coworkConfig = useSelector((state: RootState) => state.cowork.config);
@@ -71,7 +30,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
   const defaultMetabotId = task?.metabotId ?? currentSessionMetabotId ?? preferredMetabotId ?? null;
 
   // Parse existing schedule for edit mode
-  const parsed = task ? parseScheduleToUI(task.schedule) : null;
+  const parsed = task ? parseScheduleToFormState(task.schedule) : null;
 
   // Form state
   const [name, setName] = useState(task?.name ?? '');
@@ -80,9 +39,14 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
   const [scheduleTime, setScheduleTime] = useState(parsed?.time ?? '09:00');
   const [weekday, setWeekday] = useState(parsed?.weekday ?? 1);
   const [monthDay, setMonthDay] = useState(parsed?.monthDay ?? 1);
+  const [intervalValue, setIntervalValue] = useState(parsed?.intervalValue ?? 5);
+  const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>(parsed?.intervalUnit ?? 'minutes');
+  const [cronExpression, setCronExpression] = useState(parsed?.cronExpression ?? '');
   const [prompt, setPrompt] = useState(task?.prompt ?? '');
   const [workingDirectory, setWorkingDirectory] = useState(task?.workingDirectory ?? '');
   const [expiresAt, setExpiresAt] = useState(task?.expiresAt ?? '');
+  const [metabots, setMetabots] = useState<Metabot[]>([]);
+  const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(defaultMetabotId);
   const [notifyPlatforms, setNotifyPlatforms] = useState<NotifyPlatform[]>(task?.notifyPlatforms ?? []);
   const [notifyDropdownOpen, setNotifyDropdownOpen] = useState(false);
   const notifyDropdownRef = useRef<HTMLDivElement>(null);
@@ -100,19 +64,42 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const buildSchedule = (): Schedule => {
-    const [hour, min] = scheduleTime.split(':').map(Number);
-    switch (scheduleMode) {
-      case 'once':
-        return { type: 'at', datetime: `${scheduleDate}T${scheduleTime}` };
-      case 'daily':
-        return { type: 'cron', expression: `${min} ${hour} * * *` };
-      case 'weekly':
-        return { type: 'cron', expression: `${min} ${hour} * * ${weekday}` };
-      case 'monthly':
-        return { type: 'cron', expression: `${min} ${hour} ${monthDay} * *` };
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    const loadMetabots = async () => {
+      try {
+        const result = await window.electron?.metabot?.list?.();
+        if (cancelled || !result?.success || !result.list) return;
+        const enabledMetabots = result.list.filter((metabot) => metabot.enabled);
+        setMetabots(enabledMetabots);
+        setSelectedMetabotId((current) => {
+          if (current != null && enabledMetabots.some((metabot) => metabot.id === current)) {
+            return current;
+          }
+          if (defaultMetabotId != null && enabledMetabots.some((metabot) => metabot.id === defaultMetabotId)) {
+            return defaultMetabotId;
+          }
+          const twin = enabledMetabots.find((metabot) => metabot.metabot_type === 'twin');
+          return twin?.id ?? enabledMetabots[0]?.id ?? null;
+        });
+      } catch {
+        // Keep the existing default if the list cannot be loaded.
+      }
+    };
+    void loadMetabots();
+    return () => { cancelled = true; };
+  }, [defaultMetabotId]);
+
+  const buildSchedule = () => buildScheduleFromFormState({
+    mode: scheduleMode,
+    date: scheduleDate,
+    time: scheduleTime,
+    weekday,
+    monthDay,
+    intervalValue,
+    intervalUnit,
+    cronExpression,
+  });
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -121,6 +108,9 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
     if (!(workingDirectory.trim() || defaultWorkingDirectory.trim())) {
       newErrors.workingDirectory = i18nService.t('scheduledTasksFormValidationWorkingDirectoryRequired');
     }
+    if (metabots.length > 0 && selectedMetabotId == null) {
+      newErrors.metabot = i18nService.t('scheduledTasksFormValidationMetabotRequired');
+    }
     if (scheduleMode === 'once') {
       if (!scheduleDate || !scheduleTime) {
         newErrors.schedule = i18nService.t('scheduledTasksFormValidationDatetimeFuture');
@@ -128,7 +118,16 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         newErrors.schedule = i18nService.t('scheduledTasksFormValidationDatetimeFuture');
       }
     }
-    if (!scheduleTime) {
+    if (scheduleMode === 'interval' && (!Number.isInteger(intervalValue) || intervalValue <= 0)) {
+      newErrors.schedule = i18nService.t('scheduledTasksFormValidationIntervalPositive');
+    }
+    if (scheduleMode === 'cron') {
+      const cronParts = cronExpression.trim().split(/\s+/).filter(Boolean);
+      if (cronParts.length !== 5) {
+        newErrors.schedule = i18nService.t('scheduledTasksFormValidationCronRequired');
+      }
+    }
+    if (['once', 'daily', 'weekly', 'monthly'].includes(scheduleMode) && !scheduleTime) {
       newErrors.schedule = i18nService.t('scheduledTasksFormValidationTimeRequired');
     }
     setErrors(newErrors);
@@ -147,7 +146,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         workingDirectory: workingDirectory.trim() || defaultWorkingDirectory,
         systemPrompt: '',
         executionMode: task?.executionMode ?? 'auto',
-        metabotId: defaultMetabotId,
+        metabotId: selectedMetabotId,
         expiresAt: expiresAt || null,
         notifyPlatforms,
         enabled: task?.enabled ?? true,
@@ -190,7 +189,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
   const labelClass = 'block text-sm font-medium dark:text-claude-darkText text-claude-text mb-1';
   const errorClass = 'text-xs text-red-500 mt-1';
 
-  const scheduleModes: ScheduleMode[] = ['once', 'daily', 'weekly', 'monthly'];
+  const scheduleModes: ScheduleMode[] = ['once', 'interval', 'daily', 'weekly', 'monthly', 'cron'];
+  const intervalUnits: IntervalUnit[] = ['minutes', 'hours', 'days'];
 
   return (
     <div className="p-4 space-y-4 max-w-2xl mx-auto">
@@ -223,6 +223,28 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
         {errors.prompt && <p className={errorClass}>{errors.prompt}</p>}
       </div>
 
+      {/* MetaBot */}
+      <div>
+        <label className={labelClass}>{i18nService.t('scheduledTasksFormMetabot')}</label>
+        <select
+          value={selectedMetabotId ?? ''}
+          onChange={(e) => setSelectedMetabotId(e.target.value ? Number(e.target.value) : null)}
+          className={inputClass}
+          disabled={metabots.length === 0}
+        >
+          {metabots.length === 0 ? (
+            <option value="">{i18nService.t('metabotCreateFirstPrompt')}</option>
+          ) : (
+            metabots.map((metabot) => (
+              <option key={metabot.id} value={metabot.id}>
+                {metabot.name} ({metabot.metabot_type})
+              </option>
+            ))
+          )}
+        </select>
+        {errors.metabot && <p className={errorClass}>{errors.metabot}</p>}
+      </div>
+
       {/* Schedule */}
       <div>
         <label className={labelClass}>{i18nService.t('scheduledTasksFormScheduleType')}</label>
@@ -240,7 +262,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
             ))}
           </select>
 
-          {/* Second column: date/weekday/monthday or time (for daily) */}
+          {/* Second column: date/interval/weekday/monthday/time/cron */}
           {scheduleMode === 'once' ? (
             <input
               type="date"
@@ -248,6 +270,15 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
               onChange={(e) => setScheduleDate(e.target.value)}
               className={inputClass}
               min={new Date().toISOString().slice(0, 10)}
+            />
+          ) : scheduleMode === 'interval' ? (
+            <input
+              type="number"
+              value={intervalValue}
+              onChange={(e) => setIntervalValue(Number(e.target.value))}
+              className={inputClass}
+              min={1}
+              step={1}
             />
           ) : scheduleMode === 'weekly' ? (
             <select
@@ -273,6 +304,14 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
                 </option>
               ))}
             </select>
+          ) : scheduleMode === 'cron' ? (
+            <input
+              type="text"
+              value={cronExpression}
+              onChange={(e) => setCronExpression(e.target.value)}
+              className={inputClass + ' col-span-2'}
+              placeholder={i18nService.t('scheduledTasksFormCronPlaceholder')}
+            />
           ) : (
             <input
               type="time"
@@ -282,17 +321,29 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
             />
           )}
 
-          {/* Third column: time picker (or empty for daily) */}
-          {scheduleMode === 'daily' ? (
+          {/* Third column: interval unit, time picker, or empty for daily */}
+          {scheduleMode === 'interval' ? (
+            <select
+              value={intervalUnit}
+              onChange={(e) => setIntervalUnit(e.target.value as IntervalUnit)}
+              className={inputClass}
+            >
+              {intervalUnits.map((unit) => (
+                <option key={unit} value={unit}>
+                  {i18nService.t(`scheduledTasksFormInterval${unit.charAt(0).toUpperCase() + unit.slice(1)}`)}
+                </option>
+              ))}
+            </select>
+          ) : scheduleMode === 'daily' ? (
             <div />
-          ) : (
+          ) : scheduleMode !== 'cron' ? (
             <input
               type="time"
               value={scheduleTime}
               onChange={(e) => setScheduleTime(e.target.value)}
               className={inputClass}
             />
-          )}
+          ) : null}
         </div>
         {errors.schedule && <p className={errorClass}>{errors.schedule}</p>}
       </div>

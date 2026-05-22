@@ -37,6 +37,7 @@ export interface ScheduledTask {
   systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   metabotId: number | null;
+  coworkSessionId: string | null;
   expiresAt: string | null;
   notifyPlatforms: NotifyPlatform[];
   state: TaskState;
@@ -82,6 +83,7 @@ interface TaskRow {
   system_prompt: string;
   execution_mode: string;
   metabot_id: number | null;
+  cowork_session_id: string | null;
   expires_at: string | null;
   notify_platforms_json: string;
   next_run_at_ms: number | null;
@@ -197,9 +199,9 @@ export class ScheduledTaskStore {
     this.db.run(`
       INSERT INTO scheduled_tasks
         (id, name, description, enabled, schedule_json, prompt,
-         working_directory, system_prompt, execution_mode, metabot_id, expires_at,
+         working_directory, system_prompt, execution_mode, metabot_id, cowork_session_id, expires_at,
          notify_platforms_json, next_run_at_ms, consecutive_errors, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 0, ?, ?)
     `, [
       id, input.name, input.description,
       input.enabled ? 1 : 0,
@@ -231,6 +233,7 @@ export class ScheduledTaskStore {
     const systemPrompt = input.systemPrompt ?? existing.systemPrompt;
     const executionMode = input.executionMode ?? existing.executionMode;
     const metabotId = input.metabotId !== undefined ? input.metabotId : existing.metabotId;
+    const shouldResetCoworkSession = input.metabotId !== undefined && metabotId !== existing.metabotId;
     const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
     const notifyPlatforms = input.notifyPlatforms !== undefined ? input.notifyPlatforms : existing.notifyPlatforms;
 
@@ -247,7 +250,7 @@ export class ScheduledTaskStore {
       SET name = ?, description = ?, enabled = ?, schedule_json = ?,
           prompt = ?, working_directory = ?, system_prompt = ?,
           execution_mode = ?, metabot_id = ?, expires_at = ?, notify_platforms_json = ?,
-          next_run_at_ms = ?, updated_at = ?
+          next_run_at_ms = ?, cowork_session_id = ?, updated_at = ?
       WHERE id = ?
     `, [
       name, description,
@@ -258,7 +261,9 @@ export class ScheduledTaskStore {
       metabotId ?? null,
       expiresAt,
       JSON.stringify(notifyPlatforms),
-      nextRunAtMs, now, id,
+      nextRunAtMs,
+      shouldResetCoworkSession ? null : existing.coworkSessionId,
+      now, id,
     ]);
 
     this.saveDb();
@@ -364,6 +369,23 @@ export class ScheduledTaskStore {
     `, [id, taskId, now, trigger]);
     this.saveDb();
     return this.getRun(id)!;
+  }
+
+  getTaskSessionId(taskId: string): string | null {
+    const row = this.getOne<{ cowork_session_id: string | null }>(
+      'SELECT cowork_session_id FROM scheduled_tasks WHERE id = ?',
+      [taskId]
+    );
+    return row?.cowork_session_id ?? null;
+  }
+
+  setTaskSessionId(taskId: string, sessionId: string | null): void {
+    this.db.run(`
+      UPDATE scheduled_tasks
+      SET cowork_session_id = ?, updated_at = ?
+      WHERE id = ?
+    `, [sessionId, new Date().toISOString(), taskId]);
+    this.saveDb();
   }
 
   completeRun(
@@ -527,6 +549,7 @@ export class ScheduledTaskStore {
       systemPrompt: row.system_prompt,
       executionMode: row.execution_mode as 'auto' | 'local' | 'sandbox',
       metabotId: row.metabot_id ?? null,
+      coworkSessionId: row.cowork_session_id ?? null,
       expiresAt: row.expires_at,
       notifyPlatforms,
       state: {

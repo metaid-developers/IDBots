@@ -303,36 +303,68 @@ export class Scheduler {
       .join('\n\n');
     const executionMode = task.executionMode || config.executionMode || 'auto';
 
-    // Create a cowork session
-    const session = this.coworkStore.createSession(
-      `[定时] ${task.name}`,
-      cwd,
-      systemPrompt,
-      executionMode,
-      [],
-      task.metabotId ?? null
-    );
+    const sessionId = this.getOrCreateTaskCoworkSession(task, cwd, systemPrompt, executionMode);
 
     // Update session to running
-    this.coworkStore.updateSession(session.id, { status: 'running' });
+    this.coworkStore.updateSession(sessionId, { status: 'running' });
 
     // Add initial user message
-    this.coworkStore.addMessage(session.id, {
+    this.coworkStore.addMessage(sessionId, {
       type: 'user',
       content: task.prompt,
     });
 
     // Start the session with normal permission flow (no auto-approve).
-    this.taskSessionIds.set(task.id, session.id);
+    this.taskSessionIds.set(task.id, sessionId);
     const runner = this.getCoworkRunner();
     this.assertExecutionCurrent(executionGeneration);
-    await runner.startSession(session.id, task.prompt, {
+    await runner.startSession(sessionId, task.prompt, {
       skipInitialUserMessage: true,
       disableMemoryUpdates: true,
       confirmationMode: 'text',
     });
     this.assertExecutionCurrent(executionGeneration);
 
+    return sessionId;
+  }
+
+  private getOrCreateTaskCoworkSession(
+    task: ScheduledTask,
+    cwd: string,
+    systemPrompt: string,
+    executionMode: 'auto' | 'local' | 'sandbox'
+  ): string {
+    const title = `[定时] ${task.name}`;
+    const metabotId = task.metabotId ?? null;
+    const persistedSessionId = this.store.getTaskSessionId(task.id) ?? task.coworkSessionId;
+    const existingSession = persistedSessionId
+      ? this.coworkStore.getSession(persistedSessionId)
+      : null;
+
+    if (existingSession && (existingSession.metabotId ?? null) === metabotId) {
+      const shouldResetClaudeSession =
+        existingSession.cwd !== cwd
+        || existingSession.systemPrompt !== systemPrompt
+        || existingSession.executionMode !== executionMode;
+      this.coworkStore.updateSession(existingSession.id, {
+        title,
+        cwd,
+        systemPrompt,
+        executionMode,
+        ...(shouldResetClaudeSession ? { claudeSessionId: null } : {}),
+      });
+      return existingSession.id;
+    }
+
+    const session = this.coworkStore.createSession(
+      title,
+      cwd,
+      systemPrompt,
+      executionMode,
+      [],
+      metabotId
+    );
+    this.store.setTaskSessionId(task.id, session.id);
     return session.id;
   }
 

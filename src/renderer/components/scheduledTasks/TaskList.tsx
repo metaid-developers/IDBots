@@ -6,6 +6,7 @@ import { scheduledTaskService } from '../../services/scheduledTask';
 import { i18nService } from '../../services/i18n';
 import type { ScheduledTask, Schedule } from '../../types/scheduledTask';
 import { EllipsisVerticalIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { parseScheduleToFormState } from './taskFormSchedule';
 
 const weekdayKeys: Record<number, string> = {
   0: 'scheduledTasksFormWeekSun',
@@ -18,6 +19,13 @@ const weekdayKeys: Record<number, string> = {
 };
 
 function formatScheduleLabel(schedule: Schedule): string {
+  const parsed = parseScheduleToFormState(schedule);
+  if (parsed.mode === 'interval') {
+    const unitKey = parsed.intervalUnit === 'minutes' ? 'scheduledTasksFormIntervalMinutes' :
+      parsed.intervalUnit === 'hours' ? 'scheduledTasksFormIntervalHours' : 'scheduledTasksFormIntervalDays';
+    return `${i18nService.t('scheduledTasksScheduleEvery')} ${parsed.intervalValue} ${i18nService.t(unitKey)}`;
+  }
+
   if (schedule.type === 'at') {
     const dt = schedule.datetime ?? '';
     if (dt.includes('T')) {
@@ -42,10 +50,6 @@ function formatScheduleLabel(schedule: Schedule): string {
       }
       return `${i18nService.t('scheduledTasksFormScheduleModeDaily')} · ${timeStr}`;
     }
-  }
-
-  if (schedule.type === 'interval') {
-    return i18nService.t('scheduledTasksFormScheduleModeDaily');
   }
 
   return '';

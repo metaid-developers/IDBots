@@ -44,6 +44,7 @@ const SANDBOX_ALLOWED_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
   'IDBOTS_API_BASE_URL',
+  'IDBOTS_METABOT_ID',
   'ANTHROPIC_MODEL',
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -4009,6 +4010,10 @@ export class CoworkRunner extends EventEmitter {
     const paths = ensureCoworkSandboxDirs(sessionId);
     const cwdMapping = resolveSandboxCwd(cwd);
     const env = await getEnhancedEnv('sandbox');
+    const skillEnvOverrides = await this.getSkillSessionEnvOverrides?.(sessionId);
+    if (skillEnvOverrides && Object.keys(skillEnvOverrides).length > 0) {
+      Object.assign(env, skillEnvOverrides);
+    }
     const hostSkillsRoots = this.collectHostSkillsRoots(env, cwdMapping, systemPrompt);
     const sandboxSkills = this.resolveSandboxSkillsConfig(hostSkillsRoots, runtimeInfo.platform);
     const sandboxEnv = this.buildSandboxEnv(env, sandboxSkills.guestSkillsRoot);
@@ -4537,6 +4542,10 @@ export class CoworkRunner extends EventEmitter {
     const paths = ensureCoworkSandboxDirs(sessionId);
     const cwdMapping = resolveSandboxCwd(cwd);
     const env = await getEnhancedEnv('sandbox');
+    const skillEnvOverrides = await this.getSkillSessionEnvOverrides?.(sessionId);
+    if (skillEnvOverrides && Object.keys(skillEnvOverrides).length > 0) {
+      Object.assign(env, skillEnvOverrides);
+    }
     const hostSkillsRoots = this.collectHostSkillsRoots(env, cwdMapping, systemPrompt);
     const sandboxSystemPrompt = this.enforceSandboxWorkspacePrompt(systemPrompt, cwdMapping.guestPath);
     const resolvedSystemPrompt = this.resolveAutoRoutingForSandbox(sandboxSystemPrompt, {

@@ -46,6 +46,7 @@ export interface ScheduledTask {
   systemPrompt: string;
   executionMode: 'auto' | 'local' | 'sandbox';
   metabotId: number | null;
+  coworkSessionId: string | null;
   expiresAt: string | null; // ISO 8601 日期（精确到天），null 表示不过期
   notifyPlatforms: NotifyPlatform[]; // 任务完成后通知的 IM 平台
   state: TaskState;
