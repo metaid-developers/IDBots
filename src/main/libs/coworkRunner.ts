@@ -699,13 +699,24 @@ type SandboxSkillEntry = {
   mountTag: string;
 };
 
+type CoworkMetabotIdentity = {
+  name?: string | null;
+  role?: string | null;
+  soul?: string | null;
+  background?: string | null;
+  goal?: string | null;
+  llm_id?: string | null;
+  mvc_address?: string | null;
+  globalmetaid?: string | null;
+};
+
 export interface CoworkRunnerOptions {
   /** When set, env overrides (e.g. Twin wallet for metabot-basic) are merged into session env for tool execution. */
   getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   /** When set, fetches MetaBot by id for persona injection into system prompt. */
   /** When set, returns the XML block for available remote services to inject into the system prompt. */
   getRemoteServicesPrompt?: () => string | null;
-  getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null; llm_id?: string | null } | null;
+  getMetabotById?: (id: number) => CoworkMetabotIdentity | null;
   /** When set, returns enabled user-configured MCP servers for local execution. */
   mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   /** When set, opens a local MetaApp and returns the resolved local URL. */
@@ -718,7 +729,7 @@ export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
   private getSkillSessionEnvOverrides?: (sessionId: string) => Promise<Record<string, string>>;
   private getRemoteServicesPrompt?: () => string | null;
-  private getMetabotById?: (id: number) => { name: string; role: string; soul: string; background: string | null; goal: string | null; llm_id?: string | null } | null;
+  private getMetabotById?: (id: number) => CoworkMetabotIdentity | null;
   private mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
@@ -2427,7 +2438,7 @@ export class CoworkRunner extends EventEmitter {
    * Build MetaBot persona block for system prompt using structured XML.
    * Returns empty string if session has no metabot_id or MetaBot not found (silent fallback).
    * Scoped to current session to avoid persona cross-contamination between MetaBots.
-   * Only injects tags that have non-empty values (NULL/empty from DB are skipped).
+   * Always injects the executable metabot_id; nullable DB fields are skipped when empty.
    */
   private buildMetabotPersonaBlock(sessionId: string): string {
     if (!this.getMetabotById) return '';
@@ -2440,6 +2451,13 @@ export class CoworkRunner extends EventEmitter {
     const tags: string[] = [];
     if (metabot.name?.trim()) {
       tags.push(`  <name>${this.escapeXmlText(metabot.name.trim())}</name>`);
+    }
+    tags.push(`  <metabot_id>${this.escapeXmlText(String(metabotId))}</metabot_id>`);
+    if (metabot.mvc_address?.trim()) {
+      tags.push(`  <mvc_address>${this.escapeXmlText(metabot.mvc_address.trim())}</mvc_address>`);
+    }
+    if (metabot.globalmetaid?.trim()) {
+      tags.push(`  <globalmetaid>${this.escapeXmlText(metabot.globalmetaid.trim())}</globalmetaid>`);
     }
     if (metabot.role?.trim()) {
       tags.push(`  <role>${this.escapeXmlText(metabot.role.trim())}</role>`);

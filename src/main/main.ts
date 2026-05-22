@@ -3417,7 +3417,16 @@ const getCoworkRunner = () => {
       mcpServerProvider: () => getMcpStore().getEnabledServers(),
       getMetabotById: (id: number) => {
         const m = getMetabotStore().getMetabotById(id);
-        return m ? { name: m.name, role: m.role, soul: m.soul, background: m.background ?? null, goal: m.goal ?? null } : null;
+        return m ? {
+          name: m.name,
+          mvc_address: m.mvc_address ?? null,
+          globalmetaid: m.globalmetaid ?? null,
+          role: m.role,
+          soul: m.soul,
+          background: m.background ?? null,
+          goal: m.goal ?? null,
+          llm_id: m.llm_id ?? null,
+        } : null;
       },
       openMetaApp: async (input) => {
         return openMetaApp({

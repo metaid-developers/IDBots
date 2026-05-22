@@ -58,6 +58,8 @@ function createCoworkRunnerPromptHarness({
     getMetabotById() {
       return {
         name: 'SellerBot',
+        mvc_address: '1SellerMvcAddress',
+        globalmetaid: 'idq1seller-global',
         role: 'Weather assistant',
         soul: 'Warm and practical',
         background: 'Built for paid weather tasks',
@@ -304,6 +306,18 @@ test('CoworkRunner uses a compact outer prompt profile for seller metaweb_order 
   assert.doesNotMatch(systemPrompt, /<ownerMemories>/);
   assert.doesNotMatch(systemPrompt, /schedule\.type = "at"|one-time scheduled tasks/i);
   assert.doesNotMatch(systemPrompt, /AskUserQuestion/);
+});
+
+test('CoworkRunner injects executable MetaBot identity handles into the persona block', () => {
+  const { runner } = createCoworkRunnerPromptHarness();
+
+  const personaBlock = runner.buildMetabotPersonaBlock('session-1');
+
+  assert.match(personaBlock, /<metabot_identity>/);
+  assert.match(personaBlock, /<name>SellerBot<\/name>/);
+  assert.match(personaBlock, /<metabot_id>7<\/metabot_id>/);
+  assert.match(personaBlock, /<mvc_address>1SellerMvcAddress<\/mvc_address>/);
+  assert.match(personaBlock, /<globalmetaid>idq1seller-global<\/globalmetaid>/);
 });
 
 test('CoworkRunner keeps the full common outer prompt for standard cowork sessions', () => {
