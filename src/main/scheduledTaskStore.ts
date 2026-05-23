@@ -116,6 +116,7 @@ export class ScheduledTaskStore {
   constructor(db: Database, saveDb: () => void) {
     this.db = db;
     this.saveDb = saveDb;
+    this.ensureTaskSessionColumn();
     this.resetStuckRunningTasks();
   }
 
@@ -144,6 +145,68 @@ export class ScheduledTaskStore {
       });
       return row as T;
     });
+  }
+
+  private tableExists(tableName: string): boolean {
+    const row = this.getOne<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+      [tableName]
+    );
+    return Boolean(row);
+  }
+
+  private ensureTaskSessionColumn(): void {
+    try {
+      if (!this.tableExists('scheduled_tasks')) return;
+
+      const columnsResult = this.db.exec('PRAGMA table_info(scheduled_tasks);');
+      const columns = columnsResult[0]?.values.map((row) => String(row[1])) ?? [];
+      let shouldSave = false;
+
+      if (!columns.includes('cowork_session_id')) {
+        this.db.run('ALTER TABLE scheduled_tasks ADD COLUMN cowork_session_id TEXT');
+        shouldSave = true;
+      }
+
+      if (this.backfillMissingTaskSessionIdsFromRuns()) {
+        shouldSave = true;
+      }
+
+      if (shouldSave) {
+        this.saveDb();
+      }
+    } catch (error) {
+      console.warn('Failed to ensure scheduled task cowork session column:', error);
+    }
+  }
+
+  private backfillMissingTaskSessionIdsFromRuns(): boolean {
+    if (!this.tableExists('scheduled_task_runs')) return false;
+
+    this.db.run(`
+      UPDATE scheduled_tasks
+      SET cowork_session_id = (
+            SELECT r.session_id
+            FROM scheduled_task_runs r
+            WHERE r.task_id = scheduled_tasks.id
+              AND r.session_id IS NOT NULL
+              AND TRIM(r.session_id) != ''
+            ORDER BY r.started_at DESC
+            LIMIT 1
+          ),
+          updated_at = ?
+      WHERE (cowork_session_id IS NULL OR TRIM(cowork_session_id) = '')
+        AND EXISTS (
+          SELECT 1
+          FROM scheduled_task_runs r
+          WHERE r.task_id = scheduled_tasks.id
+            AND r.session_id IS NOT NULL
+            AND TRIM(r.session_id) != ''
+        )
+    `, [new Date().toISOString()]);
+
+    const modified = this.db.getRowsModified?.();
+    return typeof modified === 'number' ? modified > 0 : true;
   }
 
   // --- Startup ---
