@@ -38,6 +38,8 @@ export interface Metabot {
   tools: string[];
   /** Allowed skill ids; stored as JSON array in DB */
   skills: string[];
+  /** Skills allowed in private chat; stored as JSON array in DB */
+  allow_chat_skills: string[];
   created_at: number;
   updated_at: number;
 }
@@ -68,6 +70,7 @@ export interface MetabotInsert {
   llm_id?: string | null;
   tools?: string[];
   skills?: string[];
+  allow_chat_skills?: string[];
 }
 
 /** Input for updating a MetaBot (all optional except identity) */
@@ -96,6 +99,7 @@ export interface MetabotUpdate {
   llm_id?: string | null;
   tools?: string[];
   skills?: string[];
+  allow_chat_skills?: string[];
 }
 
 /** MetaBot wallet (append-only; no update/delete in app layer). Created before metabot; metabots.wallet_id references this id. */

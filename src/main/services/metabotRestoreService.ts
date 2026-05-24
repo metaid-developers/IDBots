@@ -35,6 +35,7 @@ export interface MetaidBioProfile {
   llm_id: string | null;
   tools: string[];
   skills: string[];
+  allowChatSkills: string[];
   boss_id: number | null;
   boss_global_metaid: string | null;
   created_by: string;
@@ -99,6 +100,7 @@ const parseMetaidBio = (bio: unknown): MetaidBioProfile => {
     llm_id: null,
     tools: [],
     skills: [],
+    allowChatSkills: [],
     boss_id: null,
     boss_global_metaid: null,
     created_by: '0000',
@@ -130,6 +132,7 @@ const parseMetaidBio = (bio: unknown): MetaidBioProfile => {
     llm_id: normalizeOptionalString(raw.llm ?? raw.llm_id),
     tools: normalizeStringArray(raw.tools),
     skills: normalizeStringArray(raw.skills),
+    allowChatSkills: normalizeStringArray(raw.allowChatSkills ?? raw.allow_chat_skills),
     boss_id: normalizeBossId(raw.boss_id ?? raw.bossId),
     boss_global_metaid: normalizeOptionalString(raw.boss_global_metaid ?? raw.bossGlobalMetaId),
     created_by: normalizeString(raw.createdBy ?? raw.created_by) || '0000',

@@ -53,6 +53,7 @@ interface MetabotRow {
   llm_id: string | null;
   tools: string;
   skills: string;
+  allow_chat_skills: string;
   created_at: number;
   updated_at: number;
 }
@@ -118,6 +119,7 @@ function rowToMetabot(row: MetabotRow): Metabot {
     llm_id: row.llm_id ?? null,
     tools: parseJsonArray(row.tools),
     skills: parseJsonArray(row.skills),
+    allow_chat_skills: parseJsonArray(row.allow_chat_skills),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -241,6 +243,7 @@ export class MetabotStore {
     const now = Date.now();
     const toolsJson = JSON.stringify(input.tools ?? []);
     const skillsJson = JSON.stringify(input.skills ?? []);
+    const allowChatSkillsJson = JSON.stringify(input.allow_chat_skills ?? []);
     const enabled = input.enabled !== false ? 1 : 0;
     const avatarDb = avatarToDb(input.avatar ?? null);
     const useBlob = this.hasAvatarBlobColumn();
@@ -270,6 +273,7 @@ export class MetabotStore {
       input.llm_id ?? null,
       toolsJson,
       skillsJson,
+      allowChatSkillsJson,
       now,
       now,
     ]);
@@ -278,8 +282,8 @@ export class MetabotStore {
         `INSERT INTO metabots (
           wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key, chat_public_key_pin_id,
           name, avatar_blob, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
-          role, soul, goal, background, boss_id, boss_global_metaid, llm_id, tools, skills, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          role, soul, goal, background, boss_id, boss_global_metaid, llm_id, tools, skills, allow_chat_skills, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params
       );
     } else {
@@ -287,8 +291,8 @@ export class MetabotStore {
         `INSERT INTO metabots (
           wallet_id, mvc_address, btc_address, doge_address, public_key, chat_public_key, chat_public_key_pin_id,
           name, avatar, enabled, metaid, globalmetaid, metabot_info_pinid, metabot_type, created_by,
-          role, soul, goal, background, boss_id, boss_global_metaid, llm_id, tools, skills, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          role, soul, goal, background, boss_id, boss_global_metaid, llm_id, tools, skills, allow_chat_skills, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params
       );
     }
@@ -327,6 +331,7 @@ export class MetabotStore {
       llm_id: input.llm_id ?? null,
       tools: input.tools ?? [],
       skills: input.skills ?? [],
+      allow_chat_skills: input.allow_chat_skills ?? [],
       created_at: now,
       updated_at: now,
     };
@@ -342,6 +347,10 @@ export class MetabotStore {
       input.tools !== undefined ? JSON.stringify(input.tools) : JSON.stringify(existing.tools);
     const skillsJson =
       input.skills !== undefined ? JSON.stringify(input.skills) : JSON.stringify(existing.skills);
+    const allowChatSkillsJson =
+      input.allow_chat_skills !== undefined
+        ? JSON.stringify(input.allow_chat_skills)
+        : JSON.stringify(existing.allow_chat_skills);
 
     const enabled = input.enabled !== undefined ? (input.enabled ? 1 : 0) : (existing.enabled ? 1 : 0);
     const avatarVal = input.avatar !== undefined ? input.avatar : existing.avatar;
@@ -353,7 +362,7 @@ export class MetabotStore {
         `UPDATE metabots SET
           wallet_id = ?, mvc_address = ?, btc_address = ?, doge_address = ?, public_key = ?, chat_public_key = ?, chat_public_key_pin_id = ?,
           name = ?, avatar_blob = ?, enabled = ?, metaid = ?, globalmetaid = ?, metabot_info_pinid = ?, metabot_type = ?, created_by = ?,
-          role = ?, soul = ?, goal = ?, background = ?, boss_id = ?, boss_global_metaid = ?, llm_id = ?, tools = ?, skills = ?, updated_at = ?
+          role = ?, soul = ?, goal = ?, background = ?, boss_id = ?, boss_global_metaid = ?, llm_id = ?, tools = ?, skills = ?, allow_chat_skills = ?, updated_at = ?
         WHERE id = ?`,
         [
           input.wallet_id ?? existing.wallet_id,
@@ -380,6 +389,7 @@ export class MetabotStore {
           input.llm_id !== undefined ? input.llm_id : existing.llm_id,
           toolsJson,
           skillsJson,
+          allowChatSkillsJson,
           now,
           id,
         ]
@@ -389,7 +399,7 @@ export class MetabotStore {
         `UPDATE metabots SET
           wallet_id = ?, mvc_address = ?, btc_address = ?, doge_address = ?, public_key = ?, chat_public_key = ?, chat_public_key_pin_id = ?,
           name = ?, avatar = ?, enabled = ?, metaid = ?, globalmetaid = ?, metabot_info_pinid = ?, metabot_type = ?, created_by = ?,
-          role = ?, soul = ?, goal = ?, background = ?, boss_id = ?, boss_global_metaid = ?, llm_id = ?, tools = ?, skills = ?, updated_at = ?
+          role = ?, soul = ?, goal = ?, background = ?, boss_id = ?, boss_global_metaid = ?, llm_id = ?, tools = ?, skills = ?, allow_chat_skills = ?, updated_at = ?
         WHERE id = ?`,
         [
           input.wallet_id ?? existing.wallet_id,
@@ -416,6 +426,7 @@ export class MetabotStore {
           input.llm_id !== undefined ? input.llm_id : existing.llm_id,
           toolsJson,
           skillsJson,
+          allowChatSkillsJson,
           now,
           id,
         ]

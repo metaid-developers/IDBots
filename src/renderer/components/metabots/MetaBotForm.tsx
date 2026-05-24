@@ -1,6 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { PhotoIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { PhotoIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import type { Skill } from '../../types/skill';
+import {
+  addAllowChatSkill,
+  normalizeAllowChatSkills,
+  removeAllowChatSkill,
+} from './allowChatSkills.ts';
 
 const AVATAR_MAX_SIZE_BYTES = 200 * 1024; // 200KB
 
@@ -15,6 +21,7 @@ export interface MetaBotFormValues {
   boss_global_metaid: string;
   boss_id: string;
   llm_id: string;
+  allow_chat_skills: string[];
 }
 
 export interface LlmOption {
@@ -33,6 +40,7 @@ const defaultValues: MetaBotFormValues = {
   boss_global_metaid: '',
   boss_id: '1',
   llm_id: '',
+  allow_chat_skills: [],
 };
 
 interface MetaBotFormProps {
@@ -43,6 +51,8 @@ interface MetaBotFormProps {
   saveLabel?: string;
   /** Available LLM providers for selection. Multiple MetaBots may share the same LLM. Empty = none available. */
   llmOptions: LlmOption[];
+  /** Available local skills for private-chat allowlist selection. */
+  skillOptions: Skill[];
   /** Called when user clicks "Go to Model Settings" (e.g. to open Settings tab). */
   onRequestModelSettings?: () => void;
   /** Check if name already exists (for uniqueness). Returns true if duplicate. */
@@ -58,6 +68,7 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   onSave,
   saveLabel,
   llmOptions,
+  skillOptions,
   onRequestModelSettings,
   onCheckNameExists,
   excludeIdForNameCheck,
@@ -66,21 +77,61 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
   const [values, setValues] = useState<MetaBotFormValues>({
     ...defaultValues,
     ...(initialValues || {}),
+    allow_chat_skills: normalizeAllowChatSkills(initialValues?.allow_chat_skills ?? defaultValues.allow_chat_skills),
   });
+  const [selectedAllowChatSkillId, setSelectedAllowChatSkillId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [nameDuplicate, setNameDuplicate] = useState(false);
 
   useEffect(() => {
     if (initialValues) {
-      setValues((prev) => ({ ...defaultValues, ...prev, ...initialValues }));
+      setValues((prev) => ({
+        ...defaultValues,
+        ...prev,
+        ...initialValues,
+        allow_chat_skills: normalizeAllowChatSkills(initialValues.allow_chat_skills ?? prev.allow_chat_skills),
+      }));
+      setSelectedAllowChatSkillId('');
     }
   }, [initialValues]);
 
-  const handleChange = (field: keyof MetaBotFormValues, value: string | 'twin' | 'worker') => {
+  const handleChange = <K extends keyof MetaBotFormValues>(field: K, value: MetaBotFormValues[K]) => {
     setValues((prev) => ({ ...prev, [field]: value }));
     setError('');
     if (field === 'name') setNameDuplicate(false);
+  };
+
+  const availableSkillOptions = useMemo(
+    () => skillOptions.filter((skill) => skill.enabled),
+    [skillOptions],
+  );
+  const skillNameById = useMemo(
+    () => new Map(skillOptions.map((skill) => [skill.id, skill.name])),
+    [skillOptions],
+  );
+  const normalizedAllowChatSkills = useMemo(
+    () => normalizeAllowChatSkills(values.allow_chat_skills),
+    [values.allow_chat_skills],
+  );
+  const canAddSelectedAllowChatSkill =
+    Boolean(selectedAllowChatSkillId) && !normalizedAllowChatSkills.includes(selectedAllowChatSkillId);
+
+  useEffect(() => {
+    if (!selectedAllowChatSkillId) return;
+    if (!availableSkillOptions.some((skill) => skill.id === selectedAllowChatSkillId)) {
+      setSelectedAllowChatSkillId('');
+    }
+  }, [availableSkillOptions, selectedAllowChatSkillId]);
+
+  const handleAddAllowChatSkill = () => {
+    if (!canAddSelectedAllowChatSkill) return;
+    handleChange('allow_chat_skills', addAllowChatSkill(values.allow_chat_skills, selectedAllowChatSkillId));
+    setSelectedAllowChatSkillId('');
+  };
+
+  const handleRemoveAllowChatSkill = (skillId: string) => {
+    handleChange('allow_chat_skills', removeAllowChatSkill(values.allow_chat_skills, skillId));
   };
 
   const handleNameBlur = async () => {
@@ -142,7 +193,10 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
     setSaving(true);
     setError('');
     try {
-      await onSave(values);
+      await onSave({
+        ...values,
+        allow_chat_skills: normalizeAllowChatSkills(values.allow_chat_skills),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : i18nService.t('metabotSaveFailed'));
     } finally {
@@ -368,6 +422,74 @@ const MetaBotForm: React.FC<MetaBotFormProps> = ({
                 </p>
               )}
             </>
+          )}
+        </div>
+      </div>
+
+      <div className={rowClass}>
+        <label htmlFor="metabot-allow-chat-skills" className={labelClass}>
+          {i18nService.t('metabotAllowChatSkills')}
+        </label>
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <select
+              id="metabot-allow-chat-skills"
+              value={selectedAllowChatSkillId}
+              onChange={(e) => setSelectedAllowChatSkillId(e.target.value)}
+              className={inputClass}
+              disabled={availableSkillOptions.length === 0}
+            >
+              <option value="">{i18nService.t('metabotAllowChatSkillsPlaceholder')}</option>
+              {availableSkillOptions.map((skill) => (
+                <option key={skill.id} value={skill.id}>
+                  {skill.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleAddAllowChatSkill}
+              disabled={!canAddSelectedAllowChatSkill}
+              className="shrink-0 px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <PlusIcon className="h-4 w-4" />
+              <span>{i18nService.t('metabotAdd')}</span>
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {normalizedAllowChatSkills.length > 0 ? (
+              normalizedAllowChatSkills.map((skillId) => (
+                <span
+                  key={skillId}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface px-2 py-1 text-xs dark:text-claude-darkText text-claude-text"
+                >
+                  <span className="max-w-[10rem] truncate" title={skillId}>
+                    {skillNameById.get(skillId) || skillId}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveAllowChatSkill(skillId)}
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-black/10 dark:hover:bg-white/10"
+                    aria-label={i18nService.t('metabotDelete')}
+                    title={i18nService.t('metabotDelete')}
+                  >
+                    <XMarkIcon className="h-3 w-3" />
+                  </button>
+                </span>
+              ))
+            ) : (
+              <p className={hintClass}>
+                {i18nService.t('metabotAllowChatSkillsDefault')}
+              </p>
+            )}
+          </div>
+          <p className={hintClass}>
+            {i18nService.t('metabotAllowChatSkillsHint')}
+          </p>
+          {availableSkillOptions.length === 0 && (
+            <p className={`${hintClass} text-amber-500 dark:text-amber-400`}>
+              {i18nService.t('metabotNoAvailableSkills')}
+            </p>
           )}
         </div>
       </div>
