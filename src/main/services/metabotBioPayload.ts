@@ -7,7 +7,7 @@ export interface MetabotBioPayloadInput {
   tools: string[];
   skills: string[];
   allow_chat_skills: string[];
-  boss_id: number | null;
+  boss_id: number | string | null;
   boss_global_metaid: string | null;
   created_by: string;
 }
