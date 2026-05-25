@@ -6,13 +6,14 @@ const DEFAULT_TIMESTAMP_URLS = [
   "http://timestamp.digicert.com",
   "http://timestamp.sectigo.com"
 ];
-const DEFAULT_SIGNTOOL_TIMEOUT_MS = 300000;
+const DEFAULT_SIGNTOOL_TIMEOUT_MS = 90000;
+const unhealthyTimestampUrls = new Set();
 
 function runSignTool(signtoolPath, args, options = {}) {
   const timeoutMs =
     Number.isFinite(Number(options.timeoutMs)) && Number(options.timeoutMs) > 0
       ? Number(options.timeoutMs)
-      : 60000;
+      : DEFAULT_SIGNTOOL_TIMEOUT_MS;
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -66,7 +67,8 @@ function getTimestampUrls() {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  return [...new Set([...configured, ...DEFAULT_TIMESTAMP_URLS])];
+  const orderedUrls = [...new Set([...configured, ...DEFAULT_TIMESTAMP_URLS])];
+  return orderedUrls.filter((url) => !unhealthyTimestampUrls.has(url));
 }
 
 module.exports = async function signWindowsArtifact(configuration) {
@@ -112,6 +114,24 @@ module.exports = async function signWindowsArtifact(configuration) {
     );
   }
 
+  // If all known timestamp services were marked unhealthy in this build process,
+  // skip timestamp attempts and sign directly (unless timestamp is mandatory).
+  if (timestampUrls.length === 0 && !requireTimestamp) {
+    for (const profile of signingProfiles) {
+      try {
+        await runSignTool(
+          signtoolPath,
+          ["sign", ...profile.certArgs, "/fd", "SHA256", "/v", filePath],
+          { timeoutMs }
+        );
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`profile=${profile.name} timestamp=none attempt=1 error=${message}`);
+      }
+    }
+  }
+
   for (const profile of signingProfiles) {
     console.log(`[windows-sign] signing ${filePath} using ${profile.name}`);
     for (const timestampUrl of timestampUrls) {
@@ -142,6 +162,12 @@ module.exports = async function signWindowsArtifact(configuration) {
           errors.push(
             `profile=${profile.name} timestamp=${timestampUrl} attempt=${attempt} error=${message}`
           );
+          if (/timed out/i.test(message)) {
+            unhealthyTimestampUrls.add(timestampUrl);
+            console.warn(
+              `[windows-sign] mark timestamp server unavailable for this build: ${timestampUrl}`
+            );
+          }
           if (attempt < maxAttemptsPerUrl) {
             await sleep(1500);
           }
