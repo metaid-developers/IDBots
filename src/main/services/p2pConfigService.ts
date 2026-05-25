@@ -24,18 +24,23 @@ export const LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES = [
   '/dns4/manapi.metaid.io/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
 ] as const;
 
-export const PREVIOUS_OFFICIAL_P2P_BOOTSTRAP_NODES = [
+const REPLACED_8_129_OFFICIAL_P2P_BOOTSTRAP_NODES = [
   ...LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES,
   '/ip4/8.129.223.128/tcp/4001/p2p/12D3KooWBTHrWigtJyPGVvAu5uTU7BEJocPHHX5D5buuFuaQdrxw',
 ] as const;
 
-export const OFFICIAL_P2P_BOOTSTRAP_NODES = [
+export const PREVIOUS_OFFICIAL_P2P_BOOTSTRAP_NODES = [
   ...LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES,
   '/ip4/47.83.192.160/tcp/4001/p2p/12D3KooWBTHrWigtJyPGVvAu5uTU7BEJocPHHX5D5buuFuaQdrxw',
 ] as const;
 
+export const OFFICIAL_P2P_BOOTSTRAP_NODES = [
+  ...LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES,
+  '/ip4/47.239.239.128/tcp/4001/p2p/12D3KooWBTHrWigtJyPGVvAu5uTU7BEJocPHHX5D5buuFuaQdrxw',
+] as const;
+
 export const LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v1';
-export const P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v3';
+export const P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v4';
 
 export const DEFAULT_P2P_CONFIG: P2PConfig = {
   p2p_sync_mode: 'self',
@@ -204,6 +209,7 @@ function shouldMigrateBootstrapDefaults(stored: Partial<P2PConfig> | undefined):
   if (nodes.length === 0) return true;
 
   return stringListsMatch(nodes, LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES)
+    || stringListsMatch(nodes, REPLACED_8_129_OFFICIAL_P2P_BOOTSTRAP_NODES)
     || stringListsMatch(nodes, PREVIOUS_OFFICIAL_P2P_BOOTSTRAP_NODES);
 }
 

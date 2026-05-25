@@ -4,6 +4,13 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
+const OLD_OFFICIAL_P2P_BOOTSTRAP_NODES = [
+  '/ip4/8.217.14.206/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
+  '/dns4/manapi.metaid.io/tcp/4001/p2p/12D3KooWSvVfJ7s37hsCfRHuhccWxocxyjU6uKGKF4czBGZk8f5H',
+  '/ip4/47.83.192.160/tcp/4001/p2p/12D3KooWBTHrWigtJyPGVvAu5uTU7BEJocPHHX5D5buuFuaQdrxw',
+];
+const OLD_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY = 'p2p.bootstrap_defaults_migrated.v3';
+
 const {
   DEFAULT_P2P_CONFIG,
   LEGACY_OFFICIAL_P2P_BOOTSTRAP_NODES,
@@ -103,6 +110,17 @@ test('getConfig returns official bootstrap nodes by default for new profiles', (
   assert.deepEqual(config.p2p_bootstrap_nodes, OFFICIAL_P2P_BOOTSTRAP_NODES);
 });
 
+test('official bootstrap nodes use the 47.239.239.128 endpoint', () => {
+  assert.ok(
+    OFFICIAL_P2P_BOOTSTRAP_NODES.some((node) => node.includes('/ip4/47.239.239.128/tcp/4001/')),
+    'Expected official bootstrap defaults to include 47.239.239.128',
+  );
+  assert.equal(
+    OFFICIAL_P2P_BOOTSTRAP_NODES.some((node) => node.includes('/ip4/47.83.192.160/tcp/4001/')),
+    false,
+  );
+});
+
 test('getConfig migrates historical empty bootstrap defaults once when marker is missing', () => {
   const store = makeStore({
     p2pConfig: {
@@ -166,6 +184,28 @@ test('getConfig expands legacy single-node defaults to the full official bootstr
     },
     kv: {
       [LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY]: true,
+    },
+  });
+
+  const config = getConfig(store);
+
+  assert.deepEqual(config.p2p_bootstrap_nodes, OFFICIAL_P2P_BOOTSTRAP_NODES);
+  assert.equal(store.state.setP2PConfigCalls.length, 1);
+  assert.deepEqual(store.state.setP2PConfigCalls[0].p2p_bootstrap_nodes, OFFICIAL_P2P_BOOTSTRAP_NODES);
+  assert.deepEqual(store.state.setCalls, [
+    { key: LEGACY_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, value: true },
+    { key: P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY, value: true },
+  ]);
+});
+
+test('getConfig migrates prior 47.83 official bootstrap defaults when only the v3 marker exists', () => {
+  const store = makeStore({
+    p2pConfig: {
+      ...DEFAULT_P2P_CONFIG,
+      p2p_bootstrap_nodes: [...OLD_OFFICIAL_P2P_BOOTSTRAP_NODES],
+    },
+    kv: {
+      [OLD_P2P_BOOTSTRAP_DEFAULTS_MIGRATION_KEY]: true,
     },
   });
 
