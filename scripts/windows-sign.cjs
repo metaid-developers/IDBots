@@ -6,6 +6,7 @@ const DEFAULT_TIMESTAMP_URLS = [
   "http://timestamp.digicert.com",
   "http://timestamp.sectigo.com"
 ];
+const DEFAULT_SIGNTOOL_TIMEOUT_MS = 300000;
 
 function runSignTool(signtoolPath, args, options = {}) {
   const timeoutMs =
@@ -88,7 +89,7 @@ module.exports = async function signWindowsArtifact(configuration) {
 
   const timestampUrls = getTimestampUrls();
   const maxAttemptsPerUrl = 1;
-  const timeoutMs = Number(process.env.WIN_SIGNTOOL_TIMEOUT_MS || 60000);
+  const timeoutMs = Number(process.env.WIN_SIGNTOOL_TIMEOUT_MS || DEFAULT_SIGNTOOL_TIMEOUT_MS);
   const requireTimestamp = String(process.env.WIN_REQUIRE_TIMESTAMP || "").toLowerCase() === "true";
   const errors = [];
 
