@@ -444,6 +444,7 @@ interface IElectronAPI {
       serviceName: string;
       displayName: string;
       description: string;
+      executionReminder?: string;
       providerSkill: string;
       price: string;
       currency: string;

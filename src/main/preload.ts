@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('electron', {
       serviceName: string;
       displayName: string;
       description: string;
+      executionReminder?: string;
       providerSkill: string;
       price: string;
       currency: string;
@@ -133,6 +134,7 @@ contextBridge.exposeInMainWorld('electron', {
       serviceName?: string;
       displayName?: string;
       description?: string;
+      executionReminder?: string;
       providerSkill?: string;
       price?: string;
       currency?: string;

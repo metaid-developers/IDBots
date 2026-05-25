@@ -175,6 +175,33 @@ test('order prompt user message strips order transport metadata and keeps only t
   assert.doesNotMatch(userPrompt, /支付金额|txid|service id|skill name/i);
 });
 
+test('order prompt includes preset execution reminder before the order context', () => {
+  const { systemPrompt, userPrompt } = buildOrderPrompts({
+    plaintext: [
+      '[ORDER] 请查询天气。',
+      '<raw_request>',
+      '请查询东京今晚到明早的天气。',
+      '</raw_request>',
+      'service id: svc-weather',
+      'skill name: weather',
+    ].join('\n'),
+    source: 'metaweb_private',
+    metabotName: 'OrderBot',
+    peerName: 'Client',
+    skillName: 'weather',
+    executionReminder: '如果用户没指定城市就用北京；如果用户有具体信息就以用户需求为准。',
+  });
+
+  assert.match(systemPrompt, /Preset Skill Execution Reminder/);
+  assert.match(systemPrompt, /如果用户没指定城市就用北京/);
+  assert.ok(
+    systemPrompt.indexOf('Preset Skill Execution Reminder') < systemPrompt.indexOf('## Current Service Order Context'),
+    'execution reminder should appear before the service order context',
+  );
+  assert.doesNotMatch(userPrompt, /如果用户没指定城市就用北京/);
+  assert.match(userPrompt, /Execution request:\n请查询东京今晚到明早的天气。/);
+});
+
 test('order prompt tells seller that acknowledgement is sent before execution and final result must arrive within fifteen minutes', () => {
   const { systemPrompt } = buildOrderPrompts({
     plaintext: 'Please deliver the result',

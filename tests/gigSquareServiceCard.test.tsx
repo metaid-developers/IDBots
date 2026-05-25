@@ -61,3 +61,30 @@ test('GigSquareServiceCard shows SPACE when service currency is MVC', () => {
   assert.match(markup, /1\.25[\s\S]*SPACE/);
   assert.doesNotMatch(markup, /1\.25[\s\S]*MVC/);
 });
+
+test('GigSquareServiceCard does not render publisher execution reminder', () => {
+  const markup = renderToStaticMarkup(
+    <GigSquareServiceCard
+      service={{
+        id: 'svc-3',
+        displayName: 'Weather Reminder Service',
+        serviceName: 'weather-reminder-service',
+        description: 'Public weather service description',
+        executionReminder: '如果用户没指定城市就用北京。',
+        price: '0',
+        currency: 'SPACE',
+        providerMetaId: 'meta-3',
+        providerGlobalMetaId: 'global-3',
+        providerAddress: 'addr-3',
+      }}
+      providerName="Forecast Bot"
+      providerAvatarSrc={null}
+      providerLookupId="global-3"
+      isOnline={true}
+      onOpen={() => {}}
+    />
+  );
+
+  assert.match(markup, /Public weather service description/);
+  assert.doesNotMatch(markup, /如果用户没指定城市就用北京/);
+});

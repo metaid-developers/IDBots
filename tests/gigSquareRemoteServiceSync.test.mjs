@@ -254,6 +254,30 @@ test('parseRemoteSkillServiceItem preserves structured MRC20 settlement metadata
   assert.equal(row.paymentAddress, 'btc-provider-address');
 });
 
+test('parseRemoteSkillServiceItem preserves execution reminder from contentSummary', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-reminder-1',
+    status: 0,
+    operation: 'create',
+    address: 'mvc-provider-address',
+    create_address: 'mvc-provider-address',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    contentSummary: {
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      executionReminder: ' 如果用户没指定城市就用北京。 ',
+      price: '0',
+      currency: 'SPACE',
+      paymentAddress: 'mvc-provider-address',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(row.executionReminder, '如果用户没指定城市就用北京。');
+});
+
 test('parseRemoteSkillServiceRow preserves createAddress and paymentAddress independently', () => {
   const row = parseRemoteSkillServiceRow({
     id: 'svc-row-1',
@@ -264,6 +288,17 @@ test('parseRemoteSkillServiceRow preserves createAddress and paymentAddress inde
   assert.equal(row.providerAddress, 'mvc-provider-address');
   assert.equal(row.createAddress, 'mvc-provider-address');
   assert.equal(row.paymentAddress, 'btc-payment-address');
+});
+
+test('parseRemoteSkillServiceRow falls back to execution reminder stored in content_summary_json', () => {
+  const row = parseRemoteSkillServiceRow({
+    id: 'svc-row-reminder',
+    content_summary_json: JSON.stringify({
+      executionReminder: '如果用户没指定城市就用北京。',
+    }),
+  });
+
+  assert.equal(row.executionReminder, '如果用户没指定城市就用北京。');
 });
 
 test('parseRemoteSkillServiceRow preserves structured MRC20 settlement metadata from content_summary_json', () => {
@@ -373,5 +408,5 @@ test('buildRemoteSkillServiceUpsertStatement emits one placeholder per remote_sk
   assert.ok(parsed);
   const statement = buildRemoteSkillServiceUpsertStatement(parsed);
   assert.equal((statement.sql.match(/\?/g) || []).length, statement.params.length);
-  assert.equal(statement.params.length, 28);
+  assert.equal(statement.params.length, 29);
 });

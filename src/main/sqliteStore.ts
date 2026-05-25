@@ -654,6 +654,7 @@ export class SqliteStore {
         service_icon TEXT,
         provider_meta_bot TEXT,
         provider_skill TEXT,
+        execution_reminder TEXT,
         skill_document TEXT,
         input_type TEXT,
         output_type TEXT,
@@ -1188,6 +1189,10 @@ export class SqliteStore {
       }
       if (!rssColumns.includes('available')) {
         this.db.run('ALTER TABLE remote_skill_service ADD COLUMN available INTEGER NOT NULL DEFAULT 1');
+        this.save();
+      }
+      if (!rssColumns.includes('execution_reminder')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN execution_reminder TEXT');
         this.save();
       }
       // Migration: Add rating columns to remote_skill_service
