@@ -149,6 +149,7 @@
   "providerSkill":"乙方执行的技能名字", //本次服务的乙方本地技能的名字
   "price": "0.001", // 建议用字符串防止精度丢失，或定义为最小单位(satoshi)
   "currency": "SPACE", // 支付币种，SPACE,BTC 和 DOGE
+  "executionReminder": "执行服务时的要点提醒，发布者预设，可为空", // bot 执行技能服务时应与用户需求一起纳入执行上下文
   "skillDocument": "metafile://", // 技能对应的 markdown 文档，默认为空
   "inputType":"text", // text or image or video or zip，默认为text
   "outputType":"text", //text or image, or video or zip，默认为text
