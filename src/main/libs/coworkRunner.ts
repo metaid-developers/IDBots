@@ -6,7 +6,7 @@ import path from 'path';
 import type { Readable } from 'stream';
 import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
-import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentDefinition, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus } from '../coworkStore';
 import { getClaudeCodePath, getCurrentApiConfig, resolveApiConfigForModel, resolveCurrentModelLimits } from './claudeSettings';
 import { loadClaudeSdk } from './claudeSdk';
@@ -197,6 +197,38 @@ export function shouldBlockBuiltinWebTool(toolName: string): boolean {
   }
 
   return false;
+}
+
+export function buildCoworkSdkAgentOverrides(): Record<string, AgentDefinition> {
+  return {
+    Explore: {
+      description: 'Fast read-only agent specialized for exploring codebases.',
+      prompt: `You are a fast read-only codebase exploration agent.
+
+Use the available tools to find files, search code, read relevant implementation, and report concise findings.
+
+Rules:
+- Do not edit, write, create, delete, move, or copy files.
+- Prefer Glob, Grep, Read, and LS for code exploration.
+- Use Bash only for harmless inspection commands when the dedicated file tools are not enough.
+- Return clear findings with relevant absolute file paths.`,
+      disallowedTools: ['Task', 'Edit', 'Write', 'NotebookEdit', 'MultiEdit'],
+      model: 'inherit',
+      criticalSystemReminder_EXPERIMENTAL:
+        'CRITICAL: This is a READ-ONLY task. You CANNOT edit, write, or create files.',
+    },
+    'general-purpose': {
+      description:
+        'General-purpose agent for researching complex questions, searching code, and executing multi-step tasks.',
+      prompt: `You are a general-purpose agent for IDBots Cowork sessions.
+
+Complete the assigned task using the tools available to you. Search broadly when needed, inspect relevant files carefully, and return a detailed writeup when finished.
+
+Follow the user's requested scope. Do not make unrelated changes. When reporting file findings, use absolute paths.`,
+      tools: ['*'],
+      model: 'inherit',
+    },
+  };
 }
 
 function resolveSkillPathFromRoots(
@@ -3367,6 +3399,10 @@ export class CoworkRunner extends EventEmitter {
 
         return { behavior: 'allow', updatedInput };
       },
+    };
+    options.agents = {
+      ...(options.agents as Record<string, AgentDefinition> | undefined),
+      ...buildCoworkSdkAgentOverrides(),
     };
 
     const usedResumeForThisRun = Boolean(activeSession.claudeSessionId);

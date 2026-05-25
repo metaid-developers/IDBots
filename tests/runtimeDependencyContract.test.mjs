@@ -143,3 +143,28 @@ test('Claude SDK CLI patch makes the built-in Explore sub-agent inherit the main
     'Explore must not keep the SDK default haiku override',
   );
 });
+
+test('CoworkRunner injects SDK subagent overrides that inherit the main model', () => {
+  const source = fs.readFileSync(coworkRunnerPath, 'utf8');
+
+  assert.match(
+    source,
+    /buildCoworkSdkAgentOverrides/,
+    'CoworkRunner should build explicit SDK agent overrides instead of depending on SDK built-ins',
+  );
+  assert.match(
+    source,
+    /Explore[\s\S]*?model:\s*'inherit'/,
+    'Explore subagent override should inherit the active Cowork model',
+  );
+  assert.match(
+    source,
+    /'general-purpose'[\s\S]*?model:\s*'inherit'/,
+    'general-purpose subagent override should inherit the active Cowork model',
+  );
+  assert.match(
+    source,
+    /options\.agents\s*=\s*\{[\s\S]*?buildCoworkSdkAgentOverrides\(\)/,
+    'CoworkRunner should pass the overrides through SDK options.agents',
+  );
+});
