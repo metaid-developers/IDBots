@@ -123,11 +123,12 @@ type GetChatSkillsRoutingPromptFn = (
   input: { allowChatSkills?: unknown; allowAllEnabled?: boolean }
 ) => ChatSkillsRoutingPromptResult | Promise<ChatSkillsRoutingPromptResult>;
 type RunPrivateChatSkillTurnFn = (params: {
+  sessionId: string;
   systemPrompt: string;
   userMessage: string;
   metabotId: number;
   activeSkillIds: string[];
-}) => Promise<string>;
+}) => Promise<{ replyText: string; assistantMessageId?: string | null }>;
 type GetListenerConfigFn = () => Partial<ListenerConfig> | null | undefined;
 
 export interface PrivateChatA2AContextMessage {
@@ -2844,18 +2845,24 @@ async function processOne(
       skillsPrompt: canRunChatSkills ? chatSkillsRouting.prompt : null,
     });
     let reply: string;
+    let skillAssistantMessageId: string | null = null;
     try {
       await waitBeforePrivateChatReply(conversationAnalysis.incomingTurnCount);
-      reply = conversationAnalysis.shouldForceBye
-        ? 'bye'
-        : canRunChatSkills && runPrivateChatSkillTurn
-          ? await runPrivateChatSkillTurn({
-              systemPrompt,
-              userMessage: plaintext,
-              metabotId: metabot.id,
-              activeSkillIds: chatSkillsRouting.activeSkillIds,
-            })
-          : await performChat(systemPrompt, plaintext, llmId);
+      if (conversationAnalysis.shouldForceBye) {
+        reply = 'bye';
+      } else if (canRunChatSkills && runPrivateChatSkillTurn) {
+        const skillTurnResult = await runPrivateChatSkillTurn({
+          sessionId,
+          systemPrompt,
+          userMessage: plaintext,
+          metabotId: metabot.id,
+          activeSkillIds: chatSkillsRouting.activeSkillIds,
+        });
+        reply = skillTurnResult.replyText;
+        skillAssistantMessageId = skillTurnResult.assistantMessageId ?? null;
+      } else {
+        reply = await performChat(systemPrompt, plaintext, llmId);
+      }
     } catch (e) {
       rethrowSqliteWasmBoundsError(e);
       emitLog(`[PrivateChat] LLM failed for message ${row.id}: ${e instanceof Error ? e.message : e}`);
@@ -2869,14 +2876,41 @@ async function processOne(
       return;
     }
 
-    const assistantMessage = appendPrivateChatA2AMessage({
-      coworkStore,
-      sessionId,
-      externalConversationId,
-      type: 'assistant',
-      content: trimmed,
-      emitToRenderer,
-    });
+    let assistantMessage: CoworkMessage | null = null;
+    if (skillAssistantMessageId) {
+      const existingAssistant = coworkStore.getSession(sessionId)?.messages.find((message) => (
+        message.id === skillAssistantMessageId && message.type === 'assistant'
+      ));
+      if (existingAssistant) {
+        const metadata: CoworkMessageMetadata = {
+          ...(existingAssistant.metadata ?? {}),
+          sourceChannel: 'metaweb_private',
+          externalConversationId,
+          direction: 'outgoing',
+        };
+        coworkStore.updateMessage(sessionId, existingAssistant.id, { metadata });
+        existingAssistant.metadata = metadata;
+        assistantMessage = existingAssistant;
+        if (emitToRenderer) {
+          emitToRenderer('cowork:stream:messageUpdate', {
+            sessionId,
+            messageId: existingAssistant.id,
+            metadata,
+          });
+        }
+      }
+    }
+
+    if (!assistantMessage) {
+      assistantMessage = appendPrivateChatA2AMessage({
+        coworkStore,
+        sessionId,
+        externalConversationId,
+        type: 'assistant',
+        content: trimmed,
+        emitToRenderer,
+      });
+    }
 
     if (memoryPolicy.memoryEnabled) {
       try {

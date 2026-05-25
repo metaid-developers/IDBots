@@ -86,7 +86,7 @@ import {
   stopPrivateChatDaemon,
 } from './services/privateChatDaemon';
 import { performChatCompletionForOrchestrator } from './services/cognitiveChatCompletion';
-import { runOrchestratorSkillTurn } from './services/orchestratorCoworkBridge';
+import { runOrchestratorSkillTurn, runSkillTurnInExistingSession } from './services/orchestratorCoworkBridge';
 import { createPin, getPinData } from './services/metaidCore';
 import { shouldForwardCoworkStreamEvent } from './services/coworkStreamForwarding';
 import type { DiscoverySnapshot } from './services/providerDiscoveryService';
@@ -2535,14 +2535,12 @@ const startSqliteDaemons = (): void => {
     async (params) => {
       const roots = skillMgr.getAllSkillRoots();
       const cwd = roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot();
-      return runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), {
+      return runSkillTurnInExistingSession(getCoworkRunner(), getCoworkStore(), {
+        sessionId: params.sessionId,
         systemPrompt: params.systemPrompt,
         userMessage: params.userMessage,
         cwd,
-        metabotId: params.metabotId,
-        triggerReason: 'PrivateChat',
         activeSkillIds: params.activeSkillIds,
-        sourceChannel: 'metaweb_private',
       });
     }
   );

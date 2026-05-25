@@ -23,6 +23,20 @@ export interface RunOrchestratorSkillTurnParams {
   sourceChannel?: 'metaweb_group' | 'metaweb_private' | 'orchestrator';
 }
 
+export interface RunExistingSessionSkillTurnParams {
+  sessionId: string;
+  systemPrompt: string;
+  userMessage: string;
+  cwd: string;
+  activeSkillIds?: string[];
+  disableRemoteServicesPrompt?: boolean;
+}
+
+export interface RunExistingSessionSkillTurnResult {
+  replyText: string;
+  assistantMessageId: string | null;
+}
+
 /**
  * Run one skill turn using CoworkRunner: create a new session,
  * startSession with autoApprove, wait for 'complete', extract last assistant
@@ -163,6 +177,107 @@ export function runOrchestratorSkillTurn(
       })
       .catch((err) => {
         console.error('[Orchestrator] [Bridge] startSession rejected:', err instanceof Error ? err.message : String(err));
+        if (!settled) fail(err instanceof Error ? err : new Error(String(err)));
+      });
+  });
+}
+
+/**
+ * Run one skill turn inside an existing session. This is used by ordinary
+ * private chat so tool_use/tool_result/assistant output stays in the current
+ * A2A window instead of opening a separate "[Orchestrator] skill-turn" session.
+ */
+export function runSkillTurnInExistingSession(
+  runner: CoworkRunner,
+  store: CoworkStore,
+  params: RunExistingSessionSkillTurnParams
+): Promise<RunExistingSessionSkillTurnResult> {
+  const {
+    sessionId,
+    systemPrompt,
+    userMessage,
+    cwd,
+    activeSkillIds = [],
+    disableRemoteServicesPrompt = true,
+  } = params;
+
+  const session = store.getSession(sessionId);
+  if (!session) {
+    return Promise.reject(new Error(`Skill turn session ${sessionId} not found`));
+  }
+
+  return new Promise<RunExistingSessionSkillTurnResult>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      runner.off('complete', onComplete);
+      runner.off('error', onError);
+      if (timeoutId != null) clearTimeout(timeoutId);
+    };
+
+    const finish = (result: RunExistingSessionSkillTurnResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const fail = (err: string | Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        store.updateSession(sessionId, { status: 'error' });
+      } catch (e) {
+        console.warn('[Orchestrator] Failed to mark existing skill session error:', e);
+      }
+      reject(typeof err === 'string' ? new Error(err) : err);
+    };
+
+    const onComplete = (sid: string) => {
+      if (sid !== sessionId) return;
+      const sessionWithMessages = store.getSession(sessionId);
+      const messages = sessionWithMessages?.messages ?? [];
+      let lastAssistantContent = '';
+      let lastAssistantMessageId: string | null = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].type === 'assistant' && messages[i].content) {
+          lastAssistantContent = String(messages[i].content).trim();
+          lastAssistantMessageId = messages[i].id;
+          break;
+        }
+      }
+      finish({
+        replyText: lastAssistantContent || '',
+        assistantMessageId: lastAssistantMessageId,
+      });
+    };
+
+    const onError = (sid: string, errorMessage: string) => {
+      if (sid !== sessionId) return;
+      fail(errorMessage);
+    };
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      timeoutId = null;
+      fail(`Skill turn timed out after ${SKILL_TURN_TIMEOUT_MS / 1000}s`);
+    }, SKILL_TURN_TIMEOUT_MS);
+
+    runner.on('complete', onComplete);
+    runner.on('error', onError);
+
+    runner
+      .startSession(sessionId, userMessage, {
+        skipInitialUserMessage: true,
+        skillIds: activeSkillIds,
+        systemPrompt,
+        autoApprove: true,
+        disableMemoryUpdates: true,
+        disableRemoteServicesPrompt,
+        confirmationMode: 'text',
+        workspaceRoot: cwd,
+      })
+      .catch((err) => {
+        console.error('[Orchestrator] [Bridge] start existing session rejected:', err instanceof Error ? err.message : String(err));
         if (!settled) fail(err instanceof Error ? err : new Error(String(err)));
       });
   });
