@@ -83,45 +83,68 @@ module.exports = async function signWindowsArtifact(configuration) {
   const thumbprint = (process.env.WIN_CERT_SHA1 || "")
     .replace(/[^A-Fa-f0-9]/g, "")
     .toUpperCase();
-  if (!thumbprint) {
-    throw new Error("windows-sign: WIN_CERT_SHA1 is required.");
-  }
+  const enableAutoSelectFallback =
+    String(process.env.WIN_CERT_AUTO_SELECT || "true").toLowerCase() !== "false";
 
   const timestampUrls = getTimestampUrls();
   const maxAttemptsPerUrl = 1;
   const timeoutMs = Number(process.env.WIN_SIGNTOOL_TIMEOUT_MS || DEFAULT_SIGNTOOL_TIMEOUT_MS);
   const requireTimestamp = String(process.env.WIN_REQUIRE_TIMESTAMP || "").toLowerCase() === "true";
   const errors = [];
+  const signingProfiles = [];
 
-  for (const timestampUrl of timestampUrls) {
-    for (let attempt = 1; attempt <= maxAttemptsPerUrl; attempt += 1) {
-      const args = [
-        "sign",
-        "/sha1",
-        thumbprint,
-        "/fd",
-        "SHA256",
-        "/tr",
-        timestampUrl,
-        "/td",
-        "SHA256",
-        "/v",
-        filePath
-      ];
+  if (thumbprint) {
+    signingProfiles.push({
+      name: `thumbprint ${thumbprint}`,
+      certArgs: ["/sha1", thumbprint]
+    });
+  }
+  if (enableAutoSelectFallback) {
+    signingProfiles.push({
+      name: "auto certificate selection",
+      certArgs: ["/a"]
+    });
+  }
 
-      try {
-        if (attempt > 1 || timestampUrls.length > 1) {
-          console.log(
-            `[windows-sign] retrying with timestamp server ${timestampUrl} (attempt ${attempt}/${maxAttemptsPerUrl})`
+  if (signingProfiles.length === 0) {
+    throw new Error(
+      "windows-sign: no certificate selection strategy available. Set WIN_CERT_SHA1 or enable WIN_CERT_AUTO_SELECT."
+    );
+  }
+
+  for (const profile of signingProfiles) {
+    console.log(`[windows-sign] signing ${filePath} using ${profile.name}`);
+    for (const timestampUrl of timestampUrls) {
+      for (let attempt = 1; attempt <= maxAttemptsPerUrl; attempt += 1) {
+        const args = [
+          "sign",
+          ...profile.certArgs,
+          "/fd",
+          "SHA256",
+          "/tr",
+          timestampUrl,
+          "/td",
+          "SHA256",
+          "/v",
+          filePath
+        ];
+
+        try {
+          if (attempt > 1 || timestampUrls.length > 1) {
+            console.log(
+              `[windows-sign] retrying with timestamp server ${timestampUrl} (attempt ${attempt}/${maxAttemptsPerUrl})`
+            );
+          }
+          await runSignTool(signtoolPath, args, { timeoutMs });
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push(
+            `profile=${profile.name} timestamp=${timestampUrl} attempt=${attempt} error=${message}`
           );
-        }
-        await runSignTool(signtoolPath, args, { timeoutMs });
-        return;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(`timestamp=${timestampUrl} attempt=${attempt} error=${message}`);
-        if (attempt < maxAttemptsPerUrl) {
-          await sleep(1500);
+          if (attempt < maxAttemptsPerUrl) {
+            await sleep(1500);
+          }
         }
       }
     }
@@ -129,12 +152,19 @@ module.exports = async function signWindowsArtifact(configuration) {
 
   if (!requireTimestamp) {
     console.warn(`[windows-sign] timestamp unavailable, fallback to signing without timestamp for ${filePath}`);
-    await runSignTool(
-      signtoolPath,
-      ["sign", "/sha1", thumbprint, "/fd", "SHA256", "/v", filePath],
-      { timeoutMs }
-    );
-    return;
+    for (const profile of signingProfiles) {
+      try {
+        await runSignTool(
+          signtoolPath,
+          ["sign", ...profile.certArgs, "/fd", "SHA256", "/v", filePath],
+          { timeoutMs }
+        );
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`profile=${profile.name} timestamp=none attempt=1 error=${message}`);
+      }
+    }
   }
 
   throw new Error(`windows-sign: all timestamp attempts failed:\n${errors.join("\n")}`);
