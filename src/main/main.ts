@@ -2479,6 +2479,7 @@ const startSqliteDaemons = (): void => {
             globalmetaid: m.globalmetaid ?? null,
             metaid: m.metaid,
             boss_global_metaid: m.boss_global_metaid ?? null,
+            allow_chat_skills: m.allow_chat_skills ?? [],
           }
         : null;
     },
@@ -2501,10 +2502,8 @@ const startSqliteDaemons = (): void => {
       });
     },
     {
-      getSkillsPromptForIds: (ids: string[]) =>
-        skillMgr.buildAutoRoutingPromptForSkillIds(
-          ids.length > 0 ? ids : skillMgr.listSkills().map((s) => s.id),
-        ),
+      getSkillsPromptForIds: (ids: string[]) => skillMgr.buildAutoRoutingPromptForSkillIds(ids),
+      getChatSkillsRoutingPrompt: (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
       skillsRoots: skillMgr.getAllSkillRoots(),
       runSkillTurnViaCowork: (params) =>
         runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
@@ -2531,7 +2530,21 @@ const startSqliteDaemons = (): void => {
     },
     getListenerConfigFromStore,
     resolveGigSquareLocalServiceOutputType,
-    () => triggerDaemonWasmRecovery('privateChatDaemon')
+    () => triggerDaemonWasmRecovery('privateChatDaemon'),
+    async (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
+    async (params) => {
+      const roots = skillMgr.getAllSkillRoots();
+      const cwd = roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot();
+      return runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), {
+        systemPrompt: params.systemPrompt,
+        userMessage: params.userMessage,
+        cwd,
+        metabotId: params.metabotId,
+        triggerReason: 'PrivateChat',
+        activeSkillIds: params.activeSkillIds,
+        sourceChannel: 'metaweb_private',
+      });
+    }
   );
 };
 

@@ -18,6 +18,9 @@ export interface RunOrchestratorSkillTurnParams {
   triggerReason?: string;
   supervisorGlobalmetaid?: string | null;
   latestMessageSenderGlobalmetaid?: string | null;
+  activeSkillIds?: string[];
+  disableRemoteServicesPrompt?: boolean;
+  sourceChannel?: 'metaweb_group' | 'metaweb_private' | 'orchestrator';
 }
 
 /**
@@ -39,6 +42,9 @@ export function runOrchestratorSkillTurn(
     triggerReason,
     supervisorGlobalmetaid,
     latestMessageSenderGlobalmetaid,
+    activeSkillIds = [],
+    disableRemoteServicesPrompt = true,
+    sourceChannel,
   } = params;
 
   const now = Date.now();
@@ -50,19 +56,17 @@ export function runOrchestratorSkillTurn(
     ? `metaweb-group:${normalizedGroupId}:${now}`
     : `orchestrator:${now}`;
 
-  const hasAvailableSkills = systemPrompt.includes('<available_skills>');
-
   const session = store.createSession(
     sessionTitle,
     cwd,
     systemPrompt,
     'local',
-    [],
+    activeSkillIds,
     metabotId ?? null
   );
   const sessionId = session.id;
 
-  if (normalizedGroupId) {
+  if (normalizedGroupId && sourceChannel !== 'metaweb_private') {
     try {
       store.upsertConversationMapping({
         channel: 'metaweb_group',
@@ -79,9 +83,10 @@ export function runOrchestratorSkillTurn(
     type: 'user',
     content: userMessage,
     metadata: {
-      sourceChannel: normalizedGroupId ? 'metaweb_group' : 'orchestrator',
+      sourceChannel: sourceChannel ?? (normalizedGroupId ? 'metaweb_group' : 'orchestrator'),
       externalConversationId,
       groupId: normalizedGroupId || undefined,
+      skillIds: activeSkillIds,
       triggerReason,
       supervisorGlobalmetaid: supervisorGlobalmetaid ?? undefined,
       latestMessageSenderGlobalmetaid: latestMessageSenderGlobalmetaid ?? undefined,
@@ -148,9 +153,11 @@ export function runOrchestratorSkillTurn(
     runner
       .startSession(sessionId, userMessage, {
         skipInitialUserMessage: true,
+        skillIds: activeSkillIds,
         systemPrompt,
         autoApprove: true,
         disableMemoryUpdates: true,
+        disableRemoteServicesPrompt,
         confirmationMode: 'text',
         workspaceRoot: cwd,
       })

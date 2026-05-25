@@ -22,6 +22,11 @@ export type SkillRecord = {
   skillPath: string;
 };
 
+export type ChatSkillsRoutingPromptResult = {
+  prompt: string | null;
+  activeSkillIds: string[];
+};
+
 type SkillStateMap = Record<string, { enabled: boolean }>;
 
 type EmailConnectivityCheckCode = 'imap_connection' | 'smtp_connection';
@@ -1018,6 +1023,85 @@ export class SkillManager {
     });
   }
 
+  private normalizeChatSkillAllowList(value: unknown): string[] {
+    let rawItems: unknown[] = [];
+    if (Array.isArray(value)) {
+      rawItems = value;
+    } else if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        rawItems = [];
+      } else {
+        try {
+          const parsed = JSON.parse(trimmed) as unknown;
+          rawItems = Array.isArray(parsed) ? parsed : [trimmed];
+        } catch {
+          rawItems = trimmed.split(',');
+        }
+      }
+    } else if (value != null) {
+      rawItems = [value];
+    }
+
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const item of rawItems) {
+      const id = String(item ?? '').trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push(id);
+    }
+    return normalized;
+  }
+
+  resolveChatSkillIds(input: {
+    allowChatSkills?: unknown;
+    isOwner?: boolean;
+  } = {}): string[] {
+    const skills = this.listSkills();
+    const enabledSkills = skills.filter((skill) => skill.enabled && skill.prompt);
+    if (input.isOwner) {
+      return enabledSkills.map((skill) => skill.id);
+    }
+
+    const resolvedIds: string[] = [];
+    const seen = new Set<string>();
+    for (const candidate of this.normalizeChatSkillAllowList(input.allowChatSkills)) {
+      const resolved =
+        this.resolveSkillById(candidate, enabledSkills)
+        || this.resolveSkillByName(candidate, enabledSkills);
+      if (!resolved || seen.has(resolved.id)) continue;
+      seen.add(resolved.id);
+      resolvedIds.push(resolved.id);
+    }
+    return resolvedIds;
+  }
+
+  buildChatSkillsRoutingPrompt(input: {
+    allowChatSkills?: unknown;
+    allowAllEnabled?: boolean;
+  } = {}): ChatSkillsRoutingPromptResult {
+    const skills = this.listSkills();
+    const enabledSkills = skills.filter((skill) => skill.enabled && skill.prompt);
+    if (input.allowAllEnabled) {
+      const activeSkillIds = this.resolveChatSkillIds({ isOwner: true });
+      return {
+        prompt: this.buildScopedRoutingPrompt(enabledSkills),
+        activeSkillIds,
+      };
+    }
+
+    const activeSkillIds = this.resolveChatSkillIds({ allowChatSkills: input.allowChatSkills });
+    const activeSkills = activeSkillIds
+      .map((skillId) => enabledSkills.find((skill) => skill.id === skillId))
+      .filter((skill): skill is SkillRecord => Boolean(skill));
+
+    return {
+      prompt: this.buildScopedRoutingPrompt(activeSkills),
+      activeSkillIds,
+    };
+  }
+
   buildCoworkAutoRoutingPrompt(): string | null {
     const skills = this.listSkills();
     const enabled = skills.filter((skill) => skill.enabled && skill.prompt);
@@ -1080,7 +1164,7 @@ export class SkillManager {
 
   /**
    * Same format as buildAutoRoutingPrompt but restricted to skills whose id is in skillIds.
-   * Used by cognitive orchestrator for allowed_skills (no enabled/prompt filter).
+   * Used by chat runtimes for scoped skill routing; disabled or promptless skills are excluded.
    */
   buildAutoRoutingPromptForSkillIds(skillIds: string[]): string | null {
     if (skillIds.length === 0) return null;
@@ -1089,7 +1173,7 @@ export class SkillManager {
         .flatMap((id) => this.getSkillIdCandidates(id))
         .filter(Boolean)
     );
-    const skills = this.listSkills().filter((s) => set.has(s.id));
+    const skills = this.listSkills().filter((s) => set.has(s.id) && s.enabled && s.prompt);
     return this.buildScopedRoutingPrompt(skills);
   }
 
