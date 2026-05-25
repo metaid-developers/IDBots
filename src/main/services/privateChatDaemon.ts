@@ -115,6 +115,19 @@ type GetSellerOrderSkillsPromptFn = (params: {
   skillId?: string | null;
   skillName?: string | null;
 }) => Promise<string | null>;
+type ChatSkillsRoutingPromptResult = {
+  prompt: string | null;
+  activeSkillIds: string[];
+};
+type GetChatSkillsRoutingPromptFn = (
+  input: { allowChatSkills?: unknown; allowAllEnabled?: boolean }
+) => ChatSkillsRoutingPromptResult | Promise<ChatSkillsRoutingPromptResult>;
+type RunPrivateChatSkillTurnFn = (params: {
+  systemPrompt: string;
+  userMessage: string;
+  metabotId: number;
+  activeSkillIds: string[];
+}) => Promise<string>;
 type GetListenerConfigFn = () => Partial<ListenerConfig> | null | undefined;
 
 export interface PrivateChatA2AContextMessage {
@@ -573,8 +586,13 @@ export function buildPrivateChatA2ASystemPrompt(params: {
   };
   memoryContext?: string;
   analysis: PrivateChatA2AAnalysis;
+  skillsPrompt?: string | null;
 }): string {
   const localName = params.metabot.name || 'Local Bot';
+  const allowedSkillsPrompt =
+    !params.analysis.shouldForceBye && typeof params.skillsPrompt === 'string'
+      ? params.skillsPrompt.trim()
+      : '';
   const contextLines = params.analysis.contextMessages.length > 0
     ? params.analysis.contextMessages.map((message) => {
         const speaker = message.direction === 'outgoing' ? localName : message.speaker;
@@ -588,6 +606,9 @@ export function buildPrivateChatA2ASystemPrompt(params: {
   const forceByeRule = params.analysis.shouldForceBye
     ? '- This active conversation has reached the 30 turns limit. Reply exactly "bye" now, with no other text.'
     : '- If the conversation no longer seems likely to produce useful new information, end the topic by replying exactly "bye".';
+  const skillPolicyRule = allowedSkillsPrompt
+    ? '- You may use only the local skills listed in <available_skills> when they clearly help answer the latest private-chat message.'
+    : '- Do not claim local tool access or execute local skills in this regular private chat.';
 
   return [
     buildPrivateReplySystemPrompt(params.metabot),
@@ -600,11 +621,19 @@ export function buildPrivateChatA2ASystemPrompt(params: {
     '- Avoid empty pleasantries, loops, repeated introductions, and generic filler.',
     '- You do not need to reply to every message; reply only to the latest meaningful message.',
     '- If the latest message is clearly meaningless placeholder or closing content, such as "Thinking...", "....", or "bye", do not reply.',
-    '- Do not claim local tool access or execute local skills in this regular private chat.',
+    skillPolicyRule,
     forceByeRule,
     closingPhaseRule,
     '- When you say "bye", say exactly "bye" and nothing else.',
     `- Active incoming turn count: ${params.analysis.incomingTurnCount}/${PRIVATE_CHAT_MAX_INCOMING_TURNS} turns.`,
+    ...(allowedSkillsPrompt
+      ? [
+          '',
+          allowedSkillsPrompt,
+          '',
+          'After using Read/Bash to run a skill, reply concisely in the private chat. Do not paste full skill logs.',
+        ]
+      : []),
     '',
     '## Active Private Chat Context',
     ...contextLines,
@@ -1733,7 +1762,9 @@ async function processOne(
   emitToRenderer?: (channel: string, data: unknown) => void,
   getListenerConfig?: GetListenerConfigFn,
   resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
-  onWasmBoundsError?: () => void
+  onWasmBoundsError?: () => void,
+  getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn,
+  runPrivateChatSkillTurn?: RunPrivateChatSkillTurnFn
 ): Promise<void> {
   const taskKey = row.pin_id;
   if (thinkingTasks.has(taskKey)) return;
@@ -2782,6 +2813,24 @@ async function processOne(
     const conversationAnalysis = analyzePrivateChatA2AConversation({
       messages: sessionAfterUserMessage?.messages ?? [userMessage],
     });
+    let chatSkillsRouting: ChatSkillsRoutingPromptResult = { prompt: null, activeSkillIds: [] };
+    const shouldUseChatSkills = !conversationAnalysis.shouldForceBye && getChatSkillsRoutingPrompt && runPrivateChatSkillTurn;
+    if (shouldUseChatSkills) {
+      try {
+        chatSkillsRouting = await getChatSkillsRoutingPrompt({
+          allowChatSkills: metabot.allow_chat_skills ?? [],
+          allowAllEnabled: autoReplyPolicy.reason === 'owner',
+        });
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        emitLog(`[PrivateChat] Failed to resolve chat skills for ${metabot.name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const canRunChatSkills = Boolean(
+      chatSkillsRouting.prompt
+      && chatSkillsRouting.activeSkillIds.length > 0
+      && runPrivateChatSkillTurn
+    );
     const systemPrompt = buildPrivateChatA2ASystemPrompt({
       metabot: {
         name: metabot.name,
@@ -2792,13 +2841,21 @@ async function processOne(
       },
       memoryContext,
       analysis: conversationAnalysis,
+      skillsPrompt: canRunChatSkills ? chatSkillsRouting.prompt : null,
     });
     let reply: string;
     try {
       await waitBeforePrivateChatReply(conversationAnalysis.incomingTurnCount);
       reply = conversationAnalysis.shouldForceBye
         ? 'bye'
-        : await performChat(systemPrompt, plaintext, llmId);
+        : canRunChatSkills && runPrivateChatSkillTurn
+          ? await runPrivateChatSkillTurn({
+              systemPrompt,
+              userMessage: plaintext,
+              metabotId: metabot.id,
+              activeSkillIds: chatSkillsRouting.activeSkillIds,
+            })
+          : await performChat(systemPrompt, plaintext, llmId);
     } catch (e) {
       rethrowSqliteWasmBoundsError(e);
       emitLog(`[PrivateChat] LLM failed for message ${row.id}: ${e instanceof Error ? e.message : e}`);
@@ -2920,6 +2977,8 @@ export function startPrivateChatDaemon(
   getListenerConfig?: GetListenerConfigFn,
   resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
   onWasmBoundsError?: () => void,
+  getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn,
+  runPrivateChatSkillTurn?: RunPrivateChatSkillTurnFn,
 ): void {
   void stopPrivateChatDaemon();
   const daemonGeneration = ++privateChatDaemonGeneration;
@@ -2978,6 +3037,8 @@ export function startPrivateChatDaemon(
               getListenerConfig,
               resolveLocalServiceOutputType,
               onWasmBoundsError,
+              getChatSkillsRoutingPrompt,
+              runPrivateChatSkillTurn,
             );
           } catch (e) {
             console.error('[PrivateChat] processOne error:', e);

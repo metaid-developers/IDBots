@@ -940,6 +940,7 @@ export class SqliteStore {
         llm_id TEXT,
         tools TEXT DEFAULT '[]',
         skills TEXT DEFAULT '[]',
+        allow_chat_skills TEXT DEFAULT '[]',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (wallet_id) REFERENCES metabot_wallets(id) ON DELETE RESTRICT,
@@ -954,6 +955,8 @@ export class SqliteStore {
     this.migrateMetabotInfoPinidOptional();
     // Migration: make chat_public_key_pin_id optional (same pattern - placeholder before on-chain push)
     this.migrateChatPublicKeyPinIdOptional();
+    // Migration: add allow_chat_skills for private-chat allowlist storage
+    this.migrateMetabotAllowChatSkills();
 
     // Migrations - safely add columns if they don't exist
     try {
@@ -1393,6 +1396,7 @@ export class SqliteStore {
         llm_id TEXT,
         tools TEXT DEFAULT '[]',
         skills TEXT DEFAULT '[]',
+        allow_chat_skills TEXT DEFAULT '[]',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL${hasAvatarBlob ? ', avatar_blob BLOB' : ''},
         FOREIGN KEY (wallet_id) REFERENCES metabot_wallets(id) ON DELETE RESTRICT,
@@ -1451,6 +1455,7 @@ export class SqliteStore {
         llm_id TEXT,
         tools TEXT DEFAULT '[]',
         skills TEXT DEFAULT '[]',
+        allow_chat_skills TEXT DEFAULT '[]',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL${hasAvatarBlob ? ', avatar_blob BLOB' : ''},
         FOREIGN KEY (wallet_id) REFERENCES metabot_wallets(id) ON DELETE RESTRICT,
@@ -1466,6 +1471,19 @@ export class SqliteStore {
     } catch (e) {
       console.warn('migrateChatPublicKeyPinIdOptional:', e);
       this.db.run('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  private migrateMetabotAllowChatSkills(): void {
+    try {
+      const colsResult = this.db.exec('PRAGMA table_info(metabots)');
+      const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (columns.includes('allow_chat_skills')) return;
+      this.db.run("ALTER TABLE metabots ADD COLUMN allow_chat_skills TEXT DEFAULT '[]'");
+      this.db.run("UPDATE metabots SET allow_chat_skills = '[]' WHERE allow_chat_skills IS NULL OR allow_chat_skills = ''");
+      this.save();
+    } catch (error) {
+      console.warn('migrateMetabotAllowChatSkills:', error);
     }
   }
 

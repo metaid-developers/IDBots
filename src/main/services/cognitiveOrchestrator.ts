@@ -2,7 +2,7 @@
  * Cognitive Orchestrator daemon: goal-oriented multi-agent group chat orchestration.
  * Phase 1: Attention filter (mention + probability/cooldown).
  * Task 12.2: Context assembly, LLM reply, /protocols/simplegroupchat broadcast.
- * Task 12.4: Cowork-style skill list + Read/Bash only (no per-skill OpenAI tools), Boss trigger only.
+ * Task 12.4: Cowork-style skill list + Read/Bash only (no per-skill OpenAI tools).
  */
 
 import type { SqliteDatabase as Database } from '../sqliteTypes';
@@ -74,6 +74,8 @@ export interface MetabotInfo {
   metaid?: string;
   /** Human owner GlobalMetaID (metabots.boss_global_metaid); privileged for Boss skill path when sender matches. */
   boss_global_metaid?: string | null;
+  /** Skills allowed for ordinary chat skill turns. */
+  allow_chat_skills?: string[];
 }
 
 type GetMetabotByIdFn = (id: number) => MetabotInfo | null;
@@ -101,6 +103,20 @@ export type ChatWithToolsFn = (
 /** Build skill-list prompt for given ids (from SkillManager.buildAutoRoutingPromptForSkillIds). */
 export type GetSkillsPromptForIdsFn = (skillIds: string[]) => string | null;
 
+export type ChatSkillsRoutingPromptInput = {
+  allowChatSkills?: unknown;
+  allowAllEnabled?: boolean;
+};
+
+export type ChatSkillsRoutingPromptResult = {
+  prompt: string | null;
+  activeSkillIds: string[];
+};
+
+export type GetChatSkillsRoutingPromptFn = (
+  input: ChatSkillsRoutingPromptInput
+) => ChatSkillsRoutingPromptResult;
+
 /** Run one skill turn via CoworkRunner (reuse Cowork Read/Bash logic). When provided and useToolLoop, used instead of in-orchestrator Read/Bash loop. */
 export type RunSkillTurnViaCoworkFn = (params: {
   systemPrompt: string;
@@ -111,6 +127,7 @@ export type RunSkillTurnViaCoworkFn = (params: {
   triggerReason?: string;
   supervisorGlobalmetaid?: string | null;
   latestMessageSenderGlobalmetaid?: string | null;
+  activeSkillIds?: string[];
 }) => Promise<string>;
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -530,7 +547,7 @@ async function executeBash(
 
 /**
  * Run the reply pipeline: context -> prompt -> LLM (with optional tool loop) -> broadcast -> update state.
- * Local skills (skill list + Read/Bash / Cowork) run only when triggerReason === 'Boss'.
+ * Boss turns can use all enabled skills; other chat turns use the MetaBot chat allowlist.
  * Must be wrapped in try/catch and finally(thinkingTasks.delete).
  */
 async function runReplyPipeline(
@@ -542,6 +559,7 @@ async function runReplyPipeline(
   broadcastGroupChat: BroadcastGroupChatFn,
   options?: {
     getSkillsPromptForIds?: GetSkillsPromptForIdsFn;
+    getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn;
     skillsRoot?: string;
     skillsRoots?: string[];
     chatWithToolsOverride?: ChatWithToolsFn;
@@ -549,7 +567,14 @@ async function runReplyPipeline(
   },
   triggerReason: TriggerReason = 'Probability'
 ): Promise<void> {
-  const { getSkillsPromptForIds, skillsRoot, skillsRoots, chatWithToolsOverride, runSkillTurnViaCowork } = options ?? {};
+  const {
+    getSkillsPromptForIds,
+    getChatSkillsRoutingPrompt,
+    skillsRoot,
+    skillsRoots,
+    chatWithToolsOverride,
+    runSkillTurnViaCowork,
+  } = options ?? {};
   const allowedRoots = skillsRoots?.length ? skillsRoots : skillsRoot ? [skillsRoot] : [];
   const metabot = getMetabotById(task.metabot_id);
   if (!metabot) {
@@ -592,11 +617,21 @@ async function runReplyPipeline(
     ownerGlobalMetaid
   );
 
-  const allowedSkillIds = parseAllowedSkillIds(task.allowed_skills);
-  const skillsPrompt =
-    triggerReason === 'Boss' && getSkillsPromptForIds && allowedRoots.length > 0
-      ? getSkillsPromptForIds(allowedSkillIds)
+  const deprecatedAllowedSkillIds = parseAllowedSkillIds(task.allowed_skills);
+  const chatSkillRouting =
+    getChatSkillsRoutingPrompt && allowedRoots.length > 0
+      ? getChatSkillsRoutingPrompt(
+          triggerReason === 'Boss'
+            ? { allowAllEnabled: true }
+            : { allowChatSkills: metabot.allow_chat_skills ?? [] }
+        )
       : null;
+  const skillsPrompt =
+    chatSkillRouting?.prompt
+    ?? (triggerReason === 'Boss' && getSkillsPromptForIds && allowedRoots.length > 0
+      ? getSkillsPromptForIds(deprecatedAllowedSkillIds)
+      : null);
+  const activeSkillIds = chatSkillRouting?.activeSkillIds ?? deprecatedAllowedSkillIds;
   const useToolLoop = Boolean(skillsPrompt);
 
   if (useToolLoop) {
@@ -625,6 +660,7 @@ async function runReplyPipeline(
           triggerReason,
           supervisorGlobalmetaid,
           latestMessageSenderGlobalmetaid,
+          activeSkillIds,
         });
       } catch (err) {
         rethrowSqliteWasmBoundsError(err);
@@ -735,9 +771,10 @@ async function runReplyPipeline(
  * Run one orchestrator cycle: fetch active tasks, get new messages per task,
  * apply attention filter; on trigger, enqueue async pipeline and update last_processed_msg_id.
  */
-/** Optional: skill-list prompt and SKILLs root(s); used only when triggerReason === 'Boss'. */
+/** Optional: skill-list prompt and SKILLs root(s). */
 export interface OrchestratorOptions {
   getSkillsPromptForIds?: GetSkillsPromptForIdsFn;
+  getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn;
   skillsRoot?: string;
   /** Multiple roots (userData + bundled); preferred over skillsRoot for Read/Bash. */
   skillsRoots?: string[];

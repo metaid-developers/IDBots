@@ -6,11 +6,13 @@ import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
 import { ALL_PROVIDER_KEYS } from '../../config';
 import type { Metabot } from '../../types/metabot';
+import type { Skill } from '../../types/skill';
 import MetaBotForm, { type MetaBotFormValues, type LlmOption } from './MetaBotForm';
 import MetaBotCreateSuccessModal, { type SyncStepKey } from './MetaBotCreateSuccessModal';
 import MetaBotDeleteConfirmModal from './MetaBotDeleteConfirmModal';
 import MetaBotRestoreMnemonicModal from './MetaBotRestoreMnemonicModal';
 import MetaBotListCard from './MetaBotListCard';
+import { normalizeAllowChatSkills } from './allowChatSkills.ts';
 import { shouldRouteFirstMetabotCreationToOnboarding } from '../onboarding/onboardingGate.js';
 
 type ViewMode = 'list' | 'add' | 'edit';
@@ -38,6 +40,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [editId, setEditId] = useState<number | null>(null);
   const [actionError, setActionError] = useState('');
+  const [skillOptions, setSkillOptions] = useState<Skill[]>([]);
   const [createSuccessModal, setCreateSuccessModal] = useState<{
     metabot: Metabot;
     subsidySuccess: boolean;
@@ -72,6 +75,23 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
   useEffect(() => {
     loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadSkillOptions = async () => {
+      const result = await window.electron.skills.list();
+      if (cancelled) return;
+      setSkillOptions(result.success && result.skills ? result.skills : []);
+    };
+    void loadSkillOptions();
+    const off = window.electron.skills.onChanged(() => {
+      void loadSkillOptions();
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
 
   const filteredList = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -138,6 +158,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
       boss_id: values.boss_id.trim() ? parseInt(values.boss_id, 10) : 1,
       boss_global_metaid: values.boss_global_metaid.trim() || null,
       llm_id: values.llm_id.trim() || null,
+      allow_chat_skills: normalizeAllowChatSkills(values.allow_chat_skills),
     });
     if (!result.success || !result.metabot) {
       setCreateChainStatus('error');
@@ -178,6 +199,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
     const nextBossId = values.boss_id.trim() ? parseInt(values.boss_id, 10) : null;
     const nextBossGlobalMetaId = values.boss_global_metaid.trim() || null;
     const nextLlmRaw = values.llm_id.trim();
+    const nextAllowChatSkills = normalizeAllowChatSkills(values.allow_chat_skills);
 
     const oldName = (current.name || '').trim();
     const oldAvatarRaw = (current.avatar || '').trim();
@@ -188,6 +210,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
     const oldBossId = current.boss_id ?? null;
     const oldBossGlobalMetaId = current.boss_global_metaid ?? null;
     const oldLlmRaw = (current.llm_id || '').trim();
+    const oldAllowChatSkills = normalizeAllowChatSkills(current.allow_chat_skills);
 
     const syncName = nextName !== oldName;
     const syncAvatar = nextAvatarRaw !== oldAvatarRaw;
@@ -198,7 +221,8 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
       nextBackgroundRaw !== oldBackgroundRaw ||
       nextLlmRaw !== oldLlmRaw ||
       nextBossId !== oldBossId ||
-      nextBossGlobalMetaId !== oldBossGlobalMetaId;
+      nextBossGlobalMetaId !== oldBossGlobalMetaId ||
+      JSON.stringify(nextAllowChatSkills) !== JSON.stringify(oldAllowChatSkills);
 
     const syncStepKeys: SyncStepKey[] = [];
     if (syncName) syncStepKeys.push('name');
@@ -216,6 +240,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
       boss_id: nextBossId,
       boss_global_metaid: nextBossGlobalMetaId,
       llm_id: nextLlmRaw || null,
+      allow_chat_skills: nextAllowChatSkills,
     });
     if (!result.success) {
       throw new Error(result.error || i18nService.t('metabotSaveFailed'));
@@ -232,6 +257,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
       boss_id: nextBossId,
       boss_global_metaid: nextBossGlobalMetaId,
       llm_id: nextLlmRaw || null,
+      allow_chat_skills: nextAllowChatSkills,
     };
     setList((prev) => prev.map((m) => (m.id === editId ? updatedMetabot : m)));
     setViewMode('list');
@@ -296,6 +322,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
           onSave={handleSaveNew}
           saveLabel={i18nService.t('save')}
           llmOptions={llmOptions}
+          skillOptions={skillOptions}
           onRequestModelSettings={onRequestModelSettings}
           onCheckNameExists={handleCheckNameExists}
           excludeIdForNameCheck={null}
@@ -368,12 +395,14 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
             boss_id: editMetabot.boss_id != null ? String(editMetabot.boss_id) : '1',
             boss_global_metaid: editMetabot.boss_global_metaid || '',
             llm_id: editMetabot.llm_id || '',
+            allow_chat_skills: editMetabot.allow_chat_skills || [],
           }}
           isEdit={true}
           onCancel={handleCancelForm}
           onSave={handleSaveEdit}
           saveLabel={i18nService.t('metabotSaveAndSyncChain')}
           llmOptions={llmOptions}
+          skillOptions={skillOptions}
           onRequestModelSettings={onRequestModelSettings}
           onCheckNameExists={handleCheckNameExists}
           excludeIdForNameCheck={editId}

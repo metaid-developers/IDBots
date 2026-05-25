@@ -21,6 +21,7 @@ export interface Metabot {
   llm_id: string | null;
   tools: string[];
   skills: string[];
+  allow_chat_skills: string[];
   created_at: number;
   updated_at: number;
 }

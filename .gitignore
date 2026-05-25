@@ -24,6 +24,10 @@ docs/
 tests/*
 !tests/runtimeDependencyContract.test.mjs
 !tests/p2pIndexerServiceRecovery.test.mjs
+!tests/chatSkillAuthorization.test.mjs
+!tests/orchestratorCoworkBridgeSkillIds.test.mjs
+!tests/groupChatAllowChatSkillsRuntime.test.mjs
+!tests/privateChatAllowChatSkillsPrompt.test.mjs
 !tests/skillManagerOrderSkillPrompt.test.mjs
 !tests/gigSquareOrderMessageBuilder.test.mjs
 !tests/gigSquareOnlineState.test.mjs

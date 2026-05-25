@@ -2479,6 +2479,7 @@ const startSqliteDaemons = (): void => {
             globalmetaid: m.globalmetaid ?? null,
             metaid: m.metaid,
             boss_global_metaid: m.boss_global_metaid ?? null,
+            allow_chat_skills: m.allow_chat_skills ?? [],
           }
         : null;
     },
@@ -2501,10 +2502,8 @@ const startSqliteDaemons = (): void => {
       });
     },
     {
-      getSkillsPromptForIds: (ids: string[]) =>
-        skillMgr.buildAutoRoutingPromptForSkillIds(
-          ids.length > 0 ? ids : skillMgr.listSkills().map((s) => s.id),
-        ),
+      getSkillsPromptForIds: (ids: string[]) => skillMgr.buildAutoRoutingPromptForSkillIds(ids),
+      getChatSkillsRoutingPrompt: (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
       skillsRoots: skillMgr.getAllSkillRoots(),
       runSkillTurnViaCowork: (params) =>
         runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
@@ -2531,7 +2530,21 @@ const startSqliteDaemons = (): void => {
     },
     getListenerConfigFromStore,
     resolveGigSquareLocalServiceOutputType,
-    () => triggerDaemonWasmRecovery('privateChatDaemon')
+    () => triggerDaemonWasmRecovery('privateChatDaemon'),
+    async (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
+    async (params) => {
+      const roots = skillMgr.getAllSkillRoots();
+      const cwd = roots.length > 0 ? roots[roots.length - 1]! : skillMgr.getSkillsRoot();
+      return runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), {
+        systemPrompt: params.systemPrompt,
+        userMessage: params.userMessage,
+        cwd,
+        metabotId: params.metabotId,
+        triggerReason: 'PrivateChat',
+        activeSkillIds: params.activeSkillIds,
+        sourceChannel: 'metaweb_private',
+      });
+    }
   );
 };
 
@@ -6070,6 +6083,7 @@ if (!gotTheLock) {
     boss_id?: number | null;
     boss_global_metaid?: string | null;
     llm_id?: string | null;
+    allow_chat_skills?: string[];
   }) => {
     try {
       const llmId = requireMetabotLlmIdForCreate(input.llm_id);
@@ -6107,6 +6121,7 @@ if (!gotTheLock) {
         llm_id: llmId,
         tools: [],
         skills: [],
+        allow_chat_skills: input.allow_chat_skills ?? [],
       });
       await syncP2PRuntimeConfigForCurrentMetabots();
       return { success: true, metabot };
@@ -6127,6 +6142,7 @@ if (!gotTheLock) {
     boss_id?: number | null;
     boss_global_metaid?: string | null;
     llm_id?: string | null;
+    allow_chat_skills?: string[];
   }) => {
     try {
       await mockUpdateConfigOnChain();
@@ -6154,6 +6170,7 @@ if (!gotTheLock) {
     boss_id?: number | null;
     boss_global_metaid?: string | null;
     llm_id?: string | null;
+    allow_chat_skills?: string[];
     metabot_type?: 'twin' | 'worker';
   }) => {
     try {
@@ -6190,6 +6207,7 @@ if (!gotTheLock) {
         llm_id: llmId,
         tools: [],
         skills: [],
+        allow_chat_skills: input.allow_chat_skills ?? [],
       });
       const subsidyResult = await requestMvcGasSubsidy({
         mvcAddress: metabot.mvc_address,
@@ -6219,6 +6237,7 @@ if (!gotTheLock) {
     boss_id?: number | null;
     boss_global_metaid?: string | null;
     llm_id?: string | null;
+    allow_chat_skills?: string[];
     metabot_type?: 'twin' | 'worker';
   }) => {
     const store = getMetabotStore();
@@ -6274,6 +6293,7 @@ if (!gotTheLock) {
         llm_id: llmId,
         tools: [],
         skills: [],
+        allow_chat_skills: input.allow_chat_skills ?? [],
       });
       metabotId = metabot.id;
 
@@ -6395,6 +6415,7 @@ if (!gotTheLock) {
         llm_id: profile.bio.llm_id ?? null,
         tools: profile.bio.tools ?? [],
         skills: profile.bio.skills ?? [],
+        allow_chat_skills: profile.bio.allowChatSkills ?? [],
       });
 
       console.log('[MetaBot] restore success', { id: metabot.id, name: metabot.name });

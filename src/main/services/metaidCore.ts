@@ -29,6 +29,7 @@ import {
   fetchMvcAddressUtxos,
   filterRecoveredCandidatesByProvider,
 } from './mvcFundingRecoveryService';
+import { buildMetabotBioPayload } from './metabotBioPayload';
 import { requestMvcGasSubsidy } from './mvcSubsidyService';
 
 const MANAPI_BASE = 'https://manapi.metaid.io';
@@ -819,18 +820,19 @@ export async function syncMetaBotToChain(
   // Step 4: Bio (optional on failure)
   log('Step 4: Pinning bio to /info/bio');
   try {
-    const bioObject = {
-      role: metabot.role || '',
-      soul: metabot.soul || '',
-      goal: metabot.goal || '',
-      background: metabot.background || '',
-      llm: metabot.llm_id || '',
+    const bioObject = buildMetabotBioPayload({
+      role: metabot.role,
+      soul: metabot.soul,
+      goal: metabot.goal,
+      background: metabot.background,
+      llm_id: metabot.llm_id,
       tools: metabot.tools ?? [],
       skills: metabot.skills ?? [],
-      boss_id: String(metabot.boss_id ?? '0000'),
-      boss_global_metaid: metabot.boss_global_metaid || '',
-      createdBy: metabot.created_by || '0000',
-    };
+      allow_chat_skills: metabot.allow_chat_skills ?? [],
+      boss_id: metabot.boss_id ?? null,
+      boss_global_metaid: metabot.boss_global_metaid ?? null,
+      created_by: metabot.created_by ?? '0000',
+    });
     const bioJson = JSON.stringify(bioObject);
     log('Bio payload prepared', { length: bioJson.length, keys: Object.keys(bioObject) });
 
@@ -1020,17 +1022,19 @@ export async function syncMetaBotEditChangesToChain(
         });
       } else if (step === 'bio') {
         const bossId = resolveFirstTwinBossId(metabotStore);
-        const bioObject = {
-          role: metabot.role || '',
-          soul: metabot.soul || '',
-          goal: metabot.goal || '',
-          background: metabot.background || '',
-          llm: metabot.llm_id || '',
+        const bioObject = buildMetabotBioPayload({
+          role: metabot.role,
+          soul: metabot.soul,
+          goal: metabot.goal,
+          background: metabot.background,
+          llm_id: metabot.llm_id,
           tools: metabot.tools ?? [],
           skills: metabot.skills ?? [],
+          allow_chat_skills: metabot.allow_chat_skills ?? [],
           boss_id: bossId,
-          createdBy: metabot.created_by || '0000',
-        };
+          boss_global_metaid: metabot.boss_global_metaid ?? null,
+          created_by: metabot.created_by ?? '0000',
+        });
         const bioJson = JSON.stringify(bioObject);
         log('Pinning bio to /info/bio', { bossId, payloadLength: bioJson.length });
         const bioResult = await createPin(metabotStore, metabotId, {

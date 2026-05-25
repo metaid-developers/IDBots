@@ -286,6 +286,7 @@ interface Metabot {
   llm_id: string | null;
   tools: string[];
   skills: string[];
+  allow_chat_skills: string[];
   created_at: number;
   updated_at: number;
 }
@@ -301,6 +302,7 @@ interface MetabotCreateInput {
   boss_id?: number | null;
   boss_global_metaid?: string | null;
   llm_id?: string | null;
+  allow_chat_skills?: string[];
 }
 
 interface MetabotUpdateInput {
@@ -315,6 +317,7 @@ interface MetabotUpdateInput {
   boss_id?: number | null;
   boss_global_metaid?: string | null;
   llm_id?: string | null;
+  allow_chat_skills?: string[];
 }
 
 interface AssignGroupChatTaskParams {
@@ -653,6 +656,7 @@ interface IElectronAPI {
       boss_id?: number | null;
       boss_global_metaid?: string | null;
       llm_id?: string | null;
+      allow_chat_skills?: string[];
       metabot_type?: 'twin' | 'worker';
     }) => Promise<{
       success: boolean;
@@ -782,6 +786,7 @@ interface IElectronAPI {
       boss_id?: number | null;
       boss_global_metaid?: string | null;
       llm_id?: string | null;
+      allow_chat_skills?: string[];
       metabot_type?: 'twin' | 'worker';
     }) => Promise<{
       success: boolean;
