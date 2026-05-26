@@ -202,6 +202,7 @@ import {
   resolveServiceActionAvailability,
   type GigSquareResolvedCurrentService,
 } from './services/gigSquareServiceStateService';
+import { resolveGigSquareServiceExecutionReminderFromRows } from './services/gigSquareExecutionReminderResolver';
 import {
   GIG_SQUARE_MUTATION_SYNC_DELAY_MS,
   buildGigSquareLocalServiceRecordForModify,
@@ -957,19 +958,20 @@ const resolveGigSquareLocalServiceExecutionReminder = (input: {
   const serviceName = toSafeString(input.serviceName).trim();
   if (!serviceId && !serviceName) return null;
   const db = getStore().getDatabase();
-  const readPayloadReminder = (payloadJson: unknown): string | null => {
-    const normalizedPayload = toSafeString(payloadJson).trim();
-    if (!normalizedPayload) return null;
-    try {
-      const parsed = JSON.parse(normalizedPayload) as Record<string, unknown>;
-      const fallback = toSafeString(parsed.executionReminder).trim();
-      return fallback || null;
-    } catch {
-      return null;
-    }
+  const rowsFromResult = (result: Array<{
+    columns?: string[];
+    values?: unknown[][];
+  }>): Record<string, unknown>[] => {
+    const firstResult = result[0];
+    if (!firstResult?.columns || !firstResult.values) return [];
+    return firstResult.values.map((values) => firstResult.columns!.reduce<Record<string, unknown>>((row, column, index) => {
+      row[column] = values[index];
+      return row;
+    }, {}));
   };
   const localResult = db.exec(
-    `SELECT execution_reminder, payload_json
+    `SELECT id, pin_id, source_service_pin_id, current_pin_id, provider_skill, service_name,
+            display_name, execution_reminder, payload_json
      FROM gig_square_services
      WHERE (? != '' AND (
        id = ?
@@ -996,14 +998,10 @@ const resolveGigSquareLocalServiceExecutionReminder = (input: {
       serviceName,
     ]),
   );
-  const localRow = localResult[0]?.values?.[0];
-  const reminder = toSafeString(localRow?.[0]).trim();
-  if (reminder) return reminder;
-  const localPayloadReminder = readPayloadReminder(localRow?.[1]);
-  if (localPayloadReminder) return localPayloadReminder;
 
   const remoteResult = db.exec(
-    `SELECT execution_reminder, content_summary_json
+    `SELECT id, pin_id, source_service_pin_id, provider_skill, service_name,
+            display_name, execution_reminder, content_summary_json
      FROM remote_skill_service
      WHERE (? != '' AND (
        id = ?
@@ -1028,9 +1026,12 @@ const resolveGigSquareLocalServiceExecutionReminder = (input: {
       serviceName,
     ]),
   );
-  const remoteRow = remoteResult[0]?.values?.[0];
-  const remoteReminder = toSafeString(remoteRow?.[0]).trim();
-  return remoteReminder || readPayloadReminder(remoteRow?.[1]);
+  return resolveGigSquareServiceExecutionReminderFromRows({
+    serviceId,
+    serviceName,
+    localRows: rowsFromResult(localResult),
+    remoteRows: rowsFromResult(remoteResult),
+  });
 };
 
 const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
