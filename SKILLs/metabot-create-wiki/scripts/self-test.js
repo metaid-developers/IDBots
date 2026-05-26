@@ -71,6 +71,33 @@ function main() {
     'utf8'
   );
 
+  const missingSkillNameRes = runNode(
+    scaffoldScript,
+    {
+      title: 'Broken Wiki',
+      description: 'Should fail without a skill name.',
+      rawSourceDir,
+      targetRoot: skillsRoot,
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.notEqual(missingSkillNameRes.code, 0);
+  assert.match(missingSkillNameRes.stderr || missingSkillNameRes.stdout, /skillName/i);
+
+  const missingRawSourceRes = runNode(
+    scaffoldScript,
+    {
+      skillName: 'broken-wiki',
+      title: 'Broken Wiki',
+      description: 'Should fail without an existing raw directory.',
+      rawSourceDir: path.join(tempRoot, 'missing-raw'),
+      targetRoot: skillsRoot,
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.notEqual(missingRawSourceRes.code, 0);
+  assert.match(missingRawSourceRes.stderr || missingRawSourceRes.stdout, /rawSourceDir/i);
+
   const scaffoldRes = runNode(
     scaffoldScript,
     {
@@ -141,6 +168,38 @@ function main() {
   assert.equal(buildRes.json?.success, true);
   assert.ok(fs.existsSync(path.join(generatedConfig.workspaceRoot, 'wiki', 'site', 'index.html')));
 
+  const seedOldZipUriRes = runNode(
+    runtimeScript,
+    {
+      action: 'publish_zip',
+      payload: {
+        uploadZip: false,
+        pinUri: 'metafile://old-upload',
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(seedOldZipUriRes.code, 0, seedOldZipUriRes.stderr || seedOldZipUriRes.stdout);
+  assert.equal(seedOldZipUriRes.json?.success, true);
+  assert.equal(seedOldZipUriRes.json?.data?.zipUri, 'metafile://old-upload');
+
+  const snapshotRes = runNode(
+    runtimeScript,
+    {
+      action: 'publish_snapshot',
+      payload: {
+        uploadZip: false,
+        snapshotOnChain: false,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(snapshotRes.code, 0, snapshotRes.stderr || snapshotRes.stdout);
+  assert.equal(snapshotRes.json?.success, true);
+  assert.equal(snapshotRes.json?.data?.publishMode?.zipUriSource, 'payload');
+  assert.match(snapshotRes.json?.data?.snapshot?.zipUri || '', /^file:\/\//);
+  assert.notEqual(snapshotRes.json?.data?.snapshot?.zipUri, 'metafile://old-upload');
+
   const publishRes = runNode(
     runtimeScript,
     {
@@ -155,6 +214,8 @@ function main() {
   assert.equal(publishRes.code, 0, publishRes.stderr || publishRes.stdout);
   assert.equal(publishRes.json?.success, true);
   assert.equal(publishRes.json?.data?.steps?.publish_zip?.skipped, true);
+  assert.match(publishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipUri || '', /^file:\/\//);
+  assert.notEqual(publishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipUri, 'metafile://old-upload');
 
   process.stdout.write('metabot-create-wiki self-test passed\n');
 }

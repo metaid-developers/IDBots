@@ -47,7 +47,7 @@ function slugify(value) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
-  return slug || `wiki-${Date.now().toString(36)}`;
+  return slug;
 }
 
 function isWithin(parent, child) {
@@ -190,10 +190,18 @@ function validatePayload(payload) {
   if (!rawSourceDir) {
     throw new Error('payload.rawSourceDir is required.');
   }
+  if (!fs.existsSync(rawSourceDir) || !fs.statSync(rawSourceDir).isDirectory()) {
+    throw new Error(`payload.rawSourceDir must point to an existing directory: ${rawSourceDir}`);
+  }
 
-  const skillName = slugify(payload.skillName || payload.name || '');
-  if (!skillName) {
+  const rawSkillName = normalizeString(payload.skillName || payload.name);
+  if (!rawSkillName) {
     throw new Error('payload.skillName is required.');
+  }
+
+  const skillName = slugify(rawSkillName);
+  if (!skillName) {
+    throw new Error('payload.skillName must contain letters or numbers.');
   }
 
   const description = normalizeString(payload.description);

@@ -189,6 +189,48 @@ function runRuntime(runtimeScript, payload) {
   return result.stdout || '';
 }
 
+function parseLastJsonLine(stdoutText) {
+  const lines = String(stdoutText || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      return JSON.parse(lines[i]);
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+function runRuntimeJson(runtimeScript, payload) {
+  const output = runRuntime(runtimeScript, payload);
+  const parsed = parseLastJsonLine(output);
+  if (!parsed) {
+    fail('runtime_parse_failed', 'Runtime did not return a JSON envelope.');
+  }
+  if (parsed.success === false) {
+    fail(
+      normalizeString(parsed.error?.code) || 'runtime_failed',
+      normalizeString(parsed.error?.detail) || normalizeString(parsed.message) || 'Runtime action failed'
+    );
+  }
+  return parsed;
+}
+
+function toFileUri(filePath) {
+  return `file://${String(filePath || '').replace(/\\/g, '/')}`;
+}
+
+function isExplicitFalse(value) {
+  if (value === false || value === 0) return true;
+  if (typeof value === 'string') {
+    return value.trim().toLowerCase() === 'false' || value.trim() === '0';
+  }
+  return false;
+}
+
 function syncRawSource(config, workspaceRoot) {
   const source = path.resolve(config.rawSourceDir);
   const workspace = path.resolve(workspaceRoot);
@@ -350,17 +392,115 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
       );
-      runRuntime(
+      const bundleOutput = runRuntime(
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
       );
-      runRuntime(
+      const bundleResult = parseLastJsonLine(bundleOutput);
+      const bundleZipPath = normalizeString(bundleResult?.data?.zipPath);
+      const bundleZipSha256 = normalizeString(bundleResult?.data?.zipSha256);
+      const explicitZipUri = normalizeString(baseInput.payload.zipUri) || normalizeString(baseInput.payload.pinUri);
+      if (!bundleZipPath && !explicitZipUri) {
+        fail('bundle_zip_failed', 'bundle_zip did not return data.zipPath for publish_snapshot.');
+      }
+      const snapshotPayload = {
+        ...baseInput.payload,
+        zipPath: bundleZipPath || baseInput.payload.zipPath,
+        zipUri: explicitZipUri || (bundleZipPath ? toFileUri(bundleZipPath) : baseInput.payload.zipUri),
+        zipSha256: bundleZipSha256 || baseInput.payload.zipSha256,
+      };
+      return runRuntime(
         runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'publish_zip' }, config, workspaceRoot, registryHome)
+        buildActionPayload({ ...baseInput, payload: snapshotPayload }, config, workspaceRoot, registryHome)
       );
-      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'publish_all':
+      if (isExplicitFalse(baseInput.payload.uploadZip) && !normalizeString(baseInput.payload.zipUri) && !normalizeString(baseInput.payload.pinUri)) {
+        const startedAt = Date.now();
+        const warnings = [];
+        const steps = {};
+        const absorbResult = runRuntimeJson(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+        );
+        steps.absorb = absorbResult.data;
+        if (Array.isArray(absorbResult.warnings)) warnings.push(...absorbResult.warnings);
+
+        const skipWikiBuild = baseInput.payload.skipWikiBuild === true;
+        const skipBundle = baseInput.payload.skipBundle === true;
+        const skipSnapshot = baseInput.payload.skipSnapshot === true;
+
+        if (!skipWikiBuild) {
+          const wikiResult = runRuntimeJson(
+            runtimeScript,
+            buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
+          );
+          steps.wiki_build = wikiResult.data;
+          if (Array.isArray(wikiResult.warnings)) warnings.push(...wikiResult.warnings);
+        }
+
+        let effectiveZipPath = normalizeString(baseInput.payload.zipPath);
+        let effectiveZipSha256 = normalizeString(baseInput.payload.zipSha256);
+        if (!skipBundle || !effectiveZipPath) {
+          const bundleResult = runRuntimeJson(
+            runtimeScript,
+            buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+          );
+          steps.bundle_zip = bundleResult.data;
+          if (Array.isArray(bundleResult.warnings)) warnings.push(...bundleResult.warnings);
+          effectiveZipPath = normalizeString(bundleResult.data?.zipPath) || effectiveZipPath;
+          effectiveZipSha256 = normalizeString(bundleResult.data?.zipSha256) || effectiveZipSha256;
+        }
+
+        steps.publish_zip = {
+          skipped: true,
+          reason: 'uploadZip=false and no external zipUri provided; keeping ZIP local.',
+          zipPath: effectiveZipPath,
+          zipSha256: effectiveZipSha256,
+          publishMode: {
+            uploadZip: false,
+            source: 'local_only',
+            explicitUploadZip: true,
+          },
+        };
+
+        if (!skipSnapshot) {
+          const snapshotPayload = {
+            ...baseInput.payload,
+            zipPath: effectiveZipPath,
+            zipUri: effectiveZipPath ? toFileUri(effectiveZipPath) : baseInput.payload.zipUri,
+            zipSha256: effectiveZipSha256,
+          };
+          const snapshotResult = runRuntimeJson(
+            runtimeScript,
+            buildActionPayload({ ...baseInput, action: 'publish_snapshot', payload: snapshotPayload }, config, workspaceRoot, registryHome)
+          );
+          steps.publish_snapshot = snapshotResult.data;
+          if (Array.isArray(snapshotResult.warnings)) warnings.push(...snapshotResult.warnings);
+        }
+
+        return `${JSON.stringify({
+          success: true,
+          action: 'publish_all',
+          kbId: baseInput.kbId,
+          message: 'Publish all pipeline completed',
+          data: {
+            steps,
+            publishMode: {
+              uploadZip: false,
+              snapshotOnChain: baseInput.payload.snapshotOnChain === true || baseInput.payload.publishOnChain === true,
+              snapshotFlagSource: baseInput.payload.snapshotOnChain !== undefined
+                ? 'snapshotOnChain'
+                : (baseInput.payload.publishOnChain !== undefined ? 'publishOnChain' : 'default'),
+            },
+          },
+          warnings,
+          metrics: {
+            elapsedMs: Date.now() - startedAt,
+          },
+        })}\n`;
+      }
+
       runRuntime(
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
