@@ -303,7 +303,15 @@ export class Scheduler {
       .join('\n\n');
     const executionMode = task.executionMode || config.executionMode || 'auto';
 
-    const sessionId = this.getOrCreateTaskCoworkSession(task, cwd, systemPrompt, executionMode);
+    const session = this.coworkStore.createSession(
+      `[定时] ${task.name}`,
+      cwd,
+      systemPrompt,
+      executionMode,
+      [],
+      task.metabotId ?? null
+    );
+    const sessionId = session.id;
 
     // Update session to running
     this.coworkStore.updateSession(sessionId, { status: 'running' });
@@ -326,46 +334,6 @@ export class Scheduler {
     this.assertExecutionCurrent(executionGeneration);
 
     return sessionId;
-  }
-
-  private getOrCreateTaskCoworkSession(
-    task: ScheduledTask,
-    cwd: string,
-    systemPrompt: string,
-    executionMode: 'auto' | 'local' | 'sandbox'
-  ): string {
-    const title = `[定时] ${task.name}`;
-    const metabotId = task.metabotId ?? null;
-    const persistedSessionId = this.store.getTaskSessionId(task.id) ?? task.coworkSessionId;
-    const existingSession = persistedSessionId
-      ? this.coworkStore.getSession(persistedSessionId)
-      : null;
-
-    if (existingSession && (existingSession.metabotId ?? null) === metabotId) {
-      const shouldResetClaudeSession =
-        existingSession.cwd !== cwd
-        || existingSession.systemPrompt !== systemPrompt
-        || existingSession.executionMode !== executionMode;
-      this.coworkStore.updateSession(existingSession.id, {
-        title,
-        cwd,
-        systemPrompt,
-        executionMode,
-        ...(shouldResetClaudeSession ? { claudeSessionId: null } : {}),
-      });
-      return existingSession.id;
-    }
-
-    const session = this.coworkStore.createSession(
-      title,
-      cwd,
-      systemPrompt,
-      executionMode,
-      [],
-      metabotId
-    );
-    this.store.setTaskSessionId(task.id, session.id);
-    return session.id;
   }
 
   // --- IM Notifications ---

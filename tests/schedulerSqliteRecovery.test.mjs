@@ -268,20 +268,21 @@ test('Scheduler does not write task completion state through a stale store after
   assert.equal(staleStoreReads, 0);
 });
 
-test('Scheduler reuses one cowork session for repeated runs of the same scheduled task', async () => {
+test('Scheduler creates a fresh cowork session for repeated runs of the same scheduled task', async () => {
   const task = createTask({ id: 'recurring-task', metabotId: 7 });
   const runs = new Map();
   const completedRuns = [];
   let runIndex = 0;
   const createdSessions = [];
   const runnerCalls = [];
-  let storedTaskSessionId = null;
+  let persistedTaskSessionWrites = 0;
+  const legacyPersistedSessionId = 'legacy-session';
   const scheduler = createScheduler({
     scheduledTaskStore: {
       getTask: () => task,
-      getTaskSessionId: () => storedTaskSessionId,
-      setTaskSessionId: (_taskId, sessionId) => {
-        storedTaskSessionId = sessionId;
+      getTaskSessionId: () => legacyPersistedSessionId,
+      setTaskSessionId: () => {
+        persistedTaskSessionWrites += 1;
       },
       createRun: (taskId, trigger) => {
         const run = {
@@ -320,6 +321,23 @@ test('Scheduler reuses one cowork session for repeated runs of the same schedule
     return session;
   };
   scheduler.coworkStore.getSession = (sessionId) => {
+    if (sessionId === legacyPersistedSessionId) {
+      return {
+        id: legacyPersistedSessionId,
+        title: '[定时] Legacy session',
+        claudeSessionId: 'legacy-claude-session',
+        status: 'idle',
+        pinned: false,
+        cwd: '/tmp',
+        systemPrompt: '',
+        executionMode: 'local',
+        activeSkillIds: [],
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+        metabotId: 7,
+      };
+    }
     const record = createdSessions.find((item) => item.session.id === sessionId);
     if (!record) return null;
     return {
@@ -342,8 +360,10 @@ test('Scheduler reuses one cowork session for repeated runs of the same schedule
   await scheduler.executeTask(task, 'manual');
   await scheduler.executeTask(task, 'manual');
 
-  assert.equal(createdSessions.length, 1);
+  assert.equal(createdSessions.length, 2);
   assert.equal(createdSessions[0].metabotId, 7);
-  assert.deepEqual(runnerCalls.map((call) => call.sessionId), ['session-1', 'session-1']);
-  assert.deepEqual(completedRuns.map((run) => run.sessionId), ['session-1', 'session-1']);
+  assert.equal(createdSessions[1].metabotId, 7);
+  assert.equal(persistedTaskSessionWrites, 0);
+  assert.deepEqual(runnerCalls.map((call) => call.sessionId), ['session-1', 'session-2']);
+  assert.deepEqual(completedRuns.map((run) => run.sessionId), ['session-1', 'session-2']);
 });
