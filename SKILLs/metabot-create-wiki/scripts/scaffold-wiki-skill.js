@@ -1,0 +1,339 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { parseArgs } = require('node:util');
+
+function readJson(filePath, fallback) {
+  if (!fs.existsSync(filePath)) return fallback;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+}
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function normalizeString(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function normalizeArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeString(item)).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => normalizeString(item))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function slugify(value) {
+  const raw = normalizeString(value);
+  const slug = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug || `wiki-${Date.now().toString(36)}`;
+}
+
+function isWithin(parent, child) {
+  const rel = path.relative(parent, child);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function resolveSkillsRoot() {
+  const envRoot = normalizeString(process.env.SKILLS_ROOT) || normalizeString(process.env.IDBOTS_SKILLS_ROOT);
+  if (envRoot) return path.resolve(envRoot);
+  return path.resolve(__dirname, '..', '..');
+}
+
+function resolveRepoSkillsRoot() {
+  return path.resolve(__dirname, '..', '..');
+}
+
+function resolveTemplatePath() {
+  return path.join(__dirname, '..', 'assets', 'wiki-skill', 'scripts', 'index.js.template');
+}
+
+function resolveTemplateSchemaPath() {
+  return path.join(resolveRepoSkillsRoot(), 'metabot-llm-wiki', 'references', 'payload-schema-v1.json');
+}
+
+function resolveSkillDir(root, skillName) {
+  return path.join(root, skillName);
+}
+
+function renderSkillMarkdown(config) {
+  return `---
+name: ${config.skillName}
+description: ${config.description}
+---
+
+# ${config.title}
+
+这是一个一对一的本地 Wiki 技能，绑定到固定的资料源：
+
+- raw source: \`${config.rawSourceDir}\`
+- workspace: \`${config.workspaceRoot}\`
+- private registry: \`${config.registryHome}\`
+
+## 运行方式
+
+- 运行: \`node "$SKILLS_ROOT/${config.skillName}/scripts/index.js" --payload '<JSON>'\`
+
+## 动作
+
+- \`init\`
+- \`ingest\`
+- \`index\`
+- \`absorb\`
+- \`query\`
+- \`wiki_build\`
+- \`bundle_zip\`
+- \`publish_zip\`
+- \`publish_snapshot\`
+- \`publish_all\`
+
+## 约定
+
+- 这个 skill 会在每次非 registry 动作前，把 \`rawSourceDir\` 镜像到内部 workspace。
+- raw 更新后，再跑 \`absorb\` 即可重新吸收和索引。
+- 生成的 HTML wiki、ZIP、snapshot 都由同一套 \`metabot-llm-wiki\` 运行时完成。
+`;
+}
+
+function renderWikiConfig(config) {
+  return {
+    skillName: config.skillName,
+    title: config.title,
+    description: config.description,
+    kbId: config.kbId,
+    aliases: config.aliases,
+    rawSourceDir: config.rawSourceDir,
+    workspaceRoot: config.workspaceRoot,
+    registryHome: config.registryHome,
+    siteTitle: config.siteTitle,
+    language: config.language,
+    chunkSize: config.chunkSize,
+    chunkOverlap: config.chunkOverlap,
+    embeddingEnabled: config.embeddingEnabled,
+    embeddingModel: config.embeddingModel,
+  };
+}
+
+function updateSkillsConfig(targetRoot, skillName) {
+  const configPath = path.join(targetRoot, 'skills.config.json');
+  const fallback = { version: 1, description: 'Default skill configuration for IDBots', defaults: {} };
+  const config = readJson(configPath, fallback);
+  if (!config || typeof config !== 'object') {
+    throw new Error(`Invalid skills.config.json at ${configPath}`);
+  }
+  if (!config.defaults || typeof config.defaults !== 'object') {
+    config.defaults = {};
+  }
+
+  let maxOrder = 0;
+  for (const value of Object.values(config.defaults)) {
+    const order = Number(value && typeof value === 'object' ? value.order : undefined);
+    if (Number.isFinite(order)) {
+      maxOrder = Math.max(maxOrder, order);
+    }
+  }
+  const nextOrder = maxOrder + 1;
+  const existing = config.defaults[skillName] && typeof config.defaults[skillName] === 'object'
+    ? config.defaults[skillName]
+    : {};
+
+  config.defaults[skillName] = {
+    ...existing,
+    order: Number.isFinite(Number(existing.order)) ? Number(existing.order) : nextOrder,
+    version: normalizeString(existing.version) || '1.0.0',
+    'creator-metaid': normalizeString(existing['creator-metaid']) || '',
+    installedAt: Date.now(),
+    enabled: existing.enabled !== false,
+  };
+
+  writeJson(configPath, config);
+}
+
+function ensureNoOverlap(sourceRawDir, skillDir) {
+  const resolvedSource = path.resolve(sourceRawDir);
+  const resolvedSkillDir = path.resolve(skillDir);
+  if (resolvedSource === resolvedSkillDir) {
+    throw new Error('rawSourceDir cannot be the same as the generated skill directory.');
+  }
+  if (isWithin(resolvedSkillDir, resolvedSource) || isWithin(resolvedSource, resolvedSkillDir)) {
+    throw new Error('rawSourceDir must not live inside the generated skill directory tree.');
+  }
+}
+
+function validatePayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Payload must be a JSON object.');
+  }
+
+  const rawSourceDir = normalizeString(payload.rawSourceDir);
+  if (!rawSourceDir) {
+    throw new Error('payload.rawSourceDir is required.');
+  }
+
+  const skillName = slugify(payload.skillName || payload.name || '');
+  if (!skillName) {
+    throw new Error('payload.skillName is required.');
+  }
+
+  const description = normalizeString(payload.description);
+  if (!description) {
+    throw new Error('payload.description is required.');
+  }
+
+  const title = normalizeString(payload.title) || skillName;
+  const aliases = normalizeArray(payload.aliases);
+  const kbId = normalizeString(payload.kbId) || skillName;
+  const targetRoot = path.resolve(normalizeString(payload.targetRoot) || resolveSkillsRoot());
+  const skillDir = resolveSkillDir(targetRoot, skillName);
+  const workspaceRoot = path.resolve(normalizeString(payload.workspaceRoot) || path.join(skillDir, 'workspace'));
+  const registryHome = path.resolve(normalizeString(payload.registryHome) || path.join(skillDir, '.wiki-home'));
+  const siteTitle = normalizeString(payload.siteTitle) || title;
+  const language = normalizeString(payload.language) || 'zh-CN';
+
+  ensureNoOverlap(rawSourceDir, skillDir);
+
+  return {
+    skillName,
+    title,
+    description,
+    kbId,
+    aliases,
+    rawSourceDir: path.resolve(rawSourceDir),
+    targetRoot,
+    skillDir,
+    workspaceRoot,
+    registryHome,
+    siteTitle,
+    language,
+    chunkSize: Number.isFinite(Number(payload.chunkSize)) ? Number(payload.chunkSize) : 1200,
+    chunkOverlap: Number.isFinite(Number(payload.chunkOverlap)) ? Number(payload.chunkOverlap) : 180,
+    embeddingEnabled: payload.embeddingEnabled !== false,
+    embeddingModel: normalizeString(payload.embeddingModel) || 'BAAI/bge-m3',
+    overwrite: payload.overwrite === true,
+  };
+}
+
+function copyTextFile(source, target) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+}
+
+function writeGeneratedSkill(config) {
+  const skillDir = config.skillDir;
+  if (fs.existsSync(skillDir)) {
+    if (!config.overwrite) {
+      throw new Error(`Skill directory already exists: ${skillDir}`);
+    }
+    fs.rmSync(skillDir, { recursive: true, force: true });
+  }
+
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(skillDir, 'references'), { recursive: true });
+
+  const templatePath = resolveTemplatePath();
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const indexJsPath = path.join(skillDir, 'scripts', 'index.js');
+  fs.writeFileSync(indexJsPath, template, 'utf8');
+  fs.chmodSync(indexJsPath, 0o755);
+
+  const payloadSchemaPath = resolveTemplateSchemaPath();
+  copyTextFile(payloadSchemaPath, path.join(skillDir, 'references', 'payload-schema-v1.json'));
+
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), renderSkillMarkdown(config), 'utf8');
+  writeJson(path.join(skillDir, 'wiki.config.json'), renderWikiConfig(config));
+  updateSkillsConfig(config.targetRoot, config.skillName);
+
+  return {
+    skillDir,
+    files: [
+      path.join(skillDir, 'SKILL.md'),
+      path.join(skillDir, 'wiki.config.json'),
+      path.join(skillDir, 'scripts', 'index.js'),
+      path.join(skillDir, 'references', 'payload-schema-v1.json'),
+      path.join(config.targetRoot, 'skills.config.json'),
+    ],
+  };
+}
+
+function main() {
+  const { values, positionals } = parseArgs({
+    options: {
+      payload: { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    allowPositionals: true,
+  });
+
+  if (values.help) {
+    process.stdout.write(
+      'Usage: node scaffold-wiki-skill.js --payload \'<json>\'\n' +
+      'Creates a dedicated wiki skill from a raw documents directory.\n'
+    );
+    process.exit(0);
+  }
+
+  for (const arg of positionals) {
+    if (arg.startsWith('-')) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+  }
+
+  const payloadRaw = normalizeString(values.payload);
+  if (!payloadRaw) {
+    throw new Error('--payload is required.');
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(payloadRaw);
+  } catch (error) {
+    throw new Error(`--payload must be valid JSON: ${error.message}`);
+  }
+
+  const config = validatePayload(payload);
+  ensureDir(config.targetRoot);
+  const result = writeGeneratedSkill(config);
+
+  process.stdout.write(
+    `${JSON.stringify({
+      success: true,
+      message: 'Wiki skill scaffolded',
+      data: {
+        skillDir: result.skillDir,
+        sourceRawDir: config.rawSourceDir,
+        workspaceRoot: config.workspaceRoot,
+        registryHome: config.registryHome,
+        files: result.files,
+      },
+    }, null, 2)}\n`
+  );
+}
+
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}

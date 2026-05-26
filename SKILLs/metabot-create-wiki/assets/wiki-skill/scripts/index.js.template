@@ -1,0 +1,399 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { parseArgs } = require('node:util');
+
+const REGISTRY_ACTIONS = new Set([
+  'registry_create',
+  'registry_list',
+  'registry_set_default',
+  'registry_resolve',
+  'registry_remove',
+]);
+
+const ACTIONS_THAT_NEED_SYNC = new Set([
+  'init',
+  'ingest',
+  'index',
+  'absorb',
+  'query',
+  'wiki_build',
+  'bundle_zip',
+  'publish_zip',
+  'publish_snapshot',
+  'publish_all',
+]);
+
+function emitJson(payload, code) {
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
+  process.exit(code);
+}
+
+function fail(code, detail) {
+  emitJson({
+    success: false,
+    action: '',
+    kbId: '',
+    message: 'wiki skill wrapper failed',
+    error: {
+      code,
+      detail,
+      retryable: false,
+    },
+  }, 1);
+}
+
+function readJson(filePath, fallback) {
+  if (!fs.existsSync(filePath)) return fallback;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function normalizeString(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function normalizeArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeString(item)).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => normalizeString(item))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function isWithin(parent, child) {
+  const rel = path.relative(parent, child);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function resolveSkillsRoot() {
+  const envRoot = normalizeString(process.env.SKILLS_ROOT) || normalizeString(process.env.IDBOTS_SKILLS_ROOT);
+  if (envRoot) return path.resolve(envRoot);
+  return path.resolve(__dirname, '..', '..');
+}
+
+function resolveConfigPath() {
+  return path.resolve(__dirname, '..', 'wiki.config.json');
+}
+
+function loadConfig() {
+  const configPath = resolveConfigPath();
+  if (!fs.existsSync(configPath)) {
+    fail('missing_config', `Missing wiki.config.json: ${configPath}`);
+  }
+
+  const config = readJson(configPath, null);
+  if (!config || typeof config !== 'object') {
+    fail('invalid_config', `Invalid wiki.config.json: ${configPath}`);
+  }
+
+  const rawSourceDir = normalizeString(config.rawSourceDir);
+  const workspaceRoot = normalizeString(config.workspaceRoot) || path.resolve(path.dirname(configPath), 'workspace');
+  const registryHome = normalizeString(config.registryHome) || path.resolve(path.dirname(configPath), '.wiki-home');
+  const kbId = normalizeString(config.kbId) || path.basename(path.dirname(configPath));
+  const title = normalizeString(config.title) || kbId;
+
+  if (!rawSourceDir) {
+    fail('invalid_config', 'wiki.config.json is missing rawSourceDir.');
+  }
+
+  return {
+    ...config,
+    rawSourceDir: path.resolve(rawSourceDir),
+    workspaceRoot: path.resolve(workspaceRoot),
+    registryHome: path.resolve(registryHome),
+    kbId,
+    title,
+    aliases: normalizeArray(config.aliases),
+    siteTitle: normalizeString(config.siteTitle) || title,
+    language: normalizeString(config.language) || 'zh-CN',
+  };
+}
+
+function resolveRuntimeScript(skillsRoot) {
+  const runtimeScript = path.join(skillsRoot, 'metabot-llm-wiki', 'scripts', 'index.js');
+  if (!fs.existsSync(runtimeScript)) {
+    fail('missing_runtime', `Cannot find metabot-llm-wiki runtime at ${runtimeScript}`);
+  }
+  return runtimeScript;
+}
+
+function parsePayloadArg() {
+  const { values } = parseArgs({
+    options: {
+      payload: { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    allowPositionals: true,
+  });
+
+  if (values.help) {
+    process.stdout.write(
+      'Wiki skill wrapper\n' +
+        'Usage: node scripts/index.js --payload \'<json>\'\n'
+    );
+    process.exit(0);
+  }
+
+  const raw = normalizeString(values.payload);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      fail('invalid_payload', `--payload is not valid JSON: ${error.message}`);
+    }
+  }
+
+  const stdin = fs.readFileSync(0, 'utf8').trim();
+  if (!stdin) {
+    fail('invalid_payload', 'Missing payload JSON. Use --payload or stdin.');
+  }
+  try {
+    return JSON.parse(stdin);
+  } catch (error) {
+    fail('invalid_payload', `stdin payload is not valid JSON: ${error.message}`);
+  }
+}
+
+function runRuntime(runtimeScript, payload) {
+  const result = spawnSync(process.execPath, [runtimeScript, '--payload', JSON.stringify(payload)], {
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    fail('runtime_spawn_failed', result.error.message);
+  }
+
+  if (result.status !== 0) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exit(result.status || 1);
+  }
+
+  return result.stdout || '';
+}
+
+function syncRawSource(config, workspaceRoot) {
+  const source = path.resolve(config.rawSourceDir);
+  const workspace = path.resolve(workspaceRoot);
+  const dest = path.join(workspace, 'raw');
+
+  if (!fs.existsSync(source)) {
+    fail('raw_source_missing', `rawSourceDir does not exist: ${source}`);
+  }
+
+  if (source === dest || isWithin(source, dest) || isWithin(dest, source)) {
+    fail(
+      'invalid_raw_source',
+      `rawSourceDir must not overlap the generated workspace. source=${source}, workspace=${workspace}`
+    );
+  }
+
+  ensureDir(workspace);
+  fs.rmSync(dest, { recursive: true, force: true });
+  ensureDir(path.dirname(dest));
+  fs.cpSync(source, dest, { recursive: true, force: true, dereference: true });
+  return dest;
+}
+
+function defaultWikiConfig(config) {
+  return {
+    language: config.language || 'zh-CN',
+    chunkSize: Number.isFinite(Number(config.chunkSize)) ? Number(config.chunkSize) : 1200,
+    chunkOverlap: Number.isFinite(Number(config.chunkOverlap)) ? Number(config.chunkOverlap) : 180,
+    embeddingEnabled: config.embeddingEnabled !== false,
+    embeddingModel: normalizeString(config.embeddingModel) || 'BAAI/bge-m3',
+  };
+}
+
+function ensureRegistry(runtimeScript, config, workspaceRoot, registryHome) {
+  const payload = {
+    action: 'registry_create',
+    payload: {
+      registryHome,
+      kbId: config.kbId,
+      title: config.title,
+      rootDir: workspaceRoot,
+      aliases: config.aliases || [],
+      setDefault: true,
+      config: defaultWikiConfig(config),
+    },
+  };
+  runRuntime(runtimeScript, payload);
+}
+
+function buildActionPayload(input, config, workspaceRoot, registryHome) {
+  const payload = input.payload && typeof input.payload === 'object' ? { ...input.payload } : {};
+
+  if (REGISTRY_ACTIONS.has(input.action)) {
+    payload.registryHome = payload.registryHome || registryHome;
+    return {
+      action: input.action,
+      kbId: normalizeString(input.kbId) || config.kbId,
+      requestId: normalizeString(input.requestId),
+      payload,
+    };
+  }
+
+  payload.registryHome = payload.registryHome || registryHome;
+  payload.rootDir = payload.rootDir || workspaceRoot;
+  payload.kbId = payload.kbId || config.kbId;
+  payload.siteTitle = payload.siteTitle || config.siteTitle || config.title;
+
+  if (input.action === 'init') {
+    payload.config = {
+      ...defaultWikiConfig(config),
+      ...(payload.config && typeof payload.config === 'object' ? payload.config : {}),
+    };
+  }
+
+  return {
+    action: input.action,
+    kbId: payload.kbId,
+    requestId: normalizeString(input.requestId),
+    payload,
+  };
+}
+
+function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) {
+  if (REGISTRY_ACTIONS.has(input.action)) {
+    return runRuntime(runtimeScript, buildActionPayload(input, config, workspaceRoot, registryHome));
+  }
+
+  syncRawSource(config, workspaceRoot);
+  ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
+
+  const baseInput = {
+    ...input,
+    payload: input.payload && typeof input.payload === 'object' ? { ...input.payload } : {},
+  };
+
+  switch (input.action) {
+    case 'init':
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'ingest':
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'index':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'ingest' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'absorb':
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'query':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'wiki_build':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'bundle_zip':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+      );
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'publish_zip':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+      );
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
+      );
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'publish_snapshot':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+      );
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
+      );
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+      );
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'publish_zip' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    case 'publish_all':
+      runRuntime(
+        runtimeScript,
+        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+      );
+      return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
+
+    default:
+      fail('invalid_action', `Unsupported action "${input.action}" for this wiki skill.`);
+  }
+}
+
+function main() {
+  const input = parsePayloadArg();
+  if (!input || typeof input !== 'object') {
+    fail('invalid_payload', 'Payload must be a JSON object.');
+  }
+
+  const config = loadConfig();
+  const skillsRoot = resolveSkillsRoot();
+  const runtimeScript = resolveRuntimeScript(skillsRoot);
+  const workspaceRoot = path.resolve(
+    normalizeString(input?.payload?.workspaceRoot)
+      || normalizeString(config.workspaceRoot)
+      || path.join(path.dirname(resolveConfigPath()), 'workspace')
+  );
+  const registryHome = path.resolve(
+    normalizeString(input?.payload?.registryHome)
+      || normalizeString(config.registryHome)
+      || path.join(path.dirname(resolveConfigPath()), '.wiki-home')
+  );
+
+  const output = runPipeline(runtimeScript, input, config, workspaceRoot, registryHome);
+  process.stdout.write(output);
+}
+
+main();
