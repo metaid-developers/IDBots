@@ -28,6 +28,12 @@ const providerRequiresApiKey = (provider: string) => provider !== 'ollama';
 const providerLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
 const sortMetabotsByCreatedAtAsc = (metabots: Metabot[]) =>
   [...metabots].sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+const parseOptionalBossId = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
 
 const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequestOnboarding?: () => void }> = ({
   onRequestModelSettings,
@@ -155,7 +161,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
       soul: values.soul.trim(),
       goal: values.goal.trim() || null,
       background: values.background.trim() || null,
-      boss_id: values.boss_id.trim() ? parseInt(values.boss_id, 10) : 1,
+      boss_id: parseOptionalBossId(values.boss_id),
       boss_global_metaid: values.boss_global_metaid.trim() || null,
       llm_id: values.llm_id.trim() || null,
       allow_chat_skills: normalizeAllowChatSkills(values.allow_chat_skills),
@@ -196,7 +202,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
     const nextSoul = values.soul.trim();
     const nextGoalRaw = values.goal.trim();
     const nextBackgroundRaw = values.background.trim();
-    const nextBossId = values.boss_id.trim() ? parseInt(values.boss_id, 10) : null;
+    const nextBossId = parseOptionalBossId(values.boss_id);
     const nextBossGlobalMetaId = values.boss_global_metaid.trim() || null;
     const nextLlmRaw = values.llm_id.trim();
     const nextAllowChatSkills = normalizeAllowChatSkills(values.allow_chat_skills);
@@ -392,7 +398,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
             soul: editMetabot.soul,
             goal: editMetabot.goal || '',
             background: editMetabot.background || '',
-            boss_id: editMetabot.boss_id != null ? String(editMetabot.boss_id) : '1',
+            boss_id: editMetabot.boss_id != null ? String(editMetabot.boss_id) : '',
             boss_global_metaid: editMetabot.boss_global_metaid || '',
             llm_id: editMetabot.llm_id || '',
             allow_chat_skills: editMetabot.allow_chat_skills || [],

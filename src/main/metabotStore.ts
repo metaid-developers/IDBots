@@ -157,6 +157,14 @@ export class MetabotStore {
     }
   }
 
+  private normalizeBossIdForWrite(value: number | null | undefined, selfId?: number): number | null {
+    if (value == null) return null;
+    const id = Math.trunc(Number(value));
+    if (!Number.isFinite(id) || id <= 0 || (selfId != null && id === selfId)) return null;
+    const row = this.getOne<{ id: number }>('SELECT id FROM metabots WHERE id = ? LIMIT 1', [id]);
+    return row ? id : null;
+  }
+
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {
     const result = this.db.exec(sql, params);
     if (!result[0]?.values[0]) return undefined;
@@ -247,6 +255,7 @@ export class MetabotStore {
     const enabled = input.enabled !== false ? 1 : 0;
     const avatarDb = avatarToDb(input.avatar ?? null);
     const useBlob = this.hasAvatarBlobColumn();
+    const bossId = this.normalizeBossIdForWrite(input.boss_id ?? null);
 
     const params = sanitizeBindParams([
       input.wallet_id,
@@ -268,7 +277,7 @@ export class MetabotStore {
       input.soul,
       input.goal ?? null,
       input.background ?? null,
-      input.boss_id ?? null,
+      bossId,
       input.boss_global_metaid ?? null,
       input.llm_id ?? null,
       toolsJson,
@@ -326,7 +335,7 @@ export class MetabotStore {
       soul: input.soul,
       goal: input.goal ?? null,
       background: input.background ?? null,
-      boss_id: input.boss_id ?? null,
+      boss_id: bossId,
       boss_global_metaid: input.boss_global_metaid ?? null,
       llm_id: input.llm_id ?? null,
       tools: input.tools ?? [],
@@ -356,6 +365,10 @@ export class MetabotStore {
     const avatarVal = input.avatar !== undefined ? input.avatar : existing.avatar;
     const avatarDb = avatarToDb(avatarVal ?? null);
     const useBlob = this.hasAvatarBlobColumn();
+    const bossId =
+      input.boss_id !== undefined
+        ? this.normalizeBossIdForWrite(input.boss_id, id)
+        : this.normalizeBossIdForWrite(existing.boss_id, id);
 
     if (useBlob) {
       this.db.run(
@@ -384,7 +397,7 @@ export class MetabotStore {
           input.soul ?? existing.soul,
           input.goal !== undefined ? input.goal : existing.goal,
           input.background !== undefined ? input.background : existing.background,
-          input.boss_id !== undefined ? input.boss_id : existing.boss_id,
+          bossId,
           input.boss_global_metaid !== undefined ? input.boss_global_metaid : existing.boss_global_metaid,
           input.llm_id !== undefined ? input.llm_id : existing.llm_id,
           toolsJson,
@@ -421,7 +434,7 @@ export class MetabotStore {
           input.soul ?? existing.soul,
           input.goal !== undefined ? input.goal : existing.goal,
           input.background !== undefined ? input.background : existing.background,
-          input.boss_id !== undefined ? input.boss_id : existing.boss_id,
+          bossId,
           input.boss_global_metaid !== undefined ? input.boss_global_metaid : existing.boss_global_metaid,
           input.llm_id !== undefined ? input.llm_id : existing.llm_id,
           toolsJson,
@@ -439,6 +452,7 @@ export class MetabotStore {
   deleteMetabot(id: number): boolean {
     const existing = this.getMetabotById(id);
     if (!existing) return false;
+    this.db.run('UPDATE metabots SET boss_id = NULL, updated_at = ? WHERE boss_id = ?', [Date.now(), id]);
     this.db.run('DELETE FROM metabots WHERE id = ?', [id]);
     this.saveDb();
     return true;

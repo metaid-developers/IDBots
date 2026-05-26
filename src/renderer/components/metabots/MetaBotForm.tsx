@@ -38,7 +38,7 @@ const defaultValues: MetaBotFormValues = {
   goal: '',
   background: '',
   boss_global_metaid: '',
-  boss_id: '1',
+  boss_id: '',
   llm_id: '',
   allow_chat_skills: [],
 };

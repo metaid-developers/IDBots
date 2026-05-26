@@ -957,6 +957,8 @@ export class SqliteStore {
     this.migrateChatPublicKeyPinIdOptional();
     // Migration: add allow_chat_skills for private-chat allowlist storage
     this.migrateMetabotAllowChatSkills();
+    // Migration: clear legacy local boss_id values that point at missing/self rows.
+    this.migrateOrphanMetabotBossIds();
 
     // Migrations - safely add columns if they don't exist
     try {
@@ -1484,6 +1486,32 @@ export class SqliteStore {
       this.save();
     } catch (error) {
       console.warn('migrateMetabotAllowChatSkills:', error);
+    }
+  }
+
+  private migrateOrphanMetabotBossIds(): void {
+    try {
+      const colsResult = this.db.exec('PRAGMA table_info(metabots)');
+      const columns = (colsResult[0]?.values?.map((row) => row[1]) || []) as string[];
+      if (!columns.includes('boss_id')) return;
+      this.db.run(`
+        UPDATE metabots
+        SET boss_id = NULL
+        WHERE boss_id IS NOT NULL
+          AND (
+            boss_id <= 0
+            OR boss_id = id
+            OR NOT EXISTS (
+              SELECT 1 FROM metabots AS parent
+              WHERE parent.id = metabots.boss_id
+            )
+          )
+      `);
+      if ((this.db.getRowsModified?.() ?? 0) > 0) {
+        this.save();
+      }
+    } catch (error) {
+      console.warn('migrateOrphanMetabotBossIds:', error);
     }
   }
 
