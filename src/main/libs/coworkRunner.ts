@@ -756,6 +756,15 @@ export interface CoworkRunnerOptions {
   openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   /** When set, resolves a local MetaApp URL without opening it. */
   resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
+  /**
+   * When set, stages a teardown of the IM ↔ cowork conversation mapping for the
+   * given session. Returns true when the session is IM-managed and the reset
+   * has been staged; false when the call is a no-op (e.g. non-IM session).
+   * Implemented by IMCoworkHandler and consumed by the `start_new_im_session`
+   * inline MCP tool so a MetaBot can rotate the IM session window on user
+   * request without disturbing the current reply.
+   */
+  requestIMSessionReset?: (sessionId: string) => boolean;
 }
 
 export class CoworkRunner extends EventEmitter {
@@ -766,6 +775,7 @@ export class CoworkRunner extends EventEmitter {
   private mcpServerProvider?: () => UserConfiguredMcpServerDefinition[];
   private openMetaApp?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
   private resolveMetaAppUrl?: (input: { appId: string; targetPath?: string }) => Promise<{ success: boolean; url?: string; error?: string; name?: string }>;
+  private requestIMSessionReset?: (sessionId: string) => boolean;
   private activeSessions: Map<string, ActiveSession> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
@@ -784,6 +794,7 @@ export class CoworkRunner extends EventEmitter {
     this.mcpServerProvider = options?.mcpServerProvider;
     this.openMetaApp = options?.openMetaApp;
     this.resolveMetaAppUrl = options?.resolveMetaAppUrl;
+    this.requestIMSessionReset = options?.requestIMSessionReset;
   }
 
 
@@ -3628,10 +3639,33 @@ export class CoworkRunner extends EventEmitter {
           )
         );
       }
-      if (this.resolveMetaAppUrl) {
-        memoryTools.push(
-          tool(
-            'resolve_metaapp_url',
+    if (this.requestIMSessionReset) {
+      memoryTools.push(
+        tool(
+          'start_new_im_session',
+          'Open a brand-new chat session for the current IM conversation. Use ONLY when the user explicitly asks for a new session/window (e.g. "新建会话", "新窗口", "重开会话", "new session", "new chat"). Do NOT call it just because the context feels long. The current reply still streams back through this session; subsequent inbound IM messages will land in a freshly created session automatically. Has no effect when called from a non-IM session.',
+          {
+            reason: z.string().optional(),
+          },
+          async (_args: { reason?: string }) => {
+            const ok = this.requestIMSessionReset?.(sessionId) ?? false;
+            return {
+              content: [{
+                type: 'text',
+                text: ok
+                  ? 'New IM session staged. After this reply, the next inbound message will start a fresh session window. Briefly confirm to the user.'
+                  : 'Not in an IM session; this tool has no effect here.',
+              }],
+              isError: !ok,
+            } as any;
+          }
+        )
+      );
+    }
+    if (this.resolveMetaAppUrl) {
+      memoryTools.push(
+        tool(
+          'resolve_metaapp_url',
             'Resolve a local MetaApp URL by app id and optional target path without opening it.',
             {
               appId: z.string().min(1),
