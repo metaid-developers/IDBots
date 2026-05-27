@@ -110,8 +110,11 @@ description: ${config.description}
 
 ## 约定
 
-- 这个 skill 会在每次非 registry 动作前，把 \`rawSourceDir\` 镜像到内部 workspace。
-- raw 更新后，再跑 \`absorb\` 即可重新吸收和索引。
+- \`absorb\`、\`ingest\`、\`index\`、发布和构建动作会把 \`rawSourceDir\` 镜像到内部 workspace。
+- 普通 \`query\` 不复制 raw、不重建索引，只读已有索引。
+- 日常 \`query\` 默认不重建索引，使用已生成的 lexical/vector/hybrid 本地索引快速查询。
+- 资料更新流程：把文件放进绑定的 \`rawSourceDir\`，运行 \`absorb\` 刷新索引，再运行 \`query\` 快速查询。
+- 如果明确需要边更新边查，\`query\` 可传 \`autoAbsorb:true\` 或 \`refresh:true\`。
 - 生成的 HTML wiki、ZIP、snapshot 都由同一套 \`metabot-llm-wiki\` 运行时完成。
 `;
 }
@@ -130,8 +133,15 @@ function renderWikiConfig(config) {
     language: config.language,
     chunkSize: config.chunkSize,
     chunkOverlap: config.chunkOverlap,
+    queryAutoAbsorb: false,
     embeddingEnabled: config.embeddingEnabled,
+    embeddingProvider: config.embeddingProvider,
     embeddingModel: config.embeddingModel,
+    embeddingCommand: config.embeddingCommand,
+    searchBackend: config.searchBackend,
+    lexicalWeight: config.lexicalWeight,
+    vectorWeight: config.vectorWeight,
+    phraseWeight: config.phraseWeight,
   };
 }
 
@@ -237,7 +247,17 @@ function validatePayload(payload) {
     chunkSize: Number.isFinite(Number(payload.chunkSize)) ? Number(payload.chunkSize) : 1200,
     chunkOverlap: Number.isFinite(Number(payload.chunkOverlap)) ? Number(payload.chunkOverlap) : 180,
     embeddingEnabled: payload.embeddingEnabled !== false,
-    embeddingModel: normalizeString(payload.embeddingModel) || 'BAAI/bge-m3',
+    embeddingProvider: ['local-hashing-v1', 'command-json-v1'].includes(normalizeString(payload.embeddingProvider).toLowerCase())
+      ? normalizeString(payload.embeddingProvider).toLowerCase()
+      : 'local-hashing-v1',
+    embeddingModel: normalizeString(payload.embeddingModel) || 'local-hashing-v1',
+    embeddingCommand: normalizeString(payload.embeddingCommand),
+    searchBackend: ['auto', 'hybrid', 'portable', 'sqlite', 'sqlite-fts', 'scan', 'vector'].includes(normalizeString(payload.searchBackend).toLowerCase())
+      ? normalizeString(payload.searchBackend).toLowerCase()
+      : 'hybrid',
+    lexicalWeight: Number.isFinite(Number(payload.lexicalWeight)) ? Number(payload.lexicalWeight) : 0.55,
+    vectorWeight: Number.isFinite(Number(payload.vectorWeight)) ? Number(payload.vectorWeight) : 0.35,
+    phraseWeight: Number.isFinite(Number(payload.phraseWeight)) ? Number(payload.phraseWeight) : 0.10,
     overwrite: payload.overwrite === true,
   };
 }

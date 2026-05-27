@@ -260,7 +260,17 @@ function defaultWikiConfig(config) {
     chunkSize: Number.isFinite(Number(config.chunkSize)) ? Number(config.chunkSize) : 1200,
     chunkOverlap: Number.isFinite(Number(config.chunkOverlap)) ? Number(config.chunkOverlap) : 180,
     embeddingEnabled: config.embeddingEnabled !== false,
-    embeddingModel: normalizeString(config.embeddingModel) || 'BAAI/bge-m3',
+    embeddingProvider: ['local-hashing-v1', 'command-json-v1'].includes(normalizeString(config.embeddingProvider).toLowerCase())
+      ? normalizeString(config.embeddingProvider).toLowerCase()
+      : 'local-hashing-v1',
+    embeddingModel: normalizeString(config.embeddingModel) || 'local-hashing-v1',
+    embeddingCommand: normalizeString(config.embeddingCommand),
+    searchBackend: ['auto', 'hybrid', 'portable', 'sqlite', 'sqlite-fts', 'scan', 'vector'].includes(normalizeString(config.searchBackend).toLowerCase())
+      ? normalizeString(config.searchBackend).toLowerCase()
+      : 'hybrid',
+    lexicalWeight: Number.isFinite(Number(config.lexicalWeight)) ? Number(config.lexicalWeight) : 0.55,
+    vectorWeight: Number.isFinite(Number(config.vectorWeight)) ? Number(config.vectorWeight) : 0.35,
+    phraseWeight: Number.isFinite(Number(config.phraseWeight)) ? Number(config.phraseWeight) : 0.10,
   };
 }
 
@@ -318,13 +328,20 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
     return runRuntime(runtimeScript, buildActionPayload(input, config, workspaceRoot, registryHome));
   }
 
-  syncRawSource(config, workspaceRoot);
-  ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
-
   const baseInput = {
     ...input,
     payload: input.payload && typeof input.payload === 'object' ? { ...input.payload } : {},
   };
+  const fastQuery = input.action === 'query'
+    && baseInput.payload.autoAbsorb !== true
+    && baseInput.payload.refresh !== true;
+
+  if (fastQuery) {
+    ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
+  } else {
+    syncRawSource(config, workspaceRoot);
+    ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
+  }
 
   switch (input.action) {
     case 'init':
@@ -344,10 +361,12 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
       return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'query':
-      runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
-      );
+      if (baseInput.payload.autoAbsorb === true || baseInput.payload.refresh === true) {
+        runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+        );
+      }
       return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'wiki_build':
@@ -373,14 +392,16 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
       );
-      runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
-      );
-      runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
-      );
+      if (!(isExplicitFalse(baseInput.payload.uploadZip) && (normalizeString(baseInput.payload.zipUri) || normalizeString(baseInput.payload.pinUri)))) {
+        runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
+        );
+        runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+        );
+      }
       return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'publish_snapshot':
@@ -392,14 +413,18 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
       );
-      const bundleOutput = runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
-      );
-      const bundleResult = parseLastJsonLine(bundleOutput);
-      const bundleZipPath = normalizeString(bundleResult?.data?.zipPath);
-      const bundleZipSha256 = normalizeString(bundleResult?.data?.zipSha256);
       const explicitZipUri = normalizeString(baseInput.payload.zipUri) || normalizeString(baseInput.payload.pinUri);
+      let bundleZipPath = normalizeString(baseInput.payload.zipPath);
+      let bundleZipSha256 = normalizeString(baseInput.payload.zipSha256);
+      if (!explicitZipUri && !bundleZipPath) {
+        const bundleOutput = runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+        );
+        const bundleResult = parseLastJsonLine(bundleOutput);
+        bundleZipPath = normalizeString(bundleResult?.data?.zipPath);
+        bundleZipSha256 = normalizeString(bundleResult?.data?.zipSha256);
+      }
       if (!bundleZipPath && !explicitZipUri) {
         fail('bundle_zip_failed', 'bundle_zip did not return data.zipPath for publish_snapshot.');
       }
@@ -441,7 +466,7 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
 
         let effectiveZipPath = normalizeString(baseInput.payload.zipPath);
         let effectiveZipSha256 = normalizeString(baseInput.payload.zipSha256);
-        if (!skipBundle || !effectiveZipPath) {
+        if (!skipBundle && !effectiveZipPath) {
           const bundleResult = runRuntimeJson(
             runtimeScript,
             buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)

@@ -27,7 +27,6 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const { parseArgs } = require('node:util');
 const { spawnSync } = require('node:child_process');
-const yazl = require('yazl');
 
 const ACTIONS = new Set([
   'registry_create',
@@ -60,7 +59,13 @@ const DEFAULT_CHUNK_OVERLAP = 180;
 const DEFAULT_TOP_K = 8;
 const DEFAULT_MIN_SCORE = 0.18;
 const DEFAULT_HYBRID_ALPHA = 0.65;
-const DEFAULT_EMBEDDING_MODEL = 'BAAI/bge-m3';
+const DEFAULT_LEXICAL_WEIGHT = 0.55;
+const DEFAULT_VECTOR_WEIGHT = 0.35;
+const DEFAULT_PHRASE_WEIGHT = 0.10;
+const DEFAULT_EMBEDDING_PROVIDER = 'local-hashing-v1';
+const DEFAULT_EMBEDDING_MODEL = 'local-hashing-v1';
+const DEFAULT_EMBEDDING_DIMENSION = 256;
+const DEFAULT_SEARCH_BACKEND = 'hybrid';
 const DEFAULT_WIKI_SNAPSHOT_PATH = '/protocols/llm-wiki-snapshot';
 const DEFAULT_REGISTRY_DIR = '.metabot-llm-wiki';
 const REGISTRY_FILE_NAME = 'registry.json';
@@ -440,6 +445,10 @@ function resolvePaths(kbId, payload) {
     docsFile: path.join(rootDir, 'work', 'docs.jsonl'),
     chunksFile: path.join(rootDir, 'work', 'chunks.jsonl'),
     lexicalIndexFile: path.join(rootDir, 'index', 'lexical.json'),
+    lexicalPostingsFile: path.join(rootDir, 'index', 'lexical-postings.json'),
+    chunkStoreFile: path.join(rootDir, 'index', 'chunk-store.json'),
+    sqliteIndexFile: path.join(rootDir, 'index', 'search.sqlite'),
+    vectorIndexFile: path.join(rootDir, 'index', 'vectors.json'),
     embeddingIndexFile: path.join(rootDir, 'index', 'embeddings', 'index.json'),
     stateFile: path.join(rootDir, 'state.json'),
     configFile: path.join(rootDir, 'kb.config.json'),
@@ -497,12 +506,27 @@ function listFilesRecursive(rootDir) {
 function normalizeConfig(configInput) {
   const chunkSize = Number(configInput.chunkSize);
   const chunkOverlap = Number(configInput.chunkOverlap);
+  const searchBackend = safeTrim(configInput.searchBackend).toLowerCase();
+  const embeddingProvider = safeTrim(configInput.embeddingProvider).toLowerCase();
+  const lexicalWeight = Number(configInput.lexicalWeight);
+  const vectorWeight = Number(configInput.vectorWeight);
+  const phraseWeight = Number(configInput.phraseWeight);
   return {
     language: safeTrim(configInput.language) || 'zh-CN',
     chunkSize: Number.isFinite(chunkSize) && chunkSize >= 200 ? Math.floor(chunkSize) : DEFAULT_CHUNK_SIZE,
     chunkOverlap: Number.isFinite(chunkOverlap) && chunkOverlap >= 0 ? Math.floor(chunkOverlap) : DEFAULT_CHUNK_OVERLAP,
     embeddingEnabled: configInput.embeddingEnabled !== false,
+    embeddingProvider: ['local-hashing-v1', 'command-json-v1'].includes(embeddingProvider)
+      ? embeddingProvider
+      : DEFAULT_EMBEDDING_PROVIDER,
     embeddingModel: safeTrim(configInput.embeddingModel) || DEFAULT_EMBEDDING_MODEL,
+    embeddingCommand: safeTrim(configInput.embeddingCommand),
+    searchBackend: ['auto', 'hybrid', 'portable', 'portable-lexical', 'sqlite', 'sqlite-fts', 'scan', 'vector', 'disabled'].includes(searchBackend)
+      ? searchBackend
+      : DEFAULT_SEARCH_BACKEND,
+    lexicalWeight: Number.isFinite(lexicalWeight) && lexicalWeight >= 0 ? lexicalWeight : DEFAULT_LEXICAL_WEIGHT,
+    vectorWeight: Number.isFinite(vectorWeight) && vectorWeight >= 0 ? vectorWeight : DEFAULT_VECTOR_WEIGHT,
+    phraseWeight: Number.isFinite(phraseWeight) && phraseWeight >= 0 ? phraseWeight : DEFAULT_PHRASE_WEIGHT,
   };
 }
 
@@ -512,6 +536,39 @@ function loadConfig(paths) {
     return normalizeConfig({});
   }
   return normalizeConfig(cfg);
+}
+
+function getIndexConfigSignature(config) {
+  const normalized = normalizeConfig(config);
+  return hashString(JSON.stringify({
+    chunkSize: normalized.chunkSize,
+    chunkOverlap: normalized.chunkOverlap,
+    embeddingEnabled: normalized.embeddingEnabled,
+    embeddingProvider: normalized.embeddingProvider,
+    embeddingModel: normalized.embeddingModel,
+    embeddingCommand: normalized.embeddingCommand,
+    searchBackend: normalized.searchBackend,
+    lexicalWeight: normalized.lexicalWeight,
+    vectorWeight: normalized.vectorWeight,
+    phraseWeight: normalized.phraseWeight,
+  }));
+}
+
+function getEmbeddingConfigSignature(config) {
+  const normalized = normalizeConfig(config);
+  return hashString(JSON.stringify({
+    embeddingEnabled: normalized.embeddingEnabled,
+    embeddingProvider: normalized.embeddingProvider,
+    embeddingModel: normalized.embeddingProvider === 'local-hashing-v1'
+      ? 'local-hashing-v1'
+      : normalized.embeddingModel,
+    embeddingCommand: normalized.embeddingProvider === 'command-json-v1'
+      ? normalized.embeddingCommand
+      : '',
+    localHashingDimension: normalized.embeddingProvider === 'local-hashing-v1'
+      ? DEFAULT_EMBEDDING_DIMENSION
+      : 0,
+  }));
 }
 
 function saveConfig(paths, config) {
@@ -649,12 +706,482 @@ function tokenize(text) {
   return tokens;
 }
 
+function normalizeVector(vector, expectedDimension = 0) {
+  if (!Array.isArray(vector)) {
+    throw new SkillError('embedding_failed', 'Embedding provider returned a non-array vector.');
+  }
+  if (expectedDimension > 0 && vector.length !== expectedDimension) {
+    throw new SkillError(
+      'embedding_failed',
+      `Embedding provider returned dimension ${vector.length}; expected ${expectedDimension}.`
+    );
+  }
+  if (vector.length === 0) {
+    throw new SkillError('embedding_failed', 'Embedding provider returned an empty vector.');
+  }
+  if (vector.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+    throw new SkillError('embedding_failed', 'Embedding provider returned a vector with non-numeric values.');
+  }
+  const values = vector.slice();
+  const magnitude = Math.sqrt(values.reduce((sum, item) => sum + (item * item), 0));
+  if (!Number.isFinite(magnitude) || magnitude <= 0) {
+    return values.map(() => 0);
+  }
+  return values.map((item) => item / magnitude);
+}
+
+function localHashingEmbedText(text, dimension = DEFAULT_EMBEDDING_DIMENSION) {
+  const vector = new Array(dimension).fill(0);
+  const tokens = tokenize(text);
+  for (const token of tokens) {
+    const digest = crypto.createHash('sha256').update(token, 'utf8').digest();
+    const bucket = digest.readUInt32BE(0) % dimension;
+    const sign = (digest[4] % 2) === 0 ? 1 : -1;
+    vector[bucket] += sign;
+  }
+  return normalizeVector(vector, dimension);
+}
+
+function parseCommandLine(commandText) {
+  const input = safeTrim(commandText);
+  const parts = [];
+  let current = '';
+  let quote = '';
+
+  for (let idx = 0; idx < input.length; idx += 1) {
+    const char = input[idx];
+    if (char === '\\') {
+      const next = input[idx + 1];
+      if (quote && next === quote) {
+        current += next;
+        idx += 1;
+      } else if (!quote && next && /\s/.test(next)) {
+        current += next;
+        idx += 1;
+      } else if (!quote && (next === '"' || next === "'")) {
+        current += next;
+        idx += 1;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = '';
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        parts.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (quote) {
+    throw new SkillError('embedding_failed', 'embeddingCommand has an unterminated quote.');
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+function embedTextsWithCommand(config, texts) {
+  const commandParts = parseCommandLine(config.embeddingCommand);
+  if (commandParts.length === 0) {
+    throw new SkillError('embedding_failed', 'embeddingCommand is required for command-json-v1.');
+  }
+
+  const result = spawnSync(commandParts[0], commandParts.slice(1), {
+    input: JSON.stringify({
+      model: config.embeddingModel,
+      texts,
+    }),
+    encoding: 'utf8',
+    maxBuffer: 50 * 1024 * 1024,
+    timeout: 120000,
+  });
+
+  if (result.error) {
+    throw new SkillError('embedding_failed', `embeddingCommand failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = safeTrim(result.stderr) || safeTrim(result.stdout) || `exit code ${result.status}`;
+    throw new SkillError('embedding_failed', `embeddingCommand failed: ${detail}`);
+  }
+
+  let output;
+  try {
+    output = JSON.parse(result.stdout || '{}');
+  } catch (error) {
+    throw new SkillError('embedding_failed', `embeddingCommand stdout is not valid JSON: ${error.message}`);
+  }
+  if (!output || typeof output !== 'object' || !Array.isArray(output.vectors)) {
+    throw new SkillError('embedding_failed', 'embeddingCommand must output JSON shaped as { "vectors": [[...]] }.');
+  }
+  if (output.vectors.length !== texts.length) {
+    throw new SkillError(
+      'embedding_failed',
+      `embeddingCommand returned ${output.vectors.length} vectors for ${texts.length} texts.`
+    );
+  }
+
+  const dimension = output.vectors.length > 0 && Array.isArray(output.vectors[0]) ? output.vectors[0].length : 0;
+  if (dimension <= 0) {
+    throw new SkillError('embedding_failed', 'embeddingCommand returned no vector dimensions.');
+  }
+  return {
+    provider: 'command-json-v1',
+    model: config.embeddingModel,
+    dimension,
+    vectors: output.vectors.map((vector) => normalizeVector(vector, dimension)),
+  };
+}
+
+function embedTexts(configInput, texts) {
+  const config = normalizeConfig(configInput);
+  if (!config.embeddingEnabled) {
+    throw new SkillError('embedding_failed', 'Embedding is disabled for this wiki.');
+  }
+  if (config.embeddingProvider === 'local-hashing-v1') {
+    return {
+      provider: 'local-hashing-v1',
+      model: 'local-hashing-v1',
+      dimension: DEFAULT_EMBEDDING_DIMENSION,
+      vectors: texts.map((text) => localHashingEmbedText(text, DEFAULT_EMBEDDING_DIMENSION)),
+    };
+  }
+  if (config.embeddingProvider === 'command-json-v1') {
+    return embedTextsWithCommand(config, texts);
+  }
+  throw new SkillError('embedding_failed', `Unsupported embeddingProvider: ${config.embeddingProvider}`);
+}
+
+function cosineSimilarity(left, right) {
+  const limit = Math.min(left.length, right.length);
+  let score = 0;
+  for (let i = 0; i < limit; i += 1) {
+    score += Number(left[i] || 0) * Number(right[i] || 0);
+  }
+  return score;
+}
+
+function cjkBigrams(text) {
+  const chars = safeTrim(text).match(/[\u4e00-\u9fff]/g) || [];
+  const out = [];
+  for (let idx = 0; idx < chars.length - 1; idx += 1) {
+    out.push(`${chars[idx]}${chars[idx + 1]}`);
+  }
+  return out;
+}
+
+function phraseScore(question, text) {
+  const q = cleanText(question);
+  const body = cleanText(text);
+  if (!q || !body) return 0;
+
+  let score = body.includes(q) ? 1 : 0;
+  const queryBigrams = new Set(cjkBigrams(q));
+  if (queryBigrams.size > 0) {
+    const bodyBigrams = new Set(cjkBigrams(body));
+    let shared = 0;
+    for (const item of queryBigrams) {
+      if (bodyBigrams.has(item)) shared += 1;
+    }
+    score += shared / queryBigrams.size;
+  }
+
+  const latinTokens = tokenize(q).filter((token) => /[a-z0-9_]/i.test(token));
+  if (latinTokens.length > 0) {
+    const lowerBody = body.toLowerCase();
+    const matched = latinTokens.filter((token) => lowerBody.includes(token.toLowerCase())).length;
+    score += matched / latinTokens.length;
+  }
+  return score;
+}
+
+function normalizedPositive(value, maxValue) {
+  const raw = Number(value) || 0;
+  const max = Number(maxValue) || 0;
+  if (max <= 1e-9) return 0;
+  return Math.max(0, raw) / max;
+}
+
 function toFrequencyMap(tokens) {
   const map = new Map();
   for (const token of tokens) {
     map.set(token, (map.get(token) || 0) + 1);
   }
   return map;
+}
+
+function objectFromMap(map) {
+  return Object.fromEntries([...map.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+}
+
+function buildPortableSearchIndex(chunks, docCount) {
+  const postingsByToken = new Map();
+  const docFreq = new Map();
+  const chunkStore = {};
+
+  for (const chunk of chunks) {
+    const tokens = tokenize(chunk.text);
+    const tokenMap = toFrequencyMap(tokens);
+    const uniqueTokens = new Set(tokenMap.keys());
+
+    chunkStore[chunk.chunkId] = {
+      docId: chunk.docId,
+      docTitle: chunk.docTitle,
+      sourcePath: chunk.sourcePath,
+      chunkId: chunk.chunkId,
+      snippet: buildCitationSnippet(chunk.text),
+      text: chunk.text,
+      startOffset: chunk.startOffset,
+      endOffset: chunk.endOffset,
+      updatedAt: chunk.updatedAt,
+    };
+
+    for (const token of uniqueTokens) {
+      docFreq.set(token, (docFreq.get(token) || 0) + 1);
+    }
+    for (const [token, tf] of tokenMap.entries()) {
+      if (!postingsByToken.has(token)) {
+        postingsByToken.set(token, []);
+      }
+      postingsByToken.get(token).push({
+        chunkId: chunk.chunkId,
+        tf,
+      });
+    }
+  }
+
+  const postings = {};
+  for (const [token, rows] of [...postingsByToken.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    postings[token] = rows.sort((a, b) => a.chunkId.localeCompare(b.chunkId));
+  }
+
+  const generatedAt = nowIso();
+  return {
+    lexicalIndex: {
+      generatedAt,
+      searchBackend: 'portable-lexical',
+      tokenizer: {
+        name: 'latin+cjk-char',
+        version: 1,
+        latinPattern: '[a-z0-9_]+',
+        cjkPattern: '[\\u4e00-\\u9fff]',
+      },
+      chunkCount: chunks.length,
+      docCount,
+      docFreq: objectFromMap(docFreq),
+      postings,
+    },
+    chunkStore: {
+      generatedAt,
+      searchBackend: 'portable-lexical',
+      chunkCount: chunks.length,
+      docCount,
+      chunks: chunkStore,
+    },
+  };
+}
+
+function loadSqliteModule() {
+  try {
+    return require('node:sqlite');
+  } catch {
+    return null;
+  }
+}
+
+function sqliteFtsAvailable() {
+  const sqlite = loadSqliteModule();
+  if (!sqlite || !sqlite.DatabaseSync) return false;
+  let db = null;
+  try {
+    db = new sqlite.DatabaseSync(':memory:');
+    db.exec("CREATE VIRTUAL TABLE wiki_fts_probe USING fts5(text, tokenize='trigram')");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        // ignore close errors for optional capability probing
+      }
+    }
+  }
+}
+
+function buildSqliteFtsIndex(chunks, docCount, sqliteIndexFile) {
+  const sqlite = loadSqliteModule();
+  if (!sqlite || !sqlite.DatabaseSync) {
+    return { available: false, reason: 'node:sqlite is not available in this runtime.' };
+  }
+
+  ensureDir(path.dirname(sqliteIndexFile));
+  fs.rmSync(sqliteIndexFile, { force: true });
+  fs.rmSync(`${sqliteIndexFile}-wal`, { force: true });
+  fs.rmSync(`${sqliteIndexFile}-shm`, { force: true });
+
+  let db = null;
+  try {
+    db = new sqlite.DatabaseSync(sqliteIndexFile);
+    db.exec(`
+      PRAGMA journal_mode = DELETE;
+      CREATE TABLE meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE chunks_fts USING fts5(
+        chunkId UNINDEXED,
+        docId UNINDEXED,
+        sourcePath UNINDEXED,
+        docTitle UNINDEXED,
+        text,
+        snippet UNINDEXED,
+        startOffset UNINDEXED,
+        endOffset UNINDEXED,
+        updatedAt UNINDEXED,
+        tokenize='trigram'
+      );
+    `);
+    const metaInsert = db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)');
+    metaInsert.run('generatedAt', nowIso());
+    metaInsert.run('searchBackend', 'sqlite-fts');
+    metaInsert.run('tokenizer', 'fts5-trigram');
+    metaInsert.run('chunkCount', String(chunks.length));
+    metaInsert.run('docCount', String(docCount));
+
+    const insert = db.prepare(`
+      INSERT INTO chunks_fts (
+        chunkId,
+        docId,
+        sourcePath,
+        docTitle,
+        text,
+        snippet,
+        startOffset,
+        endOffset,
+        updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    db.exec('BEGIN');
+    for (const chunk of chunks) {
+      insert.run(
+        chunk.chunkId,
+        chunk.docId,
+        chunk.sourcePath,
+        chunk.docTitle,
+        chunk.text,
+        buildCitationSnippet(chunk.text),
+        String(chunk.startOffset || 0),
+        String(chunk.endOffset || 0),
+        String(chunk.updatedAt || 0)
+      );
+    }
+    db.exec('COMMIT');
+    return {
+      available: true,
+      searchBackend: 'sqlite-fts',
+      sqliteIndexFile,
+      tokenizer: 'fts5-trigram',
+      chunkCount: chunks.length,
+      docCount,
+    };
+  } catch (error) {
+    try {
+      if (db) db.exec('ROLLBACK');
+    } catch {
+      // rollback is best-effort; the index can be rebuilt later
+    }
+    fs.rmSync(sqliteIndexFile, { force: true });
+    return {
+      available: false,
+      reason: `sqlite_fts_unavailable: ${error.message}`,
+    };
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        // ignore close errors after optional index build
+      }
+    }
+  }
+}
+
+function buildVectorIndex(chunks, config) {
+  const embedded = embedTexts(config, chunks.map((chunk) => chunk.text));
+  const normalizedConfig = normalizeConfig(config);
+  return {
+    generatedAt: nowIso(),
+    provider: embedded.provider,
+    model: embedded.model,
+    dimension: embedded.dimension,
+    embeddingConfigSignature: getEmbeddingConfigSignature(config),
+    embeddingCommandHash: normalizedConfig.embeddingProvider === 'command-json-v1'
+      ? hashString(normalizedConfig.embeddingCommand)
+      : '',
+    vectorNormalization: 'l2',
+    chunkCount: chunks.length,
+    vectors: chunks.map((chunk, idx) => ({
+      chunkId: chunk.chunkId,
+      docId: chunk.docId,
+      sourcePath: chunk.sourcePath,
+      docTitle: chunk.docTitle,
+      text: chunk.text,
+      snippet: buildCitationSnippet(chunk.text),
+      startOffset: chunk.startOffset,
+      endOffset: chunk.endOffset,
+      updatedAt: chunk.updatedAt,
+      vector: embedded.vectors[idx],
+    })),
+  };
+}
+
+function portableIndexFilesExist(paths) {
+  return fs.existsSync(paths.lexicalPostingsFile) && fs.existsSync(paths.chunkStoreFile);
+}
+
+function vectorIndexFileExists(paths) {
+  return fs.existsSync(paths.vectorIndexFile);
+}
+
+function sqliteIndexFileExists(paths) {
+  return fs.existsSync(paths.sqliteIndexFile);
+}
+
+function normalizeSearchBackend(value) {
+  const normalized = safeTrim(value).toLowerCase();
+  if (!normalized) return '';
+  if ([
+    'auto',
+    'hybrid',
+    'portable',
+    'portable-lexical',
+    'sqlite',
+    'sqlite-fts',
+    'vector',
+    'scan',
+    'chunk-scan',
+    'disabled',
+    'none',
+  ].includes(normalized)) {
+    return normalized;
+  }
+  return '';
 }
 
 function chunkText(text, chunkSize, chunkOverlap) {
@@ -993,13 +1520,13 @@ function actionIngest(input, paths, state) {
   const docsOut = [...docsBySource.values()].sort((a, b) => a.sourcePath.localeCompare(b.sourcePath));
   writeJsonl(paths.docsFile, docsOut);
 
-  const hasVersionChange = docsNew + docsUpdated + docsRemoved > 0;
+  const changed = docsNew + docsUpdated + docsRemoved > 0;
   const nextState = {
     ...state,
     docsFingerprint: nextFingerprint,
     lastIngestAt: nowTs(),
   };
-  if (hasVersionChange) {
+  if (changed) {
     nextState.kbVersion = bumpVersion(state.kbVersion);
   }
   saveState(paths, nextState);
@@ -1016,6 +1543,7 @@ function actionIngest(input, paths, state) {
       docsRemoved,
       docsSkipped,
       parseFailed,
+      changed,
       kbVersion: nextState.kbVersion,
     },
     metrics: {
@@ -1053,21 +1581,50 @@ function actionIndex(input, paths, state) {
   }
 
   writeJsonl(paths.chunksFile, chunks);
+  const portableSearch = buildPortableSearchIndex(chunks, docs.length);
+  writeJson(paths.lexicalPostingsFile, portableSearch.lexicalIndex);
+  writeJson(paths.chunkStoreFile, portableSearch.chunkStore);
+  const sqliteIndex = buildSqliteFtsIndex(chunks, docs.length, paths.sqliteIndexFile);
 
   const lexicalIndex = {
     generatedAt: nowIso(),
     chunkCount: chunks.length,
     docCount: docs.length,
     tokenizer: 'latin+cjk-char',
+    searchBackend: 'portable-lexical',
+    portableIndexFile: paths.lexicalPostingsFile,
+    chunkStoreFile: paths.chunkStoreFile,
+    sqliteFts: sqliteIndex,
   };
   writeJson(paths.lexicalIndexFile, lexicalIndex);
+
+  let vectorIndex = null;
+  if (config.embeddingEnabled) {
+    vectorIndex = buildVectorIndex(chunks, config);
+    writeJson(paths.vectorIndexFile, vectorIndex);
+  } else {
+    writeJson(paths.vectorIndexFile, {
+      generatedAt: nowIso(),
+      provider: config.embeddingProvider,
+      model: config.embeddingModel,
+      dimension: 0,
+      embeddingConfigSignature: getEmbeddingConfigSignature(config),
+      disabled: true,
+      chunkCount: chunks.length,
+      vectors: [],
+    });
+  }
 
   const embeddingIndex = {
     generatedAt: nowIso(),
     enabled: Boolean(config.embeddingEnabled),
-    model: config.embeddingModel,
-    status: 'not_built_in_v1',
-    vectors: 0,
+    provider: vectorIndex ? vectorIndex.provider : config.embeddingProvider,
+    model: vectorIndex ? vectorIndex.model : config.embeddingModel,
+    dimension: vectorIndex ? vectorIndex.dimension : 0,
+    embeddingConfigSignature: vectorIndex ? vectorIndex.embeddingConfigSignature : getEmbeddingConfigSignature(config),
+    status: config.embeddingEnabled ? 'built' : 'disabled',
+    vectors: vectorIndex ? vectorIndex.vectors.length : 0,
+    vectorIndexFile: paths.vectorIndexFile,
   };
   writeJson(paths.embeddingIndexFile, embeddingIndex);
 
@@ -1076,6 +1633,7 @@ function actionIndex(input, paths, state) {
     ...state,
     lastIndexAt: nowTs(),
     lastChunkHash: chunkHash,
+    lastIndexConfigSignature: getIndexConfigSignature(config),
   };
   if (state.lastChunkHash !== chunkHash) {
     nextState.kbVersion = bumpVersion(state.kbVersion);
@@ -1084,14 +1642,18 @@ function actionIndex(input, paths, state) {
 
   return {
     message: 'Index completed',
-    warnings: embeddingIndex.enabled ? [
-      'Embedding index is marked as not_built_in_v1. Query currently uses lexical/hybrid fallback.',
-    ] : [],
+    warnings: [],
     data: {
       chunkCount: chunks.length,
       docCount: docs.length,
       kbVersion: nextState.kbVersion,
       lexicalIndexFile: paths.lexicalIndexFile,
+      lexicalPostingsFile: paths.lexicalPostingsFile,
+      chunkStoreFile: paths.chunkStoreFile,
+      searchBackend: 'portable-lexical',
+      sqliteFts: sqliteIndex,
+      sqliteIndexFile: sqliteIndex.available ? paths.sqliteIndexFile : '',
+      vectorIndexFile: paths.vectorIndexFile,
       embeddingIndexFile: paths.embeddingIndexFile,
     },
     metrics: {
@@ -1128,33 +1690,356 @@ function scoreChunks(question, chunks, alpha) {
     return {
       chunk,
       lexicalRaw: rawLexical,
+      phraseRaw: phraseScore(question, chunk.text),
       vectorRaw: 0,
       score: 0,
     };
   });
 
   const maxLex = Math.max(1e-9, ...scored.map((item) => item.lexicalRaw));
+  const maxPhrase = Math.max(1e-9, ...scored.map((item) => item.phraseRaw));
   for (const row of scored) {
-    const lexicalNorm = row.lexicalRaw / maxLex;
+    const lexicalNorm = normalizedPositive(row.lexicalRaw, maxLex);
+    const phraseNorm = normalizedPositive(row.phraseRaw, maxPhrase);
     const vectorNorm = 0;
-    row.score = alpha * lexicalNorm + (1 - alpha) * vectorNorm;
+    row.score = (alpha * lexicalNorm) + ((1 - alpha) * vectorNorm) + (DEFAULT_PHRASE_WEIGHT * phraseNorm);
   }
 
   scored.sort((a, b) => b.score - a.score);
   return scored;
 }
 
-function actionQuery(input, paths) {
-  const startedAt = nowTs();
-  const chunks = readJsonl(paths.chunksFile);
-  if (chunks.length === 0) {
-    throw new SkillError('query_no_evidence', 'No chunks indexed. Run ingest + index first.');
+function scorePortableChunks(question, lexicalIndex, chunkStore, alpha) {
+  const queryTokens = tokenize(question);
+  const querySet = [...new Set(queryTokens)];
+  const indexChunks = chunkStore && typeof chunkStore.chunks === 'object' ? chunkStore.chunks : {};
+  const postings = lexicalIndex && typeof lexicalIndex.postings === 'object' ? lexicalIndex.postings : {};
+  const docFreq = lexicalIndex && typeof lexicalIndex.docFreq === 'object' ? lexicalIndex.docFreq : {};
+  const totalDocs = Math.max(1, Number(lexicalIndex?.chunkCount) || Object.keys(indexChunks).length);
+  const rawByChunkId = new Map();
+
+  for (const token of querySet) {
+    const rows = Array.isArray(postings[token]) ? postings[token] : [];
+    const idf = Math.log((totalDocs + 1) / ((Number(docFreq[token]) || 0) + 1)) + 1;
+    for (const row of rows) {
+      const chunkId = safeTrim(row?.chunkId);
+      const tf = Number(row?.tf) || 0;
+      if (!chunkId || !tf) continue;
+      rawByChunkId.set(chunkId, (rawByChunkId.get(chunkId) || 0) + ((1 + Math.log(tf)) * idf));
+    }
   }
 
+  const scored = [...rawByChunkId.entries()].map(([chunkId, lexicalRaw]) => {
+    const chunk = indexChunks[chunkId];
+    return {
+      chunk,
+      lexicalRaw,
+      phraseRaw: phraseScore(question, chunk?.text || chunk?.snippet || ''),
+      vectorRaw: 0,
+      score: 0,
+    };
+  }).filter((row) => row.chunk);
+
+  const maxLex = Math.max(1e-9, ...scored.map((row) => row.lexicalRaw));
+  const maxPhrase = Math.max(1e-9, ...scored.map((row) => row.phraseRaw));
+  for (const row of scored) {
+    const lexicalNorm = normalizedPositive(row.lexicalRaw, maxLex);
+    const phraseNorm = normalizedPositive(row.phraseRaw, maxPhrase);
+    row.score = (alpha * lexicalNorm) + (DEFAULT_PHRASE_WEIGHT * phraseNorm);
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function scoreVectorChunks(question, vectorIndex, config) {
+  if (!vectorIndex || typeof vectorIndex !== 'object') {
+    throw new SkillError('query_no_evidence', 'No vector index found. Run ingest + index first.');
+  }
+  const rows = Array.isArray(vectorIndex.vectors) ? vectorIndex.vectors : [];
+  const dimension = Number(vectorIndex.dimension) || 0;
+  if (dimension <= 0 || rows.length === 0) {
+    throw new SkillError('query_no_evidence', 'Vector index is empty. Run ingest + index first.');
+  }
+  const expectedProvider = safeTrim(vectorIndex.provider);
+  const expectedModel = safeTrim(vectorIndex.model);
+  const expectedSignature = safeTrim(vectorIndex.embeddingConfigSignature);
+  const currentSignature = getEmbeddingConfigSignature(config);
+  if (!expectedSignature || expectedSignature !== currentSignature) {
+    throw new SkillError(
+      'embedding_failed',
+      'Vector index embedding configuration is stale or missing a signature. Re-run index.'
+    );
+  }
+  if (expectedProvider && expectedProvider !== config.embeddingProvider) {
+    throw new SkillError(
+      'embedding_failed',
+      `Vector index provider ${expectedProvider} does not match configured provider ${config.embeddingProvider}. Re-run index.`
+    );
+  }
+  if (expectedModel && expectedModel !== config.embeddingModel && config.embeddingProvider !== 'local-hashing-v1') {
+    throw new SkillError(
+      'embedding_failed',
+      `Vector index model ${expectedModel} does not match configured model ${config.embeddingModel}. Re-run index.`
+    );
+  }
+
+  const embedded = embedTexts(
+    {
+      ...config,
+      embeddingProvider: expectedProvider || config.embeddingProvider,
+      embeddingModel: expectedModel || config.embeddingModel,
+    },
+    [question]
+  );
+  if (embedded.dimension !== dimension) {
+    throw new SkillError(
+      'embedding_failed',
+      `Query embedding dimension ${embedded.dimension} does not match vector index dimension ${dimension}. Re-run index.`
+    );
+  }
+  const queryVector = embedded.vectors[0];
+  const scored = rows.map((row) => {
+    const chunk = {
+      docId: row.docId,
+      docTitle: row.docTitle,
+      sourcePath: row.sourcePath,
+      chunkId: row.chunkId,
+      text: row.text || row.snippet || '',
+      startOffset: row.startOffset,
+      endOffset: row.endOffset,
+      updatedAt: row.updatedAt,
+    };
+    const vector = normalizeVector(row.vector, dimension);
+    const vectorRaw = cosineSimilarity(queryVector, vector);
+    return {
+      chunk,
+      lexicalRaw: 0,
+      vectorRaw,
+      score: Math.max(0, vectorRaw),
+    };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function escapeSqliteFtsPhrase(value) {
+  return safeTrim(value).replace(/"/g, '""');
+}
+
+function buildSqliteFtsQueries(question) {
+  const cleaned = cleanText(question)
+    .replace(/[^\p{L}\p{N}_\u4e00-\u9fff]+/gu, ' ')
+    .trim();
+  const queries = [];
+  if (cleaned.length >= 3) {
+    queries.push(`"${escapeSqliteFtsPhrase(cleaned)}"`);
+  }
+
+  const tokenQueries = [...new Set(tokenize(question)
+    .filter((token) => token.length >= 3)
+    .map((token) => `"${escapeSqliteFtsPhrase(token)}"`))];
+  if (tokenQueries.length > 0) {
+    queries.push(tokenQueries.join(' OR '));
+  }
+
+  const cjkQuery = (safeTrim(question).match(/[\u4e00-\u9fff]/g) || []).join('');
+  if (cjkQuery.length >= 3) {
+    queries.push(`"${escapeSqliteFtsPhrase(cjkQuery)}"`);
+  }
+
+  return [...new Set(queries)].filter(Boolean);
+}
+
+function scoreSqliteFtsChunks(question, paths, limit = 512) {
+  const sqlite = loadSqliteModule();
+  if (!sqlite || !sqlite.DatabaseSync || !fs.existsSync(paths.sqliteIndexFile)) {
+    throw new SkillError('query_no_evidence', 'No SQLite FTS index found. Run ingest + index first.');
+  }
+
+  const queries = buildSqliteFtsQueries(question);
+  if (queries.length === 0) return [];
+
+  let db = null;
+  try {
+    db = new sqlite.DatabaseSync(paths.sqliteIndexFile, { readOnly: true });
+    const statement = db.prepare(`
+      SELECT
+        chunkId,
+        docId,
+        sourcePath,
+        docTitle,
+        text,
+        snippet,
+        startOffset,
+        endOffset,
+        updatedAt,
+        bm25(chunks_fts) AS rank
+      FROM chunks_fts
+      WHERE chunks_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?
+    `);
+
+    let rows = [];
+    for (const query of queries) {
+      try {
+        rows = statement.all(query, limit);
+      } catch {
+        rows = [];
+      }
+      if (rows.length > 0) break;
+    }
+
+    const scored = rows.map((row, idx) => {
+      const lexicalRaw = Math.max(0, -Number(row.rank || 0)) || (1 / (idx + 1));
+      const chunk = {
+        docId: row.docId,
+        docTitle: row.docTitle,
+        sourcePath: row.sourcePath,
+        chunkId: row.chunkId,
+        text: row.text || row.snippet || '',
+        startOffset: Number(row.startOffset) || 0,
+        endOffset: Number(row.endOffset) || 0,
+        updatedAt: Number(row.updatedAt) || 0,
+      };
+      return {
+        chunk,
+        lexicalRaw,
+        phraseRaw: phraseScore(question, chunk.text),
+        vectorRaw: 0,
+        score: 0,
+      };
+    });
+
+    const maxLex = Math.max(1e-9, ...scored.map((row) => row.lexicalRaw));
+    const maxPhrase = Math.max(1e-9, ...scored.map((row) => row.phraseRaw));
+    for (const row of scored) {
+      row.score = (
+        normalizedPositive(row.lexicalRaw, maxLex) +
+        (DEFAULT_PHRASE_WEIGHT * normalizedPositive(row.phraseRaw, maxPhrase))
+      );
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored;
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        // ignore close errors on a read-only optional backend
+      }
+    }
+  }
+}
+
+function scoreHybridChunks(question, lexicalIndex, chunkStore, vectorIndex, config) {
+  const lexicalRows = scorePortableChunks(question, lexicalIndex, chunkStore, 1);
+  const vectorRows = scoreVectorChunks(question, vectorIndex, config);
+  const byChunkId = new Map();
+
+  for (const row of lexicalRows) {
+    if (!row.chunk?.chunkId) continue;
+    byChunkId.set(row.chunk.chunkId, {
+      chunk: row.chunk,
+      lexicalRaw: row.lexicalRaw || 0,
+      phraseRaw: row.phraseRaw || phraseScore(question, row.chunk.text || row.chunk.snippet || ''),
+      vectorRaw: 0,
+      score: 0,
+    });
+  }
+
+  for (const row of vectorRows) {
+    if (!row.chunk?.chunkId) continue;
+    const existing = byChunkId.get(row.chunk.chunkId) || {
+      chunk: row.chunk,
+      lexicalRaw: 0,
+      phraseRaw: phraseScore(question, row.chunk.text || row.chunk.snippet || ''),
+      vectorRaw: 0,
+      score: 0,
+    };
+    existing.vectorRaw = Math.max(existing.vectorRaw || 0, row.vectorRaw || 0);
+    byChunkId.set(row.chunk.chunkId, existing);
+  }
+
+  const rows = [...byChunkId.values()];
+  const maxLex = Math.max(1e-9, ...rows.map((row) => row.lexicalRaw));
+  const maxVector = Math.max(1e-9, ...rows.map((row) => Math.max(0, row.vectorRaw)));
+  const maxPhrase = Math.max(1e-9, ...rows.map((row) => row.phraseRaw));
+  const lexicalWeight = Number(config.lexicalWeight) || DEFAULT_LEXICAL_WEIGHT;
+  const vectorWeight = Number(config.vectorWeight) || DEFAULT_VECTOR_WEIGHT;
+  const phraseWeight = Number(config.phraseWeight) || DEFAULT_PHRASE_WEIGHT;
+  const totalWeight = Math.max(1e-9, lexicalWeight + vectorWeight + phraseWeight);
+
+  for (const row of rows) {
+    row.score = (
+      (lexicalWeight * normalizedPositive(row.lexicalRaw, maxLex)) +
+      (vectorWeight * normalizedPositive(row.vectorRaw, maxVector)) +
+      (phraseWeight * normalizedPositive(row.phraseRaw, maxPhrase))
+    ) / totalWeight;
+  }
+
+  rows.sort((a, b) => b.score - a.score);
+  return {
+    rows,
+    lexicalCandidates: lexicalRows.length,
+    vectorCandidates: vectorRows.length,
+    vectorProvider: safeTrim(vectorIndex.provider) || config.embeddingProvider,
+  };
+}
+
+function resolveQuerySearchBackend(requested, config, paths) {
+  const wanted = normalizeSearchBackend(requested)
+    || normalizeSearchBackend(config.searchBackend)
+    || 'auto';
+  const hasPortableIndex = portableIndexFilesExist(paths);
+  const hasVectorIndex = vectorIndexFileExists(paths);
+  const hasSqliteIndex = sqliteIndexFileExists(paths) && sqliteFtsAvailable();
+
+  if (wanted === 'disabled' || wanted === 'none' || wanted === 'scan' || wanted === 'chunk-scan') {
+    return 'chunk-scan';
+  }
+  if (wanted === 'vector') {
+    return 'vector';
+  }
+  if (wanted === 'hybrid') {
+    if (hasPortableIndex && hasVectorIndex) return 'hybrid';
+    if (hasVectorIndex) return 'vector';
+    if (hasPortableIndex) return 'portable-lexical';
+  }
+  if (wanted === 'sqlite' || wanted === 'sqlite-fts') {
+    if (hasSqliteIndex) return 'sqlite-fts';
+    if (hasPortableIndex) return 'portable-lexical';
+  }
+  if (wanted === 'auto') {
+    if (hasPortableIndex && hasVectorIndex) return 'hybrid';
+    if (hasSqliteIndex) return 'sqlite-fts';
+  }
+  if ((wanted === 'auto' || wanted === 'portable' || wanted === 'portable-lexical') && hasPortableIndex) {
+    return 'portable-lexical';
+  }
+  return 'chunk-scan';
+}
+
+function actionQuery(input, paths) {
+  const startedAt = nowTs();
   const question = safeTrim(input.payload.question);
   if (!question) {
     throw new SkillError('invalid_payload', 'query.payload.question is required.');
   }
+
+  const config = loadConfig(paths);
+  const searchBackend = resolveQuerySearchBackend(
+    input.payload.searchBackend,
+    config,
+    paths
+  );
+  let totalChunks = 0;
+  let scored = [];
+  let vectorProvider = '';
+  let vectorCandidates = 0;
+  let lexicalCandidates = 0;
 
   const topKRaw = Number(input.payload.topK);
   const minScoreRaw = Number(input.payload.minScore);
@@ -1164,7 +2049,59 @@ function actionQuery(input, paths) {
   const hybridAlpha = Number.isFinite(hybridAlphaRaw) ? hybridAlphaRaw : DEFAULT_HYBRID_ALPHA;
   const requireCitations = input.payload.requireCitations !== false;
 
-  const scored = scoreChunks(question, chunks, hybridAlpha);
+  if (searchBackend === 'vector') {
+    const vectorIndex = readJson(paths.vectorIndexFile, null);
+    totalChunks = Math.max(0, Number(vectorIndex?.chunkCount) || (Array.isArray(vectorIndex?.vectors) ? vectorIndex.vectors.length : 0));
+    scored = scoreVectorChunks(question, vectorIndex, config);
+    vectorProvider = safeTrim(vectorIndex?.provider) || config.embeddingProvider;
+    vectorCandidates = scored.length;
+  } else if (searchBackend === 'hybrid') {
+    const lexicalIndex = readJson(paths.lexicalPostingsFile, null);
+    const chunkStore = readJson(paths.chunkStoreFile, null);
+    const vectorIndex = readJson(paths.vectorIndexFile, null);
+    totalChunks = Math.max(
+      0,
+      Number(lexicalIndex?.chunkCount) || 0,
+      Number(chunkStore?.chunkCount) || 0,
+      Number(vectorIndex?.chunkCount) || 0,
+      Array.isArray(vectorIndex?.vectors) ? vectorIndex.vectors.length : 0
+    );
+    if (!lexicalIndex || !chunkStore || totalChunks === 0) {
+      throw new SkillError('query_no_evidence', 'No portable lexical index found. Run ingest + index first.');
+    }
+    const hybrid = scoreHybridChunks(question, lexicalIndex, chunkStore, vectorIndex, config);
+    scored = hybrid.rows;
+    lexicalCandidates = hybrid.lexicalCandidates;
+    vectorCandidates = hybrid.vectorCandidates;
+    vectorProvider = hybrid.vectorProvider;
+  } else if (searchBackend === 'sqlite-fts') {
+    const lexicalIndex = readJson(paths.lexicalIndexFile, null);
+    totalChunks = Math.max(0, Number(lexicalIndex?.chunkCount) || 0);
+    scored = scoreSqliteFtsChunks(question, paths);
+    lexicalCandidates = scored.length;
+  } else if (searchBackend === 'portable-lexical') {
+    const lexicalIndex = readJson(paths.lexicalPostingsFile, null);
+    const chunkStore = readJson(paths.chunkStoreFile, null);
+    totalChunks = Math.max(
+      0,
+      Number(lexicalIndex?.chunkCount) || 0,
+      Number(chunkStore?.chunkCount) || 0
+    );
+    if (!lexicalIndex || !chunkStore || totalChunks === 0) {
+      throw new SkillError('query_no_evidence', 'No portable lexical index found. Run ingest + index first.');
+    }
+    scored = scorePortableChunks(question, lexicalIndex, chunkStore, hybridAlpha);
+    lexicalCandidates = scored.length;
+  } else {
+    const chunks = readJsonl(paths.chunksFile);
+    totalChunks = chunks.length;
+    if (chunks.length === 0) {
+      throw new SkillError('query_no_evidence', 'No chunks indexed. Run ingest + index first.');
+    }
+    scored = scoreChunks(question, chunks, hybridAlpha);
+    lexicalCandidates = scored.length;
+  }
+
   const selected = scored.filter((row) => row.score >= minScore).slice(0, topK);
   const citations = selected.map((row) => ({
     docId: row.chunk.docId,
@@ -1197,13 +2134,21 @@ function actionQuery(input, paths) {
         topK,
         minScore,
         hybridAlpha,
+        lexicalWeight: config.lexicalWeight,
+        vectorWeight: config.vectorWeight,
+        phraseWeight: config.phraseWeight,
         requireCitations,
+        searchBackend,
+        vectorProvider,
       },
     },
     metrics: {
       elapsedMs: nowTs() - startedAt,
-      candidateChunks: chunks.length,
+      candidateChunks: scored.length,
+      totalChunks,
       matchedChunks: citations.length,
+      lexicalCandidates,
+      vectorCandidates,
     },
   };
 }
@@ -1464,6 +2409,16 @@ function actionWikiBuild(input, paths, state) {
 
 function zipDeterministic(input) {
   return new Promise((resolve, reject) => {
+    let yazl;
+    try {
+      yazl = require('yazl');
+    } catch {
+      reject(new SkillError(
+        'dependency_missing',
+        'Missing optional dependency "yazl" for bundle_zip. ingest/index/query work without it; install or bundle yazl to create ZIP archives.'
+      ));
+      return;
+    }
     const zipFile = new yazl.ZipFile();
     const output = fs.createWriteStream(input.outPath);
     let settled = false;
@@ -1614,19 +2569,24 @@ function actionPublishZip(input, paths, state) {
   const startedAt = nowTs();
   const pinUriInput = safeTrim(input.payload.pinUri) || safeTrim(input.payload.zipUri);
   const uploadZipFlag = parseOptionalBooleanFlag(input.payload.uploadZip, 'payload.uploadZip');
-  const zipPath = safeTrim(input.payload.zipPath)
+  const payloadZipPath = safeTrim(input.payload.zipPath)
     ? path.resolve(input.payload.zipPath)
-    : safeTrim(state.latestZipPath)
-      ? path.resolve(state.latestZipPath)
+    : '';
+  const stateZipPath = safeTrim(state.latestZipPath)
+    ? path.resolve(state.latestZipPath)
+    : '';
+  const shouldUpload = uploadZipFlag !== undefined ? uploadZipFlag : !pinUriInput;
+  const zipPath = payloadZipPath
+    ? payloadZipPath
+    : shouldUpload
+      ? stateZipPath
       : '';
 
-  if (!zipPath || !fs.existsSync(zipPath)) {
-    throw new SkillError('invalid_payload', 'zipPath is required. Run bundle_zip first.');
-  }
-
-  const shouldUpload = uploadZipFlag !== undefined ? uploadZipFlag : !pinUriInput;
   if (!shouldUpload && !pinUriInput) {
     throw new SkillError('invalid_payload', 'uploadZip=false requires payload.pinUri or payload.zipUri.');
+  }
+  if (shouldUpload && (!zipPath || !fs.existsSync(zipPath))) {
+    throw new SkillError('invalid_payload', 'zipPath is required. Run bundle_zip first.');
   }
 
   let zipUri = pinUriInput;
@@ -1660,7 +2620,9 @@ function actionPublishZip(input, paths, state) {
     ...state,
     latestZipPath: zipPath,
     latestZipUri: zipUri,
-    latestZipSha256: hashFile(zipPath),
+    latestZipSha256: zipPath && fs.existsSync(zipPath)
+      ? hashFile(zipPath)
+      : safeTrim(input.payload.zipSha256),
   };
   saveState(paths, nextState);
 
@@ -1736,29 +2698,38 @@ async function actionPublishSnapshot(input, paths, state) {
   const startedAt = nowTs();
   const snapshotOnChainMode = resolveSnapshotOnChainMode(input.payload);
 
+  const payloadZipPath = safeTrim(input.payload.zipPath)
+    ? path.resolve(input.payload.zipPath)
+    : '';
+  if (payloadZipPath && !fs.existsSync(payloadZipPath)) {
+    throw new SkillError('invalid_payload', `payload.zipPath does not exist: ${payloadZipPath}`);
+  }
+  const zipPath = payloadZipPath
+    ? payloadZipPath
+    : safeTrim(state.latestZipPath)
+      ? path.resolve(state.latestZipPath)
+      : '';
+
   let zipUri = '';
   let zipUriSource = '';
-  const zipUriInput = safeTrim(input.payload.zipUri);
+  const zipUriInput = safeTrim(input.payload.zipUri) || safeTrim(input.payload.pinUri);
   if (zipUriInput) {
     zipUri = zipUriInput;
     zipUriSource = 'payload';
+  } else if (payloadZipPath) {
+    zipUri = `file://${normalizeSlashes(payloadZipPath)}`;
+    zipUriSource = 'local_file';
   } else {
     const stateZipUri = safeTrim(state.latestZipUri);
     if (stateZipUri) {
       zipUri = stateZipUri;
       zipUriSource = 'state';
+    } else if (zipPath) {
+      zipUri = `file://${normalizeSlashes(zipPath)}`;
+      zipUriSource = 'local_file';
     }
   }
 
-  const zipPath = safeTrim(input.payload.zipPath)
-    ? path.resolve(input.payload.zipPath)
-    : safeTrim(state.latestZipPath)
-      ? path.resolve(state.latestZipPath)
-      : '';
-  if (!zipUri && zipPath) {
-    zipUri = `file://${normalizeSlashes(zipPath)}`;
-    zipUriSource = 'local_file';
-  }
   if (!zipUri) {
     throw new SkillError('invalid_payload', 'zipUri is required. Run publish_zip first or pass payload.zipUri.');
   }
@@ -1769,8 +2740,13 @@ async function actionPublishSnapshot(input, paths, state) {
     );
   }
 
-  const zipSha256 = safeTrim(input.payload.zipSha256)
-    || (zipPath && fs.existsSync(zipPath) ? hashFile(zipPath) : safeTrim(state.latestZipSha256));
+  let zipSha256 = safeTrim(input.payload.zipSha256);
+  if (!zipSha256 && payloadZipPath && fs.existsSync(payloadZipPath)) {
+    zipSha256 = hashFile(payloadZipPath);
+  }
+  if (!zipSha256 && !zipUriInput) {
+    zipSha256 = zipPath && fs.existsSync(zipPath) ? hashFile(zipPath) : safeTrim(state.latestZipSha256);
+  }
   const kbVersion = safeTrim(input.payload.kbVersion) || safeTrim(state.kbVersion) || 'v0';
 
   const snapshot = {
@@ -1853,7 +2829,8 @@ async function actionPublishAll(input, paths, state) {
   }
 
   let effectiveZipPath = safeTrim(input.payload.zipPath);
-  if (!skipBundle || !effectiveZipPath) {
+  const canReuseExternalZipUri = Boolean(requestedZipUri) && uploadZipFlag !== true;
+  if (!canReuseExternalZipUri && !skipBundle && !effectiveZipPath) {
     const bundleResult = await actionBundleZip({
       ...input,
       payload: {
@@ -1942,12 +2919,31 @@ function actionAbsorb(input, paths, state) {
   }, paths, state);
 
   const stateAfterIngest = loadState(paths, input.kbId);
-  const indexResult = actionIndex({
-    ...input,
-    payload: {
-      mode: 'incremental',
-    },
-  }, paths, stateAfterIngest);
+  const indexConfigSignature = getIndexConfigSignature(loadConfig(paths));
+  const configChanged = stateAfterIngest.lastIndexConfigSignature !== indexConfigSignature;
+  const shouldRunIndex = ingestResult.data?.changed === true
+    || configChanged
+    || input.payload.forceIndex === true;
+  const indexResult = shouldRunIndex
+    ? actionIndex({
+      ...input,
+      payload: {
+        ...(input.payload || {}),
+        mode: 'incremental',
+      },
+    }, paths, stateAfterIngest)
+    : {
+      message: 'Index skipped',
+      warnings: [],
+      data: {
+        skipped: true,
+        reason: 'raw_files_unchanged',
+        kbVersion: stateAfterIngest.kbVersion,
+      },
+      metrics: {
+        elapsedMs: 0,
+      },
+    };
 
   let wikiResult = null;
   if (input.payload.runWikiDelta === true) {
@@ -2066,5 +3062,7 @@ module.exports = {
     tokenize,
     scoreChunks,
     normalizeConfig,
+    normalizeVector,
+    parseCommandLine,
   },
 };

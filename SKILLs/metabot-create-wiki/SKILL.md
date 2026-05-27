@@ -68,7 +68,11 @@ payload 至少包含：
 
 - 新 skill 默认使用自己的私有 registry。
 - raw 目录更新后，重新跑 `absorb` 就行。
-- `query`、`wiki_build`、`publish_*` 应该在需要时先刷新 raw，再用最新数据工作。
+- 日常 `query` 默认不复制 raw、不重建索引，会使用本地 persistent lexical/vector/hybrid 索引快速查询。
+- 用户把新资料放进 `rawSourceDir` 后，先运行 `absorb` 刷新索引，再运行 `query`。
+- 如果用户明确要求“边更新边查”，`query` 可传 `autoAbsorb:true` 或 `refresh:true`。
+- `wiki_build`、`publish_*` 应该在需要时先刷新 raw，再用最新数据工作。
+- 默认检索后端是 `hybrid`：组合本地 lexical 索引、向量索引与短语加权；可按需改成 `portable`、`sqlite-fts`、`vector` 或 `scan`。
 - 如果 PDF/DOCX 解析依赖缺失，保留和 `metabot-llm-wiki` 一样的提示。
 
 ## 结束时
