@@ -362,19 +362,40 @@ export class IMCoworkHandler extends EventEmitter {
     const config = this.coworkStore.getConfig();
     const imSettings = this.imStore.getIMSettings();
     const systemPrompt = config.systemPrompt || '';
+    const imSessionToolsPrompt = this.buildImSessionToolsPrompt();
 
     if (!imSettings.skillsEnabled || !this.getSkillsPrompt) {
-      return systemPrompt;
+      return systemPrompt
+        ? `${imSessionToolsPrompt}\n\n${systemPrompt}`
+        : imSessionToolsPrompt;
     }
 
     const skillsPrompt = await this.getSkillsPrompt();
     if (!skillsPrompt) {
-      return systemPrompt;
+      return systemPrompt
+        ? `${imSessionToolsPrompt}\n\n${systemPrompt}`
+        : imSessionToolsPrompt;
     }
 
+    const head = `${imSessionToolsPrompt}\n\n${skillsPrompt}`;
     return systemPrompt
-      ? `${skillsPrompt}\n\n${systemPrompt}`
-      : skillsPrompt;
+      ? `${head}\n\n${systemPrompt}`
+      : head;
+  }
+
+  private buildImSessionToolsPrompt(): string {
+    return [
+      '<im_session_tools>',
+      'You are running inside an IM gateway (Telegram / Discord / Feishu / DingTalk).',
+      'A dedicated tool `start_new_im_session` is available for rotating the chat session window:',
+      '- Call it EXACTLY ONCE only when the user explicitly asks for a new session/window',
+      '  (e.g. "新建会话", "新建 session", "新窗口", "重开会话", "new session", "new chat").',
+      '- Do NOT call it for any other reason. Long context alone is NOT a trigger.',
+      '- The current reply still flows back through this session; subsequent inbound',
+      '  messages from the user will automatically land in a freshly created session.',
+      '- After calling the tool, briefly confirm to the user in the same reply.',
+      '</im_session_tools>',
+    ].join('\n');
   }
 
   private isSessionNotFoundError(error: unknown): boolean {
