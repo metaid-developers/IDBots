@@ -27,7 +27,6 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const { parseArgs } = require('node:util');
 const { spawnSync } = require('node:child_process');
-const yazl = require('yazl');
 
 const ACTIONS = new Set([
   'registry_create',
@@ -61,6 +60,7 @@ const DEFAULT_TOP_K = 8;
 const DEFAULT_MIN_SCORE = 0.18;
 const DEFAULT_HYBRID_ALPHA = 0.65;
 const DEFAULT_EMBEDDING_MODEL = 'BAAI/bge-m3';
+const DEFAULT_SEARCH_BACKEND = 'portable';
 const DEFAULT_WIKI_SNAPSHOT_PATH = '/protocols/llm-wiki-snapshot';
 const DEFAULT_REGISTRY_DIR = '.metabot-llm-wiki';
 const REGISTRY_FILE_NAME = 'registry.json';
@@ -440,6 +440,8 @@ function resolvePaths(kbId, payload) {
     docsFile: path.join(rootDir, 'work', 'docs.jsonl'),
     chunksFile: path.join(rootDir, 'work', 'chunks.jsonl'),
     lexicalIndexFile: path.join(rootDir, 'index', 'lexical.json'),
+    lexicalPostingsFile: path.join(rootDir, 'index', 'lexical-postings.json'),
+    chunkStoreFile: path.join(rootDir, 'index', 'chunk-store.json'),
     embeddingIndexFile: path.join(rootDir, 'index', 'embeddings', 'index.json'),
     stateFile: path.join(rootDir, 'state.json'),
     configFile: path.join(rootDir, 'kb.config.json'),
@@ -497,12 +499,16 @@ function listFilesRecursive(rootDir) {
 function normalizeConfig(configInput) {
   const chunkSize = Number(configInput.chunkSize);
   const chunkOverlap = Number(configInput.chunkOverlap);
+  const searchBackend = safeTrim(configInput.searchBackend).toLowerCase();
   return {
     language: safeTrim(configInput.language) || 'zh-CN',
     chunkSize: Number.isFinite(chunkSize) && chunkSize >= 200 ? Math.floor(chunkSize) : DEFAULT_CHUNK_SIZE,
     chunkOverlap: Number.isFinite(chunkOverlap) && chunkOverlap >= 0 ? Math.floor(chunkOverlap) : DEFAULT_CHUNK_OVERLAP,
     embeddingEnabled: configInput.embeddingEnabled !== false,
     embeddingModel: safeTrim(configInput.embeddingModel) || DEFAULT_EMBEDDING_MODEL,
+    searchBackend: ['auto', 'portable', 'scan', 'disabled'].includes(searchBackend)
+      ? searchBackend
+      : DEFAULT_SEARCH_BACKEND,
   };
 }
 
@@ -521,6 +527,7 @@ function getIndexConfigSignature(config) {
     chunkOverlap: normalized.chunkOverlap,
     embeddingEnabled: normalized.embeddingEnabled,
     embeddingModel: normalized.embeddingModel,
+    searchBackend: normalized.searchBackend,
   }));
 }
 
@@ -665,6 +672,90 @@ function toFrequencyMap(tokens) {
     map.set(token, (map.get(token) || 0) + 1);
   }
   return map;
+}
+
+function objectFromMap(map) {
+  return Object.fromEntries([...map.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+}
+
+function buildPortableSearchIndex(chunks, docCount) {
+  const postingsByToken = new Map();
+  const docFreq = new Map();
+  const chunkStore = {};
+
+  for (const chunk of chunks) {
+    const tokens = tokenize(chunk.text);
+    const tokenMap = toFrequencyMap(tokens);
+    const uniqueTokens = new Set(tokenMap.keys());
+
+    chunkStore[chunk.chunkId] = {
+      docId: chunk.docId,
+      docTitle: chunk.docTitle,
+      sourcePath: chunk.sourcePath,
+      chunkId: chunk.chunkId,
+      snippet: buildCitationSnippet(chunk.text),
+      text: chunk.text,
+      startOffset: chunk.startOffset,
+      endOffset: chunk.endOffset,
+      updatedAt: chunk.updatedAt,
+    };
+
+    for (const token of uniqueTokens) {
+      docFreq.set(token, (docFreq.get(token) || 0) + 1);
+    }
+    for (const [token, tf] of tokenMap.entries()) {
+      if (!postingsByToken.has(token)) {
+        postingsByToken.set(token, []);
+      }
+      postingsByToken.get(token).push({
+        chunkId: chunk.chunkId,
+        tf,
+      });
+    }
+  }
+
+  const postings = {};
+  for (const [token, rows] of [...postingsByToken.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    postings[token] = rows.sort((a, b) => a.chunkId.localeCompare(b.chunkId));
+  }
+
+  const generatedAt = nowIso();
+  return {
+    lexicalIndex: {
+      generatedAt,
+      searchBackend: 'portable-lexical',
+      tokenizer: {
+        name: 'latin+cjk-char',
+        version: 1,
+        latinPattern: '[a-z0-9_]+',
+        cjkPattern: '[\\u4e00-\\u9fff]',
+      },
+      chunkCount: chunks.length,
+      docCount,
+      docFreq: objectFromMap(docFreq),
+      postings,
+    },
+    chunkStore: {
+      generatedAt,
+      searchBackend: 'portable-lexical',
+      chunkCount: chunks.length,
+      docCount,
+      chunks: chunkStore,
+    },
+  };
+}
+
+function portableIndexFilesExist(paths) {
+  return fs.existsSync(paths.lexicalPostingsFile) && fs.existsSync(paths.chunkStoreFile);
+}
+
+function normalizeSearchBackend(value) {
+  const normalized = safeTrim(value).toLowerCase();
+  if (!normalized) return '';
+  if (['auto', 'portable', 'portable-lexical', 'scan', 'chunk-scan', 'disabled', 'none'].includes(normalized)) {
+    return normalized;
+  }
+  return '';
 }
 
 function chunkText(text, chunkSize, chunkOverlap) {
@@ -1064,12 +1155,18 @@ function actionIndex(input, paths, state) {
   }
 
   writeJsonl(paths.chunksFile, chunks);
+  const portableSearch = buildPortableSearchIndex(chunks, docs.length);
+  writeJson(paths.lexicalPostingsFile, portableSearch.lexicalIndex);
+  writeJson(paths.chunkStoreFile, portableSearch.chunkStore);
 
   const lexicalIndex = {
     generatedAt: nowIso(),
     chunkCount: chunks.length,
     docCount: docs.length,
     tokenizer: 'latin+cjk-char',
+    searchBackend: 'portable-lexical',
+    portableIndexFile: paths.lexicalPostingsFile,
+    chunkStoreFile: paths.chunkStoreFile,
   };
   writeJson(paths.lexicalIndexFile, lexicalIndex);
 
@@ -1104,6 +1201,9 @@ function actionIndex(input, paths, state) {
       docCount: docs.length,
       kbVersion: nextState.kbVersion,
       lexicalIndexFile: paths.lexicalIndexFile,
+      lexicalPostingsFile: paths.lexicalPostingsFile,
+      chunkStoreFile: paths.chunkStoreFile,
+      searchBackend: 'portable-lexical',
       embeddingIndexFile: paths.embeddingIndexFile,
     },
     metrics: {
@@ -1156,17 +1256,76 @@ function scoreChunks(question, chunks, alpha) {
   return scored;
 }
 
-function actionQuery(input, paths) {
-  const startedAt = nowTs();
-  const chunks = readJsonl(paths.chunksFile);
-  if (chunks.length === 0) {
-    throw new SkillError('query_no_evidence', 'No chunks indexed. Run ingest + index first.');
+function scorePortableChunks(question, lexicalIndex, chunkStore, alpha) {
+  const queryTokens = tokenize(question);
+  const querySet = [...new Set(queryTokens)];
+  const indexChunks = chunkStore && typeof chunkStore.chunks === 'object' ? chunkStore.chunks : {};
+  const postings = lexicalIndex && typeof lexicalIndex.postings === 'object' ? lexicalIndex.postings : {};
+  const docFreq = lexicalIndex && typeof lexicalIndex.docFreq === 'object' ? lexicalIndex.docFreq : {};
+  const totalDocs = Math.max(1, Number(lexicalIndex?.chunkCount) || Object.keys(indexChunks).length);
+  const rawByChunkId = new Map();
+
+  for (const token of querySet) {
+    const rows = Array.isArray(postings[token]) ? postings[token] : [];
+    const idf = Math.log((totalDocs + 1) / ((Number(docFreq[token]) || 0) + 1)) + 1;
+    for (const row of rows) {
+      const chunkId = safeTrim(row?.chunkId);
+      const tf = Number(row?.tf) || 0;
+      if (!chunkId || !tf) continue;
+      rawByChunkId.set(chunkId, (rawByChunkId.get(chunkId) || 0) + ((1 + Math.log(tf)) * idf));
+    }
   }
 
+  const maxLex = Math.max(1e-9, ...rawByChunkId.values());
+  const scored = [...rawByChunkId.entries()].map(([chunkId, lexicalRaw]) => {
+    const chunk = indexChunks[chunkId];
+    const lexicalNorm = lexicalRaw / maxLex;
+    return {
+      chunk,
+      lexicalRaw,
+      vectorRaw: 0,
+      score: alpha * lexicalNorm,
+    };
+  }).filter((row) => row.chunk);
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+function resolveQuerySearchBackend(requested, config, paths) {
+  const wanted = normalizeSearchBackend(requested)
+    || normalizeSearchBackend(config.searchBackend)
+    || 'auto';
+  const hasPortableIndex = portableIndexFilesExist(paths);
+
+  if (wanted === 'disabled' || wanted === 'none' || wanted === 'scan' || wanted === 'chunk-scan') {
+    return 'chunk-scan';
+  }
+  if ((wanted === 'auto' || wanted === 'portable' || wanted === 'portable-lexical') && hasPortableIndex) {
+    return 'portable-lexical';
+  }
+  return 'chunk-scan';
+}
+
+function actionQuery(input, paths) {
+  const startedAt = nowTs();
   const question = safeTrim(input.payload.question);
   if (!question) {
     throw new SkillError('invalid_payload', 'query.payload.question is required.');
   }
+
+  const config = loadConfig(paths);
+  const searchBackend = resolveQuerySearchBackend(
+    input.payload.searchBackend,
+    {
+      searchBackend: normalizeSearchBackend(input.payload.searchBackend)
+        || normalizeSearchBackend(config.searchBackend)
+        || 'auto',
+    },
+    paths
+  );
+  let totalChunks = 0;
+  let scored = [];
 
   const topKRaw = Number(input.payload.topK);
   const minScoreRaw = Number(input.payload.minScore);
@@ -1176,7 +1335,27 @@ function actionQuery(input, paths) {
   const hybridAlpha = Number.isFinite(hybridAlphaRaw) ? hybridAlphaRaw : DEFAULT_HYBRID_ALPHA;
   const requireCitations = input.payload.requireCitations !== false;
 
-  const scored = scoreChunks(question, chunks, hybridAlpha);
+  if (searchBackend === 'portable-lexical') {
+    const lexicalIndex = readJson(paths.lexicalPostingsFile, null);
+    const chunkStore = readJson(paths.chunkStoreFile, null);
+    totalChunks = Math.max(
+      0,
+      Number(lexicalIndex?.chunkCount) || 0,
+      Number(chunkStore?.chunkCount) || 0
+    );
+    if (!lexicalIndex || !chunkStore || totalChunks === 0) {
+      throw new SkillError('query_no_evidence', 'No portable lexical index found. Run ingest + index first.');
+    }
+    scored = scorePortableChunks(question, lexicalIndex, chunkStore, hybridAlpha);
+  } else {
+    const chunks = readJsonl(paths.chunksFile);
+    totalChunks = chunks.length;
+    if (chunks.length === 0) {
+      throw new SkillError('query_no_evidence', 'No chunks indexed. Run ingest + index first.');
+    }
+    scored = scoreChunks(question, chunks, hybridAlpha);
+  }
+
   const selected = scored.filter((row) => row.score >= minScore).slice(0, topK);
   const citations = selected.map((row) => ({
     docId: row.chunk.docId,
@@ -1210,11 +1389,13 @@ function actionQuery(input, paths) {
         minScore,
         hybridAlpha,
         requireCitations,
+        searchBackend,
       },
     },
     metrics: {
       elapsedMs: nowTs() - startedAt,
-      candidateChunks: chunks.length,
+      candidateChunks: scored.length,
+      totalChunks,
       matchedChunks: citations.length,
     },
   };
@@ -1476,6 +1657,16 @@ function actionWikiBuild(input, paths, state) {
 
 function zipDeterministic(input) {
   return new Promise((resolve, reject) => {
+    let yazl;
+    try {
+      yazl = require('yazl');
+    } catch {
+      reject(new SkillError(
+        'dependency_missing',
+        'Missing optional dependency "yazl" for bundle_zip. ingest/index/query work without it; install or bundle yazl to create ZIP archives.'
+      ));
+      return;
+    }
     const zipFile = new yazl.ZipFile();
     const output = fs.createWriteStream(input.outPath);
     let settled = false;
@@ -1626,19 +1817,24 @@ function actionPublishZip(input, paths, state) {
   const startedAt = nowTs();
   const pinUriInput = safeTrim(input.payload.pinUri) || safeTrim(input.payload.zipUri);
   const uploadZipFlag = parseOptionalBooleanFlag(input.payload.uploadZip, 'payload.uploadZip');
-  const zipPath = safeTrim(input.payload.zipPath)
+  const payloadZipPath = safeTrim(input.payload.zipPath)
     ? path.resolve(input.payload.zipPath)
-    : safeTrim(state.latestZipPath)
-      ? path.resolve(state.latestZipPath)
+    : '';
+  const stateZipPath = safeTrim(state.latestZipPath)
+    ? path.resolve(state.latestZipPath)
+    : '';
+  const shouldUpload = uploadZipFlag !== undefined ? uploadZipFlag : !pinUriInput;
+  const zipPath = payloadZipPath
+    ? payloadZipPath
+    : shouldUpload
+      ? stateZipPath
       : '';
 
-  if (!zipPath || !fs.existsSync(zipPath)) {
-    throw new SkillError('invalid_payload', 'zipPath is required. Run bundle_zip first.');
-  }
-
-  const shouldUpload = uploadZipFlag !== undefined ? uploadZipFlag : !pinUriInput;
   if (!shouldUpload && !pinUriInput) {
     throw new SkillError('invalid_payload', 'uploadZip=false requires payload.pinUri or payload.zipUri.');
+  }
+  if (shouldUpload && (!zipPath || !fs.existsSync(zipPath))) {
+    throw new SkillError('invalid_payload', 'zipPath is required. Run bundle_zip first.');
   }
 
   let zipUri = pinUriInput;
@@ -1672,7 +1868,9 @@ function actionPublishZip(input, paths, state) {
     ...state,
     latestZipPath: zipPath,
     latestZipUri: zipUri,
-    latestZipSha256: hashFile(zipPath),
+    latestZipSha256: zipPath && fs.existsSync(zipPath)
+      ? hashFile(zipPath)
+      : safeTrim(input.payload.zipSha256),
   };
   saveState(paths, nextState);
 
@@ -1748,29 +1946,38 @@ async function actionPublishSnapshot(input, paths, state) {
   const startedAt = nowTs();
   const snapshotOnChainMode = resolveSnapshotOnChainMode(input.payload);
 
+  const payloadZipPath = safeTrim(input.payload.zipPath)
+    ? path.resolve(input.payload.zipPath)
+    : '';
+  if (payloadZipPath && !fs.existsSync(payloadZipPath)) {
+    throw new SkillError('invalid_payload', `payload.zipPath does not exist: ${payloadZipPath}`);
+  }
+  const zipPath = payloadZipPath
+    ? payloadZipPath
+    : safeTrim(state.latestZipPath)
+      ? path.resolve(state.latestZipPath)
+      : '';
+
   let zipUri = '';
   let zipUriSource = '';
-  const zipUriInput = safeTrim(input.payload.zipUri);
+  const zipUriInput = safeTrim(input.payload.zipUri) || safeTrim(input.payload.pinUri);
   if (zipUriInput) {
     zipUri = zipUriInput;
     zipUriSource = 'payload';
+  } else if (payloadZipPath) {
+    zipUri = `file://${normalizeSlashes(payloadZipPath)}`;
+    zipUriSource = 'local_file';
   } else {
     const stateZipUri = safeTrim(state.latestZipUri);
     if (stateZipUri) {
       zipUri = stateZipUri;
       zipUriSource = 'state';
+    } else if (zipPath) {
+      zipUri = `file://${normalizeSlashes(zipPath)}`;
+      zipUriSource = 'local_file';
     }
   }
 
-  const zipPath = safeTrim(input.payload.zipPath)
-    ? path.resolve(input.payload.zipPath)
-    : safeTrim(state.latestZipPath)
-      ? path.resolve(state.latestZipPath)
-      : '';
-  if (!zipUri && zipPath) {
-    zipUri = `file://${normalizeSlashes(zipPath)}`;
-    zipUriSource = 'local_file';
-  }
   if (!zipUri) {
     throw new SkillError('invalid_payload', 'zipUri is required. Run publish_zip first or pass payload.zipUri.');
   }
@@ -1781,8 +1988,13 @@ async function actionPublishSnapshot(input, paths, state) {
     );
   }
 
-  const zipSha256 = safeTrim(input.payload.zipSha256)
-    || (zipPath && fs.existsSync(zipPath) ? hashFile(zipPath) : safeTrim(state.latestZipSha256));
+  let zipSha256 = safeTrim(input.payload.zipSha256);
+  if (!zipSha256 && payloadZipPath && fs.existsSync(payloadZipPath)) {
+    zipSha256 = hashFile(payloadZipPath);
+  }
+  if (!zipSha256 && !zipUriInput) {
+    zipSha256 = zipPath && fs.existsSync(zipPath) ? hashFile(zipPath) : safeTrim(state.latestZipSha256);
+  }
   const kbVersion = safeTrim(input.payload.kbVersion) || safeTrim(state.kbVersion) || 'v0';
 
   const snapshot = {
@@ -1865,7 +2077,8 @@ async function actionPublishAll(input, paths, state) {
   }
 
   let effectiveZipPath = safeTrim(input.payload.zipPath);
-  if (!skipBundle || !effectiveZipPath) {
+  const canReuseExternalZipUri = Boolean(requestedZipUri) && uploadZipFlag !== true;
+  if (!canReuseExternalZipUri && !skipBundle && !effectiveZipPath) {
     const bundleResult = await actionBundleZip({
       ...input,
       payload: {

@@ -261,6 +261,9 @@ function defaultWikiConfig(config) {
     chunkOverlap: Number.isFinite(Number(config.chunkOverlap)) ? Number(config.chunkOverlap) : 180,
     embeddingEnabled: config.embeddingEnabled !== false,
     embeddingModel: normalizeString(config.embeddingModel) || 'BAAI/bge-m3',
+    searchBackend: ['auto', 'portable', 'scan'].includes(normalizeString(config.searchBackend).toLowerCase())
+      ? normalizeString(config.searchBackend).toLowerCase()
+      : 'portable',
   };
 }
 
@@ -375,14 +378,16 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
       );
-      runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
-      );
-      runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
-      );
+      if (!(isExplicitFalse(baseInput.payload.uploadZip) && (normalizeString(baseInput.payload.zipUri) || normalizeString(baseInput.payload.pinUri)))) {
+        runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
+        );
+        runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+        );
+      }
       return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'publish_snapshot':
@@ -394,14 +399,18 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
         runtimeScript,
         buildActionPayload({ ...baseInput, action: 'wiki_build' }, config, workspaceRoot, registryHome)
       );
-      const bundleOutput = runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
-      );
-      const bundleResult = parseLastJsonLine(bundleOutput);
-      const bundleZipPath = normalizeString(bundleResult?.data?.zipPath);
-      const bundleZipSha256 = normalizeString(bundleResult?.data?.zipSha256);
       const explicitZipUri = normalizeString(baseInput.payload.zipUri) || normalizeString(baseInput.payload.pinUri);
+      let bundleZipPath = normalizeString(baseInput.payload.zipPath);
+      let bundleZipSha256 = normalizeString(baseInput.payload.zipSha256);
+      if (!explicitZipUri && !bundleZipPath) {
+        const bundleOutput = runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)
+        );
+        const bundleResult = parseLastJsonLine(bundleOutput);
+        bundleZipPath = normalizeString(bundleResult?.data?.zipPath);
+        bundleZipSha256 = normalizeString(bundleResult?.data?.zipSha256);
+      }
       if (!bundleZipPath && !explicitZipUri) {
         fail('bundle_zip_failed', 'bundle_zip did not return data.zipPath for publish_snapshot.');
       }
@@ -443,7 +452,7 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
 
         let effectiveZipPath = normalizeString(baseInput.payload.zipPath);
         let effectiveZipSha256 = normalizeString(baseInput.payload.zipSha256);
-        if (!skipBundle || !effectiveZipPath) {
+        if (!skipBundle && !effectiveZipPath) {
           const bundleResult = runRuntimeJson(
             runtimeScript,
             buildActionPayload({ ...baseInput, action: 'bundle_zip' }, config, workspaceRoot, registryHome)

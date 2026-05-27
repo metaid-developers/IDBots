@@ -133,6 +133,7 @@ function renderWikiConfig(config) {
     queryAutoAbsorb: false,
     embeddingEnabled: config.embeddingEnabled,
     embeddingModel: config.embeddingModel,
+    searchBackend: config.searchBackend,
   };
 }
 
@@ -239,6 +240,9 @@ function validatePayload(payload) {
     chunkOverlap: Number.isFinite(Number(payload.chunkOverlap)) ? Number(payload.chunkOverlap) : 180,
     embeddingEnabled: payload.embeddingEnabled !== false,
     embeddingModel: normalizeString(payload.embeddingModel) || 'BAAI/bge-m3',
+    searchBackend: ['auto', 'portable', 'scan'].includes(normalizeString(payload.searchBackend).toLowerCase())
+      ? normalizeString(payload.searchBackend).toLowerCase()
+      : 'portable',
     overwrite: payload.overwrite === true,
   };
 }

@@ -16,7 +16,7 @@ const repoNodeModules = path.join(repoRoot, 'node_modules');
 
 function runNode(scriptPath, payload, env = {}) {
   const mergedEnv = { ...process.env, ...env };
-  if (!mergedEnv.NODE_PATH && fs.existsSync(repoNodeModules)) {
+  if (!Object.prototype.hasOwnProperty.call(env, 'NODE_PATH') && !mergedEnv.NODE_PATH && fs.existsSync(repoNodeModules)) {
     mergedEnv.NODE_PATH = repoNodeModules;
   }
   const result = spawnSync(process.execPath, [scriptPath, '--payload', JSON.stringify(payload)], {
@@ -43,6 +43,13 @@ function runNode(scriptPath, payload, env = {}) {
   };
 }
 
+function runNodePortable(scriptPath, payload, env = {}) {
+  return runNode(scriptPath, payload, {
+    ...env,
+    NODE_PATH: '',
+  });
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -54,18 +61,26 @@ function readJsonl(filePath) {
     .map((line) => JSON.parse(line));
 }
 
+function cleanupTempDir(dirPath) {
+  if (dirPath && fs.existsSync(dirPath)) {
+    fs.rmSync(dirPath, { recursive: true, force: true });
+  }
+}
+
 function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metabot-create-wiki-'));
+  let portableRoot = '';
   const skillsRoot = path.join(tempRoot, 'SKILLs');
   const rawSourceDir = path.join(tempRoot, 'source-raw');
-  ensureDir(skillsRoot);
-  ensureDir(rawSourceDir);
+  try {
+    ensureDir(skillsRoot);
+    ensureDir(rawSourceDir);
 
-  fs.cpSync(runtimeSource, path.join(skillsRoot, 'metabot-llm-wiki'), {
-    recursive: true,
-    force: true,
-    dereference: true,
-  });
+    fs.cpSync(runtimeSource, path.join(skillsRoot, 'metabot-llm-wiki'), {
+      recursive: true,
+      force: true,
+      dereference: true,
+    });
 
   fs.writeFileSync(
     path.join(rawSourceDir, 'metaid.md'),
@@ -247,6 +262,105 @@ function main() {
   assert.equal(queryRes.json?.data?.insufficient, false);
   assert.ok((queryRes.json?.data?.citations || []).length > 0);
 
+    portableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metabot-create-wiki-portable-'));
+  const portableSkillsRoot = path.join(portableRoot, 'SKILLs');
+  const portableRawSourceDir = path.join(portableRoot, 'source-raw');
+  ensureDir(portableSkillsRoot);
+  ensureDir(portableRawSourceDir);
+  fs.cpSync(runtimeSource, path.join(portableSkillsRoot, 'metabot-llm-wiki'), {
+    recursive: true,
+    force: true,
+    dereference: true,
+  });
+  fs.writeFileSync(
+    path.join(portableRawSourceDir, 'alpha.md'),
+    [
+      '# Alpha Topic',
+      'portablealphatoken7291 appears in this exact article and explains alpha behavior.',
+      'Shared wiki words are present for background only.',
+    ].join('\n'),
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(portableRawSourceDir, 'beta.md'),
+    [
+      '# Beta Topic',
+      'portable-beta-token appears in a different article and explains beta behavior.',
+      'Shared wiki words are present for background only.',
+    ].join('\n'),
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(portableRawSourceDir, 'gamma.md'),
+    [
+      '# Gamma Topic',
+      'portable-gamma-token appears in a separate article and explains gamma behavior.',
+      'Shared wiki words are present for background only.',
+    ].join('\n'),
+    'utf8'
+  );
+
+  const portableScaffoldRes = runNodePortable(
+    scaffoldScript,
+    {
+      skillName: 'portable-wiki',
+      title: 'Portable Wiki',
+      description: 'Portable backend verification wiki.',
+      rawSourceDir: portableRawSourceDir,
+      targetRoot: portableSkillsRoot,
+      chunkSize: 240,
+      chunkOverlap: 0,
+    },
+    { SKILLS_ROOT: portableSkillsRoot }
+  );
+  assert.equal(portableScaffoldRes.code, 0, portableScaffoldRes.stderr || portableScaffoldRes.stdout);
+  assert.equal(portableScaffoldRes.json?.success, true);
+
+  const portableSkillDir = path.join(portableSkillsRoot, 'portable-wiki');
+  const portableConfig = JSON.parse(fs.readFileSync(path.join(portableSkillDir, 'wiki.config.json'), 'utf8'));
+  assert.equal(portableConfig.searchBackend, 'portable');
+  const portableRuntimeScript = path.join(portableSkillDir, 'scripts', 'index.js');
+
+  const portableIngestRes = runNodePortable(
+    portableRuntimeScript,
+    { action: 'ingest' },
+    { SKILLS_ROOT: portableSkillsRoot }
+  );
+  assert.equal(portableIngestRes.code, 0, portableIngestRes.stderr || portableIngestRes.stdout);
+  assert.equal(portableIngestRes.json?.success, true);
+
+  const portableIndexRes = runNodePortable(
+    portableRuntimeScript,
+    { action: 'index' },
+    { SKILLS_ROOT: portableSkillsRoot }
+  );
+  assert.equal(portableIndexRes.code, 0, portableIndexRes.stderr || portableIndexRes.stdout);
+  assert.equal(portableIndexRes.json?.success, true);
+
+  const portableLexicalIndexFile = path.join(portableConfig.workspaceRoot, 'index', 'lexical-postings.json');
+  const portableChunkStoreFile = path.join(portableConfig.workspaceRoot, 'index', 'chunk-store.json');
+  assert.ok(fs.existsSync(portableLexicalIndexFile));
+  assert.ok(fs.existsSync(portableChunkStoreFile));
+
+  const portableQueryRes = runNodePortable(
+    portableRuntimeScript,
+    {
+      action: 'query',
+      payload: {
+        question: 'portablealphatoken7291',
+        searchBackend: 'portable',
+        minScore: 0.01,
+      },
+    },
+    { SKILLS_ROOT: portableSkillsRoot }
+  );
+  assert.equal(portableQueryRes.code, 0, portableQueryRes.stderr || portableQueryRes.stdout);
+  assert.equal(portableQueryRes.json?.success, true);
+  assert.equal(portableQueryRes.json?.data?.query?.searchBackend, 'portable-lexical');
+  assert.ok((portableQueryRes.json?.data?.citations || []).length > 0);
+  assert.ok(portableQueryRes.json?.metrics?.totalChunks >= 3);
+  assert.ok(portableQueryRes.json?.metrics?.candidateChunks < portableQueryRes.json?.metrics?.totalChunks);
+
   fs.writeFileSync(
     path.join(rawSourceDir, 'metaid.md'),
     '# MetaID 简介\n\nMetaID 也用于管理用户身份、内容索引与本地应用资料。\n',
@@ -262,11 +376,16 @@ function main() {
   assert.equal(buildRes.json?.success, true);
   assert.ok(fs.existsSync(path.join(generatedConfig.workspaceRoot, 'wiki', 'site', 'index.html')));
 
+  const staleZipPath = path.join(generatedConfig.workspaceRoot, 'manifests', 'stale-test-wiki.zip');
+  fs.mkdirSync(path.dirname(staleZipPath), { recursive: true });
+  fs.writeFileSync(staleZipPath, 'stale zip placeholder\n', 'utf8');
+
   const seedOldZipUriRes = runNode(
     runtimeScript,
     {
       action: 'publish_zip',
       payload: {
+        zipPath: staleZipPath,
         uploadZip: false,
         pinUri: 'metafile://old-upload',
       },
@@ -276,12 +395,18 @@ function main() {
   assert.equal(seedOldZipUriRes.code, 0, seedOldZipUriRes.stderr || seedOldZipUriRes.stdout);
   assert.equal(seedOldZipUriRes.json?.success, true);
   assert.equal(seedOldZipUriRes.json?.data?.zipUri, 'metafile://old-upload');
+  assert.ok(seedOldZipUriRes.json?.data?.zipSha256);
+
+  const localZipPath = path.join(generatedConfig.workspaceRoot, 'manifests', 'local-test-wiki.zip');
+  fs.mkdirSync(path.dirname(localZipPath), { recursive: true });
+  fs.writeFileSync(localZipPath, 'local zip placeholder for snapshot tests\n', 'utf8');
 
   const snapshotRes = runNode(
     runtimeScript,
     {
       action: 'publish_snapshot',
       payload: {
+        zipPath: localZipPath,
         uploadZip: false,
         snapshotOnChain: false,
       },
@@ -292,6 +417,7 @@ function main() {
   assert.equal(snapshotRes.json?.success, true);
   assert.equal(snapshotRes.json?.data?.publishMode?.zipUriSource, 'payload');
   assert.match(snapshotRes.json?.data?.snapshot?.zipUri || '', /^file:\/\//);
+  assert.equal(snapshotRes.json?.data?.snapshot?.zipUri, `file://${localZipPath.replace(/\\/g, '/')}`);
   assert.notEqual(snapshotRes.json?.data?.snapshot?.zipUri, 'metafile://old-upload');
 
   const publishRes = runNode(
@@ -299,6 +425,7 @@ function main() {
     {
       action: 'publish_all',
       payload: {
+        zipPath: localZipPath,
         uploadZip: false,
         snapshotOnChain: false,
       },
@@ -308,10 +435,69 @@ function main() {
   assert.equal(publishRes.code, 0, publishRes.stderr || publishRes.stdout);
   assert.equal(publishRes.json?.success, true);
   assert.equal(publishRes.json?.data?.steps?.publish_zip?.skipped, true);
+  assert.equal(publishRes.json?.data?.steps?.bundle_zip, undefined);
   assert.match(publishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipUri || '', /^file:\/\//);
+  assert.equal(
+    publishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipUri,
+    `file://${localZipPath.replace(/\\/g, '/')}`
+  );
   assert.notEqual(publishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipUri, 'metafile://old-upload');
 
+  const directExternalSnapshotRes = runNode(
+    runtimeScript,
+    {
+      action: 'publish_snapshot',
+      payload: {
+        pinUri: 'metafile://direct-new-upload',
+        snapshotOnChain: false,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(directExternalSnapshotRes.code, 0, directExternalSnapshotRes.stderr || directExternalSnapshotRes.stdout);
+  assert.equal(directExternalSnapshotRes.json?.success, true);
+  assert.equal(directExternalSnapshotRes.json?.data?.snapshot?.zipUri, 'metafile://direct-new-upload');
+  assert.equal(directExternalSnapshotRes.json?.data?.snapshot?.zipSha256, '');
+
+  const missingZipSnapshotRes = runNode(
+    runtimeScript,
+    {
+      action: 'publish_snapshot',
+      payload: {
+        zipPath: path.join(generatedConfig.workspaceRoot, 'manifests', 'missing-local.zip'),
+        snapshotOnChain: false,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.notEqual(missingZipSnapshotRes.code, 0);
+  assert.match(missingZipSnapshotRes.stderr || missingZipSnapshotRes.stdout, /zipPath does not exist/i);
+
+  const externalPublishRes = runNode(
+    runtimeScript,
+    {
+      action: 'publish_all',
+      payload: {
+        uploadZip: false,
+        pinUri: 'metafile://new-upload',
+        snapshotOnChain: false,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(externalPublishRes.code, 0, externalPublishRes.stderr || externalPublishRes.stdout);
+  assert.equal(externalPublishRes.json?.success, true);
+  assert.equal(externalPublishRes.json?.data?.steps?.bundle_zip, undefined);
+  assert.equal(externalPublishRes.json?.data?.steps?.publish_zip?.zipUri, 'metafile://new-upload');
+  assert.equal(externalPublishRes.json?.data?.steps?.publish_zip?.zipSha256, '');
+  assert.equal(externalPublishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipUri, 'metafile://new-upload');
+  assert.equal(externalPublishRes.json?.data?.steps?.publish_snapshot?.snapshot?.zipSha256, '');
+
   process.stdout.write('metabot-create-wiki self-test passed\n');
+  } finally {
+    cleanupTempDir(portableRoot);
+    cleanupTempDir(tempRoot);
+  }
 }
 
 main();
