@@ -260,10 +260,17 @@ function defaultWikiConfig(config) {
     chunkSize: Number.isFinite(Number(config.chunkSize)) ? Number(config.chunkSize) : 1200,
     chunkOverlap: Number.isFinite(Number(config.chunkOverlap)) ? Number(config.chunkOverlap) : 180,
     embeddingEnabled: config.embeddingEnabled !== false,
-    embeddingModel: normalizeString(config.embeddingModel) || 'BAAI/bge-m3',
-    searchBackend: ['auto', 'portable', 'scan'].includes(normalizeString(config.searchBackend).toLowerCase())
+    embeddingProvider: ['local-hashing-v1', 'command-json-v1'].includes(normalizeString(config.embeddingProvider).toLowerCase())
+      ? normalizeString(config.embeddingProvider).toLowerCase()
+      : 'local-hashing-v1',
+    embeddingModel: normalizeString(config.embeddingModel) || 'local-hashing-v1',
+    embeddingCommand: normalizeString(config.embeddingCommand),
+    searchBackend: ['auto', 'hybrid', 'portable', 'sqlite', 'sqlite-fts', 'scan', 'vector'].includes(normalizeString(config.searchBackend).toLowerCase())
       ? normalizeString(config.searchBackend).toLowerCase()
-      : 'portable',
+      : 'hybrid',
+    lexicalWeight: Number.isFinite(Number(config.lexicalWeight)) ? Number(config.lexicalWeight) : 0.55,
+    vectorWeight: Number.isFinite(Number(config.vectorWeight)) ? Number(config.vectorWeight) : 0.35,
+    phraseWeight: Number.isFinite(Number(config.phraseWeight)) ? Number(config.phraseWeight) : 0.10,
   };
 }
 
@@ -321,13 +328,20 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
     return runRuntime(runtimeScript, buildActionPayload(input, config, workspaceRoot, registryHome));
   }
 
-  syncRawSource(config, workspaceRoot);
-  ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
-
   const baseInput = {
     ...input,
     payload: input.payload && typeof input.payload === 'object' ? { ...input.payload } : {},
   };
+  const fastQuery = input.action === 'query'
+    && baseInput.payload.autoAbsorb !== true
+    && baseInput.payload.refresh !== true;
+
+  if (fastQuery) {
+    ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
+  } else {
+    syncRawSource(config, workspaceRoot);
+    ensureRegistry(runtimeScript, config, workspaceRoot, registryHome);
+  }
 
   switch (input.action) {
     case 'init':
