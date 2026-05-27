@@ -130,6 +130,7 @@ function renderWikiConfig(config) {
     language: config.language,
     chunkSize: config.chunkSize,
     chunkOverlap: config.chunkOverlap,
+    queryAutoAbsorb: false,
     embeddingEnabled: config.embeddingEnabled,
     embeddingModel: config.embeddingModel,
   };

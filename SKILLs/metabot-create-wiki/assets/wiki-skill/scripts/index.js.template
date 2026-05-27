@@ -344,10 +344,12 @@ function runPipeline(runtimeScript, input, config, workspaceRoot, registryHome) 
       return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'query':
-      runRuntime(
-        runtimeScript,
-        buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
-      );
+      if (baseInput.payload.autoAbsorb === true || baseInput.payload.refresh === true) {
+        runRuntime(
+          runtimeScript,
+          buildActionPayload({ ...baseInput, action: 'absorb' }, config, workspaceRoot, registryHome)
+        );
+      }
       return runRuntime(runtimeScript, buildActionPayload(baseInput, config, workspaceRoot, registryHome));
 
     case 'wiki_build':

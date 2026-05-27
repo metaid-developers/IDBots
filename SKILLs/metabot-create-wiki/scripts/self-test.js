@@ -47,6 +47,13 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function readJsonl(filePath) {
+  return fs.readFileSync(filePath, 'utf8')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
 function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metabot-create-wiki-'));
   const skillsRoot = path.join(tempRoot, 'SKILLs');
@@ -124,6 +131,7 @@ function main() {
   const generatedConfig = JSON.parse(fs.readFileSync(path.join(generatedSkillDir, 'wiki.config.json'), 'utf8'));
   assert.equal(generatedConfig.rawSourceDir, rawSourceDir);
   assert.ok(generatedConfig.workspaceRoot.includes('metaid-wiki'));
+  assert.equal(generatedConfig.queryAutoAbsorb, false);
 
   const runtimeScript = path.join(generatedSkillDir, 'scripts', 'index.js');
 
@@ -136,6 +144,63 @@ function main() {
   assert.equal(absorbRes.json?.success, true);
   assert.equal(absorbRes.json?.action, 'absorb');
   assert.equal(absorbRes.json?.data?.ingest?.docsTotal, 2);
+
+  const fastQueryRes = runNode(
+    runtimeScript,
+    {
+      action: 'query',
+      payload: {
+        question: 'MetaID 是做什么的？',
+        autoAbsorb: false,
+        minScore: 0.01,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(fastQueryRes.code, 0, fastQueryRes.stderr || fastQueryRes.stdout);
+  assert.equal(fastQueryRes.json?.success, true);
+  assert.equal(fastQueryRes.json?.data?.insufficient, false);
+
+  fs.writeFileSync(
+    path.join(rawSourceDir, 'fresh.md'),
+    '新的资料内容：快速查询不应自动吸收。fresh-only-token-7291\n',
+    'utf8'
+  );
+  const noRefreshQueryRes = runNode(
+    runtimeScript,
+    {
+      action: 'query',
+      payload: {
+        question: 'fresh-only-token-7291',
+        autoAbsorb: false,
+        minScore: 0.01,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(noRefreshQueryRes.code, 0, noRefreshQueryRes.stderr || noRefreshQueryRes.stdout);
+  assert.equal(noRefreshQueryRes.json?.success, true);
+  const noRefreshDocs = readJsonl(path.join(generatedConfig.workspaceRoot, 'work', 'docs.jsonl'));
+  assert.equal(noRefreshDocs.length, 2);
+  assert.equal(noRefreshQueryRes.json?.data?.insufficient, true);
+
+  const refreshQueryRes = runNode(
+    runtimeScript,
+    {
+      action: 'query',
+      payload: {
+        question: 'fresh-only-token-7291',
+        autoAbsorb: true,
+        minScore: 0.01,
+      },
+    },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(refreshQueryRes.code, 0, refreshQueryRes.stderr || refreshQueryRes.stdout);
+  assert.equal(refreshQueryRes.json?.success, true);
+  assert.equal(refreshQueryRes.json?.data?.insufficient, false);
+  const refreshDocs = readJsonl(path.join(generatedConfig.workspaceRoot, 'work', 'docs.jsonl'));
+  assert.equal(refreshDocs.length, 3);
 
   const queryRes = runNode(
     runtimeScript,
