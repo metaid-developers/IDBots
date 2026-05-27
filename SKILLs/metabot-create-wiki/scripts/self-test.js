@@ -145,6 +145,35 @@ function main() {
   assert.equal(absorbRes.json?.action, 'absorb');
   assert.equal(absorbRes.json?.data?.ingest?.docsTotal, 2);
 
+  const secondAbsorbRes = runNode(runtimeScript, { action: 'absorb' }, { SKILLS_ROOT: skillsRoot });
+  assert.equal(secondAbsorbRes.code, 0, secondAbsorbRes.stderr || secondAbsorbRes.stdout);
+  assert.equal(secondAbsorbRes.json?.success, true);
+  assert.equal(secondAbsorbRes.json?.data?.index?.skipped, true);
+
+  const forceIndexRes = runNode(
+    runtimeScript,
+    { action: 'absorb', payload: { forceIndex: true } },
+    { SKILLS_ROOT: skillsRoot }
+  );
+  assert.equal(forceIndexRes.code, 0, forceIndexRes.stderr || forceIndexRes.stdout);
+  assert.equal(forceIndexRes.json?.success, true);
+  assert.notEqual(forceIndexRes.json?.data?.index?.skipped, true);
+  assert.ok(forceIndexRes.json?.data?.index?.chunkCount > 0);
+
+  const generatedConfigPath = path.join(generatedSkillDir, 'wiki.config.json');
+  const generatedConfigAfterInit = JSON.parse(fs.readFileSync(generatedConfigPath, 'utf8'));
+  fs.writeFileSync(
+    generatedConfigPath,
+    `${JSON.stringify({ ...generatedConfigAfterInit, chunkSize: 240, chunkOverlap: 0 }, null, 2)}\n`,
+    'utf8'
+  );
+
+  const configChangeAbsorbRes = runNode(runtimeScript, { action: 'absorb' }, { SKILLS_ROOT: skillsRoot });
+  assert.equal(configChangeAbsorbRes.code, 0, configChangeAbsorbRes.stderr || configChangeAbsorbRes.stdout);
+  assert.equal(configChangeAbsorbRes.json?.success, true);
+  assert.notEqual(configChangeAbsorbRes.json?.data?.index?.skipped, true);
+  assert.ok(configChangeAbsorbRes.json?.data?.index?.chunkCount > 0);
+
   const fastQueryRes = runNode(
     runtimeScript,
     {

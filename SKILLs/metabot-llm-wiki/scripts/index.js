@@ -514,6 +514,16 @@ function loadConfig(paths) {
   return normalizeConfig(cfg);
 }
 
+function getIndexConfigSignature(config) {
+  const normalized = normalizeConfig(config);
+  return hashString(JSON.stringify({
+    chunkSize: normalized.chunkSize,
+    chunkOverlap: normalized.chunkOverlap,
+    embeddingEnabled: normalized.embeddingEnabled,
+    embeddingModel: normalized.embeddingModel,
+  }));
+}
+
 function saveConfig(paths, config) {
   writeJson(paths.configFile, normalizeConfig(config));
 }
@@ -993,13 +1003,13 @@ function actionIngest(input, paths, state) {
   const docsOut = [...docsBySource.values()].sort((a, b) => a.sourcePath.localeCompare(b.sourcePath));
   writeJsonl(paths.docsFile, docsOut);
 
-  const hasVersionChange = docsNew + docsUpdated + docsRemoved > 0;
+  const changed = docsNew + docsUpdated + docsRemoved > 0;
   const nextState = {
     ...state,
     docsFingerprint: nextFingerprint,
     lastIngestAt: nowTs(),
   };
-  if (hasVersionChange) {
+  if (changed) {
     nextState.kbVersion = bumpVersion(state.kbVersion);
   }
   saveState(paths, nextState);
@@ -1016,6 +1026,7 @@ function actionIngest(input, paths, state) {
       docsRemoved,
       docsSkipped,
       parseFailed,
+      changed,
       kbVersion: nextState.kbVersion,
     },
     metrics: {
@@ -1076,6 +1087,7 @@ function actionIndex(input, paths, state) {
     ...state,
     lastIndexAt: nowTs(),
     lastChunkHash: chunkHash,
+    lastIndexConfigSignature: getIndexConfigSignature(config),
   };
   if (state.lastChunkHash !== chunkHash) {
     nextState.kbVersion = bumpVersion(state.kbVersion);
@@ -1942,12 +1954,31 @@ function actionAbsorb(input, paths, state) {
   }, paths, state);
 
   const stateAfterIngest = loadState(paths, input.kbId);
-  const indexResult = actionIndex({
-    ...input,
-    payload: {
-      mode: 'incremental',
-    },
-  }, paths, stateAfterIngest);
+  const indexConfigSignature = getIndexConfigSignature(loadConfig(paths));
+  const configChanged = stateAfterIngest.lastIndexConfigSignature !== indexConfigSignature;
+  const shouldRunIndex = ingestResult.data?.changed === true
+    || configChanged
+    || input.payload.forceIndex === true;
+  const indexResult = shouldRunIndex
+    ? actionIndex({
+      ...input,
+      payload: {
+        ...(input.payload || {}),
+        mode: 'incremental',
+      },
+    }, paths, stateAfterIngest)
+    : {
+      message: 'Index skipped',
+      warnings: [],
+      data: {
+        skipped: true,
+        reason: 'raw_files_unchanged',
+        kbVersion: stateAfterIngest.kbVersion,
+      },
+      metrics: {
+        elapsedMs: 0,
+      },
+    };
 
   let wikiResult = null;
   if (input.payload.runWikiDelta === true) {
