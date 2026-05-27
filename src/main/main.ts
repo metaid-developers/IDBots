@@ -202,6 +202,7 @@ import {
   resolveServiceActionAvailability,
   type GigSquareResolvedCurrentService,
 } from './services/gigSquareServiceStateService';
+import { resolveGigSquareServiceExecutionReminderFromRows } from './services/gigSquareExecutionReminderResolver';
 import {
   GIG_SQUARE_MUTATION_SYNC_DELAY_MS,
   buildGigSquareLocalServiceRecordForModify,
@@ -569,6 +570,7 @@ type GigSquareService = {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder?: string | null;
   price: string;
   currency: string;
   settlementKind?: string | null;
@@ -620,6 +622,7 @@ type GigSquareLocalServiceRecord = {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder: string;
   serviceIcon: string | null;
   price: string;
   currency: string;
@@ -718,6 +721,7 @@ const ensureGigSquareSchema = (): void => {
       service_name TEXT NOT NULL,
       display_name TEXT NOT NULL,
       description TEXT NOT NULL,
+      execution_reminder TEXT,
       service_icon TEXT,
       price TEXT NOT NULL,
       currency TEXT NOT NULL,
@@ -741,6 +745,9 @@ const ensureGigSquareSchema = (): void => {
   }
   if (!gigSquareColumns.includes('revoked_at')) {
     db.run('ALTER TABLE gig_square_services ADD COLUMN revoked_at INTEGER');
+  }
+  if (!gigSquareColumns.includes('execution_reminder')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN execution_reminder TEXT');
   }
   db.run(`
     UPDATE gig_square_services
@@ -780,6 +787,7 @@ const insertGigSquareServiceRow = (input: {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder?: string | null;
   serviceIcon: string | null;
   price: string;
   currency: string;
@@ -799,9 +807,9 @@ const insertGigSquareServiceRow = (input: {
     `
       INSERT INTO gig_square_services (
         id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid, provider_skill,
-        service_name, display_name, description, service_icon, price, currency,
+        service_name, display_name, description, execution_reminder, service_icon, price, currency,
         skill_document, input_type, output_type, endpoint, payload_json, revoked_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         pin_id = excluded.pin_id,
         source_service_pin_id = excluded.source_service_pin_id,
@@ -813,6 +821,7 @@ const insertGigSquareServiceRow = (input: {
         service_name = excluded.service_name,
         display_name = excluded.display_name,
         description = excluded.description,
+        execution_reminder = excluded.execution_reminder,
         service_icon = excluded.service_icon,
         price = excluded.price,
         currency = excluded.currency,
@@ -836,6 +845,7 @@ const insertGigSquareServiceRow = (input: {
       input.serviceName,
       input.displayName,
       input.description,
+      toSafeString(input.executionReminder).trim(),
       input.serviceIcon,
       input.price,
       input.currency,
@@ -939,13 +949,98 @@ const resolveGigSquareLocalServiceOutputType = (input: {
   return normalizeOrderOutputType(outputType) || null;
 };
 
+const resolveGigSquareLocalServiceExecutionReminder = (input: {
+  serviceId?: string | null;
+  serviceName?: string | null;
+}): string | null => {
+  ensureGigSquareSchema();
+  const serviceId = toSafeString(input.serviceId).trim();
+  const serviceName = toSafeString(input.serviceName).trim();
+  if (!serviceId && !serviceName) return null;
+  const db = getStore().getDatabase();
+  const rowsFromResult = (result: Array<{
+    columns?: string[];
+    values?: unknown[][];
+  }>): Record<string, unknown>[] => {
+    const firstResult = result[0];
+    if (!firstResult?.columns || !firstResult.values) return [];
+    return firstResult.values.map((values) => firstResult.columns!.reduce<Record<string, unknown>>((row, column, index) => {
+      row[column] = values[index];
+      return row;
+    }, {}));
+  };
+  const localResult = db.exec(
+    `SELECT id, pin_id, source_service_pin_id, current_pin_id, provider_skill, service_name,
+            display_name, execution_reminder, payload_json
+     FROM gig_square_services
+     WHERE (? != '' AND (
+       id = ?
+       OR pin_id = ?
+       OR source_service_pin_id = ?
+       OR current_pin_id = ?
+     ))
+        OR (? != '' AND (
+          provider_skill = ?
+          OR service_name = ?
+          OR display_name = ?
+        ))
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    sanitizeDbParams([
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceName,
+      serviceName,
+      serviceName,
+      serviceName,
+    ]),
+  );
+
+  const remoteResult = db.exec(
+    `SELECT id, pin_id, source_service_pin_id, provider_skill, service_name,
+            display_name, execution_reminder, content_summary_json
+     FROM remote_skill_service
+     WHERE (? != '' AND (
+       id = ?
+       OR pin_id = ?
+       OR source_service_pin_id = ?
+     ))
+        OR (? != '' AND (
+          provider_skill = ?
+          OR service_name = ?
+          OR display_name = ?
+        ))
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    sanitizeDbParams([
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceId,
+      serviceName,
+      serviceName,
+      serviceName,
+      serviceName,
+    ]),
+  );
+  return resolveGigSquareServiceExecutionReminderFromRows({
+    serviceId,
+    serviceName,
+    localRows: rowsFromResult(localResult),
+    remoteRows: rowsFromResult(remoteResult),
+  });
+};
+
 const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
   ensureGigSquareSchema();
   const db = getStore().getDatabase();
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid,
            provider_skill, service_name, display_name, description, service_icon, price, currency,
-           skill_document, input_type, output_type, endpoint, payload_json, revoked_at, updated_at
+           execution_reminder, skill_document, input_type, output_type, endpoint, payload_json, revoked_at, updated_at
     FROM gig_square_services
     ORDER BY updated_at DESC
   `);
@@ -990,6 +1085,8 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       serviceName: toSafeString(raw.service_name).trim(),
       displayName: toSafeString(raw.display_name).trim(),
       description: toSafeString(raw.description).trim(),
+      executionReminder: toSafeString(raw.execution_reminder).trim()
+        || toSafeString(payloadSummary?.executionReminder).trim(),
       serviceIcon: toSafeString(raw.service_icon).trim() || null,
       price: toSafeString(raw.price).trim(),
       currency: settlement.protocolCurrency,
@@ -1018,6 +1115,7 @@ const markGigSquareLocalServiceRevoked = (service: {
   serviceName?: string;
   displayName?: string;
   description?: string;
+  executionReminder?: string | null;
   serviceIcon?: string | null;
   price?: string;
   currency?: string;
@@ -1067,6 +1165,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     serviceName?: string;
     displayName?: string;
     description?: string;
+    executionReminder?: string | null;
     serviceIcon?: string | null;
     price?: string;
     currency?: string;
@@ -1078,6 +1177,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder: string;
   serviceIcon: string | null;
   price: string;
   currency: string;
@@ -1099,6 +1199,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
          service_name = ?,
          display_name = ?,
          description = ?,
+         execution_reminder = ?,
          service_icon = ?,
          price = ?,
          currency = ?,
@@ -1117,6 +1218,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
       input.serviceName,
       input.displayName,
       input.description,
+      toSafeString(input.executionReminder).trim(),
       input.serviceIcon,
       input.price,
       input.currency,
@@ -1138,6 +1240,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
       serviceName: input.serviceName,
       displayName: input.displayName,
       description: input.description,
+      executionReminder: input.executionReminder,
       serviceIcon: input.serviceIcon,
       price: input.price,
       currency: input.currency,
@@ -1240,7 +1343,8 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, status, operation, path, original_id, available,
            metaid, global_metaid, address, create_address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, output_type,
+           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, execution_reminder,
+           skill_document, input_type, output_type, endpoint, content_summary_json,
            updated_at, rating_avg, rating_count
     FROM remote_skill_service
     ORDER BY
@@ -2530,6 +2634,7 @@ const startSqliteDaemons = (): void => {
     },
     getListenerConfigFromStore,
     resolveGigSquareLocalServiceOutputType,
+    resolveGigSquareLocalServiceExecutionReminder,
     () => triggerDaemonWasmRecovery('privateChatDaemon'),
     async (input) => skillMgr.buildChatSkillsRoutingPrompt(input),
     async (params) => {
@@ -6847,6 +6952,7 @@ if (!gotTheLock) {
     serviceName: string;
     displayName: string;
     description: string;
+    executionReminder?: string;
     providerSkill: string;
     price: string;
     currency: string;
@@ -6860,6 +6966,7 @@ if (!gotTheLock) {
       const serviceName = toSafeString(params?.serviceName).trim();
       const displayName = toSafeString(params?.displayName).trim();
       const description = toSafeString(params?.description).trim();
+      const executionReminder = toSafeString(params?.executionReminder).trim();
       const providerSkill = toSafeString(params?.providerSkill).trim();
       const price = toSafeString(params?.price).trim();
       const currencyRaw = toSafeString(params?.currency).trim().toUpperCase();
@@ -6873,6 +6980,7 @@ if (!gotTheLock) {
         serviceName,
         displayName,
         description,
+        executionReminder,
         providerSkill,
         price,
         currency: currencyRaw,
@@ -6961,6 +7069,7 @@ if (!gotTheLock) {
         serviceName: normalizedDraft.serviceName,
         displayName: normalizedDraft.displayName,
         description: normalizedDraft.description,
+        executionReminder: normalizedDraft.executionReminder || '',
         serviceIcon: serviceIconUri || null,
         price: normalizedDraft.price,
         currency: normalizedCurrency,
@@ -7065,6 +7174,7 @@ if (!gotTheLock) {
     serviceName?: string;
     displayName?: string;
     description?: string;
+    executionReminder?: string;
     providerSkill?: string;
     price?: string;
     currency?: string;
@@ -7103,10 +7213,14 @@ if (!gotTheLock) {
         };
       }
 
+      const hasExecutionReminderParam = Object.prototype.hasOwnProperty.call(params || {}, 'executionReminder');
       const draft: GigSquareModifyDraft = {
         serviceName: toSafeString(params?.serviceName).trim() || toSafeString(currentService.serviceName).trim(),
         displayName: toSafeString(params?.displayName).trim() || toSafeString(currentService.displayName).trim(),
         description: toSafeString(params?.description).trim() || toSafeString(currentService.description).trim(),
+        executionReminder: hasExecutionReminderParam
+          ? toSafeString(params?.executionReminder).trim()
+          : toSafeString(currentService.executionReminder).trim(),
         providerSkill: toSafeString(params?.providerSkill).trim() || toSafeString(currentService.providerSkill).trim(),
         price: toSafeString(params?.price).trim() || toSafeString(currentService.price).trim(),
         currency: toSafeString(params?.currency).trim()
@@ -7186,6 +7300,7 @@ if (!gotTheLock) {
         serviceName: normalizedDraft.serviceName,
         displayName: normalizedDraft.displayName,
         description: normalizedDraft.description,
+        executionReminder: normalizedDraft.executionReminder || '',
         serviceIcon: serviceIconUri || null,
         price: normalizedDraft.price,
         currency: normalizedCurrency,

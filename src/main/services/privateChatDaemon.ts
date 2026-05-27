@@ -251,6 +251,10 @@ type ResolveLocalServiceOutputTypeFn = (input: {
   serviceId?: string | null;
   serviceName?: string | null;
 }) => string | null | undefined;
+type ResolveLocalServiceExecutionReminderFn = (input: {
+  serviceId?: string | null;
+  serviceName?: string | null;
+}) => string | null | undefined;
 
 function isOrderMessage(plaintext: string): boolean {
   return plaintext.trim().toUpperCase().startsWith(ORDER_PREFIX);
@@ -1763,6 +1767,7 @@ async function processOne(
   emitToRenderer?: (channel: string, data: unknown) => void,
   getListenerConfig?: GetListenerConfigFn,
   resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
+  resolveLocalServiceExecutionReminder?: ResolveLocalServiceExecutionReminderFn,
   onWasmBoundsError?: () => void,
   getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn,
   runPrivateChatSkillTurn?: RunPrivateChatSkillTurnFn
@@ -2054,6 +2059,10 @@ async function processOne(
         serviceName,
         resolveLocalServiceOutputType,
       });
+      const executionReminder = String(resolveLocalServiceExecutionReminder?.({
+        serviceId,
+        serviceName,
+      }) || '').trim();
       const paymentAmount = payment.amountDisplay || formatPaymentAmountFromSats(payment.amountSats);
       const paymentCurrency = payment.currency || getCurrencyFromChain(payment.chain);
       let sellerOrderSessionId: string | null = null;
@@ -2189,6 +2198,7 @@ async function processOne(
         peerName: (row.from_name as string | null) ?? null,
         skillId: serviceId,
         skillName: serviceName,
+        executionReminder,
         expectedOutputType: serviceOutputType,
       });
       const externalConversationId = sellerOrderConversationId || buildOrderExternalConversationId(row, source, orderTrackingId);
@@ -3010,6 +3020,7 @@ export function startPrivateChatDaemon(
   emitToRenderer?: (channel: string, data: unknown) => void,
   getListenerConfig?: GetListenerConfigFn,
   resolveLocalServiceOutputType?: ResolveLocalServiceOutputTypeFn,
+  resolveLocalServiceExecutionReminder?: ResolveLocalServiceExecutionReminderFn,
   onWasmBoundsError?: () => void,
   getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn,
   runPrivateChatSkillTurn?: RunPrivateChatSkillTurnFn,
@@ -3070,6 +3081,7 @@ export function startPrivateChatDaemon(
               emitToRenderer,
               getListenerConfig,
               resolveLocalServiceOutputType,
+              resolveLocalServiceExecutionReminder,
               onWasmBoundsError,
               getChatSkillsRoutingPrompt,
               runPrivateChatSkillTurn,

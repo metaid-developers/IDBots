@@ -53,6 +53,7 @@ type ModifyDraft = {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder: string;
   providerSkill: string;
   price: string;
   currency: ModifyCurrency;
@@ -206,6 +207,7 @@ const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): Modify
   serviceName: (service.serviceName || '').trim(),
   displayName: (service.displayName || '').trim(),
   description: (service.description || '').trim(),
+  executionReminder: (service.executionReminder || '').trim(),
   providerSkill: (service.providerSkill || '').trim(),
   price: (service.price || '').trim(),
   mrc20Ticker: (service.mrc20Ticker || '').trim(),
@@ -655,6 +657,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
         serviceName: modifyDraft.serviceName.trim(),
         displayName: modifyDraft.displayName.trim(),
         description: modifyDraft.description.trim(),
+        executionReminder: modifyDraft.executionReminder.trim(),
         providerSkill: modifyDraft.providerSkill.trim(),
         price: modifyDraft.price.trim(),
         currency: modifyDraft.currency,
@@ -1405,6 +1408,23 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                       placeholder={i18nService.t('gigSquarePublishDescriptionPlaceholder')}
                       className="w-full rounded-xl border border-claude-border bg-[var(--bg-panel)] px-3 py-2 text-sm text-claude-text placeholder-claude-textSecondary focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkSurface dark:text-claude-darkText dark:placeholder-claude-darkTextSecondary"
                     />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('gigSquarePublishExecutionReminderLabel')}
+                    </label>
+                    <textarea
+                      value={modifyDraft.executionReminder}
+                      onChange={(event) => setModifyDraft((prev) => (prev ? { ...prev, executionReminder: event.target.value } : prev))}
+                      rows={3}
+                      disabled={isModifySubmitting}
+                      placeholder={i18nService.t('gigSquarePublishExecutionReminderPlaceholder')}
+                      className="w-full rounded-xl border border-claude-border bg-[var(--bg-panel)] px-3 py-2 text-sm text-claude-text placeholder-claude-textSecondary focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkSurface dark:text-claude-darkText dark:placeholder-claude-darkTextSecondary"
+                    />
+                    <p className="mt-1 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('gigSquarePublishExecutionReminderHint')}
+                    </p>
                   </div>
                 </div>
 

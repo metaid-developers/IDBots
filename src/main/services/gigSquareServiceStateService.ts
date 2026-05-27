@@ -16,6 +16,7 @@ type LocalServiceStateRecordLike = {
   serviceName?: string;
   displayName?: string;
   description?: string;
+  executionReminder?: string | null;
   price?: string;
   currency?: string;
   settlementKind?: string | null;
@@ -33,6 +34,7 @@ type ServicePresentationLike = ServiceLike & {
   serviceName?: string;
   displayName?: string;
   description?: string;
+  executionReminder?: string | null;
   price?: string;
   currency?: string;
   settlementKind?: string | null;
@@ -177,6 +179,14 @@ const pickServiceOverrideString = (value: unknown, fallback: string | undefined)
   return normalized || fallback;
 };
 
+const pickExecutionReminderOverride = (
+  value: unknown,
+  fallback: string | null | undefined,
+): string | null | undefined => {
+  if (value == null) return fallback;
+  return toSafeString(value).trim();
+};
+
 export const applyLocalServiceState = <
   T extends ServicePresentationLike,
   L extends LocalServiceStateRecordLike,
@@ -225,6 +235,7 @@ export const applyLocalServiceState = <
         serviceName: pickServiceOverrideString(localRecord.serviceName, service.serviceName),
         displayName: pickServiceOverrideString(localRecord.displayName, service.displayName),
         description: pickServiceOverrideString(localRecord.description, service.description),
+        executionReminder: pickExecutionReminderOverride(localRecord.executionReminder, service.executionReminder),
         price: pickServiceOverrideString(localRecord.price, service.price),
         currency: pickServiceOverrideString(localRecord.currency, service.currency),
         settlementKind: pickServiceOverrideString(localRecord.settlementKind, service.settlementKind),

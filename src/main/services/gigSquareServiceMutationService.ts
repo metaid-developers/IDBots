@@ -21,6 +21,7 @@ export interface GigSquareModifyDraft {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder?: string | null;
   providerSkill: string;
   price: string;
   currency: string;
@@ -48,6 +49,7 @@ export interface GigSquareLocalMutationServiceSeed {
   serviceName?: string;
   displayName?: string;
   description?: string;
+  executionReminder?: string | null;
   serviceIcon?: string | null;
   price?: string;
   currency?: string;
@@ -71,6 +73,7 @@ export interface GigSquareLocalServiceMutationRecord {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder: string;
   serviceIcon: string | null;
   price: string;
   currency: string;
@@ -137,6 +140,7 @@ const createLocalMutationRecord = (input: {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder: string;
   serviceIcon: string | null;
   price: string;
   currency: string;
@@ -172,6 +176,7 @@ const createLocalMutationRecord = (input: {
     serviceName: toSafeString(input.serviceName).trim(),
     displayName: toSafeString(input.displayName).trim(),
     description: toSafeString(input.description).trim(),
+    executionReminder: toSafeString(input.executionReminder).trim(),
     serviceIcon: toSafeString(input.serviceIcon).trim() || null,
     price: toSafeString(input.price).trim(),
     currency: toSafeString(input.currency).trim(),
@@ -257,6 +262,7 @@ export const normalizeGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigS
   serviceName: toSafeString(draft.serviceName).trim(),
   displayName: toSafeString(draft.displayName).trim(),
   description: toSafeString(draft.description).trim(),
+  executionReminder: toSafeString(draft.executionReminder).trim(),
   providerSkill: toSafeString(draft.providerSkill).trim(),
   price: toSafeString(draft.price).trim(),
   currency: normalizeGigSquareCurrency(draft.currency),
@@ -333,6 +339,7 @@ export const buildGigSquareServicePayload = (input: {
     settlementKind: settlement.settlementKind,
     mrc20Ticker: settlement.mrc20Ticker,
     mrc20Id: settlement.mrc20Id,
+    executionReminder: normalized.executionReminder || '',
     skillDocument: '',
     inputType: 'text',
     outputType: normalized.outputType,
@@ -382,6 +389,7 @@ export const buildGigSquareLocalServiceRecordForRevoke = (input: {
     serviceName: toSafeString(service.serviceName).trim(),
     displayName: toSafeString(service.displayName).trim() || toSafeString(service.serviceName).trim(),
     description: toSafeString(service.description).trim(),
+    executionReminder: toSafeString(service.executionReminder).trim(),
     serviceIcon: toSafeString(service.serviceIcon).trim() || null,
     price: toSafeString(service.price).trim(),
     currency: toSafeString(service.currency).trim(),
@@ -404,6 +412,7 @@ export const buildGigSquareLocalServiceRecordForModify = (input: {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder?: string | null;
   serviceIcon: string | null;
   price: string;
   currency: string;
@@ -423,6 +432,7 @@ export const buildGigSquareLocalServiceRecordForModify = (input: {
     serviceName: input.serviceName,
     displayName: input.displayName,
     description: input.description,
+    executionReminder: toSafeString(input.executionReminder).trim(),
     serviceIcon: input.serviceIcon,
     price: input.price,
     currency: input.currency,

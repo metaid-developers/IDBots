@@ -185,6 +185,44 @@ test('buildGigSquareServicePayload and pin payload helpers write SPACE for mvc-c
   assert.equal(typeof modifyPayload.payload, 'string');
 });
 
+test('buildGigSquareServicePayload serializes execution reminder before skill metadata', () => {
+  const payload = buildGigSquareServicePayload({
+    draft: {
+      serviceName: 'weather',
+      displayName: 'Weather',
+      description: 'desc',
+      executionReminder: ' 如果用户没指定城市就用北京。 ',
+      providerSkill: 'forecast',
+      price: '0',
+      currency: 'SPACE',
+      outputType: 'text',
+    },
+    providerGlobalMetaId: 'global-metaid-1',
+    paymentAddress: '1abc',
+  });
+
+  assert.equal(payload.executionReminder, '如果用户没指定城市就用北京。');
+  assert.ok(
+    Object.keys(payload).indexOf('executionReminder') < Object.keys(payload).indexOf('skillDocument'),
+    'executionReminder should be serialized before skillDocument',
+  );
+});
+
+test('normalizeGigSquareModifyDraft allows empty execution reminder so modification can clear it', () => {
+  const normalized = normalizeGigSquareModifyDraft({
+    serviceName: 'weather',
+    displayName: 'Weather',
+    description: 'desc',
+    executionReminder: '   ',
+    providerSkill: 'forecast',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  assert.equal(normalized.executionReminder, '');
+});
+
 test('buildGigSquareServicePayload writes MRC20 payment metadata', () => {
   const payload = buildGigSquareServicePayload({
     draft: {

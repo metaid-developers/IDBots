@@ -21,6 +21,7 @@ export type ParsedRemoteSkillServiceRow = {
   serviceIcon?: string | null;
   providerMetaBot?: string | null;
   providerSkill?: string | null;
+  executionReminder?: string | null;
   skillDocument?: string | null;
   inputType?: string | null;
   outputType?: string | null;
@@ -223,6 +224,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
       serviceIcon: null,
       providerMetaBot: providerGlobalMetaId || null,
       providerSkill: null,
+      executionReminder: null,
       skillDocument: null,
       inputType: null,
       outputType: null,
@@ -256,6 +258,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
   if (!serviceName || !providerMetaId || !providerAddress) return null;
   const providerMetaBot = toSafeString((summary as Record<string, unknown>).providerMetaBot).trim();
   const providerSkill = toSafeString((summary as Record<string, unknown>).providerSkill).trim();
+  const executionReminder = toSafeString((summary as Record<string, unknown>).executionReminder).trim();
   const skillDocument = toSafeString((summary as Record<string, unknown>).skillDocument).trim();
   const inputType = toSafeString((summary as Record<string, unknown>).inputType).trim();
   const outputType = toSafeString((summary as Record<string, unknown>).outputType).trim();
@@ -276,6 +279,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
     serviceIcon,
     providerMetaBot: providerMetaBot || null,
     providerSkill: providerSkill || null,
+    executionReminder: executionReminder || null,
     skillDocument: skillDocument || null,
     inputType: inputType || null,
     outputType: outputType || null,
@@ -328,6 +332,11 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     serviceIcon: toSafeString(row.serviceIcon ?? row.service_icon).trim() || undefined,
     providerMetaBot: toSafeString(row.providerMetaBot ?? row.provider_meta_bot).trim() || undefined,
     providerSkill: toSafeString(row.providerSkill ?? row.provider_skill).trim() || undefined,
+    executionReminder: toSafeString(
+      row.executionReminder
+      ?? row.execution_reminder
+      ?? contentSummary?.executionReminder
+    ).trim() || undefined,
     skillDocument: toSafeString(row.skillDocument ?? row.skill_document).trim() || undefined,
     inputType: toSafeString(row.inputType ?? row.input_type).trim() || undefined,
     outputType: toSafeString(row.outputType ?? row.output_type).trim() || undefined,
@@ -355,9 +364,9 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
 export const REMOTE_SKILL_SERVICE_UPSERT_SQL = `INSERT INTO remote_skill_service (
   id, pin_id, metaid, global_metaid, address, create_address, service_name, display_name, description,
   price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
-  skill_document, input_type, output_type, endpoint, status, operation, path,
+  execution_reminder, skill_document, input_type, output_type, endpoint, status, operation, path,
   original_id, source_service_pin_id, available, content_summary_json, payment_address, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   pin_id = excluded.pin_id,
   metaid = excluded.metaid,
@@ -373,6 +382,7 @@ ON CONFLICT(id) DO UPDATE SET
   service_icon = excluded.service_icon,
   provider_meta_bot = excluded.provider_meta_bot,
   provider_skill = excluded.provider_skill,
+  execution_reminder = excluded.execution_reminder,
   skill_document = excluded.skill_document,
   input_type = excluded.input_type,
   output_type = excluded.output_type,
@@ -407,6 +417,7 @@ export const buildRemoteSkillServiceUpsertStatement = (
     parsed.serviceIcon ?? null,
     parsed.providerMetaBot || null,
     parsed.providerSkill || null,
+    parsed.executionReminder || null,
     parsed.skillDocument || null,
     parsed.inputType || null,
     parsed.outputType || null,

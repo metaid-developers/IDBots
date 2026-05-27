@@ -11,6 +11,7 @@ export type GigSquareService = {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder?: string | null;
   price: string;
   currency: string;
   settlementKind?: string | null;
@@ -57,6 +58,7 @@ export type GigSquareMyServiceSummary = {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder?: string | null;
   price: string;
   currency: string;
   settlementKind?: string | null;
@@ -149,6 +151,7 @@ export type GigSquareModifyServiceParams = {
   serviceName?: string;
   displayName?: string;
   description?: string;
+  executionReminder?: string;
   providerSkill?: string;
   price?: string;
   currency?: string;

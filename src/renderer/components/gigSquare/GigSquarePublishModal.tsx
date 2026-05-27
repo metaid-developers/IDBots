@@ -59,6 +59,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const [serviceName, setServiceName] = useState('');
   const [serviceNameDirty, setServiceNameDirty] = useState(false);
   const [description, setDescription] = useState('');
+  const [executionReminder, setExecutionReminder] = useState('');
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState<PublishCurrency>('BTC');
   const [mrc20Assets, setMrc20Assets] = useState<SelectableMrc20Asset[]>([]);
@@ -147,6 +148,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     setStatusPanelOpen(false);
     setStatusPanelState('submitting');
     setServiceNameDirty(false);
+    setExecutionReminder('');
     setServiceIconDataUrl('');
     setMrc20Assets([]);
     setSelectedMrc20Id('');
@@ -278,6 +280,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       serviceName: serviceName.trim(),
       displayName: displayName.trim(),
       description: description.trim(),
+      executionReminder: executionReminder.trim(),
       providerSkill: selectedSkill?.name || '',
       price: price.trim(),
       currency,
@@ -453,6 +456,23 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               className="w-full rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text placeholder-claude-textSecondary dark:placeholder-claude-darkTextSecondary focus:outline-none focus:ring-2 focus:ring-claude-accent"
               disabled={isFormDisabled}
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+              {i18nService.t('gigSquarePublishExecutionReminderLabel')}
+            </label>
+            <textarea
+              value={executionReminder}
+              onChange={(e) => setExecutionReminder(e.target.value)}
+              placeholder={i18nService.t('gigSquarePublishExecutionReminderPlaceholder')}
+              rows={3}
+              className="w-full rounded-xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-panel)] dark:bg-claude-darkSurface px-3 py-2 text-sm dark:text-claude-darkText text-claude-text placeholder-claude-textSecondary dark:placeholder-claude-darkTextSecondary focus:outline-none focus:ring-2 focus:ring-claude-accent"
+              disabled={isFormDisabled}
+            />
+            <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+              {i18nService.t('gigSquarePublishExecutionReminderHint')}
+            </p>
           </div>
 
           <div className={getGigSquareSettlementGridClassName(currency)}>

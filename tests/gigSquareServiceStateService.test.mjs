@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 
 const {
   resolveServiceActionAvailability,
+  applyLocalServiceState,
 } = require('../dist-electron/services/gigSquareServiceStateService.js');
 
 const BASE_CURRENT_SERVICE = {
@@ -82,4 +83,33 @@ test('resolveServiceActionAvailability still blocks services without a creator m
   assert.equal(result.canModify, false);
   assert.equal(result.canRevoke, false);
   assert.equal(result.blockedReason, 'gigSquareMyServicesBlockedMissingCreatorMetabot');
+});
+
+test('applyLocalServiceState treats an empty execution reminder as an explicit local clear', () => {
+  const services = [{
+    id: 'svc-root',
+    pinId: 'svc-current',
+    currentPinId: 'svc-current',
+    sourceServicePinId: 'svc-root',
+    chainPinIds: ['svc-root', 'svc-current'],
+    serviceName: 'weather-service',
+    displayName: 'Weather Service',
+    description: 'Weather lookup',
+    executionReminder: '旧的远端执行提醒',
+    price: '0',
+    currency: 'SPACE',
+    updatedAt: 100,
+  }];
+  const localRecords = [{
+    id: 'svc-root',
+    pinId: 'svc-root',
+    currentPinId: 'svc-current',
+    sourceServicePinId: 'svc-root',
+    executionReminder: '',
+    updatedAt: 200,
+  }];
+
+  const [resolved] = applyLocalServiceState(services, localRecords);
+
+  assert.equal(resolved.executionReminder, '');
 });
