@@ -18,6 +18,11 @@ export function getSidebarPrimaryNavModel({ t, hasRunningScheduledTask }) {
       icon: 'puzzlePiece',
     },
     {
+      id: 'metaapps',
+      label: t('metaApps'),
+      icon: 'squares2x2',
+    },
+    {
       id: 'metabots',
       label: t('metabots'),
       icon: 'cpuChip',
