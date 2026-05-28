@@ -113,3 +113,78 @@ test('applyLocalServiceState treats an empty execution reminder as an explicit l
 
   assert.equal(resolved.executionReminder, '');
 });
+
+test('applyLocalServiceState preserves remote v1.1 listing fields when local record omits them', () => {
+  const services = [{
+    id: 'svc-root-v11',
+    pinId: 'svc-current-v11',
+    currentPinId: 'svc-current-v11',
+    sourceServicePinId: 'svc-root-v11',
+    chainPinIds: ['svc-root-v11', 'svc-current-v11'],
+    serviceName: 'weather-service',
+    displayName: 'Weather Service',
+    description: 'Weather lookup',
+    providerSkill: 'weather, reporter',
+    providerSkills: ['weather', 'reporter'],
+    paymentTiming: 'prepaid',
+    protocolSettlementKind: 'native',
+    metadata: 'remote metadata',
+    price: '0.001',
+    currency: 'SPACE',
+    updatedAt: 100,
+  }];
+  const localRecords = [{
+    id: 'svc-root-v11',
+    pinId: 'svc-root-v11',
+    currentPinId: 'svc-current-v11',
+    sourceServicePinId: 'svc-root-v11',
+    updatedAt: 200,
+  }];
+
+  const [resolved] = applyLocalServiceState(services, localRecords);
+
+  assert.deepEqual(resolved.providerSkills, ['weather', 'reporter']);
+  assert.equal(resolved.paymentTiming, 'prepaid');
+  assert.equal(resolved.protocolSettlementKind, 'native');
+  assert.equal(resolved.metadata, 'remote metadata');
+});
+
+test('applyLocalServiceState applies local v1.1 listing field overrides', () => {
+  const services = [{
+    id: 'svc-root-v11-local',
+    pinId: 'svc-current-v11-local',
+    currentPinId: 'svc-current-v11-local',
+    sourceServicePinId: 'svc-root-v11-local',
+    chainPinIds: ['svc-root-v11-local', 'svc-current-v11-local'],
+    serviceName: 'weather-service',
+    displayName: 'Weather Service',
+    description: 'Weather lookup',
+    providerSkill: 'weather',
+    providerSkills: ['weather'],
+    paymentTiming: 'prepaid',
+    protocolSettlementKind: 'native',
+    metadata: 'remote metadata',
+    price: '0.001',
+    currency: 'SPACE',
+    updatedAt: 100,
+  }];
+  const localRecords = [{
+    id: 'svc-root-v11-local',
+    pinId: 'svc-root-v11-local',
+    currentPinId: 'svc-current-v11-local-modified',
+    sourceServicePinId: 'svc-root-v11-local',
+    providerSkills: ['weather', 'reporter'],
+    paymentTiming: 'free',
+    protocolSettlementKind: 'fiat',
+    metadata: 'local metadata',
+    updatedAt: 200,
+  }];
+
+  const [resolved] = applyLocalServiceState(services, localRecords);
+
+  assert.equal(resolved.currentPinId, 'svc-current-v11-local-modified');
+  assert.deepEqual(resolved.providerSkills, ['weather', 'reporter']);
+  assert.equal(resolved.paymentTiming, 'free');
+  assert.equal(resolved.protocolSettlementKind, 'fiat');
+  assert.equal(resolved.metadata, 'local metadata');
+});
