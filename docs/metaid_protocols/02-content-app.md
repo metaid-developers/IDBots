@@ -182,10 +182,11 @@ Version `1.0.0` is the legacy service advertisement shape. It must remain docume
 - If `price` parses to a number greater than `0`, the effective payment timing is `prepaid`.
 - If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free`.
 - `currency` aliases `MVC` and `MICROVISIONCHAIN` should normalize to `SPACE`.
+- Missing `settlementKind` defaults to `native`.
 
 ### 6.2 skill-service v1.1.0
 
-Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an ordered skill array, and adds explicit payment timing. New business logic should use shared resolvers for `providerSkill` and payment fields, not ad-hoc UI checks.
+Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an allowed skill list, and adds explicit payment timing plus settlement kind. New business logic should use shared resolvers for `providerSkill` and payment fields, not ad-hoc UI checks.
 
 ```json5
 {
@@ -195,10 +196,10 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an or
   "serviceIcon": "metafile://icon",
   "providerMetaBot": "provider MetaBot GlobalMetaID",
   /**
-   * Ordered local skill names executed by the provider for this service.
-   * UIs should allow selecting one or more skills and preserve this order.
+   * Provider-local skill names this service is allowed to use.
+   * This is a permission scope, not an ordered execution pipeline.
    */
-  "providerSkill": ["provider skill name", "optional follow-up skill name"],
+  "providerSkill": ["provider skill name", "another allowed skill name"],
 
   /**
    * prepaid: caller pays before provider delivery.
@@ -210,6 +211,8 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an or
   "price": "0.001",
   /** Quote currency only, such as SPACE, BTC, DOGE, CNY, or USD. */
   "currency": "SPACE",
+  /** native means on-chain native asset settlement; fiat means off-chain fiat settlement. */
+  "settlementKind": "native",
 
   "executionReminder": "Important execution notes for the provider MetaBot.",
   "skillDocument": "metafile://",
@@ -224,8 +227,9 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an or
 **v1.1 provider skill semantics**
 
 - `providerSkill` must be a non-empty array of provider-local skill names.
-- The array order is the recommended execution order for providers that execute multiple skills in sequence.
-- UIs should let the provider select one or more skills and preserve the selected order.
+- `providerSkill` is an allow-list for the `<available_skills>` scope. It does not require the provider MetaBot to use every skill.
+- The array has no execution-order semantics. Providers may use any suitable subset according to their runtime reasoning and local skill behavior.
+- UIs should let the provider select one or more skills.
 - For reader compatibility, a string `providerSkill` may be normalized to a one-element array. New v1.1 publishers should only publish the array form.
 - Missing or empty `providerSkill` makes the service unavailable for execution even if the display metadata is otherwise valid.
 
@@ -235,133 +239,50 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an or
 - `prepaid` means payment before provider delivery, `postpaid` means provider delivery or payment request before payment, and `free` means no payment is required.
 - If `paymentTiming` is `free`, the effective service price is `0` even if `price` contains a positive value.
 - If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free` even when `paymentTiming` says `prepaid` or `postpaid`.
+- `settlementKind` is one of `native` or `fiat`. Missing or unknown values default to `native` for compatibility.
+- `native` means the payment reference is an on-chain transaction for a native asset. `fiat` means the payment reference is off-chain fiat verification information.
 - `currency` is the quote unit only. It must not encode a payment rail, chain, or recipient address.
 - `providerMetaBot` is the provider and payment recipient identity. Service advertisements must not publish a separate payment address.
-- Fiat support may use fiat currency codes such as `CNY` or `USD` in `currency`. Until a later protocol version defines first-class fiat settlement, publisher-specific payment notes or external references may live in `metadata`.
-- `metadata` is intentionally free-form. Core clients must not use it to override `paymentTiming`, `price`, `currency`, `providerMetaBot`, or `providerSkill`.
+- Fiat support may use fiat currency codes such as `CNY` or `USD` in `currency` together with `settlementKind: "fiat"`.
+- `metadata` is intentionally free-form. Core clients must not use it to override `paymentTiming`, `price`, `currency`, `settlementKind`, `providerMetaBot`, or `providerSkill`.
 
 ## 7. skill-service-order
 
-- **Intro**: A protocol for recording skill-service order identity and order lifecycle metadata. It decouples the order primary key from payment transaction ids.
+- **Intro**: A minimal protocol for recording the relation between a skill-service pin and its payment reference. The MetaID pin id of this record is the order identifier.
 - **Path**: `/protocols/skill-service-order`
 - **Version**: `1.0.0`
 - **Content-Type**: `application/json`
 
-### 7.1 Order identity rules
+### 7.1 Payload
 
-- `orderId` is the primary business identifier for a service order.
-- `orderId` must not be a payment transaction id by design. It should be generated before payment and before the provider starts work.
-- Recommended format: UUID v4, ULID, or another globally unique opaque string up to 128 characters.
-- All order events, payment records, deliveries, refund records, and ratings should reference `orderId`.
-- Legacy orders that only have `paymentTxid` may expose a compatibility `orderId` equal to that `paymentTxid`, but new orders must generate an independent id.
-- `serviceSkills` snapshots the resolved `skill-service.providerSkill` array at order creation time.
-- `serviceSkill` may be present as a compatibility alias and should equal the first item of `serviceSkills`.
-
-### 7.2 Order created payload
-
-The initial order event should use MetaID operation `create`.
+The record should use MetaID operation `create`.
 
 ```json5
 {
-  "eventType": "order.created",
-  "orderId": "018f6f8d-6f3f-7cc8-8a70-0d3ef0d9b0a1",
+  /** PINID of the skill-service being ordered. */
   "servicePinId": "skill-service-pinid",
-  "serviceVersion": "1.1.0",
-  "serviceName": "post-buzz-service",
-  "serviceDisplayName": "On-chain buzz publishing service",
-  /** Snapshot of the resolved skill-service providerSkill array. */
-  "serviceSkills": ["provider skill name", "optional follow-up skill name"],
-  /** Compatibility alias for older clients; first item of serviceSkills. */
-  "serviceSkill": "provider skill name",
-  "outputType": "text",
-
-  "buyer": {
-    "globalMetaId": "buyer GlobalMetaID",
-    "metaid": "buyer MetaID"
-  },
-  "provider": {
-    "globalMetaId": "provider GlobalMetaID",
-    "metaid": "provider MetaID"
-  },
-
-  /** Snapshot copied from the resolved skill-service payment fields. */
-  "paymentTiming": "postpaid",
+  /** Empty for free orders. For native settlement this is a txid; for fiat this is verification URL/info. */
+  "paymentTxid": "payment transaction id",
+  /** Display only; not payment-validation authority. */
   "price": "0.001",
+  /** Display only; not payment-validation authority. */
   "currency": "SPACE",
-  "serviceMetadata": "",
-
-  /**
-   * Optional privacy-preserving summary. The full user request should normally
-   * be sent through encrypted simplemsg instead of being published here.
-   */
-  "requestSummary": "",
-  "encryptedOrderMessagePinId": "simplemsg order pinid",
-  "createdAt": 1777427686000,
-  "status": "created",
-  "paymentRecords": []
+  /** Display only; native by default. */
+  "settlementKind": "native",
+  /** Reserved free-form publisher/caller metadata. Empty by default. */
+  "metadata": ""
 }
 ```
 
-### 7.3 Order update and payment event payload
+### 7.2 Field semantics
 
-Subsequent lifecycle records should use MetaID operation `modify` targeting the original order pin when possible, and must repeat `orderId`.
-
-```json5
-{
-  "eventType": "payment.recorded",
-  "orderId": "018f6f8d-6f3f-7cc8-8a70-0d3ef0d9b0a1",
-  "status": "paid",
-  "paymentRecord": {
-    "paymentId": "payment record id",
-    "status": "confirmed",
-    "amount": "0.001",
-    "currency": "SPACE",
-    "txid": "payment transaction id",
-    "externalReference": null,
-    "paidAt": 1777427786000
-  },
-  "updatedAt": 1777427786000
-}
-```
-
-Allowed `eventType` values for v1.0.0 are:
-
-- `order.created`
-- `order.accepted`
-- `order.rejected`
-- `order.in_progress`
-- `order.delivered`
-- `payment.requested`
-- `payment.recorded`
-- `payment.failed`
-- `payment.refund_requested`
-- `payment.refunded`
-- `order.cancelled`
-- `order.failed`
-- `order.closed`
-
-Allowed `status` values for v1.0.0 are:
-
-- `created`
-- `accepted`
-- `rejected`
-- `in_progress`
-- `delivered`
-- `payment_requested`
-- `paid`
-- `payment_failed`
-- `refund_requested`
-- `refunded`
-- `cancelled`
-- `failed`
-- `closed`
-
-Allowed `paymentRecord.status` values for v1.0.0 are:
-
-- `pending`
-- `confirmed`
-- `failed`
-- `refunded`
+- The MetaID pin id of the `skill-service-order` record is the order's unique identifier. Do not publish an `orderId` field.
+- `servicePinId` is required and points to the ordered `skill-service` pin.
+- `paymentTxid` is optional. It should be empty for free orders. When `settlementKind` is `native`, it is the on-chain payment txid. When `settlementKind` is `fiat`, it is a verification URL or verification information string.
+- `price`, `currency`, and `settlementKind` are display-only snapshots. Native payment validation must inspect the referenced on-chain transaction, not trust these self-declared fields.
+- Missing or unknown `settlementKind` defaults to `native`.
+- `metadata` is a reserved string field. Core clients must not use it to override any field above.
+- Do not self-declare order primary keys, creation/update times, lifecycle status, buyer/provider identity objects, skill snapshots, or payment sub-records in this payload. MetaID pin identity, chain/indexer timestamps, pin authorship, the referenced skill-service pin, and encrypted service messages are the sources of truth for those concerns.
 
 ## 8. skill-service-rate
 
@@ -375,17 +296,17 @@ Allowed `paymentRecord.status` values for v1.0.0 are:
 {
   /** PINID of the corresponding skill service. */
   "serviceID": "pinid",
-  /** Preferred for new ratings. Independent order identifier from skill-service-order. */
-  "orderId": "018f6f8d-6f3f-7cc8-8a70-0d3ef0d9b0a1",
-  /** Price paid for the service. */
+  /** Optional PINID of the corresponding skill-service-order record. */
+  "serviceOrderPinId": "skill-service-order-pinid",
+  /** Display-only price claimed by the reviewer or client. */
   "servicePrice": "0.1",
-  /** Service currency. */
+  /** Display-only currency claimed by the reviewer or client. */
   "serviceCurrency": "SPACE",
   /** Legacy payment proof. Kept for historical paid-review compatibility. */
   "servicePaidTx": "txid",
-  /** Preferred for new ratings. Skill list used for this service request. */
+  /** Optional display snapshot of the skill allow-list visible to the reviewer. */
   "serviceSkills": ["weather-service", "report-writer"],
-  /** Legacy compatibility alias; first item of serviceSkills. */
+  /** Legacy compatibility alias. */
   "serviceSkill": "weather-service",
   /** GlobalMetaID of the MetaBot that executed the service. */
   "serverBot": "globalmetaid",
