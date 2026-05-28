@@ -31,7 +31,7 @@ import {
   type ServiceOrderOutputType,
 } from './orderPayment';
 import type { MetabotStore } from '../metabotStore';
-import type { CoworkMessage, CoworkMessageMetadata, CoworkStore } from '../coworkStore';
+import type { CoworkConversationMapping, CoworkMessage, CoworkMessageMetadata, CoworkStore } from '../coworkStore';
 import type { MemoryBackend } from '../memory/memoryBackend';
 import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
 import { createOwnerMemoryScope } from '../memory/memoryScope';
@@ -275,6 +275,54 @@ function resolveOrderProtocolTxid(plaintext: string): string {
   );
 }
 
+function resolveOrderProtocolPinId(plaintext: string): string {
+  const delivery = parseDeliveryMessage(plaintext);
+  return normalizeServiceOrderPinId(
+    parseOrderStatusMessage(plaintext)?.orderPinId
+      || delivery?.serviceOrderPinId
+      || delivery?.orderPinId
+      || parseNeedsRatingMessage(plaintext)?.orderPinId
+      || parseOrderEndMessage(plaintext)?.orderPinId
+  );
+}
+
+export function resolveBuyerOrderProtocolMapping(
+  coworkStore: Pick<CoworkStore, 'findOrderSessionByOrderPinId' | 'findOrderSessionByOrderTxid' | 'findOrderSessionByPeer'>,
+  input: {
+    localMetabotId: number;
+    peerGlobalMetaId: string;
+    plaintext: string;
+  }
+): CoworkConversationMapping | null {
+  const delivery = parseDeliveryMessage(input.plaintext);
+  const isNeedsRating = isNeedsRatingMessage(input.plaintext);
+  const orderEnd = parseOrderEndMessage(input.plaintext);
+  const explicitOrderPinId = resolveOrderProtocolPinId(input.plaintext);
+  if (explicitOrderPinId) {
+    return coworkStore.findOrderSessionByOrderPinId(
+      input.localMetabotId,
+      input.peerGlobalMetaId,
+      explicitOrderPinId,
+      orderEnd ? undefined : 'buyer',
+    );
+  }
+
+  const orderProtocolTxid = resolveOrderProtocolTxid(input.plaintext);
+  if (orderProtocolTxid) {
+    return coworkStore.findOrderSessionByOrderTxid(
+      input.localMetabotId,
+      input.peerGlobalMetaId,
+      orderProtocolTxid,
+      orderEnd ? undefined : 'buyer',
+    );
+  }
+
+  if (delivery || isNeedsRating || orderEnd) {
+    return coworkStore.findOrderSessionByPeer(input.localMetabotId, input.peerGlobalMetaId);
+  }
+  return null;
+}
+
 function buildOrderA2ADisplayMetadata(input: {
   peerGlobalMetaId: string;
   direction: 'incoming' | 'outgoing';
@@ -294,13 +342,16 @@ function buildOrderA2ADisplayMetadata(input: {
   const orderTxid = input.orderTxid
     || (classification.kind === 'order_protocol' ? classification.orderTxid : null)
     || null;
+  const orderPinId = input.orderPinId
+    || (classification.kind === 'order_protocol' ? classification.orderPinId : null)
+    || null;
   return buildOrderProtocolDisplayMetadata({
     peerGlobalMetaId: input.peerGlobalMetaId,
     direction: input.direction,
     tag,
     orderTxid,
     orderRole: input.orderRole,
-    orderPinId: input.orderPinId,
+    orderPinId,
     paymentTxid: input.paymentTxid,
     orderMappingExternalConversationId: input.orderMappingExternalConversationId,
     extra: input.extra,
@@ -738,8 +789,8 @@ export async function sendSellerOrderAcknowledgement(params: {
     );
   }
 
-  const transmittedText = params.orderTxid
-    ? buildOrderStatusMessage(params.orderTxid, acknowledgementText)
+  const transmittedText = params.orderTxid || params.orderPinId
+    ? buildOrderStatusMessage(params.orderTxid, acknowledgementText, params.orderPinId)
     : acknowledgementText;
   const result = await params.sendEncryptedMsg(transmittedText);
   const sentAt = params.now ? params.now() : Date.now();
@@ -1540,6 +1591,18 @@ export function resolveBuyerRatingContext(input: {
   };
 }
 
+export function shouldSkipAutoRatingForMissingScopedContext(input: {
+  orderTxid?: string | null;
+  serviceOrderPinId?: string | null;
+  originalRequest?: string | null;
+  serviceResult?: string | null;
+}): boolean {
+  const hasScopedOrderTxid = Boolean(normalizeOrderMessageTxid(input.orderTxid));
+  const hasScopedOrderPinId = Boolean(normalizeServiceOrderPinId(input.serviceOrderPinId));
+  if (!hasScopedOrderTxid && !hasScopedOrderPinId) return false;
+  return !String(input.originalRequest || '').trim() || !String(input.serviceResult || '').trim();
+}
+
 export function isOrderDeliveryFailureNotice(plaintext: string): boolean {
   const text = String(plaintext || '');
   if (!text.trim()) return false;
@@ -1580,8 +1643,16 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   });
   const originalRequest = ratingContext.originalRequest;
   const serviceResult = ratingContext.serviceResult;
-  if (orderTxid && (!originalRequest || !serviceResult)) {
-    emitLog(`[Rating] Missing scoped order context for order ${orderTxid.slice(0, 12)}…, skipping auto-rating to avoid cross-order history leakage.`);
+  if (shouldSkipAutoRatingForMissingScopedContext({
+    orderTxid,
+    serviceOrderPinId,
+    originalRequest,
+    serviceResult,
+  })) {
+    const scopeLabel = orderTxid
+      ? `order ${orderTxid.slice(0, 12)}…`
+      : `order pin ${serviceOrderPinId.slice(0, 24)}…`;
+    emitLog(`[Rating] Missing scoped order context for ${scopeLabel}, skipping auto-rating to avoid cross-order history leakage.`);
     return;
   }
 
@@ -1647,8 +1718,8 @@ async function handleRatingFlow(params: RatingFlowParams): Promise<void> {
   // Build combined message: rating text + on-chain pin reference
   const pinLine = ratingPinId ? `\n\n我的评分已记录在链上（pin ID: ${ratingPinId}）。` : '';
   const combinedMessageBody = `${ratingText.trim()}${pinLine}`;
-  const combinedMessage = orderTxid
-    ? buildOrderEndMessage(orderTxid, 'rated', combinedMessageBody)
+  const combinedMessage = orderTxid || serviceOrderPinId
+    ? buildOrderEndMessage(orderTxid, 'rated', combinedMessageBody, serviceOrderPinId)
     : combinedMessageBody;
 
   // Send combined message to B via simplemsg
@@ -2292,6 +2363,7 @@ async function processOne(
           peerAvatar: (row.from_avatar as string | null) ?? null,
           expectedOutputType: serviceOutputType,
           orderTxid: orderMessageTxid,
+          orderPinId,
           paymentTxid,
           processingNotice,
           sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
@@ -2301,8 +2373,8 @@ async function processOne(
       } catch (error) {
         rethrowSqliteWasmBoundsError(error);
         const failureNotice = buildOrderExecutionFailureNotice(error);
-        const transmittedFailureNotice = orderMessageTxid
-          ? buildOrderStatusMessage(orderMessageTxid, failureNotice)
+        const transmittedFailureNotice = orderMessageTxid || orderPinId
+          ? buildOrderStatusMessage(orderMessageTxid, failureNotice, orderPinId)
           : failureNotice;
         emitLog(`[Order] Cowork run failed: ${error instanceof Error ? error.message : String(error)}`);
         if (source === 'metaweb_private' && fromGlobalMetaId) {
@@ -2356,8 +2428,8 @@ async function processOne(
       if (trimmedReply && source === 'metaweb_private') {
         if (orderResult.isDeliverable === false) {
           try {
-            const transmittedFallbackReply = orderMessageTxid
-              ? buildOrderStatusMessage(orderMessageTxid, trimmedReply)
+            const transmittedFallbackReply = orderMessageTxid || orderPinId
+              ? buildOrderStatusMessage(orderMessageTxid, trimmedReply, orderPinId)
               : trimmedReply;
             const fallbackResult = await sendEncryptedMsg(transmittedFallbackReply);
             emitLog(`[Order] Timeout fallback notice sent to ${fromGlobalMetaId.slice(0, 12)}…`);
@@ -2453,13 +2525,13 @@ async function processOne(
             emitLog(`[Order] Service reply broadcast failed: ${error instanceof Error ? error.message : String(error)}`);
             if (sellerOrderSessionId) {
               const failureReason = error instanceof Error ? error.message : String(error);
-              const localFailureText = orderMessageTxid
+              const localFailureText = orderMessageTxid || orderPinId
                 ? buildOrderStatusMessage(orderMessageTxid, [
                   '服务结果已生成，但链上交付消息发送失败；以下结果仅保留在本地会话中。',
                   failureReason,
                   '',
                   deliveryText,
-                ].join('\n'))
+                ].join('\n'), orderPinId)
                 : [
                   '服务结果已生成，但链上交付消息发送失败；以下结果仅保留在本地会话中。',
                   failureReason,
@@ -2556,16 +2628,12 @@ async function processOne(
       const isNeedsRating = isNeedsRatingMessage(plaintext);
       const orderEnd = parseOrderEndMessage(plaintext);
       const orderProtocolTxid = resolveOrderProtocolTxid(plaintext);
-      const buyerOrderMapping = orderProtocolTxid
-        ? coworkStore.findOrderSessionByOrderTxid(
-          metabot.id,
-          fromGlobalMetaId,
-          orderProtocolTxid,
-          orderEnd ? undefined : 'buyer'
-        )
-        : (delivery || isNeedsRating || orderEnd)
-          ? coworkStore.findOrderSessionByPeer(metabot.id, fromGlobalMetaId)
-          : null;
+      const explicitOrderPinId = resolveOrderProtocolPinId(plaintext);
+      const buyerOrderMapping = resolveBuyerOrderProtocolMapping(coworkStore, {
+        localMetabotId: metabot.id,
+        peerGlobalMetaId: fromGlobalMetaId,
+        plaintext,
+      });
       if (buyerOrderMapping) {
         emitLog(`[PrivateChat] Order protocol message from ${fromGlobalMetaId.slice(0, 12)}…, attaching to session ${buyerOrderMapping.coworkSessionId.slice(0, 8)}…`);
         const buyerOrderMeta = parseConversationMappingMetadata(buyerOrderMapping.metadataJson);
@@ -2578,7 +2646,8 @@ async function processOne(
           typeof buyerOrderMeta.servicePaidTx === 'string'
             ? buyerOrderMeta.servicePaidTx.trim()
             : '';
-        const serviceOrderPinId = normalizeServiceOrderPinId(buyerOrderMeta.serviceOrderPinId)
+        const serviceOrderPinId = explicitOrderPinId
+          || normalizeServiceOrderPinId(buyerOrderMeta.serviceOrderPinId)
           || normalizeServiceOrderPinId(buyerOrderMeta.orderPinId)
           || normalizeServiceOrderPinId(delivery?.serviceOrderPinId)
           || normalizeServiceOrderPinId(delivery?.orderPinId);

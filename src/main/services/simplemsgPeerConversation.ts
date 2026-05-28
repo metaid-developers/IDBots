@@ -13,6 +13,7 @@ export type SimplemsgClassification =
       kind: 'order_protocol';
       tag: SimplemsgProtocolTag;
       orderTxid?: string | null;
+      orderPinId?: string | null;
       reason?: string | null;
     };
 
@@ -67,17 +68,17 @@ export function classifySimplemsgContent(content: string): SimplemsgClassificati
 
   const status = parseOrderStatusMessage(text);
   if (status) {
-    return { kind: 'order_protocol', tag: 'ORDER_STATUS', orderTxid: status.orderTxid ?? null };
+    return { kind: 'order_protocol', tag: 'ORDER_STATUS', orderTxid: status.orderTxid ?? null, orderPinId: status.orderPinId ?? null };
   }
 
   const delivery = parseDeliveryMessage(text);
   if (delivery) {
-    return { kind: 'order_protocol', tag: 'DELIVERY', orderTxid: delivery.orderTxid ?? null };
+    return { kind: 'order_protocol', tag: 'DELIVERY', orderTxid: delivery.orderTxid ?? null, orderPinId: delivery.serviceOrderPinId ?? delivery.orderPinId ?? null };
   }
 
   const needsRating = parseNeedsRatingMessage(text);
   if (needsRating) {
-    return { kind: 'order_protocol', tag: 'NeedsRating', orderTxid: needsRating.orderTxid ?? null };
+    return { kind: 'order_protocol', tag: 'NeedsRating', orderTxid: needsRating.orderTxid ?? null, orderPinId: needsRating.orderPinId ?? null };
   }
 
   const orderEnd = parseOrderEndMessage(text);
@@ -86,6 +87,7 @@ export function classifySimplemsgContent(content: string): SimplemsgClassificati
       kind: 'order_protocol',
       tag: 'ORDER_END',
       orderTxid: orderEnd.orderTxid ?? null,
+      orderPinId: orderEnd.orderPinId ?? null,
       reason: orderEnd.reason || null,
     };
   }

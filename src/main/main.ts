@@ -5420,7 +5420,7 @@ if (!gotTheLock) {
           `服务方已生成 ${outputType} 数字成果，但上传链上交付失败。`,
           verifiedUpload.error instanceof Error ? verifiedUpload.error.message : String(verifiedUpload.error || ''),
           '系统将自动转入退款流程，请稍后重试或联系服务方。',
-        ].filter(Boolean).join('\n'));
+        ].filter(Boolean).join('\n'), order.orderPinId);
         const encryptedFailure = ecdhEncrypt(
           manualResendFailureReply,
           computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)

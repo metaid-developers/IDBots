@@ -1672,6 +1672,66 @@ export class CoworkStore implements MemoryBackend {
     return row ? this.mapConversationMappingRow(row) : null;
   }
 
+  findOrderSessionByOrderPinId(
+    metabotId: number,
+    peerGlobalMetaId: string,
+    orderPinId: string,
+    role?: 'buyer' | 'seller'
+  ): CoworkConversationMapping | null {
+    const normalizedMetabotId = this.normalizeMappingMetabotId(metabotId);
+    const normalizedOrderPinId = String(orderPinId || '').trim();
+    const normalizedPeerGlobalMetaId = String(peerGlobalMetaId || '').trim();
+    if (!normalizedOrderPinId || !normalizedPeerGlobalMetaId) return null;
+
+    const roleClause = role ? 'AND m.metadata_json LIKE ?' : '';
+    const params: (string | number)[] = [
+      normalizedMetabotId,
+      normalizedPeerGlobalMetaId,
+      `%"serviceOrderPinId":"${normalizedOrderPinId}"%`,
+      `%"orderPinId":"${normalizedOrderPinId}"%`,
+    ];
+    if (role) {
+      params.push(`%"role":"${role}"%`);
+    }
+    const row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT m.channel, m.external_conversation_id, m.metabot_id, m.cowork_session_id, m.metadata_json, m.created_at, m.last_active_at
+      FROM cowork_conversation_mappings m
+      JOIN cowork_sessions s ON s.id = m.cowork_session_id
+      WHERE m.channel = 'metaweb_order'
+        AND m.metabot_id = ?
+        AND s.peer_global_metaid = ?
+        AND (m.metadata_json LIKE ? OR m.metadata_json LIKE ?)
+        ${roleClause}
+      ORDER BY m.last_active_at DESC
+      LIMIT 1
+    `, params);
+    if (row) return this.mapConversationMappingRow(row);
+
+    if (!this.tableExists('service_orders')) return null;
+    const serviceOrderRoleClause = role ? 'AND o.role = ?' : '';
+    const serviceOrderParams: (string | number)[] = [
+      normalizedMetabotId,
+      normalizedPeerGlobalMetaId,
+      normalizedOrderPinId,
+    ];
+    if (role) serviceOrderParams.push(role);
+    const serviceOrderRow = this.getOne<CoworkConversationMappingRow>(`
+      SELECT m.channel, m.external_conversation_id, m.metabot_id, m.cowork_session_id, m.metadata_json, m.created_at, m.last_active_at
+      FROM service_orders o
+      JOIN cowork_conversation_mappings m
+        ON m.channel = 'metaweb_order'
+       AND m.metabot_id = o.local_metabot_id
+       AND m.cowork_session_id = o.cowork_session_id
+      WHERE o.local_metabot_id = ?
+        AND o.counterparty_global_metaid = ?
+        AND o.order_pin_id = ?
+        ${serviceOrderRoleClause}
+      ORDER BY o.updated_at DESC, m.last_active_at DESC
+      LIMIT 1
+    `, serviceOrderParams);
+    return serviceOrderRow ? this.mapConversationMappingRow(serviceOrderRow) : null;
+  }
+
   updateConversationMappingMetadata(
     channel: string,
     externalConversationId: string,

@@ -427,7 +427,8 @@ export class ServiceOrderLifecycleService {
     const message = buildOrderEndMessage(
       order.orderMessageTxid,
       reason,
-      '等待买方评价超时，订单已结束。'
+      '等待买方评价超时，订单已结束。',
+      order.orderPinId
     );
     try {
       const result = await this.createOrderEndPin({ order, reason, message });
