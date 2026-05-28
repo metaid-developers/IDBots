@@ -653,7 +653,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     metaAppsDescription: '可即插即用、可在本地运行的前端 MetaApp',
     localMetaApps: '本地',
     recommended: '推荐',
-    chainCommunityMetaApps: '链上第三方应用',
+    chainCommunityMetaApps: '链上应用',
     metaAppInstallFailed: '安装元应用失败',
     searchMetaApps: '搜索元应用',
     noMetaAppsAvailable: '暂无本地元应用',
