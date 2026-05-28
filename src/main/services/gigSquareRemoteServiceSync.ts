@@ -1,4 +1,8 @@
 import { parseGigSquareSettlementAsset } from '../shared/gigSquareSettlementAsset.js';
+import {
+  normalizeProviderSkillList,
+  resolveSkillServicePaymentTerms,
+} from '../shared/skillServiceProtocol.js';
 
 type RemoteSkillServiceItem = Record<string, unknown>;
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -21,6 +25,11 @@ export type ParsedRemoteSkillServiceRow = {
   serviceIcon?: string | null;
   providerMetaBot?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  providerSkillsJson?: string | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   executionReminder?: string | null;
   skillDocument?: string | null;
   inputType?: string | null;
@@ -71,6 +80,16 @@ const toSafeNumber = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const toMetadataString = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 };
 
 const normalizeTimestampMs = (value: unknown): number => {
@@ -124,6 +143,27 @@ const parseGigSquareContentSummary = (value: unknown): Record<string, unknown> |
     }
   }
   return null;
+};
+
+const parseProviderSkillsJson = (value: unknown): string[] => {
+  const normalized = toSafeString(value).trim();
+  if (!normalized) return [];
+  try {
+    return normalizeProviderSkillList(JSON.parse(normalized));
+  } catch {
+    return [];
+  }
+};
+
+const getRemoteSkillServicePayloadVersion = (itemOrRow: Record<string, unknown>): string => {
+  return toSafeString(
+    itemOrRow.version
+    ?? itemOrRow.Version
+    ?? itemOrRow.protocolVersion
+    ?? itemOrRow.protocol_version
+    ?? itemOrRow.payloadVersion
+    ?? itemOrRow.payload_version
+  ).trim() || '1.0.0';
 };
 
 const getRemoteSkillServiceList = (payload: unknown): RemoteSkillServiceItem[] => {
@@ -224,6 +264,11 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
       serviceIcon: null,
       providerMetaBot: providerGlobalMetaId || null,
       providerSkill: null,
+      providerSkills: [],
+      providerSkillsJson: JSON.stringify([]),
+      paymentTiming: 'free',
+      protocolSettlementKind: 'native',
+      metadata: '',
       executionReminder: null,
       skillDocument: null,
       inputType: null,
@@ -244,7 +289,7 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
   const serviceName = toSafeString(summary.serviceName).trim();
   const displayName = toSafeString(summary.displayName).trim() || serviceName || 'Service';
   const description = toSafeString(summary.description).trim();
-  const price = toSafeString(summary.price).trim() || '0';
+  const protocolVersion = getRemoteSkillServicePayloadVersion(item);
   const settlement = parseGigSquareSettlementAsset({
     currency: toSafeString(summary.currency || summary.priceUnit).trim(),
     settlementKind: toSafeString((summary as Record<string, unknown>).settlementKind).trim(),
@@ -252,17 +297,28 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
     mrc20Ticker: toSafeString((summary as Record<string, unknown>).mrc20Ticker).trim(),
     mrc20Id: toSafeString((summary as Record<string, unknown>).mrc20Id).trim(),
   });
+  const paymentTerms = resolveSkillServicePaymentTerms({
+    price: summary.price,
+    currency: settlement.protocolCurrency,
+    paymentTiming: (summary as Record<string, unknown>).paymentTiming,
+    protocolSettlementKind: (summary as Record<string, unknown>).protocolSettlementKind,
+    settlementKind: (summary as Record<string, unknown>).settlementKind,
+    version: protocolVersion,
+  });
+  const price = paymentTerms.effectivePrice;
   const currency = settlement.protocolCurrency;
   const avatar = typeof summary.avatar === 'string' ? summary.avatar : null;
   const serviceIcon = typeof summary.serviceIcon === 'string' ? summary.serviceIcon.trim() || null : null;
   if (!serviceName || !providerMetaId || !providerAddress) return null;
   const providerMetaBot = toSafeString((summary as Record<string, unknown>).providerMetaBot).trim();
-  const providerSkill = toSafeString((summary as Record<string, unknown>).providerSkill).trim();
+  const providerSkills = normalizeProviderSkillList((summary as Record<string, unknown>).providerSkill);
+  const providerSkill = providerSkills.join(', ');
   const executionReminder = toSafeString((summary as Record<string, unknown>).executionReminder).trim();
   const skillDocument = toSafeString((summary as Record<string, unknown>).skillDocument).trim();
   const inputType = toSafeString((summary as Record<string, unknown>).inputType).trim();
   const outputType = toSafeString((summary as Record<string, unknown>).outputType).trim();
   const endpoint = toSafeString((summary as Record<string, unknown>).endpoint).trim();
+  const metadata = toMetadataString((summary as Record<string, unknown>).metadata);
   const contentSummaryJson = JSON.stringify(summary);
   return {
     id: pinId || serviceName,
@@ -279,6 +335,11 @@ export const parseRemoteSkillServiceItem = (item: RemoteSkillServiceItem): Parse
     serviceIcon,
     providerMetaBot: providerMetaBot || null,
     providerSkill: providerSkill || null,
+    providerSkills,
+    providerSkillsJson: JSON.stringify(providerSkills),
+    paymentTiming: paymentTerms.paymentTiming,
+    protocolSettlementKind: paymentTerms.protocolSettlementKind,
+    metadata,
     executionReminder: executionReminder || null,
     skillDocument: skillDocument || null,
     inputType: inputType || null,
@@ -306,6 +367,7 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
   const ratingCountRaw = row.ratingCount ?? row.rating_count;
   const updatedAtRaw = row.updatedAt ?? row.updated_at;
   const contentSummary = parseGigSquareContentSummary(row.contentSummaryJson ?? row.content_summary_json);
+  const protocolVersion = getRemoteSkillServicePayloadVersion(row);
   const settlement = parseGigSquareSettlementAsset({
     currency: toSafeString(row.currency).trim(),
     settlementKind: toSafeString(row.settlementKind ?? row.settlement_kind ?? contentSummary?.settlementKind).trim(),
@@ -313,12 +375,30 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     mrc20Ticker: toSafeString(row.mrc20Ticker ?? row.mrc20_ticker ?? contentSummary?.mrc20Ticker).trim(),
     mrc20Id: toSafeString(row.mrc20Id ?? row.mrc20_id ?? contentSummary?.mrc20Id).trim(),
   });
+  const providerSkills = parseProviderSkillsJson(row.providerSkillsJson ?? row.provider_skills_json);
+  const fallbackProviderSkills = providerSkills.length > 0
+    ? providerSkills
+    : normalizeProviderSkillList(
+      contentSummary?.providerSkill
+      ?? row.providerSkill
+      ?? row.provider_skill
+    );
+  const paymentTerms = resolveSkillServicePaymentTerms({
+    price: row.price ?? contentSummary?.price,
+    currency: settlement.protocolCurrency,
+    paymentTiming: row.paymentTiming ?? row.payment_timing ?? contentSummary?.paymentTiming,
+    protocolSettlementKind: row.protocolSettlementKind
+      ?? row.protocol_settlement_kind
+      ?? contentSummary?.protocolSettlementKind,
+    settlementKind: contentSummary?.settlementKind,
+    version: protocolVersion,
+  });
   return {
     id: toSafeString(row.id).trim(),
     serviceName: toSafeString(row.serviceName ?? row.service_name).trim(),
     displayName: toSafeString(row.displayName ?? row.display_name).trim(),
     description: toSafeString(row.description).trim(),
-    price: toSafeString(row.price).trim(),
+    price: paymentTerms.effectivePrice,
     currency: settlement.protocolCurrency,
     providerMetaId: toSafeString(row.providerMetaId ?? row.metaid).trim(),
     providerGlobalMetaId: toSafeString(row.providerGlobalMetaId ?? row.global_metaid).trim(),
@@ -331,7 +411,14 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
     avatar: toSafeString(row.avatar).trim() || undefined,
     serviceIcon: toSafeString(row.serviceIcon ?? row.service_icon).trim() || undefined,
     providerMetaBot: toSafeString(row.providerMetaBot ?? row.provider_meta_bot).trim() || undefined,
-    providerSkill: toSafeString(row.providerSkill ?? row.provider_skill).trim() || undefined,
+    providerSkill: toSafeString(row.providerSkill ?? row.provider_skill).trim()
+      || fallbackProviderSkills.join(', ')
+      || undefined,
+    providerSkills: fallbackProviderSkills,
+    providerSkillsJson: JSON.stringify(fallbackProviderSkills),
+    paymentTiming: paymentTerms.paymentTiming,
+    protocolSettlementKind: paymentTerms.protocolSettlementKind,
+    metadata: toMetadataString(row.metadata ?? contentSummary?.metadata),
     executionReminder: toSafeString(
       row.executionReminder
       ?? row.execution_reminder
@@ -364,9 +451,10 @@ export const parseRemoteSkillServiceRow = (row: Record<string, unknown>): Parsed
 export const REMOTE_SKILL_SERVICE_UPSERT_SQL = `INSERT INTO remote_skill_service (
   id, pin_id, metaid, global_metaid, address, create_address, service_name, display_name, description,
   price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
+  provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
   execution_reminder, skill_document, input_type, output_type, endpoint, status, operation, path,
   original_id, source_service_pin_id, available, content_summary_json, payment_address, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   pin_id = excluded.pin_id,
   metaid = excluded.metaid,
@@ -382,6 +470,10 @@ ON CONFLICT(id) DO UPDATE SET
   service_icon = excluded.service_icon,
   provider_meta_bot = excluded.provider_meta_bot,
   provider_skill = excluded.provider_skill,
+  provider_skills_json = excluded.provider_skills_json,
+  payment_timing = excluded.payment_timing,
+  protocol_settlement_kind = excluded.protocol_settlement_kind,
+  metadata = excluded.metadata,
   execution_reminder = excluded.execution_reminder,
   skill_document = excluded.skill_document,
   input_type = excluded.input_type,
@@ -417,6 +509,10 @@ export const buildRemoteSkillServiceUpsertStatement = (
     parsed.serviceIcon ?? null,
     parsed.providerMetaBot || null,
     parsed.providerSkill || null,
+    parsed.providerSkillsJson || JSON.stringify(parsed.providerSkills ?? []),
+    parsed.paymentTiming || null,
+    parsed.protocolSettlementKind || null,
+    parsed.metadata ?? '',
     parsed.executionReminder || null,
     parsed.skillDocument || null,
     parsed.inputType || null,

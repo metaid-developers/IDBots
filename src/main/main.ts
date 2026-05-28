@@ -1411,7 +1411,9 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, status, operation, path, original_id, available,
            metaid, global_metaid, address, create_address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, execution_reminder,
+           price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
+           provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
+           execution_reminder,
            skill_document, input_type, output_type, endpoint, content_summary_json,
            updated_at, rating_avg, rating_count
     FROM remote_skill_service

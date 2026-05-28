@@ -1,4 +1,5 @@
 import React from 'react';
+import { i18nService } from '../../services/i18n';
 import type { GigSquareService } from '../../types/gigSquare';
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import { DEFAULT_GIG_SQUARE_PROVIDER_AVATAR } from './gigSquareProviderPresentation.js';
@@ -28,8 +29,15 @@ const GigSquareServiceCard: React.FC<GigSquareServiceCardProps> = ({
   actionLabel = 'Open',
   onOpen,
 }) => {
-  const price = formatGigSquarePrice(service.price, service.currency);
+  const price = formatGigSquarePrice(service.price, service.currency, {
+    paymentTiming: service.paymentTiming,
+    freeLabel: i18nService.t('gigSquareServiceFree'),
+    treatZeroAsFree: true,
+  });
   const iconSrc = service.serviceIcon || service.avatar || null;
+  const providerSkills = Array.isArray(service.providerSkills) && service.providerSkills.length > 0
+    ? [...new Set(service.providerSkills.map((skill) => String(skill || '').trim()).filter(Boolean))]
+    : (service.providerSkill ? [service.providerSkill] : []);
 
   return (
     <div
@@ -79,15 +87,23 @@ const GigSquareServiceCard: React.FC<GigSquareServiceCardProps> = ({
               className="shrink-0 inline-flex items-baseline gap-1.5 text-claude-accent"
             >
               <span className="text-base font-semibold">{price.amount}</span>
-              <span className="text-[11px] font-medium uppercase tracking-wide">{price.unit}</span>
+              {price.unit && (
+                <span className="text-[11px] font-medium uppercase tracking-wide">{price.unit}</span>
+              )}
             </div>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {service.providerSkill && (
-              <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
-                {service.providerSkill}
+          <div
+            data-slot="gig-square-provider-skill-chips"
+            className="mt-2 flex flex-wrap items-center gap-2"
+          >
+            {providerSkills.map((skill) => (
+              <span
+                key={skill}
+                className="max-w-full truncate rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
+              >
+                {skill}
               </span>
-            )}
+            ))}
             {refundRiskLabel && (
               <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
                 {refundRiskLabel}

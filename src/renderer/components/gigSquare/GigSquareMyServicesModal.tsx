@@ -55,8 +55,12 @@ type ModifyDraft = {
   description: string;
   executionReminder: string;
   providerSkill: string;
+  providerSkills: string[];
+  paymentTiming: 'free' | 'prepaid' | string;
   price: string;
   currency: ModifyCurrency;
+  protocolSettlementKind: 'native' | 'fiat' | string;
+  metadata: string;
   mrc20Ticker: string;
   mrc20Id: string;
   outputType: 'text' | 'image' | 'video' | 'audio' | 'other';
@@ -165,6 +169,16 @@ const getServiceDisplayName = (service: SelectedServiceLike | null | undefined):
   return service.displayName?.trim() || service.serviceName?.trim() || service.id;
 };
 
+const normalizeProviderSkillChips = (
+  providerSkills: string[] | null | undefined,
+  providerSkill?: string | null,
+): string[] => {
+  const source = Array.isArray(providerSkills) && providerSkills.length > 0
+    ? providerSkills
+    : (providerSkill ? [providerSkill] : []);
+  return [...new Set(source.map((skill) => String(skill || '').trim()).filter(Boolean))];
+};
+
 const getCounterpartyDisplayName = (order: GigSquareMyServiceOrderDetail): string => {
   return order.counterpartyName?.trim() || order.counterpartyGlobalMetaid?.trim() || '—';
 };
@@ -208,8 +222,12 @@ const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): Modify
   displayName: (service.displayName || '').trim(),
   description: (service.description || '').trim(),
   executionReminder: (service.executionReminder || '').trim(),
-  providerSkill: (service.providerSkill || '').trim(),
+  providerSkill: normalizeProviderSkillChips(service.providerSkills, service.providerSkill)[0] || '',
+  providerSkills: normalizeProviderSkillChips(service.providerSkills, service.providerSkill),
+  paymentTiming: (service.paymentTiming || '').trim() || 'prepaid',
   price: (service.price || '').trim(),
+  protocolSettlementKind: (service.protocolSettlementKind || '').trim() || 'native',
+  metadata: (service.metadata || '').trim(),
   mrc20Ticker: (service.mrc20Ticker || '').trim(),
   mrc20Id: (service.mrc20Id || '').trim(),
   outputType: normalizeModifyOutputType(service.outputType || null),
@@ -553,6 +571,9 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     setModifyDraft({
       ...nextDraft,
       providerSkill: resolvedSelection.providerSkill,
+      providerSkills: nextDraft.providerSkills.length > 0
+        ? nextDraft.providerSkills
+        : (resolvedSelection.providerSkill ? [resolvedSelection.providerSkill] : []),
     });
     setModifyMrc20Assets([]);
     setModifySelectedSkillId(resolvedSelection.selectedSkillId);
@@ -659,8 +680,14 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
         description: modifyDraft.description.trim(),
         executionReminder: modifyDraft.executionReminder.trim(),
         providerSkill: modifyDraft.providerSkill.trim(),
+        providerSkills: modifyDraft.providerSkills.length > 0
+          ? modifyDraft.providerSkills
+          : [modifyDraft.providerSkill.trim()].filter(Boolean),
+        paymentTiming: modifyDraft.paymentTiming,
         price: modifyDraft.price.trim(),
         currency: modifyDraft.currency,
+        protocolSettlementKind: modifyDraft.protocolSettlementKind,
+        metadata: modifyDraft.metadata,
         mrc20Ticker: modifyDraft.currency === 'MRC20' ? modifyDraft.mrc20Ticker.trim() : undefined,
         mrc20Id: modifyDraft.currency === 'MRC20' ? modifyDraft.mrc20Id.trim() : undefined,
         outputType: modifyDraft.outputType,
@@ -881,9 +908,14 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
               )}
 
               {activeServicesPage.items.map((service) => {
-                const price = formatGigSquarePrice(service.price, service.currency);
+                const price = formatGigSquarePrice(service.price, service.currency, {
+                  paymentTiming: service.paymentTiming,
+                  freeLabel: i18nService.t('gigSquareServiceFree'),
+                  treatZeroAsFree: true,
+                });
                 const grossRevenue = formatGigSquarePrice(service.grossRevenue, service.currency);
                 const netIncome = formatGigSquarePrice(service.netIncome, service.currency);
+                const providerSkills = normalizeProviderSkillChips(service.providerSkills, service.providerSkill);
                 const revokeDisabled = mutationBusyServiceId !== null || !service.canRevoke;
                 const editDisabled = mutationBusyServiceId !== null || !service.canModify;
                 const blockedReasonKey = service.blockedReason || 'gigSquareMyServicesMutationFailed';
@@ -916,13 +948,16 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               <div className="truncate text-[15px] font-semibold text-claude-text dark:text-claude-darkText">
                                 {getServiceDisplayName(service)}
                               </div>
-                              {service.providerSkill && (
-                                <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
-                                  {service.providerSkill}
+                              {providerSkills.map((skill) => (
+                                <span
+                                  key={skill}
+                                  className="max-w-full truncate rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
+                                >
+                                  {skill}
                                 </span>
-                              )}
+                              ))}
                               <span className="rounded-full bg-claude-accent/10 px-2 py-0.5 text-[11px] font-semibold text-claude-accent">
-                                {price.amount} {price.unit}
+                                {price.unit ? `${price.amount} ${price.unit}` : price.amount}
                               </span>
                             </div>
 
@@ -1053,16 +1088,25 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                         </div>
                       </div>
                     </div>
-                    {activeSelectedService.price && activeSelectedService.currency && (
-                      <div className="shrink-0 rounded-xl bg-claude-surfaceMuted px-4 py-3 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {formatGigSquarePrice(activeSelectedService.price, activeSelectedService.currency).unit}
+                    {activeSelectedService.price && activeSelectedService.currency && (() => {
+                      const price = formatGigSquarePrice(activeSelectedService.price, activeSelectedService.currency, {
+                        paymentTiming: activeSelectedService.paymentTiming,
+                        freeLabel: i18nService.t('gigSquareServiceFree'),
+                        treatZeroAsFree: true,
+                      });
+                      return (
+                        <div className="shrink-0 rounded-xl bg-claude-surfaceMuted px-4 py-3 dark:bg-claude-darkSurfaceMuted">
+                          {price.unit && (
+                            <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                              {price.unit}
+                            </div>
+                          )}
+                          <div className="mt-1 text-lg font-semibold text-claude-accent">
+                            {price.amount}
+                          </div>
                         </div>
-                        <div className="mt-1 text-lg font-semibold text-claude-accent">
-                          {formatGigSquarePrice(activeSelectedService.price, activeSelectedService.currency).amount}
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -1440,9 +1484,11 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                           const nextSkillId = event.target.value;
                           setModifySelectedSkillId(nextSkillId);
                           const selectedSkill = modifySkillOptions.find((skill) => skill.id === nextSkillId);
+                          const providerSkill = selectedSkill?.name || '';
                           setModifyDraft((prev) => (prev ? {
                             ...prev,
-                            providerSkill: selectedSkill?.name || '',
+                            providerSkill,
+                            providerSkills: providerSkill ? [providerSkill] : [],
                           } : prev));
                         }}
                         disabled={isModifySubmitting}
