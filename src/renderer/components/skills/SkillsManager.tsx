@@ -21,7 +21,7 @@ import { Skill, OfficialSkillItem } from '../../types/skill';
 import ErrorMessage from '../ErrorMessage';
 import Tooltip from '../ui/Tooltip';
 
-type SkillsTab = 'local' | 'official';
+type SkillsTab = 'local' | 'official' | 'community';
 
 interface SkillsManagerProps {
   onStartTaskWithSkill?: (skillId: string) => void;
@@ -51,6 +51,10 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
   const [officialSkills, setOfficialSkills] = useState<OfficialSkillItem[]>([]);
   const [officialSkillsLoading, setOfficialSkillsLoading] = useState(false);
   const [officialSkillsError, setOfficialSkillsError] = useState('');
+  const [communitySkills, setCommunitySkills] = useState<OfficialSkillItem[]>([]);
+  const [communitySkillsLoading, setCommunitySkillsLoading] = useState(false);
+  const [communitySkillsError, setCommunitySkillsError] = useState('');
+  const [communitySkillPendingDownload, setCommunitySkillPendingDownload] = useState<OfficialSkillItem | null>(null);
   const [installingSkillName, setInstallingSkillName] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
 
@@ -159,6 +163,61 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     fetchOfficial();
     return () => { isActive = false; };
   }, [resolvedActiveTab]);
+
+  useEffect(() => {
+    if (resolvedActiveTab !== 'community') return;
+    let isActive = true;
+    const fetchCommunity = async () => {
+      setCommunitySkillsLoading(true);
+      setCommunitySkillsError('');
+      const result = await window.electron.idbots.getCommunitySkillsStatus();
+      if (!isActive) return;
+      setCommunitySkillsLoading(false);
+      if (result.success && result.skills) {
+        setCommunitySkills(result.skills);
+      } else {
+        setCommunitySkillsError(result.error || 'Failed to load community skills');
+        setCommunitySkills([]);
+      }
+    };
+    fetchCommunity();
+    return () => { isActive = false; };
+  }, [resolvedActiveTab]);
+
+  const handleInstallCommunitySkill = async (skill: OfficialSkillItem) => {
+    setCommunitySkillPendingDownload(skill);
+  };
+
+  const handleConfirmInstallCommunitySkill = async () => {
+    if (!communitySkillPendingDownload || installingSkillName) return;
+    const skill = communitySkillPendingDownload;
+    setCommunitySkillPendingDownload(null);
+    setInstallingSkillName(skill.name);
+    setSkillActionError('');
+    try {
+      const result = await window.electron.idbots.installOfficialSkill({
+        name: skill.name,
+        skillFileUri: skill.skillFileUri,
+        remoteVersion: skill.remoteVersion,
+        remoteCreator: skill.remoteCreator,
+      });
+      if (result.success) {
+        const updated = await window.electron.idbots.getCommunitySkillsStatus();
+        if (updated.success && updated.skills) setCommunitySkills(updated.skills);
+        const loaded = await skillService.loadSkills();
+        dispatch(setSkills(loaded));
+        setCurrentTab('local');
+      } else {
+        setSkillActionError(result.error || i18nService.t('skillDownloadFailed'));
+      }
+    } finally {
+      setInstallingSkillName(null);
+    }
+  };
+
+  const handleCancelCommunitySkillInstall = () => {
+    setCommunitySkillPendingDownload(null);
+  };
 
   const handleInstallOfficialSkill = async (skill: OfficialSkillItem) => {
     if (installingSkillName || isSyncingAll) return;
@@ -339,6 +398,17 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           >
             {i18nService.t('officialRecommended')}
           </button>
+          <button
+            type="button"
+            onClick={() => setCurrentTab('community')}
+            className={`px-3 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              resolvedActiveTab === 'community'
+                ? 'dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text border-b-2 border-transparent -mb-[1px]'
+                : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
+            }`}
+          >
+            {i18nService.t('communitySkills')}
+          </button>
         </div>
       )}
 
@@ -355,7 +425,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         />
       )}
 
-      {resolvedActiveTab === 'official' ? (
+      {resolvedActiveTab === 'official' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <button
@@ -451,7 +521,94 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
             </div>
           )}
         </div>
-      ) : (
+      )}
+
+      {resolvedActiveTab === 'community' && (
+        <div className="space-y-4">
+          {communitySkillsLoading ? (
+            <div className="py-12 text-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('loading')}
+            </div>
+          ) : communitySkillsError ? (
+            <div className="py-8 text-center text-sm text-red-500">
+              {communitySkillsError}
+            </div>
+          ) : communitySkills.length === 0 ? (
+            <div className="py-12 text-center text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('noSkillsAvailable')}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {communitySkills.map((skill) => (
+                <div
+                  key={skill.name}
+                  className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg dark:bg-claude-darkSurface bg-claude-surface flex items-center justify-center flex-shrink-0">
+                        <PuzzlePieceIcon className="h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                      </div>
+                      <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate">
+                        {skill.name}
+                      </span>
+                    </div>
+                    <div className="flex-shrink-0">
+                      {skill.status === 'download' && (
+                        <button
+                          type="button"
+                          onClick={() => handleInstallCommunitySkill(skill)}
+                          disabled={installingSkillName !== null}
+                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                          {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillDownload')}
+                        </button>
+                      )}
+                      {skill.status === 'update' && (
+                        <button
+                          type="button"
+                          onClick={() => handleInstallCommunitySkill(skill)}
+                          disabled={installingSkillName !== null}
+                          className="btn-idchat-primary-filled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {installingSkillName === skill.name ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                          {installingSkillName === skill.name ? i18nService.t('skillOfficialLoading') : i18nService.t('skillUpdate')}
+                        </button>
+                      )}
+                      {skill.status === 'installed' && (
+                        <span className="px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                          {i18nService.t('skillInstalled')}
+                        </span>
+                      )}
+                      {skill.status === 'conflict' && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-red-500/20 text-red-500 cursor-not-allowed"
+                          title={i18nService.t('skillConflict')}
+                        >
+                          <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+                          {i18nService.t('skillConflict')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {skill.description && (
+                    <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
+                      {skill.description}
+                    </p>
+                  )}
+                  <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    v{skill.remoteVersion}
+                    {skill.status === 'update' && skill.localVersion ? ` (v${skill.localVersion} → v${skill.remoteVersion})` : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {resolvedActiveTab === 'local' && (
         <>
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
@@ -631,6 +788,48 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           ))
         )}
       </div>
+
+      {communitySkillPendingDownload && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={handleCancelCommunitySkillInstall}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border shadow-2xl p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
+              {i18nService.t('communitySkillWarningTitle')}
+            </div>
+            <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('communitySkillWarning')}
+            </p>
+            {skillActionError && (
+              <div className="mt-3 text-xs text-red-500">
+                {skillActionError}
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelCommunitySkillInstall}
+                disabled={installingSkillName !== null}
+                className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmInstallCommunitySkill}
+                disabled={installingSkillName !== null}
+                className="px-3 py-1.5 text-xs rounded-lg btn-idchat-primary-filled transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {installingSkillName === communitySkillPendingDownload.name ? i18nService.t('skillOfficialLoading') : i18nService.t('communitySkillConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {skillPendingDelete && (
         <div

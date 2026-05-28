@@ -647,6 +647,7 @@ interface IElectronAPI {
     installOfficialSkill: (skill: { name: string; skillFileUri: string; remoteVersion: string; remoteCreator: string }) =>
       Promise<{ success: boolean; error?: string }>;
     syncAllOfficialSkills: () => Promise<{ success: boolean; error?: string }>;
+    getCommunitySkillsStatus: () => Promise<{ success: boolean; skills?: OfficialSkillItem[]; error?: string }>;
     addMetaBot: (input: {
       name: string;
       avatar?: string | null;

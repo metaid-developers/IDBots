@@ -461,6 +461,7 @@ contextBridge.exposeInMainWorld('electron', {
     installOfficialSkill: (skill: { name: string; skillFileUri: string; remoteVersion: string; remoteCreator: string }) =>
       ipcRenderer.invoke('idbots:installOfficialSkill', skill),
     syncAllOfficialSkills: () => ipcRenderer.invoke('idbots:syncAllOfficialSkills'),
+    getCommunitySkillsStatus: () => ipcRenderer.invoke('idbots:getCommunitySkillsStatus'),
     addMetaBot: (input: {
       name: string;
       avatar?: string | null;
