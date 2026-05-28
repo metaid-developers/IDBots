@@ -65,6 +65,7 @@ test('free orders dedupe by order pin id while preserving empty payment txids', 
   )[0].values;
   assert.equal(rows.length, 2);
   assert.deepEqual(rows.map((row) => row[1]), ['', '']);
+  assert.deepEqual(store.listOrdersByPaymentTxid(''), []);
 });
 
 test('legacy paid rows still dedupe and lookup by non-empty payment txid', async () => {
@@ -93,6 +94,7 @@ test('legacy paid rows still dedupe and lookup by non-empty payment txid', async
     counterpartyGlobalMetaid: 'counterparty-global-metaid',
     paymentTxid: '',
   }), null);
+  assert.deepEqual(store.listOrdersByPaymentTxid(paymentTxid).map((order) => order.id), [first.id]);
 });
 
 test('find and list orders by order pin id', async () => {

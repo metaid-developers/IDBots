@@ -843,12 +843,14 @@ export class ServiceOrderStore {
   }
 
   listOrdersByPaymentTxid(paymentTxid: string): ServiceOrderRecord[] {
+    const normalizedPaymentTxid = normalizePaymentTxid(paymentTxid);
+    if (!normalizedPaymentTxid) return [];
     return this.getAll<ServiceOrderRow>(`
       SELECT *
       FROM service_orders
       WHERE payment_txid = ?
       ORDER BY updated_at DESC, created_at DESC
-    `, [paymentTxid]).map((row) => this.mapRow(row));
+    `, [normalizedPaymentTxid]).map((row) => this.mapRow(row));
   }
 
   listOrdersByOrderPinId(orderPinId: string): ServiceOrderRecord[] {
