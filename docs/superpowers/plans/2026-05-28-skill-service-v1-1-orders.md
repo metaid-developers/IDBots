@@ -696,7 +696,7 @@ After commit, post a development-journal buzz.
 - Modify: `src/renderer/components/gigSquare/gigSquareOrderPayloadBuilder.mjs`
 - Modify: `tests/gigSquareOrderMessageBuilder.test.mjs`
 
-- [ ] **Step 1: Write failing order payload tests**
+- [x] **Step 1: Write failing order payload tests**
 
 Update free-order test expectations:
 
@@ -714,7 +714,7 @@ assert.match(payload, /order pin id:\s*order-pin-i0/i);
 assert.match(payload, /txid:\s*[0-9a-f]{64}/i);
 ```
 
-- [ ] **Step 2: Add order pin publishing helper**
+- [x] **Step 2: Add order pin publishing helper**
 
 In main process, add a helper near Gig Square order handling:
 
@@ -743,7 +743,7 @@ async function publishSkillServiceOrderPin(input: {
 }
 ```
 
-- [ ] **Step 3: Update Gig Square direct order flow**
+- [x] **Step 3: Update Gig Square direct order flow**
 
 In `GigSquareOrderModal.tsx`:
 
@@ -754,7 +754,7 @@ In `GigSquareOrderModal.tsx`:
 - Pass both `serviceOrderPinId` and `servicePaidTx` to `sendOrder`.
 - For free orders, `servicePaidTx` must be `''`.
 
-- [ ] **Step 4: Update main-process delegation flow**
+- [x] **Step 4: Update main-process delegation flow**
 
 In `src/main/main.ts` main-process delegation:
 
@@ -764,7 +764,7 @@ In `src/main/main.ts` main-process delegation:
 - Create buyer order with `orderPinId` and `paymentTxid: ''` for free.
 - Blocking state should prefer local row id for UI internals but include order pin id in metadata/display.
 
-- [ ] **Step 5: Update simplemsg order metadata**
+- [x] **Step 5: Update simplemsg order metadata**
 
 In `buildOrderPayload`:
 
@@ -773,13 +773,13 @@ In `buildOrderPayload`:
 - Add `allowed skills: a, b` when `providerSkills` is non-empty.
 - Keep `skill name:` only for legacy single-skill compatibility when there is exactly one skill.
 
-- [ ] **Step 6: Run order message tests**
+- [x] **Step 6: Run order message tests**
 
 Run: `node --test tests/gigSquareOrderMessageBuilder.test.mjs`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/main.ts src/main/services/delegationOrderMessage.ts src/main/shared/orderMessage.js src/renderer/components/gigSquare/GigSquareOrderModal.tsx src/renderer/components/gigSquare/gigSquareOrderPayloadBuilder.mjs tests/gigSquareOrderMessageBuilder.test.mjs
