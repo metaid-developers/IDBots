@@ -94,3 +94,19 @@ test('manual A2A delivery resend failure sends a refund-flow notice to the buyer
   assert.match(source, /系统将自动转入退款流程/);
   assert.match(source, /orderDeliveryFailed/);
 });
+
+test('manual A2A delivery resend preserves service order pin identity for free orders', () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, 'src', 'main', 'main.ts'),
+    'utf8'
+  );
+
+  assert.match(
+    source,
+    /const deliveryText = buildDeliveryMessage\(\{\s*paymentTxid: order\.paymentTxid,\s*\.\.\.\(order\.orderPinId\s*\?\s*\{\s*serviceOrderPinId: order\.orderPinId,\s*orderPinId: order\.orderPinId,\s*\}\s*:\s*\{\}\),/s
+  );
+  assert.match(
+    source,
+    /markSellerOrderDelivered\(\{\s*localMetabotId: metabotId,\s*counterpartyGlobalMetaId: peerGlobalMetaId,\s*orderPinId: order\.orderPinId,\s*paymentTxid: order\.paymentTxid,/s
+  );
+});

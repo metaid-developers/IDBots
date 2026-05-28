@@ -5467,6 +5467,10 @@ if (!gotTheLock) {
       const deliveredAt = Math.floor(Date.now() / 1000);
       const deliveryText = buildDeliveryMessage({
         paymentTxid: order.paymentTxid,
+        ...(order.orderPinId ? {
+          serviceOrderPinId: order.orderPinId,
+          orderPinId: order.orderPinId,
+        } : {}),
         servicePinId: order.servicePinId,
         serviceName: order.serviceName,
         result: deliverySummary,
@@ -5509,6 +5513,7 @@ if (!gotTheLock) {
       getServiceOrderLifecycleService().markSellerOrderDelivered({
         localMetabotId: metabotId,
         counterpartyGlobalMetaId: peerGlobalMetaId,
+        orderPinId: order.orderPinId,
         paymentTxid: order.paymentTxid,
         deliveryMessagePinId: deliveryPin.pinId ?? null,
         deliveredAt: deliveredAt * 1000,
