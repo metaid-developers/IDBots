@@ -43,6 +43,25 @@ test('free mode hides amount controls and serializes zero native SPACE payment t
   );
 });
 
+test('free submission preserves supplied protocol settlement kind and metadata', () => {
+  assert.deepEqual(
+    buildGigSquarePaymentTermsSubmission({
+      paymentTiming: 'free',
+      price: '123.45',
+      currency: 'BTC',
+      protocolSettlementKind: 'fiat',
+      metadata: '{"invoice":"manual"}',
+    }),
+    {
+      paymentTiming: 'free',
+      price: '0',
+      currency: 'SPACE',
+      protocolSettlementKind: 'fiat',
+      metadata: '{"invoice":"manual"}',
+    },
+  );
+});
+
 test('prepaid mode shows amount controls and serializes positive native amount', () => {
   assert.equal(shouldShowGigSquarePaymentAmountControls('prepaid'), true);
   assert.deepEqual(
@@ -65,6 +84,25 @@ test('prepaid mode shows amount controls and serializes positive native amount',
       currency: 'BTC',
       protocolSettlementKind: 'native',
       metadata: '',
+    },
+  );
+});
+
+test('prepaid submission preserves supplied protocol settlement kind and metadata', () => {
+  assert.deepEqual(
+    buildGigSquarePaymentTermsSubmission({
+      paymentTiming: 'prepaid',
+      price: '0.01',
+      currency: 'BTC',
+      protocolSettlementKind: 'fiat',
+      metadata: '{"quote":"usd"}',
+    }),
+    {
+      paymentTiming: 'prepaid',
+      price: '0.01',
+      currency: 'BTC',
+      protocolSettlementKind: 'fiat',
+      metadata: '{"quote":"usd"}',
     },
   );
 });

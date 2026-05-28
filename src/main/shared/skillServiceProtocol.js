@@ -1,4 +1,4 @@
-const VALID_PAYMENT_TIMINGS = new Set(['prepaid', 'postpaid', 'free']);
+const VALID_PAYMENT_TIMINGS = new Set(['prepaid', 'free']);
 const VALID_PROTOCOL_SETTLEMENT_KINDS = new Set(['native', 'fiat']);
 const PLAIN_NON_NEGATIVE_DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 

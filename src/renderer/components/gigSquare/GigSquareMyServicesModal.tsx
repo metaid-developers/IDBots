@@ -22,6 +22,7 @@ import {
   deriveGigSquarePaymentTiming,
   getGigSquarePublishPriceLimitText,
   isGigSquareLegacyMrc20Settlement,
+  normalizeGigSquareProtocolSettlementKind,
   shouldShowGigSquarePaymentAmountControls,
   validateGigSquarePaymentTermsDraft,
 } from './gigSquarePublishPresentation.js';
@@ -205,7 +206,7 @@ const normalizeMutationTxids = (value: string[] | undefined): string[] => {
   return [...new Set(value.map((entry) => String(entry || '').trim()).filter(Boolean))];
 };
 
-const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): ModifyDraft => ({
+export const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): ModifyDraft => ({
   currency: normalizeModifyCurrency(service.currency),
   serviceName: (service.serviceName || '').trim(),
   displayName: (service.displayName || '').trim(),
@@ -215,8 +216,10 @@ const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): Modify
   providerSkills: normalizeProviderSkillChips(service.providerSkills, service.providerSkill),
   paymentTiming: deriveGigSquarePaymentTiming(service.paymentTiming, service.price),
   price: (service.price || '').trim(),
-  protocolSettlementKind: 'native',
-  metadata: '',
+  protocolSettlementKind: normalizeGigSquareProtocolSettlementKind(
+    service.protocolSettlementKind ?? service.settlementKind,
+  ),
+  metadata: String(service.metadata || ''),
   isLegacyMrc20: isGigSquareLegacyMrc20Settlement(service),
   outputType: normalizeModifyOutputType(service.outputType || null),
   serviceIconDataUrl: '',

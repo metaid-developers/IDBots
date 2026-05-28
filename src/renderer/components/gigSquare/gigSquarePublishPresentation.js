@@ -26,6 +26,10 @@ export function normalizeGigSquarePaymentTiming(paymentTiming) {
   return String(paymentTiming || '').trim().toLowerCase() === 'prepaid' ? 'prepaid' : 'free';
 }
 
+export function normalizeGigSquareProtocolSettlementKind(value) {
+  return String(value || '').trim().toLowerCase() === 'fiat' ? 'fiat' : 'native';
+}
+
 export function deriveGigSquarePaymentTiming(paymentTiming, price) {
   const normalizedPaymentTiming = String(paymentTiming || '').trim().toLowerCase();
   if (normalizedPaymentTiming === 'free' || normalizedPaymentTiming === 'prepaid') {
@@ -95,21 +99,23 @@ export function buildGigSquarePaymentTermsSubmission(draft) {
     throw new Error(`Invalid GigSquare payment terms: ${validationError.code}`);
   }
   const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
+  const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(draft?.protocolSettlementKind);
+  const metadata = String(draft?.metadata || '');
   if (paymentTiming === 'free') {
     return {
       paymentTiming: 'free',
       price: '0',
       currency: 'SPACE',
-      protocolSettlementKind: 'native',
-      metadata: '',
+      protocolSettlementKind,
+      metadata,
     };
   }
   return {
     paymentTiming: 'prepaid',
     price: String(draft?.price || '').trim(),
     currency: normalizeGigSquareNativeCurrency(draft?.currency),
-    protocolSettlementKind: 'native',
-    metadata: '',
+    protocolSettlementKind,
+    metadata,
   };
 }
 

@@ -127,6 +127,32 @@ test('conflicting payment fields choose free and lowest amount semantics', () =>
   }).paymentTiming, 'free');
 });
 
+test('postpaid is not an active v1.1 timing and resolves through compatibility defaults', () => {
+  assert.deepEqual(resolveSkillServicePaymentTerms({
+    paymentTiming: 'postpaid',
+    price: '1.5',
+    currency: 'SPACE',
+  }), {
+    paymentTiming: 'prepaid',
+    effectivePrice: '1.5',
+    currency: 'SPACE',
+    protocolSettlementKind: 'native',
+    isFree: false,
+  });
+
+  assert.deepEqual(resolveSkillServicePaymentTerms({
+    paymentTiming: 'postpaid',
+    price: '0',
+    currency: 'SPACE',
+  }), {
+    paymentTiming: 'free',
+    effectivePrice: '0',
+    currency: 'SPACE',
+    protocolSettlementKind: 'native',
+    isFree: true,
+  });
+});
+
 test('builds minimal skill-service-order payload without self-declared chain facts', () => {
   const payload = buildSkillServiceOrderPayload({
     servicePinId: 'service-pin-i0',

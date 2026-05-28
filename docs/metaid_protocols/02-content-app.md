@@ -203,7 +203,6 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an al
 
   /**
    * prepaid: caller pays before provider delivery.
-   * postpaid: caller pays after provider delivery or payment request.
    * free: no service payment is required.
    */
   "paymentTiming": "prepaid",
@@ -235,10 +234,11 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an al
 
 **v1.1 effective payment semantics**
 
-- `paymentTiming` is one of `prepaid`, `postpaid`, or `free`.
-- `prepaid` means payment before provider delivery, `postpaid` means provider delivery or payment request before payment, and `free` means no payment is required.
+- `paymentTiming` is one of `prepaid` or `free`.
+- `prepaid` means payment before provider delivery, and `free` means no payment is required.
 - If `paymentTiming` is `free`, the effective service price is `0` even if `price` contains a positive value.
-- If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free` even when `paymentTiming` says `prepaid` or `postpaid`.
+- If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free` even when `paymentTiming` says `prepaid`.
+- `postpaid` is not an active v1.1 protocol value. It requires a future protocol version and implementation plan.
 - `settlementKind` is one of `native` or `fiat`. Missing or unknown values default to `native` for compatibility.
 - `native` means the payment reference is an on-chain transaction for a native asset. `fiat` means the payment reference is off-chain fiat verification information.
 - `currency` is the quote unit only. It must not encode a payment rail, chain, or recipient address.

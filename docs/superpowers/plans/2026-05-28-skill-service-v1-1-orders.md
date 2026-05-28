@@ -18,7 +18,7 @@
 - `skill-service-order` JSON must not include `orderId`, created/updated timestamps, lifecycle status, buyer/provider identity objects, or skill snapshots. The order record id is the order pin id.
 - `price`, `currency`, and `settlementKind` in `skill-service-order` are display-only. Native payment validation must inspect payment tx data.
 - `providerSkill` is an unordered allow-list for `<available_skills>`, not an execution pipeline and not a promise that every skill will run.
-- This implementation exposes only `free` and `prepaid` in UI/business logic. `postpaid` and `fiat` remain protocol-compatible future values, not active flows.
+- This implementation exposes only `free` and `prepaid` in UI/business logic and the v1.1 protocol surface. `postpaid` requires a future protocol version/plan. `fiat` remains a future settlement kind and may be preserved by compatibility paths, but it is not an active payment flow.
 - New v1.1 service payloads should not publish `paymentAddress`. The provider MetaBot identity is the recipient. Legacy v1.0 payloads with `paymentAddress` remain readable as compatibility fallback.
 - Existing code has local `settlementKind: "mrc20"` runtime paths. Do not treat that as the protocol `settlementKind`. For this plan, keep MRC20 parsing/runtime compatibility for existing records, but do not broaden the v1.1 protocol surface beyond `native|fiat`.
 
@@ -229,7 +229,7 @@ Expected: FAIL because `src/main/shared/skillServiceProtocol.js` does not exist.
 Implementation sketch:
 
 ```js
-const VALID_PAYMENT_TIMINGS = new Set(['prepaid', 'postpaid', 'free']);
+const VALID_PAYMENT_TIMINGS = new Set(['prepaid', 'free']);
 const VALID_PROTOCOL_SETTLEMENT_KINDS = new Set(['native', 'fiat']);
 
 export function normalizeProviderSkillList(value) {
@@ -564,7 +564,7 @@ Add to `GigSquareService` and `GigSquareMyServiceSummary`:
 
 ```ts
 providerSkills?: string[];
-paymentTiming?: 'free' | 'prepaid' | 'postpaid';
+paymentTiming?: 'free' | 'prepaid';
 protocolSettlementKind?: 'native' | 'fiat';
 metadata?: string | null;
 ```
