@@ -427,7 +427,7 @@ After commit, post a development-journal buzz.
 - Modify: `src/renderer/types/gigSquare.ts`
 - Create: `tests/gigSquareServiceMutationService.test.mjs`
 
-- [ ] **Step 1: Write failing payload tests**
+- [x] **Step 1: Write failing payload tests**
 
 Test that `buildGigSquareServicePayload` returns:
 
@@ -453,7 +453,7 @@ Run: `npm run compile:electron && node --test tests/gigSquareServiceMutationServ
 
 Expected: FAIL until mutation service supports v1.1 fields.
 
-- [ ] **Step 2: Update mutation draft types**
+- [x] **Step 2: Update mutation draft types**
 
 Change `GigSquareModifyDraft`:
 
@@ -476,7 +476,7 @@ export interface GigSquareModifyDraft {
 
 Keep compatibility input `providerSkill?: string` at IPC boundaries and normalize it into `providerSkills`.
 
-- [ ] **Step 3: Build v1.1 payloads**
+- [x] **Step 3: Build v1.1 payloads**
 
 Use shared helpers from `skillServiceProtocol.js`.
 
@@ -489,7 +489,7 @@ Rules:
 - `providerSkill` must be a non-empty array.
 - Do not publish `paymentAddress`.
 
-- [ ] **Step 4: Update MetaID create/modify versions**
+- [x] **Step 4: Update MetaID create/modify versions**
 
 In `gigSquare:publishService`, call `createPin` with:
 
@@ -506,13 +506,13 @@ In `gigSquare:publishService`, call `createPin` with:
 
 For modify, keep `operation: "modify"` targeting the current pin but use MetaID version `1.1.0`.
 
-- [ ] **Step 5: Run payload tests**
+- [x] **Step 5: Run payload tests**
 
 Run: `npm run compile:electron && node --test tests/gigSquareServiceMutationService.test.mjs`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/services/gigSquareServiceMutationService.ts src/main/main.ts src/main/preload.ts src/renderer/types/electron.d.ts src/renderer/types/gigSquare.ts tests/gigSquareServiceMutationService.test.mjs
