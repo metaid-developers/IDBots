@@ -787,6 +787,17 @@ export class IMGatewayManager extends EventEmitter {
     return this.resolveRouteMetabotId(platform, this.getConfig());
   }
 
+  /**
+   * Stage a teardown of the IM ↔ cowork conversation mapping for a session.
+   * Returns false when no cowork handler is bound or the session is not IM-managed.
+   *
+   * Exposed for CoworkRunner's `start_new_im_session` inline tool so MetaBots
+   * can rotate the IM session window on user request.
+   */
+  requestSessionReset(coworkSessionId: string): boolean {
+    return this.coworkHandler?.requestSessionReset(coworkSessionId) ?? false;
+  }
+
   private handleMetabotRouteChange(prevConfig: IMGatewayConfig, nextConfig: IMGatewayConfig): void {
     for (const platform of MANAGED_IM_PLATFORMS) {
       const prevResolved = this.resolveRouteMetabotId(platform, prevConfig);

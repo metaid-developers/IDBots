@@ -3561,6 +3561,12 @@ const getCoworkRunner = () => {
           ensureServerReady: ensureMetaAppServerReady,
         });
       },
+      // Resolved lazily because the IM gateway manager singleton is created
+      // after the cowork runner; reading the module-scoped variable defers the
+      // lookup until the inline MCP tool is actually invoked.
+      requestIMSessionReset: (sessionId: string): boolean => {
+        return imGatewayManager?.requestSessionReset(sessionId) ?? false;
+      },
     });
 
     // Set up event listeners to forward to renderer

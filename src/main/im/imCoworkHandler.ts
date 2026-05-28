@@ -56,6 +56,9 @@ export class IMCoworkHandler extends EventEmitter {
   private imSessionIds: Set<string> = new Set();
   private sessionConversationMap: Map<string, { conversationId: string; platform: IMPlatform }> = new Map();
   private pendingPermissionByConversation: Map<string, PendingIMPermission> = new Map();
+  // Session ids whose IM mapping should be torn down after the current turn completes.
+  // Populated by `requestSessionReset()` (e.g. from the `start_new_im_session` MCP tool).
+  private pendingResets: Set<string> = new Set();
 
   constructor(options: IMCoworkHandlerOptions) {
     super();
@@ -359,24 +362,104 @@ export class IMCoworkHandler extends EventEmitter {
     const config = this.coworkStore.getConfig();
     const imSettings = this.imStore.getIMSettings();
     const systemPrompt = config.systemPrompt || '';
+    const imSessionToolsPrompt = this.buildImSessionToolsPrompt();
 
     if (!imSettings.skillsEnabled || !this.getSkillsPrompt) {
-      return systemPrompt;
+      return systemPrompt
+        ? `${imSessionToolsPrompt}\n\n${systemPrompt}`
+        : imSessionToolsPrompt;
     }
 
     const skillsPrompt = await this.getSkillsPrompt();
     if (!skillsPrompt) {
-      return systemPrompt;
+      return systemPrompt
+        ? `${imSessionToolsPrompt}\n\n${systemPrompt}`
+        : imSessionToolsPrompt;
     }
 
+    const head = `${imSessionToolsPrompt}\n\n${skillsPrompt}`;
     return systemPrompt
-      ? `${skillsPrompt}\n\n${systemPrompt}`
-      : skillsPrompt;
+      ? `${head}\n\n${systemPrompt}`
+      : head;
+  }
+
+  private buildImSessionToolsPrompt(): string {
+    return [
+      '<im_session_tools>',
+      'You are running inside an IM gateway (Telegram / Discord / Feishu / DingTalk).',
+      'A dedicated tool `start_new_im_session` is available for rotating the chat session window:',
+      '- Call it EXACTLY ONCE only when the user explicitly asks for a new session/window',
+      '  (e.g. "新建会话", "新建 session", "新窗口", "重开会话", "new session", "new chat").',
+      '- Do NOT call it for any other reason. Long context alone is NOT a trigger.',
+      '- The current reply still flows back through this session; subsequent inbound',
+      '  messages from the user will automatically land in a freshly created session.',
+      '- After calling the tool, briefly confirm to the user in the same reply.',
+      '</im_session_tools>',
+    ].join('\n');
   }
 
   private isSessionNotFoundError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     return /^Session\s.+\snot found$/i.test(message.trim());
+  }
+
+  /**
+   * Stage a session-mapping reset for an IM-managed session.
+   *
+   * Used by the `start_new_im_session` MCP tool so the MetaBot can rotate the
+   * IM ↔ cowork session mapping on explicit user request. The current turn is
+   * left intact so its reply still streams back through the existing session;
+   * the actual mapping deletion happens once `handleComplete`/`handleError`
+   * fires, ensuring the next inbound IM message lands in a fresh session.
+   *
+   * Returns false when the session is not IM-managed (no-op safeguard for
+   * non-IM callers).
+   */
+  requestSessionReset(coworkSessionId: string): boolean {
+    if (!this.imSessionIds.has(coworkSessionId)) return false;
+    if (!this.sessionConversationMap.has(coworkSessionId)) return false;
+    this.pendingResets.add(coworkSessionId);
+    return true;
+  }
+
+  /**
+   * Delete the IM ↔ cowork conversation mapping for a session.
+   *
+   * Idempotent across direct/group/legacy channels. Does NOT stop the cowork
+   * session itself — the underlying session row stays so users can still
+   * inspect history in the desktop UI.
+   */
+  private tearDownConversationMapping(sessionId: string): void {
+    const conv = this.sessionConversationMap.get(sessionId);
+    if (!conv) return;
+
+    const mapping = this.imStore.getSessionMapping(conv.conversationId, conv.platform);
+    const mappingMetabotId = mapping?.metabotId ?? null;
+
+    this.imStore.deleteSessionMapping(conv.conversationId, conv.platform);
+
+    // Delete from all possible channel encodings; chatType-specific channels
+    // were introduced after the legacy `im:<platform>` channel, so both may
+    // coexist for older mappings. Each call is a no-op when the row is absent.
+    const channels = [
+      this.getImConversationChannel(conv.platform, 'direct'),
+      this.getImConversationChannel(conv.platform, 'group'),
+      this.getImConversationChannel(conv.platform),
+    ];
+    for (const channel of channels) {
+      this.coworkStore.deleteConversationMapping(channel, conv.conversationId, mappingMetabotId);
+    }
+
+    this.imSessionIds.delete(sessionId);
+    this.sessionConversationMap.delete(sessionId);
+    this.clearPendingPermissionsBySessionId(sessionId);
+
+    console.log('[IMCoworkHandler] Conversation mapping reset by tool', JSON.stringify({
+      sessionId,
+      platform: conv.platform,
+      conversationId: conv.conversationId,
+      metabotId: mappingMetabotId,
+    }));
   }
 
   /**
@@ -627,6 +710,7 @@ export class IMCoworkHandler extends EventEmitter {
     // Only process complete events from IM sessions
     if (!this.imSessionIds.has(sessionId)) return;
 
+    const resetStaged = this.pendingResets.delete(sessionId);
     this.clearPendingPermissionsBySessionId(sessionId);
     const accumulator = this.messageAccumulators.get(sessionId);
     if (accumulator) {
@@ -638,10 +722,17 @@ export class IMCoworkHandler extends EventEmitter {
         messageCount: accumulator.messages.length,
         replyLength: replyText.length,
         reply: replyText,
+        resetStaged,
       }, null, 2));
 
       this.cleanupAccumulator(sessionId);
       accumulator.resolve(replyText);
+    }
+
+    // Apply the mapping teardown only after the current turn's reply has been
+    // resolved, so the reply travels back through the still-mapped session.
+    if (resetStaged) {
+      this.tearDownConversationMapping(sessionId);
     }
   }
 
@@ -652,6 +743,9 @@ export class IMCoworkHandler extends EventEmitter {
     // Only process error events from IM sessions
     if (!this.imSessionIds.has(sessionId)) return;
 
+    // Drop any pending reset to avoid acting on a half-finished turn; the user
+    // can re-issue the request once the error is surfaced.
+    this.pendingResets.delete(sessionId);
     this.clearPendingPermissionsBySessionId(sessionId);
     const accumulator = this.messageAccumulators.get(sessionId);
     if (accumulator) {
@@ -722,6 +816,7 @@ export class IMCoworkHandler extends EventEmitter {
     for (const sessionId of sessionIds) {
       this.imSessionIds.delete(sessionId);
       this.sessionConversationMap.delete(sessionId);
+      this.pendingResets.delete(sessionId);
       this.clearPendingPermissionsBySessionId(sessionId);
       const accumulator = this.messageAccumulators.get(sessionId);
       if (accumulator) {
@@ -745,6 +840,7 @@ export class IMCoworkHandler extends EventEmitter {
     this.messageAccumulators.clear();
     this.imSessionIds.clear();
     this.sessionConversationMap.clear();
+    this.pendingResets.clear();
 
     for (const [key, pending] of this.pendingPermissionByConversation.entries()) {
       if (pending.timeoutId) {
