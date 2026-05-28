@@ -83,6 +83,20 @@ test('extractOrderPinId reads skill-service-order pin id and allowed skills meta
   assert.deepEqual(extractOrderAllowedSkills(text), ['weather', 'maps', 'image-gen']);
 });
 
+test('extractOrderAllowedSkills preserves display names with spaces', () => {
+  const english = [
+    '[ORDER] Please create a launch image.',
+    'allowed skills: Friendly Seller Skill, Image Gen',
+  ].join('\n');
+  const chinese = [
+    '[ORDER] 请处理这个订单。',
+    'allowed skills: Friendly Seller Skill、Image Gen；天气 查询',
+  ].join('\n');
+
+  assert.deepEqual(extractOrderAllowedSkills(english), ['Friendly Seller Skill', 'Image Gen']);
+  assert.deepEqual(extractOrderAllowedSkills(chinese), ['Friendly Seller Skill', 'Image Gen', '天气 查询']);
+});
+
 test('extractOrderRequestText prefers the explicit raw_request block over the display summary line', () => {
   const rawRequest = [
     '请帮我查询一下东京今天从早到晚的天气变化，并告诉我是否适合晚上外出散步。',

@@ -41,6 +41,7 @@ import type { MetaidDataPayload } from './metaidCore';
 import { generateSessionTitle } from '../libs/coworkUtil';
 import {
   SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON,
+  SERVICE_ORDER_SKILL_SCOPE_UNRESOLVED_REASON,
   type ServiceOrderLifecycleService,
 } from './serviceOrderLifecycleService';
 import {
@@ -444,7 +445,7 @@ export async function resolveSellerOrderSkillScopePrompt(params: {
     missingSkillNames,
     allowedSkillNames,
     strictScope,
-    shouldRejectOrder: strictScope && activeSkillIds.length === 0 && !prompt,
+    shouldRejectOrder: strictScope && activeSkillIds.length === 0,
   };
 }
 
@@ -2451,6 +2452,15 @@ async function processOne(
             emitLog(`[Order] Scoped failure notice broadcast failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
           }
         }
+        serviceOrderLifecycle?.markSellerOrderFailed({
+          localMetabotId: metabot.id,
+          counterpartyGlobalMetaId: orderPeerGlobalMetaId,
+          orderPinId,
+          paymentTxid,
+          orderMessageTxid,
+          failureReason: SERVICE_ORDER_SKILL_SCOPE_UNRESOLVED_REASON,
+          failedAt: Date.now(),
+        });
         markProcessed(db, row.id, saveDb);
         return;
       }
@@ -2518,6 +2528,7 @@ async function processOne(
           orderTxid: orderMessageTxid,
           orderPinId,
           paymentTxid,
+          activeSkillIds: skillScope.activeSkillIds,
           processingNotice,
           sendStatusUpdate: source === 'metaweb_private' && fromGlobalMetaId
             ? sendEncryptedMsg

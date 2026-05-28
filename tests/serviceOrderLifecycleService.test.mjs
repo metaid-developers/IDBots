@@ -256,6 +256,31 @@ test('markSellerOrderFirstResponseSent moves awaiting seller orders into in_prog
   assert.equal(updated?.firstResponseAt, now);
 });
 
+test('markSellerOrderFailed closes seller-side scope rejection orders', async () => {
+  const now = 1_770_000_112_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const order = service.createSellerOrder(baseOrderInput({
+    orderPinId: 'scope-rejected-order-pin-i0',
+  }));
+
+  const updated = service.markSellerOrderFailed({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    orderPinId: order.orderPinId,
+    paymentTxid: order.paymentTxid,
+    failureReason: 'skill_scope_unresolved',
+    failedAt: now,
+  });
+
+  assert.equal(updated?.status, 'failed');
+  assert.equal(updated?.failureReason, 'skill_scope_unresolved');
+  assert.equal(updated?.failedAt, now);
+  assert.equal(store.getOrderById(order.id)?.status, 'failed');
+  assert.deepEqual(store.listOrdersByStatuses('seller', ['awaiting_first_response']).map((item) => item.id), []);
+});
+
 test('markBuyerOrderDelivered moves the buyer order into rating_pending and stores the delivery message pin', async () => {
   const now = 1_770_000_222_000;
   const { service } = await createLifecycleServiceForTest({

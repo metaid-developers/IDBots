@@ -83,6 +83,7 @@ export interface OrderCoworkRequest {
     content: string;
     metadata?: Record<string, unknown>;
   };
+  activeSkillIds?: string[];
   sendStatusUpdate?: (content: string) => Promise<unknown>;
 }
 
@@ -136,6 +137,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
     request.orderStartedAt = request.orderStartedAt ?? Date.now();
+    request.activeSkillIds = this.normalizeActiveSkillIds(request.activeSkillIds);
     const displaySessionId = this.normalizeSessionId(request.displaySessionId);
     const existingSessionId = this.normalizeSessionId(request.existingSessionId);
     let sessionId: string;
@@ -164,6 +166,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       workspaceRoot: session.cwd,
       confirmationMode: 'text',
       systemPrompt: request.systemPrompt,
+      skillIds: request.activeSkillIds,
       autoApprove: true,
       disableMemoryUpdates: true,
       disableRemoteServicesPrompt: true,
@@ -178,6 +181,18 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   private normalizeSessionId(value?: string | null): string {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private normalizeActiveSkillIds(values?: string[] | null): string[] {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of Array.isArray(values) ? values : []) {
+      const skillId = String(value || '').trim();
+      if (!skillId || seen.has(skillId)) continue;
+      seen.add(skillId);
+      normalized.push(skillId);
+    }
+    return normalized;
   }
 
   private getDisplaySessionId(executionSessionId: string, request?: OrderCoworkRequest): string {
@@ -212,7 +227,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       resolvedRoot,
       request.systemPrompt,
       'local',
-      [],
+      this.normalizeActiveSkillIds(request.activeSkillIds),
       request.metabotId,
       'a2a',
       request.peerGlobalMetaId ?? null,
@@ -242,7 +257,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       resolvedRoot,
       request.systemPrompt,
       'local',
-      [],
+      this.normalizeActiveSkillIds(request.activeSkillIds),
       request.metabotId,
       'a2a',
       request.peerGlobalMetaId ?? null,
@@ -529,6 +544,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
           workspaceRoot: session?.cwd,
           confirmationMode: 'text',
           systemPrompt: request?.systemPrompt,
+          skillIds: this.normalizeActiveSkillIds(request?.activeSkillIds),
           autoApprove: true,
           disableMemoryUpdates: true,
           disableRemoteServicesPrompt: true,

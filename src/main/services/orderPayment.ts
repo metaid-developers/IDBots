@@ -134,7 +134,7 @@ export function extractOrderAllowedSkills(plaintext: string): string[] {
   return Array.from(new Set(
     raw
       .replace(/^\[|\]$/g, '')
-      .split(/[,，、;\s]+/g)
+      .split(/[,，、;；]+/g)
       .map((item) => item.trim().replace(/^["']|["']$/g, ''))
       .filter(Boolean)
   ));

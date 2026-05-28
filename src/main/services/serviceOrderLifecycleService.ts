@@ -8,6 +8,7 @@ import { buildOrderEndMessage, buildRefundRequestPayload } from './serviceOrderP
 export const SERVICE_ORDER_OPEN_ORDER_EXISTS_ERROR_CODE = 'open_order_exists';
 export const SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE = 'self_order_not_allowed';
 export const SERVICE_ORDER_DELIVERY_ARTIFACT_FAILED_REASON = 'delivery_artifact_failed';
+export const SERVICE_ORDER_SKILL_SCOPE_UNRESOLVED_REASON = 'skill_scope_unresolved';
 export const DEFAULT_REFUND_REQUEST_RETRY_DELAY_MS = 60_000;
 export const SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON = 'free_order_no_refund_required';
 
@@ -73,6 +74,11 @@ export interface MarkBuyerOrderFirstResponseReceivedInput extends ServiceOrderPa
 }
 
 export interface MarkBuyerOrderFailedAndRequestRefundInput extends ServiceOrderPaymentMatchInput {
+  failureReason: string;
+  failedAt?: number;
+}
+
+export interface MarkSellerOrderFailedInput extends ServiceOrderPaymentMatchInput {
   failureReason: string;
   failedAt?: number;
 }
@@ -320,6 +326,16 @@ export class ServiceOrderLifecycleService {
     return this.store.markFirstResponseReceived(
       order.id,
       input.sentAt ?? this.now()
+    );
+  }
+
+  markSellerOrderFailed(input: MarkSellerOrderFailedInput): ServiceOrderRecord | null {
+    const order = this.findOrderForMatch('seller', input);
+    if (!order) return null;
+    return this.store.markFailed(
+      order.id,
+      input.failureReason || SERVICE_ORDER_SKILL_SCOPE_UNRESOLVED_REASON,
+      input.failedAt ?? this.now()
     );
   }
 

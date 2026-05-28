@@ -113,6 +113,29 @@ test('seller order skill scope rejects unresolved v1.1 allowed skills instead of
   assert.equal(result.shouldRejectOrder, true);
 });
 
+test('seller order skill scope rejects strict prompt-only resolution before order execution', async () => {
+  const result = await resolveSellerOrderSkillScopePrompt({
+    allowedSkillNames: ['Friendly Seller Skill'],
+    getSkillsPrompt: async () => '<available_skills><skill><id>friendly-seller-skill</id></skill></available_skills>',
+  });
+
+  assert.equal(result.prompt, '<available_skills><skill><id>friendly-seller-skill</id></skill></available_skills>');
+  assert.equal(result.strictScope, true);
+  assert.deepEqual(result.activeSkillIds, []);
+  assert.equal(result.shouldRejectOrder, true);
+});
+
+test('seller order skill scope keeps legacy prompt-only fallback for orders without allowed skills metadata', async () => {
+  const result = await resolveSellerOrderSkillScopePrompt({
+    allowedSkillNames: [],
+    getSkillsPrompt: async () => '<available_skills><skill><id>legacy-skill</id></skill></available_skills>',
+  });
+
+  assert.equal(result.strictScope, false);
+  assert.deepEqual(result.activeSkillIds, []);
+  assert.equal(result.shouldRejectOrder, false);
+});
+
 test('seller order skill scope preserves legacy fallback when the order has no allowed skills metadata', async () => {
   const calls: unknown[] = [];
   const result = await resolveSellerOrderSkillScopePrompt({
