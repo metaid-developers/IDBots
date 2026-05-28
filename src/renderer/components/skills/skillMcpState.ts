@@ -1,5 +1,5 @@
 export type SkillMode = 'skills' | 'mcp';
-export type SkillsTab = 'local' | 'official';
+export type SkillsTab = 'local' | 'official' | 'community';
 export type McpTab = 'installed' | 'marketplace' | 'custom';
 
 export interface SkillMcpState {

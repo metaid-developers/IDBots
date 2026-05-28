@@ -7,6 +7,7 @@ import { app, session } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fetchContentWithFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './localIndexerProxy';
+import { getP2PLocalBase } from './p2pLocalEndpoint';
 
 // Dynamically require AdmZip to avoid crash if not installed
 let AdmZip: typeof import('adm-zip') | null = null;
@@ -439,4 +440,101 @@ export async function syncAllOfficialSkills(): Promise<{ success: boolean; error
   }
 
   return { success: true };
+}
+
+function buildCommunitySkillListUrl(
+  baseUrl: string,
+  pageSize: number,
+  cursor?: string
+): string {
+  const url = new URL('/pin/path/list', `${String(baseUrl).replace(/\/+$/, '')}/`);
+  url.searchParams.set('path', '/protocols/metabot-skill');
+  url.searchParams.set('size', String(pageSize));
+  if (cursor) {
+    url.searchParams.set('cursor', cursor);
+  }
+  return url.toString();
+}
+
+function extractPinListFromResponse(data: unknown): unknown[] {
+  const list = (data as Record<string, unknown> | null)?.data as { list?: unknown[] } | undefined;
+  return Array.isArray(list?.list) ? list.list : [];
+}
+
+function extractPaginationCursor(data: unknown): string | undefined {
+  const nextCursor = (data as Record<string, unknown> | null)?.data as { nextCursor?: unknown } | undefined;
+  return typeof nextCursor?.nextCursor === 'string' && nextCursor.nextCursor.trim()
+    ? nextCursor.nextCursor
+    : undefined;
+}
+
+async function fetchCommunitySkillPins(): Promise<unknown[]> {
+  const REMOTE_BASE = 'https://manapi.metaid.io';
+  const LOCAL_BASE = getP2PLocalBase();
+  const PAGE_SIZE = 200;
+  const MAX_PAGES = 10;
+  const allPins: unknown[] = [];
+  const seenPinIds = new Set<string>();
+  const featuredSet = new Set<string>(FEATURED_SKILL_ADDRESSES);
+
+  const fetchFromSource = async (baseUrl: string, requireCodeOne: boolean): Promise<void> => {
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const url = buildCommunitySkillListUrl(baseUrl, PAGE_SIZE, cursor);
+      let response: Response;
+      try {
+        response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      } catch {
+        break;
+      }
+      if (!response.ok) break;
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        break;
+      }
+      if (requireCodeOne && (payload as { code?: unknown }).code !== 1) break;
+      const list = extractPinListFromResponse(payload);
+      for (const rawPin of list) {
+        if (!rawPin || typeof rawPin !== 'object' || Array.isArray(rawPin)) continue;
+        const pin = rawPin as Record<string, unknown>;
+        const pinId = String(pin.id ?? pin.pinId ?? '').trim();
+        if (!pinId || seenPinIds.has(pinId)) continue;
+        const address = String(pin.address ?? pin.create_address ?? '').trim();
+        if (featuredSet.has(address)) continue;
+        seenPinIds.add(pinId);
+        allPins.push(pin);
+      }
+      cursor = extractPaginationCursor(payload);
+      if (!cursor) break;
+    }
+  };
+
+  await fetchFromSource(LOCAL_BASE, true);
+  await fetchFromSource(REMOTE_BASE, false);
+
+  return allPins;
+}
+
+export async function getCommunitySkillsStatus(): Promise<{
+  success: boolean;
+  skills?: OfficialSkillItem[];
+  error?: string;
+}> {
+  try {
+    const rawPins = await fetchCommunitySkillPins();
+
+    ensureConfigExists();
+    const config = loadSkillsConfig();
+    const skills = buildOfficialSkillStatuses(rawPins, {
+      config,
+      skillsRoot: getSkillsRoot(),
+    });
+
+    return { success: true, skills };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
 }

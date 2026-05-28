@@ -65,7 +65,7 @@ import {
 import { registerMetabotWalletIpcHandlers } from './services/metabotWalletIpc';
 import { startMetaidRpcServer } from './services/metaidRpcServer';
 import { syncMetaBotEditChangesToChain, syncMetaBotToChain } from './services/metaidCore';
-import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills } from './services/skillSyncService';
+import { getOfficialSkillsStatus, installOfficialSkill, syncAllOfficialSkills, getCommunitySkillsStatus } from './services/skillSyncService';
 import {
   startMetaWebListener,
   hasListenerSocket,
@@ -4882,6 +4882,14 @@ if (!gotTheLock) {
       return result;
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to sync official skills' };
+    }
+  });
+
+  ipcMain.handle('idbots:getCommunitySkillsStatus', async () => {
+    try {
+      return await getCommunitySkillsStatus();
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get community skills status' };
     }
   });
 
