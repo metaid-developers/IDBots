@@ -4,7 +4,7 @@
 
 **Source of truth**: `/Users/tusm/Documents/MetaID_Projects/open-agent-connect/docs/metaid_protocols` is the project-level source of truth for MetaID protocol documentation. Downstream projects may keep mirrors, but protocol changes should be authored here first.
 
-**Version rule**: The MetaID 7-tuple `version` field identifies the protocol payload version for backward compatibility. JSON payloads that include a top-level `version` field should keep it equal to the 7-tuple version. Parsers should prefer the payload version when available, then the 7-tuple version, then the legacy default documented for the path.
+**Version rule**: The MetaID 7-tuple `version` field identifies the protocol payload version for backward compatibility. JSON payloads should not repeat the protocol version as a top-level `version` field unless a protocol explicitly defines a different business meaning for that field.
 
 ## 1. SimpleNote
 
@@ -176,8 +176,8 @@ Version `1.0.0` is the legacy service advertisement shape. It must remain docume
 
 **v1.0 compatibility semantics**
 
-- Missing `version` is treated as `1.0.0`.
-- Missing `paymentTerms` is expected.
+- If a parser cannot read the MetaID 7-tuple version, treat the payload as `1.0.0`.
+- Missing `paymentTiming` is expected.
 - `providerSkill` is the legacy single-skill string. App-level models should normalize it to a one-element skill list.
 - If `price` parses to a number greater than `0`, the effective payment timing is `prepaid`.
 - If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free`.
@@ -185,11 +185,10 @@ Version `1.0.0` is the legacy service advertisement shape. It must remain docume
 
 ### 6.2 skill-service v1.1.0
 
-Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an ordered skill array, and adds structured payment terms. New business logic should use shared resolvers for `providerSkill` and `paymentTerms`, not ad-hoc UI checks.
+Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an ordered skill array, and adds explicit payment timing. New business logic should use shared resolvers for `providerSkill` and payment fields, not ad-hoc UI checks.
 
 ```json5
 {
-  "version": "1.1.0",
   "serviceName": "post-buzz-service",
   "displayName": "On-chain buzz publishing service",
   "description": "Tell me what you want to publish, and I will write the buzz on-chain for you.",
@@ -202,68 +201,23 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an or
   "providerSkill": ["provider skill name", "optional follow-up skill name"],
 
   /**
-   * Compatibility summary fields. These mirror paymentTerms.quote for older
-   * indexers and clients. For free services, amount should be "0".
+   * prepaid: caller pays before provider delivery.
+   * postpaid: caller pays after provider delivery or payment request.
+   * free: no service payment is required.
    */
+  "paymentTiming": "prepaid",
+  /** Decimal string in major units. Free services publish "0". */
   "price": "0.001",
+  /** Quote currency only, such as SPACE, BTC, DOGE, CNY, or USD. */
   "currency": "SPACE",
-
-  /**
-   * Optional legacy settlement hints kept for existing native and MRC20
-   * clients. New clients should derive these through paymentTerms.methods.
-   */
-  "paymentChain": "mvc",
-  "settlementKind": "native",
-  "mrc20Ticker": null,
-  "mrc20Id": null,
-  "paymentAddress": "provider settlement address",
-
-  "paymentTerms": {
-    /**
-     * prepaid: caller pays before the order is sent to the provider.
-     * postpaid: caller pays after provider delivery or payment request.
-     * free: no service payment is required.
-     */
-    "timing": "prepaid",
-    "quote": {
-      /** Decimal string in major units, or "0" for free services. */
-      "amount": "0.001",
-      "asset": {
-        /**
-         * crypto-native: native chain asset such as SPACE, BTC, or DOGE.
-         * mrc20: MRC20 token settled on BTC.
-         * fiat: fiat-denominated quote such as CNY or USD.
-         */
-        "kind": "crypto-native",
-        "symbol": "SPACE",
-        "chain": "mvc",
-        "assetId": null,
-        "decimals": 8
-      }
-    },
-    "methods": [
-      {
-        /**
-         * onchain: direct blockchain transfer.
-         * alipay: fiat payment via Alipay.
-         * stripe-link: fiat payment via Stripe Link or a Stripe-hosted flow.
-         * manual-link: provider-supplied external payment link.
-         */
-        "rail": "onchain",
-        "chain": "mvc",
-        "settlementKind": "native",
-        "address": "provider settlement address",
-        "assetId": null,
-        "label": "SPACE on MVC"
-      }
-    ]
-  },
 
   "executionReminder": "Important execution notes for the provider MetaBot.",
   "skillDocument": "metafile://",
   "inputType": "text",
   "outputType": "text",
-  "endpoint": "simplemsg"
+  "endpoint": "simplemsg",
+  /** Free-form publisher metadata. Core clients must not use it to override fields above. */
+  "metadata": ""
 }
 ```
 
@@ -277,16 +231,14 @@ Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an or
 
 **v1.1 effective payment semantics**
 
-- `paymentTerms.timing` is one of `prepaid`, `postpaid`, or `free`.
+- `paymentTiming` is one of `prepaid`, `postpaid`, or `free`.
 - `prepaid` means payment before provider delivery, `postpaid` means provider delivery or payment request before payment, and `free` means no payment is required.
-- If `paymentTerms.timing` is `free`, the effective service price is `0` even if compatibility fields contain a positive `price`.
-- If `paymentTerms.quote.amount` or compatibility `price` parses to `0`, the effective payment timing is `free` even when `timing` says `prepaid` or `postpaid`.
-- If no field parses to a positive decimal amount, the effective payment timing is `free`.
-- When payment fields conflict, parsers must choose the lowest-money interpretation. This prevents a service from accidentally becoming paid when any versioned field says it is free.
-- `price` and `currency` remain required compatibility fields for v1.1 service discovery. For free services, publish `price: "0"` and a harmless default `currency`, usually `SPACE`.
-- Free services may publish `paymentTerms.methods` as an empty array.
-- Fiat support should use `paymentTerms.quote.asset.kind: "fiat"` plus method rails such as `alipay`, `stripe-link`, or `manual-link`. Do not overload `currency` to mean the payment rail; `currency` or `asset.symbol` is only the quote unit.
-- Order-specific payment URLs, QR codes, external invoice ids, or checkout session ids should not be placed in the service advertisement. They belong in `/protocols/skill-service-order` or a future payment event for a specific `orderId`.
+- If `paymentTiming` is `free`, the effective service price is `0` even if `price` contains a positive value.
+- If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free` even when `paymentTiming` says `prepaid` or `postpaid`.
+- `currency` is the quote unit only. It must not encode a payment rail, chain, or recipient address.
+- `providerMetaBot` is the provider and payment recipient identity. Service advertisements must not publish a separate payment address.
+- Fiat support may use fiat currency codes such as `CNY` or `USD` in `currency`. Until a later protocol version defines first-class fiat settlement, publisher-specific payment notes or external references may live in `metadata`.
+- `metadata` is intentionally free-form. Core clients must not use it to override `paymentTiming`, `price`, `currency`, `providerMetaBot`, or `providerSkill`.
 
 ## 7. skill-service-order
 
@@ -311,7 +263,6 @@ The initial order event should use MetaID operation `create`.
 
 ```json5
 {
-  "version": "1.0.0",
   "eventType": "order.created",
   "orderId": "018f6f8d-6f3f-7cc8-8a70-0d3ef0d9b0a1",
   "servicePinId": "skill-service-pinid",
@@ -326,42 +277,18 @@ The initial order event should use MetaID operation `create`.
 
   "buyer": {
     "globalMetaId": "buyer GlobalMetaID",
-    "metaid": "buyer MetaID",
-    "address": "buyer address"
+    "metaid": "buyer MetaID"
   },
   "provider": {
     "globalMetaId": "provider GlobalMetaID",
-    "metaid": "provider MetaID",
-    "address": "provider address"
+    "metaid": "provider MetaID"
   },
 
-  /**
-   * Snapshot copied from the resolved skill-service payment terms at order
-   * creation time. This prevents later service edits from changing the order.
-   */
-  "paymentTerms": {
-    "timing": "postpaid",
-    "quote": {
-      "amount": "0.001",
-      "asset": {
-        "kind": "crypto-native",
-        "symbol": "SPACE",
-        "chain": "mvc",
-        "assetId": null,
-        "decimals": 8
-      }
-    },
-    "methods": [
-      {
-        "rail": "onchain",
-        "chain": "mvc",
-        "settlementKind": "native",
-        "address": "provider settlement address",
-        "assetId": null,
-        "label": "SPACE on MVC"
-      }
-    ]
-  },
+  /** Snapshot copied from the resolved skill-service payment fields. */
+  "paymentTiming": "postpaid",
+  "price": "0.001",
+  "currency": "SPACE",
+  "serviceMetadata": "",
 
   /**
    * Optional privacy-preserving summary. The full user request should normally
@@ -381,24 +308,15 @@ Subsequent lifecycle records should use MetaID operation `modify` targeting the 
 
 ```json5
 {
-  "version": "1.0.0",
   "eventType": "payment.recorded",
   "orderId": "018f6f8d-6f3f-7cc8-8a70-0d3ef0d9b0a1",
   "status": "paid",
   "paymentRecord": {
     "paymentId": "payment record id",
-    "rail": "onchain",
     "status": "confirmed",
     "amount": "0.001",
-    "asset": {
-      "kind": "crypto-native",
-      "symbol": "SPACE",
-      "chain": "mvc",
-      "assetId": null,
-      "decimals": 8
-    },
+    "currency": "SPACE",
     "txid": "payment transaction id",
-    "commitTxid": null,
     "externalReference": null,
     "paidAt": 1777427786000
   },
