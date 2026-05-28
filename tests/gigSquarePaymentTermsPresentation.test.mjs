@@ -5,6 +5,7 @@ import {
   GIG_SQUARE_PAYMENT_TIMING_OPTIONS,
   buildGigSquarePaymentTermsSubmission,
   getDefaultGigSquarePaymentTiming,
+  isGigSquareLegacyMrc20Settlement,
   shouldShowGigSquarePaymentAmountControls,
   validateGigSquarePaymentTermsDraft,
 } from '../src/renderer/components/gigSquare/gigSquarePublishPresentation.js';
@@ -85,4 +86,21 @@ test('prepaid validation requires a positive amount and native currency', () => 
     })?.code,
     'currency_invalid',
   );
+});
+
+test('prepaid submission rejects invalid currency instead of normalizing it', () => {
+  assert.throws(
+    () => buildGigSquarePaymentTermsSubmission({
+      paymentTiming: 'prepaid',
+      price: '1',
+      currency: 'MRC20',
+    }),
+    /currency_invalid/,
+  );
+});
+
+test('legacy MRC20 settlement detection covers service settlement metadata', () => {
+  assert.equal(isGigSquareLegacyMrc20Settlement({ settlementKind: 'mrc20', currency: 'SPACE' }), true);
+  assert.equal(isGigSquareLegacyMrc20Settlement({ settlementKind: 'native', currency: 'MRC20' }), true);
+  assert.equal(isGigSquareLegacyMrc20Settlement({ settlementKind: 'native', currency: 'SPACE' }), false);
 });

@@ -55,6 +55,16 @@ export function resolveGigSquareSelectedProviderSkills(skillOptions, selectedSki
   return normalizeGigSquareProviderSkillNames(selectedNames);
 }
 
+export function resolveGigSquareSelectedSkillIds(skillOptions, providerSkills) {
+  const skillIdByName = new Map(
+    (Array.isArray(skillOptions) ? skillOptions : [])
+      .map((skill) => [skill?.name, skill?.id]),
+  );
+  return normalizeGigSquareProviderSkillNames(providerSkills)
+    .map((skillName) => skillIdByName.get(skillName))
+    .filter(Boolean);
+}
+
 export function buildGigSquareModifySkillOptions(skills, currentSkillName) {
   return buildGigSquareSkillSelectionOptions(skills, [currentSkillName]);
 }

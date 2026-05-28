@@ -21,6 +21,7 @@ import {
   buildGigSquarePaymentTermsSubmission,
   deriveGigSquarePaymentTiming,
   getGigSquarePublishPriceLimitText,
+  isGigSquareLegacyMrc20Settlement,
   shouldShowGigSquarePaymentAmountControls,
   validateGigSquarePaymentTermsDraft,
 } from './gigSquarePublishPresentation.js';
@@ -34,6 +35,7 @@ import {
 import {
   buildGigSquareSkillSelectionOptions,
   normalizeGigSquareProviderSkillNames,
+  resolveGigSquareSelectedSkillIds,
   resolveGigSquareSelectedProviderSkills,
 } from './gigSquareSkillOptions.js';
 
@@ -54,6 +56,7 @@ type ModifyDraft = {
   currency: ModifyCurrency;
   protocolSettlementKind: 'native' | 'fiat' | string;
   metadata: string;
+  isLegacyMrc20: boolean;
   outputType: 'text' | 'image' | 'video' | 'audio' | 'other';
   serviceIconDataUrl: string;
 };
@@ -214,11 +217,13 @@ const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): Modify
   price: (service.price || '').trim(),
   protocolSettlementKind: 'native',
   metadata: '',
+  isLegacyMrc20: isGigSquareLegacyMrc20Settlement(service),
   outputType: normalizeModifyOutputType(service.outputType || null),
   serviceIconDataUrl: '',
 });
 
 const validateModifyDraft = (draft: ModifyDraft): string | null => {
+  if (draft.isLegacyMrc20) return i18nService.t('gigSquareMyServicesModifyMrc20Blocked');
   if (!draft.displayName.trim()) return i18nService.t('gigSquarePublishDisplayNameRequired');
   if (!draft.serviceName.trim()) return i18nService.t('gigSquarePublishServiceNameRequired');
   if (!draft.description.trim()) return i18nService.t('gigSquarePublishDescriptionRequired');
@@ -419,9 +424,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   useEffect(() => {
     if (!modifyDraft) return;
     const selectedProviderSkillNames = normalizeGigSquareProviderSkillNames(modifyDraft.providerSkills);
-    const selectedSkillIds = modifySkillOptions
-      .filter((skill) => selectedProviderSkillNames.includes(skill.name))
-      .map((skill) => skill.id);
+    const selectedSkillIds = resolveGigSquareSelectedSkillIds(modifySkillOptions, selectedProviderSkillNames);
     const resolvedProviderSkills = resolveGigSquareSelectedProviderSkills(modifySkillOptions, selectedSkillIds);
     setModifySelectedSkillIds((prev) => (
       prev.length === selectedSkillIds.length && prev.every((skillId, index) => skillId === selectedSkillIds[index])
@@ -508,9 +511,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     if (mutationBusyServiceId || !service.canModify) return;
     const nextDraft = buildModifyDraftFromService(service);
     const nextSkillOptions = buildGigSquareSkillSelectionOptions(skills, nextDraft.providerSkills);
-    const selectedSkillIds = nextSkillOptions
-      .filter((skill) => nextDraft.providerSkills.includes(skill.name))
-      .map((skill) => skill.id);
+    const selectedSkillIds = resolveGigSquareSelectedSkillIds(nextSkillOptions, nextDraft.providerSkills);
     const resolvedProviderSkills = resolveGigSquareSelectedProviderSkills(nextSkillOptions, selectedSkillIds);
     setModifyTargetService(service);
     setModifyDraft({
@@ -519,7 +520,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
       providerSkills: resolvedProviderSkills,
     });
     setModifySelectedSkillIds(selectedSkillIds);
-    setModifyError(null);
+    setModifyError(nextDraft.isLegacyMrc20 ? i18nService.t('gigSquareMyServicesModifyMrc20Blocked') : null);
     if (modifyIconInputRef.current) {
       modifyIconInputRef.current.value = '';
     }
@@ -689,6 +690,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     && modifyTargetService
     && mutationBusyServiceId === modifyTargetService.id,
   );
+  const isModifySubmitDisabled = isModifySubmitting || Boolean(modifyDraft?.isLegacyMrc20);
   const modifyPriceLimitText = modifyDraft ? getGigSquarePublishPriceLimitText(modifyDraft.currency) : '';
   const modifyShowPaymentAmountControls = modifyDraft
     ? shouldShowGigSquarePaymentAmountControls(modifyDraft.paymentTiming)
@@ -1614,7 +1616,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 <button
                   type="button"
                   onClick={() => void handleSubmitModify()}
-                  disabled={isModifySubmitting}
+                  disabled={isModifySubmitDisabled}
                   className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isModifySubmitting

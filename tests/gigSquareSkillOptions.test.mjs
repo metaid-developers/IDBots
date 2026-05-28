@@ -5,6 +5,7 @@ import {
   buildGigSquareModifySkillOptions,
   getEnabledGigSquareSkills,
   normalizeGigSquareProviderSkillNames,
+  resolveGigSquareSelectedSkillIds,
   resolveGigSquareSelectedProviderSkills,
   resolveGigSquareModifySkillSelection,
 } from '../src/renderer/components/gigSquare/gigSquareSkillOptions.js';
@@ -78,6 +79,18 @@ test('resolveGigSquareSelectedProviderSkills maps selected option ids to unique 
       'skill-weather',
     ]),
     ['reporter', 'legacy-skill', 'weather-skill'],
+  );
+});
+
+test('resolveGigSquareSelectedSkillIds preserves providerSkills order instead of option order', () => {
+  const options = buildGigSquareSkillSelectionOptions([
+    createSkill({ id: 'skill-weather', name: 'weather-skill', enabled: true }),
+    createSkill({ id: 'skill-report', name: 'reporter', enabled: true }),
+  ], ['legacy-skill']);
+
+  assert.deepEqual(
+    resolveGigSquareSelectedSkillIds(options, ['reporter', 'legacy-skill', 'weather-skill']),
+    ['skill-report', '__current__:legacy-skill', 'skill-weather'],
   );
 });
 

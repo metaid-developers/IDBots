@@ -41,6 +41,14 @@ export function normalizeGigSquareNativeCurrency(currency) {
   return NATIVE_CURRENCIES.has(normalized) ? normalized : 'SPACE';
 }
 
+export function isGigSquareLegacyMrc20Settlement(value) {
+  const settlementKind = String(value?.settlementKind || value?.protocolSettlementKind || '')
+    .trim()
+    .toLowerCase();
+  const currency = String(value?.currency || '').trim().toUpperCase();
+  return settlementKind === 'mrc20' || currency === 'MRC20' || currency.endsWith('-MRC20');
+}
+
 export function shouldShowGigSquarePaymentAmountControls(paymentTiming) {
   return normalizeGigSquarePaymentTiming(paymentTiming) === 'prepaid';
 }
@@ -82,6 +90,10 @@ export function validateGigSquarePaymentTermsDraft(draft) {
 }
 
 export function buildGigSquarePaymentTermsSubmission(draft) {
+  const validationError = validateGigSquarePaymentTermsDraft(draft);
+  if (validationError) {
+    throw new Error(`Invalid GigSquare payment terms: ${validationError.code}`);
+  }
   const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
   if (paymentTiming === 'free') {
     return {
