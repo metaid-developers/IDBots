@@ -94,6 +94,13 @@ function normalizeMrc20Ticker(ticker: string | null | undefined): string {
     .replace(/[^A-Z0-9]/g, '');
 }
 
+function formatOrderPinPublishFailedAfterPayment(paymentTxid: string): string {
+  return i18nService
+    .t('gigSquareOrderPinPublishFailedAfterPayment')
+    .split('{txid}')
+    .join(paymentTxid);
+}
+
 function resolveGigSquareSettlement(service: GigSquareService | null): ResolvedGigSquareSettlement {
   if (!service) {
     return {
@@ -659,6 +666,9 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         metadata: service.metadata || '',
       });
       if (!serviceOrderPin?.success || !serviceOrderPin.pinId) {
+        if (!isFreeService && txId) {
+          throw new Error(formatOrderPinPublishFailedAfterPayment(txId));
+        }
         throw new Error(serviceOrderPin?.error || i18nService.t('gigSquareOrderFailed'));
       }
       const orderPinId = serviceOrderPin.pinId;
