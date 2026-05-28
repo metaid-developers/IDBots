@@ -608,7 +608,7 @@ After commit, post a development-journal buzz.
 - Modify: `tests/gigSquareSkillOptions.test.mjs`
 - Create: `tests/gigSquarePaymentTermsPresentation.test.mjs`
 
-- [ ] **Step 1: Write failing multi-skill helper tests**
+- [x] **Step 1: Write failing multi-skill helper tests**
 
 Expected helper behavior:
 
@@ -617,7 +617,7 @@ Expected helper behavior:
 - Normalizes selected ids to unique provider skill names.
 - Does not impose order semantics beyond stable UI display.
 
-- [ ] **Step 2: Write failing payment presentation tests**
+- [x] **Step 2: Write failing payment presentation tests**
 
 Expected helper behavior:
 
@@ -626,7 +626,7 @@ Expected helper behavior:
 - Prepaid mode requires amount/currency.
 - Switching from prepaid to free keeps a draft amount in UI state only if useful, but submission still sends `price: "0"`.
 
-- [ ] **Step 3: Implement publish modal UI**
+- [x] **Step 3: Implement publish modal UI**
 
 UI controls:
 
@@ -657,7 +657,7 @@ window.electron.gigSquare.publishService({
 });
 ```
 
-- [ ] **Step 4: Implement modify modal UI**
+- [x] **Step 4: Implement modify modal UI**
 
 Apply the same controls. Existing v1.0 services:
 
@@ -665,7 +665,7 @@ Apply the same controls. Existing v1.0 services:
 - Missing `paymentTiming` derives from price.
 - Missing `settlementKind` derives as `native`.
 
-- [ ] **Step 5: Run renderer helper tests**
+- [x] **Step 5: Run renderer helper tests**
 
 Run:
 
@@ -675,7 +675,7 @@ node --test tests/gigSquareSkillOptions.test.mjs tests/gigSquarePaymentTermsPres
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/renderer/components/gigSquare/GigSquarePublishModal.tsx src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx src/renderer/components/gigSquare/gigSquareSkillOptions.js src/renderer/components/gigSquare/gigSquarePublishPresentation.js src/renderer/services/i18n.ts tests/gigSquareSkillOptions.test.mjs tests/gigSquarePaymentTermsPresentation.test.mjs
