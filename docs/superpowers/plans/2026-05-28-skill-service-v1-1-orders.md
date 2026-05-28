@@ -802,7 +802,7 @@ After commit, post a development-journal buzz.
 - Modify: `tests/privateChatOrderCoworkDeliveryArtifacts.test.mjs`
 - Modify: `tests/privateChatRatingPrompt.test.ts`
 
-- [ ] **Step 1: Write failing A2A tests**
+- [x] **Step 1: Write failing A2A tests**
 
 Add scenarios:
 
@@ -811,7 +811,7 @@ Add scenarios:
 - Delivery/status/rating flow finds buyer and seller orders by order pin id first.
 - Legacy paid order without order pin id still works through payment txid fallback.
 
-- [ ] **Step 2: Update order payment parsing**
+- [x] **Step 2: Update order payment parsing**
 
 Add:
 
@@ -825,7 +825,7 @@ export function extractOrderAllowedSkills(plaintext: string): string[]
 - zero amount -> paid/free even without txid.
 - positive amount -> requires valid txid and verifies as today.
 
-- [ ] **Step 3: Update lifecycle service APIs**
+- [x] **Step 3: Update lifecycle service APIs**
 
 Add `orderPinId?: string | null` to all create/mark inputs. Lookup order in this order:
 
@@ -835,7 +835,7 @@ Add `orderPinId?: string | null` to all create/mark inputs. Lookup order in this
 
 Do not use empty payment txid as a grouping key.
 
-- [ ] **Step 4: Update private chat daemon**
+- [x] **Step 4: Update private chat daemon**
 
 For incoming `[ORDER]`:
 
@@ -845,13 +845,13 @@ For incoming `[ORDER]`:
 - Observer session metadata includes `serviceOrderPinId`.
 - Delivery messages include `paymentTxid` only when present and include `serviceOrderPinId`.
 
-- [ ] **Step 5: Update refund/rating/session helpers**
+- [x] **Step 5: Update refund/rating/session helpers**
 
 - Refund mirroring should prefer `orderPinId`.
 - Rating payload should write `serviceOrderPinId`.
 - Session summary display should tolerate empty payment txid.
 
-- [ ] **Step 6: Run A2A tests**
+- [x] **Step 6: Run A2A tests**
 
 Run:
 
@@ -863,7 +863,7 @@ npx tsx --test tests/privateChatRatingPrompt.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/services/orderPayment.ts src/main/services/serviceOrderLifecycleService.ts src/main/services/privateChatDaemon.ts src/main/services/serviceOrderSessionResolution.js src/main/coworkStore.ts src/main/services/gigSquareRefundsService.ts tests/privateChatOrderCoworkDeliveryArtifacts.test.mjs tests/privateChatRatingPrompt.test.ts
