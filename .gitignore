@@ -20,7 +20,9 @@ release/
 Dev-docs/
 CLAUDE.md
 localdocs/
-docs/
+docs/*
+!docs/metaid_protocols/
+!docs/metaid_protocols/**
 tests/*
 !tests/runtimeDependencyContract.test.mjs
 !tests/p2pIndexerServiceRecovery.test.mjs
