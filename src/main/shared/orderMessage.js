@@ -42,6 +42,21 @@ function normalizeOutputType(value) {
   return '';
 }
 
+function normalizeProviderSkillList(value) {
+  const rawSkills = Array.isArray(value) ? value : [value];
+  const seen = new Set();
+  const skills = [];
+
+  for (const rawSkill of rawSkills) {
+    const skill = normalizeSingleLineText(rawSkill);
+    if (!skill || seen.has(skill)) continue;
+    seen.add(skill);
+    skills.push(skill);
+  }
+
+  return skills;
+}
+
 function isZeroAmount(value) {
   const raw = normalizeSingleLineText(value);
   if (!raw) return false;
@@ -156,13 +171,23 @@ export function buildOrderPayload(input) {
     || normalizeSingleLineText(input?.skillName)
     || 'Service Order';
   const paymentTxid = normalizeSingleLineText(input?.paymentTxid);
+  const orderPinId = normalizeSingleLineText(input?.orderPinId);
   const orderReference = normalizeSingleLineText(input?.orderReference);
   const settlement = resolveOrderSettlementMetadata(input);
-  const omitPaymentSettlementMetadata = !paymentTxid && orderReference && isZeroAmount(input?.price);
+  const omitPaymentSettlementMetadata = !paymentTxid && (orderPinId || orderReference) && isZeroAmount(input?.price);
+  const providerSkills = normalizeProviderSkillList(input?.providerSkills);
+  const legacySkillName = providerSkills.length === 1
+    ? providerSkills[0]
+    : providerSkills.length === 0
+      ? normalizeSingleLineText(input?.skillName)
+      : '';
 
   const metadataLines = [
     `支付金额 ${String(input?.price || '').trim()} ${String(input?.currency || '').trim()}`,
   ];
+  if (orderPinId) {
+    metadataLines.push(`order pin id: ${orderPinId}`);
+  }
   if (paymentTxid) {
     metadataLines.push(`txid: ${paymentTxid}`);
   } else if (orderReference) {
@@ -185,8 +210,13 @@ export function buildOrderPayload(input) {
   }
   metadataLines.push(
     `service id: ${String(input?.serviceId || '').trim()}`,
-    `skill name: ${String(input?.skillName || '').trim()}`,
   );
+  if (providerSkills.length > 0) {
+    metadataLines.push(`allowed skills: ${providerSkills.join(', ')}`);
+  }
+  if (legacySkillName) {
+    metadataLines.push(`skill name: ${legacySkillName}`);
+  }
   const outputType = normalizeOutputType(input?.outputType);
   if (outputType) {
     metadataLines.push(`output type: ${outputType}`);

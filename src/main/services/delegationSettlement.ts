@@ -40,6 +40,7 @@ interface BuildDelegationOrderPayloadFromSettlementInput {
   outputType?: string | null;
   paymentTxid: string;
   paymentCommitTxid?: string | null;
+  orderPinId?: string | null;
   orderReference?: string | null;
   settlement: ResolvedDelegationSettlement;
 }
@@ -94,6 +95,7 @@ export function buildDelegationOrderPayloadFromSettlement(
     servicePinId: input.servicePinId,
     paymentTxid: input.paymentTxid,
     paymentCommitTxid: normalizeText(input.paymentCommitTxid),
+    orderPinId: normalizeText(input.orderPinId),
     orderReference: input.orderReference,
     price: input.settlement.price,
     currency: input.settlement.displayCurrency,
@@ -128,6 +130,7 @@ export function buildDelegationOrderPayloadFromService(
       servicePinId: input.servicePinId,
       paymentTxid: input.paymentTxid,
       paymentCommitTxid: input.paymentCommitTxid,
+      orderPinId: input.orderPinId,
       orderReference: input.orderReference,
       settlement,
     }),

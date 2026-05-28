@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativ
 import type { Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { randomBytes } from 'crypto';
 import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
@@ -159,6 +158,7 @@ import {
   normalizeGigSquareSettlementDraft,
   parseGigSquareSettlementAsset,
 } from './shared/gigSquareSettlementAsset.js';
+import { buildSkillServiceOrderPayload } from './shared/skillServiceProtocol.js';
 import { verifyMrc20Transfer } from './services/mrc20PaymentVerification';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
@@ -335,10 +335,6 @@ const isFreeServicePrice = (value: unknown): boolean => {
   if (!raw) return false;
   const numeric = Number(raw);
   return Number.isFinite(numeric) && numeric === 0;
-};
-
-const generateSyntheticOrderTxid = (): string => {
-  return randomBytes(32).toString('hex');
 };
 
 const getRefundAddressForOrder = (
@@ -646,6 +642,41 @@ const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value == null) return '';
   return String(value);
+};
+
+const publishSkillServiceOrderPin = async (input: {
+  metabotId: number;
+  servicePinId?: string | null;
+  paymentTxid?: string | null;
+  price?: string | null;
+  currency?: string | null;
+  settlementKind?: string | null;
+  metadata?: string | null;
+}): Promise<{ pinId: string; txids: string[] }> => {
+  const metabotId = Number(input.metabotId);
+  if (!Number.isFinite(metabotId) || metabotId <= 0) {
+    throw new Error('metabotId is required');
+  }
+
+  const payload = buildSkillServiceOrderPayload(input);
+  const result = await createPin(getMetabotStore(), metabotId, {
+    operation: 'create',
+    path: '/protocols/skill-service-order',
+    encryption: '0',
+    version: '1.0.0',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+  });
+
+  const pinId = toSafeString(result.pinId).trim();
+  if (!pinId) {
+    throw new Error('Failed to publish skill-service-order pin');
+  }
+
+  return {
+    pinId,
+    txids: Array.isArray(result.txids) ? result.txids : [],
+  };
 };
 
 const toSafeNumber = (value: unknown): number => {
@@ -3215,7 +3246,7 @@ const executeDelegationPipeline = async (
 
   const isFreeDelegation = numericPrice === 0;
   const paymentChain = delegationSettlement.paymentChain as TransferChain;
-  let paymentTxid = isFreeDelegation ? generateSyntheticOrderTxid() : '';
+  let paymentTxid = '';
   let paymentCommitTxid: string | null = null;
   const formatPaymentFailureMessage = (errorMsg: string): string => (
     /decimalerror|invalid argument/i.test(errorMsg)
@@ -3320,6 +3351,30 @@ const executeDelegationPipeline = async (
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
   }
 
+  let serviceOrderPinId = '';
+  try {
+    const publishedOrder = await publishSkillServiceOrderPin({
+      metabotId,
+      servicePinId: delegation.servicePinId,
+      paymentTxid: isFreeDelegation ? '' : paymentTxid,
+      price,
+      currency: normalizedCurrency,
+      settlementKind: delegationSettlement.settlementKind,
+      metadata: '',
+    });
+    serviceOrderPinId = publishedOrder.pinId;
+  } catch (error) {
+    console.error(LOG_TAG, 'Failed to publish skill-service-order pin:', error);
+    injectDelegationSystemMessage(
+      sessionId,
+      isFreeDelegation
+        ? `Failed to publish free service order pin. No payment transaction was required.`
+        : `Payment was sent (tx: ${paymentTxid}), but publishing the service order pin failed. Please try again or contact support.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Order pin publish failed' });
+    return;
+  }
+
   const orderPayload = buildDelegationOrderPayloadFromSettlement({
     rawRequest: rawOrderRequest,
     taskContext: delegation.taskContext,
@@ -3330,7 +3385,8 @@ const executeDelegationPipeline = async (
     outputType: toSafeString(service.outputType).trim() || 'text',
     paymentTxid: isFreeDelegation ? '' : paymentTxid,
     paymentCommitTxid: isFreeDelegation ? null : paymentCommitTxid,
-    orderReference: isFreeDelegation ? paymentTxid : '',
+    orderPinId: serviceOrderPinId,
+    orderReference: serviceOrderPinId,
     settlement: delegationSettlement,
   });
 
@@ -3354,7 +3410,7 @@ const executeDelegationPipeline = async (
       serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
       serviceOutputType: toSafeString(service.outputType).trim() || 'text',
       serverBotGlobalMetaId: providerGlobalMetaId,
-      servicePaidTx: paymentTxid,
+      servicePaidTx: isFreeDelegation ? '' : paymentTxid,
       orderPayload,
     });
     buyerObserverSessionId = observerSession.coworkSessionId;
@@ -3367,7 +3423,7 @@ const executeDelegationPipeline = async (
     console.warn(LOG_TAG, 'Failed to create buyer observer session:', error);
   }
 
-  let orderPinId: string | null = null;
+  let orderMessagePinId: string | null = null;
   let orderMessageTxid: string | null = null;
   try {
     const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
@@ -3387,7 +3443,7 @@ const executeDelegationPipeline = async (
       payload: payloadStr,
     });
 
-    orderPinId = result.pinId ?? null;
+    orderMessagePinId = result.pinId ?? null;
     orderMessageTxid = resolvePrimarySimplemsgTxid({
       txids: result.txids,
       pinId: result.pinId,
@@ -3396,7 +3452,7 @@ const executeDelegationPipeline = async (
       buyerObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(coworkStoreInst, {
         metabotId,
         peerGlobalMetaId: providerGlobalMetaId,
-        paymentTxid,
+        paymentTxid: isFreeDelegation ? '' : paymentTxid,
         orderTxid: orderMessageTxid,
         currentExternalConversationId: buyerObserverExternalConversationId,
       });
@@ -3416,7 +3472,7 @@ const executeDelegationPipeline = async (
       const failureMessage = coworkStoreInst.addMessage(buyerObserverSessionId, {
         type: 'system',
         content: isFreeDelegation
-          ? `系统提示：免费服务订单发送失败。订单标识：${paymentTxid}。请稍后重试。`
+          ? `系统提示：免费服务订单发送失败。订单 pin：${serviceOrderPinId}。请稍后重试。`
           : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${paymentTxid}。请稍后重试或联系服务方处理退款。`,
         metadata: buildOrderProtocolDisplayMetadata({
           peerGlobalMetaId: providerGlobalMetaId,
@@ -3424,7 +3480,7 @@ const executeDelegationPipeline = async (
           tag: 'ORDER_STATUS',
           orderTxid: orderMessageTxid,
           orderRole: 'buyer',
-          paymentTxid,
+          paymentTxid: isFreeDelegation ? '' : paymentTxid,
           orderMappingExternalConversationId: buyerObserverExternalConversationId,
           extra: {
           refreshSessionSummary: true,
@@ -3452,8 +3508,9 @@ const executeDelegationPipeline = async (
         localMetabotId: metabotId,
         counterpartyGlobalMetaId: providerGlobalMetaId,
         servicePinId: delegation.servicePinId,
+        orderPinId: serviceOrderPinId,
         serviceName: delegation.serviceName || delegation.servicePinId,
-        paymentTxid,
+        paymentTxid: isFreeDelegation ? '' : paymentTxid,
         paymentChain: delegationSettlement.paymentChain,
         paymentAmount: price,
         paymentCurrency: normalizedCurrency,
@@ -3462,7 +3519,7 @@ const executeDelegationPipeline = async (
         mrc20Id: delegationSettlement.mrc20Id || undefined,
         paymentCommitTxid: paymentCommitTxid || undefined,
         coworkSessionId: sessionId,
-        orderMessagePinId: orderPinId,
+        orderMessagePinId,
         orderMessageTxid,
       });
       orderId = order.id;
@@ -3475,7 +3532,7 @@ const executeDelegationPipeline = async (
         injectDelegationSystemMessage(
           sessionId,
           isFreeDelegation
-            ? `Order creation failed: ${error.message}. Free order id: ${paymentTxid}`
+            ? `Order creation failed: ${error.message}. Order pin: ${serviceOrderPinId}`
             : `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
         );
         emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
@@ -3485,7 +3542,7 @@ const executeDelegationPipeline = async (
       injectDelegationSystemMessage(
         sessionId,
         isFreeDelegation
-          ? `Order tracking failed for free order (${paymentTxid}). Service should still be delivered.`
+          ? `Order tracking failed for free order (${serviceOrderPinId}). Service should still be delivered.`
           : `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
       );
       // Continue to blocking mode even if order tracking failed — the order was sent
@@ -3494,7 +3551,7 @@ const executeDelegationPipeline = async (
     // -----------------------------------------------------------------------
     // Step 6: Enter delegation blocking mode
     // -----------------------------------------------------------------------
-    coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
+    coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || serviceOrderPinId);
 
     const paymentLine = isFreeDelegation
       ? `Payment: free service (${price} ${normalizedCurrency}), no transaction required.`
@@ -3506,13 +3563,13 @@ const executeDelegationPipeline = async (
       })();
     injectDelegationSystemMessage(
       sessionId,
-      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\n${paymentLine}`
+      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\nOrder pin: ${serviceOrderPinId}\n${paymentLine}`
     );
 
     emitDelegationStateChange({
       sessionId,
       blocking: true,
-      orderId: orderId || paymentTxid,
+      orderId: orderId || serviceOrderPinId,
       message: `Waiting for delivery from "${delegation.serviceName}"`,
     });
 };
@@ -7445,6 +7502,34 @@ if (!gotTheLock) {
     }
   });
 
+ipcMain.handle('gigSquare:createServiceOrderPin', async (_event, params: {
+    metabotId: number;
+    servicePinId?: string | null;
+    paymentTxid?: string | null;
+    price?: string | null;
+    currency?: string | null;
+    settlementKind?: string | null;
+    metadata?: string | null;
+  }) => {
+    try {
+      const result = await publishSkillServiceOrderPin({
+        metabotId: params?.metabotId,
+        servicePinId: params?.servicePinId,
+        paymentTxid: params?.paymentTxid,
+        price: params?.price,
+        currency: params?.currency,
+        settlementKind: params?.settlementKind,
+        metadata: params?.metadata,
+      });
+      return { success: true, pinId: result.pinId, txids: result.txids };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to publish service order pin',
+      };
+    }
+  });
+
 ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     metabotId: number;
     toGlobalMetaId: string;
@@ -7463,11 +7548,13 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serviceSkill?: string | null;
     serviceOutputType?: string | null;
     serverBotGlobalMetaId?: string | null;
+    serviceOrderPinId?: string | null;
     servicePaidTx?: string | null;
   }) => {
     let releaseBuyerOrderCreation: (() => void) | null = null;
     let coworkSessionId: string | null = null;
     let attemptedPaymentTxid: string | null = null;
+    let attemptedOrderPinId: string | null = null;
     let isFreeServiceOrder = false;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
@@ -7505,19 +7592,22 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         ? params.serviceOutputType.trim().toLowerCase() || 'text'
         : 'text';
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
+      const serviceOrderPinId = typeof params?.serviceOrderPinId === 'string'
+        ? params.serviceOrderPinId.trim() || null
+        : null;
       let servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
       isFreeServiceOrder = isFreeServicePrice(servicePrice);
-      if (isFreeServiceOrder && !servicePaidTx) {
-        servicePaidTx = generateSyntheticOrderTxid();
+      if (isFreeServiceOrder) {
+        servicePaidTx = null;
       }
-      if (isFreeServiceOrder && servicePaidTx) {
-        const hasTxidLine = /(?:^|\n)\s*txid\s*[:：=]/i.test(orderPayload);
-        const hasOrderReferenceLine = /(?:^|\n)\s*order(?:\s+id|\s+ref(?:erence)?)\s*[:：=]/i.test(orderPayload);
-        if (!hasTxidLine && !hasOrderReferenceLine) {
-          orderPayload = `${orderPayload}\norder id: ${servicePaidTx}`;
+      if (serviceOrderPinId) {
+        const hasOrderReferenceLine = /(?:^|\n)\s*order(?:\s+pin)?(?:\s+id|\s+ref(?:erence)?)\s*[:：=]/i.test(orderPayload);
+        if (!hasOrderReferenceLine) {
+          orderPayload = `${orderPayload}\norder pin id: ${serviceOrderPinId}`;
         }
       }
       attemptedPaymentTxid = servicePaidTx;
+      attemptedOrderPinId = serviceOrderPinId;
 
       if (!metabotId || metabotId < 0) {
         return { success: false, error: 'metabotId is required' };
@@ -7645,8 +7735,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           localMetabotId: metabotId,
           counterpartyGlobalMetaId: toGlobalMetaId,
           servicePinId: serviceId,
+          orderPinId: serviceOrderPinId,
           serviceName: serviceSkill || serviceId || 'Service Order',
-          paymentTxid: servicePaidTx || result.txids?.[0] || result.pinId,
+          paymentTxid: servicePaidTx || '',
           paymentChain: servicePaymentChain || normalizeServiceOrderPaymentChain(serviceCurrency),
           paymentAmount: servicePrice || '0',
           paymentCurrency: serviceCurrency || 'SPACE',
@@ -7678,7 +7769,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         const failureMessage = getCoworkStore().addMessage(coworkSessionId, {
           type: 'system',
           content: isFreeServiceOrder
-            ? `系统提示：免费服务订单发送失败。订单标识：${attemptedPaymentTxid || 'unknown'}。请稍后重试。`
+            ? `系统提示：免费服务订单发送失败。订单 pin：${attemptedOrderPinId || 'unknown'}。请稍后重试。`
             : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${attemptedPaymentTxid || 'unknown'}。请稍后重试或联系服务方处理退款。`,
           metadata: buildOrderProtocolDisplayMetadata({
             peerGlobalMetaId: typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '',
@@ -7686,7 +7777,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             tag: 'ORDER_STATUS',
             orderTxid: null,
             orderRole: 'buyer',
-            paymentTxid: attemptedPaymentTxid,
+            paymentTxid: attemptedPaymentTxid || '',
             orderMappingExternalConversationId: null,
             extra: {
               refreshSessionSummary: true,

@@ -15,6 +15,7 @@ export interface CreateBuyerOrderInput {
   localMetabotId: number;
   counterpartyGlobalMetaId: string;
   servicePinId?: string | null;
+  orderPinId?: string | null;
   serviceName: string;
   paymentTxid: string;
   paymentChain?: string;
@@ -248,6 +249,7 @@ export class ServiceOrderLifecycleService {
       localMetabotId: input.localMetabotId,
       counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
       servicePinId: input.servicePinId ?? null,
+      orderPinId: input.orderPinId ?? null,
       serviceName: input.serviceName,
       paymentTxid: input.paymentTxid,
       paymentChain: input.paymentChain,

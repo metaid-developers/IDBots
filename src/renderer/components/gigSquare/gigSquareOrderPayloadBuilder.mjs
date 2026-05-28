@@ -15,6 +15,7 @@ export function buildGigSquareOrderPayload(input) {
     currency: input.currency,
     paymentTxid: input.txid,
     paymentCommitTxid: input.paymentCommitTxid,
+    orderPinId: input.orderPinId,
     orderReference: input.orderReference,
     paymentChain: input.paymentChain,
     settlementKind: input.settlementKind,
@@ -22,6 +23,7 @@ export function buildGigSquareOrderPayload(input) {
     mrc20Id: input.mrc20Id,
     serviceId: input.serviceId,
     skillName: input.skillName,
+    providerSkills: input.providerSkills,
     serviceName: input.serviceName,
     outputType: input.outputType,
   });
