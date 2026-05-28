@@ -316,7 +316,7 @@ After commit, post a development-journal buzz with the Codex `metabot-post-buzz`
 - Modify: `src/main/main.ts`
 - Create: `tests/serviceOrderStoreOrderPin.test.mjs`
 
-- [ ] **Step 1: Write failing store migration tests**
+- [x] **Step 1: Write failing store migration tests**
 
 Test requirements:
 
@@ -331,7 +331,7 @@ Run: `npm run compile:electron && node --test tests/serviceOrderStoreOrderPin.te
 
 Expected: FAIL because `orderPinId` and empty payment txid support do not exist.
 
-- [ ] **Step 2: Add store fields and schema migration**
+- [x] **Step 2: Add store fields and schema migration**
 
 In both `src/main/serviceOrderStore.ts` and `src/main/sqliteStore.ts`:
 
@@ -356,7 +356,7 @@ WHERE order_pin_id IS NOT NULL AND trim(order_pin_id) <> '';
 - Update duplicate remediation so empty `payment_txid` rows are not collapsed together.
 - Preserve all existing local UUID `id` values. They are local DB row ids, not MetaID protocol ids.
 
-- [ ] **Step 3: Add lookup APIs**
+- [x] **Step 3: Add lookup APIs**
 
 Add or update:
 
@@ -378,7 +378,7 @@ listOrdersByOrderPinId(orderPinId: string): ServiceOrderRecord[]
 
 Update `createOrder` to prefer an existing row by order pin id before falling back to non-empty payment txid.
 
-- [ ] **Step 4: Add Gig Square service table columns**
+- [x] **Step 4: Add Gig Square service table columns**
 
 In `ensureGigSquareSchema` and `src/main/sqliteStore.ts` remote table migrations, add:
 
@@ -389,13 +389,13 @@ In `ensureGigSquareSchema` and `src/main/sqliteStore.ts` remote table migrations
 
 Keep old `provider_skill` as a compatibility label and search column.
 
-- [ ] **Step 5: Run migration tests**
+- [x] **Step 5: Run migration tests**
 
 Run: `npm run compile:electron && node --test tests/serviceOrderStoreOrderPin.test.mjs`
 
 Expected: PASS.
 
-- [ ] **Step 6: Run existing store-sensitive tests**
+- [x] **Step 6: Run existing store-sensitive tests**
 
 Run:
 
@@ -406,7 +406,7 @@ node --test tests/sqliteNativeStore.test.mjs tests/sqliteRecoveryLifecycle.test.
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/serviceOrderStore.ts src/main/sqliteStore.ts src/main/main.ts tests/serviceOrderStoreOrderPin.test.mjs
