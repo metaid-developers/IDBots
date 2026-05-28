@@ -2726,7 +2726,19 @@ const startSqliteDaemons = (): void => {
     createPin,
     (msg) => console.log(msg),
     getServiceOrderLifecycleService(),
-    async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
+    async ({ skillId, skillName, allowedSkillNames, strictScope }) => {
+      if (strictScope || (Array.isArray(allowedSkillNames) && allowedSkillNames.length > 0)) {
+        return skillMgr.buildAutoRoutingPromptForOrderSkillScope({
+          skillNames: allowedSkillNames ?? [],
+          strictScope: true,
+        });
+      }
+      return {
+        prompt: skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
+        activeSkillIds: [],
+        missingSkillNames: [],
+      };
+    },
     (channel, data) => {
       BrowserWindow.getAllWindows().forEach(win => {
         if (!win.isDestroyed()) {

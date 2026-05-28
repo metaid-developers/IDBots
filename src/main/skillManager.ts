@@ -27,6 +27,12 @@ export type ChatSkillsRoutingPromptResult = {
   activeSkillIds: string[];
 };
 
+export type OrderSkillScopePromptResult = {
+  prompt: string | null;
+  activeSkillIds: string[];
+  missingSkillNames: string[];
+};
+
 type SkillStateMap = Record<string, { enabled: boolean }>;
 
 type EmailConnectivityCheckCode = 'imap_connection' | 'smtp_connection';
@@ -1186,17 +1192,72 @@ export class SkillManager {
     skillId?: string | null;
     skillName?: string | null;
   }): string | null {
-    const skills = this.listSkills();
-    const resolvedSkill =
-      this.resolveSkillById(params.skillId || '', skills)
-      || this.resolveSkillById(params.skillName || '', skills)
-      || this.resolveSkillByName(params.skillName || '', skills);
+    const result = this.buildAutoRoutingPromptForOrderSkillScope({
+      skillIds: [params.skillId || ''].filter(Boolean),
+      skillNames: [params.skillName || ''].filter(Boolean),
+      strictScope: true,
+    });
 
-    if (resolvedSkill) {
-      return this.buildScopedRoutingPrompt([resolvedSkill]);
-    }
+    if (result.prompt) return result.prompt;
 
     return this.buildAutoRoutingPrompt();
+  }
+
+  buildAutoRoutingPromptForOrderSkillScope(params: {
+    skillIds?: string[];
+    skillNames?: string[];
+    strictScope?: boolean;
+  } = {}): OrderSkillScopePromptResult {
+    const rawSkillIds = Array.isArray(params.skillIds) ? params.skillIds : [];
+    const rawSkillNames = Array.isArray(params.skillNames) ? params.skillNames : [];
+    const candidates = [...rawSkillIds, ...rawSkillNames]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const hasScopeInput = candidates.length > 0;
+    const enabledSkills = this.listSkills().filter((skill) => skill.enabled && skill.prompt);
+
+    if (!hasScopeInput && !params.strictScope) {
+      const activeSkillIds = enabledSkills.map((skill) => skill.id);
+      return {
+        prompt: this.buildAutoRoutingPrompt(),
+        activeSkillIds,
+        missingSkillNames: [],
+      };
+    }
+
+    const resolvedSkills: SkillRecord[] = [];
+    const seenSkillIds = new Set<string>();
+    const missingSkillNames: string[] = [];
+    const seenMissing = new Set<string>();
+
+    for (const candidate of candidates) {
+      const resolved =
+        this.resolveSkillById(candidate, enabledSkills)
+        || this.resolveSkillByName(candidate, enabledSkills);
+      if (resolved) {
+        if (!seenSkillIds.has(resolved.id)) {
+          seenSkillIds.add(resolved.id);
+          resolvedSkills.push(resolved);
+        }
+      } else if (!seenMissing.has(candidate)) {
+        seenMissing.add(candidate);
+        missingSkillNames.push(candidate);
+      }
+    }
+
+    if (resolvedSkills.length === 0 && params.strictScope) {
+      return {
+        prompt: null,
+        activeSkillIds: [],
+        missingSkillNames,
+      };
+    }
+
+    return {
+      prompt: this.buildScopedRoutingPrompt(resolvedSkills),
+      activeSkillIds: resolvedSkills.map((skill) => skill.id),
+      missingSkillNames,
+    };
   }
 
   setSkillEnabled(id: string, enabled: boolean): SkillRecord[] {

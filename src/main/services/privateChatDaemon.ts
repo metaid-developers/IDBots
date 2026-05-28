@@ -25,6 +25,7 @@ import {
   extractOrderReferenceId,
   extractOrderSkillId,
   extractOrderSkillName,
+  extractOrderAllowedSkills,
   extractOrderOutputType,
   normalizeOrderOutputType,
   OrderSource,
@@ -115,7 +116,22 @@ type DelayFn = (ms: number) => Promise<void>;
 type GetSellerOrderSkillsPromptFn = (params: {
   skillId?: string | null;
   skillName?: string | null;
-}) => Promise<string | null>;
+  allowedSkillNames?: string[];
+  strictScope?: boolean;
+}) => Promise<string | null | SellerOrderSkillsPromptResult>;
+type SellerOrderSkillsPromptResult = {
+  prompt: string | null;
+  activeSkillIds?: string[];
+  missingSkillNames?: string[];
+};
+export type SellerOrderSkillScopeResolution = {
+  prompt: string | null;
+  activeSkillIds: string[];
+  missingSkillNames: string[];
+  allowedSkillNames: string[];
+  strictScope: boolean;
+  shouldRejectOrder: boolean;
+};
 type ChatSkillsRoutingPromptResult = {
   prompt: string | null;
   activeSkillIds: string[];
@@ -356,6 +372,80 @@ function buildOrderA2ADisplayMetadata(input: {
     orderMappingExternalConversationId: input.orderMappingExternalConversationId,
     extra: input.extra,
   }) as CoworkMessageMetadata;
+}
+
+function normalizeAllowedSkillScopeNames(values: string[] | null | undefined): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const trimmed = String(value || '').trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
+export async function resolveSellerOrderSkillScopePrompt(params: {
+  skillId?: string | null;
+  skillName?: string | null;
+  allowedSkillNames?: string[] | null;
+  getSkillsPrompt?: GetSellerOrderSkillsPromptFn;
+}): Promise<SellerOrderSkillScopeResolution> {
+  const allowedSkillNames = normalizeAllowedSkillScopeNames(params.allowedSkillNames);
+  const strictScope = allowedSkillNames.length > 0;
+  const rawResult = params.getSkillsPrompt
+    ? await params.getSkillsPrompt({
+      skillId: params.skillId,
+      skillName: params.skillName,
+      allowedSkillNames,
+      strictScope,
+    })
+    : null;
+  let promptResult: SellerOrderSkillsPromptResult;
+  if (typeof rawResult === 'string') {
+    promptResult = {
+      prompt: rawResult,
+      activeSkillIds: [],
+      missingSkillNames: [],
+    };
+  } else if (rawResult == null) {
+    promptResult = {
+      prompt: null,
+      activeSkillIds: [],
+      missingSkillNames: strictScope ? allowedSkillNames : [],
+    };
+  } else {
+    promptResult = {
+      prompt: rawResult.prompt,
+      activeSkillIds: Array.isArray(rawResult.activeSkillIds) ? rawResult.activeSkillIds : [],
+      missingSkillNames: Array.isArray(rawResult.missingSkillNames) ? rawResult.missingSkillNames : [],
+    };
+  }
+  const activeSkillIds = Array.from(new Set(
+    (promptResult.activeSkillIds ?? [])
+      .map((skillId) => String(skillId || '').trim())
+      .filter(Boolean)
+  ));
+  const missingSkillNames = normalizeAllowedSkillScopeNames(
+    promptResult.missingSkillNames && promptResult.missingSkillNames.length > 0
+      ? promptResult.missingSkillNames
+      : strictScope && activeSkillIds.length === 0 && !promptResult.prompt
+        ? allowedSkillNames
+        : []
+  );
+  const prompt = typeof promptResult.prompt === 'string' && promptResult.prompt.trim()
+    ? promptResult.prompt
+    : null;
+
+  return {
+    prompt,
+    activeSkillIds,
+    missingSkillNames,
+    allowedSkillNames,
+    strictScope,
+    shouldRejectOrder: strictScope && activeSkillIds.length === 0 && !prompt,
+  };
 }
 
 function getCurrencyFromChain(chain?: string): string {
@@ -740,6 +830,17 @@ function buildOrderExecutionFailureNotice(error: unknown): string {
     '抱歉，本次服务执行遇到异常，暂未生成最终结果。',
     compactReason ? `原因：${compactReason}` : '',
     '若稍后仍未收到正式交付，系统会自动发起退款。',
+  ].filter(Boolean).join('\n');
+}
+
+function buildOrderSkillScopeFailureNotice(scope: SellerOrderSkillScopeResolution): string {
+  const requested = scope.allowedSkillNames.join(', ');
+  const missing = scope.missingSkillNames.join(', ');
+  return [
+    '抱歉，本次服务订单指定的 allowed skills 未在本地启用技能中解析到可执行技能，因此无法按限定范围执行。',
+    requested ? `Allowed skill scope: ${requested}.` : '',
+    missing ? `Missing local skills: ${missing}.` : '',
+    '为避免超出订单授权范围，本次订单不会使用未授权的本地技能执行。',
   ].filter(Boolean).join('\n');
 }
 
@@ -2190,6 +2291,7 @@ async function processOne(
       emitLog(
         `[Order] Payment verified: ref=${orderTrackingId || 'n/a'} chain=${payment.chain || '?'} amount=${payment.amountAtomic ?? payment.amountSats ?? 0} ${payment.settlementKind === 'mrc20' ? 'atomic' : 'sats'}`
       );
+      const allowedSkillNames = extractOrderAllowedSkills(plaintext);
       const serviceId = extractOrderSkillId(plaintext);
       const serviceName = extractOrderSkillName(plaintext) || 'Service Order';
       const serviceOutputType = resolveSellerOrderOutputType({
@@ -2297,6 +2399,62 @@ async function processOne(
         return await createSimpleMsgPin(payloadStr);
       };
 
+      const skillScope = await resolveSellerOrderSkillScopePrompt({
+        skillId: serviceId,
+        skillName: serviceName,
+        allowedSkillNames,
+        getSkillsPrompt,
+      });
+      if (skillScope.shouldRejectOrder) {
+        const scopeFailureNotice = buildOrderSkillScopeFailureNotice(skillScope);
+        const transmittedScopeFailureNotice = orderMessageTxid || orderPinId
+          ? buildOrderStatusMessage(orderMessageTxid, scopeFailureNotice, orderPinId)
+          : scopeFailureNotice;
+        emitLog(
+          `[Order] Rejecting scoped order: allowed skills did not resolve locally (${skillScope.allowedSkillNames.join(', ') || 'n/a'}).`
+        );
+        if (source === 'metaweb_private' && fromGlobalMetaId) {
+          try {
+            const failureResult = await sendEncryptedMsg(transmittedScopeFailureNotice);
+            if (sellerOrderSessionId) {
+              const failureMsg = coworkStore.addMessage(sellerOrderSessionId, {
+                type: 'assistant',
+                content: transmittedScopeFailureNotice,
+                metadata: buildOrderA2ADisplayMetadata({
+                  peerGlobalMetaId: orderPeerGlobalMetaId,
+                  direction: 'outgoing',
+                  content: transmittedScopeFailureNotice,
+                  fallbackTag: 'ORDER_STATUS',
+                  orderTxid: orderMessageTxid,
+                  orderRole: 'seller',
+                  orderPinId,
+                  paymentTxid,
+                  orderMappingExternalConversationId: sellerOrderConversationId,
+                  extra: {
+                    orderExecutionFailed: true,
+                    orderSkillScopeRejected: true,
+                    allowedSkillNames: skillScope.allowedSkillNames,
+                    missingSkillNames: skillScope.missingSkillNames,
+                    ...buildPrivateChatA2AChainMetadata({
+                      txids: failureResult.txids,
+                      pinId: failureResult.pinId,
+                    }),
+                  },
+                }),
+              });
+              if (emitToRenderer) {
+                emitToRenderer('cowork:stream:message', { sessionId: sellerOrderSessionId, message: failureMsg });
+              }
+            }
+          } catch (sendError) {
+            rethrowSqliteWasmBoundsError(sendError);
+            emitLog(`[Order] Scoped failure notice broadcast failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
+          }
+        }
+        markProcessed(db, row.id, saveDb);
+        return;
+      }
+
       let processingNotice: OrderCoworkRequest['processingNotice'] | undefined;
       if (source === 'metaweb_private' && fromGlobalMetaId) {
         try {
@@ -2327,20 +2485,15 @@ async function processOne(
         }
       }
 
-      const skillsPrompt = getSkillsPrompt
-        ? await getSkillsPrompt({
-          skillId: serviceId,
-          skillName: serviceName,
-        })
-        : null;
       const prompts = buildOrderPrompts({
         plaintext,
         source,
         metabotName: metabot.name,
-        skillsPrompt,
+        skillsPrompt: skillScope.prompt,
         peerName: (row.from_name as string | null) ?? null,
         skillId: serviceId,
         skillName: serviceName,
+        allowedSkillNames: skillScope.allowedSkillNames,
         executionReminder,
         expectedOutputType: serviceOutputType,
       });

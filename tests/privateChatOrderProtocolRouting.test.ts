@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   resolveBuyerOrderProtocolMapping,
+  resolveSellerOrderSkillScopePrompt,
 } from '../src/main/services/privateChatDaemon';
 import {
   buildDeliveryMessage,
@@ -90,4 +91,52 @@ test('buyer order protocol routing keeps txid and peer fallback only for legacy 
 
   assert.equal(legacyMapping, legacy.second);
   assert.deepEqual(legacy.calls, ['peer']);
+});
+
+test('seller order skill scope rejects unresolved v1.1 allowed skills instead of running unrestricted', async () => {
+  const result = await resolveSellerOrderSkillScopePrompt({
+    skillId: 'legacy-service-pin',
+    skillName: 'Legacy Service',
+    allowedSkillNames: ['unknown-skill'],
+    getSkillsPrompt: async () => ({
+      prompt: null,
+      activeSkillIds: [],
+      missingSkillNames: ['unknown-skill'],
+    }),
+  });
+
+  assert.equal(result.prompt, null);
+  assert.equal(result.strictScope, true);
+  assert.deepEqual(result.allowedSkillNames, ['unknown-skill']);
+  assert.deepEqual(result.activeSkillIds, []);
+  assert.deepEqual(result.missingSkillNames, ['unknown-skill']);
+  assert.equal(result.shouldRejectOrder, true);
+});
+
+test('seller order skill scope preserves legacy fallback when the order has no allowed skills metadata', async () => {
+  const calls: unknown[] = [];
+  const result = await resolveSellerOrderSkillScopePrompt({
+    skillId: 'legacy-service-pin',
+    skillName: 'Legacy Service',
+    allowedSkillNames: [],
+    getSkillsPrompt: async (input) => {
+      calls.push(input);
+      return {
+        prompt: '<available_skills><skill><id>legacy-service-pin</id></skill></available_skills>',
+        activeSkillIds: ['legacy-service-pin'],
+        missingSkillNames: [],
+      };
+    },
+  });
+
+  assert.equal(result.prompt, '<available_skills><skill><id>legacy-service-pin</id></skill></available_skills>');
+  assert.equal(result.strictScope, false);
+  assert.equal(result.shouldRejectOrder, false);
+  assert.deepEqual(result.activeSkillIds, ['legacy-service-pin']);
+  assert.deepEqual(calls, [{
+    skillId: 'legacy-service-pin',
+    skillName: 'Legacy Service',
+    allowedSkillNames: [],
+    strictScope: false,
+  }]);
 });
