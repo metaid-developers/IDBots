@@ -2,7 +2,11 @@ export const GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS = [
   { label: 'BTC', value: 'BTC' },
   { label: 'SPACE', value: 'SPACE' },
   { label: 'DOGE', value: 'DOGE' },
-  { label: 'MRC20', value: 'MRC20' },
+];
+
+export const GIG_SQUARE_PAYMENT_TIMING_OPTIONS = [
+  { label: 'Free', value: 'free' },
+  { label: 'Prepaid', value: 'prepaid' },
 ];
 
 export const GIG_SQUARE_PUBLISH_PRICE_LIMITS = {
@@ -10,6 +14,92 @@ export const GIG_SQUARE_PUBLISH_PRICE_LIMITS = {
   SPACE: 100000,
   DOGE: 10000,
 };
+
+const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
+const NATIVE_CURRENCIES = new Set(GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => item.value));
+
+export function getDefaultGigSquarePaymentTiming() {
+  return 'free';
+}
+
+export function normalizeGigSquarePaymentTiming(paymentTiming) {
+  return String(paymentTiming || '').trim().toLowerCase() === 'prepaid' ? 'prepaid' : 'free';
+}
+
+export function deriveGigSquarePaymentTiming(paymentTiming, price) {
+  const normalizedPaymentTiming = String(paymentTiming || '').trim().toLowerCase();
+  if (normalizedPaymentTiming === 'free' || normalizedPaymentTiming === 'prepaid') {
+    return normalizedPaymentTiming;
+  }
+  const numericPrice = Number(String(price || '').trim());
+  return Number.isFinite(numericPrice) && numericPrice > 0 ? 'prepaid' : 'free';
+}
+
+export function normalizeGigSquareNativeCurrency(currency) {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'MVC') return 'SPACE';
+  return NATIVE_CURRENCIES.has(normalized) ? normalized : 'SPACE';
+}
+
+export function shouldShowGigSquarePaymentAmountControls(paymentTiming) {
+  return normalizeGigSquarePaymentTiming(paymentTiming) === 'prepaid';
+}
+
+export function validateGigSquarePaymentTermsDraft(draft) {
+  const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
+  if (paymentTiming === 'free') return null;
+
+  const currency = String(draft?.currency || '').trim().toUpperCase();
+  if (!NATIVE_CURRENCIES.has(currency)) {
+    return {
+      code: 'currency_invalid',
+      i18nKey: 'gigSquarePublishCurrencyInvalid',
+    };
+  }
+
+  const price = String(draft?.price || '').trim();
+  if (!price) {
+    return {
+      code: 'price_required',
+      i18nKey: 'gigSquarePublishPriceRequired',
+    };
+  }
+  const numericPrice = Number(price);
+  if (!NUMBER_PATTERN.test(price) || !Number.isFinite(numericPrice) || numericPrice <= 0) {
+    return {
+      code: 'price_invalid',
+      i18nKey: 'gigSquarePublishPriceInvalid',
+    };
+  }
+  const priceLimit = getGigSquarePublishPriceLimit(currency);
+  if (priceLimit !== null && numericPrice > priceLimit) {
+    return {
+      code: 'price_exceed',
+      i18nKey: 'gigSquarePublishPriceExceed',
+    };
+  }
+  return null;
+}
+
+export function buildGigSquarePaymentTermsSubmission(draft) {
+  const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
+  if (paymentTiming === 'free') {
+    return {
+      paymentTiming: 'free',
+      price: '0',
+      currency: 'SPACE',
+      protocolSettlementKind: 'native',
+      metadata: '',
+    };
+  }
+  return {
+    paymentTiming: 'prepaid',
+    price: String(draft?.price || '').trim(),
+    currency: normalizeGigSquareNativeCurrency(draft?.currency),
+    protocolSettlementKind: 'native',
+    metadata: '',
+  };
+}
 
 export function getGigSquarePublishCurrencyLabel(currency) {
   const normalized = typeof currency === 'string' ? currency.trim().toUpperCase() : '';

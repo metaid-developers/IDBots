@@ -13,10 +13,10 @@ import {
   getSelectableGigSquareMrc20Assets,
 } from '../src/renderer/components/gigSquare/gigSquarePublishPresentation.js';
 
-test('publish currency options include MRC20', () => {
+test('publish currency options only include native currencies for new forms', () => {
   assert.deepEqual(
     GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => item.value),
-    ['BTC', 'SPACE', 'DOGE', 'MRC20'],
+    ['BTC', 'SPACE', 'DOGE'],
   );
 });
 

@@ -3,34 +3,60 @@ export function getEnabledGigSquareSkills(skills) {
   return skills.filter((skill) => skill?.enabled === true);
 }
 
-export function buildGigSquareModifySkillOptions(skills, currentSkillName) {
+export function normalizeGigSquareProviderSkillNames(providerSkills) {
+  const source = Array.isArray(providerSkills) ? providerSkills : [providerSkills];
+  const seen = new Set();
+  const normalized = [];
+  for (const skillName of source) {
+    const name = String(skillName || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    normalized.push(name);
+  }
+  return normalized;
+}
+
+function createLegacyCurrentSkillOption(skillName) {
+  return {
+    id: `__current__:${skillName}`,
+    name: skillName,
+    description: '',
+    enabled: true,
+    isOfficial: false,
+    isBuiltIn: false,
+    updatedAt: 0,
+    prompt: '',
+    skillPath: '',
+    readOnly: true,
+  };
+}
+
+export function buildGigSquareSkillSelectionOptions(skills, currentSkillNames = []) {
   const enabledSkills = getEnabledGigSquareSkills(skills);
-  const normalizedCurrentSkillName = String(currentSkillName || '').trim();
-  if (!normalizedCurrentSkillName) return enabledSkills;
-  if (enabledSkills.some((skill) => skill.name === normalizedCurrentSkillName)) {
-    return enabledSkills;
-  }
+  const enabledSkillNames = new Set(enabledSkills.map((skill) => skill.name));
+  const loadedSkillNames = new Set(
+    (Array.isArray(skills) ? skills : [])
+      .map((skill) => String(skill?.name || '').trim())
+      .filter(Boolean),
+  );
+  const legacyOptions = normalizeGigSquareProviderSkillNames(currentSkillNames)
+    .filter((skillName) => !enabledSkillNames.has(skillName) && !loadedSkillNames.has(skillName))
+    .map(createLegacyCurrentSkillOption);
+  return [...legacyOptions, ...enabledSkills];
+}
 
-  const existsInLoadedSkills = Array.isArray(skills)
-    && skills.some((skill) => skill?.name === normalizedCurrentSkillName);
-  if (existsInLoadedSkills) {
-    return enabledSkills;
-  }
+export function resolveGigSquareSelectedProviderSkills(skillOptions, selectedSkillIds) {
+  const skillNameById = new Map(
+    (Array.isArray(skillOptions) ? skillOptions : [])
+      .map((skill) => [skill?.id, skill?.name]),
+  );
+  const selectedNames = (Array.isArray(selectedSkillIds) ? selectedSkillIds : [selectedSkillIds])
+    .map((skillId) => skillNameById.get(skillId));
+  return normalizeGigSquareProviderSkillNames(selectedNames);
+}
 
-  return [
-    {
-      id: `__current__:${normalizedCurrentSkillName}`,
-      name: normalizedCurrentSkillName,
-      description: '',
-      enabled: true,
-      isOfficial: false,
-      isBuiltIn: false,
-      updatedAt: 0,
-      prompt: '',
-      skillPath: '',
-    },
-    ...enabledSkills,
-  ];
+export function buildGigSquareModifySkillOptions(skills, currentSkillName) {
+  return buildGigSquareSkillSelectionOptions(skills, [currentSkillName]);
 }
 
 export function resolveGigSquareModifySkillSelection(skills, currentSkillName) {
