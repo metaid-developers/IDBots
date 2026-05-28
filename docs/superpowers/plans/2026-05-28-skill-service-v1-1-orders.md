@@ -883,7 +883,7 @@ After commit, post a development-journal buzz.
 - Modify: `tests/orderPromptBuilder.test.ts`
 - Modify: `tests/skillManagerOrderSkillPrompt.test.mjs`
 
-- [ ] **Step 1: Write failing prompt tests**
+- [x] **Step 1: Write failing prompt tests**
 
 Expected:
 
@@ -892,7 +892,7 @@ Expected:
 - Prompt does not say the skills must be used in order.
 - Prompt does not require every allowed skill to be used.
 
-- [ ] **Step 2: Add multi-skill routing prompt builder**
+- [x] **Step 2: Add multi-skill routing prompt builder**
 
 In `skillManager.ts`, add:
 
@@ -911,7 +911,7 @@ Behavior:
 - For v1.1 orders, do not fall back to all skills when a non-empty allow-list resolves to nothing.
 - Preserve legacy fallback only for old orders with no allow-list.
 
-- [ ] **Step 3: Update order prompt builder**
+- [x] **Step 3: Update order prompt builder**
 
 Replace:
 
@@ -927,13 +927,13 @@ You may use any suitable subset of these skills. Do not use local skills outside
 The list has no execution-order semantics.
 ```
 
-- [ ] **Step 4: Update private chat order run**
+- [x] **Step 4: Update private chat order run**
 
 - Parse `allowed skills:` from the order payload.
 - Pass the array to `getSkillsPrompt`.
 - If a v1.1 service order has an allow-list but no local skills resolve, send an order-status failure rather than running unrestricted.
 
-- [ ] **Step 5: Run prompt tests**
+- [x] **Step 5: Run prompt tests**
 
 Run:
 
@@ -945,12 +945,14 @@ node --test tests/skillManagerOrderSkillPrompt.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/skillManager.ts src/main/services/orderPromptBuilder.ts src/main/services/privateChatDaemon.ts tests/orderPromptBuilder.test.ts tests/skillManagerOrderSkillPrompt.test.mjs
 git commit -m "feat: scope orders to allowed skills"
 ```
+
+Completed in `b8cced6` and follow-up fix `002befd`.
 
 After commit, post a development-journal buzz.
 
