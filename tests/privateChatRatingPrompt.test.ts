@@ -252,3 +252,57 @@ test('resolveBuyerRatingContext does not fall back to unrelated orders when an o
   assert.equal(context.originalRequest, '');
   assert.equal(context.serviceResult, '');
 });
+
+test('resolveBuyerRatingContext scopes free order rating by service order pin id', () => {
+  const targetOrderPinId = 'free-order-pin-i0';
+  const otherOrderPinId = 'free-order-pin-i1';
+  const context = resolveBuyerRatingContext({
+    serviceOrderPinId: targetOrderPinId,
+    messages: [
+      {
+        id: 'target-order',
+        type: 'user',
+        content: [
+          '[ORDER] 查询新加坡天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${targetOrderPinId}`,
+        ].join('\n'),
+        metadata: { direction: 'outgoing', serviceOrderPinId: targetOrderPinId },
+      },
+      {
+        id: 'target-delivery',
+        type: 'assistant',
+        content: `[DELIVERY] ${JSON.stringify({
+          serviceOrderPinId: targetOrderPinId,
+          orderPinId: targetOrderPinId,
+          result: '新加坡天气：多云，29°C',
+        })}`,
+        metadata: { direction: 'incoming', serviceOrderPinId: targetOrderPinId },
+      },
+      {
+        id: 'other-order',
+        type: 'user',
+        content: [
+          '[ORDER] 查询广州天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${otherOrderPinId}`,
+        ].join('\n'),
+        metadata: { direction: 'outgoing', serviceOrderPinId: otherOrderPinId },
+      },
+      {
+        id: 'other-delivery',
+        type: 'assistant',
+        content: `[DELIVERY] ${JSON.stringify({
+          serviceOrderPinId: otherOrderPinId,
+          result: '广州天气：晴，30°C',
+        })}`,
+        metadata: { direction: 'incoming', serviceOrderPinId: otherOrderPinId },
+      },
+    ],
+  });
+
+  assert.match(context.originalRequest, /新加坡天气/);
+  assert.match(context.serviceResult, /新加坡天气/);
+  assert.doesNotMatch(context.originalRequest, /广州天气/);
+  assert.doesNotMatch(context.serviceResult, /广州天气/);
+});

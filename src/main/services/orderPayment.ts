@@ -37,7 +37,9 @@ export interface OrderPaymentCheckResult {
 }
 
 const TXID_RE = /^\s*(?:txid|transaction\s+id)\s*[:：=]?\s*([0-9a-fA-F]{64})(?=[^0-9a-fA-F]|$).*$/im;
+const ORDER_PIN_ID_RE = /^\s*order\s+pin\s+id\s*[:：=]?\s*([A-Za-z0-9][A-Za-z0-9._:-]{5,127})\s*$/im;
 const ORDER_REFERENCE_RE = /^\s*order(?:\s+pin)?(?:\s+id|\s+ref(?:erence)?)\s*[:：=]?\s*([A-Za-z0-9][A-Za-z0-9._:-]{5,127})\s*$/im;
+const ALLOWED_SKILLS_RE = /^\s*allowed\s+skills?\s*[:：=]?\s*(.+?)\s*$/im;
 const AMOUNT_RE = /支付金额\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z0-9-]+)/i;
 const ORDER_PREFIX_RE = /^\s*\[ORDER\]\s*/i;
 const STRUCTURED_ORDER_METADATA_LINE_RE = /^\s*(?:支付金额|payment(?: amount)?|txid|commit\s+txid|transaction id|order(?:\s+pin)?(?:\s+id|\s+ref(?:erence)?)?|payment\s+chain|settlement\s+kind|mrc20\s+ticker|mrc20\s+id|output\s+type|service(?:\s+pin)?\s+id|serviceid|服务(?:\s*pin)?\s*id|服务(?:编号|标识|ID)|订单(?:编号|标识|ID)|skill(?:\s+name)?|allowed\s+skills|provider\s*skill|service\s+skill|技能(?:名称?)?|服务技能|服务名称|输出格式|交付格式)\s*[:：=]?/i;
@@ -113,10 +115,29 @@ export function extractOrderTxid(plaintext: string): string | null {
   return match[1] || null;
 }
 
+export function extractOrderPinId(plaintext: string): string | null {
+  const match = String(plaintext || '').match(ORDER_PIN_ID_RE);
+  if (!match) return null;
+  return match[1] || null;
+}
+
 export function extractOrderReferenceId(plaintext: string): string | null {
   const match = plaintext.match(ORDER_REFERENCE_RE);
   if (!match) return null;
   return match[1] || null;
+}
+
+export function extractOrderAllowedSkills(plaintext: string): string[] {
+  const match = String(plaintext || '').match(ALLOWED_SKILLS_RE);
+  const raw = typeof match?.[1] === 'string' ? match[1].trim() : '';
+  if (!raw) return [];
+  return Array.from(new Set(
+    raw
+      .replace(/^\[|\]$/g, '')
+      .split(/[,，、;\s]+/g)
+      .map((item) => item.trim().replace(/^["']|["']$/g, ''))
+      .filter(Boolean)
+  ));
 }
 
 export function extractOrderRequestText(plaintext: string): string {

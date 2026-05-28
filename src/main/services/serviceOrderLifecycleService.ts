@@ -34,6 +34,7 @@ export interface CreateSellerOrderInput {
   localMetabotId: number;
   counterpartyGlobalMetaId: string;
   servicePinId?: string | null;
+  orderPinId?: string | null;
   serviceName: string;
   paymentTxid: string;
   paymentChain?: string;
@@ -51,7 +52,10 @@ export interface CreateSellerOrderInput {
 export interface ServiceOrderPaymentMatchInput {
   localMetabotId: number;
   counterpartyGlobalMetaId: string;
-  paymentTxid: string;
+  orderPinId?: string | null;
+  paymentTxid?: string | null;
+  orderMessageTxid?: string | null;
+  coworkSessionId?: string | null;
 }
 
 export interface MarkBuyerOrderDeliveredInput extends ServiceOrderPaymentMatchInput {
@@ -206,9 +210,10 @@ export class ServiceOrderLifecycleService {
   private assertNoPendingBuyerOrderForPayment(
     localMetabotId: number,
     counterpartyGlobalMetaId: string,
-    paymentTxid?: string | null
+    paymentTxid?: string | null,
+    orderPinId?: string | null
   ): void {
-    const key = this.getBuyerPaymentKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
+    const key = this.getBuyerOrderReservationKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid, orderPinId);
     if (!key) return;
     if (this.pendingBuyerOrderPayments.has(key)) {
       throw new ServiceOrderOpenOrderExistsError(`pending:${key}`);
@@ -218,12 +223,13 @@ export class ServiceOrderLifecycleService {
   reserveBuyerOrderCreation(
     localMetabotId: number,
     counterpartyGlobalMetaId: string,
-    paymentTxid?: string | null
+    paymentTxid?: string | null,
+    orderPinId?: string | null
   ): () => void {
     this.repairSelfDirectedOrders();
     this.assertNotSelfDirectedOrder(localMetabotId, counterpartyGlobalMetaId);
-    this.assertNoPendingBuyerOrderForPayment(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
-    const paymentKey = this.getBuyerPaymentKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid);
+    this.assertNoPendingBuyerOrderForPayment(localMetabotId, counterpartyGlobalMetaId, paymentTxid, orderPinId);
+    const paymentKey = this.getBuyerOrderReservationKey(localMetabotId, counterpartyGlobalMetaId, paymentTxid, orderPinId);
     if (paymentKey) {
       this.pendingBuyerOrderPayments.add(paymentKey);
     }
@@ -277,6 +283,7 @@ export class ServiceOrderLifecycleService {
       localMetabotId: input.localMetabotId,
       counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
       servicePinId: input.servicePinId ?? null,
+      orderPinId: input.orderPinId ?? null,
       serviceName: input.serviceName,
       paymentTxid: input.paymentTxid,
       paymentChain: input.paymentChain,
@@ -297,12 +304,7 @@ export class ServiceOrderLifecycleService {
   markBuyerOrderFirstResponseReceived(
     input: MarkBuyerOrderFirstResponseReceivedInput
   ): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role: 'buyer',
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch('buyer', input);
     if (!order) return null;
     return this.store.markFirstResponseReceived(
       order.id,
@@ -313,12 +315,7 @@ export class ServiceOrderLifecycleService {
   markSellerOrderFirstResponseSent(
     input: MarkSellerOrderFirstResponseSentInput
   ): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role: 'seller',
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch('seller', input);
     if (!order) return null;
     return this.store.markFirstResponseReceived(
       order.id,
@@ -327,12 +324,7 @@ export class ServiceOrderLifecycleService {
   }
 
   markBuyerOrderDelivered(input: MarkBuyerOrderDeliveredInput): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role: 'buyer',
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch('buyer', input);
     if (!order) return null;
     return this.store.markDelivered(order.id, {
       deliveryMessagePinId: input.deliveryMessagePinId ?? null,
@@ -343,12 +335,7 @@ export class ServiceOrderLifecycleService {
   async markBuyerOrderFailedAndRequestRefund(
     input: MarkBuyerOrderFailedAndRequestRefundInput
   ): Promise<ServiceOrderRecord | null> {
-    const order = this.store.findOrderByPayment({
-      role: 'buyer',
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch('buyer', input);
     if (!order) return null;
     const failedAt = input.failedAt ?? this.now();
     const failedOrder = this.store.markFailed(
@@ -364,12 +351,7 @@ export class ServiceOrderLifecycleService {
   }
 
   markSellerOrderDelivered(input: MarkSellerOrderDeliveredInput): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role: 'seller',
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch('seller', input);
     if (!order) return null;
     return this.store.markDelivered(order.id, {
       deliveryMessagePinId: input.deliveryMessagePinId ?? null,
@@ -381,12 +363,7 @@ export class ServiceOrderLifecycleService {
     role: 'buyer' | 'seller',
     input: MarkOrderRatingRequestedInput
   ): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role,
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch(role, input);
     if (!order) return null;
     return this.store.markRatingRequested(order.id, input.requestedAt ?? this.now());
   }
@@ -395,12 +372,7 @@ export class ServiceOrderLifecycleService {
     role: 'buyer' | 'seller',
     input: MarkOrderEndedInput
   ): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role,
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch(role, input);
     if (!order) return null;
     return this.store.markOrderEnded(order.id, {
       reason: input.reason,
@@ -412,12 +384,7 @@ export class ServiceOrderLifecycleService {
   attachCoworkSessionToSellerOrder(
     input: AttachSellerCoworkSessionInput
   ): ServiceOrderRecord | null {
-    const order = this.store.findOrderByPayment({
-      role: 'seller',
-      localMetabotId: input.localMetabotId,
-      counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
-      paymentTxid: input.paymentTxid,
-    });
+    const order = this.findOrderForMatch('seller', input);
     if (!order) return null;
     return this.store.setCoworkSessionId(order.id, input.coworkSessionId);
   }
@@ -484,6 +451,7 @@ export class ServiceOrderLifecycleService {
 
   repairSelfDirectedOrders(): ServiceOrderRecord[] {
     const paymentTxids = new Set<string>();
+    const orderPinIds = new Set<string>();
     const candidateStatuses = [
       'awaiting_first_response',
       'in_progress',
@@ -494,17 +462,35 @@ export class ServiceOrderLifecycleService {
     for (const role of ['buyer', 'seller'] as const) {
       for (const order of this.store.listOrdersByStatuses(role, [...candidateStatuses])) {
         if (this.isSelfDirectedOrder(order)) {
-          paymentTxids.add(order.paymentTxid);
+          if (order.orderPinId) {
+            orderPinIds.add(order.orderPinId);
+          } else if (order.paymentTxid) {
+            paymentTxids.add(order.paymentTxid);
+          }
         }
       }
     }
 
-    if (paymentTxids.size === 0) {
+    if (paymentTxids.size === 0 && orderPinIds.size === 0) {
       return [];
     }
 
     const resolvedAt = this.now();
     const repaired: ServiceOrderRecord[] = [];
+    for (const orderPinId of orderPinIds) {
+      for (const order of this.store.listOrdersByOrderPinId(orderPinId)) {
+        if (order.status === 'completed' || order.status === 'refunded') {
+          continue;
+        }
+        const updated = this.store.markRefundedLocally(order.id, {
+          resolvedAt,
+          failureReason: SERVICE_ORDER_SELF_ORDER_NOT_ALLOWED_ERROR_CODE,
+        });
+        if (updated) {
+          repaired.push(updated);
+        }
+      }
+    }
     for (const paymentTxid of paymentTxids) {
       for (const order of this.store.listOrdersByPaymentTxid(paymentTxid)) {
         if (order.status === 'completed' || order.status === 'refunded') {
@@ -536,8 +522,8 @@ export class ServiceOrderLifecycleService {
       return order;
     }
     if (this.isZeroAmount(order.paymentAmount)) {
-      const updatedOrders = this.store
-        .listOrdersByPaymentTxid(order.paymentTxid)
+      const updatedOrders = this
+        .listRelatedOrders(order)
         .map((candidate) => this.store.markRefundedLocally(candidate.id, {
           resolvedAt: attemptedAt,
           failureReason: SERVICE_ORDER_FREE_REFUND_SKIPPED_REASON,
@@ -607,14 +593,86 @@ export class ServiceOrderLifecycleService {
     return '服务超时';
   }
 
-  private getBuyerPaymentKey(
+  private getBuyerOrderReservationKey(
     localMetabotId: number,
     counterpartyGlobalMetaId: string,
-    paymentTxid?: string | null
+    paymentTxid?: string | null,
+    orderPinId?: string | null
   ): string | null {
+    const normalizedOrderPinId = typeof orderPinId === 'string' ? orderPinId.trim() : '';
+    if (normalizedOrderPinId) {
+      return `${localMetabotId}:${counterpartyGlobalMetaId}:order-pin:${normalizedOrderPinId}`;
+    }
     const normalizedTxid = typeof paymentTxid === 'string' ? paymentTxid.trim() : '';
     if (!normalizedTxid) return null;
-    return `${localMetabotId}:${counterpartyGlobalMetaId}:${normalizedTxid}`;
+    return `${localMetabotId}:${counterpartyGlobalMetaId}:payment:${normalizedTxid}`;
+  }
+
+  private findOrderForMatch(
+    role: 'buyer' | 'seller',
+    input: ServiceOrderPaymentMatchInput
+  ): ServiceOrderRecord | null {
+    const orderPinId = typeof input.orderPinId === 'string' ? input.orderPinId.trim() : '';
+    if (orderPinId) {
+      const order = this.store.findOrderByOrderPinId({
+        role,
+        localMetabotId: input.localMetabotId,
+        counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+        orderPinId,
+      });
+      if (order) return order;
+    }
+
+    const paymentTxid = typeof input.paymentTxid === 'string' ? input.paymentTxid.trim() : '';
+    if (paymentTxid) {
+      const order = this.store.findOrderByPayment({
+        role,
+        localMetabotId: input.localMetabotId,
+        counterpartyGlobalMetaid: input.counterpartyGlobalMetaId,
+        paymentTxid,
+      });
+      if (order) return order;
+    }
+
+    const orderMessageTxid = typeof input.orderMessageTxid === 'string' ? input.orderMessageTxid.trim() : '';
+    if (orderMessageTxid) {
+      const order = this.store.findOrderByOrderMessageTxid(
+        role,
+        input.localMetabotId,
+        input.counterpartyGlobalMetaId,
+        orderMessageTxid
+      );
+      if (order) return order;
+    }
+
+    const coworkSessionId = typeof input.coworkSessionId === 'string' ? input.coworkSessionId.trim() : '';
+    if (coworkSessionId) {
+      const order = this.store.findLatestOrderBySessionId(coworkSessionId);
+      if (
+        order
+        && order.role === role
+        && order.localMetabotId === input.localMetabotId
+        && order.counterpartyGlobalMetaid === input.counterpartyGlobalMetaId
+      ) {
+        return order;
+      }
+    }
+
+    return null;
+  }
+
+  private listRelatedOrders(order: ServiceOrderRecord): ServiceOrderRecord[] {
+    if (order.orderPinId) {
+      return this.store.listOrdersByOrderPinId(order.orderPinId);
+    }
+    if (order.paymentTxid) {
+      return this.store.listOrdersByPaymentTxid(order.paymentTxid);
+    }
+    if (order.coworkSessionId) {
+      const sessionOrder = this.store.findLatestOrderBySessionId(order.coworkSessionId);
+      return sessionOrder ? [sessionOrder] : [order];
+    }
+    return [order];
   }
 
   private isSelfDirectedOrder(order: ServiceOrderRecord): boolean {
@@ -654,8 +712,8 @@ export class ServiceOrderLifecycleService {
     refundRequestPinId: string | null,
     requestedAt: number
   ): ServiceOrderRecord[] {
-    const counterparts = this.store
-      .listOrdersByPaymentTxid(order.paymentTxid)
+    const counterparts = this
+      .listRelatedOrders(order)
       .filter((candidate) => candidate.id !== order.id && candidate.role !== order.role);
 
     const mirroredOrders: ServiceOrderRecord[] = [];

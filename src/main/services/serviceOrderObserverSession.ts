@@ -27,6 +27,7 @@ export interface EnsureServiceOrderObserverSessionInput {
   serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
+  serviceOrderPinId?: string | null;
   orderTxid?: string | null;
   orderMessagePinId?: string | null;
   orderMessageTxid?: string | null;
@@ -61,6 +62,7 @@ export interface ServiceOrderObserverMetadata {
   serviceOutputType: string | null;
   serverBotGlobalMetaId: string | null;
   servicePaidTx: string | null;
+  serviceOrderPinId: string | null;
   orderTxid: string | null;
 }
 
@@ -186,11 +188,13 @@ export function buildServiceOrderObserverConversationId(input: {
   role: ServiceOrderObserverRole;
   metabotId: number;
   peerGlobalMetaId: string;
+  serviceOrderPinId?: string | null;
   paymentTxid?: string | null;
   orderTxid?: string | null;
 }): string {
   const txidPart = (
     normalizeText(input.orderTxid)
+    || normalizeText(input.serviceOrderPinId)
     || normalizeText(input.paymentTxid)
   ).slice(0, 16) || 'pending';
   return `metaweb_order:${input.role}:${input.metabotId}:${normalizeText(input.peerGlobalMetaId)}:${txidPart}`;
@@ -198,6 +202,7 @@ export function buildServiceOrderObserverConversationId(input: {
 
 export function buildServiceOrderFallbackPayload(input: {
   servicePaidTx?: string | null;
+  serviceOrderPinId?: string | null;
   servicePrice?: string | null;
   serviceCurrency?: string | null;
   servicePaymentChain?: string | null;
@@ -217,6 +222,7 @@ export function buildServiceOrderFallbackPayload(input: {
       ? `支付金额 ${normalizeText(input.servicePrice) || '0'} ${normalizeText(input.serviceCurrency) || 'SPACE'}`
       : '',
     txid ? `txid: ${txid}` : 'txid: pending',
+    normalizeText(input.serviceOrderPinId) ? `order pin id: ${normalizeText(input.serviceOrderPinId)}` : '',
     normalizeText(input.servicePaymentCommitTxid) ? `commit txid: ${normalizeText(input.servicePaymentCommitTxid)}` : '',
     normalizeText(input.servicePaymentChain) ? `payment chain: ${normalizeText(input.servicePaymentChain)}` : '',
     normalizeText(input.serviceSettlementKind) ? `settlement kind: ${normalizeText(input.serviceSettlementKind)}` : '',
@@ -250,6 +256,7 @@ export function buildServiceOrderObserverMetadata(
     serviceOutputType: normalizeText(input.serviceOutputType) || null,
     serverBotGlobalMetaId: normalizeText(input.serverBotGlobalMetaId) || null,
     servicePaidTx: normalizeText(input.servicePaidTx) || null,
+    serviceOrderPinId: normalizeText(input.serviceOrderPinId) || null,
     orderTxid: normalizeText(input.orderTxid) || normalizeText(input.orderMessageTxid) || null,
   };
 }
@@ -262,6 +269,7 @@ export async function ensureServiceOrderObserverSession(
     role: input.role,
     metabotId: input.metabotId,
     peerGlobalMetaId: input.peerGlobalMetaId,
+    serviceOrderPinId: input.serviceOrderPinId,
     paymentTxid: input.servicePaidTx,
     orderTxid: input.orderTxid || input.orderMessageTxid,
   });
@@ -276,6 +284,7 @@ export async function ensureServiceOrderObserverSession(
 
   const orderPayload = normalizeText(input.orderPayload) || buildServiceOrderFallbackPayload({
     servicePaidTx: input.servicePaidTx,
+    serviceOrderPinId: input.serviceOrderPinId,
     servicePrice: input.servicePrice,
     serviceCurrency: input.serviceCurrency,
     servicePaymentChain: input.servicePaymentChain,
@@ -325,6 +334,7 @@ export async function ensureServiceOrderObserverSession(
           tag: 'ORDER',
           orderTxid,
           orderRole: input.role,
+          orderPinId: input.serviceOrderPinId,
           paymentTxid: input.servicePaidTx,
           orderMappingExternalConversationId: externalConversationId,
         }),

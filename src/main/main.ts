@@ -163,6 +163,7 @@ import { verifyMrc20Transfer } from './services/mrc20PaymentVerification';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
 import {
+  extractSessionOrderPinId,
   extractSessionOrderTxid,
   findMatchingOrderSessionId,
   resolveOrderSessionId,
@@ -3411,6 +3412,7 @@ const executeDelegationPipeline = async (
       serviceOutputType: toSafeString(service.outputType).trim() || 'text',
       serverBotGlobalMetaId: providerGlobalMetaId,
       servicePaidTx: isFreeDelegation ? '' : paymentTxid,
+      serviceOrderPinId,
       orderPayload,
     });
     buyerObserverSessionId = observerSession.coworkSessionId;
@@ -3452,6 +3454,7 @@ const executeDelegationPipeline = async (
       buyerObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(coworkStoreInst, {
         metabotId,
         peerGlobalMetaId: providerGlobalMetaId,
+        serviceOrderPinId,
         paymentTxid: isFreeDelegation ? '' : paymentTxid,
         orderTxid: orderMessageTxid,
         currentExternalConversationId: buyerObserverExternalConversationId,
@@ -3480,6 +3483,7 @@ const executeDelegationPipeline = async (
           tag: 'ORDER_STATUS',
           orderTxid: orderMessageTxid,
           orderRole: 'buyer',
+          orderPinId: serviceOrderPinId,
           paymentTxid: isFreeDelegation ? '' : paymentTxid,
           orderMappingExternalConversationId: buyerObserverExternalConversationId,
           extra: {
@@ -4418,13 +4422,16 @@ const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | 
     return null;
   }
 
+  const orderPinId = extractSessionOrderPinId(session.messages);
   const paymentTxid = extractSessionOrderTxid(session.messages);
-  if (!paymentTxid) {
+  if (!orderPinId && !paymentTxid) {
     return null;
   }
 
-  const matched = orderStore
-    .listOrdersByPaymentTxid(paymentTxid)
+  const candidates = orderPinId
+    ? orderStore.listOrdersByOrderPinId(orderPinId)
+    : orderStore.listOrdersByPaymentTxid(paymentTxid);
+  const matched = candidates
     .find((candidate) => (
       candidate.localMetabotId === session.metabotId
       && (
@@ -7637,7 +7644,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
           metabotId,
           toGlobalMetaId,
-          servicePaidTx
+          servicePaidTx,
+          serviceOrderPinId
         );
       } catch (error) {
         if (
@@ -7679,6 +7687,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           serviceOutputType,
           serverBotGlobalMetaId,
           servicePaidTx,
+          serviceOrderPinId,
           orderPayload,
         });
         coworkSessionId = observerSession.coworkSessionId;
@@ -7715,6 +7724,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         orderObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(getCoworkStore(), {
           metabotId,
           peerGlobalMetaId: toGlobalMetaId,
+          serviceOrderPinId,
           paymentTxid: servicePaidTx,
           orderTxid: orderMessageTxid,
           currentExternalConversationId: orderObserverExternalConversationId,
@@ -7777,6 +7787,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             tag: 'ORDER_STATUS',
             orderTxid: null,
             orderRole: 'buyer',
+            orderPinId: attemptedOrderPinId,
             paymentTxid: attemptedPaymentTxid || '',
             orderMappingExternalConversationId: null,
             extra: {

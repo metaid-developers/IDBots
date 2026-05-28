@@ -656,6 +656,7 @@ interface MetawebPrivateMessageBackfillRow extends MetawebOrderMessageBackfillRo
 interface ServiceOrderSimplemsgBackfillRow {
   order_message_pin_id: string | null;
   delivery_message_pin_id: string | null;
+  order_pin_id?: string | null;
   payment_txid?: string | null;
   order_message_txid?: string | null;
 }
@@ -670,7 +671,10 @@ interface OrderBackfillIdentifiers {
   mappingOrderTxid: string;
   messagePaymentTxid: string;
   mappingPaymentTxid: string;
+  messageOrderPinId: string;
+  mappingOrderPinId: string;
   orderMessageTxid: string;
+  orderPinId: string;
   paymentTxid: string;
   role: 'buyer' | 'seller' | '';
   peerGlobalMetaId: string;
@@ -2820,6 +2824,11 @@ export class CoworkStore implements MemoryBackend {
     );
   }
 
+  private extractOrderPinIdFromSimplemsgContent(content: string): string {
+    const match = String(content || '').match(/^\s*order\s+pin\s+id\s*[:：=]?\s*([A-Za-z0-9][A-Za-z0-9._:-]{5,127})\s*$/im);
+    return typeof match?.[1] === 'string' ? match[1].trim() : '';
+  }
+
   private getOrderBackfillIdentifiers(
     row: MetawebOrderMessageBackfillRow,
     metadata: CoworkMessageMetadata,
@@ -2835,6 +2844,9 @@ export class CoworkStore implements MemoryBackend {
     const mappingPaymentTxid = normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
       || normalizeA2AChainTxid(mappingMetadata.paymentTxid)
       || normalizeA2AChainTxid(mappingMetadata.orderPaymentTxid);
+    const messageOrderPinId = String(metadata.serviceOrderPinId || metadata.orderPinId || '').trim()
+      || this.extractOrderPinIdFromSimplemsgContent(content);
+    const mappingOrderPinId = String(mappingMetadata.serviceOrderPinId || mappingMetadata.orderPinId || '').trim();
 
     return {
       messageMappingExternalId: String(metadata.orderMappingExternalConversationId || '').trim(),
@@ -2842,7 +2854,10 @@ export class CoworkStore implements MemoryBackend {
       mappingOrderTxid,
       messagePaymentTxid,
       mappingPaymentTxid,
+      messageOrderPinId,
+      mappingOrderPinId,
       orderMessageTxid: messageOrderTxid || mappingOrderTxid,
+      orderPinId: messageOrderPinId || mappingOrderPinId,
       paymentTxid: messagePaymentTxid || mappingPaymentTxid,
       role: this.normalizeOrderBackfillRole(metadata.orderRole) || this.normalizeOrderBackfillRole(mappingMetadata.role),
       peerGlobalMetaId: String(row.peer_global_metaid || mappingMetadata.peerGlobalMetaId || '').trim(),
@@ -2888,6 +2903,13 @@ export class CoworkStore implements MemoryBackend {
     ) {
       return false;
     }
+    if (
+      identifiers.messageOrderPinId
+      && identifiers.mappingOrderPinId
+      && identifiers.messageOrderPinId !== identifiers.mappingOrderPinId
+    ) {
+      return false;
+    }
 
     if (this.countMetawebOrderMappingsForSession(row.session_id) <= 1) {
       return true;
@@ -2899,6 +2921,9 @@ export class CoworkStore implements MemoryBackend {
       return true;
     }
     if (identifiers.messagePaymentTxid && identifiers.messagePaymentTxid === identifiers.mappingPaymentTxid) {
+      return true;
+    }
+    if (identifiers.messageOrderPinId && identifiers.messageOrderPinId === identifiers.mappingOrderPinId) {
       return true;
     }
     return false;
@@ -2924,7 +2949,7 @@ export class CoworkStore implements MemoryBackend {
     const orderBy = input.orderByDelivery
       ? 'ORDER BY delivered_at DESC, updated_at DESC'
       : 'ORDER BY updated_at DESC';
-    const selectColumns = 'payment_txid, order_message_txid, order_message_pin_id, delivery_message_pin_id';
+    const selectColumns = 'order_pin_id, payment_txid, order_message_txid, order_message_pin_id, delivery_message_pin_id';
 
     const buildParams = (chainTxid: string): (string | number)[] => {
       const params: (string | number)[] = [
@@ -2952,6 +2977,21 @@ export class CoworkStore implements MemoryBackend {
         if (orderRow) return orderRow;
       }
 
+      if (identifiers.metabotId != null && identifiers.peerGlobalMetaId && identifiers.orderPinId) {
+        const orderPinRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
+          SELECT ${selectColumns}
+          FROM service_orders
+          WHERE local_metabot_id = ?
+            AND counterparty_global_metaid = ?
+            AND order_pin_id = ?
+            ${roleClause}
+            ${deliveryClause}
+          ${orderBy}
+          LIMIT 1
+        `, buildParams(identifiers.orderPinId));
+        if (orderPinRow) return orderPinRow;
+      }
+
       if (identifiers.metabotId != null && identifiers.peerGlobalMetaId && identifiers.paymentTxid) {
         const paymentRow = this.getOne<ServiceOrderSimplemsgBackfillRow>(`
           SELECT ${selectColumns}
@@ -2967,7 +3007,7 @@ export class CoworkStore implements MemoryBackend {
         if (paymentRow) return paymentRow;
       }
 
-      if (identifiers.orderMessageTxid || identifiers.paymentTxid) {
+      if (identifiers.orderMessageTxid || identifiers.orderPinId || identifiers.paymentTxid) {
         return null;
       }
 
@@ -3061,6 +3101,7 @@ export class CoworkStore implements MemoryBackend {
           tag: 'DELIVERY',
           orderTxid: typeof mappingMetadata.orderTxid === 'string' ? mappingMetadata.orderTxid : null,
           orderRole: 'seller',
+          orderPinId: String(orderRow?.order_pin_id || mappingMetadata.serviceOrderPinId || mappingMetadata.orderPinId || ''),
           paymentTxid: normalizeA2AChainTxid(orderRow?.payment_txid)
             || normalizeA2AChainTxid(mappingMetadata.servicePaidTx)
             || undefined,

@@ -21,6 +21,7 @@ export interface EnsureBuyerOrderObserverSessionInput {
   serviceOutputType?: string | null;
   serverBotGlobalMetaId?: string | null;
   servicePaidTx?: string | null;
+  serviceOrderPinId?: string | null;
   orderTxid?: string | null;
   orderMessagePinId?: string | null;
   orderMessageTxid?: string | null;
@@ -38,6 +39,7 @@ export interface EnsureBuyerOrderObserverSessionResult {
 export interface ReindexBuyerOrderObserverSessionByOrderTxidInput {
   metabotId: number;
   peerGlobalMetaId: string;
+  serviceOrderPinId?: string | null;
   paymentTxid?: string | null;
   orderTxid: string;
   currentExternalConversationId?: string | null;
@@ -67,6 +69,7 @@ function parseMetadataJson(value: string | null | undefined): Record<string, unk
 export function buildBuyerOrderObserverConversationId(input: {
   metabotId: number;
   peerGlobalMetaId: string;
+  serviceOrderPinId?: string | null;
   paymentTxid?: string | null;
   orderTxid?: string | null;
 }): string {
@@ -74,6 +77,7 @@ export function buildBuyerOrderObserverConversationId(input: {
     role: 'buyer',
     metabotId: input.metabotId,
     peerGlobalMetaId: input.peerGlobalMetaId,
+    serviceOrderPinId: input.serviceOrderPinId,
     paymentTxid: input.paymentTxid,
     orderTxid: input.orderTxid,
   });
@@ -101,6 +105,7 @@ export async function ensureBuyerOrderObserverSession(
     serviceOutputType: input.serviceOutputType,
     serverBotGlobalMetaId: input.serverBotGlobalMetaId,
     servicePaidTx: input.servicePaidTx,
+    serviceOrderPinId: input.serviceOrderPinId,
     orderTxid: input.orderTxid || input.orderMessageTxid,
     orderMessagePinId: input.orderMessagePinId,
     orderMessageTxid: input.orderMessageTxid,
@@ -134,6 +139,7 @@ export function reindexBuyerOrderObserverSessionByOrderTxid(
   const paymentExternalConversationId = buildBuyerOrderObserverConversationId({
     metabotId: input.metabotId,
     peerGlobalMetaId: input.peerGlobalMetaId,
+    serviceOrderPinId: input.serviceOrderPinId,
     paymentTxid: input.paymentTxid,
   });
   const candidateExternalConversationIds = Array.from(new Set([

@@ -32,12 +32,14 @@ export function buildOrderProtocolDisplayMetadata(input: {
   tag: SimplemsgProtocolTag;
   orderTxid?: string | null;
   orderRole?: 'buyer' | 'seller' | string | null;
+  orderPinId?: string | null;
   paymentTxid?: string | null;
   orderMappingExternalConversationId?: string | null;
   extra?: Record<string, unknown> | null;
 }): Record<string, unknown> {
   const orderTxid = String(input.orderTxid || '').trim();
   const paymentTxid = String(input.paymentTxid || '').trim();
+  const orderPinId = String(input.orderPinId || '').trim();
   const orderRole = String(input.orderRole || '').trim();
   const orderMappingExternalConversationId = String(input.orderMappingExternalConversationId || '').trim();
   return {
@@ -49,6 +51,7 @@ export function buildOrderProtocolDisplayMetadata(input: {
     orderProtocolTag: input.tag,
     ...(orderTxid ? { orderTxid } : {}),
     ...(orderRole ? { orderRole } : {}),
+    ...(orderPinId ? { serviceOrderPinId: orderPinId, orderPinId } : {}),
     ...(paymentTxid ? { paymentTxid, orderPaymentTxid: paymentTxid } : {}),
     ...(orderMappingExternalConversationId ? { orderMappingExternalConversationId } : {}),
   };
