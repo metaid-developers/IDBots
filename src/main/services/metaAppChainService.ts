@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fetchContentWithFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './localIndexerProxy';
+import { fetchMetaidInfoByMetaid } from './metabotRestoreService';
 
 let AdmZip: typeof import('adm-zip') | null = null;
 try {
@@ -44,11 +45,21 @@ type FetchListFn = (
   input?: CommunityMetaAppListPageInput,
 ) => Promise<unknown[] | CommunityMetaAppListPage>;
 
+type CommunityMetaAppAuthorInfo = {
+  name?: string;
+  avatar?: string;
+  avatarId?: string;
+  avatarPinId?: string;
+};
+
+type FetchAuthorInfoFn = (creatorMetaId: string) => Promise<CommunityMetaAppAuthorInfo | null>;
+
 type FetchZipFn = (pinId: string) => Promise<Buffer>;
 
 type ListCommunityMetaAppsInput = {
   manager: Pick<MetaAppManagerLike, 'listMetaApps'>;
   fetchList?: FetchListFn;
+  fetchAuthorInfo?: FetchAuthorInfoFn;
   cursor?: string;
   size?: number;
 };
@@ -98,6 +109,8 @@ export type CommunityMetaAppRecord = {
   indexFile: string;
   codeUri: string;
   codePinId: string;
+  authorName?: string;
+  authorAvatar?: string;
   status: CommunityMetaAppStatus;
   installable: boolean;
   reason: string;
@@ -196,6 +209,54 @@ const normalizeFetchListResult = (value: unknown): CommunityMetaAppListPage => {
   const nextCursor = asText(data?.nextCursor ?? parsed.nextCursor) || null;
 
   return { list, nextCursor };
+};
+
+const authorInfoCache = new Map<string, Promise<CommunityMetaAppAuthorInfo | null>>();
+
+const defaultFetchAuthorInfo: FetchAuthorInfoFn = async (creatorMetaId) => {
+  const normalized = asText(creatorMetaId);
+  if (!normalized) return null;
+
+  const cached = authorInfoCache.get(normalized);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = fetchMetaidInfoByMetaid(normalized)
+    .then((info) => (info ? {
+      name: info.name,
+      avatar: info.avatar,
+      avatarId: info.avatarId,
+      avatarPinId: info.avatarPinId,
+    } : null))
+    .catch((error) => {
+      authorInfoCache.delete(normalized);
+      console.warn('[metaapp-chain] author info fetch failed', normalized, error instanceof Error ? error.message : String(error));
+      return null;
+    });
+
+  authorInfoCache.set(normalized, pending);
+  return pending;
+};
+
+const resolveAuthorAvatarReference = (authorInfo: CommunityMetaAppAuthorInfo | null | undefined): string => {
+  const avatar = asText(authorInfo?.avatar);
+  if (avatar) {
+    return avatar;
+  }
+  const avatarReference = asText(authorInfo?.avatarId || authorInfo?.avatarPinId);
+  if (!avatarReference) {
+    return '';
+  }
+  if (
+    avatarReference.startsWith('/')
+    || avatarReference.startsWith('data:')
+    || /^https?:\/\//i.test(avatarReference)
+    || avatarReference.toLowerCase().startsWith('metafile://')
+  ) {
+    return avatarReference;
+  }
+  return `metafile://${avatarReference}`;
 };
 
 const normalizeVersion = (value: string): string => {
@@ -379,11 +440,14 @@ const resolveInstallability = (
 const toCommunityRecord = (
   chain: ChainMetaAppCandidate,
   localMap: Map<string, LocalMetaAppLike>,
+  authorInfo?: CommunityMetaAppAuthorInfo | null,
 ): CommunityMetaAppRecord => {
   const appId = sanitizeAppId(chain.payload.appName || chain.payload.title, chain.sourcePinId);
   const localApp = localMap.get(appId);
   const installability = resolveInstallability(chain, localApp);
   const codePinId = extractMetafilePinId(chain.payload.code);
+  const authorName = asText(authorInfo?.name);
+  const authorAvatar = resolveAuthorAvatarReference(authorInfo);
 
   return {
     appId,
@@ -399,6 +463,8 @@ const toCommunityRecord = (
     indexFile: chain.payload.indexFile,
     codeUri: chain.payload.code,
     codePinId,
+    authorName: authorName || undefined,
+    authorAvatar: authorAvatar || undefined,
     status: installability.status,
     installable: installability.installable,
     reason: installability.reason,
@@ -458,8 +524,15 @@ export async function listCommunityMetaApps(input: ListCommunityMetaAppsInput): 
       .map((item) => decodeChainPayload(item))
       .filter((item): item is ChainMetaAppCandidate => Boolean(item));
 
+    const fetchAuthorInfo = input.fetchAuthorInfo || defaultFetchAuthorInfo;
+    const authorEntries = await Promise.all(
+      [...new Set(decoded.map((item) => asText(item.creatorMetaId)).filter(Boolean))]
+        .map(async (creatorMetaId) => [creatorMetaId, await fetchAuthorInfo(creatorMetaId)] as const),
+    );
+    const authorMap = new Map(authorEntries);
+
     const records = decoded
-      .map((item) => toCommunityRecord(item, localMap))
+      .map((item) => toCommunityRecord(item, localMap, authorMap.get(asText(item.creatorMetaId))))
       .sort((a, b) => b.publishedAt - a.publishedAt || a.name.localeCompare(b.name));
 
     return {

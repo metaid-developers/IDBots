@@ -5,6 +5,7 @@ const METAFILE_ACCELERATE_CONTENT_API_BASE_URL = 'https://file.metaid.io/metafil
 type MetaAppVisualRecord = {
   icon?: string;
   cover?: string;
+  authorAvatar?: string;
 };
 
 type ResolveMetaAppVisualOptions = {
@@ -45,6 +46,7 @@ export const resolveMetaAppVisualFields = async <T extends MetaAppVisualRecord>(
       ...record,
       icon: resolveRemoteAssetUrl(record.icon),
       cover: resolveRemoteAssetUrl(record.cover),
+      authorAvatar: resolveRemoteAssetUrl(record.authorAvatar),
     };
   }
 

@@ -69,7 +69,7 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
     },
     {
       id: 'pin-uninstallable',
-      globalMetaId: 'idq1creator',
+      globalMetaId: 'idq1native',
       timestamp: nowTs,
       contentSummary: JSON.stringify({
         title: 'Native only',
@@ -92,6 +92,18 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
   const result = await listCommunityMetaApps({
     manager,
     fetchList: async () => fetched,
+    fetchAuthorInfo: async (creatorMetaId) => {
+      if (creatorMetaId === 'idq1creator') {
+        return { name: 'Creator Bot', avatar: '/content/avatar-creator' };
+      }
+      if (creatorMetaId === 'idq1another') {
+        return { name: 'Another Bot', avatar: 'metafile://avatar-another' };
+      }
+      if (creatorMetaId === 'idq1native') {
+        return { name: 'Native Bot', avatarId: '/content/avatar-native' };
+      }
+      return null;
+    },
   });
 
   assert.equal(result.success, true);
@@ -105,15 +117,21 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
   assert.equal(buzz.codePinId, 'zip-buzz');
   assert.equal(buzz.icon, 'metafile://icon-buzz');
   assert.equal(buzz.cover, 'metafile://cover-buzz');
+  assert.equal(buzz.authorName, 'Creator Bot');
+  assert.equal(buzz.authorAvatar, '/content/avatar-creator');
 
   const chat = result.apps.find((app) => app.appId === 'chat');
   assert.ok(chat);
   assert.equal(chat.status, 'uninstallable');
+  assert.equal(chat.authorName, 'Another Bot');
+  assert.equal(chat.authorAvatar, 'metafile://avatar-another');
   assert.match(chat.reason || '', /冲突|conflict|阻止覆盖安装/i);
 
   const nativeOnly = result.apps.find((app) => app.appId === 'native-only');
   assert.ok(nativeOnly);
   assert.equal(nativeOnly.status, 'uninstallable');
+  assert.equal(nativeOnly.authorName, 'Native Bot');
+  assert.equal(nativeOnly.authorAvatar, '/content/avatar-native');
   assert.match(nativeOnly.reason || '', /browser/i);
 });
 

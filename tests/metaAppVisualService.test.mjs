@@ -25,6 +25,7 @@ test('resolveMetaAppVisualFields maps chain metafile visuals to browser URLs wit
         name: 'Chain App',
         icon: 'metafile://icon-pin-i0',
         cover: 'metafile://cover-pin-i0',
+        authorAvatar: '/content/avatar-pin-i0',
       },
       { preferRemoteAssetUrls: true },
     );
@@ -36,6 +37,10 @@ test('resolveMetaAppVisualFields maps chain metafile visuals to browser URLs wit
     assert.equal(
       result.cover,
       'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/cover-pin-i0',
+    );
+    assert.equal(
+      result.authorAvatar,
+      'https://file.metaid.io/metafile-indexer/api/v1/files/accelerate/content/avatar-pin-i0',
     );
     assert.equal(result.name, 'Chain App');
   } finally {
