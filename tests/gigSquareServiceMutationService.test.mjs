@@ -165,20 +165,124 @@ test('validateGigSquareModifyDraft accepts zero price for free services', () => 
   assert.equal(result.ok, true);
 });
 
-test('validateGigSquareModifyDraft rejects prepaid services without a positive price', () => {
+test('validateGigSquareModifyDraft accepts empty price for default free services', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    price: '',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(normalizeGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    price: '',
+    currency: 'SPACE',
+    outputType: 'text',
+  }).price, '0');
+});
+
+test('validateGigSquareModifyDraft rejects invalid raw price strings', () => {
+  for (const price of ['abc', '-1', '1e2', '1.2.3']) {
+    const result = validateGigSquareModifyDraft({
+      serviceName: 'svc',
+      displayName: 'SVC',
+      description: 'desc',
+      providerSkill: 'skill',
+      price,
+      currency: 'SPACE',
+      outputType: 'text',
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'price_invalid');
+  }
+});
+
+test('validateGigSquareModifyDraft rejects unsupported paymentTiming values', () => {
+  for (const paymentTiming of ['postpaid', 'later']) {
+    const result = validateGigSquareModifyDraft({
+      serviceName: 'svc',
+      displayName: 'SVC',
+      description: 'desc',
+      providerSkill: 'skill',
+      paymentTiming,
+      price: '0',
+      currency: 'SPACE',
+      outputType: 'text',
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'payment_timing_invalid');
+  }
+});
+
+test('validateGigSquareModifyDraft accepts free services with a positive raw price as zero', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    paymentTiming: 'free',
+    price: '1.25',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  const normalized = normalizeGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    paymentTiming: 'free',
+    price: '1.25',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(normalized.paymentTiming, 'free');
+  assert.equal(normalized.price, '0');
+});
+
+test('validateGigSquareModifyDraft rejects prepaid services with empty or zero price', () => {
+  for (const price of ['', '0']) {
+    const result = validateGigSquareModifyDraft({
+      serviceName: 'svc',
+      displayName: 'SVC',
+      description: 'desc',
+      providerSkill: 'skill',
+      paymentTiming: 'prepaid',
+      price,
+      currency: 'SPACE',
+      outputType: 'text',
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'price_positive_required');
+  }
+});
+
+test('validateGigSquareModifyDraft rejects prepaid services with invalid price syntax', () => {
   const result = validateGigSquareModifyDraft({
     serviceName: 'svc',
     displayName: 'SVC',
     description: 'desc',
     providerSkill: 'skill',
     paymentTiming: 'prepaid',
-    price: '0',
+    price: '1e2',
     currency: 'SPACE',
     outputType: 'text',
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.errorCode, 'price_positive_required');
+  assert.equal(result.errorCode, 'price_invalid');
 });
 
 test('validateGigSquareModifyDraft rejects MRC20 v1.1 publish drafts', () => {

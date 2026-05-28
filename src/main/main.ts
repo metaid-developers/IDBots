@@ -7036,7 +7036,7 @@ if (!gotTheLock) {
     description: string;
     executionReminder?: string;
     providerSkills?: string[];
-    providerSkill: string;
+    providerSkill?: string;
     paymentTiming?: 'free' | 'prepaid' | string;
     price: string;
     currency: string;

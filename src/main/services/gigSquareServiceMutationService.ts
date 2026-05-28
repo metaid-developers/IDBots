@@ -117,6 +117,7 @@ export interface GigSquareSettlementAddressOwner {
 
 const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
 const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'audio', 'other']);
+const GIG_SQUARE_PRICE_PATTERN = /^\d+(?:\.\d+)?$/;
 const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
   BTC: 1,
   MVC: 100000,
@@ -321,11 +322,19 @@ export const normalizeGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigS
 
 export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSquareMutationValidationResult => {
   const normalized = normalizeGigSquareModifyDraft(draft);
+  const rawPaymentTiming = toSafeString(draft.paymentTiming).trim().toLowerCase();
+  const rawPrice = toSafeString(draft.price).trim();
   const requestedPaymentTiming = normalizeDraftPaymentTiming(draft.paymentTiming);
   if (!normalized.serviceName) return { ok: false, error: 'serviceName is required', errorCode: 'service_name_required' };
   if (!normalized.displayName) return { ok: false, error: 'displayName is required', errorCode: 'display_name_required' };
   if (!normalized.description) return { ok: false, error: 'description is required', errorCode: 'description_required' };
   if (!normalized.providerSkills?.length) return { ok: false, error: 'providerSkill is required', errorCode: 'provider_skill_required' };
+  if (rawPaymentTiming && !requestedPaymentTiming) {
+    return { ok: false, error: 'paymentTiming is invalid', errorCode: 'payment_timing_invalid' };
+  }
+  if (rawPrice && !GIG_SQUARE_PRICE_PATTERN.test(rawPrice)) {
+    return { ok: false, error: 'price is invalid', errorCode: 'price_invalid' };
+  }
 
   if (!GIG_SQUARE_ALLOWED_CURRENCIES.has(normalized.currency)) {
     return { ok: false, error: 'currency is invalid', errorCode: 'currency_invalid' };
@@ -406,6 +415,7 @@ export const resolveGigSquareSettlementPaymentAddress = (input: {
   owner?: GigSquareSettlementAddressOwner | null;
   settlement: ReturnType<typeof normalizeGigSquareSettlementDraft>;
 }): string => {
+  // Legacy paymentAddress/MRC20 routing helper; v1.1 skill-service publish does not serialize paymentAddress.
   const owner = input.owner;
   if (!owner) return '';
   if (input.settlement.paymentChain === 'btc') return toSafeString(owner.btc_address).trim();
