@@ -107,6 +107,7 @@ import { assignGroupChatTask, type AssignGroupChatTaskParams } from './services/
 import { cancelActiveDownload, downloadUpdate, installUpdate } from './libs/appUpdateInstaller';
 import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss, isEmptyListDataPayload } from './services/localIndexerProxy';
 import { resolveMetaidAvatarSource, resolvePinAssetSource } from './services/pinAssetService';
+import { resolveMetaAppVisualFields } from './services/metaAppVisualService';
 import * as p2pIndexerService from './services/p2pIndexerService';
 import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
@@ -221,29 +222,6 @@ import { GigSquareRefundsService } from './services/gigSquareRefundsService';
 // 设置应用程序名称
 app.name = APP_NAME;
 app.setName(APP_NAME);
-
-const normalizeMetaAppVisualFallback = (value?: string): string | undefined => {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
-    return undefined;
-  }
-  if (normalized.toLowerCase().startsWith('metafile://')) {
-    return undefined;
-  }
-  return normalized;
-};
-
-const resolveMetaAppVisualFields = async <T extends { icon?: string; cover?: string }>(record: T): Promise<T> => {
-  const [icon, cover] = await Promise.all([
-    record.icon ? resolvePinAssetSource(record.icon) : Promise.resolve(null),
-    record.cover ? resolvePinAssetSource(record.cover) : Promise.resolve(null),
-  ]);
-  return {
-    ...record,
-    icon: icon || normalizeMetaAppVisualFallback(record.icon),
-    cover: cover || normalizeMetaAppVisualFallback(record.cover),
-  };
-};
 
 const LEGACY_APP_NAMES = ['OctoBot', 'octobot'];
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
@@ -4771,7 +4749,9 @@ if (!gotTheLock) {
       if (!result.success || !result.apps) {
         return result;
       }
-      const apps = await Promise.all(result.apps.map((app) => resolveMetaAppVisualFields(app)));
+      const apps = await Promise.all(result.apps.map((app) => resolveMetaAppVisualFields(app, {
+        preferRemoteAssetUrls: true,
+      })));
       return { ...result, apps };
     } catch (error) {
       return { success: false, apps: [], error: error instanceof Error ? error.message : 'Failed to list community MetaApps' };
