@@ -181,7 +181,7 @@ test('validateGigSquareModifyDraft rejects prepaid services without a positive p
   assert.equal(result.errorCode, 'price_positive_required');
 });
 
-test('validateGigSquareModifyDraft rejects invalid MRC20 ticker formats', () => {
+test('validateGigSquareModifyDraft rejects MRC20 v1.1 publish drafts', () => {
   const result = validateGigSquareModifyDraft({
     serviceName: 'svc',
     displayName: 'SVC',
@@ -196,7 +196,7 @@ test('validateGigSquareModifyDraft rejects invalid MRC20 ticker formats', () => 
 
   assert.equal(result.ok, false);
   assert.equal(result.errorCode, 'currency_invalid');
-  assert.match(result.error || '', /MRC20 ticker is invalid/);
+  assert.match(result.error || '', /currency is invalid/);
 });
 
 test('buildGigSquareServicePayload builds free skill-service v1.1 payloads without tuple or legacy payment fields', () => {
@@ -221,7 +221,7 @@ test('buildGigSquareServicePayload builds free skill-service v1.1 payloads witho
   assert.equal(payload.currency, 'SPACE');
   assert.equal(payload.settlementKind, 'native');
   assert.equal(payload.metadata, '');
-  for (const omittedField of ['version', 'paymentAddress', 'paymentChain', 'orderId']) {
+  for (const omittedField of ['version', 'paymentAddress', 'paymentChain', 'orderId', 'mrc20Ticker', 'mrc20Id']) {
     assert.equal(Object.hasOwn(payload, omittedField), false);
   }
 
@@ -264,6 +264,8 @@ test('buildGigSquareServicePayload builds prepaid skill-service v1.1 payment ter
   assert.equal(payload.settlementKind, 'fiat');
   assert.equal(payload.metadata, 'free-form note');
   assert.equal(Object.hasOwn(payload, 'paymentAddress'), false);
+  assert.equal(Object.hasOwn(payload, 'mrc20Ticker'), false);
+  assert.equal(Object.hasOwn(payload, 'mrc20Id'), false);
 });
 
 test('buildGigSquareServicePayload serializes execution reminder before skill metadata', () => {
@@ -303,7 +305,7 @@ test('normalizeGigSquareModifyDraft allows empty execution reminder so modificat
   assert.equal(normalized.executionReminder, '');
 });
 
-test('buildGigSquareServicePayload keeps legacy MRC20 draft compatibility without publishing paymentAddress', () => {
+test('buildGigSquareServicePayload omits MRC20 protocol fields from v1.1 payloads', () => {
   const payload = buildGigSquareServicePayload({
     draft: {
       serviceName: 'weather',
@@ -311,18 +313,17 @@ test('buildGigSquareServicePayload keeps legacy MRC20 draft compatibility withou
       description: 'desc',
       providerSkill: 'forecast',
       price: '12',
-      currency: 'MRC20',
-      mrc20Ticker: 'metaid',
-      mrc20Id: 'tick-metaid',
+      currency: 'SPACE',
+      mrc20Ticker: 'ignored',
+      mrc20Id: 'ignored',
       outputType: 'text',
     },
     providerGlobalMetaId: 'global-metaid-1',
   });
 
-  assert.equal(payload.currency, 'METAID-MRC20');
-  assert.equal(payload.settlementKind, 'native');
-  assert.equal(payload.mrc20Ticker, 'METAID');
-  assert.equal(payload.mrc20Id, 'tick-metaid');
+  assert.equal(payload.currency, 'SPACE');
+  assert.equal(Object.hasOwn(payload, 'mrc20Ticker'), false);
+  assert.equal(Object.hasOwn(payload, 'mrc20Id'), false);
   assert.equal(Object.hasOwn(payload, 'paymentChain'), false);
   assert.equal(Object.hasOwn(payload, 'paymentAddress'), false);
 });

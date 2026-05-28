@@ -115,7 +115,7 @@ export interface GigSquareSettlementAddressOwner {
   doge_address?: string | null;
 }
 
-const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE', 'MRC20']);
+const GIG_SQUARE_ALLOWED_CURRENCIES = new Set(['BTC', 'MVC', 'DOGE', 'SPACE']);
 const GIG_SQUARE_ALLOWED_OUTPUT_TYPES = new Set(['text', 'image', 'video', 'audio', 'other']);
 const GIG_SQUARE_PRICE_LIMITS: Record<string, number> = {
   BTC: 1,
@@ -374,6 +374,9 @@ export const buildGigSquareServicePayload = (input: {
   if (!normalized.providerSkills?.length) {
     throw new Error('providerSkill is required');
   }
+  if (normalized.currency === 'MRC20') {
+    throw new Error('currency is invalid');
+  }
   const settlement = normalizeGigSquareSettlementDraft({
     currency: normalized.currency,
     mrc20Ticker: normalized.mrc20Ticker,
@@ -390,8 +393,6 @@ export const buildGigSquareServicePayload = (input: {
     currency: settlement.protocolCurrency,
     paymentTiming: normalized.paymentTiming || 'free',
     settlementKind: normalizeProtocolSettlementKind(normalized.protocolSettlementKind),
-    mrc20Ticker: settlement.mrc20Ticker,
-    mrc20Id: settlement.mrc20Id,
     metadata: normalized.metadata || '',
     executionReminder: normalized.executionReminder || '',
     skillDocument: '',
