@@ -3381,12 +3381,12 @@ const executeDelegationPipeline = async (
     userTask: delegation.userTask,
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
     providerSkill: toSafeString(service.providerSkill).trim(),
+    providerSkills: Array.isArray(service.providerSkills) ? service.providerSkills.map(toSafeString) : null,
     servicePinId: delegation.servicePinId,
     outputType: toSafeString(service.outputType).trim() || 'text',
     paymentTxid: isFreeDelegation ? '' : paymentTxid,
     paymentCommitTxid: isFreeDelegation ? null : paymentCommitTxid,
     orderPinId: serviceOrderPinId,
-    orderReference: serviceOrderPinId,
     settlement: delegationSettlement,
   });
 

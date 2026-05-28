@@ -36,6 +36,21 @@ test('buildBuyerOrderMessageSystemPrompt keeps the LLM in buyer perspective and 
   assert.match(prompt, /查询东京现在的天气/);
 });
 
+test('buildBuyerOrderMessageSystemPrompt names free order metadata as order pin id', () => {
+  const prompt = buildBuyerOrderMessageSystemPrompt({
+    price: '0',
+    currency: 'SPACE',
+    txid: '',
+    orderReference: 'order-pin-i0',
+    serviceId: 'service-weather',
+    skillName: 'weather',
+    requestText: '查询北京现在的天气',
+  });
+
+  assert.match(prompt, /order pin id order-pin-i0/i);
+  assert.doesNotMatch(prompt, /order id order-pin-i0/i);
+});
+
 test('normalizeBuyerOrderNaturalText falls back when the generated text sounds like seller-side payment handling chatter', () => {
   const requestText = '查询北京天气';
   const normalized = normalizeBuyerOrderNaturalText(
@@ -174,6 +189,7 @@ test('buildGigSquareOrderPayload includes order pin id and omits payment settlem
     currency: 'SPACE',
     txid: '',
     orderPinId,
+    orderReference: 'legacy-order-id',
     serviceId: 'service-weather',
     skillName: 'weather',
     paymentChain: 'mvc',
@@ -183,6 +199,7 @@ test('buildGigSquareOrderPayload includes order pin id and omits payment settlem
 
   assert.match(payload, /支付金额 0 SPACE/);
   assert.match(payload, new RegExp(`order pin id:\\s*${orderPinId}`, 'i'));
+  assert.doesNotMatch(payload, /order id:\s*legacy-order-id/i);
   assert.doesNotMatch(payload, /txid:/i);
   assert.doesNotMatch(payload, /payment chain:/i);
   assert.doesNotMatch(payload, /settlement kind:/i);

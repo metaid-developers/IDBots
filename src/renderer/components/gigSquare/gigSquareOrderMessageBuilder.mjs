@@ -143,10 +143,10 @@ export function buildBuyerOrderMessageSystemPrompt(input) {
   const numericPrice = Number(normalizeText(input?.price));
   const isFreeOrder = Number.isFinite(numericPrice) && numericPrice === 0;
   const txid = normalizeText(input?.txid) || 'the payment txid';
-  const orderReference = normalizeText(input?.orderReference) || 'the order id';
+  const orderReference = normalizeText(input?.orderReference) || 'the order pin id';
   const serviceId = normalizeText(input?.serviceId) || 'the service id';
   const structuredMetadataSummary = isFreeOrder
-    ? `Structured metadata will be appended separately after your sentence: payment amount ${price} ${currency}, order id ${orderReference}, service id ${serviceId}, required skill ${skillName}. Do not restate any of those metadata fields.`
+    ? `Structured metadata will be appended separately after your sentence: payment amount ${price} ${currency}, order pin id ${orderReference}, service id ${serviceId}, required skill ${skillName}. Do not restate any of those metadata fields.`
     : `Structured metadata will be appended separately after your sentence: payment amount ${price} ${currency}, txid ${txid}, service id ${serviceId}, required skill ${skillName}. Do not restate any of those metadata fields.`;
 
   return [

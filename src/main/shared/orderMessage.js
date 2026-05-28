@@ -190,7 +190,7 @@ export function buildOrderPayload(input) {
   }
   if (paymentTxid) {
     metadataLines.push(`txid: ${paymentTxid}`);
-  } else if (orderReference) {
+  } else if (!orderPinId && orderReference) {
     metadataLines.push(`order id: ${orderReference}`);
   }
   if (!omitPaymentSettlementMetadata && settlement.paymentChain) {

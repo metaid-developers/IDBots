@@ -9,6 +9,7 @@ export interface BuildDelegationOrderPayloadInput {
   userTask?: string | null;
   serviceName?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
   servicePinId?: string | null;
   paymentTxid: string;
   paymentCommitTxid?: string | null;
@@ -120,6 +121,7 @@ export function buildDelegationOrderPayload(
     outputType: normalizeText(input.outputType),
     serviceId: normalizeText(input.servicePinId),
     skillName,
+    providerSkills: input.providerSkills ?? undefined,
     serviceName: normalizeText(input.serviceName),
   });
 }
