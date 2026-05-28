@@ -534,7 +534,7 @@ After commit, post a development-journal buzz.
 - Modify: `src/renderer/utils/gigSquare.ts`
 - Modify: `tests/gigSquareServiceCard.test.tsx`
 
-- [ ] **Step 1: Write failing parser tests**
+- [x] **Step 1: Write failing parser tests**
 
 Add tests to `tests/skillServiceProtocol.test.mjs` or a remote-sync test:
 
@@ -544,7 +544,7 @@ Add tests to `tests/skillServiceProtocol.test.mjs` or a remote-sync test:
 - v1.1 `providerSkill: ['a', 'b']` remains both skills.
 - v1.1 conflict `paymentTiming: 'free', price: '10'` displays free/effective price 0.
 
-- [ ] **Step 2: Update remote service parsing**
+- [x] **Step 2: Update remote service parsing**
 
 In `parseRemoteSkillServiceItem` and `parseRemoteSkillServiceRow`:
 
@@ -558,7 +558,7 @@ In `parseRemoteSkillServiceItem` and `parseRemoteSkillServiceRow`:
   - `metadata`: payload metadata string.
 - Preserve old `paymentAddress`, `paymentChain`, `mrc20Ticker`, `mrc20Id` only as legacy compatibility data.
 
-- [ ] **Step 3: Update renderer types and cards**
+- [x] **Step 3: Update renderer types and cards**
 
 Add to `GigSquareService` and `GigSquareMyServiceSummary`:
 
@@ -575,7 +575,7 @@ Display rules:
 - Paid services show amount and currency as today.
 - Skill allow-lists render as compact chips and wrap cleanly.
 
-- [ ] **Step 4: Run display tests**
+- [x] **Step 4: Run display tests**
 
 Run:
 
@@ -586,7 +586,7 @@ node --test tests/skillServiceProtocol.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/services/gigSquareRemoteServiceSync.ts src/main/services/gigSquareMyServicesService.ts src/main/services/gigSquareServiceStateService.ts src/renderer/components/gigSquare/GigSquareServiceCard.tsx src/renderer/components/gigSquare/GigSquareMyServicesModal.tsx src/renderer/utils/gigSquare.ts src/renderer/types/gigSquare.ts tests/gigSquareServiceCard.test.tsx tests/skillServiceProtocol.test.mjs
