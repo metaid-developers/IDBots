@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const packageJsonPath = path.join(process.cwd(), 'package.json');
+const mainProcessPath = path.join(process.cwd(), 'src', 'main', 'main.ts');
 const skillManagerPath = path.join(process.cwd(), 'src', 'main', 'skillManager.ts');
 const coworkRunnerPath = path.join(process.cwd(), 'src', 'main', 'libs', 'coworkRunner.ts');
 const claudeSdkCliPatchScriptPath = path.join(process.cwd(), 'scripts', 'patch-claude-sdk-cli.js');
@@ -60,6 +61,34 @@ test('web-search skill build must go through the runtime bootstrap wrapper', () 
     aggregateBuildScript,
     /node\s+scripts\/build-web-search-skill\.js/,
     'build:skills should use the same web-search bootstrap script so electron:dev works in fresh worktrees',
+  );
+});
+
+test('electron dev scripts use IPv4 loopback for Vite readiness', () => {
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  const mainProcessSource = fs.readFileSync(mainProcessPath, 'utf8');
+  const electronDevScript = packageJson.scripts?.['electron:dev'] || '';
+  const startElectronScript = packageJson.scripts?.['start:electron'] || '';
+
+  assert.match(
+    electronDevScript,
+    /http:\/\/127\.0\.0\.1:5175/,
+    'electron:dev should wait for the Vite server on IPv4 loopback so localhost cannot resolve to an unrelated ::1 listener',
+  );
+  assert.doesNotMatch(
+    electronDevScript,
+    /http:\/\/localhost:5175/,
+    'electron:dev should not wait on localhost because wait-on may probe IPv6 ::1 before this project server',
+  );
+  assert.match(
+    startElectronScript,
+    /ELECTRON_START_URL=http:\/\/127\.0\.0\.1:5175/,
+    'Electron should load the same IPv4 loopback URL that electron:dev waits for',
+  );
+  assert.match(
+    mainProcessSource,
+    /ELECTRON_START_URL \|\| 'http:\/\/127\.0\.0\.1:5175'/,
+    'The main process development fallback should avoid localhost for direct Electron starts too',
   );
 });
 
