@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeProviderSkillList,
+  getLegacyProviderSkillFallback,
   getPrimaryProviderSkill,
   normalizeProtocolSettlementKind,
   normalizeSkillServiceCurrency,
@@ -20,7 +21,10 @@ test('normalizes v1.1 providerSkill arrays without order semantics', () => {
   );
 });
 
-test('returns the first normalized provider skill or an empty string', () => {
+test('returns a legacy single providerSkill fallback without adding execution order semantics', () => {
+  assert.equal(getLegacyProviderSkillFallback(['', ' weather ', 'reporter']), 'weather');
+  assert.equal(getLegacyProviderSkillFallback([]), '');
+  assert.equal(getLegacyProviderSkillFallback(null), '');
   assert.equal(getPrimaryProviderSkill(['', ' weather ', 'reporter']), 'weather');
   assert.equal(getPrimaryProviderSkill([]), '');
   assert.equal(getPrimaryProviderSkill(null), '');
@@ -40,6 +44,39 @@ test('v1.0 zero, missing, or invalid price defaults to free', () => {
   assert.equal(resolveSkillServicePaymentTerms({ price: '0' }).paymentTiming, 'free');
   assert.equal(resolveSkillServicePaymentTerms({}).paymentTiming, 'free');
   assert.equal(resolveSkillServicePaymentTerms({ price: 'not-a-number' }).paymentTiming, 'free');
+});
+
+test('rejects non-canonical numeric price forms as free compatibility semantics', () => {
+  for (const price of ['0x10', '1e-8', '1e309', '+1', '-1', 'Infinity', 'NaN', '   ', {}]) {
+    assert.deepEqual(resolveSkillServicePaymentTerms({ price }), {
+      paymentTiming: 'free',
+      effectivePrice: '0',
+      currency: 'SPACE',
+      protocolSettlementKind: 'native',
+      isFree: true,
+    });
+  }
+});
+
+test('accepts trimmed plain positive decimal price strings without JS Number coercion', () => {
+  assert.deepEqual(resolveSkillServicePaymentTerms({ price: ' 1.25 ' }), {
+    paymentTiming: 'prepaid',
+    effectivePrice: '1.25',
+    currency: 'SPACE',
+    protocolSettlementKind: 'native',
+    isFree: false,
+  });
+
+  assert.deepEqual(resolveSkillServicePaymentTerms({
+    price: '0.000000000000000001',
+    currency: 'dogecoin',
+  }), {
+    paymentTiming: 'prepaid',
+    effectivePrice: '0.000000000000000001',
+    currency: 'DOGE',
+    protocolSettlementKind: 'native',
+    isFree: false,
+  });
 });
 
 test('normalizes protocol currency aliases', () => {
