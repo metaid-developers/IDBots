@@ -445,9 +445,13 @@ interface IElectronAPI {
       displayName: string;
       description: string;
       executionReminder?: string;
-      providerSkill: string;
+      providerSkills?: string[];
+      providerSkill?: string;
+      paymentTiming?: 'free' | 'prepaid' | string;
       price: string;
       currency: string;
+      protocolSettlementKind?: 'native' | 'fiat' | string;
+      metadata?: string;
       mrc20Ticker?: string;
       mrc20Id?: string;
       outputType: string;

@@ -211,7 +211,6 @@ import {
   buildGigSquareRevokeMetaidPayload,
   buildGigSquareServicePayload,
   normalizeGigSquareModifyDraft,
-  resolveGigSquareSettlementPaymentAddress,
   validateGigSquareModifyDraft,
   validateGigSquareServiceMutation,
   type GigSquareModifyDraft,
@@ -586,6 +585,10 @@ type GigSquareService = {
   serviceIcon?: string | null;
   providerMetaBot?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   status?: number;
   operation?: string | null;
   path?: string | null;
@@ -619,6 +622,7 @@ type GigSquareLocalServiceRecord = {
   metabotId: number;
   providerGlobalMetaId: string;
   providerSkill: string;
+  providerSkills: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -626,6 +630,9 @@ type GigSquareLocalServiceRecord = {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  paymentTiming: string | null;
+  protocolSettlementKind: string | null;
+  metadata: string;
   skillDocument: string;
   inputType: string;
   outputType: string;
@@ -800,6 +807,7 @@ const insertGigSquareServiceRow = (input: {
   metabotId: number;
   providerGlobalMetaId: string;
   providerSkill: string;
+  providerSkills?: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -807,6 +815,9 @@ const insertGigSquareServiceRow = (input: {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   skillDocument: string;
   inputType: string;
   outputType: string;
@@ -823,9 +834,10 @@ const insertGigSquareServiceRow = (input: {
     `
       INSERT INTO gig_square_services (
         id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid, provider_skill,
+        provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
         service_name, display_name, description, execution_reminder, service_icon, price, currency,
         skill_document, input_type, output_type, endpoint, payload_json, revoked_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         pin_id = excluded.pin_id,
         source_service_pin_id = excluded.source_service_pin_id,
@@ -834,6 +846,10 @@ const insertGigSquareServiceRow = (input: {
         metabot_id = excluded.metabot_id,
         provider_global_metaid = excluded.provider_global_metaid,
         provider_skill = excluded.provider_skill,
+        provider_skills_json = excluded.provider_skills_json,
+        payment_timing = excluded.payment_timing,
+        protocol_settlement_kind = excluded.protocol_settlement_kind,
+        metadata = excluded.metadata,
         service_name = excluded.service_name,
         display_name = excluded.display_name,
         description = excluded.description,
@@ -858,6 +874,10 @@ const insertGigSquareServiceRow = (input: {
       input.metabotId,
       input.providerGlobalMetaId,
       input.providerSkill,
+      input.providerSkills?.length ? JSON.stringify(input.providerSkills) : null,
+      toSafeString(input.paymentTiming).trim() || null,
+      toSafeString(input.protocolSettlementKind).trim() || null,
+      toSafeString(input.metadata),
       input.serviceName,
       input.displayName,
       input.description,
@@ -1055,7 +1075,8 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
   const db = getStore().getDatabase();
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid,
-           provider_skill, service_name, display_name, description, service_icon, price, currency,
+           provider_skill, provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
+           service_name, display_name, description, service_icon, price, currency,
            execution_reminder, skill_document, input_type, output_type, endpoint, payload_json, revoked_at, updated_at
     FROM gig_square_services
     ORDER BY updated_at DESC
@@ -1098,6 +1119,14 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       metabotId: Math.trunc(toSafeNumber(raw.metabot_id)),
       providerGlobalMetaId: toSafeString(raw.provider_global_metaid).trim(),
       providerSkill: toSafeString(raw.provider_skill).trim(),
+      providerSkills: (() => {
+        try {
+          const parsed = JSON.parse(toSafeString(raw.provider_skills_json));
+          return Array.isArray(parsed) ? parsed.map(toSafeString).map((item) => item.trim()).filter(Boolean) : [];
+        } catch {
+          return [];
+        }
+      })(),
       serviceName: toSafeString(raw.service_name).trim(),
       displayName: toSafeString(raw.display_name).trim(),
       description: toSafeString(raw.description).trim(),
@@ -1106,6 +1135,9 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       serviceIcon: toSafeString(raw.service_icon).trim() || null,
       price: toSafeString(raw.price).trim(),
       currency: settlement.protocolCurrency,
+      paymentTiming: toSafeString(raw.payment_timing).trim() || null,
+      protocolSettlementKind: toSafeString(raw.protocol_settlement_kind).trim() || null,
+      metadata: toSafeString(raw.metadata),
       settlementKind: settlement.settlementKind,
       paymentChain: settlement.paymentChain,
       mrc20Ticker: settlement.mrc20Ticker,
@@ -1178,6 +1210,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     creatorMetabotId?: number | null;
     providerGlobalMetaId?: string;
     providerSkill?: string | null;
+    providerSkills?: string[] | null;
     serviceName?: string;
     displayName?: string;
     description?: string;
@@ -1185,11 +1218,15 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     serviceIcon?: string | null;
     price?: string;
     currency?: string;
+    paymentTiming?: string | null;
+    protocolSettlementKind?: string | null;
+    metadata?: string | null;
     outputType?: string | null;
     endpoint?: string | null;
   };
   currentPinId: string;
   providerSkill: string;
+  providerSkills?: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -1197,6 +1234,9 @@ const updateGigSquareLocalServiceAfterModify = (input: {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   outputType: string;
   endpoint: string;
   payloadJson: string;
@@ -1212,6 +1252,10 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     `UPDATE gig_square_services
      SET current_pin_id = ?,
          provider_skill = ?,
+         provider_skills_json = ?,
+         payment_timing = ?,
+         protocol_settlement_kind = ?,
+         metadata = ?,
          service_name = ?,
          display_name = ?,
          description = ?,
@@ -1231,6 +1275,10 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     sanitizeDbParams([
       toSafeString(input.currentPinId).trim() || normalizedTargetServiceId,
       input.providerSkill,
+      input.providerSkills?.length ? JSON.stringify(input.providerSkills) : null,
+      toSafeString(input.paymentTiming).trim() || null,
+      toSafeString(input.protocolSettlementKind).trim() || null,
+      toSafeString(input.metadata),
       input.serviceName,
       input.displayName,
       input.description,
@@ -1253,6 +1301,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
       service: input.targetService,
       currentPinId: toSafeString(input.currentPinId).trim() || normalizedTargetServiceId,
       providerSkill: input.providerSkill,
+      providerSkills: input.providerSkills,
       serviceName: input.serviceName,
       displayName: input.displayName,
       description: input.description,
@@ -1260,6 +1309,9 @@ const updateGigSquareLocalServiceAfterModify = (input: {
       serviceIcon: input.serviceIcon,
       price: input.price,
       currency: input.currency,
+      paymentTiming: input.paymentTiming,
+      protocolSettlementKind: input.protocolSettlementKind,
+      metadata: input.metadata,
       outputType: input.outputType,
       endpoint: input.endpoint,
       payloadJson: input.payloadJson,
@@ -6983,9 +7035,13 @@ if (!gotTheLock) {
     displayName: string;
     description: string;
     executionReminder?: string;
+    providerSkills?: string[];
     providerSkill: string;
+    paymentTiming?: 'free' | 'prepaid' | string;
     price: string;
     currency: string;
+    protocolSettlementKind?: 'native' | 'fiat' | string;
+    metadata?: string;
     mrc20Ticker?: string;
     mrc20Id?: string;
     outputType: string;
@@ -6998,8 +7054,14 @@ if (!gotTheLock) {
       const description = toSafeString(params?.description).trim();
       const executionReminder = toSafeString(params?.executionReminder).trim();
       const providerSkill = toSafeString(params?.providerSkill).trim();
+      const providerSkills = Array.isArray(params?.providerSkills)
+        ? params.providerSkills.map(toSafeString)
+        : undefined;
+      const paymentTiming = toSafeString(params?.paymentTiming).trim();
       const price = toSafeString(params?.price).trim();
       const currencyRaw = toSafeString(params?.currency).trim().toUpperCase();
+      const protocolSettlementKind = toSafeString(params?.protocolSettlementKind).trim();
+      const metadata = toSafeString(params?.metadata);
       const mrc20Ticker = toSafeString(params?.mrc20Ticker).trim();
       const mrc20Id = toSafeString(params?.mrc20Id).trim();
       const outputType = toSafeString(params?.outputType).trim().toLowerCase();
@@ -7011,9 +7073,13 @@ if (!gotTheLock) {
         displayName,
         description,
         executionReminder,
+        providerSkills,
         providerSkill,
+        paymentTiming,
         price,
         currency: currencyRaw,
+        protocolSettlementKind,
+        metadata,
         mrc20Ticker,
         mrc20Id,
         outputType,
@@ -7062,11 +7128,6 @@ if (!gotTheLock) {
         serviceIconUri = `metafile://${fileResult.pinId}`;
       }
 
-      const paymentAddress = resolveGigSquareSettlementPaymentAddress({
-        owner: metabot,
-        settlement,
-      });
-
       const payload = buildGigSquareServicePayload({
         draft: {
           ...normalizedDraft,
@@ -7076,7 +7137,6 @@ if (!gotTheLock) {
           serviceIconUri: serviceIconUri || null,
         },
         providerGlobalMetaId: metabot.globalmetaid,
-        paymentAddress,
       });
 
       const payloadJson = JSON.stringify(payload);
@@ -7084,7 +7144,7 @@ if (!gotTheLock) {
         operation: 'create',
         path: GIG_SQUARE_SERVICE_PATH,
         encryption: '0',
-        version: '1.0.0',
+        version: '1.1.0',
         contentType: 'application/json',
         payload: payloadJson,
       });
@@ -7095,7 +7155,8 @@ if (!gotTheLock) {
         txid: result.txids?.[0] || '',
         metabotId,
         providerGlobalMetaId: metabot.globalmetaid,
-        providerSkill: normalizedDraft.providerSkill,
+        providerSkill: normalizedDraft.providerSkill || normalizedDraft.providerSkills?.[0] || '',
+        providerSkills: normalizedDraft.providerSkills || [],
         serviceName: normalizedDraft.serviceName,
         displayName: normalizedDraft.displayName,
         description: normalizedDraft.description,
@@ -7103,6 +7164,9 @@ if (!gotTheLock) {
         serviceIcon: serviceIconUri || null,
         price: normalizedDraft.price,
         currency: normalizedCurrency,
+        paymentTiming: normalizedDraft.paymentTiming || null,
+        protocolSettlementKind: normalizedDraft.protocolSettlementKind || null,
+        metadata: normalizedDraft.metadata || '',
         skillDocument: '',
         inputType: 'text',
         outputType: normalizedDraft.outputType,
@@ -7205,9 +7269,13 @@ if (!gotTheLock) {
     displayName?: string;
     description?: string;
     executionReminder?: string;
+    providerSkills?: string[];
     providerSkill?: string;
+    paymentTiming?: 'free' | 'prepaid' | string;
     price?: string;
     currency?: string;
+    protocolSettlementKind?: 'native' | 'fiat' | string;
+    metadata?: string;
     mrc20Ticker?: string;
     mrc20Id?: string;
     outputType?: string;
@@ -7244,6 +7312,10 @@ if (!gotTheLock) {
       }
 
       const hasExecutionReminderParam = Object.prototype.hasOwnProperty.call(params || {}, 'executionReminder');
+      const hasProviderSkillsParam = Object.prototype.hasOwnProperty.call(params || {}, 'providerSkills');
+      const hasPaymentTimingParam = Object.prototype.hasOwnProperty.call(params || {}, 'paymentTiming');
+      const hasProtocolSettlementKindParam = Object.prototype.hasOwnProperty.call(params || {}, 'protocolSettlementKind');
+      const hasMetadataParam = Object.prototype.hasOwnProperty.call(params || {}, 'metadata');
       const draft: GigSquareModifyDraft = {
         serviceName: toSafeString(params?.serviceName).trim() || toSafeString(currentService.serviceName).trim(),
         displayName: toSafeString(params?.displayName).trim() || toSafeString(currentService.displayName).trim(),
@@ -7251,12 +7323,22 @@ if (!gotTheLock) {
         executionReminder: hasExecutionReminderParam
           ? toSafeString(params?.executionReminder).trim()
           : toSafeString(currentService.executionReminder).trim(),
+        providerSkills: hasProviderSkillsParam && Array.isArray(params?.providerSkills)
+          ? params.providerSkills.map(toSafeString)
+          : currentService.providerSkills,
         providerSkill: toSafeString(params?.providerSkill).trim() || toSafeString(currentService.providerSkill).trim(),
+        paymentTiming: hasPaymentTimingParam
+          ? toSafeString(params?.paymentTiming).trim()
+          : toSafeString(currentService.paymentTiming).trim(),
         price: toSafeString(params?.price).trim() || toSafeString(currentService.price).trim(),
         currency: toSafeString(params?.currency).trim()
           || (toSafeString(currentService.settlementKind).trim().toLowerCase() === 'mrc20' ? 'MRC20' : toSafeString(currentService.currency).trim()),
+        protocolSettlementKind: hasProtocolSettlementKindParam
+          ? toSafeString(params?.protocolSettlementKind).trim()
+          : toSafeString(currentService.protocolSettlementKind || currentService.settlementKind).trim(),
         mrc20Ticker: toSafeString(params?.mrc20Ticker).trim() || toSafeString(currentService.mrc20Ticker).trim(),
         mrc20Id: toSafeString(params?.mrc20Id).trim() || toSafeString(currentService.mrc20Id).trim(),
+        metadata: hasMetadataParam ? toSafeString(params?.metadata) : toSafeString(currentService.metadata),
         outputType: toSafeString(params?.outputType).trim() || 'text',
       };
       const draftValidation = validateGigSquareModifyDraft(draft);
@@ -7281,10 +7363,6 @@ if (!gotTheLock) {
         mrc20Id: normalizedDraft.mrc20Id,
       });
       const normalizedCurrency = settlement.protocolCurrency;
-      const paymentAddress = resolveGigSquareSettlementPaymentAddress({
-        owner: creatorMetabot,
-        settlement,
-      });
 
       let serviceIconUri = toSafeString(currentService.serviceIcon).trim();
       const serviceIconDataUrl = toSafeString(params?.serviceIconDataUrl).trim();
@@ -7316,7 +7394,6 @@ if (!gotTheLock) {
           serviceIconUri: serviceIconUri || null,
         },
         providerGlobalMetaId: creatorMetabot.globalmetaid,
-        paymentAddress,
       });
       const payloadJson = JSON.stringify(payload);
       const result = await createPin(store, validation.creatorMetabotId, buildGigSquareModifyMetaidPayload({
@@ -7326,7 +7403,8 @@ if (!gotTheLock) {
       updateGigSquareLocalServiceAfterModify({
         targetService: currentService,
         currentPinId: toSafeString(result.pinId).trim() || currentService.currentPinId,
-        providerSkill: normalizedDraft.providerSkill,
+        providerSkill: normalizedDraft.providerSkill || normalizedDraft.providerSkills?.[0] || '',
+        providerSkills: normalizedDraft.providerSkills || [],
         serviceName: normalizedDraft.serviceName,
         displayName: normalizedDraft.displayName,
         description: normalizedDraft.description,
@@ -7334,6 +7412,9 @@ if (!gotTheLock) {
         serviceIcon: serviceIconUri || null,
         price: normalizedDraft.price,
         currency: normalizedCurrency,
+        paymentTiming: normalizedDraft.paymentTiming || null,
+        protocolSettlementKind: normalizedDraft.protocolSettlementKind || null,
+        metadata: normalizedDraft.metadata || '',
         outputType: normalizedDraft.outputType,
         endpoint: 'simplemsg',
         payloadJson,

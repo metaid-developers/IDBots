@@ -65,7 +65,7 @@ test('normalizeGigSquareModifyDraft normalizes network aliases to currency units
     serviceName: ' weather ',
     displayName: ' Weather ',
     description: ' desc ',
-    providerSkill: ' sky ',
+    providerSkills: [' sky ', '', 'report-writer', 'sky'],
     price: '0.1',
     currency: 'space',
     outputType: 'TEXT',
@@ -74,6 +74,8 @@ test('normalizeGigSquareModifyDraft normalizes network aliases to currency units
   assert.equal(normalized.currency, 'SPACE');
   assert.equal(normalized.outputType, 'text');
   assert.equal(normalized.serviceName, 'weather');
+  assert.deepEqual(normalized.providerSkills, ['sky', 'report-writer']);
+  assert.equal(normalized.providerSkill, 'sky');
 
   assert.equal(
     normalizeGigSquareModifyDraft({
@@ -100,6 +102,38 @@ test('normalizeGigSquareModifyDraft normalizes network aliases to currency units
     }).currency,
     'BTC',
   );
+});
+
+test('normalizeGigSquareModifyDraft keeps legacy providerSkill string compatibility', () => {
+  const normalized = normalizeGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: ' legacy-weather ',
+    price: '0',
+    currency: 'MVC',
+    outputType: 'text',
+  });
+
+  assert.deepEqual(normalized.providerSkills, ['legacy-weather']);
+  assert.equal(normalized.providerSkill, 'legacy-weather');
+});
+
+test('validateGigSquareModifyDraft rejects empty or invalid provider skill allow-lists', () => {
+  for (const providerSkills of [[], [' ', ''], [null, undefined]]) {
+    const result = validateGigSquareModifyDraft({
+      serviceName: 'svc',
+      displayName: 'SVC',
+      description: 'desc',
+      providerSkills,
+      price: '0',
+      currency: 'SPACE',
+      outputType: 'text',
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'provider_skill_required');
+  }
 });
 
 test('validateGigSquareModifyDraft rejects price beyond currency limit', () => {
@@ -131,6 +165,22 @@ test('validateGigSquareModifyDraft accepts zero price for free services', () => 
   assert.equal(result.ok, true);
 });
 
+test('validateGigSquareModifyDraft rejects prepaid services without a positive price', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    paymentTiming: 'prepaid',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'price_positive_required');
+});
+
 test('validateGigSquareModifyDraft rejects invalid MRC20 ticker formats', () => {
   const result = validateGigSquareModifyDraft({
     serviceName: 'svc',
@@ -149,27 +199,31 @@ test('validateGigSquareModifyDraft rejects invalid MRC20 ticker formats', () => 
   assert.match(result.error || '', /MRC20 ticker is invalid/);
 });
 
-test('buildGigSquareServicePayload and pin payload helpers write SPACE for mvc-chain settlement', () => {
+test('buildGigSquareServicePayload builds free skill-service v1.1 payloads without tuple or legacy payment fields', () => {
   const payload = buildGigSquareServicePayload({
     draft: {
       serviceName: 'weather',
       displayName: 'Weather',
       description: 'desc',
-      providerSkill: 'forecast',
-      price: '0.0001',
-      currency: 'SPACE',
+      providerSkills: ['weather', 'report-writer'],
+      paymentTiming: 'free',
+      price: '99',
+      currency: 'MVC',
       outputType: 'text',
       serviceIconUri: 'metafile://icon-pin',
     },
     providerGlobalMetaId: 'global-metaid-1',
-    paymentAddress: '1abc',
   });
 
+  assert.deepEqual(payload.providerSkill, ['weather', 'report-writer']);
+  assert.equal(payload.paymentTiming, 'free');
+  assert.equal(payload.price, '0');
   assert.equal(payload.currency, 'SPACE');
-  assert.equal(payload.paymentChain, 'mvc');
   assert.equal(payload.settlementKind, 'native');
-  assert.equal(payload.providerMetaBot, 'global-metaid-1');
-  assert.equal(payload.paymentAddress, '1abc');
+  assert.equal(payload.metadata, '');
+  for (const omittedField of ['version', 'paymentAddress', 'paymentChain', 'orderId']) {
+    assert.equal(Object.hasOwn(payload, omittedField), false);
+  }
 
   const revokePayload = buildGigSquareRevokeMetaidPayload('pin-1');
   assert.equal(revokePayload.operation, 'revoke');
@@ -182,7 +236,34 @@ test('buildGigSquareServicePayload and pin payload helpers write SPACE for mvc-c
   });
   assert.equal(modifyPayload.operation, 'modify');
   assert.equal(modifyPayload.path, '@pin-2');
+  assert.equal(modifyPayload.version, '1.1.0');
   assert.equal(typeof modifyPayload.payload, 'string');
+});
+
+test('buildGigSquareServicePayload builds prepaid skill-service v1.1 payment terms', () => {
+  const payload = buildGigSquareServicePayload({
+    draft: {
+      serviceName: 'report',
+      displayName: 'Report',
+      description: 'desc',
+      providerSkill: 'report-writer',
+      paymentTiming: 'prepaid',
+      price: ' 1.25 ',
+      currency: 'mvc',
+      protocolSettlementKind: 'fiat',
+      metadata: 'free-form note',
+      outputType: 'text',
+    },
+    providerGlobalMetaId: 'global-metaid-1',
+  });
+
+  assert.deepEqual(payload.providerSkill, ['report-writer']);
+  assert.equal(payload.paymentTiming, 'prepaid');
+  assert.equal(payload.price, '1.25');
+  assert.equal(payload.currency, 'SPACE');
+  assert.equal(payload.settlementKind, 'fiat');
+  assert.equal(payload.metadata, 'free-form note');
+  assert.equal(Object.hasOwn(payload, 'paymentAddress'), false);
 });
 
 test('buildGigSquareServicePayload serializes execution reminder before skill metadata', () => {
@@ -198,7 +279,6 @@ test('buildGigSquareServicePayload serializes execution reminder before skill me
       outputType: 'text',
     },
     providerGlobalMetaId: 'global-metaid-1',
-    paymentAddress: '1abc',
   });
 
   assert.equal(payload.executionReminder, '如果用户没指定城市就用北京。');
@@ -223,7 +303,7 @@ test('normalizeGigSquareModifyDraft allows empty execution reminder so modificat
   assert.equal(normalized.executionReminder, '');
 });
 
-test('buildGigSquareServicePayload writes MRC20 payment metadata', () => {
+test('buildGigSquareServicePayload keeps legacy MRC20 draft compatibility without publishing paymentAddress', () => {
   const payload = buildGigSquareServicePayload({
     draft: {
       serviceName: 'weather',
@@ -237,15 +317,14 @@ test('buildGigSquareServicePayload writes MRC20 payment metadata', () => {
       outputType: 'text',
     },
     providerGlobalMetaId: 'global-metaid-1',
-    paymentAddress: 'btc-provider-address',
   });
 
   assert.equal(payload.currency, 'METAID-MRC20');
-  assert.equal(payload.paymentChain, 'btc');
-  assert.equal(payload.settlementKind, 'mrc20');
+  assert.equal(payload.settlementKind, 'native');
   assert.equal(payload.mrc20Ticker, 'METAID');
   assert.equal(payload.mrc20Id, 'tick-metaid');
-  assert.equal(payload.paymentAddress, 'btc-provider-address');
+  assert.equal(Object.hasOwn(payload, 'paymentChain'), false);
+  assert.equal(Object.hasOwn(payload, 'paymentAddress'), false);
 });
 
 test('resolveGigSquareSettlementPaymentAddress keeps native address routing and maps MRC20 to btc', () => {

@@ -16,6 +16,9 @@ export type GigSquareService = {
   currency: string;
   settlementKind?: string | null;
   paymentChain?: string | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: 'native' | 'fiat' | string | null;
+  metadata?: string | null;
   mrc20Ticker?: string | null;
   mrc20Id?: string | null;
   providerMetaId: string;
@@ -26,6 +29,7 @@ export type GigSquareService = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
   outputType?: string | null;
   ratingAvg?: number;
   ratingCount?: number;
@@ -63,6 +67,9 @@ export type GigSquareMyServiceSummary = {
   currency: string;
   settlementKind?: string | null;
   paymentChain?: string | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: 'native' | 'fiat' | string | null;
+  metadata?: string | null;
   mrc20Ticker?: string | null;
   mrc20Id?: string | null;
   providerMetaId: string;
@@ -73,6 +80,7 @@ export type GigSquareMyServiceSummary = {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
   outputType?: string | null;
   creatorMetabotId: number | null;
   creatorMetabotName?: string | null;
@@ -152,9 +160,13 @@ export type GigSquareModifyServiceParams = {
   displayName?: string;
   description?: string;
   executionReminder?: string;
+  providerSkills?: string[];
   providerSkill?: string;
+  paymentTiming?: 'free' | 'prepaid' | string;
   price?: string;
   currency?: string;
+  protocolSettlementKind?: 'native' | 'fiat' | string;
+  metadata?: string;
   mrc20Ticker?: string;
   mrc20Id?: string;
   outputType?: string;
