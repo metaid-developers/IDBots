@@ -64,6 +64,7 @@ const SERVICE_ORDER_TABLE_SQL = `
     local_metabot_id INTEGER NOT NULL,
     counterparty_global_metaid TEXT NOT NULL,
     service_pin_id TEXT,
+    order_pin_id TEXT,
     service_name TEXT NOT NULL,
     payment_txid TEXT NOT NULL,
     payment_chain TEXT NOT NULL CHECK (payment_chain IN ('mvc', 'btc', 'doge')),
@@ -116,6 +117,9 @@ function migrateLegacyServiceOrdersTable(db: SqliteDatabase): void {
     && columns.includes('order_ended_at')
     && columns.includes('order_end_reason')
   ) {
+    if (!columns.includes('order_pin_id')) {
+      db.run('ALTER TABLE service_orders ADD COLUMN order_pin_id TEXT;');
+    }
     return;
   }
 
@@ -136,8 +140,8 @@ function migrateLegacyServiceOrdersTable(db: SqliteDatabase): void {
     db.run(SERVICE_ORDER_TABLE_SQL);
     db.run(`
       INSERT INTO service_orders (
-        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
-        payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, order_pin_id,
+        service_name, payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
         mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, order_message_txid, cowork_session_id,
         status, first_response_deadline_at, delivery_deadline_at, first_response_at,
         delivery_message_pin_id, delivered_at, rating_requested_at, rating_deadline_at,
@@ -151,6 +155,7 @@ function migrateLegacyServiceOrdersTable(db: SqliteDatabase): void {
         local_metabot_id,
         counterparty_global_metaid,
         service_pin_id,
+        ${legacy('order_pin_id', 'NULL')},
         service_name,
         payment_txid,
         CASE
@@ -654,6 +659,10 @@ export class SqliteStore {
         service_icon TEXT,
         provider_meta_bot TEXT,
         provider_skill TEXT,
+        provider_skills_json TEXT,
+        payment_timing TEXT,
+        protocol_settlement_kind TEXT,
+        metadata TEXT,
         execution_reminder TEXT,
         skill_document TEXT,
         input_type TEXT,
@@ -697,6 +706,9 @@ export class SqliteStore {
     // Service order ledger (buyer/seller local runtime truth)
     migrateLegacyServiceOrdersTable(this.db);
     this.db.run(SERVICE_ORDER_TABLE_SQL);
+    if (!listTableColumns(this.db, 'service_orders').includes('order_pin_id')) {
+      this.db.run('ALTER TABLE service_orders ADD COLUMN order_pin_id TEXT;');
+    }
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
@@ -785,6 +797,8 @@ export class SqliteStore {
             ORDER BY updated_at DESC, created_at DESC, id DESC
           ) AS rank_in_group
         FROM service_orders
+        WHERE payment_txid IS NOT NULL
+          AND trim(payment_txid) <> ''
       )
       DELETE FROM service_orders
       WHERE rowid IN (
@@ -792,8 +806,37 @@ export class SqliteStore {
       );
     `);
     this.db.run(`
+      WITH ranked AS (
+        SELECT
+          rowid,
+          ROW_NUMBER() OVER (
+            PARTITION BY local_metabot_id, role, order_pin_id
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+          ) AS rank_in_group
+        FROM service_orders
+        WHERE order_pin_id IS NOT NULL
+          AND trim(order_pin_id) <> ''
+      )
+      DELETE FROM service_orders
+      WHERE rowid IN (
+        SELECT rowid FROM ranked WHERE rank_in_group > 1
+      );
+    `);
+    this.db.run('DROP INDEX IF EXISTS idx_service_orders_dedupe_payment;');
+    this.db.run(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
-      ON service_orders(local_metabot_id, role, payment_txid);
+      ON service_orders(local_metabot_id, role, payment_txid)
+      WHERE payment_txid IS NOT NULL AND trim(payment_txid) <> '';
+    `);
+    this.db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_order_pin
+      ON service_orders(local_metabot_id, role, order_pin_id)
+      WHERE order_pin_id IS NOT NULL AND trim(order_pin_id) <> '';
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_service_orders_order_pin_id
+      ON service_orders(order_pin_id)
+      WHERE order_pin_id IS NOT NULL AND trim(order_pin_id) <> '';
     `);
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_order_message_txid
@@ -1195,6 +1238,22 @@ export class SqliteStore {
       }
       if (!rssColumns.includes('execution_reminder')) {
         this.db.run('ALTER TABLE remote_skill_service ADD COLUMN execution_reminder TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('provider_skills_json')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN provider_skills_json TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('payment_timing')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN payment_timing TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('protocol_settlement_kind')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN protocol_settlement_kind TEXT');
+        this.save();
+      }
+      if (!rssColumns.includes('metadata')) {
+        this.db.run('ALTER TABLE remote_skill_service ADD COLUMN metadata TEXT');
         this.save();
       }
       // Migration: Add rating columns to remote_skill_service

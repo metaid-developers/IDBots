@@ -13,6 +13,7 @@ interface ServiceOrderRow {
   local_metabot_id: number;
   counterparty_global_metaid: string;
   service_pin_id: string | null;
+  order_pin_id: string | null;
   service_name: string;
   payment_txid: string;
   payment_chain: string;
@@ -57,6 +58,7 @@ export interface ServiceOrderRecord {
   localMetabotId: number;
   counterpartyGlobalMetaid: string;
   servicePinId: string | null;
+  orderPinId: string | null;
   serviceName: string;
   paymentTxid: string;
   paymentChain: string;
@@ -116,8 +118,9 @@ export interface ServiceOrderCreateInput {
   localMetabotId: number;
   counterpartyGlobalMetaid: string;
   servicePinId?: string | null;
+  orderPinId?: string | null;
   serviceName: string;
-  paymentTxid: string;
+  paymentTxid?: string | null;
   paymentChain?: string;
   paymentAmount: string;
   paymentCurrency?: string;
@@ -137,6 +140,13 @@ export interface ServiceOrderLookupByPaymentInput {
   localMetabotId: number;
   counterpartyGlobalMetaid: string;
   paymentTxid: string;
+}
+
+export interface ServiceOrderLookupByOrderPinInput {
+  role: ServiceOrderRole;
+  localMetabotId: number;
+  counterpartyGlobalMetaid: string;
+  orderPinId: string;
 }
 
 interface MarkRefundRequestRetryInput {
@@ -166,6 +176,10 @@ function derivePaymentCurrency(chain: string): string {
 function normalizeOptionalText(value: unknown): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || null;
+}
+
+function normalizePaymentTxid(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function normalizeOrderMessageTxid(value: unknown): string | null {
@@ -229,6 +243,7 @@ const SERVICE_ORDER_TABLE_SQL = `
     local_metabot_id INTEGER NOT NULL,
     counterparty_global_metaid TEXT NOT NULL,
     service_pin_id TEXT,
+    order_pin_id TEXT,
     service_name TEXT NOT NULL,
     payment_txid TEXT NOT NULL,
     payment_chain TEXT NOT NULL CHECK (payment_chain IN ('mvc', 'btc', 'doge')),
@@ -279,6 +294,7 @@ export class ServiceOrderStore {
   private ensureSchema(): void {
     this.migrateLegacyServiceOrdersTable();
     this.db.run(SERVICE_ORDER_TABLE_SQL);
+    this.ensureOrderPinColumn();
     this.db.run(`
       CREATE INDEX IF NOT EXISTS idx_service_orders_status_updated_at
       ON service_orders(status, updated_at DESC);
@@ -377,9 +393,22 @@ export class ServiceOrderStore {
     `);
     this.remediateLegacyServiceOrderRows();
     this.remediateDuplicatePaymentRows();
+    this.remediateDuplicateOrderPinRows();
+    this.db.run('DROP INDEX IF EXISTS idx_service_orders_dedupe_payment;');
     this.db.run(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_payment
-      ON service_orders(local_metabot_id, role, payment_txid);
+      ON service_orders(local_metabot_id, role, payment_txid)
+      WHERE payment_txid IS NOT NULL AND trim(payment_txid) <> '';
+    `);
+    this.db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_service_orders_dedupe_order_pin
+      ON service_orders(local_metabot_id, role, order_pin_id)
+      WHERE order_pin_id IS NOT NULL AND trim(order_pin_id) <> '';
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_service_orders_order_pin_id
+      ON service_orders(order_pin_id)
+      WHERE order_pin_id IS NOT NULL AND trim(order_pin_id) <> '';
     `);
   }
 
@@ -398,6 +427,9 @@ export class ServiceOrderStore {
       && columns.includes('order_ended_at')
       && columns.includes('order_end_reason')
     ) {
+      if (!columns.includes('order_pin_id')) {
+        this.db.run('ALTER TABLE service_orders ADD COLUMN order_pin_id TEXT;');
+      }
       return;
     }
 
@@ -418,8 +450,8 @@ export class ServiceOrderStore {
       this.db.run(SERVICE_ORDER_TABLE_SQL);
       this.db.run(`
         INSERT INTO service_orders (
-          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
-          payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, order_pin_id,
+          service_name, payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
           mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, order_message_txid, cowork_session_id,
           status, first_response_deadline_at, delivery_deadline_at, first_response_at,
           delivery_message_pin_id, delivered_at, rating_requested_at, rating_deadline_at,
@@ -433,6 +465,7 @@ export class ServiceOrderStore {
           local_metabot_id,
           counterparty_global_metaid,
           service_pin_id,
+          ${legacy('order_pin_id', 'NULL')},
           service_name,
           payment_txid,
           CASE
@@ -486,6 +519,13 @@ export class ServiceOrderStore {
     } catch (error) {
       this.db.run('ROLLBACK;');
       throw error;
+    }
+  }
+
+  private ensureOrderPinColumn(): void {
+    const columns = listTableColumns(this.db, 'service_orders');
+    if (!columns.includes('order_pin_id')) {
+      this.db.run('ALTER TABLE service_orders ADD COLUMN order_pin_id TEXT;');
     }
   }
 
@@ -577,6 +617,28 @@ export class ServiceOrderStore {
             ORDER BY updated_at DESC, created_at DESC, id DESC
           ) AS rank_in_group
         FROM service_orders
+        WHERE payment_txid IS NOT NULL
+          AND trim(payment_txid) <> ''
+      )
+      DELETE FROM service_orders
+      WHERE rowid IN (
+        SELECT rowid FROM ranked WHERE rank_in_group > 1
+      );
+    `);
+  }
+
+  private remediateDuplicateOrderPinRows(): void {
+    this.db.run(`
+      WITH ranked AS (
+        SELECT
+          rowid,
+          ROW_NUMBER() OVER (
+            PARTITION BY local_metabot_id, role, order_pin_id
+            ORDER BY updated_at DESC, created_at DESC, id DESC
+          ) AS rank_in_group
+        FROM service_orders
+        WHERE order_pin_id IS NOT NULL
+          AND trim(order_pin_id) <> ''
       )
       DELETE FROM service_orders
       WHERE rowid IN (
@@ -617,6 +679,7 @@ export class ServiceOrderStore {
       localMetabotId: row.local_metabot_id,
       counterpartyGlobalMetaid: row.counterparty_global_metaid,
       servicePinId: row.service_pin_id,
+      orderPinId: row.order_pin_id,
       serviceName: row.service_name,
       paymentTxid: row.payment_txid,
       paymentChain: row.payment_chain,
@@ -657,6 +720,8 @@ export class ServiceOrderStore {
   createOrder(input: ServiceOrderCreateInput): ServiceOrderRecord {
     const now = input.now ?? Date.now();
     const deadlines = computeOrderDeadlines(now);
+    const paymentTxid = normalizePaymentTxid(input.paymentTxid);
+    const orderPinId = normalizeOptionalText(input.orderPinId);
     const settlement = resolveStructuredSettlement({
       paymentChain: input.paymentChain,
       paymentCurrency: input.paymentCurrency,
@@ -669,17 +734,36 @@ export class ServiceOrderStore {
       : null;
     const orderMessageTxid = normalizeOrderMessageTxid(input.orderMessageTxid)
       || deriveOrderMessageTxidFromPinId(input.orderMessagePinId);
-    const existing = this.getOne<ServiceOrderRow>(
-      `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
-      [input.localMetabotId, input.role, input.paymentTxid]
-    );
-    if (existing) return this.mapRow(existing);
+    if (orderPinId) {
+      const existingByOrderPin = this.getOne<ServiceOrderRow>(
+        `SELECT *
+         FROM service_orders
+         WHERE local_metabot_id = ?
+           AND role = ?
+           AND order_pin_id = ?
+         LIMIT 1`,
+        [input.localMetabotId, input.role, orderPinId]
+      );
+      if (existingByOrderPin) return this.mapRow(existingByOrderPin);
+    }
+    if (paymentTxid) {
+      const existingByPayment = this.getOne<ServiceOrderRow>(
+        `SELECT *
+         FROM service_orders
+         WHERE local_metabot_id = ?
+           AND role = ?
+           AND payment_txid = ?
+         LIMIT 1`,
+        [input.localMetabotId, input.role, paymentTxid]
+      );
+      if (existingByPayment) return this.mapRow(existingByPayment);
+    }
     const id = uuidv4();
 
     try {
       this.db.run(`
         INSERT INTO service_orders (
-          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, service_name,
+          id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, order_pin_id, service_name,
           payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
           mrc20_ticker, mrc20_id, payment_commit_txid, order_message_pin_id, order_message_txid, cowork_session_id,
           status, first_response_deadline_at, delivery_deadline_at, first_response_at, delivery_message_pin_id,
@@ -687,7 +771,7 @@ export class ServiceOrderStore {
           order_end_reason, failed_at, failure_reason, refund_request_pin_id, refund_finalize_pin_id, refund_txid,
           refund_requested_at, refund_completed_at, refund_apply_retry_count, next_retry_at, created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?, ?
         );
       `, [
         id,
@@ -695,8 +779,9 @@ export class ServiceOrderStore {
         input.localMetabotId,
         input.counterpartyGlobalMetaid,
         input.servicePinId ?? null,
+        orderPinId,
         input.serviceName,
-        input.paymentTxid,
+        paymentTxid,
         settlement.paymentChain,
         input.paymentAmount,
         settlement.paymentCurrency,
@@ -714,11 +799,30 @@ export class ServiceOrderStore {
         now,
       ]);
     } catch (error) {
-      const raced = this.getOne<ServiceOrderRow>(
-        `SELECT * FROM service_orders WHERE local_metabot_id = ? AND role = ? AND payment_txid = ? LIMIT 1`,
-        [input.localMetabotId, input.role, input.paymentTxid]
-      );
+      const raced = orderPinId
+        ? this.getOne<ServiceOrderRow>(
+          `SELECT *
+           FROM service_orders
+           WHERE local_metabot_id = ?
+             AND role = ?
+             AND order_pin_id = ?
+           LIMIT 1`,
+          [input.localMetabotId, input.role, orderPinId]
+        )
+        : undefined;
       if (raced) return this.mapRow(raced);
+      if (paymentTxid) {
+        const racedByPayment = this.getOne<ServiceOrderRow>(
+          `SELECT *
+           FROM service_orders
+           WHERE local_metabot_id = ?
+             AND role = ?
+             AND payment_txid = ?
+           LIMIT 1`,
+          [input.localMetabotId, input.role, paymentTxid]
+        );
+        if (racedByPayment) return this.mapRow(racedByPayment);
+      }
       throw error;
     }
 
@@ -745,6 +849,17 @@ export class ServiceOrderStore {
       WHERE payment_txid = ?
       ORDER BY updated_at DESC, created_at DESC
     `, [paymentTxid]).map((row) => this.mapRow(row));
+  }
+
+  listOrdersByOrderPinId(orderPinId: string): ServiceOrderRecord[] {
+    const normalizedOrderPinId = normalizeOptionalText(orderPinId);
+    if (!normalizedOrderPinId) return [];
+    return this.getAll<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE order_pin_id = ?
+      ORDER BY updated_at DESC, created_at DESC
+    `, [normalizedOrderPinId]).map((row) => this.mapRow(row));
   }
 
   getSessionSummary(coworkSessionId: string): ServiceOrderSessionSummary | null {
@@ -855,6 +970,8 @@ export class ServiceOrderStore {
   }
 
   findOrderByPayment(input: ServiceOrderLookupByPaymentInput): ServiceOrderRecord | null {
+    const paymentTxid = normalizePaymentTxid(input.paymentTxid);
+    if (!paymentTxid) return null;
     const row = this.getOne<ServiceOrderRow>(`
       SELECT *
       FROM service_orders
@@ -867,7 +984,27 @@ export class ServiceOrderStore {
       input.role,
       input.localMetabotId,
       input.counterpartyGlobalMetaid,
-      input.paymentTxid,
+      paymentTxid,
+    ]);
+    return row ? this.mapRow(row) : null;
+  }
+
+  findOrderByOrderPinId(input: ServiceOrderLookupByOrderPinInput): ServiceOrderRecord | null {
+    const orderPinId = normalizeOptionalText(input.orderPinId);
+    if (!orderPinId) return null;
+    const row = this.getOne<ServiceOrderRow>(`
+      SELECT *
+      FROM service_orders
+      WHERE role = ?
+        AND local_metabot_id = ?
+        AND counterparty_global_metaid = ?
+        AND order_pin_id = ?
+      LIMIT 1
+    `, [
+      input.role,
+      input.localMetabotId,
+      input.counterpartyGlobalMetaid,
+      orderPinId,
     ]);
     return row ? this.mapRow(row) : null;
   }

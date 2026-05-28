@@ -718,6 +718,10 @@ const ensureGigSquareSchema = (): void => {
       metabot_id INTEGER NOT NULL,
       provider_global_metaid TEXT NOT NULL,
       provider_skill TEXT NOT NULL,
+      provider_skills_json TEXT,
+      payment_timing TEXT,
+      protocol_settlement_kind TEXT,
+      metadata TEXT,
       service_name TEXT NOT NULL,
       display_name TEXT NOT NULL,
       description TEXT NOT NULL,
@@ -748,6 +752,18 @@ const ensureGigSquareSchema = (): void => {
   }
   if (!gigSquareColumns.includes('execution_reminder')) {
     db.run('ALTER TABLE gig_square_services ADD COLUMN execution_reminder TEXT');
+  }
+  if (!gigSquareColumns.includes('provider_skills_json')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN provider_skills_json TEXT');
+  }
+  if (!gigSquareColumns.includes('payment_timing')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN payment_timing TEXT');
+  }
+  if (!gigSquareColumns.includes('protocol_settlement_kind')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN protocol_settlement_kind TEXT');
+  }
+  if (!gigSquareColumns.includes('metadata')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN metadata TEXT');
   }
   db.run(`
     UPDATE gig_square_services
