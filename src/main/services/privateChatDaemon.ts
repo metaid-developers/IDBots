@@ -1451,13 +1451,13 @@ function messageMatchesOrderScope(message: CoworkMessage, input: {
   orderTxid?: string | null;
   serviceOrderPinId?: string | null;
 }): boolean {
-  const normalizedOrderTxid = normalizeOrderMessageTxid(input.orderTxid);
-  if (normalizedOrderTxid) {
-    return messageMatchesOrderTxid(message, normalizedOrderTxid);
-  }
   const normalizedOrderPinId = normalizeServiceOrderPinId(input.serviceOrderPinId);
   if (normalizedOrderPinId) {
     return messageMatchesServiceOrderPinId(message, normalizedOrderPinId);
+  }
+  const normalizedOrderTxid = normalizeOrderMessageTxid(input.orderTxid);
+  if (normalizedOrderTxid) {
+    return messageMatchesOrderTxid(message, normalizedOrderTxid);
   }
   return false;
 }
