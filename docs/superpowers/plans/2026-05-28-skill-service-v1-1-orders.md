@@ -136,7 +136,7 @@
 - Create: `src/main/shared/skillServiceProtocol.js`
 - Create: `tests/skillServiceProtocol.test.mjs`
 
-- [ ] **Step 1: Write failing tests for provider skill normalization**
+- [x] **Step 1: Write failing tests for provider skill normalization**
 
 ```js
 import test from 'node:test';
@@ -159,7 +159,7 @@ test('normalizes v1.1 providerSkill arrays without order semantics', () => {
 });
 ```
 
-- [ ] **Step 2: Write failing tests for payment compatibility**
+- [x] **Step 2: Write failing tests for payment compatibility**
 
 ```js
 import {
@@ -191,7 +191,7 @@ test('conflicting payment fields choose the lowest amount semantics', () => {
 });
 ```
 
-- [ ] **Step 3: Write failing tests for skill-service-order payload shape**
+- [x] **Step 3: Write failing tests for skill-service-order payload shape**
 
 ```js
 import { buildSkillServiceOrderPayload } from '../src/main/shared/skillServiceProtocol.js';
@@ -218,13 +218,13 @@ test('builds minimal skill-service-order payload without self-declared ids or ti
 });
 ```
 
-- [ ] **Step 4: Run tests and confirm failure**
+- [x] **Step 4: Run tests and confirm failure**
 
 Run: `node --test tests/skillServiceProtocol.test.mjs`
 
 Expected: FAIL because `src/main/shared/skillServiceProtocol.js` does not exist.
 
-- [ ] **Step 5: Implement the shared normalizer**
+- [x] **Step 5: Implement the shared normalizer**
 
 Implementation sketch:
 
@@ -291,13 +291,13 @@ export function buildSkillServiceOrderPayload(input) {
 }
 ```
 
-- [ ] **Step 6: Run tests and confirm pass**
+- [x] **Step 6: Run tests and confirm pass**
 
 Run: `node --test tests/skillServiceProtocol.test.mjs`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/shared/skillServiceProtocol.js tests/skillServiceProtocol.test.mjs
