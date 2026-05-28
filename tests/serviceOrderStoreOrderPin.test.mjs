@@ -209,3 +209,130 @@ test('duplicate remediation does not collapse legacy free rows with empty paymen
     ['legacy-free-2', '', null],
   ]);
 });
+
+test('duplicate order pin remediation preserves rows and clears non-winning order pin ids', async () => {
+  const db = await createSqlDatabase();
+  db.run(`
+    CREATE TABLE service_orders (
+      id TEXT PRIMARY KEY,
+      role TEXT NOT NULL,
+      local_metabot_id INTEGER NOT NULL,
+      counterparty_global_metaid TEXT NOT NULL,
+      service_pin_id TEXT,
+      order_pin_id TEXT,
+      service_name TEXT NOT NULL,
+      payment_txid TEXT NOT NULL,
+      payment_chain TEXT NOT NULL,
+      payment_amount TEXT NOT NULL,
+      payment_currency TEXT NOT NULL,
+      settlement_kind TEXT NOT NULL DEFAULT 'native',
+      mrc20_ticker TEXT,
+      mrc20_id TEXT,
+      payment_commit_txid TEXT,
+      order_message_pin_id TEXT,
+      order_message_txid TEXT,
+      cowork_session_id TEXT,
+      status TEXT NOT NULL,
+      first_response_deadline_at INTEGER NOT NULL,
+      delivery_deadline_at INTEGER NOT NULL,
+      first_response_at INTEGER,
+      delivery_message_pin_id TEXT,
+      delivered_at INTEGER,
+      rating_requested_at INTEGER,
+      rating_deadline_at INTEGER,
+      order_end_message_pin_id TEXT,
+      order_ended_at INTEGER,
+      order_end_reason TEXT,
+      failed_at INTEGER,
+      failure_reason TEXT,
+      refund_request_pin_id TEXT,
+      refund_finalize_pin_id TEXT,
+      refund_txid TEXT,
+      refund_requested_at INTEGER,
+      refund_completed_at INTEGER,
+      refund_apply_retry_count INTEGER NOT NULL DEFAULT 0,
+      next_retry_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  const insertDuplicate = ({
+    id,
+    paymentTxid,
+    sessionId,
+    status,
+    createdAt,
+    updatedAt,
+  }) => {
+    db.run(
+      `INSERT INTO service_orders (
+        id, role, local_metabot_id, counterparty_global_metaid, service_pin_id, order_pin_id,
+        service_name, payment_txid, payment_chain, payment_amount, payment_currency, settlement_kind,
+        order_message_pin_id, order_message_txid, cowork_session_id, status,
+        first_response_deadline_at, delivery_deadline_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        'buyer',
+        31,
+        'counterparty-global-metaid',
+        'service-pin-id',
+        'duplicate-order-pin-i0',
+        'service-name',
+        paymentTxid,
+        'mvc',
+        '0',
+        'SPACE',
+        'native',
+        `${paymentTxid}i0`,
+        paymentTxid,
+        sessionId,
+        status,
+        1000,
+        2000,
+        createdAt,
+        updatedAt,
+      ]
+    );
+  };
+  insertDuplicate({
+    id: 'legacy-order-pin-old',
+    paymentTxid: 'b'.repeat(64),
+    sessionId: 'session-old',
+    status: 'failed',
+    createdAt: 100,
+    updatedAt: 100,
+  });
+  insertDuplicate({
+    id: 'legacy-order-pin-keep',
+    paymentTxid: 'c'.repeat(64),
+    sessionId: 'session-keep',
+    status: 'in_progress',
+    createdAt: 200,
+    updatedAt: 300,
+  });
+
+  const store = new ServiceOrderStore(db, () => {});
+  void store;
+
+  const rows = db.exec(
+    `SELECT id, order_pin_id, cowork_session_id, status
+     FROM service_orders
+     WHERE local_metabot_id = ? AND role = ?
+     ORDER BY id ASC`,
+    [31, 'buyer']
+  )[0].values;
+  assert.deepEqual(rows, [
+    ['legacy-order-pin-keep', 'duplicate-order-pin-i0', 'session-keep', 'in_progress'],
+    ['legacy-order-pin-old', null, 'session-old', 'failed'],
+  ]);
+
+  const uniqueIndexRows = db.exec(
+    "SELECT name FROM pragma_index_list('service_orders') WHERE name = 'idx_service_orders_dedupe_order_pin' AND \"unique\" = 1"
+  );
+  assert.equal(uniqueIndexRows[0]?.values?.length ?? 0, 1);
+  assert.deepEqual(
+    store.listOrdersByOrderPinId('duplicate-order-pin-i0').map((order) => order.id),
+    ['legacy-order-pin-keep']
+  );
+});

@@ -640,7 +640,8 @@ export class ServiceOrderStore {
         WHERE order_pin_id IS NOT NULL
           AND trim(order_pin_id) <> ''
       )
-      DELETE FROM service_orders
+      UPDATE service_orders
+      SET order_pin_id = NULL
       WHERE rowid IN (
         SELECT rowid FROM ranked WHERE rank_in_group > 1
       );
