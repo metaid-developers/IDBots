@@ -178,13 +178,14 @@ Version `1.0.0` is the legacy service advertisement shape. It must remain docume
 
 - Missing `version` is treated as `1.0.0`.
 - Missing `paymentTerms` is expected.
+- `providerSkill` is the legacy single-skill string. App-level models should normalize it to a one-element skill list.
 - If `price` parses to a number greater than `0`, the effective payment timing is `prepaid`.
 - If `price` is missing, invalid, or parses to `0`, the effective payment timing is `free`.
 - `currency` aliases `MVC` and `MICROVISIONCHAIN` should normalize to `SPACE`.
 
 ### 6.2 skill-service v1.1.0
 
-Version `1.1.0` keeps the v1.0 display fields and adds structured payment terms. New business logic should use `paymentTerms` through a shared resolver, not ad-hoc UI checks.
+Version `1.1.0` keeps the v1.0 display fields, upgrades `providerSkill` to an ordered skill array, and adds structured payment terms. New business logic should use shared resolvers for `providerSkill` and `paymentTerms`, not ad-hoc UI checks.
 
 ```json5
 {
@@ -194,7 +195,11 @@ Version `1.1.0` keeps the v1.0 display fields and adds structured payment terms.
   "description": "Tell me what you want to publish, and I will write the buzz on-chain for you.",
   "serviceIcon": "metafile://icon",
   "providerMetaBot": "provider MetaBot GlobalMetaID",
-  "providerSkill": "provider skill name",
+  /**
+   * Ordered local skill names executed by the provider for this service.
+   * UIs should allow selecting one or more skills and preserve this order.
+   */
+  "providerSkill": ["provider skill name", "optional follow-up skill name"],
 
   /**
    * Compatibility summary fields. These mirror paymentTerms.quote for older
@@ -262,6 +267,14 @@ Version `1.1.0` keeps the v1.0 display fields and adds structured payment terms.
 }
 ```
 
+**v1.1 provider skill semantics**
+
+- `providerSkill` must be a non-empty array of provider-local skill names.
+- The array order is the recommended execution order for providers that execute multiple skills in sequence.
+- UIs should let the provider select one or more skills and preserve the selected order.
+- For reader compatibility, a string `providerSkill` may be normalized to a one-element array. New v1.1 publishers should only publish the array form.
+- Missing or empty `providerSkill` makes the service unavailable for execution even if the display metadata is otherwise valid.
+
 **v1.1 effective payment semantics**
 
 - `paymentTerms.timing` is one of `prepaid`, `postpaid`, or `free`.
@@ -289,6 +302,8 @@ Version `1.1.0` keeps the v1.0 display fields and adds structured payment terms.
 - Recommended format: UUID v4, ULID, or another globally unique opaque string up to 128 characters.
 - All order events, payment records, deliveries, refund records, and ratings should reference `orderId`.
 - Legacy orders that only have `paymentTxid` may expose a compatibility `orderId` equal to that `paymentTxid`, but new orders must generate an independent id.
+- `serviceSkills` snapshots the resolved `skill-service.providerSkill` array at order creation time.
+- `serviceSkill` may be present as a compatibility alias and should equal the first item of `serviceSkills`.
 
 ### 7.2 Order created payload
 
@@ -303,6 +318,9 @@ The initial order event should use MetaID operation `create`.
   "serviceVersion": "1.1.0",
   "serviceName": "post-buzz-service",
   "serviceDisplayName": "On-chain buzz publishing service",
+  /** Snapshot of the resolved skill-service providerSkill array. */
+  "serviceSkills": ["provider skill name", "optional follow-up skill name"],
+  /** Compatibility alias for older clients; first item of serviceSkills. */
   "serviceSkill": "provider skill name",
   "outputType": "text",
 
@@ -447,7 +465,9 @@ Allowed `paymentRecord.status` values for v1.0.0 are:
   "serviceCurrency": "SPACE",
   /** Legacy payment proof. Kept for historical paid-review compatibility. */
   "servicePaidTx": "txid",
-  /** Skill used for this service request. */
+  /** Preferred for new ratings. Skill list used for this service request. */
+  "serviceSkills": ["weather-service", "report-writer"],
+  /** Legacy compatibility alias; first item of serviceSkills. */
   "serviceSkill": "weather-service",
   /** GlobalMetaID of the MetaBot that executed the service. */
   "serverBot": "globalmetaid",
