@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDownTrayIcon,
+  ArrowPathIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
   PlayIcon,
@@ -10,6 +10,7 @@ import { i18nService } from '../../services/i18n';
 import { metaAppService } from '../../services/metaApp';
 import type { CommunityMetaAppRecord, MetaAppRecord } from '../../types/metaApp';
 import ErrorMessage from '../ErrorMessage';
+import { DEFAULT_GIG_SQUARE_PROVIDER_AVATAR } from '../gigSquare/gigSquareProviderPresentation.js';
 import Tooltip from '../ui/Tooltip';
 import {
   filterCommunityMetaApps,
@@ -417,12 +418,14 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
       <div>
         <div className="grid grid-cols-2 gap-3">
           {filteredCommunityApps.map((app) => {
-            const statusLabel = getCommunityMetaAppStatusLabel(app.status, i18nService.getLanguage());
-            const actionLabel = getCommunityMetaAppActionLabel(app.status, i18nService.getLanguage());
-            const disabled =
-              app.status === 'installed'
-              || app.status === 'uninstallable'
-              || installingSourcePinId !== null;
+            const language = i18nService.getLanguage();
+            const statusLabel = getCommunityMetaAppStatusLabel(app.status, language);
+            const actionLabel = getCommunityMetaAppActionLabel(app.status, language);
+            const authorName = String(app.authorName || '').trim() || i18nService.t('metaAppUnknownAuthor');
+            const authorAvatarSrc = String(app.authorAvatar || '').trim() || DEFAULT_GIG_SQUARE_PROVIDER_AVATAR;
+            const isInstalling = installingSourcePinId === app.sourcePinId;
+            const canInstall = app.status === 'install' || app.status === 'update';
+            const isActionDisabled = installingSourcePinId !== null;
 
             return (
               <div
@@ -451,25 +454,46 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
                 </Tooltip>
 
                 <div className="flex items-center justify-between gap-2 mt-1">
-                  <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
-                    <span className="truncate">v{app.version}</span>
-                    <span>·</span>
-                    <span className="truncate">{app.creatorMetaId || '-'}</span>
+                  <div className="min-w-0 flex items-center gap-2">
+                    <img
+                      src={authorAvatarSrc}
+                      alt={authorName}
+                      className="h-7 w-7 flex-shrink-0 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
+                      onError={(event) => { event.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium text-claude-text dark:text-claude-darkText">
+                        {authorName}
+                      </div>
+                    </div>
                   </div>
                   <Tooltip
                     content={app.reason || actionLabel}
                     position="top"
                   >
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => void handleInstallCommunityMetaApp(app)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={actionLabel}
-                    >
-                      <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-                      <span>{actionLabel}</span>
-                    </button>
+                    {canInstall ? (
+                      <button
+                        type="button"
+                        disabled={isActionDisabled}
+                        onClick={() => void handleInstallCommunityMetaApp(app)}
+                        className="btn-idchat-primary-filled inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={actionLabel}
+                      >
+                        {isInstalling ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                        {isInstalling ? i18nService.t('loading') : actionLabel}
+                      </button>
+                    ) : app.status === 'installed' ? (
+                      <span className="shrink-0 whitespace-nowrap px-2.5 py-1 text-xs rounded-lg dark:bg-claude-darkBorder bg-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary cursor-not-allowed">
+                        {actionLabel}
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1 text-xs rounded-lg bg-red-500/20 text-red-500 cursor-not-allowed"
+                        title={app.reason || actionLabel}
+                      >
+                        {actionLabel}
+                      </span>
+                    )}
                   </Tooltip>
                 </div>
 

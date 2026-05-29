@@ -30,6 +30,8 @@ export interface CommunityMetaAppRecord {
   indexFile: string;
   codeUri: string;
   codePinId: string;
+  authorName?: string;
+  authorAvatar?: string;
   status: 'install' | 'installed' | 'update' | 'uninstallable';
   installable: boolean;
   reason: string;
