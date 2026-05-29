@@ -301,6 +301,21 @@ test('validateGigSquareModifyDraft rejects MRC20 v1.1 publish drafts', () => {
   assert.equal(result.ok, false);
   assert.equal(result.errorCode, 'currency_invalid');
   assert.match(result.error || '', /currency is invalid/);
+
+  const fiatResult = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'skill',
+    paymentTiming: 'prepaid',
+    price: '1',
+    currency: 'MRC20',
+    protocolSettlementKind: 'fiat',
+    outputType: 'text',
+  });
+
+  assert.equal(fiatResult.ok, false);
+  assert.equal(fiatResult.errorCode, 'currency_invalid');
 });
 
 test('buildGigSquareServicePayload builds free skill-service v1.1 payloads without tuple or legacy payment fields', () => {
@@ -370,6 +385,46 @@ test('buildGigSquareServicePayload builds prepaid skill-service v1.1 payment ter
   assert.equal(Object.hasOwn(payload, 'paymentAddress'), false);
   assert.equal(Object.hasOwn(payload, 'mrc20Ticker'), false);
   assert.equal(Object.hasOwn(payload, 'mrc20Id'), false);
+});
+
+test('buildGigSquareServicePayload preserves fiat quote currency and metadata on compatibility modify', () => {
+  const validation = validateGigSquareModifyDraft({
+    serviceName: 'report',
+    displayName: 'Report',
+    description: 'desc',
+    providerSkill: 'report-writer',
+    paymentTiming: 'prepaid',
+    price: ' 12.50 ',
+    currency: ' cny ',
+    protocolSettlementKind: 'fiat',
+    metadata: '{"invoice":"manual","quote":"cny"}',
+    outputType: 'text',
+  });
+  assert.equal(validation.ok, true);
+
+  const payload = buildGigSquareServicePayload({
+    draft: {
+      serviceName: 'report',
+      displayName: 'Report',
+      description: 'desc',
+      providerSkill: 'report-writer',
+      paymentTiming: 'prepaid',
+      price: ' 12.50 ',
+      currency: ' cny ',
+      protocolSettlementKind: 'fiat',
+      metadata: '{"invoice":"manual","quote":"cny"}',
+      outputType: 'text',
+    },
+    providerGlobalMetaId: 'global-metaid-1',
+  });
+
+  assert.equal(payload.paymentTiming, 'prepaid');
+  assert.equal(payload.price, '12.50');
+  assert.equal(payload.currency, 'CNY');
+  assert.equal(payload.settlementKind, 'fiat');
+  assert.equal(payload.metadata, '{"invoice":"manual","quote":"cny"}');
+  assert.equal(Object.hasOwn(payload, 'paymentAddress'), false);
+  assert.equal(Object.hasOwn(payload, 'paymentChain'), false);
 });
 
 test('buildGigSquareServicePayload serializes execution reminder before skill metadata', () => {

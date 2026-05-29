@@ -181,3 +181,29 @@ test('modify draft preserves v1.1 protocol settlement kind and metadata', () => 
   assert.equal(draft.protocolSettlementKind, 'fiat');
   assert.equal(draft.metadata, '{"invoice":"manual"}');
 });
+
+test('modify draft preserves existing fiat quote currency', () => {
+  for (const currency of [' CNY ', 'usd']) {
+    const draft = buildModifyDraftFromService({
+      id: 'svc-1',
+      currentPinId: 'svc-1',
+      sourceServicePinId: 'svc-root',
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      executionReminder: '',
+      providerSkill: 'weather',
+      providerSkills: ['weather'],
+      paymentTiming: 'prepaid',
+      price: '12.50',
+      currency,
+      settlementKind: 'fiat',
+      metadata: '{"invoice":"manual","quote":"fiat"}',
+      outputType: 'text',
+    } as any);
+
+    assert.equal(draft.currency, currency.trim().toUpperCase());
+    assert.equal(draft.protocolSettlementKind, 'fiat');
+    assert.equal(draft.metadata, '{"invoice":"manual","quote":"fiat"}');
+  }
+});

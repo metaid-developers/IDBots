@@ -150,6 +150,26 @@ const normalizeDraftPaymentTiming = (value: unknown): 'free' | 'prepaid' | undef
   return undefined;
 };
 
+const normalizeGigSquareFiatQuoteCurrency = (value: unknown): string => {
+  const normalized = toSafeString(value).trim().toUpperCase();
+  if (normalized === 'MVC' || normalized === 'MICROVISIONCHAIN') return 'SPACE';
+  return normalized;
+};
+
+const isFiatSettlementKind = (value: unknown): boolean => {
+  return normalizeProtocolSettlementKind(value) === 'fiat';
+};
+
+const normalizeGigSquarePayloadCurrency = (input: {
+  currency: string;
+  protocolSettlementKind?: string | null;
+}): string => {
+  if (isFiatSettlementKind(input.protocolSettlementKind)) {
+    return normalizeGigSquareFiatQuoteCurrency(input.currency);
+  }
+  return normalizeGigSquareSettlementDraft({ currency: input.currency }).protocolCurrency;
+};
+
 const resolveSourceServicePinId = (service: GigSquareLocalMutationServiceSeed): string => {
   return (
     toSafeString(service.sourceServicePinId).trim()
@@ -300,6 +320,7 @@ export const normalizeGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigS
     currency: draft.currency,
     protocolSettlementKind: draft.protocolSettlementKind,
   });
+  const protocolSettlementKind = paymentTerms.protocolSettlementKind;
 
   return {
     serviceName: toSafeString(draft.serviceName).trim(),
@@ -310,8 +331,10 @@ export const normalizeGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigS
     providerSkill: getPrimaryProviderSkill(providerSkills),
     paymentTiming: paymentTerms.paymentTiming,
     price: paymentTerms.effectivePrice,
-    currency: paymentTerms.currency,
-    protocolSettlementKind: paymentTerms.protocolSettlementKind,
+    currency: isFiatSettlementKind(protocolSettlementKind)
+      ? normalizeGigSquareFiatQuoteCurrency(draft.currency)
+      : paymentTerms.currency,
+    protocolSettlementKind,
     mrc20Ticker: toSafeString(draft.mrc20Ticker).trim() || null,
     mrc20Id: toSafeString(draft.mrc20Id).trim() || null,
     metadata: toSafeString(draft.metadata),
@@ -336,7 +359,11 @@ export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSq
     return { ok: false, error: 'price is invalid', errorCode: 'price_invalid' };
   }
 
-  if (!GIG_SQUARE_ALLOWED_CURRENCIES.has(normalized.currency)) {
+  const isFiatSettlement = isFiatSettlementKind(normalized.protocolSettlementKind);
+  if (isFiatSettlement
+    ? !normalized.currency || normalized.currency === 'MRC20' || normalized.currency.endsWith('-MRC20')
+    : !GIG_SQUARE_ALLOWED_CURRENCIES.has(normalized.currency)
+  ) {
     return { ok: false, error: 'currency is invalid', errorCode: 'currency_invalid' };
   }
   if (!GIG_SQUARE_ALLOWED_OUTPUT_TYPES.has(normalized.outputType)) {
@@ -353,22 +380,24 @@ export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSq
   if (!Number.isFinite(priceNumber) || priceNumber < 0) {
     return { ok: false, error: 'price is invalid', errorCode: 'price_invalid' };
   }
-  if (normalized.paymentTiming === 'prepaid' && priceNumber > getGigSquarePriceLimit(normalized.currency)) {
+  if (!isFiatSettlement && normalized.paymentTiming === 'prepaid' && priceNumber > getGigSquarePriceLimit(normalized.currency)) {
     return { ok: false, error: 'price exceeds limit', errorCode: 'price_limit_exceeded' };
   }
 
-  try {
-    normalizeGigSquareSettlementDraft({
-      currency: normalized.currency,
-      mrc20Ticker: normalized.mrc20Ticker,
-      mrc20Id: normalized.mrc20Id,
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : 'currency is invalid',
-      errorCode: 'currency_invalid',
-    };
+  if (!isFiatSettlement) {
+    try {
+      normalizeGigSquareSettlementDraft({
+        currency: normalized.currency,
+        mrc20Ticker: normalized.mrc20Ticker,
+        mrc20Id: normalized.mrc20Id,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'currency is invalid',
+        errorCode: 'currency_invalid',
+      };
+    }
   }
 
   return { ok: true };
@@ -386,10 +415,10 @@ export const buildGigSquareServicePayload = (input: {
   if (normalized.currency === 'MRC20') {
     throw new Error('currency is invalid');
   }
-  const settlement = normalizeGigSquareSettlementDraft({
+  const settlementKind = normalizeProtocolSettlementKind(normalized.protocolSettlementKind);
+  const currency = normalizeGigSquarePayloadCurrency({
     currency: normalized.currency,
-    mrc20Ticker: normalized.mrc20Ticker,
-    mrc20Id: normalized.mrc20Id,
+    protocolSettlementKind: settlementKind,
   });
   return {
     serviceName: normalized.serviceName,
@@ -399,9 +428,9 @@ export const buildGigSquareServicePayload = (input: {
     providerMetaBot: toSafeString(input.providerGlobalMetaId).trim(),
     providerSkill: normalized.providerSkills,
     price: normalized.price,
-    currency: settlement.protocolCurrency,
+    currency,
     paymentTiming: normalized.paymentTiming || 'free',
-    settlementKind: normalizeProtocolSettlementKind(normalized.protocolSettlementKind),
+    settlementKind,
     metadata: normalized.metadata || '',
     executionReminder: normalized.executionReminder || '',
     skillDocument: '',

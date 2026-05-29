@@ -45,6 +45,12 @@ export function normalizeGigSquareNativeCurrency(currency) {
   return NATIVE_CURRENCIES.has(normalized) ? normalized : 'SPACE';
 }
 
+export function normalizeGigSquareFiatQuoteCurrency(currency) {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'MVC' || normalized === 'MICROVISIONCHAIN') return 'SPACE';
+  return normalized;
+}
+
 export function isGigSquareLegacyMrc20Settlement(value) {
   const settlementKind = String(value?.settlementKind || value?.protocolSettlementKind || '')
     .trim()
@@ -61,8 +67,12 @@ export function validateGigSquarePaymentTermsDraft(draft) {
   const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
   if (paymentTiming === 'free') return null;
 
+  const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(draft?.protocolSettlementKind);
   const currency = String(draft?.currency || '').trim().toUpperCase();
-  if (!NATIVE_CURRENCIES.has(currency)) {
+  if (protocolSettlementKind === 'fiat'
+    ? !currency || isGigSquareLegacyMrc20Settlement({ currency })
+    : !NATIVE_CURRENCIES.has(currency)
+  ) {
     return {
       code: 'currency_invalid',
       i18nKey: 'gigSquarePublishCurrencyInvalid',
@@ -83,7 +93,7 @@ export function validateGigSquarePaymentTermsDraft(draft) {
       i18nKey: 'gigSquarePublishPriceInvalid',
     };
   }
-  const priceLimit = getGigSquarePublishPriceLimit(currency);
+  const priceLimit = protocolSettlementKind === 'fiat' ? null : getGigSquarePublishPriceLimit(currency);
   if (priceLimit !== null && numericPrice > priceLimit) {
     return {
       code: 'price_exceed',
@@ -101,11 +111,14 @@ export function buildGigSquarePaymentTermsSubmission(draft) {
   const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
   const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(draft?.protocolSettlementKind);
   const metadata = String(draft?.metadata || '');
+  const currency = protocolSettlementKind === 'fiat'
+    ? normalizeGigSquareFiatQuoteCurrency(draft?.currency)
+    : normalizeGigSquareNativeCurrency(draft?.currency);
   if (paymentTiming === 'free') {
     return {
       paymentTiming: 'free',
       price: '0',
-      currency: 'SPACE',
+      currency: protocolSettlementKind === 'fiat' ? currency : 'SPACE',
       protocolSettlementKind,
       metadata,
     };
@@ -113,7 +126,7 @@ export function buildGigSquarePaymentTermsSubmission(draft) {
   return {
     paymentTiming: 'prepaid',
     price: String(draft?.price || '').trim(),
-    currency: normalizeGigSquareNativeCurrency(draft?.currency),
+    currency,
     protocolSettlementKind,
     metadata,
   };

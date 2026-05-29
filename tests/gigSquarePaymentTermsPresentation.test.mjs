@@ -48,14 +48,14 @@ test('free submission preserves supplied protocol settlement kind and metadata',
     buildGigSquarePaymentTermsSubmission({
       paymentTiming: 'free',
       price: '123.45',
-      currency: 'BTC',
+      currency: ' CNY ',
       protocolSettlementKind: 'fiat',
       metadata: '{"invoice":"manual"}',
     }),
     {
       paymentTiming: 'free',
       price: '0',
-      currency: 'SPACE',
+      currency: 'CNY',
       protocolSettlementKind: 'fiat',
       metadata: '{"invoice":"manual"}',
     },
@@ -90,17 +90,26 @@ test('prepaid mode shows amount controls and serializes positive native amount',
 
 test('prepaid submission preserves supplied protocol settlement kind and metadata', () => {
   assert.deepEqual(
+    validateGigSquarePaymentTermsDraft({
+      paymentTiming: 'prepaid',
+      price: '12.50',
+      currency: ' USD ',
+      protocolSettlementKind: 'fiat',
+    }),
+    null,
+  );
+  assert.deepEqual(
     buildGigSquarePaymentTermsSubmission({
       paymentTiming: 'prepaid',
-      price: '0.01',
-      currency: 'BTC',
+      price: '12.50',
+      currency: ' USD ',
       protocolSettlementKind: 'fiat',
       metadata: '{"quote":"usd"}',
     }),
     {
       paymentTiming: 'prepaid',
-      price: '0.01',
-      currency: 'BTC',
+      price: '12.50',
+      currency: 'USD',
       protocolSettlementKind: 'fiat',
       metadata: '{"quote":"usd"}',
     },
@@ -121,6 +130,15 @@ test('prepaid validation requires a positive amount and native currency', () => 
       paymentTiming: 'prepaid',
       price: '1',
       currency: 'MRC20',
+    })?.code,
+    'currency_invalid',
+  );
+  assert.equal(
+    validateGigSquarePaymentTermsDraft({
+      paymentTiming: 'prepaid',
+      price: '1',
+      currency: 'MRC20',
+      protocolSettlementKind: 'fiat',
     })?.code,
     'currency_invalid',
   );

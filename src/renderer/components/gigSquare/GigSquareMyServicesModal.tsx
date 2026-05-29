@@ -41,7 +41,6 @@ import {
 } from './gigSquareSkillOptions.js';
 
 type GigSquareMyServicesView = 'list' | 'detail';
-type ModifyCurrency = 'BTC' | 'SPACE' | 'DOGE';
 
 type SelectedServiceLike = Pick<GigSquareMyServiceSummary, 'id'> & Partial<GigSquareMyServiceSummary>;
 
@@ -54,7 +53,7 @@ type ModifyDraft = {
   providerSkills: string[];
   paymentTiming: 'free' | 'prepaid' | string;
   price: string;
-  currency: ModifyCurrency;
+  currency: string;
   protocolSettlementKind: 'native' | 'fiat' | string;
   metadata: string;
   isLegacyMrc20: boolean;
@@ -132,6 +131,17 @@ const normalizeModifyCurrency = (value: string | null | undefined): ModifyDraft[
   return 'SPACE';
 };
 
+const normalizeModifyCurrencyForService = (service: GigSquareMyServiceSummary): ModifyDraft['currency'] => {
+  const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(
+    service.protocolSettlementKind ?? service.settlementKind,
+  );
+  if (protocolSettlementKind === 'fiat') {
+    const fiatQuoteCurrency = String(service.currency || '').trim().toUpperCase();
+    if (fiatQuoteCurrency) return fiatQuoteCurrency;
+  }
+  return normalizeModifyCurrency(service.currency);
+};
+
 const normalizeModifyOutputType = (value: string | null | undefined): ModifyDraft['outputType'] => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'image') return 'image';
@@ -207,7 +217,7 @@ const normalizeMutationTxids = (value: string[] | undefined): string[] => {
 };
 
 export const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): ModifyDraft => ({
-  currency: normalizeModifyCurrency(service.currency),
+  currency: normalizeModifyCurrencyForService(service),
   serviceName: (service.serviceName || '').trim(),
   displayName: (service.displayName || '').trim(),
   description: (service.description || '').trim(),
