@@ -94,6 +94,13 @@ function normalizeMrc20Ticker(ticker: string | null | undefined): string {
     .replace(/[^A-Z0-9]/g, '');
 }
 
+function formatOrderPinPublishFailedAfterPayment(paymentTxid: string): string {
+  return i18nService
+    .t('gigSquareOrderPinPublishFailedAfterPayment')
+    .split('{txid}')
+    .join(paymentTxid);
+}
+
 function resolveGigSquareSettlement(service: GigSquareService | null): ResolvedGigSquareSettlement {
   if (!service) {
     return {
@@ -153,18 +160,6 @@ function formatBalance(
 function isFreeServicePrice(value: string): boolean {
   const numeric = Number(String(value || '').trim());
   return Number.isFinite(numeric) && numeric === 0;
-}
-
-function generateSyntheticOrderTxid(): string {
-  const bytes = new Uint8Array(32);
-  if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function resolveGigSquarePaymentAddress(
@@ -584,7 +579,6 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
       let txId = '';
       let paymentCommitTxid = '';
       if (isFreeService) {
-        txId = generateSyntheticOrderTxid();
         setStatus('sending');
       } else if (settlement.kind === 'mrc20') {
         setStatus('paying');
@@ -662,6 +656,23 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         throw new Error(i18nService.t('gigSquareOrderFailed'));
       }
 
+      const serviceOrderPin = await window.electron.gigSquare.createServiceOrderPin({
+        metabotId: selectedMetabotId,
+        servicePinId: service.id,
+        paymentTxid: isFreeService ? '' : txId,
+        price: service.price,
+        currency: settlement.currency,
+        settlementKind: service.protocolSettlementKind || service.settlementKind || settlement.kind,
+        metadata: service.metadata || '',
+      });
+      if (!serviceOrderPin?.success || !serviceOrderPin.pinId) {
+        if (!isFreeService && txId) {
+          throw new Error(formatOrderPinPublishFailedAfterPayment(txId));
+        }
+        throw new Error(serviceOrderPin?.error || i18nService.t('gigSquareOrderFailed'));
+      }
+      const orderPinId = serviceOrderPin.pinId;
+
       // Generate only the buyer-side natural request sentence here.
       // Payment/txid/service metadata stays in the structured block below.
       let naturalOrderText: string;
@@ -680,7 +691,7 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
           price: service.price,
           currency: settlement.currency,
           txid: orderMessageTxid,
-          orderReference: isFreeService ? txId : '',
+          orderReference: orderPinId,
           serviceId: service.id,
           skillName: service.providerSkill || service.serviceName,
           requestText: trimmedPrompt,
@@ -705,13 +716,14 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         currency: settlement.currency,
         txid: orderMessageTxid,
         paymentCommitTxid: isFreeService ? '' : paymentCommitTxid,
-        orderReference: isFreeService ? txId : '',
+        orderPinId,
         paymentChain: settlement.paymentChain,
         settlementKind: settlement.kind,
         mrc20Ticker: settlement.mrc20Ticker || '',
         mrc20Id: settlement.mrc20Id || '',
         serviceId: service.id,
         skillName: service.providerSkill || service.serviceName,
+        providerSkills: service.providerSkills || undefined,
         serviceName: service.serviceName,
         outputType: service.outputType || 'text',
       });
@@ -734,7 +746,8 @@ const GigSquareOrderModal: React.FC<GigSquareOrderModalProps> = ({
         serviceSkill: service.providerSkill || service.serviceName,
         serviceOutputType: service.outputType || 'text',
         serverBotGlobalMetaId: service.providerGlobalMetaId || null,
-        servicePaidTx: txId,
+        serviceOrderPinId: orderPinId,
+        servicePaidTx: isFreeService ? '' : txId,
       });
 
       if (!sendResult?.success) {

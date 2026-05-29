@@ -36,10 +36,12 @@ interface BuildDelegationOrderPayloadFromSettlementInput {
   userTask?: string | null;
   serviceName?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
   servicePinId?: string | null;
   outputType?: string | null;
   paymentTxid: string;
   paymentCommitTxid?: string | null;
+  orderPinId?: string | null;
   orderReference?: string | null;
   settlement: ResolvedDelegationSettlement;
 }
@@ -91,9 +93,11 @@ export function buildDelegationOrderPayloadFromSettlement(
     userTask: input.userTask,
     serviceName: input.serviceName,
     providerSkill: input.providerSkill,
+    providerSkills: input.providerSkills,
     servicePinId: input.servicePinId,
     paymentTxid: input.paymentTxid,
     paymentCommitTxid: normalizeText(input.paymentCommitTxid),
+    orderPinId: normalizeText(input.orderPinId),
     orderReference: input.orderReference,
     price: input.settlement.price,
     currency: input.settlement.displayCurrency,
@@ -125,9 +129,11 @@ export function buildDelegationOrderPayloadFromService(
       userTask: input.userTask,
       serviceName: input.serviceName,
       providerSkill: input.providerSkill,
+      providerSkills: input.providerSkills,
       servicePinId: input.servicePinId,
       paymentTxid: input.paymentTxid,
       paymentCommitTxid: input.paymentCommitTxid,
+      orderPinId: input.orderPinId,
       orderReference: input.orderReference,
       settlement,
     }),

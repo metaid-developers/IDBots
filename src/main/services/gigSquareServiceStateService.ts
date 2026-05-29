@@ -25,6 +25,10 @@ type LocalServiceStateRecordLike = {
   mrc20Id?: string | null;
   providerGlobalMetaId?: string;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   serviceIcon?: string | null;
   updatedAt?: number;
   revokedAt?: number | null;
@@ -43,6 +47,10 @@ type ServicePresentationLike = ServiceLike & {
   mrc20Id?: string | null;
   providerGlobalMetaId?: string;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   serviceIcon?: string | null;
 };
 
@@ -187,6 +195,19 @@ const pickExecutionReminderOverride = (
   return toSafeString(value).trim();
 };
 
+const normalizeProviderSkills = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => toSafeString(item).trim()).filter(Boolean))];
+};
+
+const pickProviderSkillsOverride = (
+  value: unknown,
+  fallback: string[] | null | undefined,
+): string[] | null | undefined => {
+  const normalized = normalizeProviderSkills(value);
+  return normalized.length > 0 ? normalized : fallback;
+};
+
 export const applyLocalServiceState = <
   T extends ServicePresentationLike,
   L extends LocalServiceStateRecordLike,
@@ -244,6 +265,10 @@ export const applyLocalServiceState = <
         mrc20Id: pickServiceOverrideString(localRecord.mrc20Id, service.mrc20Id),
         providerGlobalMetaId: pickServiceOverrideString(localRecord.providerGlobalMetaId, service.providerGlobalMetaId),
         providerSkill: pickServiceOverrideString(localRecord.providerSkill, service.providerSkill),
+        providerSkills: pickProviderSkillsOverride(localRecord.providerSkills, service.providerSkills),
+        paymentTiming: pickServiceOverrideString(localRecord.paymentTiming, service.paymentTiming),
+        protocolSettlementKind: pickServiceOverrideString(localRecord.protocolSettlementKind, service.protocolSettlementKind),
+        metadata: localRecord.metadata == null ? service.metadata : toSafeString(localRecord.metadata),
         serviceIcon: localRecord.serviceIcon == null ? service.serviceIcon : localRecord.serviceIcon,
         updatedAt: Math.max(toSafeNumber(service.updatedAt), toSafeNumber(localRecord.updatedAt)),
       };

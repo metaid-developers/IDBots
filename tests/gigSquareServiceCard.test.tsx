@@ -62,6 +62,61 @@ test('GigSquareServiceCard shows SPACE when service currency is MVC', () => {
   assert.doesNotMatch(markup, /1\.25[\s\S]*MVC/);
 });
 
+test('GigSquareServiceCard renders free services without a zero currency price', () => {
+  const markup = renderToStaticMarkup(
+    <GigSquareServiceCard
+      service={{
+        id: 'svc-free',
+        displayName: 'Free Weather',
+        serviceName: 'free-weather-service',
+        description: 'Free forecast',
+        price: '0',
+        currency: 'SPACE',
+        paymentTiming: 'free',
+        providerMetaId: 'meta-free',
+        providerGlobalMetaId: 'global-free',
+        providerAddress: 'addr-free',
+      }}
+      providerName="Forecast Bot"
+      providerAvatarSrc="https://example.com/provider.png"
+      providerLookupId="global-free"
+      isOnline={true}
+      onOpen={() => {}}
+    />
+  );
+
+  assert.match(markup, /data-slot="gig-square-card-price"[\s\S]*Free/);
+  assert.doesNotMatch(markup, /0[\s\S]*SPACE/);
+});
+
+test('GigSquareServiceCard renders provider skill allow-list chips', () => {
+  const markup = renderToStaticMarkup(
+    <GigSquareServiceCard
+      service={{
+        id: 'svc-skills',
+        displayName: 'Multi Skill',
+        serviceName: 'multi-skill-service',
+        description: 'Uses allowed skills',
+        price: '0.25',
+        currency: 'SPACE',
+        providerSkill: 'legacy',
+        providerSkills: ['weather', 'reporter'],
+        providerMetaId: 'meta-skills',
+        providerGlobalMetaId: 'global-skills',
+        providerAddress: 'addr-skills',
+      }}
+      providerName="Forecast Bot"
+      providerAvatarSrc="https://example.com/provider.png"
+      providerLookupId="global-skills"
+      isOnline={true}
+      onOpen={() => {}}
+    />
+  );
+
+  assert.match(markup, /data-slot="gig-square-provider-skill-chips"[\s\S]*weather[\s\S]*reporter/);
+  assert.doesNotMatch(markup, /data-slot="gig-square-provider-skill-chips"[\s\S]*legacy/);
+});
+
 test('GigSquareServiceCard does not render publisher execution reminder', () => {
   const markup = renderToStaticMarkup(
     <GigSquareServiceCard

@@ -1,7 +1,14 @@
 const TXID_RE = /(?:txid|order(?:\s+id|\s+ref(?:erence)?))\s*[:：=]?\s*([0-9a-fA-F]{64})/i;
+const ORDER_PIN_ID_RE = /^\s*order\s+pin\s+id\s*[:：=]?\s*([A-Za-z0-9][A-Za-z0-9._:-]{5,127})\s*$/im;
 
 function extractOrderTxid(plaintext) {
   const match = String(plaintext || '').match(TXID_RE);
+  if (!match) return null;
+  return match[1] || null;
+}
+
+function extractOrderPinId(plaintext) {
+  const match = String(plaintext || '').match(ORDER_PIN_ID_RE);
   if (!match) return null;
   return match[1] || null;
 }
@@ -80,6 +87,29 @@ export function extractSessionOrderTxid(messages) {
   return null;
 }
 
+export function extractSessionOrderPinId(messages) {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+
+  for (const message of messages) {
+    const metadata = message?.metadata && typeof message.metadata === 'object'
+      ? message.metadata
+      : {};
+    const metadataOrderPinId = normalizeString(metadata.serviceOrderPinId)
+      || normalizeString(metadata.orderPinId);
+    if (metadataOrderPinId) {
+      return metadataOrderPinId;
+    }
+    const orderPinId = extractOrderPinId(typeof message?.content === 'string' ? message.content : '');
+    if (orderPinId) {
+      return orderPinId;
+    }
+  }
+
+  return null;
+}
+
 export function resolveOrderSessionId(input) {
   const directSessionId = normalizeString(input?.directSessionId);
   if (directSessionId) {
@@ -94,10 +124,11 @@ export function findMatchingOrderSessionId(sessions, order) {
     return null;
   }
 
+  const orderPinId = normalizeString(order.orderPinId);
   const paymentTxid = normalizeString(order.paymentTxid);
   const localMetabotId = normalizeNumber(order.localMetabotId);
   const counterpartyGlobalMetaid = normalizeString(order.counterpartyGlobalMetaid);
-  if (!paymentTxid || localMetabotId == null || localMetabotId <= 0) {
+  if ((!orderPinId && !paymentTxid) || localMetabotId == null || localMetabotId <= 0) {
     return null;
   }
 
@@ -125,6 +156,9 @@ export function findMatchingOrderSessionId(sessions, order) {
         return false;
       }
 
+      if (orderPinId) {
+        return extractSessionOrderPinId(session.messages) === orderPinId;
+      }
       return extractSessionOrderTxid(session.messages) === paymentTxid;
     })
     .sort((left, right) => {

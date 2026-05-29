@@ -18,6 +18,10 @@ export interface GigSquareMyServiceSource {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   outputType?: string | null;
   creatorMetabotId?: number | null;
   creatorMetabotName?: string | null;
@@ -77,6 +81,10 @@ export interface GigSquareMyServiceSummary {
   avatar?: string | null;
   serviceIcon?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   creatorMetabotId: number | null;
   creatorMetabotName?: string | null;
   creatorMetabotAvatar?: string | null;
@@ -191,6 +199,11 @@ const formatUnitsToDecimal = (units: bigint): string => {
   const integerPart = absolute / DECIMAL_MULTIPLIER;
   const fractionPart = (absolute % DECIMAL_MULTIPLIER).toString().padStart(Number(DECIMAL_SCALE), '0').replace(/0+$/, '');
   return fractionPart ? `${sign}${integerPart.toString()}.${fractionPart}` : `${sign}${integerPart.toString()}`;
+};
+
+const normalizeProviderSkills = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((entry) => toSafeString(entry).trim()).filter(Boolean))];
 };
 
 const createPageResult = <T>(items: T[], page: number, pageSize: number): GigSquarePageResult<T> => {
@@ -354,6 +367,10 @@ export function buildMyServiceSummaries(input: {
         avatar: service.avatar ?? null,
         serviceIcon: service.serviceIcon ?? null,
         providerSkill: toSafeString(service.providerSkill).trim() || null,
+        providerSkills: normalizeProviderSkills(service.providerSkills),
+        paymentTiming: toSafeString(service.paymentTiming).trim() || null,
+        protocolSettlementKind: toSafeString(service.protocolSettlementKind).trim() || null,
+        metadata: service.metadata == null ? null : toSafeString(service.metadata),
         outputType: toSafeString(service.outputType).trim() || null,
         creatorMetabotId: toOptionalInteger(service.creatorMetabotId),
         creatorMetabotName: toSafeString(service.creatorMetabotName).trim() || null,

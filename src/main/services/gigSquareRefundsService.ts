@@ -10,6 +10,7 @@ export interface GigSquareRefundOrderRecord {
   counterpartyGlobalMetaid: string;
   servicePinId: string | null;
   serviceName: string;
+  orderPinId?: string | null;
   paymentTxid: string;
   orderMessageTxid?: string | null;
   paymentAmount: string;
@@ -30,6 +31,7 @@ export interface GigSquareRefundItem {
   role: 'buyer' | 'seller';
   servicePinId: string | null;
   serviceName: string;
+  orderPinId: string | null;
   paymentTxid: string;
   orderMessageTxid: string | null;
   paymentAmount: string;
@@ -275,6 +277,7 @@ export class GigSquareRefundsService {
       role: order.role,
       servicePinId: normalizeOptionalText(order.servicePinId),
       serviceName: normalizeText(order.serviceName),
+      orderPinId: normalizeOptionalText(order.orderPinId),
       paymentTxid: normalizeText(order.paymentTxid),
       orderMessageTxid: normalizeOptionalText(order.orderMessageTxid),
       paymentAmount: normalizeText(order.paymentAmount),

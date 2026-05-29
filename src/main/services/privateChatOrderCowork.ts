@@ -75,12 +75,15 @@ export interface OrderCoworkRequest {
   peerAvatar?: string | null;
   expectedOutputType?: string | null;
   orderTxid?: string | null;
+  orderPinId?: string | null;
+  serviceOrderPinId?: string | null;
   paymentTxid?: string | null;
   orderStartedAt?: number | null;
   processingNotice?: {
     content: string;
     metadata?: Record<string, unknown>;
   };
+  activeSkillIds?: string[];
   sendStatusUpdate?: (content: string) => Promise<unknown>;
 }
 
@@ -134,6 +137,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   async runOrder(request: OrderCoworkRequest): Promise<OrderCoworkResult> {
     request.orderStartedAt = request.orderStartedAt ?? Date.now();
+    request.activeSkillIds = this.normalizeActiveSkillIds(request.activeSkillIds);
     const displaySessionId = this.normalizeSessionId(request.displaySessionId);
     const existingSessionId = this.normalizeSessionId(request.existingSessionId);
     let sessionId: string;
@@ -162,6 +166,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       workspaceRoot: session.cwd,
       confirmationMode: 'text',
       systemPrompt: request.systemPrompt,
+      skillIds: request.activeSkillIds,
       autoApprove: true,
       disableMemoryUpdates: true,
       disableRemoteServicesPrompt: true,
@@ -176,6 +181,18 @@ export class PrivateChatOrderCowork extends EventEmitter {
 
   private normalizeSessionId(value?: string | null): string {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private normalizeActiveSkillIds(values?: string[] | null): string[] {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of Array.isArray(values) ? values : []) {
+      const skillId = String(value || '').trim();
+      if (!skillId || seen.has(skillId)) continue;
+      seen.add(skillId);
+      normalized.push(skillId);
+    }
+    return normalized;
   }
 
   private getDisplaySessionId(executionSessionId: string, request?: OrderCoworkRequest): string {
@@ -210,7 +227,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       resolvedRoot,
       request.systemPrompt,
       'local',
-      [],
+      this.normalizeActiveSkillIds(request.activeSkillIds),
       request.metabotId,
       'a2a',
       request.peerGlobalMetaId ?? null,
@@ -240,7 +257,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
       resolvedRoot,
       request.systemPrompt,
       'local',
-      [],
+      this.normalizeActiveSkillIds(request.activeSkillIds),
       request.metabotId,
       'a2a',
       request.peerGlobalMetaId ?? null,
@@ -527,6 +544,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
           workspaceRoot: session?.cwd,
           confirmationMode: 'text',
           systemPrompt: request?.systemPrompt,
+          skillIds: this.normalizeActiveSkillIds(request?.activeSkillIds),
           autoApprove: true,
           disableMemoryUpdates: true,
           disableRemoteServicesPrompt: true,
@@ -739,8 +757,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
   ): string {
     const text = String(content || '').trim();
     const orderTxid = typeof request?.orderTxid === 'string' ? request.orderTxid.trim() : '';
-    if (!orderTxid || /^\[ORDER_STATUS:/i.test(text)) return text;
-    return buildOrderStatusMessage(orderTxid, text);
+    const orderPinId = this.getRequestOrderPinId(request);
+    if (!orderTxid && !orderPinId) return text;
+    if (/^\[ORDER_STATUS:/i.test(text)) {
+      if (!orderPinId || /order\s+pin\s+id\s*[:：=]/i.test(text)) return text;
+      return `${text}\norder pin id: ${orderPinId}`;
+    }
+    const withoutLegacyPrefix = text.replace(/^\[ORDER_STATUS\]\s*/i, '').trim();
+    return buildOrderStatusMessage(orderTxid, withoutLegacyPrefix, orderPinId);
   }
 
   private formatNeedsRatingText(
@@ -749,9 +773,22 @@ export class PrivateChatOrderCowork extends EventEmitter {
   ): string {
     const text = String(content || '').trim();
     const orderTxid = typeof request?.orderTxid === 'string' ? request.orderTxid.trim() : '';
-    if (!orderTxid || /^\[NeedsRating:/i.test(text)) return text;
+    const orderPinId = this.getRequestOrderPinId(request);
+    if (!orderTxid && !orderPinId) return text;
+    if (/^\[NeedsRating:/i.test(text)) {
+      if (!orderPinId || /order\s+pin\s+id\s*[:：=]/i.test(text)) return text;
+      return `${text}\norder pin id: ${orderPinId}`;
+    }
     const withoutLegacyPrefix = text.replace(/^\[NeedsRating\]\s*/i, '').trim();
-    return buildNeedsRatingMessage(orderTxid, withoutLegacyPrefix);
+    return buildNeedsRatingMessage(orderTxid, withoutLegacyPrefix, orderPinId);
+  }
+
+  private getRequestOrderPinId(request: OrderCoworkRequest | undefined): string {
+    return (
+      typeof request?.serviceOrderPinId === 'string' ? request.serviceOrderPinId.trim() : ''
+    ) || (
+      typeof request?.orderPinId === 'string' ? request.orderPinId.trim() : ''
+    );
   }
 
   private buildDisplayMetadata(
@@ -766,6 +803,7 @@ export class PrivateChatOrderCowork extends EventEmitter {
         tag,
         orderTxid: request.orderTxid,
         orderRole: 'seller',
+        orderPinId: this.getRequestOrderPinId(request),
         paymentTxid: request.paymentTxid,
         orderMappingExternalConversationId: request.externalConversationId,
         extra,

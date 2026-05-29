@@ -46,6 +46,7 @@ class FakeCoworkStore {
     this.workingDirectory = workingDirectory;
     this.sessions = new Map();
     this.hiddenSessionIds = new Set();
+    this.createSessionCalls = [];
     this.mappingCalls = [];
     this.messageCounter = 0;
   }
@@ -54,12 +55,14 @@ class FakeCoworkStore {
     return { workingDirectory: this.workingDirectory };
   }
 
-  createSession(title, cwd) {
+  createSession(title, cwd, systemPrompt, executionMode, activeSkillIds) {
+    this.createSessionCalls.push({ title, cwd, systemPrompt, executionMode, activeSkillIds });
     const id = `session-${this.sessions.size + 1}`;
     const session = {
       id,
       title,
       cwd,
+      activeSkillIds,
       messages: [],
     };
     this.sessions.set(id, session);
@@ -454,6 +457,91 @@ test('runOrder scopes media artifact resolution to the current order metadata', 
   assert.match(result.serviceReply, /blackhole_spaceship\.png/);
 });
 
+test('runOrder carries active skill ids into execution session creation and runner start options', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-skill-ids-execution-'));
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+  const displaySessionId = store.createTestSession(cwd);
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_private',
+    externalConversationId: 'metaweb_order:seller:1:peer:scoped-execution',
+    displaySessionId,
+    prompt: '[ORDER] 查询天气',
+    systemPrompt: 'test system prompt',
+    activeSkillIds: ['weather', 'weather', 'image-gen', ''],
+    expectedOutputType: 'text',
+  });
+
+  const executionSessionId = runner.startSessionCalls[0].sessionId;
+  const executionSessionCall = store.createSessionCalls.find((call) => call.title === '[ORDER] 查询天气');
+  assert.deepEqual(executionSessionCall.activeSkillIds, ['weather', 'image-gen']);
+  assert.deepEqual(runner.startSessionCalls[0].options.skillIds, ['weather', 'image-gen']);
+
+  runner.emit('message', executionSessionId, {
+    id: 'assistant-final',
+    type: 'assistant',
+    content: '天气晴朗。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('complete', executionSessionId);
+
+  const result = await runPromise;
+  assert.equal(result.serviceReply, '天气晴朗。');
+});
+
+test('runOrder carries active skill ids into newly created order sessions', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-skill-ids-order-session-'));
+  const runner = new FakeCoworkRunner();
+  const store = new FakeCoworkStore(cwd);
+
+  const handler = new PrivateChatOrderCowork({
+    coworkRunner: runner,
+    coworkStore: store,
+    metabotStore: new FakeMetabotStore(),
+    timeoutMs: 1000,
+    buildRatingInvite: async () => '[NeedsRating] 请评价本次服务。',
+  });
+
+  const runPromise = handler.runOrder({
+    metabotId: 1,
+    source: 'metaweb_group',
+    externalConversationId: 'metaweb_order:group:scoped-order-session',
+    prompt: '[ORDER] 生成摘要',
+    systemPrompt: 'test system prompt',
+    activeSkillIds: ['summarizer', 'writer'],
+    expectedOutputType: 'text',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const orderSessionId = runner.startSessionCalls[0].sessionId;
+  const orderSessionCall = store.createSessionCalls.find((call) => call.title !== 'test');
+  assert.deepEqual(orderSessionCall.activeSkillIds, ['summarizer', 'writer']);
+  assert.deepEqual(runner.startSessionCalls[0].options.skillIds, ['summarizer', 'writer']);
+
+  runner.emit('message', orderSessionId, {
+    id: 'assistant-final',
+    type: 'assistant',
+    content: '摘要完成。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runner.emit('complete', orderSessionId);
+
+  const result = await runPromise;
+  assert.equal(result.serviceReply, '摘要完成。');
+});
+
 test('runOrder isolates concurrent same-peer orders into separate execution sessions with one display session', async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-order-concurrent-'));
   const runner = new FakeCoworkRunner();
@@ -720,6 +808,7 @@ test('runOrder continues media execution once when the first turn ends before ge
     peerName: 'Sunny',
     expectedOutputType: 'image',
     orderTxid: '5'.repeat(64),
+    activeSkillIds: ['image-gen'],
   });
   let settled = false;
   runPromise.finally(() => {
@@ -754,6 +843,7 @@ test('runOrder continues media execution once when the first turn ends before ge
   assert.equal(runner.startSessionCalls.length, 2);
   assert.equal(runner.startSessionCalls[1].sessionId, executionSessionId);
   assert.equal(runner.startSessionCalls[1].options.skipInitialUserMessage, true);
+  assert.deepEqual(runner.startSessionCalls[1].options.skillIds, ['image-gen']);
   assert.match(runner.startSessionCalls[1].prompt, /generate a real image file/i);
 
   fs.writeFileSync(imagePath, 'png');

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -13,8 +12,7 @@ const {
   ServiceOrderLifecycleService,
 } = require('../dist-electron/services/serviceOrderLifecycleService.js');
 
-const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const sqlWasmPath = path.join(projectRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+const sqlWasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
 
 async function createSqlDatabase() {
   const SQL = await initSqlJs({
@@ -258,6 +256,31 @@ test('markSellerOrderFirstResponseSent moves awaiting seller orders into in_prog
   assert.equal(updated?.firstResponseAt, now);
 });
 
+test('markSellerOrderFailed closes seller-side scope rejection orders', async () => {
+  const now = 1_770_000_112_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const order = service.createSellerOrder(baseOrderInput({
+    orderPinId: 'scope-rejected-order-pin-i0',
+  }));
+
+  const updated = service.markSellerOrderFailed({
+    localMetabotId: order.localMetabotId,
+    counterpartyGlobalMetaId: order.counterpartyGlobalMetaid,
+    orderPinId: order.orderPinId,
+    paymentTxid: order.paymentTxid,
+    failureReason: 'skill_scope_unresolved',
+    failedAt: now,
+  });
+
+  assert.equal(updated?.status, 'failed');
+  assert.equal(updated?.failureReason, 'skill_scope_unresolved');
+  assert.equal(updated?.failedAt, now);
+  assert.equal(store.getOrderById(order.id)?.status, 'failed');
+  assert.deepEqual(store.listOrdersByStatuses('seller', ['awaiting_first_response']).map((item) => item.id), []);
+});
+
 test('markBuyerOrderDelivered moves the buyer order into rating_pending and stores the delivery message pin', async () => {
   const now = 1_770_000_222_000;
   const { service } = await createLifecycleServiceForTest({
@@ -277,6 +300,65 @@ test('markBuyerOrderDelivered moves the buyer order into rating_pending and stor
   assert.equal(updated?.deliveryMessagePinId, 'delivery-pin-id');
   assert.equal(updated?.deliveredAt, now);
   assert.equal(updated?.firstResponseAt, now);
+});
+
+test('free lifecycle transitions match by order pin id when payment txid is empty', async () => {
+  const now = 1_770_000_333_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    orderPinId: 'free-order-pin-i0',
+    paymentTxid: '',
+    paymentAmount: '0',
+  }));
+  const otherFreeOrder = service.createBuyerOrder(baseOrderInput({
+    orderPinId: 'free-order-pin-i1',
+    paymentTxid: '',
+    paymentAmount: '0',
+  }));
+
+  const updated = service.markBuyerOrderDelivered({
+    localMetabotId: buyerOrder.localMetabotId,
+    counterpartyGlobalMetaId: buyerOrder.counterpartyGlobalMetaid,
+    orderPinId: buyerOrder.orderPinId,
+    paymentTxid: '',
+    deliveryMessagePinId: 'delivery-pin-id',
+    deliveredAt: now,
+  });
+
+  assert.equal(updated?.id, buyerOrder.id);
+  assert.equal(updated?.status, 'rating_pending');
+  assert.equal(updated?.paymentTxid, '');
+  assert.equal(store.getOrderById(otherFreeOrder.id)?.status, 'awaiting_first_response');
+});
+
+test('paid lifecycle transitions prefer order pin id over a conflicting payment txid', async () => {
+  const now = 1_770_000_334_000;
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => now,
+  });
+  const targetOrder = service.createBuyerOrder(baseOrderInput({
+    orderPinId: 'paid-order-pin-i0',
+    paymentTxid: '1'.repeat(64),
+  }));
+  const conflictingPaymentOrder = service.createBuyerOrder(baseOrderInput({
+    orderPinId: 'paid-order-pin-i1',
+    paymentTxid: '2'.repeat(64),
+  }));
+
+  const updated = service.markBuyerOrderDelivered({
+    localMetabotId: targetOrder.localMetabotId,
+    counterpartyGlobalMetaId: targetOrder.counterpartyGlobalMetaid,
+    orderPinId: targetOrder.orderPinId,
+    paymentTxid: conflictingPaymentOrder.paymentTxid,
+    deliveryMessagePinId: 'delivery-pin-id',
+    deliveredAt: now,
+  });
+
+  assert.equal(updated?.id, targetOrder.id);
+  assert.equal(store.getOrderById(targetOrder.id)?.status, 'rating_pending');
+  assert.equal(store.getOrderById(conflictingPaymentOrder.id)?.status, 'awaiting_first_response');
 });
 
 test('scanTimedOutOrders sends scoped seller ORDER_END after the rating deadline', async () => {
@@ -637,6 +719,54 @@ test('scanTimedOutOrders auto-resolves free timed-out orders without creating re
   assert.deepEqual(
     seenEvents.map((event) => event).sort(),
     ['refunded:buyer', 'refunded:seller']
+  );
+});
+
+test('free refund resolution mirrors by order pin id instead of empty payment txid', async () => {
+  let currentNow = 1_770_000_000_000;
+  const seenEvents = [];
+  const { service, store } = await createLifecycleServiceForTest({
+    now: () => currentNow,
+    createRefundRequestPin: async () => {
+      throw new Error('free orders must not create refund request pins');
+    },
+    onOrderEvent: (event) => {
+      seenEvents.push(`${event.type}:${event.order.role}:${event.order.orderPinId}`);
+    },
+  });
+
+  const buyerOrder = service.createBuyerOrder(baseOrderInput({
+    orderPinId: 'free-timeout-order-pin-i0',
+    paymentTxid: '',
+    paymentAmount: '0',
+    coworkSessionId: 'buyer-session-id',
+  }));
+  const sellerOrder = service.createSellerOrder(baseOrderInput({
+    orderPinId: 'free-timeout-order-pin-i0',
+    paymentTxid: '',
+    paymentAmount: '0',
+    coworkSessionId: 'seller-session-id',
+  }));
+  const unrelatedFreeOrder = service.createSellerOrder(baseOrderInput({
+    counterpartyGlobalMetaId: 'other-buyer-global-metaid',
+    orderPinId: 'free-timeout-order-pin-i1',
+    paymentTxid: '',
+    paymentAmount: '0',
+    coworkSessionId: 'unrelated-session-id',
+  }));
+
+  currentNow += 5 * 60_000 + 1;
+  await service.scanTimedOutOrders();
+
+  assert.equal(store.getOrderById(buyerOrder.id)?.status, 'refunded');
+  assert.equal(store.getOrderById(sellerOrder.id)?.status, 'refunded');
+  assert.equal(store.getOrderById(unrelatedFreeOrder.id)?.status, 'awaiting_first_response');
+  assert.deepEqual(
+    seenEvents.sort(),
+    [
+      'refunded:buyer:free-timeout-order-pin-i0',
+      'refunded:seller:free-timeout-order-pin-i0',
+    ]
   );
 });
 

@@ -90,6 +90,64 @@ test('buildAutoRoutingPromptForOrderSkill falls back to the full seller skill li
   assert.equal(prompt, fullPrompt);
 });
 
+test('buildAutoRoutingPromptForOrderSkillScope resolves multiple ids and names without order semantics', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-skill-order-scope-'));
+  const alphaDir = path.join(tempRoot, 'alpha-skill');
+  const betaDir = path.join(tempRoot, 'beta-skill');
+  fs.mkdirSync(alphaDir, { recursive: true });
+  fs.mkdirSync(betaDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(alphaDir, 'SKILL.md'),
+    `---\nname: Alpha Skill\ndescription: Alpha scope skill.\n---\n\nRun alpha.\n`,
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(betaDir, 'SKILL.md'),
+    `---\nname: Friendly Beta\ndescription: Beta scope skill.\n---\n\nRun beta.\n`,
+    'utf8'
+  );
+  const { manager } = createManager(tempRoot);
+
+  const result = manager.buildAutoRoutingPromptForOrderSkillScope({
+    skillIds: ['alpha-skill', 'missing-by-id'],
+    skillNames: ['Friendly Beta', 'missing-by-name', 'alpha-skill'],
+    strictScope: true,
+  });
+
+  assert.ok(result.prompt);
+  assert.deepEqual(result.activeSkillIds, ['alpha-skill', 'beta-skill']);
+  assert.deepEqual(result.missingSkillNames, ['missing-by-id', 'missing-by-name']);
+  assert.deepEqual(extractSkillIds(result.prompt), ['alpha-skill', 'beta-skill']);
+  assert.doesNotMatch(result.prompt, /missing-by-id/);
+});
+
+test('buildAutoRoutingPromptForOrderSkillScope refuses unrestricted fallback for unresolved strict allow-lists', () => {
+  const { manager } = createManager();
+
+  const result = manager.buildAutoRoutingPromptForOrderSkillScope({
+    skillNames: ['missing-seller-skill'],
+    strictScope: true,
+  });
+
+  assert.equal(result.prompt, null);
+  assert.deepEqual(result.activeSkillIds, []);
+  assert.deepEqual(result.missingSkillNames, ['missing-seller-skill']);
+});
+
+test('buildAutoRoutingPromptForOrderSkillScope keeps legacy full routing fallback when no allow-list is supplied', () => {
+  const { manager } = createManager();
+
+  const fullPrompt = manager.buildAutoRoutingPrompt();
+  const result = manager.buildAutoRoutingPromptForOrderSkillScope({
+    strictScope: false,
+  });
+
+  assert.ok(fullPrompt);
+  assert.equal(result.prompt, fullPrompt);
+  assert.deepEqual(result.activeSkillIds, extractSkillIds(fullPrompt));
+  assert.deepEqual(result.missingSkillNames, []);
+});
+
 test('buildRemoteServicesPrompt prefers currentPinId for delegated service identity', () => {
   const { manager } = createManager();
 

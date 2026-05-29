@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, session, nativeTheme, dialog, shell, nativ
 import type { Session, WebContents } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { randomBytes } from 'crypto';
 import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import os from 'os';
@@ -160,10 +159,12 @@ import {
   normalizeGigSquareSettlementDraft,
   parseGigSquareSettlementAsset,
 } from './shared/gigSquareSettlementAsset.js';
+import { buildSkillServiceOrderPayload } from './shared/skillServiceProtocol.js';
 import { verifyMrc20Transfer } from './services/mrc20PaymentVerification';
 import { buildTransactionExplorerUrl } from './services/serviceOrderPresentation.js';
 import { recoverMissingRefundPendingOrderSessions } from './services/serviceOrderSessionRecovery';
 import {
+  extractSessionOrderPinId,
   extractSessionOrderTxid,
   findMatchingOrderSessionId,
   resolveOrderSessionId,
@@ -212,7 +213,6 @@ import {
   buildGigSquareRevokeMetaidPayload,
   buildGigSquareServicePayload,
   normalizeGigSquareModifyDraft,
-  resolveGigSquareSettlementPaymentAddress,
   validateGigSquareModifyDraft,
   validateGigSquareServiceMutation,
   type GigSquareModifyDraft,
@@ -314,10 +314,6 @@ const isFreeServicePrice = (value: unknown): boolean => {
   if (!raw) return false;
   const numeric = Number(raw);
   return Number.isFinite(numeric) && numeric === 0;
-};
-
-const generateSyntheticOrderTxid = (): string => {
-  return randomBytes(32).toString('hex');
 };
 
 const getRefundAddressForOrder = (
@@ -564,6 +560,10 @@ type GigSquareService = {
   serviceIcon?: string | null;
   providerMetaBot?: string | null;
   providerSkill?: string | null;
+  providerSkills?: string[] | null;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   status?: number;
   operation?: string | null;
   path?: string | null;
@@ -597,6 +597,7 @@ type GigSquareLocalServiceRecord = {
   metabotId: number;
   providerGlobalMetaId: string;
   providerSkill: string;
+  providerSkills: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -604,6 +605,9 @@ type GigSquareLocalServiceRecord = {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  paymentTiming: string | null;
+  protocolSettlementKind: string | null;
+  metadata: string;
   skillDocument: string;
   inputType: string;
   outputType: string;
@@ -617,6 +621,41 @@ const toSafeString = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value == null) return '';
   return String(value);
+};
+
+const publishSkillServiceOrderPin = async (input: {
+  metabotId: number;
+  servicePinId?: string | null;
+  paymentTxid?: string | null;
+  price?: string | null;
+  currency?: string | null;
+  settlementKind?: string | null;
+  metadata?: string | null;
+}): Promise<{ pinId: string; txids: string[] }> => {
+  const metabotId = Number(input.metabotId);
+  if (!Number.isFinite(metabotId) || metabotId <= 0) {
+    throw new Error('metabotId is required');
+  }
+
+  const payload = buildSkillServiceOrderPayload(input);
+  const result = await createPin(getMetabotStore(), metabotId, {
+    operation: 'create',
+    path: '/protocols/skill-service-order',
+    encryption: '0',
+    version: '1.0.0',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+  });
+
+  const pinId = toSafeString(result.pinId).trim();
+  if (!pinId) {
+    throw new Error('Failed to publish skill-service-order pin');
+  }
+
+  return {
+    pinId,
+    txids: Array.isArray(result.txids) ? result.txids : [],
+  };
 };
 
 const toSafeNumber = (value: unknown): number => {
@@ -696,6 +735,10 @@ const ensureGigSquareSchema = (): void => {
       metabot_id INTEGER NOT NULL,
       provider_global_metaid TEXT NOT NULL,
       provider_skill TEXT NOT NULL,
+      provider_skills_json TEXT,
+      payment_timing TEXT,
+      protocol_settlement_kind TEXT,
+      metadata TEXT,
       service_name TEXT NOT NULL,
       display_name TEXT NOT NULL,
       description TEXT NOT NULL,
@@ -726,6 +769,18 @@ const ensureGigSquareSchema = (): void => {
   }
   if (!gigSquareColumns.includes('execution_reminder')) {
     db.run('ALTER TABLE gig_square_services ADD COLUMN execution_reminder TEXT');
+  }
+  if (!gigSquareColumns.includes('provider_skills_json')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN provider_skills_json TEXT');
+  }
+  if (!gigSquareColumns.includes('payment_timing')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN payment_timing TEXT');
+  }
+  if (!gigSquareColumns.includes('protocol_settlement_kind')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN protocol_settlement_kind TEXT');
+  }
+  if (!gigSquareColumns.includes('metadata')) {
+    db.run('ALTER TABLE gig_square_services ADD COLUMN metadata TEXT');
   }
   db.run(`
     UPDATE gig_square_services
@@ -762,6 +817,7 @@ const insertGigSquareServiceRow = (input: {
   metabotId: number;
   providerGlobalMetaId: string;
   providerSkill: string;
+  providerSkills?: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -769,6 +825,9 @@ const insertGigSquareServiceRow = (input: {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   skillDocument: string;
   inputType: string;
   outputType: string;
@@ -785,9 +844,10 @@ const insertGigSquareServiceRow = (input: {
     `
       INSERT INTO gig_square_services (
         id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid, provider_skill,
+        provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
         service_name, display_name, description, execution_reminder, service_icon, price, currency,
         skill_document, input_type, output_type, endpoint, payload_json, revoked_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         pin_id = excluded.pin_id,
         source_service_pin_id = excluded.source_service_pin_id,
@@ -796,6 +856,10 @@ const insertGigSquareServiceRow = (input: {
         metabot_id = excluded.metabot_id,
         provider_global_metaid = excluded.provider_global_metaid,
         provider_skill = excluded.provider_skill,
+        provider_skills_json = excluded.provider_skills_json,
+        payment_timing = excluded.payment_timing,
+        protocol_settlement_kind = excluded.protocol_settlement_kind,
+        metadata = excluded.metadata,
         service_name = excluded.service_name,
         display_name = excluded.display_name,
         description = excluded.description,
@@ -820,6 +884,10 @@ const insertGigSquareServiceRow = (input: {
       input.metabotId,
       input.providerGlobalMetaId,
       input.providerSkill,
+      input.providerSkills?.length ? JSON.stringify(input.providerSkills) : null,
+      toSafeString(input.paymentTiming).trim() || null,
+      toSafeString(input.protocolSettlementKind).trim() || null,
+      toSafeString(input.metadata),
       input.serviceName,
       input.displayName,
       input.description,
@@ -1017,7 +1085,8 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
   const db = getStore().getDatabase();
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, current_pin_id, txid, metabot_id, provider_global_metaid,
-           provider_skill, service_name, display_name, description, service_icon, price, currency,
+           provider_skill, provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
+           service_name, display_name, description, service_icon, price, currency,
            execution_reminder, skill_document, input_type, output_type, endpoint, payload_json, revoked_at, updated_at
     FROM gig_square_services
     ORDER BY updated_at DESC
@@ -1060,6 +1129,14 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       metabotId: Math.trunc(toSafeNumber(raw.metabot_id)),
       providerGlobalMetaId: toSafeString(raw.provider_global_metaid).trim(),
       providerSkill: toSafeString(raw.provider_skill).trim(),
+      providerSkills: (() => {
+        try {
+          const parsed = JSON.parse(toSafeString(raw.provider_skills_json));
+          return Array.isArray(parsed) ? parsed.map(toSafeString).map((item) => item.trim()).filter(Boolean) : [];
+        } catch {
+          return [];
+        }
+      })(),
       serviceName: toSafeString(raw.service_name).trim(),
       displayName: toSafeString(raw.display_name).trim(),
       description: toSafeString(raw.description).trim(),
@@ -1068,6 +1145,9 @@ const listGigSquareLocalServiceRecords = (): GigSquareLocalServiceRecord[] => {
       serviceIcon: toSafeString(raw.service_icon).trim() || null,
       price: toSafeString(raw.price).trim(),
       currency: settlement.protocolCurrency,
+      paymentTiming: toSafeString(raw.payment_timing).trim() || null,
+      protocolSettlementKind: toSafeString(raw.protocol_settlement_kind).trim() || null,
+      metadata: toSafeString(raw.metadata),
       settlementKind: settlement.settlementKind,
       paymentChain: settlement.paymentChain,
       mrc20Ticker: settlement.mrc20Ticker,
@@ -1140,6 +1220,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     creatorMetabotId?: number | null;
     providerGlobalMetaId?: string;
     providerSkill?: string | null;
+    providerSkills?: string[] | null;
     serviceName?: string;
     displayName?: string;
     description?: string;
@@ -1147,11 +1228,15 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     serviceIcon?: string | null;
     price?: string;
     currency?: string;
+    paymentTiming?: string | null;
+    protocolSettlementKind?: string | null;
+    metadata?: string | null;
     outputType?: string | null;
     endpoint?: string | null;
   };
   currentPinId: string;
   providerSkill: string;
+  providerSkills?: string[];
   serviceName: string;
   displayName: string;
   description: string;
@@ -1159,6 +1244,9 @@ const updateGigSquareLocalServiceAfterModify = (input: {
   serviceIcon: string | null;
   price: string;
   currency: string;
+  paymentTiming?: string | null;
+  protocolSettlementKind?: string | null;
+  metadata?: string | null;
   outputType: string;
   endpoint: string;
   payloadJson: string;
@@ -1174,6 +1262,10 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     `UPDATE gig_square_services
      SET current_pin_id = ?,
          provider_skill = ?,
+         provider_skills_json = ?,
+         payment_timing = ?,
+         protocol_settlement_kind = ?,
+         metadata = ?,
          service_name = ?,
          display_name = ?,
          description = ?,
@@ -1193,6 +1285,10 @@ const updateGigSquareLocalServiceAfterModify = (input: {
     sanitizeDbParams([
       toSafeString(input.currentPinId).trim() || normalizedTargetServiceId,
       input.providerSkill,
+      input.providerSkills?.length ? JSON.stringify(input.providerSkills) : null,
+      toSafeString(input.paymentTiming).trim() || null,
+      toSafeString(input.protocolSettlementKind).trim() || null,
+      toSafeString(input.metadata),
       input.serviceName,
       input.displayName,
       input.description,
@@ -1215,6 +1311,7 @@ const updateGigSquareLocalServiceAfterModify = (input: {
       service: input.targetService,
       currentPinId: toSafeString(input.currentPinId).trim() || normalizedTargetServiceId,
       providerSkill: input.providerSkill,
+      providerSkills: input.providerSkills,
       serviceName: input.serviceName,
       displayName: input.displayName,
       description: input.description,
@@ -1222,6 +1319,9 @@ const updateGigSquareLocalServiceAfterModify = (input: {
       serviceIcon: input.serviceIcon,
       price: input.price,
       currency: input.currency,
+      paymentTiming: input.paymentTiming,
+      protocolSettlementKind: input.protocolSettlementKind,
+      metadata: input.metadata,
       outputType: input.outputType,
       endpoint: input.endpoint,
       payloadJson: input.payloadJson,
@@ -1321,7 +1421,9 @@ function listRemoteSkillServicesFromDb(): GigSquareService[] {
   const result = db.exec(`
     SELECT id, pin_id, source_service_pin_id, status, operation, path, original_id, available,
            metaid, global_metaid, address, create_address, payment_address, service_name, display_name, description,
-           price, currency, avatar, service_icon, provider_meta_bot, provider_skill, execution_reminder,
+           price, currency, avatar, service_icon, provider_meta_bot, provider_skill,
+           provider_skills_json, payment_timing, protocol_settlement_kind, metadata,
+           execution_reminder,
            skill_document, input_type, output_type, endpoint, content_summary_json,
            updated_at, rating_avg, rating_count
     FROM remote_skill_service
@@ -2602,7 +2704,19 @@ const startSqliteDaemons = (): void => {
     createPin,
     (msg) => console.log(msg),
     getServiceOrderLifecycleService(),
-    async ({ skillId, skillName }) => skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
+    async ({ skillId, skillName, allowedSkillNames, strictScope }) => {
+      if (strictScope || (Array.isArray(allowedSkillNames) && allowedSkillNames.length > 0)) {
+        return skillMgr.buildAutoRoutingPromptForOrderSkillScope({
+          skillNames: allowedSkillNames ?? [],
+          strictScope: true,
+        });
+      }
+      return {
+        prompt: skillMgr.buildAutoRoutingPromptForOrderSkill({ skillId, skillName }),
+        activeSkillIds: [],
+        missingSkillNames: [],
+      };
+    },
     (channel, data) => {
       BrowserWindow.getAllWindows().forEach(win => {
         if (!win.isDestroyed()) {
@@ -3123,7 +3237,7 @@ const executeDelegationPipeline = async (
 
   const isFreeDelegation = numericPrice === 0;
   const paymentChain = delegationSettlement.paymentChain as TransferChain;
-  let paymentTxid = isFreeDelegation ? generateSyntheticOrderTxid() : '';
+  let paymentTxid = '';
   let paymentCommitTxid: string | null = null;
   const formatPaymentFailureMessage = (errorMsg: string): string => (
     /decimalerror|invalid argument/i.test(errorMsg)
@@ -3228,17 +3342,42 @@ const executeDelegationPipeline = async (
     emitDelegationStateChange({ sessionId, blocking: false, message: 'Sending order...' });
   }
 
+  let serviceOrderPinId = '';
+  try {
+    const publishedOrder = await publishSkillServiceOrderPin({
+      metabotId,
+      servicePinId: delegation.servicePinId,
+      paymentTxid: isFreeDelegation ? '' : paymentTxid,
+      price,
+      currency: normalizedCurrency,
+      settlementKind: delegationSettlement.settlementKind,
+      metadata: '',
+    });
+    serviceOrderPinId = publishedOrder.pinId;
+  } catch (error) {
+    console.error(LOG_TAG, 'Failed to publish skill-service-order pin:', error);
+    injectDelegationSystemMessage(
+      sessionId,
+      isFreeDelegation
+        ? `Failed to publish free service order pin. No payment transaction was required.`
+        : `Payment was sent (tx: ${paymentTxid}), but publishing the service order pin failed. Please try again or contact support.`
+    );
+    emitDelegationStateChange({ sessionId, blocking: false, message: 'Order pin publish failed' });
+    return;
+  }
+
   const orderPayload = buildDelegationOrderPayloadFromSettlement({
     rawRequest: rawOrderRequest,
     taskContext: delegation.taskContext,
     userTask: delegation.userTask,
     serviceName: delegation.serviceName || service.serviceName || service.displayName,
     providerSkill: toSafeString(service.providerSkill).trim(),
+    providerSkills: Array.isArray(service.providerSkills) ? service.providerSkills.map(toSafeString) : null,
     servicePinId: delegation.servicePinId,
     outputType: toSafeString(service.outputType).trim() || 'text',
     paymentTxid: isFreeDelegation ? '' : paymentTxid,
     paymentCommitTxid: isFreeDelegation ? null : paymentCommitTxid,
-    orderReference: isFreeDelegation ? paymentTxid : '',
+    orderPinId: serviceOrderPinId,
     settlement: delegationSettlement,
   });
 
@@ -3262,7 +3401,8 @@ const executeDelegationPipeline = async (
       serviceSkill: toSafeString(service.providerSkill).trim() || delegation.serviceName || null,
       serviceOutputType: toSafeString(service.outputType).trim() || 'text',
       serverBotGlobalMetaId: providerGlobalMetaId,
-      servicePaidTx: paymentTxid,
+      servicePaidTx: isFreeDelegation ? '' : paymentTxid,
+      serviceOrderPinId,
       orderPayload,
     });
     buyerObserverSessionId = observerSession.coworkSessionId;
@@ -3275,7 +3415,7 @@ const executeDelegationPipeline = async (
     console.warn(LOG_TAG, 'Failed to create buyer observer session:', error);
   }
 
-  let orderPinId: string | null = null;
+  let orderMessagePinId: string | null = null;
   let orderMessageTxid: string | null = null;
   try {
     const privateKeyBuffer = await getPrivateKeyBufferForEcdh(
@@ -3295,7 +3435,7 @@ const executeDelegationPipeline = async (
       payload: payloadStr,
     });
 
-    orderPinId = result.pinId ?? null;
+    orderMessagePinId = result.pinId ?? null;
     orderMessageTxid = resolvePrimarySimplemsgTxid({
       txids: result.txids,
       pinId: result.pinId,
@@ -3304,7 +3444,8 @@ const executeDelegationPipeline = async (
       buyerObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(coworkStoreInst, {
         metabotId,
         peerGlobalMetaId: providerGlobalMetaId,
-        paymentTxid,
+        serviceOrderPinId,
+        paymentTxid: isFreeDelegation ? '' : paymentTxid,
         orderTxid: orderMessageTxid,
         currentExternalConversationId: buyerObserverExternalConversationId,
       });
@@ -3324,7 +3465,7 @@ const executeDelegationPipeline = async (
       const failureMessage = coworkStoreInst.addMessage(buyerObserverSessionId, {
         type: 'system',
         content: isFreeDelegation
-          ? `系统提示：免费服务订单发送失败。订单标识：${paymentTxid}。请稍后重试。`
+          ? `系统提示：免费服务订单发送失败。订单 pin：${serviceOrderPinId}。请稍后重试。`
           : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${paymentTxid}。请稍后重试或联系服务方处理退款。`,
         metadata: buildOrderProtocolDisplayMetadata({
           peerGlobalMetaId: providerGlobalMetaId,
@@ -3332,7 +3473,8 @@ const executeDelegationPipeline = async (
           tag: 'ORDER_STATUS',
           orderTxid: orderMessageTxid,
           orderRole: 'buyer',
-          paymentTxid,
+          orderPinId: serviceOrderPinId,
+          paymentTxid: isFreeDelegation ? '' : paymentTxid,
           orderMappingExternalConversationId: buyerObserverExternalConversationId,
           extra: {
           refreshSessionSummary: true,
@@ -3360,8 +3502,9 @@ const executeDelegationPipeline = async (
         localMetabotId: metabotId,
         counterpartyGlobalMetaId: providerGlobalMetaId,
         servicePinId: delegation.servicePinId,
+        orderPinId: serviceOrderPinId,
         serviceName: delegation.serviceName || delegation.servicePinId,
-        paymentTxid,
+        paymentTxid: isFreeDelegation ? '' : paymentTxid,
         paymentChain: delegationSettlement.paymentChain,
         paymentAmount: price,
         paymentCurrency: normalizedCurrency,
@@ -3370,7 +3513,7 @@ const executeDelegationPipeline = async (
         mrc20Id: delegationSettlement.mrc20Id || undefined,
         paymentCommitTxid: paymentCommitTxid || undefined,
         coworkSessionId: sessionId,
-        orderMessagePinId: orderPinId,
+        orderMessagePinId,
         orderMessageTxid,
       });
       orderId = order.id;
@@ -3383,7 +3526,7 @@ const executeDelegationPipeline = async (
         injectDelegationSystemMessage(
           sessionId,
           isFreeDelegation
-            ? `Order creation failed: ${error.message}. Free order id: ${paymentTxid}`
+            ? `Order creation failed: ${error.message}. Order pin: ${serviceOrderPinId}`
             : `Order creation failed: ${error.message}. Payment tx: ${paymentTxid}`
         );
         emitDelegationStateChange({ sessionId, blocking: false, message: 'Order creation failed' });
@@ -3393,7 +3536,7 @@ const executeDelegationPipeline = async (
       injectDelegationSystemMessage(
         sessionId,
         isFreeDelegation
-          ? `Order tracking failed for free order (${paymentTxid}). Service should still be delivered.`
+          ? `Order tracking failed for free order (${serviceOrderPinId}). Service should still be delivered.`
           : `Order tracking failed (payment was sent, tx: ${paymentTxid}). Service should still be delivered.`
       );
       // Continue to blocking mode even if order tracking failed — the order was sent
@@ -3402,7 +3545,7 @@ const executeDelegationPipeline = async (
     // -----------------------------------------------------------------------
     // Step 6: Enter delegation blocking mode
     // -----------------------------------------------------------------------
-    coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || paymentTxid);
+    coworkStoreInst.setDelegationBlocking(sessionId, true, orderId || serviceOrderPinId);
 
     const paymentLine = isFreeDelegation
       ? `Payment: free service (${price} ${normalizedCurrency}), no transaction required.`
@@ -3414,13 +3557,13 @@ const executeDelegationPipeline = async (
       })();
     injectDelegationSystemMessage(
       sessionId,
-      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\n${paymentLine}`
+      `Order sent to "${delegation.serviceName}" provider. Waiting for delivery...\nOrder pin: ${serviceOrderPinId}\n${paymentLine}`
     );
 
     emitDelegationStateChange({
       sessionId,
       blocking: true,
-      orderId: orderId || paymentTxid,
+      orderId: orderId || serviceOrderPinId,
       message: `Waiting for delivery from "${delegation.serviceName}"`,
     });
 };
@@ -4269,13 +4412,16 @@ const resolveServiceOrderForSession = (sessionId: string): ServiceOrderRecord | 
     return null;
   }
 
+  const orderPinId = extractSessionOrderPinId(session.messages);
   const paymentTxid = extractSessionOrderTxid(session.messages);
-  if (!paymentTxid) {
+  if (!orderPinId && !paymentTxid) {
     return null;
   }
 
-  const matched = orderStore
-    .listOrdersByPaymentTxid(paymentTxid)
+  const candidates = orderPinId
+    ? orderStore.listOrdersByOrderPinId(orderPinId)
+    : orderStore.listOrdersByPaymentTxid(paymentTxid);
+  const matched = candidates
     .find((candidate) => (
       candidate.localMetabotId === session.metabotId
       && (
@@ -5266,7 +5412,7 @@ if (!gotTheLock) {
           `服务方已生成 ${outputType} 数字成果，但上传链上交付失败。`,
           verifiedUpload.error instanceof Error ? verifiedUpload.error.message : String(verifiedUpload.error || ''),
           '系统将自动转入退款流程，请稍后重试或联系服务方。',
-        ].filter(Boolean).join('\n'));
+        ].filter(Boolean).join('\n'), order.orderPinId);
         const encryptedFailure = ecdhEncrypt(
           manualResendFailureReply,
           computeEcdhSharedSecretSha256(privateKeyBuffer, chatPubkey)
@@ -5313,6 +5459,10 @@ if (!gotTheLock) {
       const deliveredAt = Math.floor(Date.now() / 1000);
       const deliveryText = buildDeliveryMessage({
         paymentTxid: order.paymentTxid,
+        ...(order.orderPinId ? {
+          serviceOrderPinId: order.orderPinId,
+          orderPinId: order.orderPinId,
+        } : {}),
         servicePinId: order.servicePinId,
         serviceName: order.serviceName,
         result: deliverySummary,
@@ -5355,6 +5505,7 @@ if (!gotTheLock) {
       getServiceOrderLifecycleService().markSellerOrderDelivered({
         localMetabotId: metabotId,
         counterpartyGlobalMetaId: peerGlobalMetaId,
+        orderPinId: order.orderPinId,
         paymentTxid: order.paymentTxid,
         deliveryMessagePinId: deliveryPin.pinId ?? null,
         deliveredAt: deliveredAt * 1000,
@@ -6947,9 +7098,13 @@ if (!gotTheLock) {
     displayName: string;
     description: string;
     executionReminder?: string;
-    providerSkill: string;
+    providerSkills?: string[];
+    providerSkill?: string;
+    paymentTiming?: 'free' | 'prepaid' | string;
     price: string;
     currency: string;
+    protocolSettlementKind?: 'native' | 'fiat' | string;
+    metadata?: string;
     mrc20Ticker?: string;
     mrc20Id?: string;
     outputType: string;
@@ -6962,8 +7117,14 @@ if (!gotTheLock) {
       const description = toSafeString(params?.description).trim();
       const executionReminder = toSafeString(params?.executionReminder).trim();
       const providerSkill = toSafeString(params?.providerSkill).trim();
+      const providerSkills = Array.isArray(params?.providerSkills)
+        ? params.providerSkills.map(toSafeString)
+        : undefined;
+      const paymentTiming = toSafeString(params?.paymentTiming).trim();
       const price = toSafeString(params?.price).trim();
       const currencyRaw = toSafeString(params?.currency).trim().toUpperCase();
+      const protocolSettlementKind = toSafeString(params?.protocolSettlementKind).trim();
+      const metadata = toSafeString(params?.metadata);
       const mrc20Ticker = toSafeString(params?.mrc20Ticker).trim();
       const mrc20Id = toSafeString(params?.mrc20Id).trim();
       const outputType = toSafeString(params?.outputType).trim().toLowerCase();
@@ -6975,9 +7136,13 @@ if (!gotTheLock) {
         displayName,
         description,
         executionReminder,
+        providerSkills,
         providerSkill,
+        paymentTiming,
         price,
         currency: currencyRaw,
+        protocolSettlementKind,
+        metadata,
         mrc20Ticker,
         mrc20Id,
         outputType,
@@ -7026,11 +7191,6 @@ if (!gotTheLock) {
         serviceIconUri = `metafile://${fileResult.pinId}`;
       }
 
-      const paymentAddress = resolveGigSquareSettlementPaymentAddress({
-        owner: metabot,
-        settlement,
-      });
-
       const payload = buildGigSquareServicePayload({
         draft: {
           ...normalizedDraft,
@@ -7040,7 +7200,6 @@ if (!gotTheLock) {
           serviceIconUri: serviceIconUri || null,
         },
         providerGlobalMetaId: metabot.globalmetaid,
-        paymentAddress,
       });
 
       const payloadJson = JSON.stringify(payload);
@@ -7048,7 +7207,7 @@ if (!gotTheLock) {
         operation: 'create',
         path: GIG_SQUARE_SERVICE_PATH,
         encryption: '0',
-        version: '1.0.0',
+        version: '1.1.0',
         contentType: 'application/json',
         payload: payloadJson,
       });
@@ -7059,7 +7218,8 @@ if (!gotTheLock) {
         txid: result.txids?.[0] || '',
         metabotId,
         providerGlobalMetaId: metabot.globalmetaid,
-        providerSkill: normalizedDraft.providerSkill,
+        providerSkill: normalizedDraft.providerSkill || normalizedDraft.providerSkills?.[0] || '',
+        providerSkills: normalizedDraft.providerSkills || [],
         serviceName: normalizedDraft.serviceName,
         displayName: normalizedDraft.displayName,
         description: normalizedDraft.description,
@@ -7067,6 +7227,9 @@ if (!gotTheLock) {
         serviceIcon: serviceIconUri || null,
         price: normalizedDraft.price,
         currency: normalizedCurrency,
+        paymentTiming: normalizedDraft.paymentTiming || null,
+        protocolSettlementKind: normalizedDraft.protocolSettlementKind || null,
+        metadata: normalizedDraft.metadata || '',
         skillDocument: '',
         inputType: 'text',
         outputType: normalizedDraft.outputType,
@@ -7169,9 +7332,13 @@ if (!gotTheLock) {
     displayName?: string;
     description?: string;
     executionReminder?: string;
+    providerSkills?: string[];
     providerSkill?: string;
+    paymentTiming?: 'free' | 'prepaid' | string;
     price?: string;
     currency?: string;
+    protocolSettlementKind?: 'native' | 'fiat' | string;
+    metadata?: string;
     mrc20Ticker?: string;
     mrc20Id?: string;
     outputType?: string;
@@ -7208,6 +7375,10 @@ if (!gotTheLock) {
       }
 
       const hasExecutionReminderParam = Object.prototype.hasOwnProperty.call(params || {}, 'executionReminder');
+      const hasProviderSkillsParam = Object.prototype.hasOwnProperty.call(params || {}, 'providerSkills');
+      const hasPaymentTimingParam = Object.prototype.hasOwnProperty.call(params || {}, 'paymentTiming');
+      const hasProtocolSettlementKindParam = Object.prototype.hasOwnProperty.call(params || {}, 'protocolSettlementKind');
+      const hasMetadataParam = Object.prototype.hasOwnProperty.call(params || {}, 'metadata');
       const draft: GigSquareModifyDraft = {
         serviceName: toSafeString(params?.serviceName).trim() || toSafeString(currentService.serviceName).trim(),
         displayName: toSafeString(params?.displayName).trim() || toSafeString(currentService.displayName).trim(),
@@ -7215,12 +7386,22 @@ if (!gotTheLock) {
         executionReminder: hasExecutionReminderParam
           ? toSafeString(params?.executionReminder).trim()
           : toSafeString(currentService.executionReminder).trim(),
+        providerSkills: hasProviderSkillsParam && Array.isArray(params?.providerSkills)
+          ? params.providerSkills.map(toSafeString)
+          : currentService.providerSkills,
         providerSkill: toSafeString(params?.providerSkill).trim() || toSafeString(currentService.providerSkill).trim(),
+        paymentTiming: hasPaymentTimingParam
+          ? toSafeString(params?.paymentTiming).trim()
+          : toSafeString(currentService.paymentTiming).trim(),
         price: toSafeString(params?.price).trim() || toSafeString(currentService.price).trim(),
         currency: toSafeString(params?.currency).trim()
           || (toSafeString(currentService.settlementKind).trim().toLowerCase() === 'mrc20' ? 'MRC20' : toSafeString(currentService.currency).trim()),
+        protocolSettlementKind: hasProtocolSettlementKindParam
+          ? toSafeString(params?.protocolSettlementKind).trim()
+          : toSafeString(currentService.protocolSettlementKind || currentService.settlementKind).trim(),
         mrc20Ticker: toSafeString(params?.mrc20Ticker).trim() || toSafeString(currentService.mrc20Ticker).trim(),
         mrc20Id: toSafeString(params?.mrc20Id).trim() || toSafeString(currentService.mrc20Id).trim(),
+        metadata: hasMetadataParam ? toSafeString(params?.metadata) : toSafeString(currentService.metadata),
         outputType: toSafeString(params?.outputType).trim() || 'text',
       };
       const draftValidation = validateGigSquareModifyDraft(draft);
@@ -7245,10 +7426,6 @@ if (!gotTheLock) {
         mrc20Id: normalizedDraft.mrc20Id,
       });
       const normalizedCurrency = settlement.protocolCurrency;
-      const paymentAddress = resolveGigSquareSettlementPaymentAddress({
-        owner: creatorMetabot,
-        settlement,
-      });
 
       let serviceIconUri = toSafeString(currentService.serviceIcon).trim();
       const serviceIconDataUrl = toSafeString(params?.serviceIconDataUrl).trim();
@@ -7280,7 +7457,6 @@ if (!gotTheLock) {
           serviceIconUri: serviceIconUri || null,
         },
         providerGlobalMetaId: creatorMetabot.globalmetaid,
-        paymentAddress,
       });
       const payloadJson = JSON.stringify(payload);
       const result = await createPin(store, validation.creatorMetabotId, buildGigSquareModifyMetaidPayload({
@@ -7290,7 +7466,8 @@ if (!gotTheLock) {
       updateGigSquareLocalServiceAfterModify({
         targetService: currentService,
         currentPinId: toSafeString(result.pinId).trim() || currentService.currentPinId,
-        providerSkill: normalizedDraft.providerSkill,
+        providerSkill: normalizedDraft.providerSkill || normalizedDraft.providerSkills?.[0] || '',
+        providerSkills: normalizedDraft.providerSkills || [],
         serviceName: normalizedDraft.serviceName,
         displayName: normalizedDraft.displayName,
         description: normalizedDraft.description,
@@ -7298,6 +7475,9 @@ if (!gotTheLock) {
         serviceIcon: serviceIconUri || null,
         price: normalizedDraft.price,
         currency: normalizedCurrency,
+        paymentTiming: normalizedDraft.paymentTiming || null,
+        protocolSettlementKind: normalizedDraft.protocolSettlementKind || null,
+        metadata: normalizedDraft.metadata || '',
         outputType: normalizedDraft.outputType,
         endpoint: 'simplemsg',
         payloadJson,
@@ -7326,6 +7506,34 @@ if (!gotTheLock) {
     }
   });
 
+ipcMain.handle('gigSquare:createServiceOrderPin', async (_event, params: {
+    metabotId: number;
+    servicePinId?: string | null;
+    paymentTxid?: string | null;
+    price?: string | null;
+    currency?: string | null;
+    settlementKind?: string | null;
+    metadata?: string | null;
+  }) => {
+    try {
+      const result = await publishSkillServiceOrderPin({
+        metabotId: params?.metabotId,
+        servicePinId: params?.servicePinId,
+        paymentTxid: params?.paymentTxid,
+        price: params?.price,
+        currency: params?.currency,
+        settlementKind: params?.settlementKind,
+        metadata: params?.metadata,
+      });
+      return { success: true, pinId: result.pinId, txids: result.txids };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to publish service order pin',
+      };
+    }
+  });
+
 ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     metabotId: number;
     toGlobalMetaId: string;
@@ -7344,11 +7552,13 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     serviceSkill?: string | null;
     serviceOutputType?: string | null;
     serverBotGlobalMetaId?: string | null;
+    serviceOrderPinId?: string | null;
     servicePaidTx?: string | null;
   }) => {
     let releaseBuyerOrderCreation: (() => void) | null = null;
     let coworkSessionId: string | null = null;
     let attemptedPaymentTxid: string | null = null;
+    let attemptedOrderPinId: string | null = null;
     let isFreeServiceOrder = false;
     try {
       const metabotId = typeof params?.metabotId === 'number' ? params.metabotId : -1;
@@ -7386,19 +7596,22 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         ? params.serviceOutputType.trim().toLowerCase() || 'text'
         : 'text';
       const serverBotGlobalMetaId = typeof params?.serverBotGlobalMetaId === 'string' ? params.serverBotGlobalMetaId.trim() || null : null;
+      const serviceOrderPinId = typeof params?.serviceOrderPinId === 'string'
+        ? params.serviceOrderPinId.trim() || null
+        : null;
       let servicePaidTx = typeof params?.servicePaidTx === 'string' ? params.servicePaidTx.trim() || null : null;
       isFreeServiceOrder = isFreeServicePrice(servicePrice);
-      if (isFreeServiceOrder && !servicePaidTx) {
-        servicePaidTx = generateSyntheticOrderTxid();
+      if (isFreeServiceOrder) {
+        servicePaidTx = null;
       }
-      if (isFreeServiceOrder && servicePaidTx) {
-        const hasTxidLine = /(?:^|\n)\s*txid\s*[:：=]/i.test(orderPayload);
-        const hasOrderReferenceLine = /(?:^|\n)\s*order(?:\s+id|\s+ref(?:erence)?)\s*[:：=]/i.test(orderPayload);
-        if (!hasTxidLine && !hasOrderReferenceLine) {
-          orderPayload = `${orderPayload}\norder id: ${servicePaidTx}`;
+      if (serviceOrderPinId) {
+        const hasOrderReferenceLine = /(?:^|\n)\s*order(?:\s+pin)?(?:\s+id|\s+ref(?:erence)?)\s*[:：=]/i.test(orderPayload);
+        if (!hasOrderReferenceLine) {
+          orderPayload = `${orderPayload}\norder pin id: ${serviceOrderPinId}`;
         }
       }
       attemptedPaymentTxid = servicePaidTx;
+      attemptedOrderPinId = serviceOrderPinId;
 
       if (!metabotId || metabotId < 0) {
         return { success: false, error: 'metabotId is required' };
@@ -7428,7 +7641,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         releaseBuyerOrderCreation = serviceOrderLifecycle.reserveBuyerOrderCreation(
           metabotId,
           toGlobalMetaId,
-          servicePaidTx
+          servicePaidTx,
+          serviceOrderPinId
         );
       } catch (error) {
         if (
@@ -7470,6 +7684,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           serviceOutputType,
           serverBotGlobalMetaId,
           servicePaidTx,
+          serviceOrderPinId,
           orderPayload,
         });
         coworkSessionId = observerSession.coworkSessionId;
@@ -7506,6 +7721,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         orderObserverExternalConversationId = reindexBuyerOrderObserverSessionByOrderTxid(getCoworkStore(), {
           metabotId,
           peerGlobalMetaId: toGlobalMetaId,
+          serviceOrderPinId,
           paymentTxid: servicePaidTx,
           orderTxid: orderMessageTxid,
           currentExternalConversationId: orderObserverExternalConversationId,
@@ -7526,8 +7742,9 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
           localMetabotId: metabotId,
           counterpartyGlobalMetaId: toGlobalMetaId,
           servicePinId: serviceId,
+          orderPinId: serviceOrderPinId,
           serviceName: serviceSkill || serviceId || 'Service Order',
-          paymentTxid: servicePaidTx || result.txids?.[0] || result.pinId,
+          paymentTxid: servicePaidTx || '',
           paymentChain: servicePaymentChain || normalizeServiceOrderPaymentChain(serviceCurrency),
           paymentAmount: servicePrice || '0',
           paymentCurrency: serviceCurrency || 'SPACE',
@@ -7559,7 +7776,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
         const failureMessage = getCoworkStore().addMessage(coworkSessionId, {
           type: 'system',
           content: isFreeServiceOrder
-            ? `系统提示：免费服务订单发送失败。订单标识：${attemptedPaymentTxid || 'unknown'}。请稍后重试。`
+            ? `系统提示：免费服务订单发送失败。订单 pin：${attemptedOrderPinId || 'unknown'}。请稍后重试。`
             : `系统提示：支付已完成，但服务订单发送失败。付款 txid：${attemptedPaymentTxid || 'unknown'}。请稍后重试或联系服务方处理退款。`,
           metadata: buildOrderProtocolDisplayMetadata({
             peerGlobalMetaId: typeof params?.toGlobalMetaId === 'string' ? params.toGlobalMetaId.trim() : '',
@@ -7567,7 +7784,8 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
             tag: 'ORDER_STATUS',
             orderTxid: null,
             orderRole: 'buyer',
-            paymentTxid: attemptedPaymentTxid,
+            orderPinId: attemptedOrderPinId,
+            paymentTxid: attemptedPaymentTxid || '',
             orderMappingExternalConversationId: null,
             extra: {
               refreshSessionSummary: true,

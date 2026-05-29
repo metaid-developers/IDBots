@@ -445,9 +445,13 @@ interface IElectronAPI {
       displayName: string;
       description: string;
       executionReminder?: string;
-      providerSkill: string;
+      providerSkills?: string[];
+      providerSkill?: string;
+      paymentTiming?: 'free' | 'prepaid' | string;
       price: string;
       currency: string;
+      protocolSettlementKind?: 'native' | 'fiat' | string;
+      metadata?: string;
       mrc20Ticker?: string;
       mrc20Id?: string;
       outputType: string;
@@ -455,6 +459,15 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; txids?: string[]; pinId?: string; warning?: string; error?: string }>;
     revokeService: (params: { serviceId: string }) => Promise<GigSquareServiceMutationResult>;
     modifyService: (params: GigSquareModifyServiceParams) => Promise<GigSquareServiceMutationResult>;
+    createServiceOrderPin: (params: {
+      metabotId: number;
+      servicePinId?: string | null;
+      paymentTxid?: string | null;
+      price?: string | null;
+      currency?: string | null;
+      settlementKind?: string | null;
+      metadata?: string | null;
+    }) => Promise<{ success: boolean; pinId?: string; txids?: string[]; error?: string }>;
     sendOrder: (params: {
       metabotId: number;
       toGlobalMetaId: string;
@@ -473,6 +486,7 @@ interface IElectronAPI {
       serviceSkill?: string | null;
       serviceOutputType?: string | null;
       serverBotGlobalMetaId?: string | null;
+      serviceOrderPinId?: string | null;
       servicePaidTx?: string | null;
     }) => Promise<{ success: boolean; txids?: string[]; error?: string; errorCode?: 'open_order_exists' | 'self_order_not_allowed' | 'order_request_too_long' | string }>;
     pingProvider: (params: { metabotId: number; toGlobalMetaId: string; toChatPubkey: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string }>;

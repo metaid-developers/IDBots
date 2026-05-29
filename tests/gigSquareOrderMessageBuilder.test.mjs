@@ -36,6 +36,21 @@ test('buildBuyerOrderMessageSystemPrompt keeps the LLM in buyer perspective and 
   assert.match(prompt, /查询东京现在的天气/);
 });
 
+test('buildBuyerOrderMessageSystemPrompt names free order metadata as order pin id', () => {
+  const prompt = buildBuyerOrderMessageSystemPrompt({
+    price: '0',
+    currency: 'SPACE',
+    txid: '',
+    orderReference: 'order-pin-i0',
+    serviceId: 'service-weather',
+    skillName: 'weather',
+    requestText: '查询北京现在的天气',
+  });
+
+  assert.match(prompt, /order pin id order-pin-i0/i);
+  assert.doesNotMatch(prompt, /order id order-pin-i0/i);
+});
+
 test('normalizeBuyerOrderNaturalText falls back when the generated text sounds like seller-side payment handling chatter', () => {
   const requestText = '查询北京天气';
   const normalized = normalizeBuyerOrderNaturalText(
@@ -125,6 +140,7 @@ test('buildGigSquareOrderPayload keeps the buyer-facing natural sentence and pre
     price: '0.00005',
     currency: 'SPACE',
     txid: 'a'.repeat(64),
+    orderPinId: 'order-pin-i0',
     serviceId: 'service-weather',
     skillName: 'weather',
   });
@@ -135,6 +151,8 @@ test('buildGigSquareOrderPayload keeps the buyer-facing natural sentence and pre
     /<raw_request>\n请帮我查询东京今晚到明早的天气，并告诉我是否需要带伞和外套。\n<\/raw_request>/
   );
   assert.match(payload, /支付金额 0\.00005 SPACE/);
+  assert.match(payload, /order pin id:\s*order-pin-i0/i);
+  assert.match(payload, new RegExp(`txid:\\s*${'a'.repeat(64)}`, 'i'));
   assert.match(payload, /service id: service-weather/);
   assert.match(payload, /skill name: weather/);
 });
@@ -162,15 +180,16 @@ test('buildGigSquareOrderPayload appends structured MRC20 settlement metadata li
   assert.match(payload, new RegExp(`commit txid:\\s*${'c'.repeat(64)}`, 'i'));
 });
 
-test('buildGigSquareOrderPayload omits payment settlement metadata for free orders', () => {
-  const orderId = 'free-order-e32f3577f163fd06';
+test('buildGigSquareOrderPayload includes order pin id and omits payment settlement metadata for free orders', () => {
+  const orderPinId = 'order-pin-i0';
   const payload = buildGigSquareOrderPayload({
     naturalOrderText: '想请你帮我查询一下北京现在的天气。',
     rawRequest: '查询北京现在的天气。',
     price: '0',
     currency: 'SPACE',
     txid: '',
-    orderReference: orderId,
+    orderPinId,
+    orderReference: 'legacy-order-id',
     serviceId: 'service-weather',
     skillName: 'weather',
     paymentChain: 'mvc',
@@ -179,13 +198,46 @@ test('buildGigSquareOrderPayload omits payment settlement metadata for free orde
   });
 
   assert.match(payload, /支付金额 0 SPACE/);
-  assert.match(payload, new RegExp(`order id:\\s*${orderId}`, 'i'));
+  assert.match(payload, new RegExp(`order pin id:\\s*${orderPinId}`, 'i'));
+  assert.doesNotMatch(payload, /order id:\s*legacy-order-id/i);
   assert.doesNotMatch(payload, /txid:/i);
   assert.doesNotMatch(payload, /payment chain:/i);
   assert.doesNotMatch(payload, /settlement kind:/i);
   assert.match(payload, /service id: service-weather/);
   assert.match(payload, /skill name: weather/);
   assert.match(payload, /output type:\s*text/i);
+});
+
+test('buildGigSquareOrderPayload writes allowed skills and only keeps legacy skill name for one skill', () => {
+  const multiSkillPayload = buildGigSquareOrderPayload({
+    naturalOrderText: '请帮我查询天气并生成简报。',
+    rawRequest: '查询北京天气，然后生成中文简报。',
+    price: '0',
+    currency: 'SPACE',
+    txid: '',
+    orderPinId: 'order-pin-i0',
+    serviceId: 'service-weather-report',
+    skillName: 'weather',
+    providerSkills: ['weather', 'reporter'],
+  });
+
+  assert.match(multiSkillPayload, /allowed skills:\s*weather,\s*reporter/i);
+  assert.doesNotMatch(multiSkillPayload, /skill name:/i);
+
+  const singleSkillPayload = buildGigSquareOrderPayload({
+    naturalOrderText: '请帮我查询天气。',
+    rawRequest: '查询北京天气。',
+    price: '0',
+    currency: 'SPACE',
+    txid: '',
+    orderPinId: 'order-pin-i0',
+    serviceId: 'service-weather',
+    skillName: 'weather',
+    providerSkills: ['weather'],
+  });
+
+  assert.match(singleSkillPayload, /allowed skills:\s*weather/i);
+  assert.match(singleSkillPayload, /skill name:\s*weather/i);
 });
 
 test('buildGigSquareOrderPayload appends expected output type metadata', () => {

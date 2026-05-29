@@ -260,3 +260,38 @@ test('clampPageSize caps requested page size at product maximum', () => {
   assert.equal(clampPageSize(99, 10), 10);
   assert.equal(clampPageSize(0, 8), 8);
 });
+
+test('buildMyServiceSummaries preserves v1.1 listing fields in summaries', () => {
+  const result = buildMyServiceSummaries({
+    ownedGlobalMetaIds: new Set(['owned-global']),
+    services: [{
+      id: 'svc-v11-current',
+      currentPinId: 'svc-v11-current',
+      sourceServicePinId: 'svc-v11-root',
+      chainPinIds: ['svc-v11-root', 'svc-v11-current'],
+      displayName: 'Weather V1.1',
+      serviceName: 'weather-service',
+      description: 'desc',
+      price: '0',
+      currency: 'SPACE',
+      providerMetaId: 'meta-1',
+      providerGlobalMetaId: 'owned-global',
+      providerAddress: 'addr-1',
+      providerSkill: 'weather, reporter',
+      providerSkills: ['weather', 'reporter'],
+      paymentTiming: 'free',
+      protocolSettlementKind: 'fiat',
+      metadata: 'summary metadata',
+      updatedAt: 123,
+    }],
+    sellerOrders: [],
+    page: 1,
+    pageSize: 8,
+  });
+
+  assert.equal(result.items[0].id, 'svc-v11-current');
+  assert.deepEqual(result.items[0].providerSkills, ['weather', 'reporter']);
+  assert.equal(result.items[0].paymentTiming, 'free');
+  assert.equal(result.items[0].protocolSettlementKind, 'fiat');
+  assert.equal(result.items[0].metadata, 'summary metadata');
+});

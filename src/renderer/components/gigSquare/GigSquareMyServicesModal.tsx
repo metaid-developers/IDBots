@@ -17,13 +17,14 @@ import type {
 import { formatGigSquarePrice } from '../../utils/gigSquare';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
-  formatGigSquareMrc20OptionLabel,
-  getGigSquareMrc20SelectPlaceholder,
-  getGigSquarePublishPriceLimit,
+  GIG_SQUARE_PAYMENT_TIMING_OPTIONS,
+  buildGigSquarePaymentTermsSubmission,
+  deriveGigSquarePaymentTiming,
   getGigSquarePublishPriceLimitText,
-  getGigSquareSettlementGridClassName,
-  getSelectableGigSquareModifyMrc20Assets,
-  getSelectableGigSquareMrc20Assets,
+  isGigSquareLegacyMrc20Settlement,
+  normalizeGigSquareProtocolSettlementKind,
+  shouldShowGigSquarePaymentAmountControls,
+  validateGigSquarePaymentTermsDraft,
 } from './gigSquarePublishPresentation.js';
 import {
   getMyServiceMetricLabel,
@@ -33,19 +34,13 @@ import {
   shortenMyServiceHash,
 } from './gigSquareMyServicesPresentation.js';
 import {
-  buildGigSquareModifySkillOptions,
-  resolveGigSquareModifySkillSelection,
+  buildGigSquareSkillSelectionOptions,
+  normalizeGigSquareProviderSkillNames,
+  resolveGigSquareSelectedSkillIds,
+  resolveGigSquareSelectedProviderSkills,
 } from './gigSquareSkillOptions.js';
 
 type GigSquareMyServicesView = 'list' | 'detail';
-type ModifyCurrency = 'BTC' | 'SPACE' | 'DOGE' | 'MRC20';
-type SelectableMrc20Asset = {
-  symbol: string;
-  mrc20Id: string;
-  balance: {
-    display: string;
-  };
-};
 
 type SelectedServiceLike = Pick<GigSquareMyServiceSummary, 'id'> & Partial<GigSquareMyServiceSummary>;
 
@@ -55,10 +50,13 @@ type ModifyDraft = {
   description: string;
   executionReminder: string;
   providerSkill: string;
+  providerSkills: string[];
+  paymentTiming: 'free' | 'prepaid' | string;
   price: string;
-  currency: ModifyCurrency;
-  mrc20Ticker: string;
-  mrc20Id: string;
+  currency: string;
+  protocolSettlementKind: 'native' | 'fiat' | string;
+  metadata: string;
+  isLegacyMrc20: boolean;
   outputType: 'text' | 'image' | 'video' | 'audio' | 'other';
   serviceIconDataUrl: string;
 };
@@ -86,7 +84,6 @@ const DETAIL_PAGE_SIZE = 10;
 const UNIX_SECONDS_MAX = 10_000_000_000;
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 const ICON_ACCEPT = 'image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml';
-const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
 const OUTPUT_OPTIONS: Array<{ label: string; value: ModifyDraft['outputType'] }> = [
   { label: 'text', value: 'text' },
   { label: 'image', value: 'image' },
@@ -129,10 +126,20 @@ const normalizeTimestampMs = (value: number | null | undefined): number | null =
 
 const normalizeModifyCurrency = (value: string | null | undefined): ModifyDraft['currency'] => {
   const normalized = String(value || '').trim().toUpperCase();
-  if (normalized === 'MRC20') return 'MRC20';
   if (normalized === 'BTC') return 'BTC';
   if (normalized === 'DOGE') return 'DOGE';
   return 'SPACE';
+};
+
+const normalizeModifyCurrencyForService = (service: GigSquareMyServiceSummary): ModifyDraft['currency'] => {
+  const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(
+    service.protocolSettlementKind ?? service.settlementKind,
+  );
+  if (protocolSettlementKind === 'fiat') {
+    const fiatQuoteCurrency = String(service.currency || '').trim().toUpperCase();
+    if (fiatQuoteCurrency) return fiatQuoteCurrency;
+  }
+  return normalizeModifyCurrency(service.currency);
 };
 
 const normalizeModifyOutputType = (value: string | null | undefined): ModifyDraft['outputType'] => {
@@ -163,6 +170,16 @@ const formatDateTime = (value: number | null | undefined): string => {
 const getServiceDisplayName = (service: SelectedServiceLike | null | undefined): string => {
   if (!service) return 'Service';
   return service.displayName?.trim() || service.serviceName?.trim() || service.id;
+};
+
+const normalizeProviderSkillChips = (
+  providerSkills: string[] | null | undefined,
+  providerSkill?: string | null,
+): string[] => {
+  const source = Array.isArray(providerSkills) && providerSkills.length > 0
+    ? providerSkills
+    : (providerSkill ? [providerSkill] : []);
+  return normalizeGigSquareProviderSkillNames(source);
 };
 
 const getCounterpartyDisplayName = (order: GigSquareMyServiceOrderDetail): string => {
@@ -199,41 +216,33 @@ const normalizeMutationTxids = (value: string[] | undefined): string[] => {
   return [...new Set(value.map((entry) => String(entry || '').trim()).filter(Boolean))];
 };
 
-const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): ModifyDraft => ({
-  // mrc20 services are represented by settlementKind + mrc20 identifiers.
-  currency: String(service.settlementKind || '').trim().toLowerCase() === 'mrc20'
-    ? 'MRC20'
-    : normalizeModifyCurrency(service.currency),
+export const buildModifyDraftFromService = (service: GigSquareMyServiceSummary): ModifyDraft => ({
+  currency: normalizeModifyCurrencyForService(service),
   serviceName: (service.serviceName || '').trim(),
   displayName: (service.displayName || '').trim(),
   description: (service.description || '').trim(),
   executionReminder: (service.executionReminder || '').trim(),
-  providerSkill: (service.providerSkill || '').trim(),
+  providerSkill: normalizeProviderSkillChips(service.providerSkills, service.providerSkill)[0] || '',
+  providerSkills: normalizeProviderSkillChips(service.providerSkills, service.providerSkill),
+  paymentTiming: deriveGigSquarePaymentTiming(service.paymentTiming, service.price),
   price: (service.price || '').trim(),
-  mrc20Ticker: (service.mrc20Ticker || '').trim(),
-  mrc20Id: (service.mrc20Id || '').trim(),
+  protocolSettlementKind: normalizeGigSquareProtocolSettlementKind(
+    service.protocolSettlementKind ?? service.settlementKind,
+  ),
+  metadata: String(service.metadata || ''),
+  isLegacyMrc20: isGigSquareLegacyMrc20Settlement(service),
   outputType: normalizeModifyOutputType(service.outputType || null),
   serviceIconDataUrl: '',
 });
 
 const validateModifyDraft = (draft: ModifyDraft): string | null => {
+  if (draft.isLegacyMrc20) return i18nService.t('gigSquareMyServicesModifyMrc20Blocked');
   if (!draft.displayName.trim()) return i18nService.t('gigSquarePublishDisplayNameRequired');
   if (!draft.serviceName.trim()) return i18nService.t('gigSquarePublishServiceNameRequired');
   if (!draft.description.trim()) return i18nService.t('gigSquarePublishDescriptionRequired');
-  if (!draft.providerSkill.trim()) return i18nService.t('gigSquarePublishSkillRequired');
-  if (!draft.price.trim()) return i18nService.t('gigSquarePublishPriceRequired');
-  if (!NUMBER_PATTERN.test(draft.price.trim())) return i18nService.t('gigSquarePublishPriceInvalid');
-  const numericPrice = Number(draft.price.trim());
-  if (!Number.isFinite(numericPrice) || numericPrice < 0) {
-    return i18nService.t('gigSquarePublishPriceInvalid');
-  }
-  const priceLimit = getGigSquarePublishPriceLimit(draft.currency);
-  if (priceLimit !== null && numericPrice > priceLimit) {
-    return i18nService.t('gigSquarePublishPriceExceed');
-  }
-  if (draft.currency === 'MRC20' && (!draft.mrc20Ticker.trim() || !draft.mrc20Id.trim())) {
-    return 'Please select an MRC20 token';
-  }
+  if (draft.providerSkills.length === 0) return i18nService.t('gigSquarePublishSkillRequired');
+  const paymentTermsError = validateGigSquarePaymentTermsDraft(draft);
+  if (paymentTermsError) return i18nService.t(paymentTermsError.i18nKey);
   return null;
 };
 
@@ -313,11 +322,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [mutationBusyServiceId, setMutationBusyServiceId] = useState<string | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [modifySelectedSkillId, setModifySelectedSkillId] = useState('');
+  const [modifySelectedSkillIds, setModifySelectedSkillIds] = useState<string[]>([]);
   const [revokeTargetService, setRevokeTargetService] = useState<GigSquareMyServiceSummary | null>(null);
   const [modifyTargetService, setModifyTargetService] = useState<GigSquareMyServiceSummary | null>(null);
   const [modifyDraft, setModifyDraft] = useState<ModifyDraft | null>(null);
-  const [modifyMrc20Assets, setModifyMrc20Assets] = useState<SelectableMrc20Asset[]>([]);
   const [modifyError, setModifyError] = useState<string | null>(null);
   const [mutationNotice, setMutationNotice] = useState<MutationNotice | null>(null);
   const modifyIconInputRef = useRef<HTMLInputElement | null>(null);
@@ -328,16 +336,9 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   const activeOrdersPage = ordersPage ?? internalOrdersPage;
   const detailServiceId = activeSelectedService?.id?.trim() || '';
   const modifySkillOptions = useMemo(
-    () => buildGigSquareModifySkillOptions(skills, modifyDraft?.providerSkill),
-    [modifyDraft?.providerSkill, skills],
+    () => buildGigSquareSkillSelectionOptions(skills, modifyDraft?.providerSkills || []),
+    [modifyDraft?.providerSkills, skills],
   );
-  const modifyMrc20Options = useMemo(() => {
-    if (!modifyDraft || modifyDraft.currency !== 'MRC20') return [];
-    return getSelectableGigSquareModifyMrc20Assets(modifyMrc20Assets, {
-      mrc20Ticker: modifyDraft.mrc20Ticker,
-      mrc20Id: modifyDraft.mrc20Id,
-    });
-  }, [modifyDraft, modifyMrc20Assets]);
 
   const loadServicesPage = useCallback(async (
     pageNumber: number,
@@ -422,11 +423,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     setOrdersError(null);
     setMutationBusyServiceId(null);
     setSkills([]);
-    setModifySelectedSkillId('');
+    setModifySelectedSkillIds([]);
     setRevokeTargetService(null);
     setModifyTargetService(null);
     setModifyDraft(null);
-    setModifyMrc20Assets([]);
     setModifyError(null);
     setMutationNotice(null);
     if (modifyIconInputRef.current) {
@@ -436,52 +436,28 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
 
   useEffect(() => {
     if (!modifyDraft) return;
-    const resolved = resolveGigSquareModifySkillSelection(skills, modifyDraft.providerSkill);
-    setModifySelectedSkillId((prev) => (
-      prev === resolved.selectedSkillId ? prev : resolved.selectedSkillId
+    const selectedProviderSkillNames = normalizeGigSquareProviderSkillNames(modifyDraft.providerSkills);
+    const selectedSkillIds = resolveGigSquareSelectedSkillIds(modifySkillOptions, selectedProviderSkillNames);
+    const resolvedProviderSkills = resolveGigSquareSelectedProviderSkills(modifySkillOptions, selectedSkillIds);
+    setModifySelectedSkillIds((prev) => (
+      prev.length === selectedSkillIds.length && prev.every((skillId, index) => skillId === selectedSkillIds[index])
+        ? prev
+        : selectedSkillIds
     ));
-    if (resolved.providerSkill !== modifyDraft.providerSkill) {
+    if (
+      resolvedProviderSkills.length !== modifyDraft.providerSkills.length
+      || resolvedProviderSkills.some((skillName, index) => skillName !== modifyDraft.providerSkills[index])
+      || (resolvedProviderSkills[0] || '') !== modifyDraft.providerSkill
+    ) {
       setModifyDraft((prev) => (
-        prev ? { ...prev, providerSkill: resolved.providerSkill } : prev
+        prev ? {
+          ...prev,
+          providerSkill: resolvedProviderSkills[0] || '',
+          providerSkills: resolvedProviderSkills,
+        } : prev
       ));
     }
-  }, [modifyDraft, skills]);
-
-  useEffect(() => {
-    if (!modifyDraft || modifyDraft.currency === 'MRC20') return;
-    setModifyMrc20Assets([]);
-    if (!modifyDraft.mrc20Ticker && !modifyDraft.mrc20Id) return;
-    setModifyDraft((prev) => (prev ? {
-      ...prev,
-      mrc20Ticker: '',
-      mrc20Id: '',
-    } : prev));
-  }, [modifyDraft?.currency, modifyDraft?.mrc20Ticker, modifyDraft?.mrc20Id]);
-
-  useEffect(() => {
-    if (!isOpen || !modifyTargetService || !modifyDraft || modifyDraft.currency !== 'MRC20') return;
-    const creatorMetabotId = modifyTargetService.creatorMetabotId;
-    if (typeof creatorMetabotId !== 'number' || creatorMetabotId <= 0) {
-      setModifyMrc20Assets([]);
-      return;
-    }
-    let isCancelled = false;
-    const loadMrc20Assets = async () => {
-      try {
-        const result = await window.electron.idbots.getMetabotWalletAssets({ metabotId: creatorMetabotId });
-        if (isCancelled) return;
-        const options = getSelectableGigSquareMrc20Assets(result?.assets?.mrc20Assets || []);
-        setModifyMrc20Assets(options);
-      } catch {
-        if (isCancelled) return;
-        setModifyMrc20Assets([]);
-      }
-    };
-    void loadMrc20Assets();
-    return () => {
-      isCancelled = true;
-    };
-  }, [isOpen, modifyTargetService?.creatorMetabotId, modifyDraft?.currency]);
+  }, [modifyDraft, modifySkillOptions]);
 
   useEffect(() => {
     if (!isOpen || servicesPage) return;
@@ -508,8 +484,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     if (mutationBusyServiceId) return;
     setModifyTargetService(null);
     setModifyDraft(null);
-    setModifyMrc20Assets([]);
-    setModifySelectedSkillId('');
+    setModifySelectedSkillIds([]);
     setModifyError(null);
     if (modifyIconInputRef.current) {
       modifyIconInputRef.current.value = '';
@@ -548,15 +523,17 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
   const handleOpenModify = useCallback((service: GigSquareMyServiceSummary) => {
     if (mutationBusyServiceId || !service.canModify) return;
     const nextDraft = buildModifyDraftFromService(service);
-    const resolvedSelection = resolveGigSquareModifySkillSelection(skills, nextDraft.providerSkill);
+    const nextSkillOptions = buildGigSquareSkillSelectionOptions(skills, nextDraft.providerSkills);
+    const selectedSkillIds = resolveGigSquareSelectedSkillIds(nextSkillOptions, nextDraft.providerSkills);
+    const resolvedProviderSkills = resolveGigSquareSelectedProviderSkills(nextSkillOptions, selectedSkillIds);
     setModifyTargetService(service);
     setModifyDraft({
       ...nextDraft,
-      providerSkill: resolvedSelection.providerSkill,
+      providerSkill: resolvedProviderSkills[0] || '',
+      providerSkills: resolvedProviderSkills,
     });
-    setModifyMrc20Assets([]);
-    setModifySelectedSkillId(resolvedSelection.selectedSkillId);
-    setModifyError(null);
+    setModifySelectedSkillIds(selectedSkillIds);
+    setModifyError(nextDraft.isLegacyMrc20 ? i18nService.t('gigSquareMyServicesModifyMrc20Blocked') : null);
     if (modifyIconInputRef.current) {
       modifyIconInputRef.current.value = '';
     }
@@ -652,17 +629,19 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     setMutationNotice(null);
     setMutationBusyServiceId(modifyTargetService.id);
     try {
+      const paymentTerms = buildGigSquarePaymentTermsSubmission(modifyDraft);
       const result = await window.electron.gigSquare.modifyService({
         serviceId: modifyTargetService.currentPinId || modifyTargetService.id,
         serviceName: modifyDraft.serviceName.trim(),
         displayName: modifyDraft.displayName.trim(),
         description: modifyDraft.description.trim(),
         executionReminder: modifyDraft.executionReminder.trim(),
-        providerSkill: modifyDraft.providerSkill.trim(),
-        price: modifyDraft.price.trim(),
-        currency: modifyDraft.currency,
-        mrc20Ticker: modifyDraft.currency === 'MRC20' ? modifyDraft.mrc20Ticker.trim() : undefined,
-        mrc20Id: modifyDraft.currency === 'MRC20' ? modifyDraft.mrc20Id.trim() : undefined,
+        providerSkills: modifyDraft.providerSkills,
+        paymentTiming: paymentTerms.paymentTiming,
+        price: paymentTerms.price,
+        currency: paymentTerms.currency,
+        protocolSettlementKind: paymentTerms.protocolSettlementKind,
+        metadata: paymentTerms.metadata,
         outputType: modifyDraft.outputType,
         serviceIconDataUrl: modifyDraft.serviceIconDataUrl || null,
       });
@@ -724,7 +703,11 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
     && modifyTargetService
     && mutationBusyServiceId === modifyTargetService.id,
   );
+  const isModifySubmitDisabled = isModifySubmitting || Boolean(modifyDraft?.isLegacyMrc20);
   const modifyPriceLimitText = modifyDraft ? getGigSquarePublishPriceLimitText(modifyDraft.currency) : '';
+  const modifyShowPaymentAmountControls = modifyDraft
+    ? shouldShowGigSquarePaymentAmountControls(modifyDraft.paymentTiming)
+    : false;
   const paginationStart = paginationPage.total > 0
     ? (paginationPage.page - 1) * paginationPage.pageSize + 1
     : 0;
@@ -881,9 +864,14 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
               )}
 
               {activeServicesPage.items.map((service) => {
-                const price = formatGigSquarePrice(service.price, service.currency);
+                const price = formatGigSquarePrice(service.price, service.currency, {
+                  paymentTiming: service.paymentTiming,
+                  freeLabel: i18nService.t('gigSquareServiceFree'),
+                  treatZeroAsFree: true,
+                });
                 const grossRevenue = formatGigSquarePrice(service.grossRevenue, service.currency);
                 const netIncome = formatGigSquarePrice(service.netIncome, service.currency);
+                const providerSkills = normalizeProviderSkillChips(service.providerSkills, service.providerSkill);
                 const revokeDisabled = mutationBusyServiceId !== null || !service.canRevoke;
                 const editDisabled = mutationBusyServiceId !== null || !service.canModify;
                 const blockedReasonKey = service.blockedReason || 'gigSquareMyServicesMutationFailed';
@@ -916,13 +904,16 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                               <div className="truncate text-[15px] font-semibold text-claude-text dark:text-claude-darkText">
                                 {getServiceDisplayName(service)}
                               </div>
-                              {service.providerSkill && (
-                                <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
-                                  {service.providerSkill}
+                              {providerSkills.map((skill) => (
+                                <span
+                                  key={skill}
+                                  className="max-w-full truncate rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[11px] font-medium text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
+                                >
+                                  {skill}
                                 </span>
-                              )}
+                              ))}
                               <span className="rounded-full bg-claude-accent/10 px-2 py-0.5 text-[11px] font-semibold text-claude-accent">
-                                {price.amount} {price.unit}
+                                {price.unit ? `${price.amount} ${price.unit}` : price.amount}
                               </span>
                             </div>
 
@@ -1053,16 +1044,25 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                         </div>
                       </div>
                     </div>
-                    {activeSelectedService.price && activeSelectedService.currency && (
-                      <div className="shrink-0 rounded-xl bg-claude-surfaceMuted px-4 py-3 dark:bg-claude-darkSurfaceMuted">
-                        <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {formatGigSquarePrice(activeSelectedService.price, activeSelectedService.currency).unit}
+                    {activeSelectedService.price && activeSelectedService.currency && (() => {
+                      const price = formatGigSquarePrice(activeSelectedService.price, activeSelectedService.currency, {
+                        paymentTiming: activeSelectedService.paymentTiming,
+                        freeLabel: i18nService.t('gigSquareServiceFree'),
+                        treatZeroAsFree: true,
+                      });
+                      return (
+                        <div className="shrink-0 rounded-xl bg-claude-surfaceMuted px-4 py-3 dark:bg-claude-darkSurfaceMuted">
+                          {price.unit && (
+                            <div className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                              {price.unit}
+                            </div>
+                          )}
+                          <div className="mt-1 text-lg font-semibold text-claude-accent">
+                            {price.amount}
+                          </div>
                         </div>
-                        <div className="mt-1 text-lg font-semibold text-claude-accent">
-                          {formatGigSquarePrice(activeSelectedService.price, activeSelectedService.currency).amount}
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -1434,29 +1434,51 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                       <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('gigSquarePublishSkillLabel')}
                       </label>
-                      <select
-                        value={modifySelectedSkillId}
-                        onChange={(event) => {
-                          const nextSkillId = event.target.value;
-                          setModifySelectedSkillId(nextSkillId);
-                          const selectedSkill = modifySkillOptions.find((skill) => skill.id === nextSkillId);
-                          setModifyDraft((prev) => (prev ? {
-                            ...prev,
-                            providerSkill: selectedSkill?.name || '',
-                          } : prev));
-                        }}
-                        disabled={isModifySubmitting}
-                        className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
-                      >
-                        <option value="">
-                          {i18nService.t('gigSquarePublishSkillLabel')}
-                        </option>
+                      <div className="space-y-2 rounded-xl border border-claude-border bg-claude-bg px-3 py-2 dark:border-claude-darkBorder dark:bg-claude-darkBg">
                         {modifySkillOptions.map((skill) => (
-                          <option key={skill.id} value={skill.id}>
-                            {skill.name}
-                          </option>
+                          <label key={skill.id} className="flex items-center gap-2 text-sm text-claude-text dark:text-claude-darkText">
+                            <input
+                              type="checkbox"
+                              checked={modifySelectedSkillIds.includes(skill.id)}
+                              onChange={(event) => {
+                                const nextSelectedSkillIds = event.target.checked
+                                  ? [...modifySelectedSkillIds, skill.id]
+                                  : modifySelectedSkillIds.filter((skillId) => skillId !== skill.id);
+                                const providerSkills = resolveGigSquareSelectedProviderSkills(
+                                  modifySkillOptions,
+                                  nextSelectedSkillIds,
+                                );
+                                setModifySelectedSkillIds(nextSelectedSkillIds);
+                                setModifyDraft((prev) => (prev ? {
+                                  ...prev,
+                                  providerSkill: providerSkills[0] || '',
+                                  providerSkills,
+                                } : prev));
+                              }}
+                              disabled={isModifySubmitting || Boolean(skill.readOnly)}
+                              className="h-4 w-4 rounded border-claude-border text-claude-accent focus:ring-claude-accent dark:border-claude-darkBorder"
+                            />
+                            <span className="min-w-0 flex-1 truncate">{skill.name}</span>
+                            {skill.readOnly && (
+                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[10px] uppercase tracking-wide text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
+                                {i18nService.t('gigSquarePublishLegacySkill')}
+                              </span>
+                            )}
+                          </label>
                         ))}
-                      </select>
+                      </div>
+                      {modifyDraft.providerSkills.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {modifyDraft.providerSkills.map((skillName) => (
+                            <span
+                              key={skillName}
+                              className="rounded-full border border-claude-border bg-claude-surfaceMuted px-2 py-0.5 text-[11px] text-claude-textSecondary dark:border-claude-darkBorder dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
+                            >
+                              {skillName}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -1478,79 +1500,73 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                         ))}
                       </select>
                     </div>
-                    <div className={getGigSquareSettlementGridClassName(modifyDraft.currency)}>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t('gigSquarePublishPriceLabel')}
-                        </label>
-                        <input
-                          type="text"
-                          value={modifyDraft.price}
-                          onChange={(event) => setModifyDraft((prev) => (prev ? { ...prev, price: event.target.value } : prev))}
-                          disabled={isModifySubmitting}
-                          placeholder={i18nService.t('gigSquarePublishPricePlaceholder')}
-                          className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                          {i18nService.t('gigSquarePublishCurrencyLabel')}
-                        </label>
-                        <select
-                          value={modifyDraft.currency}
-                          onChange={(event) => setModifyDraft((prev) => (prev ? {
-                            ...prev,
-                            currency: normalizeModifyCurrency(event.target.value),
-                            mrc20Ticker: normalizeModifyCurrency(event.target.value) === 'MRC20' ? prev.mrc20Ticker : '',
-                            mrc20Id: normalizeModifyCurrency(event.target.value) === 'MRC20' ? prev.mrc20Id : '',
-                          } : prev))}
-                          disabled={isModifySubmitting}
-                          className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
-                        >
-                          {GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => (
-                            <option key={item.value} value={item.value}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        {modifyDraft.currency === 'MRC20' && (
-                          <>
-                            <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                              MRC20 Token
-                            </label>
-                            <select
-                              value={modifyDraft.mrc20Id}
-                              onChange={(event) => {
-                                const nextMrc20Id = event.target.value;
-                                const selectedAsset = modifyMrc20Options.find((item) => item.mrc20Id === nextMrc20Id);
-                                setModifyDraft((prev) => (prev ? {
-                                  ...prev,
-                                  mrc20Id: nextMrc20Id,
-                                  mrc20Ticker: selectedAsset?.symbol || '',
-                                } : prev));
-                              }}
-                              disabled={isModifySubmitting}
-                              className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
-                            >
-                              <option value="">
-                                {getGigSquareMrc20SelectPlaceholder(modifyMrc20Options)}
-                              </option>
-                              {modifyMrc20Options.map((asset) => (
-                                <option key={asset.mrc20Id} value={asset.mrc20Id}>
-                                  {formatGigSquareMrc20OptionLabel(asset)}
-                                </option>
-                              ))}
-                            </select>
-                          </>
-                        )}
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {i18nService.t('gigSquarePublishPaymentTimingLabel')}
+                      </label>
+                      <div className="inline-flex rounded-xl border border-claude-border bg-claude-bg p-1 dark:border-claude-darkBorder dark:bg-claude-darkBg">
+                        {GIG_SQUARE_PAYMENT_TIMING_OPTIONS.map((item) => (
+                          <button
+                            key={item.value}
+                            type="button"
+                            onClick={() => setModifyDraft((prev) => (prev ? {
+                              ...prev,
+                              paymentTiming: item.value,
+                            } : prev))}
+                            disabled={isModifySubmitting}
+                            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                              modifyDraft.paymentTiming === item.value
+                                ? 'bg-claude-accent text-white'
+                                : 'text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover'
+                            }`}
+                          >
+                            {i18nService.t(item.value === 'free' ? 'gigSquarePublishPaymentTimingFree' : 'gigSquarePublishPaymentTimingPrepaid')}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                    {modifyPriceLimitText && (
-                      <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                        {i18nService.t('gigSquarePublishPriceLimitPrefix')}{modifyPriceLimitText}
-                      </p>
+
+                    {modifyShowPaymentAmountControls && (
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            {i18nService.t('gigSquarePublishPriceLabel')}
+                          </label>
+                          <input
+                            type="text"
+                            value={modifyDraft.price}
+                            onChange={(event) => setModifyDraft((prev) => (prev ? { ...prev, price: event.target.value } : prev))}
+                            disabled={isModifySubmitting}
+                            placeholder={i18nService.t('gigSquarePublishPricePlaceholder')}
+                            className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                            {i18nService.t('gigSquarePublishCurrencyLabel')}
+                          </label>
+                          <select
+                            value={modifyDraft.currency}
+                            onChange={(event) => setModifyDraft((prev) => (prev ? {
+                              ...prev,
+                              currency: normalizeModifyCurrency(event.target.value),
+                            } : prev))}
+                            disabled={isModifySubmitting}
+                            className="w-full rounded-xl border border-claude-border bg-claude-bg px-3 py-2 text-sm text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent disabled:cursor-not-allowed disabled:opacity-60 dark:border-claude-darkBorder dark:bg-claude-darkBg dark:text-claude-darkText"
+                          >
+                            {GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => (
+                              <option key={item.value} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {modifyPriceLimitText && (
+                          <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary md:col-span-2">
+                            {i18nService.t('gigSquarePublishPriceLimitPrefix')}{modifyPriceLimitText}
+                          </p>
+                        )}
+                      </div>
                     )}
                     <div className="rounded-xl border border-dashed border-claude-border/80 bg-claude-surfaceMuted/60 p-3 dark:border-claude-darkBorder/80 dark:bg-claude-darkSurfaceMuted/60">
                       <label className="mb-3 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -1613,7 +1629,7 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 <button
                   type="button"
                   onClick={() => void handleSubmitModify()}
-                  disabled={isModifySubmitting}
+                  disabled={isModifySubmitDisabled}
                   className="btn-idchat-primary-filled px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isModifySubmitting

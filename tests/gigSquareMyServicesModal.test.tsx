@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import GigSquareMyServicesModal, {
+  buildModifyDraftFromService,
   dispatchGigSquareMyServiceOrderSessionView,
 } from '../src/renderer/components/gigSquare/GigSquareMyServicesModal';
 
@@ -156,4 +157,53 @@ test('my-service order session helper dispatches focused order view and closes t
     },
   }]);
   assert.deepEqual(onCloseCalls, ['closed']);
+});
+
+test('modify draft preserves v1.1 protocol settlement kind and metadata', () => {
+  const draft = buildModifyDraftFromService({
+    id: 'svc-1',
+    currentPinId: 'svc-1',
+    sourceServicePinId: 'svc-root',
+    serviceName: 'weather-service',
+    displayName: 'Weather',
+    description: 'desc',
+    executionReminder: '',
+    providerSkill: 'weather',
+    providerSkills: ['weather'],
+    paymentTiming: 'prepaid',
+    price: '1.25',
+    currency: 'SPACE',
+    protocolSettlementKind: 'fiat',
+    metadata: '{"invoice":"manual"}',
+    outputType: 'text',
+  } as any);
+
+  assert.equal(draft.protocolSettlementKind, 'fiat');
+  assert.equal(draft.metadata, '{"invoice":"manual"}');
+});
+
+test('modify draft preserves existing fiat quote currency', () => {
+  for (const currency of [' CNY ', 'usd']) {
+    const draft = buildModifyDraftFromService({
+      id: 'svc-1',
+      currentPinId: 'svc-1',
+      sourceServicePinId: 'svc-root',
+      serviceName: 'weather-service',
+      displayName: 'Weather',
+      description: 'desc',
+      executionReminder: '',
+      providerSkill: 'weather',
+      providerSkills: ['weather'],
+      paymentTiming: 'prepaid',
+      price: '12.50',
+      currency,
+      settlementKind: 'fiat',
+      metadata: '{"invoice":"manual","quote":"fiat"}',
+      outputType: 'text',
+    } as any);
+
+    assert.equal(draft.currency, currency.trim().toUpperCase());
+    assert.equal(draft.protocolSettlementKind, 'fiat');
+    assert.equal(draft.metadata, '{"invoice":"manual","quote":"fiat"}');
+  }
 });

@@ -2,7 +2,11 @@ export const GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS = [
   { label: 'BTC', value: 'BTC' },
   { label: 'SPACE', value: 'SPACE' },
   { label: 'DOGE', value: 'DOGE' },
-  { label: 'MRC20', value: 'MRC20' },
+];
+
+export const GIG_SQUARE_PAYMENT_TIMING_OPTIONS = [
+  { label: 'Free', value: 'free' },
+  { label: 'Prepaid', value: 'prepaid' },
 ];
 
 export const GIG_SQUARE_PUBLISH_PRICE_LIMITS = {
@@ -10,6 +14,123 @@ export const GIG_SQUARE_PUBLISH_PRICE_LIMITS = {
   SPACE: 100000,
   DOGE: 10000,
 };
+
+const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
+const NATIVE_CURRENCIES = new Set(GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => item.value));
+
+export function getDefaultGigSquarePaymentTiming() {
+  return 'free';
+}
+
+export function normalizeGigSquarePaymentTiming(paymentTiming) {
+  return String(paymentTiming || '').trim().toLowerCase() === 'prepaid' ? 'prepaid' : 'free';
+}
+
+export function normalizeGigSquareProtocolSettlementKind(value) {
+  return String(value || '').trim().toLowerCase() === 'fiat' ? 'fiat' : 'native';
+}
+
+export function deriveGigSquarePaymentTiming(paymentTiming, price) {
+  const normalizedPaymentTiming = String(paymentTiming || '').trim().toLowerCase();
+  if (normalizedPaymentTiming === 'free' || normalizedPaymentTiming === 'prepaid') {
+    return normalizedPaymentTiming;
+  }
+  const numericPrice = Number(String(price || '').trim());
+  return Number.isFinite(numericPrice) && numericPrice > 0 ? 'prepaid' : 'free';
+}
+
+export function normalizeGigSquareNativeCurrency(currency) {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'MVC') return 'SPACE';
+  return NATIVE_CURRENCIES.has(normalized) ? normalized : 'SPACE';
+}
+
+export function normalizeGigSquareFiatQuoteCurrency(currency) {
+  const normalized = String(currency || '').trim().toUpperCase();
+  if (normalized === 'MVC' || normalized === 'MICROVISIONCHAIN') return 'SPACE';
+  return normalized;
+}
+
+export function isGigSquareLegacyMrc20Settlement(value) {
+  const settlementKind = String(value?.settlementKind || value?.protocolSettlementKind || '')
+    .trim()
+    .toLowerCase();
+  const currency = String(value?.currency || '').trim().toUpperCase();
+  return settlementKind === 'mrc20' || currency === 'MRC20' || currency.endsWith('-MRC20');
+}
+
+export function shouldShowGigSquarePaymentAmountControls(paymentTiming) {
+  return normalizeGigSquarePaymentTiming(paymentTiming) === 'prepaid';
+}
+
+export function validateGigSquarePaymentTermsDraft(draft) {
+  const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
+  if (paymentTiming === 'free') return null;
+
+  const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(draft?.protocolSettlementKind);
+  const currency = String(draft?.currency || '').trim().toUpperCase();
+  if (protocolSettlementKind === 'fiat'
+    ? !currency || isGigSquareLegacyMrc20Settlement({ currency })
+    : !NATIVE_CURRENCIES.has(currency)
+  ) {
+    return {
+      code: 'currency_invalid',
+      i18nKey: 'gigSquarePublishCurrencyInvalid',
+    };
+  }
+
+  const price = String(draft?.price || '').trim();
+  if (!price) {
+    return {
+      code: 'price_required',
+      i18nKey: 'gigSquarePublishPriceRequired',
+    };
+  }
+  const numericPrice = Number(price);
+  if (!NUMBER_PATTERN.test(price) || !Number.isFinite(numericPrice) || numericPrice <= 0) {
+    return {
+      code: 'price_invalid',
+      i18nKey: 'gigSquarePublishPriceInvalid',
+    };
+  }
+  const priceLimit = protocolSettlementKind === 'fiat' ? null : getGigSquarePublishPriceLimit(currency);
+  if (priceLimit !== null && numericPrice > priceLimit) {
+    return {
+      code: 'price_exceed',
+      i18nKey: 'gigSquarePublishPriceExceed',
+    };
+  }
+  return null;
+}
+
+export function buildGigSquarePaymentTermsSubmission(draft) {
+  const validationError = validateGigSquarePaymentTermsDraft(draft);
+  if (validationError) {
+    throw new Error(`Invalid GigSquare payment terms: ${validationError.code}`);
+  }
+  const paymentTiming = normalizeGigSquarePaymentTiming(draft?.paymentTiming);
+  const protocolSettlementKind = normalizeGigSquareProtocolSettlementKind(draft?.protocolSettlementKind);
+  const metadata = String(draft?.metadata || '');
+  const currency = protocolSettlementKind === 'fiat'
+    ? normalizeGigSquareFiatQuoteCurrency(draft?.currency)
+    : normalizeGigSquareNativeCurrency(draft?.currency);
+  if (paymentTiming === 'free') {
+    return {
+      paymentTiming: 'free',
+      price: '0',
+      currency: protocolSettlementKind === 'fiat' ? currency : 'SPACE',
+      protocolSettlementKind,
+      metadata,
+    };
+  }
+  return {
+    paymentTiming: 'prepaid',
+    price: String(draft?.price || '').trim(),
+    currency,
+    protocolSettlementKind,
+    metadata,
+  };
+}
 
 export function getGigSquarePublishCurrencyLabel(currency) {
   const normalized = typeof currency === 'string' ? currency.trim().toUpperCase() : '';

@@ -4,25 +4,21 @@ import { i18nService } from '../../services/i18n';
 import type { Skill } from '../../types/skill';
 import {
   GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS,
-  formatGigSquareMrc20OptionLabel,
-  getGigSquareMrc20SelectPlaceholder,
-  getNextGigSquareSelectedMrc20Id,
-  getGigSquarePublishPriceLimit,
+  GIG_SQUARE_PAYMENT_TIMING_OPTIONS,
+  buildGigSquarePaymentTermsSubmission,
+  getDefaultGigSquarePaymentTiming,
   getGigSquarePublishPriceLimitText,
-  getGigSquareSettlementGridClassName,
-  getSelectableGigSquareMrc20Assets,
+  shouldShowGigSquarePaymentAmountControls,
+  validateGigSquarePaymentTermsDraft,
 } from './gigSquarePublishPresentation.js';
-import { getEnabledGigSquareSkills } from './gigSquareSkillOptions.js';
+import {
+  buildGigSquareSkillSelectionOptions,
+  resolveGigSquareSelectedProviderSkills,
+} from './gigSquareSkillOptions.js';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
-type PublishCurrency = 'BTC' | 'SPACE' | 'DOGE' | 'MRC20';
-type SelectableMrc20Asset = {
-  symbol: string;
-  mrc20Id: string;
-  balance: {
-    display: string;
-  };
-};
+type PublishCurrency = 'BTC' | 'SPACE' | 'DOGE';
+type PublishPaymentTiming = 'free' | 'prepaid';
 
 interface GigSquarePublishModalProps {
   isOpen: boolean;
@@ -44,8 +40,6 @@ const OUTPUT_OPTIONS = [
   { label: 'other', value: 'other' },
 ];
 
-const NUMBER_PATTERN = /^\d+(\.\d+)?$/;
-
 const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   isOpen,
   onClose,
@@ -53,17 +47,16 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
 }) => {
   const [metabots, setMetabots] = useState<MetabotOption[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [selectedSkillId, setSelectedSkillId] = useState('');
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [selectedMetabotId, setSelectedMetabotId] = useState<number | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [serviceName, setServiceName] = useState('');
   const [serviceNameDirty, setServiceNameDirty] = useState(false);
   const [description, setDescription] = useState('');
   const [executionReminder, setExecutionReminder] = useState('');
+  const [paymentTiming, setPaymentTiming] = useState<PublishPaymentTiming>(getDefaultGigSquarePaymentTiming());
   const [price, setPrice] = useState('');
-  const [currency, setCurrency] = useState<PublishCurrency>('BTC');
-  const [mrc20Assets, setMrc20Assets] = useState<SelectableMrc20Asset[]>([]);
-  const [selectedMrc20Id, setSelectedMrc20Id] = useState('');
+  const [currency, setCurrency] = useState<PublishCurrency>('SPACE');
   const [outputType, setOutputType] = useState<'text' | 'image' | 'video' | 'audio' | 'other'>('text');
   const [serviceIconDataUrl, setServiceIconDataUrl] = useState('');
   const [status, setStatus] = useState<PublishStatus>('idle');
@@ -72,19 +65,22 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [statusPanelState, setStatusPanelState] = useState<StatusPanelState>('submitting');
   const iconInputRef = useRef<HTMLInputElement | null>(null);
-  const selectedMrc20IdRef = useRef('');
 
+  const skillOptions = useMemo(
+    () => buildGigSquareSkillSelectionOptions(skills, []),
+    [skills],
+  );
+  const selectedProviderSkills = useMemo(
+    () => resolveGigSquareSelectedProviderSkills(skillOptions, selectedSkillIds),
+    [selectedSkillIds, skillOptions],
+  );
   const selectedSkill = useMemo(
-    () => skills.find((skill) => skill.id === selectedSkillId) || null,
-    [skills, selectedSkillId]
-  );
-  const selectedMrc20Asset = useMemo(
-    () => mrc20Assets.find((asset) => asset.mrc20Id === selectedMrc20Id) || null,
-    [mrc20Assets, selectedMrc20Id]
+    () => skillOptions.find((skill) => selectedSkillIds.includes(skill.id)) || null,
+    [selectedSkillIds, skillOptions]
   );
 
-  const priceLimit = getGigSquarePublishPriceLimit(currency);
   const priceLimitText = getGigSquarePublishPriceLimitText(currency);
+  const showPaymentAmountControls = shouldShowGigSquarePaymentAmountControls(paymentTiming);
   const isFormDisabled = status === 'submitting' || statusPanelOpen;
 
   const loadMetabots = useCallback(async () => {
@@ -123,20 +119,21 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   const loadSkills = useCallback(async () => {
     try {
       const res = await window.electron.skills.list();
-      const enabledSkills = getEnabledGigSquareSkills(res?.success ? res.skills : []);
-      if (enabledSkills.length) {
-        setSkills(enabledSkills);
-        setSelectedSkillId((prev) => {
-          if (prev && enabledSkills.some((skill) => skill.id === prev)) return prev;
-          return enabledSkills[0].id;
+      const options = buildGigSquareSkillSelectionOptions(res?.success ? res.skills : [], []);
+      if (options.length) {
+        setSkills(options);
+        setSelectedSkillIds((prev) => {
+          const availableIds = new Set(options.map((skill) => skill.id));
+          const retained = prev.filter((skillId) => availableIds.has(skillId));
+          return retained.length > 0 ? retained : [options[0].id];
         });
       } else {
         setSkills([]);
-        setSelectedSkillId('');
+        setSelectedSkillIds([]);
       }
     } catch {
       setSkills([]);
-      setSelectedSkillId('');
+      setSelectedSkillIds([]);
     }
   }, []);
 
@@ -149,9 +146,8 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     setStatusPanelState('submitting');
     setServiceNameDirty(false);
     setExecutionReminder('');
+    setPaymentTiming(getDefaultGigSquarePaymentTiming());
     setServiceIconDataUrl('');
-    setMrc20Assets([]);
-    setSelectedMrc20Id('');
     loadMetabots();
     loadSkills();
   }, [isOpen, loadMetabots, loadSkills]);
@@ -160,41 +156,6 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     if (!selectedSkill || serviceNameDirty) return;
     setServiceName(selectedSkill.name + '-service');
   }, [selectedSkill, serviceNameDirty]);
-
-  useEffect(() => {
-    selectedMrc20IdRef.current = selectedMrc20Id;
-  }, [selectedMrc20Id]);
-
-  useEffect(() => {
-    if (currency === 'MRC20') return;
-    setMrc20Assets([]);
-    setSelectedMrc20Id('');
-  }, [currency]);
-
-  useEffect(() => {
-    if (!isOpen || !selectedMetabotId || currency !== 'MRC20') return;
-    let isCancelled = false;
-    const previousSelectedMrc20Id = selectedMrc20IdRef.current;
-    setMrc20Assets([]);
-    setSelectedMrc20Id('');
-    const loadMrc20Assets = async () => {
-      try {
-        const result = await window.electron.idbots.getMetabotWalletAssets({ metabotId: selectedMetabotId });
-        if (isCancelled) return;
-        const options = getSelectableGigSquareMrc20Assets(result?.assets?.mrc20Assets || []);
-        setMrc20Assets(options);
-        setSelectedMrc20Id(getNextGigSquareSelectedMrc20Id(options, previousSelectedMrc20Id));
-      } catch {
-        if (isCancelled) return;
-        setMrc20Assets([]);
-        setSelectedMrc20Id('');
-      }
-    };
-    void loadMrc20Assets();
-    return () => {
-      isCancelled = true;
-    };
-  }, [isOpen, selectedMetabotId, currency]);
 
   if (!isOpen) return null;
 
@@ -217,7 +178,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
   };
 
   const validate = (): boolean => {
-    if (!selectedSkill) {
+    if (selectedProviderSkills.length === 0) {
       setError(i18nService.t('gigSquarePublishSkillRequired'));
       return false;
     }
@@ -237,25 +198,9 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       setError(i18nService.t('gigSquarePublishDescriptionRequired'));
       return false;
     }
-    if (!price.trim()) {
-      setError(i18nService.t('gigSquarePublishPriceRequired'));
-      return false;
-    }
-    if (!NUMBER_PATTERN.test(price.trim())) {
-      setError(i18nService.t('gigSquarePublishPriceInvalid'));
-      return false;
-    }
-    const numericPrice = Number(price.trim());
-    if (!Number.isFinite(numericPrice) || numericPrice < 0) {
-      setError(i18nService.t('gigSquarePublishPriceInvalid'));
-      return false;
-    }
-    if (priceLimit !== null && numericPrice > priceLimit) {
-      setError(i18nService.t('gigSquarePublishPriceExceed'));
-      return false;
-    }
-    if (currency === 'MRC20' && !selectedMrc20Id) {
-      setError('Please select an MRC20 token');
+    const paymentTermsError = validateGigSquarePaymentTermsDraft({ paymentTiming, price, currency });
+    if (paymentTermsError) {
+      setError(i18nService.t(paymentTermsError.i18nKey));
       return false;
     }
     if (!outputType) {
@@ -274,6 +219,7 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
     setError(null);
     setStatusPanelOpen(true);
     setStatusPanelState('submitting');
+    const paymentTerms = buildGigSquarePaymentTermsSubmission({ paymentTiming, price, currency });
 
     const result = await window.electron.gigSquare.publishService({
       metabotId: selectedMetabotId || 0,
@@ -281,11 +227,12 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
       displayName: displayName.trim(),
       description: description.trim(),
       executionReminder: executionReminder.trim(),
-      providerSkill: selectedSkill?.name || '',
-      price: price.trim(),
-      currency,
-      mrc20Ticker: currency === 'MRC20' ? selectedMrc20Asset?.symbol || '' : undefined,
-      mrc20Id: currency === 'MRC20' ? selectedMrc20Asset?.mrc20Id || '' : undefined,
+      providerSkills: selectedProviderSkills,
+      paymentTiming: paymentTerms.paymentTiming,
+      price: paymentTerms.price,
+      currency: paymentTerms.currency,
+      protocolSettlementKind: paymentTerms.protocolSettlementKind,
+      metadata: paymentTerms.metadata,
       outputType,
       serviceIconDataUrl: serviceIconDataUrl || null,
     });
@@ -371,21 +318,44 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
                 {i18nService.t('gigSquarePublishSkillLabel')}
               </label>
-              <select
-                value={selectedSkillId}
-                onChange={(e) => setSelectedSkillId(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={isFormDisabled}
-              >
-                <option value="">
-                  {i18nService.t('gigSquarePublishSkillLabel')}
-                </option>
-                {skills.map((skill) => (
-                  <option key={skill.id} value={skill.id}>
-                    {skill.name}
-                  </option>
-                ))}
-              </select>
+              <div className="space-y-2 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-claude-bg dark:bg-claude-darkBg px-3 py-2">
+                {skillOptions.length === 0 ? (
+                  <div className="text-sm text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {i18nService.t('gigSquarePublishSkillRequired')}
+                  </div>
+                ) : (
+                  skillOptions.map((skill) => (
+                    <label key={skill.id} className="flex items-center gap-2 text-sm dark:text-claude-darkText text-claude-text">
+                      <input
+                        type="checkbox"
+                        checked={selectedSkillIds.includes(skill.id)}
+                        onChange={(event) => {
+                          setSelectedSkillIds((prev) => (
+                            event.target.checked
+                              ? [...prev, skill.id]
+                              : prev.filter((skillId) => skillId !== skill.id)
+                          ));
+                        }}
+                        disabled={isFormDisabled}
+                        className="h-4 w-4 rounded border-claude-border text-claude-accent focus:ring-claude-accent dark:border-claude-darkBorder"
+                      />
+                      <span className="min-w-0 truncate">{skill.name}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+              {selectedProviderSkills.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {selectedProviderSkills.map((skillName) => (
+                    <span
+                      key={skillName}
+                      className="rounded-full border border-claude-border bg-claude-surfaceMuted px-2 py-0.5 text-[11px] text-claude-textSecondary dark:border-claude-darkBorder dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
+                    >
+                      {skillName}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
@@ -475,67 +445,68 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
             </p>
           </div>
 
-          <div className={getGigSquareSettlementGridClassName(currency)}>
-            <div>
-              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-                {i18nService.t('gigSquarePublishPriceLabel')}
-              </label>
-              <input
-                type="text"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder={i18nService.t('gigSquarePublishPricePlaceholder')}
-                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={isFormDisabled}
-              />
-              {priceLimitText && (
-                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
-                  {i18nService.t('gigSquarePublishPriceLimitPrefix')}{priceLimitText}
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-                {i18nService.t('gigSquarePublishCurrencyLabel')}
-              </label>
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value as PublishCurrency)}
-                className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                disabled={isFormDisabled}
-              >
-                {GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              {currency === 'MRC20' && (
-                <>
-                  <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
-                    MRC20 Token
-                  </label>
-                  <select
-                    value={selectedMrc20Id}
-                    onChange={(e) => setSelectedMrc20Id(e.target.value)}
-                    className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                    disabled={isFormDisabled}
-                  >
-                    <option value="">
-                      {getGigSquareMrc20SelectPlaceholder(mrc20Assets)}
-                    </option>
-                    {mrc20Assets.map((asset) => (
-                      <option key={asset.mrc20Id} value={asset.mrc20Id}>
-                        {formatGigSquareMrc20OptionLabel(asset)}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
+          <div>
+            <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+              {i18nService.t('gigSquarePublishPaymentTimingLabel')}
+            </label>
+            <div className="inline-flex rounded-xl border border-claude-border bg-claude-bg p-1 dark:border-claude-darkBorder dark:bg-claude-darkBg">
+              {GIG_SQUARE_PAYMENT_TIMING_OPTIONS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setPaymentTiming(item.value as PublishPaymentTiming)}
+                  disabled={isFormDisabled}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                    paymentTiming === item.value
+                      ? 'bg-claude-accent text-white'
+                      : 'text-claude-textSecondary hover:bg-claude-surfaceHover dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceHover'
+                  }`}
+                >
+                  {i18nService.t(item.value === 'free' ? 'gigSquarePublishPaymentTimingFree' : 'gigSquarePublishPaymentTimingPrepaid')}
+                </button>
+              ))}
             </div>
           </div>
+
+          {showPaymentAmountControls && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                  {i18nService.t('gigSquarePublishPriceLabel')}
+                </label>
+                <input
+                  type="text"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder={i18nService.t('gigSquarePublishPricePlaceholder')}
+                  className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                  disabled={isFormDisabled}
+                />
+                {priceLimitText && (
+                  <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary mt-1">
+                    {i18nService.t('gigSquarePublishPriceLimitPrefix')}{priceLimitText}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                  {i18nService.t('gigSquarePublishCurrencyLabel')}
+                </label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as PublishCurrency)}
+                  className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                  disabled={isFormDisabled}
+                >
+                  {GIG_SQUARE_PUBLISH_CURRENCY_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

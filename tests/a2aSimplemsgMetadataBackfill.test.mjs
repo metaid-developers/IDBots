@@ -1528,6 +1528,90 @@ test('backfillMetawebOrderSimplemsgMetadata does not let another mapping order t
   }
 });
 
+test('findOrderSessionByOrderPinId routes two free orders from the same seller to the explicit order pin session', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    sqlite.db.run('PRAGMA reverse_unordered_selects = ON');
+    const store = createCoworkStore(sqlite.db);
+    const metabotId = 9;
+    const peerGlobalMetaId = 'seller-free-order-peer';
+    const firstOrderPinId = 'free-order-first-pin-i0';
+    const secondOrderPinId = 'free-order-second-pin-i0';
+    const firstExternalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${firstOrderPinId}`;
+    const secondExternalConversationId = `metaweb_order:buyer:${metabotId}:${peerGlobalMetaId}:${secondOrderPinId}`;
+    const firstSession = store.createSession(
+      'First free order',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Seller Bot',
+      null,
+    );
+    const secondSession = store.createSession(
+      'Second free order',
+      process.cwd(),
+      '',
+      'local',
+      [],
+      metabotId,
+      'a2a',
+      peerGlobalMetaId,
+      'Seller Bot',
+      null,
+    );
+
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: firstExternalConversationId,
+      metabotId,
+      coworkSessionId: firstSession.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: '',
+        serviceOrderPinId: firstOrderPinId,
+        orderPinId: firstOrderPinId,
+      }),
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: secondExternalConversationId,
+      metabotId,
+      coworkSessionId: secondSession.id,
+      metadataJson: JSON.stringify({
+        role: 'buyer',
+        peerGlobalMetaId,
+        servicePaidTx: '',
+        serviceOrderPinId: secondOrderPinId,
+        orderPinId: secondOrderPinId,
+      }),
+    });
+    sqlite.db.run(
+      `UPDATE cowork_conversation_mappings
+       SET last_active_at = ?
+       WHERE channel = 'metaweb_order' AND external_conversation_id = ? AND metabot_id = ?`,
+      [Date.now() + 10_000, secondExternalConversationId, metabotId],
+    );
+
+    const peerFallback = store.findOrderSessionByPeer(metabotId, peerGlobalMetaId);
+    assert.equal(peerFallback.coworkSessionId, secondSession.id);
+
+    const routed = store.findOrderSessionByOrderPinId(
+      metabotId,
+      peerGlobalMetaId,
+      firstOrderPinId,
+      'buyer',
+    );
+    assert.equal(routed.coworkSessionId, firstSession.id);
+  } finally {
+    sqlite.cleanup();
+  }
+});
+
 test('backfillMetawebOrderSimplemsgMetadata binds seller delivery by message order identity in unified peer sessions', async () => {
   const sqlite = await createSqliteStore();
   try {

@@ -55,6 +55,25 @@ test('buildDelegationOrderPayload omits txid for free orders and keeps an order 
   assert.doesNotMatch(payload, /settlement kind:/i);
 });
 
+test('buildDelegationOrderPayload writes allowed skills for multi-skill services without legacy skill name', () => {
+  const payload = buildDelegationOrderPayload({
+    rawRequest: '先查天气，再整理一段中文出行建议。',
+    taskContext: '用户需要天气和出行建议',
+    userTask: '查询天气并生成建议',
+    serviceName: '天气出行服务',
+    providerSkill: 'weather',
+    providerSkills: ['weather', 'travel-advice'],
+    servicePinId: 'service-pin-weather-advice',
+    paymentTxid: '',
+    orderPinId: 'order-pin-i0',
+    price: '0',
+    currency: 'SPACE',
+  });
+
+  assert.match(payload, /allowed skills:\s*weather,\s*travel-advice/i);
+  assert.doesNotMatch(payload, /skill name:/i);
+});
+
 test('buildDelegationOrderPayload falls back to the service name when providerSkill is unavailable', () => {
   const payload = buildDelegationOrderPayload({
     taskContext: '',

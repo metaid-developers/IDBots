@@ -119,9 +119,13 @@ contextBridge.exposeInMainWorld('electron', {
       displayName: string;
       description: string;
       executionReminder?: string;
-      providerSkill: string;
+      providerSkills?: string[];
+      providerSkill?: string;
+      paymentTiming?: 'free' | 'prepaid' | string;
       price: string;
       currency: string;
+      protocolSettlementKind?: 'native' | 'fiat' | string;
+      metadata?: string;
       mrc20Ticker?: string;
       mrc20Id?: string;
       outputType: string;
@@ -135,14 +139,27 @@ contextBridge.exposeInMainWorld('electron', {
       displayName?: string;
       description?: string;
       executionReminder?: string;
+      providerSkills?: string[];
       providerSkill?: string;
+      paymentTiming?: 'free' | 'prepaid' | string;
       price?: string;
       currency?: string;
+      protocolSettlementKind?: 'native' | 'fiat' | string;
+      metadata?: string;
       mrc20Ticker?: string;
       mrc20Id?: string;
       outputType?: string;
       serviceIconDataUrl?: string | null;
     }) => ipcRenderer.invoke('gigSquare:modifyService', params),
+    createServiceOrderPin: (params: {
+      metabotId: number;
+      servicePinId?: string | null;
+      paymentTxid?: string | null;
+      price?: string | null;
+      currency?: string | null;
+      settlementKind?: string | null;
+      metadata?: string | null;
+    }) => ipcRenderer.invoke('gigSquare:createServiceOrderPin', params),
     sendOrder: (params: {
       metabotId: number;
       toGlobalMetaId: string;
@@ -161,6 +178,7 @@ contextBridge.exposeInMainWorld('electron', {
       serviceSkill?: string | null;
       serviceOutputType?: string | null;
       serverBotGlobalMetaId?: string | null;
+      serviceOrderPinId?: string | null;
       servicePaidTx?: string | null;
     }) => ipcRenderer.invoke('gigSquare:sendOrder', params),
     pingProvider: (params: {

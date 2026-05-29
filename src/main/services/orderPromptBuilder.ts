@@ -30,10 +30,16 @@ export function buildOrderPrompts(params: {
   peerName?: string | null;
   skillId?: string | null;
   skillName?: string | null;
+  allowedSkillNames?: string[] | null;
   executionReminder?: string | null;
   expectedOutputType?: string | null;
 }): OrderPromptBuildResult {
   const clientName = params.peerName?.trim() || 'the client';
+  const allowedSkillNames = Array.from(new Set(
+    (Array.isArray(params.allowedSkillNames) ? params.allowedSkillNames : [])
+      .map((name) => String(name || '').trim())
+      .filter(Boolean)
+  ));
   const resolvedSkill = params.skillName?.trim() || params.skillId?.trim() || null;
   const requestText = extractOrderRequestText(params.plaintext) || String(params.plaintext || '').trim();
   const displaySummary = extractOrderDisplaySummary(params.plaintext)
@@ -54,7 +60,13 @@ export function buildOrderPrompts(params: {
     '## Current Service Order Context',
     `- This is a paid service order. The client has already completed payment.`,
     `- Client name: ${clientName}.`,
-    resolvedSkill
+    allowedSkillNames.length > 0
+      ? [
+        `- Allowed skill scope: ${allowedSkillNames.join(', ')}.`,
+        '- You may use any suitable subset of these skills. Do not use local skills outside this scope for this service order.',
+        '- The list has no execution-order semantics.',
+      ].join('\n')
+      : resolvedSkill
       ? `- Required skill: **${resolvedSkill}**. You MUST use this skill to fulfill the order. Do not substitute or skip it.`
       : null,
     `- A brief acknowledgement is sent to the client before execution starts. Do not repeat that acknowledgement in your final result.`,

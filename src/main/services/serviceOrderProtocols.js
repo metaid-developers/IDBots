@@ -4,6 +4,7 @@ const NEEDS_RATING_TAG = 'NeedsRating';
 const ORDER_END_TAG = 'ORDER_END';
 const ORDER_TXID_RE = /^[0-9a-f]{64}$/i;
 const ORDER_TAG_RE = /^\[([A-Za-z_]+)(?::([0-9a-fA-F]{64})(?:\s+([A-Za-z0-9_-]+))?)?\]/;
+const ORDER_PIN_LINE_RE = /^\s*order\s+pin\s+id\s*[:：=]\s*([A-Za-z0-9][A-Za-z0-9._:-]{5,127})\s*$/im;
 const MARKDOWN_HEADING_RE = /^#{1,6}\s+/;
 const EXCLUDED_RESULT_SECTION_RE = /(服务订单确认|订单确认|order confirmation|payment confirmation|payment details|交易信息|付款信息|支付信息)/i;
 const RESULT_METADATA_LINE_RE = /^\s*(?:[-*]\s*)?(?:\*\*)?\s*(支付金额|交易ID|交易Id|txid|service id|服务ID|技能名称|skill name|payment(?: amount)?|transaction id|service name)\s*[:：]/i;
@@ -20,29 +21,66 @@ function buildOrderProtocolPrefix(tag, orderTxid) {
   return normalizedTxid ? `[${tag}:${normalizedTxid}]` : `[${tag}]`;
 }
 
+function normalizeOrderProtocolPinId(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveOrderPinIdArg(value) {
+  if (typeof value === 'string') return normalizeOrderProtocolPinId(value);
+  if (value && typeof value === 'object') {
+    return normalizeOrderProtocolPinId(value.orderPinId)
+      || normalizeOrderProtocolPinId(value.serviceOrderPinId);
+  }
+  return '';
+}
+
+function extractOrderProtocolPinId(content) {
+  const match = String(content || '').match(ORDER_PIN_LINE_RE);
+  return typeof match?.[1] === 'string' ? match[1].trim() : '';
+}
+
+function stripOrderProtocolPinLine(content) {
+  return String(content || '')
+    .split(/\r?\n/)
+    .filter((line) => !ORDER_PIN_LINE_RE.test(line))
+    .join('\n')
+    .trim();
+}
+
+function appendOrderProtocolPinLine(content, orderPinId) {
+  const text = stripOrderProtocolPinLine(content);
+  const normalizedOrderPinId = normalizeOrderProtocolPinId(orderPinId);
+  if (!normalizedOrderPinId) return text;
+  return [text, `order pin id: ${normalizedOrderPinId}`].filter(Boolean).join('\n');
+}
+
 function parseOrderProtocolTag(content) {
   const trimmed = String(content || '').trim();
   const match = trimmed.match(ORDER_TAG_RE);
   if (!match) {
     const legacyOrderEndMatch = trimmed.match(/^\[(ORDER_END)(?:\s+([A-Za-z0-9_-]+))?\]/i);
     if (!legacyOrderEndMatch) return null;
+    const rest = trimmed.slice(legacyOrderEndMatch[0].length).trim();
     return {
       tag: legacyOrderEndMatch[1],
       orderTxid: '',
       reason: String(legacyOrderEndMatch[2] || '').trim(),
-      rest: trimmed.slice(legacyOrderEndMatch[0].length).trim(),
+      orderPinId: extractOrderProtocolPinId(rest),
+      rest: stripOrderProtocolPinLine(rest),
     };
   }
+  const rest = trimmed.slice(match[0].length).trim();
   return {
     tag: String(match[1] || ''),
     orderTxid: normalizeOrderProtocolTxid(match[2]),
     reason: String(match[3] || '').trim(),
-    rest: trimmed.slice(match[0].length).trim(),
+    orderPinId: extractOrderProtocolPinId(rest),
+    rest: stripOrderProtocolPinLine(rest),
   };
 }
 
-export function buildOrderStatusMessage(orderTxid, content) {
-  const text = String(content || '').trim();
+export function buildOrderStatusMessage(orderTxid, content, orderPinId) {
+  const text = appendOrderProtocolPinLine(content, resolveOrderPinIdArg(orderPinId));
   return `${buildOrderProtocolPrefix(ORDER_STATUS_TAG, orderTxid)}${text ? ` ${text}` : ''}`;
 }
 
@@ -51,12 +89,13 @@ export function parseOrderStatusMessage(content) {
   if (!parsed || parsed.tag.toUpperCase() !== ORDER_STATUS_TAG) return null;
   return {
     orderTxid: parsed.orderTxid || undefined,
+    orderPinId: parsed.orderPinId || undefined,
     content: parsed.rest,
   };
 }
 
-export function buildNeedsRatingMessage(orderTxid, content) {
-  const text = String(content || '').trim();
+export function buildNeedsRatingMessage(orderTxid, content, orderPinId) {
+  const text = appendOrderProtocolPinLine(content, resolveOrderPinIdArg(orderPinId));
   return `${buildOrderProtocolPrefix(NEEDS_RATING_TAG, orderTxid)}${text ? ` ${text}` : ''}`;
 }
 
@@ -65,18 +104,19 @@ export function parseNeedsRatingMessage(content) {
   if (!parsed || parsed.tag.toUpperCase() !== NEEDS_RATING_TAG.toUpperCase()) return null;
   return {
     orderTxid: parsed.orderTxid || undefined,
+    orderPinId: parsed.orderPinId || undefined,
     content: parsed.rest,
   };
 }
 
-export function buildOrderEndMessage(orderTxid, reason = '', content = '') {
+export function buildOrderEndMessage(orderTxid, reason = '', content = '', orderPinId = '') {
   const normalizedTxid = normalizeOrderProtocolTxid(orderTxid);
   const normalizedReason = String(reason || '').trim().replace(/\s+/g, '_');
   const tagSuffix = [
     normalizedTxid ? `:${normalizedTxid}` : '',
     normalizedReason ? ` ${normalizedReason}` : '',
   ].join('');
-  const text = String(content || '').trim();
+  const text = appendOrderProtocolPinLine(content, resolveOrderPinIdArg(orderPinId));
   return `[${ORDER_END_TAG}${tagSuffix}]${text ? ` ${text}` : ''}`;
 }
 
@@ -85,6 +125,7 @@ export function parseOrderEndMessage(content) {
   if (!parsed || parsed.tag.toUpperCase() !== ORDER_END_TAG) return null;
   return {
     orderTxid: parsed.orderTxid || undefined,
+    orderPinId: parsed.orderPinId || undefined,
     reason: parsed.reason || '',
     content: parsed.rest,
   };

@@ -8,6 +8,7 @@ import {
   resolveBuyerRatingContext,
   resolveBuyerOrderOutputType,
   resolveSellerOrderOutputType,
+  shouldSkipAutoRatingForMissingScopedContext,
 } from '../src/main/services/privateChatDaemon';
 
 test('buildBuyerRatingSystemPrompt instructs buyer to reject missing image delivery artifacts', () => {
@@ -251,4 +252,173 @@ test('resolveBuyerRatingContext does not fall back to unrelated orders when an o
 
   assert.equal(context.originalRequest, '');
   assert.equal(context.serviceResult, '');
+});
+
+test('resolveBuyerRatingContext scopes free order rating by service order pin id', () => {
+  const targetOrderPinId = 'free-order-pin-i0';
+  const otherOrderPinId = 'free-order-pin-i1';
+  const context = resolveBuyerRatingContext({
+    serviceOrderPinId: targetOrderPinId,
+    messages: [
+      {
+        id: 'target-order',
+        type: 'user',
+        content: [
+          '[ORDER] 查询新加坡天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${targetOrderPinId}`,
+        ].join('\n'),
+        metadata: { direction: 'outgoing', serviceOrderPinId: targetOrderPinId },
+      },
+      {
+        id: 'target-delivery',
+        type: 'assistant',
+        content: `[DELIVERY] ${JSON.stringify({
+          serviceOrderPinId: targetOrderPinId,
+          orderPinId: targetOrderPinId,
+          result: '新加坡天气：多云，29°C',
+        })}`,
+        metadata: { direction: 'incoming', serviceOrderPinId: targetOrderPinId },
+      },
+      {
+        id: 'other-order',
+        type: 'user',
+        content: [
+          '[ORDER] 查询广州天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${otherOrderPinId}`,
+        ].join('\n'),
+        metadata: { direction: 'outgoing', serviceOrderPinId: otherOrderPinId },
+      },
+      {
+        id: 'other-delivery',
+        type: 'assistant',
+        content: `[DELIVERY] ${JSON.stringify({
+          serviceOrderPinId: otherOrderPinId,
+          result: '广州天气：晴，30°C',
+        })}`,
+        metadata: { direction: 'incoming', serviceOrderPinId: otherOrderPinId },
+      },
+    ],
+  });
+
+  assert.match(context.originalRequest, /新加坡天气/);
+  assert.match(context.serviceResult, /新加坡天气/);
+  assert.doesNotMatch(context.originalRequest, /广州天气/);
+  assert.doesNotMatch(context.serviceResult, /广州天气/);
+});
+
+test('resolveBuyerRatingContext prefers service order pin id over conflicting order txid', () => {
+  const conflictingOrderTxid = '7'.repeat(64);
+  const targetOrderPinId = 'free-order-target-pin-i0';
+  const staleOrderPinId = 'free-order-stale-pin-i0';
+
+  const context = resolveBuyerRatingContext({
+    orderTxid: conflictingOrderTxid,
+    serviceOrderPinId: targetOrderPinId,
+    messages: [
+      {
+        id: 'stale-order-by-txid',
+        type: 'user',
+        content: [
+          '[ORDER] 查询上海天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${staleOrderPinId}`,
+        ].join('\n'),
+        metadata: {
+          direction: 'outgoing',
+          orderTxid: conflictingOrderTxid,
+          serviceOrderPinId: staleOrderPinId,
+        },
+      },
+      {
+        id: 'stale-delivery-by-txid',
+        type: 'assistant',
+        content: `[DELIVERY:${conflictingOrderTxid}] ${JSON.stringify({
+          serviceOrderPinId: staleOrderPinId,
+          orderPinId: staleOrderPinId,
+          result: '上海天气：小雨，22°C',
+        })}`,
+        metadata: {
+          direction: 'incoming',
+          orderTxid: conflictingOrderTxid,
+          serviceOrderPinId: staleOrderPinId,
+        },
+      },
+      {
+        id: 'target-order-by-pin',
+        type: 'user',
+        content: [
+          '[ORDER] 查询首尔天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${targetOrderPinId}`,
+        ].join('\n'),
+        metadata: {
+          direction: 'outgoing',
+          serviceOrderPinId: targetOrderPinId,
+        },
+      },
+      {
+        id: 'target-delivery-by-pin',
+        type: 'assistant',
+        content: `[DELIVERY] ${JSON.stringify({
+          serviceOrderPinId: targetOrderPinId,
+          orderPinId: targetOrderPinId,
+          result: '首尔天气：晴，18°C',
+        })}`,
+        metadata: {
+          direction: 'incoming',
+          serviceOrderPinId: targetOrderPinId,
+        },
+      },
+    ],
+  });
+
+  assert.match(context.originalRequest, /首尔天气/);
+  assert.match(context.serviceResult, /首尔天气/);
+  assert.doesNotMatch(context.originalRequest, /上海天气/);
+  assert.doesNotMatch(context.serviceResult, /上海天气/);
+});
+
+test('resolveBuyerRatingContext does not fall back to another free order when service order pin id is missing from history', () => {
+  const targetOrderPinId = 'missing-free-order-pin-i0';
+  const otherOrderPinId = 'other-free-order-pin-i0';
+
+  const context = resolveBuyerRatingContext({
+    serviceOrderPinId: targetOrderPinId,
+    messages: [
+      {
+        id: 'other-order',
+        type: 'user',
+        content: [
+          '[ORDER] 查询广州天气',
+          '支付金额 0 SPACE',
+          `order pin id: ${otherOrderPinId}`,
+        ].join('\n'),
+        metadata: { direction: 'outgoing', serviceOrderPinId: otherOrderPinId },
+      },
+      {
+        id: 'other-delivery',
+        type: 'assistant',
+        content: `[DELIVERY] ${JSON.stringify({
+          serviceOrderPinId: otherOrderPinId,
+          orderPinId: otherOrderPinId,
+          result: '广州天气：晴，30°C',
+        })}`,
+        metadata: { direction: 'incoming', serviceOrderPinId: otherOrderPinId },
+      },
+    ],
+  });
+
+  assert.equal(context.originalRequest, '');
+  assert.equal(context.serviceResult, '');
+  assert.equal(
+    shouldSkipAutoRatingForMissingScopedContext({
+      orderTxid: '',
+      serviceOrderPinId: targetOrderPinId,
+      originalRequest: context.originalRequest,
+      serviceResult: context.serviceResult,
+    }),
+    true
+  );
 });

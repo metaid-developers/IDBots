@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   checkOrderPaymentStatus,
+  extractOrderAllowedSkills,
+  extractOrderPinId,
   extractOrderReferenceId,
   extractOrderRequestText,
   extractOrderOutputType,
@@ -67,6 +69,32 @@ test('extractOrderReferenceId rejects unsafe free-order ids', () => {
   ].join('\n');
 
   assert.equal(extractOrderReferenceId(text), null);
+});
+
+test('extractOrderPinId reads skill-service-order pin id and allowed skills metadata', () => {
+  const text = [
+    '[ORDER] 请查询天气',
+    '支付金额 0 SPACE',
+    'order pin id: order-pin-free-i0',
+    'allowed skills: weather, maps, image-gen',
+  ].join('\n');
+
+  assert.equal(extractOrderPinId(text), 'order-pin-free-i0');
+  assert.deepEqual(extractOrderAllowedSkills(text), ['weather', 'maps', 'image-gen']);
+});
+
+test('extractOrderAllowedSkills preserves display names with spaces', () => {
+  const english = [
+    '[ORDER] Please create a launch image.',
+    'allowed skills: Friendly Seller Skill, Image Gen',
+  ].join('\n');
+  const chinese = [
+    '[ORDER] 请处理这个订单。',
+    'allowed skills: Friendly Seller Skill、Image Gen；天气 查询',
+  ].join('\n');
+
+  assert.deepEqual(extractOrderAllowedSkills(english), ['Friendly Seller Skill', 'Image Gen']);
+  assert.deepEqual(extractOrderAllowedSkills(chinese), ['Friendly Seller Skill', 'Image Gen', '天气 查询']);
 });
 
 test('extractOrderRequestText prefers the explicit raw_request block over the display summary line', () => {
@@ -155,6 +183,30 @@ test('checkOrderPaymentStatus allows free order messages with an order id but wi
   assert.equal(result.amountSats, 0);
 });
 
+test('checkOrderPaymentStatus allows free order messages with an order pin id but without txid', async () => {
+  const text = [
+    '[ORDER] 帮我整理一段文本。',
+    '支付金额 0 SPACE',
+    'order pin id: order-pin-free-i0',
+  ].join('\n');
+
+  const result = await checkOrderPaymentStatus({
+    txid: null,
+    plaintext: text,
+    source: 'metaweb_private',
+    metabotId: 1,
+    metabotStore: {} as any,
+    verifyNativeTransferToRecipient: async () => {
+      throw new Error('free orders must not verify a payment txid');
+    },
+  });
+
+  assert.equal(result.paid, true);
+  assert.equal(result.txid, null);
+  assert.equal(result.reason, 'free_order_no_payment_required');
+  assert.equal(result.amountSats, 0);
+});
+
 test('checkOrderPaymentStatus still requires txid for paid orders', async () => {
   const text = [
     '[ORDER] 帮我整理一段文本。',
@@ -171,4 +223,38 @@ test('checkOrderPaymentStatus still requires txid for paid orders', async () => 
 
   assert.equal(result.paid, false);
   assert.equal(result.reason, 'invalid_or_missing_txid');
+});
+
+test('checkOrderPaymentStatus validates the real txid when paid orders also include an order pin id', async () => {
+  const paymentTxid = 'a'.repeat(64);
+  const seenTxids: string[] = [];
+  const text = [
+    '[ORDER] 请查询天气',
+    '支付金额 1 SPACE',
+    'order pin id: order-pin-paid-i0',
+    `txid: ${paymentTxid}`,
+  ].join('\n');
+
+  const result = await checkOrderPaymentStatus({
+    txid: paymentTxid,
+    plaintext: text,
+    source: 'metaweb_private',
+    metabotId: 1,
+    metabotStore: {
+      getMetabotById: () => ({
+        id: 1,
+        mvc_address: 'mvc-address',
+      }),
+    } as any,
+    verifyNativeTransferToRecipient: async (input) => {
+      seenTxids.push(input.txid);
+      assert.equal(input.recipientAddress, 'mvc-address');
+      assert.equal(input.expectedAmountSats, 100_000_000);
+      return { valid: true, reason: 'ok', matchedAmountSats: 100_000_000 };
+    },
+  });
+
+  assert.equal(result.paid, true);
+  assert.equal(result.txid, paymentTxid);
+  assert.deepEqual(seenTxids, [paymentTxid]);
 });

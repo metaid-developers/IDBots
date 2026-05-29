@@ -29,3 +29,28 @@ test('buildOrderPrompts adds media delivery constraints for image outputs', () =
   assert.match(prompts.systemPrompt, /Do not stop after saying/i);
   assert.match(prompts.systemPrompt, /run the required skill/i);
 });
+
+test('buildOrderPrompts describes multiple order skills as an unordered allow-list scope', () => {
+  const prompts = buildOrderPrompts({
+    plaintext: [
+      '[ORDER] Summarize the attached report.',
+      '<raw_request>',
+      'Summarize the attached report.',
+      '</raw_request>',
+      'allowed skills: report-reader, summarizer',
+      `txid: ${'a'.repeat(64)}`,
+      'output type: text',
+    ].join('\n'),
+    source: 'metaweb_private',
+    metabotName: 'Provider Bot',
+    allowedSkillNames: ['report-reader', 'summarizer'],
+  });
+
+  assert.match(prompts.systemPrompt, /Allowed skill scope:\s*report-reader,\s*summarizer\./);
+  assert.match(prompts.systemPrompt, /use any suitable subset/i);
+  assert.match(prompts.systemPrompt, /no execution-order semantics/i);
+  assert.match(prompts.systemPrompt, /Do not use local skills outside this scope/i);
+  assert.doesNotMatch(prompts.systemPrompt, /Required skill/i);
+  assert.doesNotMatch(prompts.systemPrompt, /MUST use this skill/i);
+  assert.doesNotMatch(prompts.systemPrompt, /must use every/i);
+});

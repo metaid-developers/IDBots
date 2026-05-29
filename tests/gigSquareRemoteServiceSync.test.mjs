@@ -150,6 +150,71 @@ test('parseRemoteSkillServiceItem preserves chain status and operation metadata'
   assert.equal(row.sourceServicePinId, 'svc-root-1');
 });
 
+test('parseRemoteSkillServiceItem expands v1.0 providerSkill and defaults paid terms', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-v10-1',
+    status: 0,
+    operation: 'create',
+    address: 'mvc-provider-address',
+    create_address: 'mvc-provider-address',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    contentSummary: {
+      serviceName: 'legacy-paid-service',
+      displayName: 'Legacy Paid',
+      description: 'desc',
+      price: '0.001',
+      currency: 'MVC',
+      providerSkill: 'weather',
+      metadata: 'legacy note',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(row.providerSkill, 'weather');
+  assert.deepEqual(row.providerSkills, ['weather']);
+  assert.equal(row.providerSkillsJson, JSON.stringify(['weather']));
+  assert.equal(row.paymentTiming, 'prepaid');
+  assert.equal(row.protocolSettlementKind, 'native');
+  assert.equal(row.price, '0.001');
+  assert.equal(row.currency, 'SPACE');
+  assert.equal(row.metadata, 'legacy note');
+});
+
+test('parseRemoteSkillServiceItem preserves v1.1 providerSkill arrays and free conflicts', () => {
+  const row = parseRemoteSkillServiceItem({
+    id: 'svc-v11-1',
+    status: 0,
+    operation: 'create',
+    address: 'mvc-provider-address',
+    create_address: 'mvc-provider-address',
+    metaid: 'meta-1',
+    globalMetaId: 'global-1',
+    version: '1.1.0',
+    contentSummary: {
+      serviceName: 'multi-free-service',
+      displayName: 'Multi Free',
+      description: 'desc',
+      price: '10',
+      currency: 'SPACE',
+      paymentTiming: 'free',
+      settlementKind: 'fiat',
+      providerSkill: ['weather', 'reporter'],
+      metadata: 'v1.1 note',
+    },
+  });
+
+  assert.ok(row);
+  assert.equal(row.providerSkill, 'weather, reporter');
+  assert.deepEqual(row.providerSkills, ['weather', 'reporter']);
+  assert.equal(row.providerSkillsJson, JSON.stringify(['weather', 'reporter']));
+  assert.equal(row.paymentTiming, 'free');
+  assert.equal(row.protocolSettlementKind, 'fiat');
+  assert.equal(row.price, '0');
+  assert.equal(row.currency, 'SPACE');
+  assert.equal(row.metadata, 'v1.1 note');
+});
+
 test('parseRemoteSkillServiceItem preserves revoke rows even when contentSummary is empty', () => {
   const row = parseRemoteSkillServiceItem({
     id: 'svc-revoke-1',
@@ -320,6 +385,26 @@ test('parseRemoteSkillServiceRow preserves structured MRC20 settlement metadata 
   assert.equal(row.mrc20Id, 'tick-metaid');
 });
 
+test('parseRemoteSkillServiceRow reads stored v1.1 provider skills and payment fields', () => {
+  const row = parseRemoteSkillServiceRow({
+    id: 'svc-row-v11',
+    provider_skill: 'weather, reporter',
+    provider_skills_json: JSON.stringify(['weather', 'reporter']),
+    payment_timing: 'free',
+    protocol_settlement_kind: 'fiat',
+    metadata: 'stored note',
+    price: '10',
+    currency: 'SPACE',
+  });
+
+  assert.equal(row.providerSkill, 'weather, reporter');
+  assert.deepEqual(row.providerSkills, ['weather', 'reporter']);
+  assert.equal(row.paymentTiming, 'free');
+  assert.equal(row.protocolSettlementKind, 'fiat');
+  assert.equal(row.price, '0');
+  assert.equal(row.metadata, 'stored note');
+});
+
 test('isRemoteSkillServiceListSemanticMiss falls back when list items lack mutation metadata', () => {
   assert.equal(isRemoteSkillServiceListSemanticMiss({
     data: {
@@ -408,5 +493,9 @@ test('buildRemoteSkillServiceUpsertStatement emits one placeholder per remote_sk
   assert.ok(parsed);
   const statement = buildRemoteSkillServiceUpsertStatement(parsed);
   assert.equal((statement.sql.match(/\?/g) || []).length, statement.params.length);
-  assert.equal(statement.params.length, 29);
+  assert.equal(statement.params.length, 33);
+  assert.match(statement.sql, /provider_skills_json/);
+  assert.match(statement.sql, /payment_timing/);
+  assert.match(statement.sql, /protocol_settlement_kind/);
+  assert.match(statement.sql, /metadata/);
 });
