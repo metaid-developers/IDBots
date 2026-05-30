@@ -449,7 +449,8 @@ export class MetaAppManager {
   }
 
   syncBundledMetaAppsToUserData(): void {
-    if (!this.runtimeApp?.isPackaged) {
+    const hasMetaAppsRootOverride = Boolean(process.env.IDBOTS_METAAPPS_ROOT?.trim());
+    if (!this.runtimeApp?.isPackaged && !hasMetaAppsRootOverride) {
       return;
     }
 

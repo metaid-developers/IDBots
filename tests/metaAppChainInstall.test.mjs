@@ -4,8 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 let installCommunityMetaApp;
 let MetaAppManager;
@@ -244,4 +246,28 @@ test('installCommunityMetaApp can locate a later-page record via nextCursor pagi
     { cursor: 'cursor-2', size: 100 },
   ]);
   assert.equal(fs.existsSync(path.join(metaAppsRoot, 'simple-music-player', 'APP.md')), true);
+});
+
+test('dev IDBOTS_METAAPPS_ROOT still receives bundled MetaApps for local testing', async () => {
+  assert.equal(typeof MetaAppManager, 'function', 'MetaAppManager should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  await withMetaAppsRoot(metaAppsRoot, async () => {
+    const manager = new MetaAppManager({
+      app: {
+        isPackaged: false,
+        getPath: () => tempDir,
+        getAppPath: () => projectRoot,
+      },
+    });
+    manager.syncBundledMetaAppsToUserData();
+    const apps = manager.listMetaApps().map((app) => app.id).sort();
+
+    assert.equal(apps.includes('buzz'), true);
+    assert.equal(apps.includes('chat'), true);
+    assert.equal(fs.existsSync(path.join(metaAppsRoot, 'buzz', 'APP.md')), true);
+    assert.equal(fs.existsSync(path.join(metaAppsRoot, 'chat', 'APP.md')), true);
+  });
 });
