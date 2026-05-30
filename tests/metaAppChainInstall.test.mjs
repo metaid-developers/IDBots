@@ -315,11 +315,24 @@ test('dev IDBOTS_METAAPPS_ROOT still receives bundled MetaApps for local testing
       },
     });
     manager.syncBundledMetaAppsToUserData();
-    const apps = manager.listMetaApps().map((app) => app.id).sort();
+    const apps = manager.listMetaApps().sort((left, right) => left.id.localeCompare(right.id));
+    const buzzApp = apps.find((app) => app.id === 'buzz');
+    const chatApp = apps.find((app) => app.id === 'chat');
+    const config = JSON.parse(fs.readFileSync(path.join(metaAppsRoot, 'metaapps.config.json'), 'utf8'));
 
-    assert.equal(apps.includes('buzz'), true);
-    assert.equal(apps.includes('chat'), true);
+    assert.equal(Boolean(buzzApp), true);
+    assert.equal(Boolean(chatApp), true);
+    assert.equal(buzzApp?.version, '1.1.1');
+    assert.equal(chatApp?.version, '1.1.1');
+    assert.equal(buzzApp?.cover, '/buzz/assets/cover.png');
+    assert.equal(chatApp?.cover, '/chat/assets/cover.png');
+    assert.equal(config.defaults?.buzz?.version, '1.1.1');
+    assert.equal(config.defaults?.chat?.version, '1.1.1');
+    assert.equal(config.defaults?.buzz?.cover, '/buzz/assets/cover.png');
+    assert.equal(config.defaults?.chat?.cover, '/chat/assets/cover.png');
     assert.equal(fs.existsSync(path.join(metaAppsRoot, 'buzz', 'APP.md')), true);
     assert.equal(fs.existsSync(path.join(metaAppsRoot, 'chat', 'APP.md')), true);
+    assert.equal(fs.existsSync(path.join(metaAppsRoot, 'buzz', 'assets', 'cover.png')), true);
+    assert.equal(fs.existsSync(path.join(metaAppsRoot, 'chat', 'assets', 'cover.png')), true);
   });
 });

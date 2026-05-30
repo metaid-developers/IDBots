@@ -3,18 +3,20 @@
   "description": "Default MetaApp configuration for IDBots",
   "defaults": {
     "buzz": {
-      "version": "1.1.0",
+      "version": "1.1.1",
       "creator-metaid": "idbots",
       "source-type": "bundled-idbots",
+      "cover": "/buzz/assets/cover.png",
       "installedAt": 1774224000000,
-      "updatedAt": 1774224000000
+      "updatedAt": 1780070400000
     },
     "chat": {
-      "version": "1.1.0",
+      "version": "1.1.1",
       "creator-metaid": "idbots",
       "source-type": "bundled-idbots",
+      "cover": "/chat/assets/cover.png",
       "installedAt": 1774224000000,
-      "updatedAt": 1774224000000
+      "updatedAt": 1780070400000
     }
   }
 }
