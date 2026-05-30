@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildUseMetaAppPrompt,
   filterMetaApps,
+  getMetaAppAuthorModel,
   getMetaAppVisualModel,
   getRecommendedMetaAppsEmptyState,
 } from '../src/renderer/components/metaapps/metaAppPresentation.js';
@@ -32,6 +33,29 @@ test('buildUseMetaAppPrompt builds a cowork prompt around the selected MetaApp',
   const prompt = buildUseMetaAppPrompt({ name: 'Buzz' });
   assert.match(prompt, /使用本地元应用 Buzz/);
   assert.match(prompt, /如果需要，请直接打开它/);
+});
+
+test('getMetaAppAuthorModel uses author fields and IDBots fallback', () => {
+  assert.deepEqual(
+    getMetaAppAuthorModel({
+      authorName: 'Creator Bot',
+      authorAvatar: 'metafile://avatar-pin',
+      creatorMetaId: 'idq1creator',
+    }),
+    { name: 'Creator Bot', avatar: 'metafile://avatar-pin' },
+  );
+  assert.deepEqual(
+    getMetaAppAuthorModel({
+      creatorMetaId: 'idbots',
+      sourceType: 'bundled-idbots',
+      managedByIdbots: true,
+    }),
+    { name: 'IDBots', avatar: null },
+  );
+  assert.deepEqual(
+    getMetaAppAuthorModel({ creatorMetaId: '' }, 'en'),
+    { name: 'Unknown author', avatar: null },
+  );
 });
 
 test('getMetaAppVisualModel prefers cover, then icon, then none', () => {

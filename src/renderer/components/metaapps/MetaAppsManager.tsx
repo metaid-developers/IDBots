@@ -18,9 +18,11 @@ import {
   getCommunityMetaAppActionLabel,
   getCommunityMetaAppsEmptyState,
   getCommunityMetaAppStatusLabel,
+  getMetaAppAuthorModel,
   getMetaAppVisualModel,
   getRecommendedMetaAppsEmptyState,
 } from './metaAppPresentation.js';
+import { openMetaAppDirectory } from './metaAppLaunch.js';
 
 interface MetaAppsManagerProps {
   onStartTaskWithMetaApp?: (app: MetaAppRecord) => Promise<void> | void;
@@ -40,7 +42,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
   const [isLoading, setIsLoading] = useState(true);
   const [isCommunityLoading, setIsCommunityLoading] = useState(false);
   const [actionError, setActionError] = useState('');
-  const [openingAppId, setOpeningAppId] = useState<string | null>(null);
+  const [openingFolderAppId, setOpeningFolderAppId] = useState<string | null>(null);
   const [startingAppId, setStartingAppId] = useState<string | null>(null);
   const [installingSourcePinId, setInstallingSourcePinId] = useState<string | null>(null);
 
@@ -194,19 +196,21 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
     );
   };
 
-  const handleOpenMetaApp = async (app: MetaAppRecord) => {
-    if (openingAppId || startingAppId) return;
-    setOpeningAppId(app.id);
+  const handleOpenMetaAppFolder = async (app: MetaAppRecord) => {
+    if (openingFolderAppId || startingAppId) return;
+    setOpeningFolderAppId(app.id);
     setActionError('');
-    const result = await metaAppService.openMetaApp(app.id, app.entry);
-    if (!result.success) {
-      setActionError(result.error || i18nService.t('metaAppOpenFailed'));
+    try {
+      await openMetaAppDirectory({ app, shell: window.electron.shell });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : i18nService.t('metaAppOpenFolderFailed'));
+    } finally {
+      setOpeningFolderAppId(null);
     }
-    setOpeningAppId(null);
   };
 
   const handleUseMetaApp = async (app: MetaAppRecord) => {
-    if (!onStartTaskWithMetaApp || openingAppId || startingAppId) return;
+    if (!onStartTaskWithMetaApp || openingFolderAppId || startingAppId) return;
     setStartingAppId(app.id);
     setActionError('');
     try {
@@ -323,68 +327,80 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
 
     return (
       <div className="grid grid-cols-2 gap-3">
-        {filteredApps.map((app) => (
-          <div
-            key={app.id}
-            className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
-          >
-            {renderMetaAppVisual(app)}
-            <div className="flex items-start justify-between mb-2">
-              <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
-                {app.name}
-              </span>
-            </div>
+        {filteredApps.map((app) => {
+          const author = getMetaAppAuthorModel(app, i18nService.getLanguage());
+          const authorAvatarSrc = author.avatar || DEFAULT_GIG_SQUARE_PROVIDER_AVATAR;
 
-            <Tooltip
-              content={app.description}
-              position="bottom"
-              maxWidth="360px"
-              className="block w-full"
+          return (
+            <div
+              key={app.id}
+              className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
             >
-              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
-                {app.description}
-              </p>
-            </Tooltip>
-
-            <div className="flex items-center justify-between gap-2 mt-1">
-              <div className="flex items-center gap-2 text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary min-w-0">
+              {renderMetaAppVisual(app)}
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
+                  {app.name}
+                </span>
                 {app.isOfficial ? (
-                  <>
-                    <span className="px-1.5 py-0.5 rounded bg-claude-accent/10 text-claude-accent font-medium flex-shrink-0">
-                      {i18nService.t('official')}
-                    </span>
-                    <span>·</span>
-                  </>
+                  <span className="px-1.5 py-0.5 rounded bg-claude-accent/10 text-claude-accent font-medium text-[10px] flex-shrink-0">
+                    {i18nService.t('official')}
+                  </span>
                 ) : null}
-                <span className="truncate">v{app.version}</span>
               </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <Tooltip content={i18nService.t('metaAppUse')} position="top">
-                  <button
-                    type="button"
-                    disabled={!onStartTaskWithMetaApp || openingAppId !== null || startingAppId !== null}
-                    onClick={() => void handleUseMetaApp(app)}
-                    className="p-1 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={i18nService.t('metaAppUse')}
-                  >
-                    <PlayIcon className="h-3.5 w-3.5" />
-                  </button>
-                </Tooltip>
-                <Tooltip content={i18nService.t('metaAppOpen')} position="top">
-                  <button
-                    type="button"
-                    disabled={openingAppId !== null || startingAppId !== null}
-                    onClick={() => void handleOpenMetaApp(app)}
-                    className="p-1 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={i18nService.t('metaAppOpen')}
-                  >
-                    <FolderOpenIcon className="h-3.5 w-3.5" />
-                  </button>
-                </Tooltip>
+
+              <Tooltip
+                content={app.description}
+                position="bottom"
+                maxWidth="360px"
+                className="block w-full"
+              >
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary line-clamp-2 mb-2">
+                  {app.description}
+                </p>
+              </Tooltip>
+
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="min-w-0 flex items-center gap-2">
+                  <img
+                    src={authorAvatarSrc}
+                    alt={author.name}
+                    className="h-7 w-7 flex-shrink-0 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
+                    onError={(event) => { event.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
+                  />
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-claude-text dark:text-claude-darkText">
+                      {author.name}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <Tooltip content={i18nService.t('metaAppUse')} position="top">
+                    <button
+                      type="button"
+                      disabled={!onStartTaskWithMetaApp || openingFolderAppId !== null || startingAppId !== null}
+                      onClick={() => void handleUseMetaApp(app)}
+                      className="p-1 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={i18nService.t('metaAppUse')}
+                    >
+                      <PlayIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content={i18nService.t('metaAppOpenFolder')} position="top">
+                    <button
+                      type="button"
+                      disabled={openingFolderAppId !== null || startingAppId !== null}
+                      onClick={() => void handleOpenMetaAppFolder(app)}
+                      className="p-1 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent hover:bg-claude-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={i18nService.t('metaAppOpenFolder')}
+                    >
+                      <FolderOpenIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   };
@@ -421,8 +437,8 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
             const language = i18nService.getLanguage();
             const statusLabel = getCommunityMetaAppStatusLabel(app.status, language);
             const actionLabel = getCommunityMetaAppActionLabel(app.status, language);
-            const authorName = String(app.authorName || '').trim() || i18nService.t('metaAppUnknownAuthor');
-            const authorAvatarSrc = String(app.authorAvatar || '').trim() || DEFAULT_GIG_SQUARE_PROVIDER_AVATAR;
+            const author = getMetaAppAuthorModel(app, language);
+            const authorAvatarSrc = author.avatar || DEFAULT_GIG_SQUARE_PROVIDER_AVATAR;
             const isInstalling = installingSourcePinId === app.sourcePinId;
             const canInstall = app.status === 'install' || app.status === 'update';
             const isActionDisabled = installingSourcePinId !== null;
@@ -457,13 +473,13 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
                   <div className="min-w-0 flex items-center gap-2">
                     <img
                       src={authorAvatarSrc}
-                      alt={authorName}
+                      alt={author.name}
                       className="h-7 w-7 flex-shrink-0 rounded-full border border-claude-border object-cover dark:border-claude-darkBorder"
                       onError={(event) => { event.currentTarget.src = DEFAULT_GIG_SQUARE_PROVIDER_AVATAR; }}
                     />
                     <div className="min-w-0">
                       <div className="truncate text-xs font-medium text-claude-text dark:text-claude-darkText">
-                        {authorName}
+                        {author.name}
                       </div>
                     </div>
                   </div>

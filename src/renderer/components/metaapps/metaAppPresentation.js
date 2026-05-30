@@ -30,6 +30,34 @@ export function buildUseMetaAppPrompt(app) {
   return `请帮我使用本地元应用 ${name}。如果需要，请直接打开它，并基于这个应用继续协助我完成任务。`;
 }
 
+export function getMetaAppAuthorModel(app, language = 'zh') {
+  const authorName = String(app?.authorName || '').trim();
+  const creatorMetaId = String(app?.creatorMetaId || '').trim();
+  const sourceType = String(app?.sourceType || '').trim();
+  const isIdbotsManaged = Boolean(app?.managedByIdbots)
+    || creatorMetaId.toLowerCase() === 'idbots'
+    || sourceType === 'bundled-idbots'
+    || sourceType === 'chain-idbots';
+  const avatar = String(app?.authorAvatar || '').trim();
+
+  if (authorName) {
+    return { name: authorName, avatar: avatar || null };
+  }
+
+  if (isIdbotsManaged) {
+    return { name: 'IDBots', avatar: avatar || null };
+  }
+
+  if (creatorMetaId) {
+    return { name: creatorMetaId, avatar: avatar || null };
+  }
+
+  return {
+    name: language === 'en' ? 'Unknown author' : '未知作者',
+    avatar: avatar || null,
+  };
+}
+
 export function getMetaAppVisualModel(app) {
   const cover = String(app?.cover || '').trim();
   if (cover) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { openSelectedMetaApp } from '../src/renderer/components/metaapps/metaAppLaunch.js';
+import { openMetaAppDirectory, openSelectedMetaApp } from '../src/renderer/components/metaapps/metaAppLaunch.js';
 
 test('openSelectedMetaApp opens the selected MetaApp directly', async () => {
   const calls = [];
@@ -43,5 +43,39 @@ test('openSelectedMetaApp throws the open error when direct launch fails', async
       },
     }),
     /launch failed/,
+  );
+});
+
+test('openMetaAppDirectory opens the local app root through shell.openPath', async () => {
+  const calls = [];
+  const result = await openMetaAppDirectory({
+    app: {
+      id: 'buzz',
+      appRoot: '/tmp/METAAPPs/buzz',
+    },
+    shell: {
+      openPath: async (targetPath) => {
+        calls.push(targetPath);
+        return { success: true };
+      },
+    },
+  });
+
+  assert.deepEqual(calls, ['/tmp/METAAPPs/buzz']);
+  assert.deepEqual(result, { success: true });
+});
+
+test('openMetaAppDirectory throws shell errors', async () => {
+  await assert.rejects(
+    () => openMetaAppDirectory({
+      app: {
+        id: 'buzz',
+        appRoot: '/tmp/METAAPPs/buzz',
+      },
+      shell: {
+        openPath: async () => ({ success: false, error: 'cannot open folder' }),
+      },
+    }),
+    /cannot open folder/,
   );
 });
