@@ -396,7 +396,7 @@ const decodeChainPayload = (item: unknown): ChainMetaAppCandidate | null => {
       runtime: asText(content.runtime),
       version: normalizeVersion(asText(content.version)),
       indexFile: normalizeIndexFile(asText(content.indexFile)),
-      code: asText(content.code),
+      code: asText(content.code) || asText(content.content),
       codeType: asText(content.codeType || content.contentType),
       disabled: asBoolean(content.disabled),
     },

@@ -116,6 +116,58 @@ test('installCommunityMetaApp installs zip payload and writes APP.md + registry 
   assert.equal(config.defaults?.buzz?.updatedAt, 111);
 });
 
+test('installCommunityMetaApp installs zip from content metafile when code is empty', async () => {
+  assert.equal(typeof installCommunityMetaApp, 'function', 'installCommunityMetaApp() should be exported');
+  assert.equal(typeof MetaAppManager, 'function', 'MetaAppManager should be exported');
+
+  const tempDir = createTempDir();
+  const metaAppsRoot = path.join(tempDir, 'METAAPPs');
+
+  const result = await withMetaAppsRoot(metaAppsRoot, async () => {
+    const manager = new MetaAppManager();
+    return installCommunityMetaApp({
+      sourcePinId: 'pin-iddisk',
+      manager,
+      fetchList: async () => [
+        {
+          id: 'pin-iddisk',
+          createMetaId: 'idq1creator',
+          timestamp: 1_765_221_178,
+          contentSummary: JSON.stringify({
+            title: 'IDDisk',
+            appName: 'IDDisk',
+            intro: 'Chain file manager',
+            runtime: 'browser/ios/android',
+            version: 'v1.1.0',
+            code: '',
+            content: 'metafile://zip-iddisk',
+            contentType: 'application/zip',
+            codeType: 'application/zip',
+            indexFile: 'index.html',
+            disabled: false,
+          }),
+        },
+      ],
+      fetchCodeZip: async (pinId) => {
+        assert.equal(pinId, 'zip-iddisk');
+        return createZipBuffer([{ name: 'index.html', content: '<html>iddisk</html>' }]);
+      },
+      now: () => 444,
+    });
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.appId, 'IDDisk');
+  assert.equal(fs.existsSync(path.join(metaAppsRoot, 'IDDisk', 'index.html')), true);
+
+  const appMd = fs.readFileSync(path.join(metaAppsRoot, 'IDDisk', 'APP.md'), 'utf8');
+  assert.equal(appMd.includes('chain-code-pinid: "zip-iddisk"'), true);
+
+  const config = JSON.parse(fs.readFileSync(path.join(metaAppsRoot, 'metaapps.config.json'), 'utf8'));
+  assert.equal(config.defaults?.IDDisk?.version, 'v1.1.0');
+  assert.equal(config.defaults?.IDDisk?.['source-type'], 'chain-community');
+});
+
 test('installCommunityMetaApp blocks install on appId conflict with different creator', async () => {
   assert.equal(typeof installCommunityMetaApp, 'function', 'installCommunityMetaApp() should be exported');
   assert.equal(typeof MetaAppManager, 'function', 'MetaAppManager should be exported');

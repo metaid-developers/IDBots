@@ -175,3 +175,39 @@ test('listCommunityMetaApps forwards cursor and size, and returns nextCursor', a
   assert.equal(result.apps.length, 1);
   assert.equal(result.apps[0]?.appId, 'paged-app');
 });
+
+test('listCommunityMetaApps accepts content metafile when code is empty', async () => {
+  assert.equal(typeof listCommunityMetaApps, 'function', 'listCommunityMetaApps() should be exported');
+
+  const result = await listCommunityMetaApps({
+    manager: { listMetaApps: () => [] },
+    fetchList: async () => [
+      {
+        id: 'pin-iddisk',
+        createMetaId: 'idq1creator',
+        timestamp: 1_765_221_178,
+        contentSummary: JSON.stringify({
+          title: 'IDDisk',
+          appName: 'IDDisk',
+          intro: 'Chain file manager',
+          runtime: 'browser/ios/android',
+          version: 'v1.1.0',
+          indexFile: 'index.html',
+          code: '',
+          content: 'metafile://zip-iddisk',
+          contentType: 'application/zip',
+          codeType: 'application/zip',
+          disabled: false,
+        }),
+      },
+    ],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.apps.length, 1);
+  assert.equal(result.apps[0]?.appId, 'IDDisk');
+  assert.equal(result.apps[0]?.status, 'install');
+  assert.equal(result.apps[0]?.installable, true);
+  assert.equal(result.apps[0]?.codeUri, 'metafile://zip-iddisk');
+  assert.equal(result.apps[0]?.codePinId, 'zip-iddisk');
+});
