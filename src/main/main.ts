@@ -155,6 +155,7 @@ import {
   extractOrderRawRequest,
   normalizeOrderRawRequest,
 } from './shared/orderMessage.js';
+import { getMetabotLimitError } from './shared/metabotLimit';
 import {
   normalizeGigSquareSettlementDraft,
   parseGigSquareSettlementAsset,
@@ -6320,6 +6321,13 @@ if (!gotTheLock) {
     return llmId;
   };
 
+  const assertCanCreateMetabot = (store: MetabotStore): void => {
+    const error = getMetabotLimitError(store.listMetabots().length);
+    if (error) {
+      throw new Error(error);
+    }
+  };
+
   ipcMain.handle('metabot:create', async (_event, input: {
     name: string;
     avatar?: string | null;
@@ -6334,13 +6342,14 @@ if (!gotTheLock) {
     allow_chat_skills?: string[];
   }) => {
     try {
+      const store = getMetabotStore();
+      assertCanCreateMetabot(store);
       const llmId = requireMetabotLlmIdForCreate(input.llm_id);
       const walletResult = await mockCreateWalletAndFund();
       const pushResult = await mockPushConfigToChain();
       if (!pushResult.success) {
         return { success: false, error: 'Mock push config to chain failed' };
       }
-      const store = getMetabotStore();
       const wallet = store.insertMetabotWallet({
         mnemonic: walletResult.mnemonic,
       });
@@ -6422,9 +6431,10 @@ if (!gotTheLock) {
     metabot_type?: 'twin' | 'worker';
   }) => {
     try {
+      const store = getMetabotStore();
+      assertCanCreateMetabot(store);
       const llmId = requireMetabotLlmIdForCreate(input.llm_id);
       const walletResult = await createMetaBotWallet({});
-      const store = getMetabotStore();
       const wallet = store.insertMetabotWallet({
         mnemonic: walletResult.mnemonic,
         path: walletResult.path,
@@ -6492,6 +6502,7 @@ if (!gotTheLock) {
     let walletId: number | null = null;
     let metabotId: number | null = null;
     try {
+      assertCanCreateMetabot(store);
       const llmId = requireMetabotLlmIdForCreate(input.llm_id);
       // 1. Generate wallet (in-memory)
       const walletResult = await createMetaBotWallet({});
@@ -6609,6 +6620,7 @@ if (!gotTheLock) {
           });
         }
       }
+      assertCanCreateMetabot(store);
 
       const walletResult = await createMetaBotWallet({
         mnemonic: existingWallet?.mnemonic ?? mnemonic,

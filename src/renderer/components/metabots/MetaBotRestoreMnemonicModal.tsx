@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
+import { DEFAULT_METABOT_LIMIT, METABOT_LIMIT_REACHED_ERROR } from '../../../main/shared/metabotLimit';
 
 export interface MetaBotRestoreMnemonicModalProps {
   onClose: () => void;
@@ -14,6 +15,8 @@ export interface MetaBotRestoreMnemonicModalProps {
 }
 
 const DEFAULT_DERIVATION_PATH = "m/44'/10001'/0'/0/0";
+const formatMetabotLimitReached = () =>
+  i18nService.t('metabotLimitReached').replace('{limit}', String(DEFAULT_METABOT_LIMIT));
 
 const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = ({ onClose, onRestored }) => {
   const [words, setWords] = useState<string[]>(Array.from({ length: 12 }, () => ''));
@@ -66,6 +69,8 @@ const MetaBotRestoreMnemonicModal: React.FC<MetaBotRestoreMnemonicModalProps> = 
         return i18nService.t('metabotRestorePathInvalid');
       case 'METABOT_WALLET_IN_USE':
         return i18nService.t('metabotRestoreWalletInUse');
+      case METABOT_LIMIT_REACHED_ERROR:
+        return formatMetabotLimitReached();
       case 'CHAIN_INFO_EMPTY':
         return i18nService.t('metabotRestoreChainMissing');
       default:

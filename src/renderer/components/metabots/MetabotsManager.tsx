@@ -14,6 +14,7 @@ import MetaBotRestoreMnemonicModal from './MetaBotRestoreMnemonicModal';
 import MetaBotListCard from './MetaBotListCard';
 import { normalizeAllowChatSkills } from './allowChatSkills.ts';
 import { shouldRouteFirstMetabotCreationToOnboarding } from '../onboarding/onboardingGate.js';
+import { DEFAULT_METABOT_LIMIT, METABOT_LIMIT_REACHED_ERROR } from '../../../main/shared/metabotLimit';
 
 type ViewMode = 'list' | 'add' | 'edit';
 interface EditSyncPlan {
@@ -34,6 +35,10 @@ const parseOptionalBossId = (value: string): number | null => {
   const parsed = Number.parseInt(trimmed, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
+const formatMetabotLimitReached = () =>
+  i18nService.t('metabotLimitReached').replace('{limit}', String(DEFAULT_METABOT_LIMIT));
+const resolveMetabotActionError = (error?: string): string =>
+  error === METABOT_LIMIT_REACHED_ERROR ? formatMetabotLimitReached() : (error || i18nService.t('metabotSaveFailed'));
 
 const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequestOnboarding?: () => void }> = ({
   onRequestModelSettings,
@@ -61,7 +66,6 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
   const [deleteTarget, setDeleteTarget] = useState<Metabot | null>(null);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
-  const METABOT_LIMIT = 10;
   // Chain-first creation state
   const [pendingCreateValues, setPendingCreateValues] = useState<MetaBotFormValues | null>(null);
   const [createChainStatus, setCreateChainStatus] = useState<'idle' | 'publishing' | 'error'>('idle');
@@ -121,7 +125,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
   };
 
   const handleAdd = () => {
-    if (list.length >= METABOT_LIMIT) {
+    if (list.length >= DEFAULT_METABOT_LIMIT) {
       setShowLimitModal(true);
       return;
     }
@@ -168,7 +172,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
     });
     if (!result.success || !result.metabot) {
       setCreateChainStatus('error');
-      setCreateChainError(result.error || i18nService.t('metabotSaveFailed'));
+      setCreateChainError(resolveMetabotActionError(result.error));
       return;
     }
     // Success — clear publishing state, add to list, show success modal
@@ -575,7 +579,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
         <button
           type="button"
           onClick={() => {
-            if (list.length >= METABOT_LIMIT) {
+            if (list.length >= DEFAULT_METABOT_LIMIT) {
               setShowLimitModal(true);
               return;
             }
@@ -651,7 +655,7 @@ const MetabotsManager: React.FC<{ onRequestModelSettings?: () => void; onRequest
                 onClick={(e) => e.stopPropagation()}
               >
                 <p className="text-sm dark:text-claude-darkText text-claude-text">
-                  {i18nService.t('metabotLimitReached')}
+                  {formatMetabotLimitReached()}
                 </p>
                 <div className="mt-4 flex justify-end">
                   <button
