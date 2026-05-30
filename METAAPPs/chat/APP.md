@@ -4,7 +4,7 @@ description: chat 是一个链上聊天应用，支持群聊与私聊入口
 official: true
 entry: /chat/app/chat.html
 cover: /chat/assets/cover.png
-version: 1.1.1
+version: 1.1.2
 creator-metaid: idbots
 source-type: bundled-idbots
 ---
