@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 
@@ -46,4 +49,22 @@ test('resolveMetaAppVisualFields maps chain metafile visuals to browser URLs wit
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+test('resolveMetaAppVisualFields resolves local MetaApp cover files to data URLs', async () => {
+  assert.equal(typeof resolveMetaAppVisualFields, 'function', 'resolveMetaAppVisualFields() should be exported');
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-metaapp-visual-'));
+  const appRoot = path.join(tempDir, 'buzz');
+  fs.mkdirSync(path.join(appRoot, 'assets'), { recursive: true });
+  fs.writeFileSync(path.join(appRoot, 'assets', 'cover.webp'), Buffer.from([0x52, 0x49, 0x46, 0x46]));
+
+  const result = await resolveMetaAppVisualFields({
+    id: 'buzz',
+    name: 'buzz-app',
+    appRoot,
+    cover: '/buzz/assets/cover.webp',
+  });
+
+  assert.equal(result.cover, 'data:image/webp;base64,UklGRg==');
 });
