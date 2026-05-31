@@ -291,10 +291,11 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
         aria-hidden
       />
       <div
-        className="relative w-full max-w-2xl rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface p-6 shadow-xl"
+        data-slot="gig-square-publish-panel"
+        className="relative flex max-h-[calc(100svh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border dark:border-claude-darkBorder border-claude-border bg-[var(--bg-main)] dark:bg-claude-darkSurface shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-claude-border px-6 py-4 dark:border-claude-darkBorder">
           <div>
             <h3 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
               {i18nService.t('gigSquarePublishTitle')}
@@ -313,7 +314,11 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
           </button>
         </div>
 
-        <div className="mt-5 space-y-5">
+        <div
+          data-slot="gig-square-publish-scroll"
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
+        >
+          <div className="space-y-5">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
@@ -558,14 +563,20 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               </div>
             </div>
           </div>
+          </div>
+        </div>
 
+        <div
+          data-slot="gig-square-publish-actions"
+          className="shrink-0 border-t border-claude-border px-6 py-4 dark:border-claude-darkBorder"
+        >
           {!statusPanelOpen && error && (
-            <div className="text-xs text-red-500">
+            <div className="mb-3 text-xs text-red-500">
               {error}
             </div>
           )}
           {!statusPanelOpen && warning && (
-            <div className="text-xs text-amber-500">
+            <div className="mb-3 text-xs text-amber-500">
               {warning}
             </div>
           )}
