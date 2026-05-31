@@ -39,6 +39,7 @@ import {
   resolveGigSquareSelectedSkillIds,
   resolveGigSquareSelectedProviderSkills,
 } from './gigSquareSkillOptions.js';
+import GigSquareSkillPicker from './GigSquareSkillPicker';
 
 type GigSquareMyServicesView = 'list' | 'detail';
 
@@ -1434,51 +1435,24 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                       <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
                         {i18nService.t('gigSquarePublishSkillLabel')}
                       </label>
-                      <div className="space-y-2 rounded-xl border border-claude-border bg-claude-bg px-3 py-2 dark:border-claude-darkBorder dark:bg-claude-darkBg">
-                        {modifySkillOptions.map((skill) => (
-                          <label key={skill.id} className="flex items-center gap-2 text-sm text-claude-text dark:text-claude-darkText">
-                            <input
-                              type="checkbox"
-                              checked={modifySelectedSkillIds.includes(skill.id)}
-                              onChange={(event) => {
-                                const nextSelectedSkillIds = event.target.checked
-                                  ? [...modifySelectedSkillIds, skill.id]
-                                  : modifySelectedSkillIds.filter((skillId) => skillId !== skill.id);
-                                const providerSkills = resolveGigSquareSelectedProviderSkills(
-                                  modifySkillOptions,
-                                  nextSelectedSkillIds,
-                                );
-                                setModifySelectedSkillIds(nextSelectedSkillIds);
-                                setModifyDraft((prev) => (prev ? {
-                                  ...prev,
-                                  providerSkill: providerSkills[0] || '',
-                                  providerSkills,
-                                } : prev));
-                              }}
-                              disabled={isModifySubmitting || Boolean(skill.readOnly)}
-                              className="h-4 w-4 rounded border-claude-border text-claude-accent focus:ring-claude-accent dark:border-claude-darkBorder"
-                            />
-                            <span className="min-w-0 flex-1 truncate">{skill.name}</span>
-                            {skill.readOnly && (
-                              <span className="rounded-full bg-claude-surfaceMuted px-2 py-0.5 text-[10px] uppercase tracking-wide text-claude-textSecondary dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary">
-                                {i18nService.t('gigSquarePublishLegacySkill')}
-                              </span>
-                            )}
-                          </label>
-                        ))}
-                      </div>
-                      {modifyDraft.providerSkills.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {modifyDraft.providerSkills.map((skillName) => (
-                            <span
-                              key={skillName}
-                              className="rounded-full border border-claude-border bg-claude-surfaceMuted px-2 py-0.5 text-[11px] text-claude-textSecondary dark:border-claude-darkBorder dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
-                            >
-                              {skillName}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <GigSquareSkillPicker
+                        id="gig-square-modify-provider-skills"
+                        options={modifySkillOptions}
+                        selectedSkillIds={modifySelectedSkillIds}
+                        onSelectedSkillIdsChange={(nextSelectedSkillIds) => {
+                          const providerSkills = resolveGigSquareSelectedProviderSkills(
+                            modifySkillOptions,
+                            nextSelectedSkillIds,
+                          );
+                          setModifySelectedSkillIds(nextSelectedSkillIds);
+                          setModifyDraft((prev) => (prev ? {
+                            ...prev,
+                            providerSkill: providerSkills[0] || '',
+                            providerSkills,
+                          } : prev));
+                        }}
+                        disabled={isModifySubmitting}
+                      />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">

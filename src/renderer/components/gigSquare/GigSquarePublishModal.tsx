@@ -15,6 +15,7 @@ import {
   buildGigSquareSkillSelectionOptions,
   resolveGigSquareSelectedProviderSkills,
 } from './gigSquareSkillOptions.js';
+import GigSquareSkillPicker from './GigSquareSkillPicker';
 
 type MetabotOption = { id: number; name: string; avatar: string | null; metabot_type: string };
 type PublishCurrency = 'BTC' | 'SPACE' | 'DOGE';
@@ -318,44 +319,13 @@ const GigSquarePublishModal: React.FC<GigSquarePublishModalProps> = ({
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
                 {i18nService.t('gigSquarePublishSkillLabel')}
               </label>
-              <div className="space-y-2 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-claude-bg dark:bg-claude-darkBg px-3 py-2">
-                {skillOptions.length === 0 ? (
-                  <div className="text-sm text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                    {i18nService.t('gigSquarePublishSkillRequired')}
-                  </div>
-                ) : (
-                  skillOptions.map((skill) => (
-                    <label key={skill.id} className="flex items-center gap-2 text-sm dark:text-claude-darkText text-claude-text">
-                      <input
-                        type="checkbox"
-                        checked={selectedSkillIds.includes(skill.id)}
-                        onChange={(event) => {
-                          setSelectedSkillIds((prev) => (
-                            event.target.checked
-                              ? [...prev, skill.id]
-                              : prev.filter((skillId) => skillId !== skill.id)
-                          ));
-                        }}
-                        disabled={isFormDisabled}
-                        className="h-4 w-4 rounded border-claude-border text-claude-accent focus:ring-claude-accent dark:border-claude-darkBorder"
-                      />
-                      <span className="min-w-0 truncate">{skill.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-              {selectedProviderSkills.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {selectedProviderSkills.map((skillName) => (
-                    <span
-                      key={skillName}
-                      className="rounded-full border border-claude-border bg-claude-surfaceMuted px-2 py-0.5 text-[11px] text-claude-textSecondary dark:border-claude-darkBorder dark:bg-claude-darkSurfaceMuted dark:text-claude-darkTextSecondary"
-                    >
-                      {skillName}
-                    </span>
-                  ))}
-                </div>
-              )}
+              <GigSquareSkillPicker
+                id="gig-square-publish-provider-skills"
+                options={skillOptions}
+                selectedSkillIds={selectedSkillIds}
+                onSelectedSkillIdsChange={setSelectedSkillIds}
+                disabled={isFormDisabled}
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold tracking-wide dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
