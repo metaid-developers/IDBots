@@ -202,3 +202,59 @@ test('runSkillTurnInExistingSession reuses the private A2A session without creat
   assert.equal(startCall.options.disableRemoteServicesPrompt, true);
   assert.equal(session.messages.filter((message) => message.type === 'user').length, 1);
 });
+
+test('runSkillTurnInExistingSession waits for slow local skill completion before timing out', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const runner = new EventEmitter();
+  const session = {
+    id: 'slow-private-a2a-session',
+    cwd: '/tmp/private-chat-workspace',
+    messages: [
+      {
+        id: 'user-1',
+        type: 'user',
+        content: 'pop机制是怎样？',
+        metadata: {
+          sourceChannel: 'metaweb_private',
+          externalConversationId: 'peer-global',
+          direction: 'incoming',
+        },
+      },
+    ],
+  };
+  const store = {
+    getSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      return session;
+    },
+    updateSession() {},
+  };
+
+  runner.startSession = async (sessionId) => {
+    setTimeout(() => {
+      session.messages.push({
+        id: 'assistant-skill-slow',
+        type: 'assistant',
+        content: 'PoP 的全称是 Proof of PIN',
+        timestamp: Date.now(),
+      });
+      runner.emit('complete', sessionId);
+    }, 121_000);
+  };
+
+  const resultPromise = runSkillTurnInExistingSession(runner, store, {
+    sessionId: session.id,
+    systemPrompt: 'system\n<available_skills></available_skills>',
+    userMessage: 'pop机制是怎样？',
+    cwd: '/tmp/private-chat-workspace',
+    activeSkillIds: ['metaid-master-wiki'],
+  });
+
+  await Promise.resolve();
+  t.mock.timers.tick(121_000);
+
+  const result = await resultPromise;
+  assert.equal(result.replyText, 'PoP 的全称是 Proof of PIN');
+  assert.equal(result.assistantMessageId, 'assistant-skill-slow');
+});

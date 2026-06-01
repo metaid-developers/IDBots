@@ -6,7 +6,7 @@
 import type { CoworkRunner } from '../libs/coworkRunner';
 import type { CoworkStore } from '../coworkStore';
 
-const SKILL_TURN_TIMEOUT_MS = 120_000;
+const SKILL_TURN_TIMEOUT_MS = 300_000;
 
 export interface RunOrchestratorSkillTurnParams {
   systemPrompt: string;

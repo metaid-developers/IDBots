@@ -3202,7 +3202,12 @@ async function processOne(
       }
     } catch (e) {
       rethrowSqliteWasmBoundsError(e);
-      emitLog(`[PrivateChat] LLM failed for message ${row.id}: ${e instanceof Error ? e.message : e}`);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      emitLog(`[PrivateChat] LLM failed for message ${row.id}: ${errorMessage}`);
+      if (canRunChatSkills) {
+        emitLog(`[PrivateChat] Keeping message ${row.id} unprocessed until a skill reply can be delivered.`);
+        return;
+      }
       markProcessed(db, row.id, saveDb);
       return;
     }
@@ -3297,7 +3302,25 @@ async function processOne(
       emitLog(`[PrivateChat] Replied to ${fromGlobalMetaId.slice(0, 12)}…`);
     } catch (e) {
       rethrowSqliteWasmBoundsError(e);
-      emitLog(`[PrivateChat] Failed to broadcast reply: ${e instanceof Error ? e.message : e}`);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      emitLog(`[PrivateChat] Failed to broadcast reply: ${errorMessage}`);
+      const failedMetadata: CoworkMessageMetadata = {
+        ...(assistantMessage.metadata ?? {}),
+        privateChatDeliveryStatus: 'failed',
+        privateChatDeliveryError: errorMessage,
+        privateChatDeliveryFailedAt: Date.now(),
+      };
+      coworkStore.updateMessage(sessionId, assistantMessage.id, { metadata: failedMetadata });
+      assistantMessage.metadata = failedMetadata;
+      if (emitToRenderer) {
+        emitToRenderer('cowork:stream:messageUpdate', {
+          sessionId,
+          messageId: assistantMessage.id,
+          metadata: failedMetadata,
+        });
+      }
+      emitLog(`[PrivateChat] Keeping message ${row.id} unprocessed because reply broadcast failed.`);
+      return;
     }
 
     // If we just said "bye", set the byeSent flag so we ignore future messages from this peer
