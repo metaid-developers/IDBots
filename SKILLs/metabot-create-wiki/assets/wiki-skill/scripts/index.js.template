@@ -126,11 +126,16 @@ function loadConfig() {
 }
 
 function resolveRuntimeScript(skillsRoot) {
-  const runtimeScript = path.join(skillsRoot, 'metabot-llm-wiki', 'scripts', 'index.js');
-  if (!fs.existsSync(runtimeScript)) {
-    fail('missing_runtime', `Cannot find metabot-llm-wiki runtime at ${runtimeScript}`);
+  const localRuntimeScript = path.resolve(__dirname, '..', 'runtime', 'metabot-llm-wiki', 'scripts', 'index.js');
+  if (fs.existsSync(localRuntimeScript)) {
+    return localRuntimeScript;
   }
-  return runtimeScript;
+
+  const legacyRuntimeScript = path.join(skillsRoot, 'metabot-llm-wiki', 'scripts', 'index.js');
+  if (!fs.existsSync(legacyRuntimeScript)) {
+    fail('missing_runtime', `Cannot find embedded wiki runtime at ${localRuntimeScript} or legacy runtime at ${legacyRuntimeScript}`);
+  }
+  return legacyRuntimeScript;
 }
 
 function parsePayloadArg() {

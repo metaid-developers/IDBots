@@ -12,7 +12,7 @@ description: 问答式创建一对一的本地 Wiki 技能。Use when the user w
 1. 先问清楚必要信息，再动手创建。
 2. 默认一次只问一个问题，别猜路径、别脑补描述。
 3. 收集齐后，创建一个新的 skill 目录到当前 `SKILLS_ROOT`。
-4. 让新 skill 具备和 `metabot-llm-wiki` 相同的核心能力：
+4. 让新 skill 通过内嵌 wiki runtime 具备完整核心能力：
    - 吸收/索引 `raw` 资料
    - 支持 `pdf`、`docx`、`md`、`txt`、`csv`、`json`
    - raw 更新后可重新吸收、重新索引
@@ -62,7 +62,7 @@ payload 至少包含：
 - `scripts/index.js`
 - `references/payload-schema-v1.json`
 
-其中 `scripts/index.js` 要自动把 `rawSourceDir` 镜像到内部工作区，再调用 `metabot-llm-wiki` 的现有运行时完成 `init`、`absorb`、`query`、`wiki_build`、`publish_all` 等动作。
+其中 `scripts/index.js` 要自动把 `rawSourceDir` 镜像到内部工作区，再调用新 skill 自带的 `runtime/metabot-llm-wiki` 完成 `init`、`absorb`、`query`、`wiki_build`、`publish_all` 等动作，不要求用户另外安装 `metabot-llm-wiki`。
 
 ## 运行约定
 
@@ -73,7 +73,7 @@ payload 至少包含：
 - 如果用户明确要求“边更新边查”，`query` 可传 `autoAbsorb:true` 或 `refresh:true`。
 - `wiki_build`、`publish_*` 应该在需要时先刷新 raw，再用最新数据工作。
 - 默认检索后端是 `hybrid`：组合本地 lexical 索引、向量索引与短语加权；可按需改成 `portable`、`sqlite-fts`、`vector` 或 `scan`。
-- 如果 PDF/DOCX 解析依赖缺失，保留和 `metabot-llm-wiki` 一样的提示。
+- 如果 PDF/DOCX 解析依赖缺失，保留和内嵌 wiki runtime 一样的提示。
 
 ## 结束时
 

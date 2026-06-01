@@ -11,7 +11,7 @@ const skillRoot = path.resolve(__dirname, '..');
 const repoSkillsRoot = path.resolve(skillRoot, '..');
 const repoRoot = path.resolve(repoSkillsRoot, '..');
 const scaffoldScript = path.join(skillRoot, 'scripts', 'scaffold-wiki-skill.js');
-const runtimeSource = path.join(repoSkillsRoot, 'metabot-llm-wiki');
+const runtimeSource = path.join(skillRoot, 'assets', 'metabot-llm-wiki-runtime');
 const repoNodeModules = path.join(repoRoot, 'node_modules');
 
 function runNode(scriptPath, payload, env = {}) {
@@ -93,12 +93,6 @@ function main() {
     ensureDir(skillsRoot);
     ensureDir(rawSourceDir);
 
-    fs.cpSync(runtimeSource, path.join(skillsRoot, 'metabot-llm-wiki'), {
-      recursive: true,
-      force: true,
-      dereference: true,
-    });
-
   fs.writeFileSync(
     path.join(rawSourceDir, 'metaid.md'),
     '# MetaID 简介\n\nMetaID 用于组织链上身份、内容和应用数据。\n',
@@ -158,7 +152,9 @@ function main() {
   assert.ok(fs.existsSync(path.join(generatedSkillDir, 'SKILL.md')));
   assert.ok(fs.existsSync(path.join(generatedSkillDir, 'wiki.config.json')));
   assert.ok(fs.existsSync(path.join(generatedSkillDir, 'scripts', 'index.js')));
+  assert.ok(fs.existsSync(path.join(generatedSkillDir, 'runtime', 'metabot-llm-wiki', 'scripts', 'index.js')));
   assert.ok(fs.existsSync(path.join(generatedSkillDir, 'references', 'payload-schema-v1.json')));
+  assert.equal(fs.existsSync(path.join(skillsRoot, 'metabot-llm-wiki')), false);
 
   const generatedConfig = JSON.parse(fs.readFileSync(path.join(generatedSkillDir, 'wiki.config.json'), 'utf8'));
   assert.equal(generatedConfig.rawSourceDir, rawSourceDir);
@@ -463,11 +459,6 @@ function main() {
   const portableRawSourceDir = path.join(portableRoot, 'source-raw');
   ensureDir(portableSkillsRoot);
   ensureDir(portableRawSourceDir);
-  fs.cpSync(runtimeSource, path.join(portableSkillsRoot, 'metabot-llm-wiki'), {
-    recursive: true,
-    force: true,
-    dereference: true,
-  });
   fs.writeFileSync(
     path.join(portableRawSourceDir, 'alpha.md'),
     [
@@ -516,6 +507,8 @@ function main() {
   const portableSkillDir = path.join(portableSkillsRoot, 'portable-wiki');
   const portableConfig = JSON.parse(fs.readFileSync(path.join(portableSkillDir, 'wiki.config.json'), 'utf8'));
   assert.equal(portableConfig.searchBackend, 'portable');
+  assert.ok(fs.existsSync(path.join(portableSkillDir, 'runtime', 'metabot-llm-wiki', 'scripts', 'index.js')));
+  assert.equal(fs.existsSync(path.join(portableSkillsRoot, 'metabot-llm-wiki')), false);
   const portableRuntimeScript = path.join(portableSkillDir, 'scripts', 'index.js');
 
   const portableIngestRes = runNodePortable(

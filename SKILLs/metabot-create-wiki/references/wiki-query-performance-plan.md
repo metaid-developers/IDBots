@@ -4,9 +4,9 @@
 
 **Goal:** Make generated wiki skills fast enough for day-to-day querying while improving retrieval quality with an IDBots-decoupled local persistent search index, real configurable embedding generation, persistent vector indexing, vector recall, and hybrid ranking.
 
-**Architecture:** Treat the wiki skills as portable skill bundles, not as IDBots app features. Keep `metabot-create-wiki` as the generator and `metabot-llm-wiki` as the shared runtime, but add explicit refresh/query modes, change-aware index skipping, a self-contained persistent search index, and a local vector index. The generated wrapper should expose safe defaults for normal use while still preserving a one-command refresh path after users update source documents.
+**Architecture:** Treat the wiki skills as portable skill bundles, not as IDBots app features. Keep `metabot-create-wiki` as the generator and bundle the former `metabot-llm-wiki` runtime inside `metabot-create-wiki/assets/metabot-llm-wiki-runtime`; generated wiki skills carry their own `runtime/metabot-llm-wiki` copy. The generated wrapper should expose safe defaults for normal use while still preserving a one-command refresh path after users update source documents.
 
-**Tech Stack:** Node.js CommonJS scripts, existing `metabot-llm-wiki` JSON/JSONL workspace files, self-contained JSONL/JSON persistent indexes by default, optional SQLite/FTS adapter only if bundled with the skill or available in the agent runtime, configurable embedding provider support, deterministic local hashing fallback for offline tests, persistent vector storage, and existing self-test style under `SKILLs/metabot-create-wiki/scripts/self-test.js`.
+**Tech Stack:** Node.js CommonJS scripts, embedded wiki-runtime JSON/JSONL workspace files, self-contained JSONL/JSON persistent indexes by default, optional SQLite/FTS adapter only if bundled with the skill or available in the agent runtime, configurable embedding provider support, deterministic local hashing fallback for offline tests, persistent vector storage, and existing self-test style under `SKILLs/metabot-create-wiki/scripts/self-test.js`.
 
 ---
 
@@ -26,7 +26,7 @@ Use **superpowers:subagent-driven-development** for this phase.
 ## Decoupling Requirements
 
 - Do not require IDBots app services, Electron runtime, IDBots package scripts, or the repository root `node_modules` for generated wiki skills to work.
-- The generated skill must run from a generic skills root that contains `metabot-create-wiki` and `metabot-llm-wiki`.
+- The generated skill must run from a generic skills root without requiring a separate top-level `metabot-llm-wiki` skill.
 - Runtime dependencies must be Node built-ins or files bundled inside the skill directory unless explicitly documented as optional.
 - SQLite/FTS is allowed only as an optional adapter if the required module is bundled with the skill or available in the generic agent runtime. The portable default must still provide a persistent lexical index and vector index without SQLite.
 - Real embedding generation must not call IDBots services. It must use either files bundled with the skill, a generic local command configured in `wiki.config.json`, or a documented generic local runtime.
@@ -35,7 +35,7 @@ Use **superpowers:subagent-driven-development** for this phase.
 
 ## File Structure
 
-- Modify `SKILLs/metabot-llm-wiki/scripts/index.js`
+- Modify `SKILLs/metabot-create-wiki/assets/metabot-llm-wiki-runtime/scripts/index.js`
   - Add query refresh controls, change-aware index skipping, self-contained persistent lexical indexing, optional SQLite/FTS adapter, embedding provider support, vector indexing, vector recall, and hybrid ranking.
   - Preserve existing payload envelopes and action names.
 - Modify `SKILLs/metabot-create-wiki/assets/wiki-skill/scripts/index.js.template`
@@ -579,7 +579,6 @@ PYTHONPATH=/tmp/codex-pyyaml-qPYM9j /Users/tusm/.cache/codex-runtimes/codex-prim
 ```bash
 TMP_ROOT="$(mktemp -d)"
 mkdir -p "$TMP_ROOT/raw" "$TMP_ROOT/SKILLs"
-cp -R SKILLs/metabot-llm-wiki "$TMP_ROOT/SKILLs/metabot-llm-wiki"
 printf 'MetaID 资料用于身份和内容索引。\\n' > "$TMP_ROOT/raw/metaid.txt"
 SKILLS_ROOT="$TMP_ROOT/SKILLs" node SKILLs/metabot-create-wiki/scripts/scaffold-wiki-skill.js --payload "{\"skillName\":\"metaid-fast-wiki\",\"title\":\"MetaID Fast Wiki\",\"description\":\"快速 MetaID wiki\",\"rawSourceDir\":\"$TMP_ROOT/raw\",\"targetRoot\":\"$TMP_ROOT/SKILLs\"}"
 SKILLS_ROOT="$TMP_ROOT/SKILLs" node "$TMP_ROOT/SKILLs/metaid-fast-wiki/scripts/index.js" --payload '{"action":"absorb"}'

@@ -61,16 +61,16 @@ function resolveSkillsRoot() {
   return path.resolve(__dirname, '..', '..');
 }
 
-function resolveRepoSkillsRoot() {
-  return path.resolve(__dirname, '..', '..');
-}
-
 function resolveTemplatePath() {
   return path.join(__dirname, '..', 'assets', 'wiki-skill', 'scripts', 'index.js.template');
 }
 
+function resolveRuntimeAssetDir() {
+  return path.join(__dirname, '..', 'assets', 'metabot-llm-wiki-runtime');
+}
+
 function resolveTemplateSchemaPath() {
-  return path.join(resolveRepoSkillsRoot(), 'metabot-llm-wiki', 'references', 'payload-schema-v1.json');
+  return path.join(resolveRuntimeAssetDir(), 'references', 'payload-schema-v1.json');
 }
 
 function resolveSkillDir(root, skillName) {
@@ -115,7 +115,7 @@ description: ${config.description}
 - 日常 \`query\` 默认不重建索引，使用已生成的 lexical/vector/hybrid 本地索引快速查询。
 - 资料更新流程：把文件放进绑定的 \`rawSourceDir\`，运行 \`absorb\` 刷新索引，再运行 \`query\` 快速查询。
 - 如果明确需要边更新边查，\`query\` 可传 \`autoAbsorb:true\` 或 \`refresh:true\`。
-- 生成的 HTML wiki、ZIP、snapshot 都由同一套 \`metabot-llm-wiki\` 运行时完成。
+- 生成的 HTML wiki、ZIP、snapshot 都由新 skill 内嵌的 wiki 运行时完成。
 `;
 }
 
@@ -267,6 +267,19 @@ function copyTextFile(source, target) {
   fs.copyFileSync(source, target);
 }
 
+function copyRuntimeAsset(targetDir) {
+  const runtimeSource = resolveRuntimeAssetDir();
+  if (!fs.existsSync(path.join(runtimeSource, 'scripts', 'index.js'))) {
+    throw new Error(`Missing embedded wiki runtime asset: ${runtimeSource}`);
+  }
+
+  fs.cpSync(runtimeSource, targetDir, {
+    recursive: true,
+    force: true,
+    dereference: true,
+  });
+}
+
 function writeGeneratedSkill(config) {
   const skillDir = config.skillDir;
   if (fs.existsSync(skillDir)) {
@@ -286,6 +299,8 @@ function writeGeneratedSkill(config) {
   fs.writeFileSync(indexJsPath, template, 'utf8');
   fs.chmodSync(indexJsPath, 0o755);
 
+  copyRuntimeAsset(path.join(skillDir, 'runtime', 'metabot-llm-wiki'));
+
   const payloadSchemaPath = resolveTemplateSchemaPath();
   copyTextFile(payloadSchemaPath, path.join(skillDir, 'references', 'payload-schema-v1.json'));
 
@@ -299,6 +314,7 @@ function writeGeneratedSkill(config) {
       path.join(skillDir, 'SKILL.md'),
       path.join(skillDir, 'wiki.config.json'),
       path.join(skillDir, 'scripts', 'index.js'),
+      path.join(skillDir, 'runtime', 'metabot-llm-wiki', 'scripts', 'index.js'),
       path.join(skillDir, 'references', 'payload-schema-v1.json'),
       path.join(config.targetRoot, 'skills.config.json'),
     ],

@@ -72,13 +72,6 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
-    "metabot-llm-wiki": {
-      "order": 19,
-      "version": "1.0.0",
-      "creator-metaid": "",
-      "installedAt": 1740969600000,
-      "enabled": true
-    },
     "metabot-create-wiki": {
       "order": 21,
       "version": "1.0.0",
