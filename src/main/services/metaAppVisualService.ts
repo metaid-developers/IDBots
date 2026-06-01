@@ -152,13 +152,15 @@ export const resolveMetaAppVisualFields = async <T extends MetaAppVisualRecord>(
     };
   }
 
-  const [icon, cover] = await Promise.all([
+  const [icon, cover, authorAvatar] = await Promise.all([
     resolveLocalOrPinnedVisualSource(record, record.icon),
     resolveLocalOrPinnedVisualSource(record, record.cover),
+    resolveLocalOrPinnedVisualSource(record, record.authorAvatar),
   ]);
   return {
     ...record,
     icon,
     cover,
+    authorAvatar,
   };
 };

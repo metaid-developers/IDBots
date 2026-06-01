@@ -41,6 +41,7 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
         title: 'Buzz',
         appName: 'buzz',
         intro: 'Buzz chain app',
+        prompt: 'Create a social feed MetaApp with a compact composer.',
         runtime: 'browser/android',
         version: '1.2.0',
         icon: 'metafile://icon-buzz',
@@ -119,6 +120,7 @@ test('listCommunityMetaApps parses chain protocol items and computes install sta
   assert.equal(buzz.cover, 'metafile://cover-buzz');
   assert.equal(buzz.authorName, 'Creator Bot');
   assert.equal(buzz.authorAvatar, '/content/avatar-creator');
+  assert.equal(buzz.aiPrompt, 'Create a social feed MetaApp with a compact composer.');
 
   const chat = result.apps.find((app) => app.appId === 'chat');
   assert.ok(chat);

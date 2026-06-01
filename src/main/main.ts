@@ -112,7 +112,11 @@ import * as p2pConfigService from './services/p2pConfigService';
 import { runAppCleanup as runSharedAppCleanup } from './services/appCleanup';
 import { ensureMetaAppServerReady, stopMetaAppServer } from './services/metaAppLocalServer';
 import { openMetaApp, resolveMetaAppUrl } from './services/metaAppOpenService';
-import { installCommunityMetaApp, listCommunityMetaApps } from './services/metaAppChainService';
+import {
+  findCommunityMetaAppRecordBySourcePinId,
+  installCommunityMetaApp,
+  listCommunityMetaApps,
+} from './services/metaAppChainService';
 import { getP2PLocalBase } from './services/p2pLocalEndpoint';
 import { getMetaidRpcBase } from './services/metaidRpcEndpoint';
 import { isSemanticallyEmptyMetaidInfoPayload } from './services/metabotRestoreService';
@@ -4878,8 +4882,33 @@ if (!gotTheLock) {
 
   ipcMain.handle('metaapps:list', async () => {
     try {
-      const apps = getMetaAppManager().listMetaApps();
-      const resolvedApps = await Promise.all(apps.map((app) => resolveMetaAppVisualFields(app)));
+      const manager = getMetaAppManager();
+      const apps = manager.listMetaApps();
+      const enrichedApps = await Promise.all(apps.map(async (app) => {
+        if (app.sourceType !== 'chain-community' || !app.sourcePinId) {
+          return app;
+        }
+
+        if (app.authorName && app.authorAvatar && app.aiPrompt) {
+          return app;
+        }
+
+        const lookup = await findCommunityMetaAppRecordBySourcePinId({
+          sourcePinId: app.sourcePinId,
+          manager,
+        });
+        if (!lookup.record) {
+          return app;
+        }
+
+        return {
+          ...app,
+          authorName: app.authorName || lookup.record.authorName,
+          authorAvatar: app.authorAvatar || lookup.record.authorAvatar,
+          aiPrompt: app.aiPrompt || lookup.record.aiPrompt,
+        };
+      }));
+      const resolvedApps = await Promise.all(enrichedApps.map((app) => resolveMetaAppVisualFields(app)));
       return { success: true, apps: resolvedApps };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list MetaApps' };

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildUseMetaAppPrompt,
   filterMetaApps,
+  getMetaAppAiPromptModel,
   getMetaAppAuthorModel,
   getMetaAppVisualModel,
   getRecommendedMetaAppsEmptyState,
@@ -55,6 +56,25 @@ test('getMetaAppAuthorModel uses author fields and IDBots fallback', () => {
   assert.deepEqual(
     getMetaAppAuthorModel({ creatorMetaId: '' }, 'en'),
     { name: 'Unknown author', avatar: null },
+  );
+});
+
+test('getMetaAppAiPromptModel only exposes chain AI development prompts', () => {
+  assert.deepEqual(
+    getMetaAppAiPromptModel({
+      name: 'AI App',
+      aiPrompt: 'Build a file manager MetaApp',
+      prompt: 'APP.md routing prompt should not trigger the badge',
+    }),
+    { visible: true, label: 'AI', prompt: 'Build a file manager MetaApp' },
+  );
+
+  assert.deepEqual(
+    getMetaAppAiPromptModel({
+      name: 'Manual App',
+      prompt: 'APP.md routing prompt should not trigger the badge',
+    }),
+    { visible: false, label: 'AI', prompt: '' },
   );
 });
 

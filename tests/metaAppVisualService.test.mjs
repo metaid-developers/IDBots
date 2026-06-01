@@ -68,3 +68,24 @@ test('resolveMetaAppVisualFields resolves local MetaApp cover files to data URLs
 
   assert.equal(result.cover, 'data:image/webp;base64,UklGRg==');
 });
+
+test('resolveMetaAppVisualFields resolves local MetaApp author avatars from MetaID content references', async () => {
+  assert.equal(typeof resolveMetaAppVisualFields, 'function', 'resolveMetaAppVisualFields() should be exported');
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(Buffer.from([0x89, 0x50, 0x4e, 0x47]), {
+    headers: { 'content-type': 'image/png', 'content-length': '4' },
+  });
+
+  try {
+    const result = await resolveMetaAppVisualFields({
+      id: 'buzz',
+      name: 'buzz-app',
+      authorAvatar: '/content/avatar-pin-i0',
+    });
+
+    assert.equal(result.authorAvatar, 'data:image/png;base64,iVBORw==');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

@@ -10,8 +10,13 @@ export interface MetaAppRecord {
   appPath: string;
   appRoot: string;
   prompt: string;
+  aiPrompt?: string;
   version: string;
   creatorMetaId: string;
+  authorName?: string;
+  authorAvatar?: string;
+  sourcePinId?: string;
+  codePinId?: string;
   sourceType: 'bundled-idbots' | 'chain-idbots' | 'chain-community' | 'manual' | string;
   managedByIdbots: boolean;
 }
@@ -30,6 +35,7 @@ export interface CommunityMetaAppRecord {
   indexFile: string;
   codeUri: string;
   codePinId: string;
+  aiPrompt?: string;
   authorName?: string;
   authorAvatar?: string;
   status: 'install' | 'installed' | 'update' | 'uninstallable';

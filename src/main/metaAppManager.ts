@@ -31,6 +31,11 @@ type MetaAppDefaultConfig = {
   version?: string;
   'creator-metaid'?: string;
   'source-type'?: string;
+  'author-name'?: string;
+  'author-avatar'?: string;
+  'chain-pinid'?: string;
+  'chain-code-pinid'?: string;
+  'ai-prompt'?: string;
   icon?: string;
   cover?: string;
   installedAt?: number;
@@ -55,8 +60,13 @@ export type MetaAppRecord = {
   appPath: string;
   appRoot: string;
   prompt: string;
+  aiPrompt?: string;
   version: string;
   creatorMetaId: string;
+  authorName?: string;
+  authorAvatar?: string;
+  sourcePinId?: string;
+  codePinId?: string;
   sourceType: MetaAppSourceType;
   managedByIdbots: boolean;
 };
@@ -313,6 +323,11 @@ const loadMetaAppDefaultFromDir = (appDir: string): MetaAppDefaultConfig => {
     'source-type': normalizeSourceType(frontmatter['source-type'] ?? 'manual'),
     icon: String(frontmatter.icon ?? '').trim(),
     cover: String(frontmatter.cover ?? '').trim(),
+    'author-name': String(frontmatter['author-name'] ?? '').trim(),
+    'author-avatar': String(frontmatter['author-avatar'] ?? '').trim(),
+    'chain-pinid': String(frontmatter['chain-pinid'] ?? '').trim(),
+    'chain-code-pinid': String(frontmatter['chain-code-pinid'] ?? '').trim(),
+    'ai-prompt': String(frontmatter['ai-prompt'] ?? '').trim(),
   };
 };
 
@@ -582,6 +597,21 @@ export class MetaAppManager {
         const cover = hasRegistryEntry
           ? String(appDefaults.cover ?? frontmatter.cover ?? '').trim()
           : String(frontmatter.cover || '').trim();
+        const authorName = hasRegistryEntry
+          ? String(appDefaults['author-name'] ?? frontmatter['author-name'] ?? '').trim()
+          : String(frontmatter['author-name'] || '').trim();
+        const authorAvatar = hasRegistryEntry
+          ? String(appDefaults['author-avatar'] ?? frontmatter['author-avatar'] ?? '').trim()
+          : String(frontmatter['author-avatar'] || '').trim();
+        const sourcePinId = hasRegistryEntry
+          ? String(appDefaults['chain-pinid'] ?? frontmatter['chain-pinid'] ?? '').trim()
+          : String(frontmatter['chain-pinid'] || '').trim();
+        const codePinId = hasRegistryEntry
+          ? String(appDefaults['chain-code-pinid'] ?? frontmatter['chain-code-pinid'] ?? '').trim()
+          : String(frontmatter['chain-code-pinid'] || '').trim();
+        const aiPrompt = hasRegistryEntry
+          ? String(appDefaults['ai-prompt'] ?? frontmatter['ai-prompt'] ?? '').trim()
+          : String(frontmatter['ai-prompt'] || '').trim();
         const entryFilePath = resolveEntryFilePath(id, dir, entry);
         if (!entryFilePath) {
           return;
@@ -598,8 +628,13 @@ export class MetaAppManager {
           appPath: appFile,
           appRoot: dir,
           prompt: content.trim(),
+          aiPrompt: aiPrompt || undefined,
           version,
           creatorMetaId,
+          authorName: authorName || undefined,
+          authorAvatar: authorAvatar || undefined,
+          sourcePinId: sourcePinId || undefined,
+          codePinId: codePinId || undefined,
           sourceType,
           managedByIdbots: isIdbotsManagedSource(sourceType),
         });
@@ -709,6 +744,11 @@ export class MetaAppManager {
         'source-type': normalizeSourceType(bundledDefault['source-type'] ?? existing['source-type'] ?? 'manual'),
         icon: String(bundledDefault.icon ?? existing.icon ?? '').trim(),
         cover: String(bundledDefault.cover ?? existing.cover ?? '').trim(),
+        'author-name': String(bundledDefault['author-name'] ?? existing['author-name'] ?? '').trim(),
+        'author-avatar': String(bundledDefault['author-avatar'] ?? existing['author-avatar'] ?? '').trim(),
+        'chain-pinid': String(bundledDefault['chain-pinid'] ?? existing['chain-pinid'] ?? '').trim(),
+        'chain-code-pinid': String(bundledDefault['chain-code-pinid'] ?? existing['chain-code-pinid'] ?? '').trim(),
+        'ai-prompt': String(bundledDefault['ai-prompt'] ?? existing['ai-prompt'] ?? '').trim(),
         installedAt: typeof existing.installedAt === 'number' ? existing.installedAt : now,
         updatedAt: now,
       };

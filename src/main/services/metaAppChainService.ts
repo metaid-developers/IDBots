@@ -24,6 +24,7 @@ type LocalMetaAppLike = {
   version: string;
   creatorMetaId: string;
   sourceType: string;
+  sourcePinId?: string;
 };
 
 type MetaAppManagerLike = {
@@ -68,6 +69,7 @@ type InstallCommunityMetaAppInput = {
   sourcePinId: string;
   manager: Pick<MetaAppManagerLike, 'listMetaApps' | 'ensureMetaAppsRoot'>;
   fetchList?: FetchListFn;
+  fetchAuthorInfo?: FetchAuthorInfoFn;
   fetchCodeZip?: FetchZipFn;
   now?: () => number;
 };
@@ -83,6 +85,7 @@ type ChainMetaAppPayload = {
   indexFile: string;
   code: string;
   codeType: string;
+  prompt: string;
   disabled: boolean;
 };
 
@@ -109,6 +112,7 @@ export type CommunityMetaAppRecord = {
   indexFile: string;
   codeUri: string;
   codePinId: string;
+  aiPrompt?: string;
   authorName?: string;
   authorAvatar?: string;
   status: CommunityMetaAppStatus;
@@ -138,6 +142,11 @@ type MetaAppsConfig = {
     version?: string;
     'creator-metaid'?: string;
     'source-type'?: string;
+    'author-name'?: string;
+    'author-avatar'?: string;
+    'chain-pinid'?: string;
+    'chain-code-pinid'?: string;
+    'ai-prompt'?: string;
     icon?: string;
     cover?: string;
     installedAt?: number;
@@ -398,6 +407,7 @@ const decodeChainPayload = (item: unknown): ChainMetaAppCandidate | null => {
       indexFile: normalizeIndexFile(asText(content.indexFile)),
       code: asText(content.code) || asText(content.content),
       codeType: asText(content.codeType || content.contentType),
+      prompt: asText(content.prompt),
       disabled: asBoolean(content.disabled),
     },
   };
@@ -463,6 +473,7 @@ const toCommunityRecord = (
     indexFile: chain.payload.indexFile,
     codeUri: chain.payload.code,
     codePinId,
+    aiPrompt: chain.payload.prompt || undefined,
     authorName: authorName || undefined,
     authorAvatar: authorAvatar || undefined,
     status: installability.status,
@@ -517,6 +528,7 @@ export async function listCommunityMetaApps(input: ListCommunityMetaAppsInput): 
         version: normalizeVersion(asText(app.version)),
         creatorMetaId: asText(app.creatorMetaId),
         sourceType: asText(app.sourceType),
+        sourcePinId: asText(app.sourcePinId),
       });
     });
 
@@ -551,7 +563,7 @@ export async function listCommunityMetaApps(input: ListCommunityMetaAppsInput): 
 }
 
 const findCommunityMetaAppBySourcePinId = async (
-  input: Pick<InstallCommunityMetaAppInput, 'sourcePinId' | 'manager' | 'fetchList'>,
+  input: Pick<InstallCommunityMetaAppInput, 'sourcePinId' | 'manager' | 'fetchList' | 'fetchAuthorInfo'>,
 ): Promise<{ record?: CommunityMetaAppRecord; error?: string }> => {
   let cursor = COMMUNITY_METAAPPS_ROOT_CURSOR;
 
@@ -559,6 +571,7 @@ const findCommunityMetaAppBySourcePinId = async (
     const result = await listCommunityMetaApps({
       manager: input.manager,
       fetchList: input.fetchList,
+      fetchAuthorInfo: input.fetchAuthorInfo,
       cursor,
       size: COMMUNITY_METAAPPS_INSTALL_SCAN_PAGE_SIZE,
     });
@@ -581,6 +594,8 @@ const findCommunityMetaAppBySourcePinId = async (
 
   return {};
 };
+
+export const findCommunityMetaAppRecordBySourcePinId = findCommunityMetaAppBySourcePinId;
 
 const safeExtractZip = (buffer: Buffer, destination: string): void => {
   if (!AdmZip) {
@@ -674,6 +689,9 @@ const buildAppMd = (params: {
   creatorMetaId: string;
   sourcePinId: string;
   codePinId: string;
+  authorName?: string;
+  authorAvatar?: string;
+  aiPrompt?: string;
 }): string => {
   return [
     '---',
@@ -759,6 +777,7 @@ export async function installCommunityMetaApp(input: InstallCommunityMetaAppInpu
     sourcePinId,
     manager: input.manager,
     fetchList: input.fetchList,
+    fetchAuthorInfo: input.fetchAuthorInfo,
   });
 
   if (lookup.error) {
@@ -820,6 +839,9 @@ export async function installCommunityMetaApp(input: InstallCommunityMetaAppInpu
       creatorMetaId: targetRecord.creatorMetaId,
       sourcePinId: targetRecord.sourcePinId,
       codePinId: targetRecord.codePinId,
+      authorName: targetRecord.authorName,
+      authorAvatar: targetRecord.authorAvatar,
+      aiPrompt: targetRecord.aiPrompt,
     });
     fs.writeFileSync(path.join(stageDir, 'APP.md'), appMd, 'utf8');
 
@@ -838,6 +860,11 @@ export async function installCommunityMetaApp(input: InstallCommunityMetaAppInpu
       'source-type': 'chain-community',
       icon: targetRecord.icon,
       cover: targetRecord.cover,
+      'author-name': targetRecord.authorName,
+      'author-avatar': targetRecord.authorAvatar,
+      'chain-pinid': targetRecord.sourcePinId,
+      'chain-code-pinid': targetRecord.codePinId,
+      'ai-prompt': targetRecord.aiPrompt,
       installedAt: typeof existing.installedAt === 'number' ? existing.installedAt : nowTs,
       updatedAt: nowTs,
     };

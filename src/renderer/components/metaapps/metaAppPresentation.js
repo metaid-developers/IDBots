@@ -58,6 +58,15 @@ export function getMetaAppAuthorModel(app, language = 'zh') {
   };
 }
 
+export function getMetaAppAiPromptModel(app) {
+  const prompt = String(app?.aiPrompt || app?.developmentPrompt || '').trim();
+  return {
+    visible: Boolean(prompt),
+    label: 'AI',
+    prompt,
+  };
+}
+
 export function getMetaAppVisualModel(app) {
   const cover = String(app?.cover || '').trim();
   if (cover) {

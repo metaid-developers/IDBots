@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowPathIcon,
+  ClipboardDocumentIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
   PlayIcon,
   Squares2X2Icon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { metaAppService } from '../../services/metaApp';
@@ -18,6 +20,7 @@ import {
   getCommunityMetaAppActionLabel,
   getCommunityMetaAppsEmptyState,
   getCommunityMetaAppStatusLabel,
+  getMetaAppAiPromptModel,
   getMetaAppAuthorModel,
   getMetaAppVisualModel,
   getRecommendedMetaAppsEmptyState,
@@ -45,6 +48,23 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
   const [openingFolderAppId, setOpeningFolderAppId] = useState<string | null>(null);
   const [startingAppId, setStartingAppId] = useState<string | null>(null);
   const [installingSourcePinId, setInstallingSourcePinId] = useState<string | null>(null);
+  const [promptPanel, setPromptPanel] = useState<{ appName: string; prompt: string } | null>(null);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+
+  useEffect(() => {
+    if (!promptPanel) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPromptPanel(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [promptPanel]);
 
   useEffect(() => {
     let isActive = true;
@@ -196,6 +216,111 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
     );
   };
 
+  const openPromptPanel = (appName: string, prompt: string) => {
+    setCopiedPrompt(false);
+    setPromptPanel({ appName, prompt });
+  };
+
+  const handleCopyPrompt = async () => {
+    if (!promptPanel?.prompt || !navigator.clipboard?.writeText) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(promptPanel.prompt);
+      setCopiedPrompt(true);
+      window.setTimeout(() => setCopiedPrompt(false), 1500);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : i18nService.t('copyToClipboard'));
+    }
+  };
+
+  const renderAiPromptButton = (app: { name: string; aiPrompt?: string; developmentPrompt?: string }) => {
+    const aiPrompt = getMetaAppAiPromptModel(app);
+    if (!aiPrompt.visible) {
+      return null;
+    }
+
+    return (
+      <Tooltip content={i18nService.t('metaAppAiPrompt')} position="top">
+        <button
+          type="button"
+          onClick={() => openPromptPanel(app.name, aiPrompt.prompt)}
+          className="inline-flex h-5 shrink-0 items-center rounded-md border border-claude-accent/30 bg-claude-accent/10 px-1.5 text-[10px] font-semibold leading-none text-claude-accent transition-colors hover:border-claude-accent hover:bg-claude-accent/15"
+          title={i18nService.t('metaAppAiPrompt')}
+          aria-label={i18nService.t('metaAppAiPrompt')}
+        >
+          {aiPrompt.label}
+        </button>
+      </Tooltip>
+    );
+  };
+
+  const renderPromptPanel = () => {
+    if (!promptPanel) {
+      return null;
+    }
+
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+        onClick={() => setPromptPanel(null)}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={i18nService.t('metaAppAiPrompt')}
+          className="w-full max-w-2xl overflow-hidden rounded-xl border border-claude-border bg-white shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-claude-border px-4 py-3 dark:border-claude-darkBorder">
+            <div className="min-w-0 flex items-center gap-2">
+              <span className="inline-flex h-5 items-center rounded-md border border-claude-accent/30 bg-claude-accent/10 px-1.5 text-[10px] font-semibold text-claude-accent">
+                AI
+              </span>
+              <div className="min-w-0 truncate text-sm font-semibold text-claude-text dark:text-claude-darkText">
+                {promptPanel.appName}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <Tooltip content={copiedPrompt ? i18nService.t('messageCopied') : i18nService.t('copyToClipboard')} position="top">
+                <button
+                  type="button"
+                  onClick={() => void handleCopyPrompt()}
+                  className={`rounded-md p-1.5 transition-colors hover:bg-claude-accent/10 ${
+                    copiedPrompt
+                      ? 'text-claude-accent'
+                      : 'text-claude-textSecondary dark:text-claude-darkTextSecondary'
+                  }`}
+                  title={i18nService.t('copyToClipboard')}
+                  aria-label={i18nService.t('copyToClipboard')}
+                >
+                  <ClipboardDocumentIcon className="h-4 w-4" />
+                </button>
+              </Tooltip>
+              <Tooltip content={i18nService.t('close')} position="top">
+                <button
+                  type="button"
+                  onClick={() => setPromptPanel(null)}
+                  className="rounded-md p-1.5 text-claude-textSecondary transition-colors hover:bg-claude-surfaceMuted hover:text-claude-text dark:text-claude-darkTextSecondary dark:hover:bg-claude-darkSurfaceMuted dark:hover:text-claude-darkText"
+                  title={i18nService.t('close')}
+                  aria-label={i18nService.t('close')}
+                >
+                  <XMarkIcon className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+          <div className="max-h-[60vh] overflow-auto p-4">
+            <pre className="whitespace-pre-wrap break-words rounded-lg bg-claude-surfaceMuted p-3 text-xs leading-5 text-claude-text dark:bg-claude-darkSurfaceMuted dark:text-claude-darkText">
+              {promptPanel.prompt}
+            </pre>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const handleOpenMetaAppFolder = async (app: MetaAppRecord) => {
     if (openingFolderAppId || startingAppId) return;
     setOpeningFolderAppId(app.id);
@@ -338,9 +463,12 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
             >
               {renderMetaAppVisual(app)}
               <div className="flex items-start justify-between gap-2 mb-2">
-                <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
-                  {app.name}
-                </span>
+                <div className="min-w-0 flex items-center gap-1.5">
+                  <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
+                    {app.name}
+                  </span>
+                  {renderAiPromptButton(app)}
+                </div>
                 {app.isOfficial ? (
                   <span className="px-1.5 py-0.5 rounded bg-claude-accent/10 text-claude-accent font-medium text-[10px] flex-shrink-0">
                     {i18nService.t('official')}
@@ -449,10 +577,13 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
                 className="rounded-xl border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50 p-3 transition-colors hover:border-claude-accent/50"
               >
                 {renderMetaAppVisual(app)}
-                <div className="flex items-start justify-between mb-2">
-                  <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
-                    {app.name}
-                  </span>
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0 flex items-center gap-1.5">
+                    <span className="text-sm font-medium dark:text-claude-darkText text-claude-text truncate min-w-0">
+                      {app.name}
+                    </span>
+                    {renderAiPromptButton(app)}
+                  </div>
                   <span className="px-1.5 py-0.5 rounded text-[10px] bg-claude-accent/10 text-claude-accent font-medium">
                     {statusLabel}
                   </span>
@@ -604,6 +735,7 @@ const MetaAppsManager: React.FC<MetaAppsManagerProps> = ({ onStartTaskWithMetaAp
           {activeTab === 'chainCommunity' ? renderChainCommunityTab() : renderLocalTab()}
         </>
       )}
+      {renderPromptPanel()}
     </div>
   );
 };

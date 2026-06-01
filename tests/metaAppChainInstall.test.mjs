@@ -74,6 +74,7 @@ test('installCommunityMetaApp installs zip payload and writes APP.md + registry 
             title: 'Buzz',
             appName: 'buzz',
             intro: 'Buzz app from chain',
+            prompt: 'Build Buzz as an AI-generated social reader.',
             runtime: 'browser/android',
             version: '1.1.0',
             icon: 'metafile://icon-buzz',
@@ -85,6 +86,13 @@ test('installCommunityMetaApp installs zip payload and writes APP.md + registry 
           }),
         },
       ],
+      fetchAuthorInfo: async (creatorMetaId) => {
+        assert.equal(creatorMetaId, 'idq1creator');
+        return {
+          name: 'Creator Bot',
+          avatar: '/content/avatar-creator',
+        };
+      },
       fetchCodeZip: async (pinId) => {
         assert.equal(pinId, 'zip-buzz');
         return createZipBuffer([
@@ -112,8 +120,19 @@ test('installCommunityMetaApp installs zip payload and writes APP.md + registry 
   assert.equal(config.defaults?.buzz?.['source-type'], 'chain-community');
   assert.equal(config.defaults?.buzz?.icon, 'metafile://icon-buzz');
   assert.equal(config.defaults?.buzz?.cover, 'metafile://cover-buzz');
+  assert.equal(config.defaults?.buzz?.['author-name'], 'Creator Bot');
+  assert.equal(config.defaults?.buzz?.['author-avatar'], '/content/avatar-creator');
+  assert.equal(config.defaults?.buzz?.['ai-prompt'], 'Build Buzz as an AI-generated social reader.');
   assert.equal(config.defaults?.buzz?.installedAt, 111);
   assert.equal(config.defaults?.buzz?.updatedAt, 111);
+
+  await withMetaAppsRoot(metaAppsRoot, async () => {
+    const manager = new MetaAppManager();
+    const apps = manager.listMetaApps();
+    assert.equal(apps[0]?.authorName, 'Creator Bot');
+    assert.equal(apps[0]?.authorAvatar, '/content/avatar-creator');
+    assert.equal(apps[0]?.aiPrompt, 'Build Buzz as an AI-generated social reader.');
+  });
 });
 
 test('installCommunityMetaApp installs zip from content metafile when code is empty', async () => {
