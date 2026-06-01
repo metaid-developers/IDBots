@@ -6,6 +6,7 @@ export interface GigSquareMyServiceSource {
   serviceName?: string;
   displayName?: string;
   description?: string;
+  executionReminder?: string | null;
   price?: string;
   currency?: string;
   settlementKind?: string | null;
@@ -69,6 +70,7 @@ export interface GigSquareMyServiceSummary {
   serviceName: string;
   displayName: string;
   description: string;
+  executionReminder: string;
   price: string;
   currency: string;
   settlementKind: string | null;
@@ -355,6 +357,7 @@ export function buildMyServiceSummaries(input: {
         serviceName: toSafeString(service.serviceName).trim(),
         displayName: toSafeString(service.displayName).trim() || toSafeString(service.serviceName).trim() || 'Service',
         description: toSafeString(service.description).trim(),
+        executionReminder: toSafeString(service.executionReminder).trim(),
         price: toSafeString(service.price).trim(),
         currency: toSafeString(service.currency).trim(),
         settlementKind: toSafeString(service.settlementKind).trim() || null,

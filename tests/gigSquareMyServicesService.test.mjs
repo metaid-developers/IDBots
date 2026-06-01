@@ -279,6 +279,7 @@ test('buildMyServiceSummaries preserves v1.1 listing fields in summaries', () =>
       providerAddress: 'addr-1',
       providerSkill: 'weather, reporter',
       providerSkills: ['weather', 'reporter'],
+      executionReminder: '  运行前先确认订单需求是否完整  ',
       paymentTiming: 'free',
       protocolSettlementKind: 'fiat',
       metadata: 'summary metadata',
@@ -291,6 +292,7 @@ test('buildMyServiceSummaries preserves v1.1 listing fields in summaries', () =>
 
   assert.equal(result.items[0].id, 'svc-v11-current');
   assert.deepEqual(result.items[0].providerSkills, ['weather', 'reporter']);
+  assert.equal(result.items[0].executionReminder, '运行前先确认订单需求是否完整');
   assert.equal(result.items[0].paymentTiming, 'free');
   assert.equal(result.items[0].protocolSettlementKind, 'fiat');
   assert.equal(result.items[0].metadata, 'summary metadata');

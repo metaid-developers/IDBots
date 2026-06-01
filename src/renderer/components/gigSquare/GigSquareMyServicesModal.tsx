@@ -1333,21 +1333,28 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
         {modifyTargetService && modifyDraft && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/55 p-4">
             <div
-              className="w-full max-w-3xl rounded-2xl border border-claude-border bg-[var(--bg-main)] p-6 shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+              data-slot="gig-square-modify-panel"
+              className="flex max-h-[calc(100svh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-claude-border bg-[var(--bg-main)] shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface"
               role="dialog"
               aria-modal="true"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <h3 className="text-base font-semibold text-claude-text dark:text-claude-darkText">
+              <div
+                data-slot="gig-square-modify-header"
+                className="flex shrink-0 items-center justify-between gap-4 border-b border-claude-border px-5 py-3.5 dark:border-claude-darkBorder"
+              >
+                <div
+                  data-slot="gig-square-modify-title-line"
+                  className="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1"
+                >
+                  <h3 className="shrink-0 text-base font-semibold text-claude-text dark:text-claude-darkText">
                     {i18nService.t('gigSquareMyServicesModifyTitle')}
                   </h3>
-                  <p className="mt-1 text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  <span className="min-w-0 max-w-[18rem] truncate text-sm font-medium text-claude-text dark:text-claude-darkText">
                     {getServiceDisplayName(modifyTargetService)}
-                  </p>
-                  <p className="mt-1 text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  </span>
+                  <span className="min-w-0 max-w-[18rem] truncate text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                     {i18nService.t('gigSquareMyServicesCreatorMetabot')} {modifyTargetService.creatorMetabotName || modifyTargetService.creatorMetabotId || '—'}
-                  </p>
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -1360,13 +1367,17 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 </button>
               </div>
 
-              {modifyError && (
-                <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-500">
-                  {modifyError}
-                </div>
-              )}
+              <div
+                data-slot="gig-square-modify-scroll"
+                className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+              >
+                {modifyError && (
+                  <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-500">
+                    {modifyError}
+                  </div>
+                )}
 
-              <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_320px]">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_320px]">
                 <div className="space-y-4 rounded-xl border border-claude-border bg-[var(--bg-panel)] p-4 dark:border-claude-darkBorder dark:bg-claude-darkSurface">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
@@ -1591,7 +1602,12 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
                 </div>
               </div>
 
-              <div className="mt-6 flex items-center justify-end gap-2">
+              </div>
+
+              <div
+                data-slot="gig-square-modify-actions"
+                className="flex shrink-0 items-center justify-end gap-2 border-t border-claude-border px-5 py-4 dark:border-claude-darkBorder"
+              >
                 <button
                   type="button"
                   onClick={closeModifyModal}
