@@ -27,15 +27,33 @@ export default class GetPinDetailCommand {
         throw new Error('numberOrId is required');
       }
 
-      // Call BusinessDelegate to fetch Pin detail
-      const response = await delegate('metaid_man', `/pin/${numberOrId}`, {
-        method: 'GET'
-      });
+      const normalizedPinId = this._normalizePinReference(numberOrId);
+      if (!normalizedPinId) throw new Error('Invalid pin id');
 
-      return response.data;
+      const response = await delegate('metaid_man', `/api/pin/${encodeURIComponent(normalizedPinId)}`, {
+        method: 'GET',
+      });
+      if (response && Object.prototype.hasOwnProperty.call(response, 'data')) {
+        return response.data;
+      }
+      return response;
     } catch (error) {
       console.error('GetPinDetailCommand error:', error);
       throw error;
     }
+  }
+
+  _normalizePinReference(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return '';
+    const exact = text.match(/[A-Fa-f0-9]{64}i\d+/);
+    if (exact && exact[0]) return exact[0];
+    let cleaned = text.split('?')[0].split('#')[0].replace(/\/+$/, '');
+    if (cleaned.startsWith('metafile://')) cleaned = cleaned.slice('metafile://'.length);
+    if (cleaned.includes('/pin/')) cleaned = cleaned.split('/pin/').pop() || '';
+    if (cleaned.includes('/content/')) cleaned = cleaned.split('/content/').pop() || '';
+    const matched = cleaned.match(/[A-Fa-f0-9]{64}i\d+/);
+    if (matched && matched[0]) return matched[0];
+    return cleaned;
   }
 }

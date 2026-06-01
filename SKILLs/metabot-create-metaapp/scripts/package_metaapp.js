@@ -26,7 +26,7 @@ const { spawnSync } = require('child_process');
 // ---------------------------------------------------------------------------
 
 const METAAPP_REQUIRED_FILES = ['index.html', 'app.js', 'app.css', 'idframework.js'];
-const METAAPP_REQUIRED_DIRS = ['idcomponents', 'commands'];
+const METAAPP_REQUIRED_DIRS = ['components', 'commands'];
 
 const EXCLUDE_DIRS = new Set([
   '.git', '.idea', '.vscode', 'node_modules', '__pycache__', 'dist', 'build', '.DS_Store',

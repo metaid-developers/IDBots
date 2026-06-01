@@ -12,7 +12,7 @@
 // ServiceLocator - Service Endpoint Configuration
 // ============================================
 // Define base URLs for various services used by BusinessDelegate.
-// idconfig.js may have already set ServiceLocator defaults; here we override or extend.
+// utils/idconfig.js may have already set ServiceLocator defaults; here we override or extend.
 // For MetaID user registration, set window.__createOrUpdateUserInfoImpl to your implementation.
 window.ServiceLocator = {
   metaid_man: 'https://manapi.metaid.io', // MetaID data indexer API

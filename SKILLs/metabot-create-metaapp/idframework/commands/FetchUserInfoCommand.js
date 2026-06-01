@@ -38,7 +38,7 @@ export default class FetchUserInfoCommand {
       }
 
       const endpoint = globalMetaId
-        ? `/v1/info/globalmetaid/${globalMetaId}`
+        ? `/info/globalmetaid/${globalMetaId}`
         : `/info/metaid/${metaid}`;
       const userData = await userDelegate('metafs', endpoint, globalMetaId ? { globalMetaId } : { metaid });
       const data = userData && typeof userData === 'object' && userData.data && typeof userData.data === 'object'

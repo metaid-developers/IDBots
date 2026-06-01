@@ -1,3 +1,5 @@
+import MetafileUploadHelper from '../utils/metafile-upload.js';
+
 /**
  * PostBuzzCommand - Create buzz with optional local attachments.
  *
@@ -9,6 +11,22 @@
  * 3) Create simplebuzz pin via IDFramework.BuiltInCommands.createPin.
  */
 export default class PostBuzzCommand {
+  constructor() {
+    this._uploader = new MetafileUploadHelper({
+      ensureOnchainReady: (stores) => this._ensureOnchainReady(stores),
+      resolveChain: (source) => this._resolveChain(source),
+      getFeeRate: (options) => this._getFeeRate(options),
+      runChunkedUploadFlow: (options) => this.runChunkedUploadFlow(options),
+      uploadFileToChainDirect: (file) => this.uploadFileToChainDirect(file),
+      uploadFileByCreatePin: (file, stores, options) => this._uploadFileByCreatePin(file, stores, options),
+      fileToBase64: (file) => this._fileToBase64(file),
+      sanitizePathName: (name) => this._sanitizePathName(name),
+      buildContentType: (file) => this._buildContentType(file),
+      extractUploadTxid: (result) => this._extractUploadTxid(result),
+      extractTxid: (res) => this._extractTxid(res),
+    });
+  }
+
   async execute({ payload = {}, stores }) {
     if (!window.IDFramework || !window.IDFramework.BuiltInCommands || !window.IDFramework.BuiltInCommands.createPin) {
       throw new Error('IDFramework.BuiltInCommands.createPin is not available');
@@ -18,15 +36,17 @@ export default class PostBuzzCommand {
     var content = typeof payload.content === 'string' ? payload.content : '';
     var quotePin = typeof payload.quotePin === 'string' ? payload.quotePin : '';
     var files = Array.isArray(payload.files) ? payload.files : [];
+    var chain = this._resolveChain(payload);
+    var feeRate = this._getFeeRate({ chain: chain, feeRate: payload.feeRate });
 
-    if (!content.trim() && files.length === 0) {
-      throw new Error('Please enter content or add attachment');
+    if (!content.trim() && files.length === 0 && !quotePin.trim()) {
+      throw new Error('Please enter content, add attachment, or select a quote pin');
     }
 
     var attachments = [];
     for (var i = 0; i < files.length; i += 1) {
       var file = files[i];
-      var attachment = await this._uploadFileToMetafile(file, stores);
+      var attachment = await this._uploadFileToMetafile(file, stores, { chain: chain, feeRate: feeRate });
       attachments.push(attachment);
     }
 
@@ -43,36 +63,27 @@ export default class PostBuzzCommand {
         body: JSON.stringify(body),
         path: '/protocols/simplebuzz',
         contentType: 'application/json',
+        chain: chain,
+        feeRate: feeRate,
       },
       stores: stores,
     });
 
     return {
       body: body,
+      chain: chain,
+      feeRate: feeRate,
       pinRes: pinRes,
       txid: this._extractTxid(pinRes),
     };
   }
 
-  async _uploadFileToMetafile(file, stores) {
-    this._ensureOnchainReady(stores);
-    if (!(file instanceof File)) {
-      throw new Error('Invalid file object');
-    }
+  async _uploadFileToMetafile(file, stores, options = {}) {
+    return await this._uploader.uploadFileToMetafile(file, stores, options);
+  }
 
-    var result;
-    if (file.size > 5 * 1024 * 1024) {
-      result = await this.runChunkedUploadFlow({ file: file, asynchronous: false });
-    } else {
-      result = await this.uploadFileToChainDirect(file);
-    }
-
-    var txid = this._extractUploadTxid(result);
-    if (!txid) {
-      throw new Error('File upload succeeded but txid is missing');
-    }
-
-    return 'metafile://' + txid + 'i0';
+  async _uploadFileByCreatePin(file, stores, options = {}) {
+    return await this._uploader.uploadFileByCreatePin(file, stores, options);
   }
 
   async runChunkedUploadFlow(options) {
@@ -153,6 +164,13 @@ export default class PostBuzzCommand {
 
   async _loadMetaIdJS() {
     if (this._metaIdJSLib) return this._metaIdJSLib;
+    if (typeof window !== 'undefined' && window.MetaIDJs) {
+      this._metaIdJSLib = window.MetaIDJs;
+      return this._metaIdJSLib;
+    }
+
+    await this._ensureMetaIdJSScript();
+
     for (var i = 0; i < 100; i += 1) {
       if (typeof window !== 'undefined' && window.MetaIDJs) {
         this._metaIdJSLib = window.MetaIDJs;
@@ -160,7 +178,93 @@ export default class PostBuzzCommand {
       }
       await new Promise(function (resolve) { setTimeout(resolve, 50); });
     }
-    throw new Error('MetaIDJs is not available, please include ./metaid.js in index.html');
+    throw new Error('MetaIDJs is not available, please include ../../idframework/vendors/metaid.js in demo HTML.');
+  }
+
+  _getMetaIdScriptUrl() {
+    var cfg = (typeof window !== 'undefined' && window.IDConfig) ? window.IDConfig : {};
+    var configured = String(cfg.METAID_JS_URL || '').trim();
+    if (configured) return configured;
+    try {
+      return new URL('../vendors/metaid.js', import.meta.url).href;
+    } catch (_) {
+      return '../../idframework/vendors/metaid.js';
+    }
+  }
+
+  _findExistingMetaIdScript(scriptUrl) {
+    if (typeof document === 'undefined') return null;
+
+    if (typeof document.querySelector === 'function') {
+      var tagged = document.querySelector('script[data-idframework-metaidjs="1"]');
+      if (tagged) return tagged;
+    }
+
+    if (typeof document.querySelectorAll === 'function') {
+      var scripts = document.querySelectorAll('script[src]');
+      for (var i = 0; i < scripts.length; i += 1) {
+        var item = scripts[i];
+        if (!item) continue;
+        var src = '';
+        if (item.getAttribute) src = String(item.getAttribute('src') || '').trim();
+        if (!src && item.src) src = String(item.src).trim();
+        if (!src) continue;
+        if (src === scriptUrl || src.indexOf('metaid.js') >= 0) return item;
+      }
+    }
+
+    return null;
+  }
+
+  async _ensureMetaIdJSScript() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (window.MetaIDJs) return;
+    if (this._metaIdJSPromise) {
+      await this._metaIdJSPromise;
+      return;
+    }
+
+    var scriptUrl = this._getMetaIdScriptUrl();
+    var existing = this._findExistingMetaIdScript(scriptUrl);
+    if (existing) return;
+
+    this._metaIdJSPromise = new Promise(function (resolve) {
+      if (typeof document.createElement !== 'function') {
+        resolve();
+        return;
+      }
+
+      var script = document.createElement('script');
+      script.src = scriptUrl;
+      script.async = true;
+      if (typeof script.setAttribute === 'function') {
+        script.setAttribute('data-idframework-metaidjs', '1');
+      }
+
+      var done = function () {
+        resolve();
+      };
+      script.onload = done;
+      script.onerror = done;
+
+      var parent = null;
+      if (document.head && typeof document.head.appendChild === 'function') parent = document.head;
+      else if (document.body && typeof document.body.appendChild === 'function') parent = document.body;
+      else if (document.documentElement && typeof document.documentElement.appendChild === 'function') parent = document.documentElement;
+
+      if (!parent) {
+        resolve();
+        return;
+      }
+
+      parent.appendChild(script);
+    });
+
+    try {
+      await this._metaIdJSPromise;
+    } finally {
+      this._metaIdJSPromise = null;
+    }
   }
 
   _getUploadBase() {
@@ -170,7 +274,50 @@ export default class PostBuzzCommand {
     return 'https://file.metaid.io/metafile-uploader';
   }
 
-  _getFeeRate() {
+  _normalizeChain(rawChain) {
+    var chain = String(rawChain || '').trim().toLowerCase();
+    if (chain === 'btc' || chain === 'bsv') return 'btc';
+    if (chain === 'doge' || chain === 'dogecoin') return 'doge';
+    if (chain === 'mvc' || chain === 'microvisionchain') return 'mvc';
+    return '';
+  }
+
+  _resolveChain(source) {
+    var fromSource = this._normalizeChain(source && source.chain ? source.chain : '');
+    if (fromSource) return fromSource;
+
+    if (typeof Alpine !== 'undefined' && Alpine && typeof Alpine.store === 'function') {
+      var chainFeeStore = Alpine.store('chainFee');
+      var fromStore = this._normalizeChain(chainFeeStore && chainFeeStore.currentChain ? chainFeeStore.currentChain : '');
+      if (fromStore) return fromStore;
+    }
+
+    var cfg = (typeof window !== 'undefined' && window.IDConfig) ? window.IDConfig : {};
+    var fromCfg = this._normalizeChain(cfg.CHAT_CHAIN || cfg.CHAIN || cfg.DEFAULT_CHAIN);
+    return fromCfg || 'mvc';
+  }
+
+  _getFeeRate(options = {}) {
+    var fromPayload = Number(options && options.feeRate);
+    if (Number.isFinite(fromPayload) && fromPayload > 0) return fromPayload;
+
+    var chain = this._resolveChain(options);
+    if (typeof Alpine !== 'undefined' && Alpine && typeof Alpine.store === 'function') {
+      var chainFeeStore = Alpine.store('chainFee');
+      if (chainFeeStore && typeof chainFeeStore.getSelectedFeeRate === 'function') {
+        var fromStoreGetter = Number(chainFeeStore.getSelectedFeeRate(chain));
+        if (Number.isFinite(fromStoreGetter) && fromStoreGetter > 0) return fromStoreGetter;
+      }
+      if (chainFeeStore && chainFeeStore[chain] && typeof chainFeeStore[chain] === 'object') {
+        var chainState = chainFeeStore[chain];
+        var feeType = String(chainState.selectedFeeType || '').trim();
+        var fromStateSelected = Number(chainState[feeType] || 0);
+        if (Number.isFinite(fromStateSelected) && fromStateSelected > 0) return fromStateSelected;
+        var fromStateEconomy = Number(chainState.economyFee || 0);
+        if (Number.isFinite(fromStateEconomy) && fromStateEconomy > 0) return fromStateEconomy;
+      }
+    }
+
     var cfg = (typeof window !== 'undefined' && window.IDConfig) ? window.IDConfig : {};
     var rate = Number(cfg.FEE_RATE);
     return Number.isFinite(rate) && rate > 0 ? rate : 1;

@@ -30,11 +30,11 @@ const MIN_REQUIRED_FILES = [
   'app.css',
   'app.js',
   'idframework.js',
-  'idconfig.js',
-  'idutils.js',
+  'utils/idconfig.js',
+  'utils/idutils.js',
   'bootstrap-stores.js',
   'app-env-compat.js',
-  'idcomponents/id-connect-button.js',
+  'components/id-connect-button.js',
   'commands/FetchUserCommand.js',
   'commands/CheckWebViewBridgeCommand.js',
   'commands/CheckBtcAddressSameAsMvcCommand.js',
@@ -42,15 +42,16 @@ const MIN_REQUIRED_FILES = [
 
 const MIN_REQUIRED_DIRS = [
   'commands',
-  'idcomponents',
+  'components',
+  'utils',
 ];
 
 const INDEX_REQUIRED_SNIPPETS = [
   './bootstrap-stores.js',
-  './idconfig.js',
-  './idutils.js',
+  './utils/idconfig.js',
+  './utils/idutils.js',
   './idframework.js',
-  './idcomponents/id-connect-button.js',
+  './components/id-connect-button.js',
   './app.js',
   './app-env-compat.js',
   '<id-connect-button',
@@ -150,9 +151,12 @@ function validatePregen(projectDir, skillRoot, workspaceRoot = null) {
     'templates/idframework.js',
     'templates/bootstrap-stores.js',
     'templates/app-env-compat.js',
+    'templates/utils/idconfig.js',
+    'templates/utils/idutils.js',
+    'templates/components/id-connect-button.js',
     'idframework/idframework.js',
     'idframework/commands/FetchUserCommand.js',
-    'idframework/idcomponents/id-connect-button.js',
+    'idframework/components/id-connect-button.js',
     'references/MetaApp-Development-Guide.md',
   ];
 
@@ -212,7 +216,7 @@ function validatePredeliver(projectDir, skillRoot) {
   const comparePairs = [
     ['idframework.js', 'idframework/idframework.js'],
     ['commands/FetchUserCommand.js', 'idframework/commands/FetchUserCommand.js'],
-    ['idcomponents/id-connect-button.js', 'idframework/idcomponents/id-connect-button.js'],
+    ['components/id-connect-button.js', 'idframework/components/id-connect-button.js'],
   ];
   for (const [projectRel, baselineRel] of comparePairs) {
     const p = path.join(projectDir, projectRel);
@@ -235,10 +239,10 @@ function validatePredeliver(projectDir, skillRoot) {
       if (f.endsWith('.js')) scannedFiles.push(`commands/${f}`);
     }
   }
-  const idcompsDir = path.join(projectDir, 'idcomponents');
+  const idcompsDir = path.join(projectDir, 'components');
   if (fs.existsSync(idcompsDir)) {
     for (const f of fs.readdirSync(idcompsDir)) {
-      if (f.endsWith('.js')) scannedFiles.push(`idcomponents/${f}`);
+      if (f.endsWith('.js')) scannedFiles.push(`components/${f}`);
     }
   }
 

@@ -110,7 +110,7 @@ if (result?.txids?.length) {
 **加载组件**：
 ```javascript
 // 动态加载组件（用于路由或按需加载）
-await IDFramework.loadComponent('./idcomponents/id-buzz-card.js');
+await IDFramework.loadComponent('./components/id-buzz-card.js');
 ```
 
 **调用服务**：
@@ -166,7 +166,7 @@ const userStore = Alpine.store('user');
 
 #### 2. View 层（视图层）
 
-**位置**：`/idcomponents/` 目录
+**位置**：`/components/` 目录
 
 **职责**：
 - **展示数据**：从 Model 绑定数据并渲染
@@ -237,7 +237,7 @@ metaapp/
 ├── app.css                 # 全局样式、主题变量（必须）
 ├── idframework.js          # 框架核心（必须，内置）
 │
-├── idcomponents/           # 视图组件目录
+├── components/           # 视图组件目录
 │   ├── id-connect-button.js # 用户登录组件（必须）
 │   └── ...                 # 更多组件
 │
@@ -273,7 +273,7 @@ metaapp/
     - `app.js`：包含 ServiceLocator、Model 定义、命令注册
     - `app.css`：全局样式和 CSS Variables
     - `idframework.js`：框架核心（从项目根目录复制）
-    - `idcomponents/id-connect-button.js`：用户登录组件
+    - `components/id-connect-button.js`：用户登录组件
     - `commands/FetchUserCommand.js`：获取用户信息命令
     - `commands/CheckWebViewBridgeCommand.js`：WebView 检测命令
     - `commands/CheckBtcAddressSameAsMvcCommand.js`：BTC/MVC 地址检查命令
@@ -290,7 +290,7 @@ metaapp/
      - `app.js`（作为基础配置模板）
      - `app.css`（作为样式模板）
      - `idframework.js`（框架核心，必须与项目根目录保持一致）
-     - `idcomponents/id-connect-button.js`（用户登录组件）
+     - `components/id-connect-button.js`（用户登录组件）
      - `commands/FetchUserCommand.js`（获取用户信息）
      - `commands/CheckWebViewBridgeCommand.js`（WebView 检测）
      - `commands/CheckBtcAddressSameAsMvcCommand.js`（地址检查）
@@ -309,11 +309,11 @@ metaapp/
 | `app.js` | ServiceLocator、Model 定义、命令注册 | ✅ 必须 | **参考 `test/demo/app.js` 结构** |
 | `app.css` | 全局样式、CSS Variables 主题 | ✅ 必须 | **参考 `test/demo/app.css` 结构** |
 | `idframework.js` | 框架核心 | ✅ 必须 | **内置，从项目根目录复制，AI 不需要生成** |
-| `idcomponents/id-connect-button.js` | 用户登录组件 | ✅ 必须 | **从 `test/demo/idcomponents/` 复制** |
+| `components/id-connect-button.js` | 用户登录组件 | ✅ 必须 | **从 `test/demo/components/` 复制** |
 | `commands/FetchUserCommand.js` | 获取用户信息 | ✅ 必须 | **从 `test/demo/commands/` 复制** |
 | `commands/CheckWebViewBridgeCommand.js` | WebView 检测 | ✅ 必须 | **从 `test/demo/commands/` 复制** |
 | `commands/CheckBtcAddressSameAsMvcCommand.js` | 地址检查 | ✅ 必须 | **从 `test/demo/commands/` 复制** |
-| `idcomponents/` | 视图组件 | ⚠️ 按需 | AI 根据需求生成 |
+| `components/` | 视图组件 | ⚠️ 按需 | AI 根据需求生成 |
 | `commands/` | 业务命令 | ⚠️ 按需 | AI 根据需求生成 |
 
 ---
@@ -372,12 +372,12 @@ metaapp/
   </div>
 
   <!-- 5. 基础依赖 (必须，使用相对路径) -->
-  <script src="./idconfig.js"></script>
-  <script src="./idutils.js"></script>
+  <script src="./utils/idconfig.js"></script>
+  <script src="./utils/idutils.js"></script>
 
   <!-- 5.1 可选依赖（按需） -->
   <!-- 仅当命令中需要使用 MetaIDJs.mvc / MetaIDJs.TxComposer 时才引入 -->
-  <!-- <script src="./metaid.js"></script> -->
+  <!-- <script src="./vendors/metaid.js"></script> -->
 
   <!-- 6. 框架核心 (必须，使用相对路径) -->
   <script type="module" src="./idframework.js"></script>
@@ -394,8 +394,8 @@ metaapp/
 2. **加载顺序**：
    - Alpine.js 必须最先加载（使用 `defer`）
    - `alpine:init` 脚本必须在 Alpine.js 之后、DOM 之前
-   - `idconfig.js`、`idutils.js` 必须在 `idframework.js` 之前加载
-   - 仅在需要 `MetaIDJs`（`mvc` / `TxComposer`）时才引入 `metaid.js`，且同样应在 `idframework.js` 之前加载
+   - `utils/idconfig.js`、`utils/idutils.js` 必须在 `idframework.js` 之前加载
+   - 仅在需要 `MetaIDJs`（`mvc` / `TxComposer`）时才引入 `vendors/metaid.js`，且同样应在 `idframework.js` 之前加载
    - `idframework.js` 必须在 `app.js` 之前
 3. **组件引入**：
    - 基础组件可以在 `index.html` 中静态引入
@@ -686,7 +686,7 @@ body {
 
 ### 组件职责
 
-`/idcomponents/` 目录下的组件是**视图层**，职责是：
+`/components/` 目录下的组件是**视图层**，职责是：
 
 1. **展示数据**：从 Model（Alpine stores）绑定数据并渲染
 2. **派发事件**：用户交互时派发事件，不处理业务逻辑
@@ -832,7 +832,7 @@ if (!customElements.get('id-my-component')) {
 在 `index.html` 中直接引入：
 
 ```html
-<script type="module" src="./idcomponents/id-connect-button.js"></script>
+<script type="module" src="./components/id-connect-button.js"></script>
 
 <body>
   <id-connect-button></id-connect-button>
@@ -850,7 +850,7 @@ async execute({ payload, stores, delegate }) {
   
   if (route === '/home') {
     // 动态加载组件
-    await IDFramework.loadComponent('./idcomponents/id-home-page.js');
+    await IDFramework.loadComponent('./components/id-home-page.js');
     stores.app.currentView = 'home';
   }
 }
@@ -1423,13 +1423,13 @@ IDFramework.IDController.register('newCommand', './commands/NewCommand.js');
 
 #### 步骤 3：创建组件文件（如果需要）
 
-在 `/idcomponents/` 目录创建组件文件，遵循组件模板。
+在 `/components/` 目录创建组件文件，遵循组件模板。
 
 #### 步骤 4：更新 index.html
 
 如果需要静态引入组件：
 ```html
-<script type="module" src="./idcomponents/id-new-component.js"></script>
+<script type="module" src="./components/id-new-component.js"></script>
 ```
 
 如果需要使用组件：
@@ -1442,8 +1442,8 @@ IDFramework.IDController.register('newCommand', './commands/NewCommand.js');
 生成代码后，AI 需要检查：
 
 - [ ] 所有路径使用相对路径（`./` 开头）
-- [ ] `index.html` 中正确引入了 `idconfig.js`、`idutils.js`、`idframework.js`、`app.js`
-- [ ] 若业务使用 `mvc` / `TxComposer`，已按需引入 `metaid.js`
+- [ ] `index.html` 中正确引入了 `utils/idconfig.js`、`utils/idutils.js`、`idframework.js`、`app.js`
+- [ ] 若业务使用 `mvc` / `TxComposer`，已按需引入 `vendors/metaid.js`
 - [ ] `app.js` 中注册了所有自定义命令
 - [ ] 组件文件名以 `id-` 开头
 - [ ] 组件使用 Shadow DOM 和 CSS Variables
@@ -1462,7 +1462,7 @@ IDFramework.IDController.register('newCommand', './commands/NewCommand.js');
 
 **步骤**：
 
-1. **创建组件** `idcomponents/id-user-list.js`：
+1. **创建组件** `components/id-user-list.js`：
 ```javascript
 class IdUserList extends HTMLElement {
   constructor() {
@@ -1520,7 +1520,7 @@ customElements.define('id-user-list', IdUserList);
 
 2. **在 index.html 中引入**：
 ```html
-<script type="module" src="./idcomponents/id-user-list.js"></script>
+<script type="module" src="./components/id-user-list.js"></script>
 <body>
   <id-user-list></id-user-list>
 </body>
@@ -1590,7 +1590,7 @@ await IDFramework.dispatch('fetchUserList');
 
 **步骤**：
 
-1. **创建页面组件** `idcomponents/id-user-detail-page.js`：
+1. **创建页面组件** `components/id-user-detail-page.js`：
 ```javascript
 class IdUserDetailPage extends HTMLElement {
   constructor() {
@@ -1650,7 +1650,7 @@ async execute({ payload, stores, delegate }) {
     const userId = route.split('/user/')[1];
     stores.app.routeParams = { id: userId };
     
-    await IDFramework.loadComponent('./idcomponents/id-user-detail-page.js');
+    await IDFramework.loadComponent('./components/id-user-detail-page.js');
     stores.app.currentView = 'user-detail-page';
   }
 }
