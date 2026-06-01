@@ -1331,7 +1331,10 @@ const GigSquareMyServicesModal: React.FC<GigSquareMyServicesModalProps> = ({
         )}
 
         {modifyTargetService && modifyDraft && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/55 p-4">
+          <div
+            data-slot="gig-square-modify-overlay"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4"
+          >
             <div
               data-slot="gig-square-modify-panel"
               className="flex max-h-[calc(100svh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-claude-border bg-[var(--bg-main)] shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface"

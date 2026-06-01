@@ -8,6 +8,9 @@ const source = readFileSync(
 );
 
 test('GigSquare modify service modal keeps header and actions fixed while the edit body scrolls', () => {
+  assert.match(source, /data-slot="gig-square-modify-overlay"/);
+  assert.match(source, /fixed inset-0 z-\[60\]/);
+  assert.doesNotMatch(source, /data-slot="gig-square-modify-overlay"[\s\S]{0,160}absolute inset-0 z-20/);
   assert.match(source, /data-slot="gig-square-modify-panel"/);
   assert.match(source, /max-h-\[calc\(100svh-2rem\)\]/);
   assert.match(source, /flex-col/);
