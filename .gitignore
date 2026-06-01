@@ -78,6 +78,10 @@ resources/PortableGit-*.7z.exe
 
 # Removed skill — do not re-add to repo (accidental skill)
 SKILLs/maintain-idbots-project/
+SKILLs/metaid-master-wiki/
+
+# Local generated skills for development only; never bundled into release.
+.local-skills/
 
 # SKILLs runtime files
 SKILLs/**/.connection
