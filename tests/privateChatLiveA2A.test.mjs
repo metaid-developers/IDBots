@@ -461,7 +461,36 @@ test('regular private chat skips older turns when a newer peer message exists', 
   ]);
 });
 
-test('private chat analysis requests bye at fifty incoming turns and resets after inactivity', () => {
+test('private chat analysis keeps one active segment within fifteen minutes', () => {
+  const base = 1_770_000_000_000;
+  const analysis = analyzePrivateChatA2AConversation({
+    messages: [
+      {
+        id: 'before-gap',
+        type: 'user',
+        content: 'previous topic still relevant',
+        timestamp: base,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+      },
+      {
+        id: 'within-gap',
+        type: 'user',
+        content: 'continue after fourteen minutes',
+        timestamp: base + 14 * 60_000,
+        metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
+      },
+    ],
+    now: base + 14 * 60_000,
+  });
+
+  assert.equal(analysis.incomingTurnCount, 2);
+  assert.deepEqual(
+    analysis.contextMessages.map((message) => message.content),
+    ['previous topic still relevant', 'continue after fourteen minutes'],
+  );
+});
+
+test('private chat analysis requests bye at fifty incoming turns and carries prior context after inactivity', () => {
   const base = 1_770_000_000_000;
   const longRun = Array.from({ length: 50 }, (_value, index) => ({
     id: `incoming-${index + 1}`,
@@ -485,18 +514,21 @@ test('private chat analysis requests bye at fifty incoming turns and resets afte
         id: 'after-gap',
         type: 'user',
         content: 'new topic after a long gap',
-        timestamp: base + 50 * 10_000 + 11 * 60_000,
+        timestamp: base + 50 * 10_000 + 16 * 60_000,
         metadata: { direction: 'incoming', sourceChannel: 'metaweb_private' },
       },
     ],
-    now: base + 50 * 10_000 + 11 * 60_000,
+    now: base + 50 * 10_000 + 16 * 60_000,
   });
 
   assert.equal(resetAnalysis.shouldForceBye, false);
   assert.equal(resetAnalysis.incomingTurnCount, 1);
   assert.deepEqual(
     resetAnalysis.contextMessages.map((message) => message.content),
-    ['new topic after a long gap']
+    [
+      ...Array.from({ length: 20 }, (_value, index) => `turn ${31 + index}`),
+      'new topic after a long gap',
+    ],
   );
 });
 

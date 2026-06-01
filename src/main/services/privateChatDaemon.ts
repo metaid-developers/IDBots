@@ -79,10 +79,11 @@ import {
 } from './simplemsgPeerConversation';
 
 const POLL_INTERVAL_MS = 5_000;
-const PRIVATE_CHAT_SESSION_GAP_MS = 10 * 60 * 1000;
+const PRIVATE_CHAT_SESSION_GAP_MS = 15 * 60 * 1000;
 const PRIVATE_CHAT_MAX_INCOMING_TURNS = 30;
 const PRIVATE_CHAT_CLOSING_PHASE_TURNS = 20;
 const PRIVATE_CHAT_CONTEXT_MAX_MESSAGES = 80;
+const PRIVATE_CHAT_PREVIOUS_SEGMENT_CONTEXT_MESSAGES = 20;
 const RATING_PROMPT_ORIGINAL_REQUEST_MAX_CHARS = 1200;
 const RATING_PROMPT_SERVICE_RESULT_MAX_CHARS = 6000;
 const RATING_PROMPT_EXCERPT_TAIL_CHARS = 1200;
@@ -684,6 +685,7 @@ export function analyzePrivateChatA2AConversation(params: {
     .slice()
     .sort((a, b) => a.timestamp - b.timestamp);
   let activeSegment: PrivateChatA2AContextMessage[] = [];
+  let previousSegmentTail: PrivateChatA2AContextMessage[] = [];
   let previousTimestamp: number | null = null;
 
   for (const message of sortedMessages) {
@@ -692,6 +694,7 @@ export function analyzePrivateChatA2AConversation(params: {
       previousTimestamp != null
       && timestamp - previousTimestamp > PRIVATE_CHAT_SESSION_GAP_MS
     ) {
+      previousSegmentTail = activeSegment.slice(-PRIVATE_CHAT_PREVIOUS_SEGMENT_CONTEXT_MESSAGES);
       activeSegment = [];
     }
     previousTimestamp = timestamp;
@@ -702,6 +705,7 @@ export function analyzePrivateChatA2AConversation(params: {
     const content = String(message.content || '').trim();
     if (!content) continue;
     if (direction === 'outgoing' && isByeText(content)) {
+      previousSegmentTail = [];
       activeSegment = [];
       continue;
     }
@@ -717,7 +721,15 @@ export function analyzePrivateChatA2AConversation(params: {
     });
   }
 
-  const contextMessages = activeSegment.slice(-PRIVATE_CHAT_CONTEXT_MAX_MESSAGES);
+  const activeContextMessages = activeSegment.slice(-PRIVATE_CHAT_CONTEXT_MAX_MESSAGES);
+  const previousContextSlots = Math.max(0, PRIVATE_CHAT_CONTEXT_MAX_MESSAGES - activeContextMessages.length);
+  const previousContextMessages = previousContextSlots > 0
+    ? previousSegmentTail.slice(-Math.min(PRIVATE_CHAT_PREVIOUS_SEGMENT_CONTEXT_MESSAGES, previousContextSlots))
+    : [];
+  const contextMessages = [
+    ...previousContextMessages,
+    ...activeContextMessages,
+  ];
   const incomingTurnCount = activeSegment.filter((message) => message.direction === 'incoming').length;
   return {
     contextMessages,
