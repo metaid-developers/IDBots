@@ -60,7 +60,7 @@
     },
     "metabot-create-metaapp": {
       "order": 20,
-      "version": "1.0.0",
+      "version": "1.0.1",
       "creator-metaid": "",
       "installedAt": 1740969600000,
       "enabled": true
