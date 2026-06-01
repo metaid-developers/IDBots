@@ -251,7 +251,7 @@ function buildPrivateMsgPayload(to: string, encryptedContent: string, replyPin =
     to,
     timestamp: Math.floor(Date.now() / 1000),
     content: encryptedContent,
-    contentType: 'text/plain',
+    contentType: 'text/markdown',
     encrypt: 'ecdh',
     replyPin: replyPin || '',
   };

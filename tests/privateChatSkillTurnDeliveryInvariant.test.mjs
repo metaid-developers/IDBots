@@ -286,3 +286,71 @@ test('regular private chat broadcast failures keep the inbound skill reply retry
   assert.equal(assistantMessage?.metadata?.privateChatDeliveryStatus, 'failed');
   assert.match(String(assistantMessage?.metadata?.privateChatDeliveryError || ''), /simulated broadcast failure/);
 });
+
+test('regular private chat replies emit markdown simplemsg payloads without changing the outer pin content type', async () => {
+  const { db, row } = createPrivateChatDbHarness();
+  const { store: coworkStore } = createCoworkStoreHarness();
+  const { metabot, store: metabotStore } = createMetabotStoreHarness();
+  const logs = [];
+  const txid = 'b'.repeat(64);
+  let saveCount = 0;
+  let capturedCreatePinPayload = null;
+
+  startPrivateChatDaemon(
+    db,
+    () => {
+      saveCount += 1;
+    },
+    coworkStore,
+    metabotStore,
+    {
+      on() {},
+      off() {},
+    },
+    async (_metabotStore, metabotId, payload) => {
+      assert.equal(metabotId, metabot.id);
+      capturedCreatePinPayload = payload;
+      return { txids: [txid], pinId: `${txid}i0` };
+    },
+    (message) => logs.push(message),
+    null,
+    undefined,
+    undefined,
+    () => ({ respondToStrangerPrivateChats: true }),
+    undefined,
+    undefined,
+    undefined,
+    async () => ({
+      prompt: '<available_skills><skill><id>metaid-master-wiki</id></skill></available_skills>',
+      activeSkillIds: ['metaid-master-wiki'],
+    }),
+    async () => ({
+      replyText: 'PoP 的全称是 **Proof of PIN**',
+      assistantMessageId: null,
+    }),
+  );
+
+  try {
+    await waitFor(() => logs.some((message) => message.includes('Replied to')));
+  } finally {
+    await stopPrivateChatDaemon({ waitForTick: true });
+  }
+
+  assert.equal(row.is_processed, 1);
+  assert.equal(saveCount, 1);
+  assert.equal(capturedCreatePinPayload?.path, '/protocols/simplemsg');
+  assert.equal(capturedCreatePinPayload?.contentType, 'application/json');
+
+  const simplemsgPayload = JSON.parse(String(capturedCreatePinPayload?.payload || ''));
+  assert.deepEqual(
+    Object.keys(simplemsgPayload).sort(),
+    ['content', 'contentType', 'encrypt', 'replyPin', 'timestamp', 'to'].sort(),
+  );
+  assert.equal(simplemsgPayload.to, 'peer-global');
+  assert.equal(typeof simplemsgPayload.timestamp, 'number');
+  assert.equal(typeof simplemsgPayload.content, 'string');
+  assert.ok(simplemsgPayload.content.length > 0);
+  assert.equal(simplemsgPayload.contentType, 'text/markdown');
+  assert.equal(simplemsgPayload.encrypt, 'ecdh');
+  assert.equal(simplemsgPayload.replyPin, '');
+});
