@@ -11303,7 +11303,9 @@ if (!gotTheLock) {
         mrc20Id,
         outputType,
       };
-      const draftValidation = validateGigSquareModifyDraft(draft);
+      const draftValidation = validateGigSquareModifyDraft(draft, {
+        installedSkills: getSkillManager().listSkills(),
+      });
       if (!draftValidation.ok) {
         return { success: false, error: draftValidation.error, errorCode: draftValidation.errorCode };
       }
@@ -11561,7 +11563,9 @@ if (!gotTheLock) {
         metadata: hasMetadataParam ? toSafeString(params?.metadata) : toSafeString(currentService.metadata),
         outputType: toSafeString(params?.outputType).trim() || 'text',
       };
-      const draftValidation = validateGigSquareModifyDraft(draft);
+      const draftValidation = validateGigSquareModifyDraft(draft, {
+        installedSkills: getSkillManager().listSkills(),
+      });
       if (!draftValidation.ok) {
         return { success: false, error: draftValidation.error, errorCode: draftValidation.errorCode };
       }

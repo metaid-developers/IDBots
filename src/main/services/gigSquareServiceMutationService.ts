@@ -343,7 +343,59 @@ export const normalizeGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigS
   };
 };
 
-export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSquareMutationValidationResult => {
+/**
+ * Minimal shape of an installed host skill as reported by
+ * `SkillManager.listSkills()`. Only `id` (skill directory basename) and
+ * `name` (SKILL.md frontmatter name, falling back to the directory basename)
+ * are needed for the publish-time availability cross-check.
+ */
+export interface GigSquareInstalledSkillDescriptor {
+  id: string;
+  name: string;
+}
+
+/**
+ * Pure cross-check that mirrors the runtime skill resolution semantics used
+ * when an order is executed (`SkillManager.resolveSkillById` /
+ * `resolveSkillByName`): a claimed provider skill is considered available on
+ * this host when it matches an installed skill by id (with `_`/`-` variant
+ * normalization) or by case-insensitive name.
+ *
+ * Returns the claimed skills that are NOT installed on this host, in the
+ * order they were declared. The caller decides whether to reject the
+ * publish/modify draft; this helper only computes the gap.
+ */
+export const resolveMissingProviderSkills = (
+  providerSkills: string[],
+  installedSkills: GigSquareInstalledSkillDescriptor[],
+): string[] => {
+  const claims = normalizeProviderSkillList(providerSkills);
+  if (claims.length === 0 || installedSkills.length === 0) return claims;
+
+  const exactMatches = new Set<string>();
+  const idCandidates = new Set<string>();
+  const nameIndex = new Set<string>();
+  for (const skill of installedSkills) {
+    exactMatches.add(skill.id);
+    exactMatches.add(skill.name.trim());
+    for (const candidate of [skill.id, skill.id.replace(/_/g, '-'), skill.id.replace(/-/g, '_')]) {
+      if (candidate) idCandidates.add(candidate);
+    }
+    const normalizedName = skill.name.trim().toLowerCase();
+    if (normalizedName) nameIndex.add(normalizedName);
+  }
+
+  return claims.filter((claim) => {
+    if (exactMatches.has(claim)) return false;
+    if (idCandidates.has(claim)) return false;
+    return !nameIndex.has(claim.toLowerCase());
+  });
+};
+
+export const validateGigSquareModifyDraft = (
+  draft: GigSquareModifyDraft,
+  options?: { installedSkills?: GigSquareInstalledSkillDescriptor[] },
+): GigSquareMutationValidationResult => {
   const normalized = normalizeGigSquareModifyDraft(draft);
   const rawPaymentTiming = toSafeString(draft.paymentTiming).trim().toLowerCase();
   const rawPrice = toSafeString(draft.price).trim();
@@ -396,6 +448,22 @@ export const validateGigSquareModifyDraft = (draft: GigSquareModifyDraft): GigSq
         ok: false,
         error: error instanceof Error ? error.message : 'currency is invalid',
         errorCode: 'currency_invalid',
+      };
+    }
+  }
+
+  // Host-side availability cross-check: a publish/modify must not declare
+  // provider skills this host cannot actually execute. Runs last so existing
+  // validation precedence is preserved, and only when the caller provides the
+  // installed-skill list (legacy callers without the option keep prior
+  // behavior).
+  if (options?.installedSkills) {
+    const missingSkills = resolveMissingProviderSkills(normalized.providerSkills, options.installedSkills);
+    if (missingSkills.length > 0) {
+      return {
+        ok: false,
+        error: `providerSkill is not available on this host: ${missingSkills.join(', ')}`,
+        errorCode: 'provider_skill_not_available',
       };
     }
   }

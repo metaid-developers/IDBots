@@ -14,10 +14,11 @@ const {
   resolveGigSquareSettlementPaymentAddress,
   buildGigSquareRevokeMetaidPayload,
   buildGigSquareModifyMetaidPayload,
-} = require('../dist-electron/services/gigSquareServiceMutationService.js');
+  resolveMissingProviderSkills,
+} = require('../dist-electron/main/services/gigSquareServiceMutationService.js');
 const {
   normalizeGigSquareSettlementDraft,
-} = require('../dist-electron/shared/gigSquareSettlementAsset.js');
+} = require('../dist-electron/main/shared/gigSquareSettlementAsset.js');
 
 test('validateGigSquareServiceMutation rejects missing target service', () => {
   const result = validateGigSquareServiceMutation({
@@ -594,4 +595,129 @@ test('buildGigSquareLocalServiceRecordForModify creates a local overlay row when
   assert.equal(record.displayName, 'Weather Pro');
   assert.equal(record.outputType, 'image');
   assert.equal(record.revokedAt, null);
+});
+
+test('validateGigSquareModifyDraft rejects declared provider skills that are not installed on this host', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'seedance',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  }, {
+    installedSkills: [{ id: 'weather', name: 'weather' }],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'provider_skill_not_available');
+  assert.match(result.error, /seedance/);
+});
+
+test('validateGigSquareModifyDraft lists only the missing skills in the availability error', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkills: ['seedance', 'seedream'],
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  }, {
+    installedSkills: [{ id: 'seedream', name: 'seedream' }],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'provider_skill_not_available');
+  assert.match(result.error, /seedance/);
+  assert.doesNotMatch(result.error, /seedream/);
+});
+
+test('validateGigSquareModifyDraft accepts declared provider skills that are installed on this host', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'seedance',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  }, {
+    installedSkills: [{ id: 'seedance', name: 'seedance' }],
+  });
+
+  assert.equal(result.ok, true);
+});
+
+test('validateGigSquareModifyDraft matches installed skills by case-insensitive name (runtime parity)', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'Seedance',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  }, {
+    installedSkills: [{ id: 'seedance', name: 'seedance' }],
+  });
+
+  assert.equal(result.ok, true);
+});
+
+test('validateGigSquareModifyDraft matches installed skills by id with _/- normalization (runtime parity)', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'web-search',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  }, {
+    installedSkills: [{ id: 'web_search', name: 'Web Search' }],
+  });
+
+  assert.equal(result.ok, true);
+});
+
+test('validateGigSquareModifyDraft rejects every claim when the host has no installed skills', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'seedance',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  }, {
+    installedSkills: [],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'provider_skill_not_available');
+});
+
+test('validateGigSquareModifyDraft without availability options keeps legacy behavior', () => {
+  const result = validateGigSquareModifyDraft({
+    serviceName: 'svc',
+    displayName: 'SVC',
+    description: 'desc',
+    providerSkill: 'seedance',
+    price: '0',
+    currency: 'SPACE',
+    outputType: 'text',
+  });
+
+  assert.equal(result.ok, true);
+});
+
+test('resolveMissingProviderSkills returns only the claims not installed on the host', () => {
+  const missing = resolveMissingProviderSkills(
+    ['seedance', 'weather', 'Seedance'],
+    [{ id: 'weather', name: 'weather' }],
+  );
+
+  assert.deepEqual(missing, ['seedance', 'Seedance']);
 });
