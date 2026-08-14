@@ -13886,7 +13886,7 @@ ipcMain.handle('gigSquare:sendOrder', async (_event, params: {
     startupLog('fee rate store init scheduled');
 
     startupLog('metaid rpc server start begin');
-    metaidRpcServer = startMetaidRpcServer(getMetabotStore, getStore, {
+    metaidRpcServer = startMetaidRpcServer(getMetabotStore, getStore, getCoworkStore, {
       controlBotBrowserTabs: (command) => getBotBrowserTabBridge().execute(command),
     });
     startupLog('metaid rpc server started');

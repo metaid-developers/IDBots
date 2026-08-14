@@ -15,6 +15,8 @@ import {
 } from '@metalet/utxo-wallet-service';
 import type { SqliteStore } from '../sqliteStore';
 import type { MetabotStore } from '../metabotStore';
+import type { MemoryBackend } from '../memory/memoryBackend';
+import { handleMemoryCreateRoute, handleMemoryListRoute } from './memoryGatewayRoutes';
 import {
   createPin,
   getPinData,
@@ -114,6 +116,8 @@ const GROUP_TASK_SEARCH_REMOTE_PATH = '/api/idbots/group-task/search-remote-cand
 const GROUP_TASK_SEARCH_CANDIDATES_PATH = '/api/idbots/group-task/search-candidates';
 const GROUP_TASK_INVITE_REMOTE_PATH = '/api/idbots/group-task/invite-remote';
 const LIST_METABOTS_PATH = '/api/idbots/list-metabots';
+const MEMORY_LIST_PATH = '/api/idbots/memory/list';
+const MEMORY_CREATE_PATH = '/api/idbots/memory/create';
 const BOT_BROWSER_URI_SCHEMES = new Set(['metaid', 'pin', 'metaapp', 'map', 'metafile']);
 
 export type BotBrowserRpcOpenRequest = {
@@ -247,6 +251,7 @@ function recordRpcAuthFailure(origin: string | undefined): boolean {
 export function startMetaidRpcServer(
   getMetabotStore: () => MetabotStore,
   getStore: () => SqliteStore,
+  getMemoryBackend: () => MemoryBackend,
   options: MetaidRpcServerOptions = {}
 ): http.Server {
   setMetaidCoreStore(getStore);
@@ -2155,6 +2160,33 @@ export function startMetaidRpcServer(
         res.writeHead(500);
         res.end(JSON.stringify({ success: false, error: message }));
       }
+      return;
+    }
+
+    // Phase 4 (SDD R4.1): scoped `user_memories` read/write over the HTTP
+    // gateway, so the DSH engine can read and write a MetaBot's long-term
+    // memory. The validation + mapping logic lives in memoryGatewayRoutes.ts
+    // (pure functions, unit-testable without Electron); these handlers only
+    // collect the body, delegate, and write back the result.
+    if (req.method === 'POST' && pathname === MEMORY_LIST_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      const result = handleMemoryListRoute(getMemoryBackend, body);
+      res.writeHead(result.status);
+      res.end(JSON.stringify(result.body));
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === MEMORY_CREATE_PATH) {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      const result = handleMemoryCreateRoute(getMemoryBackend, body);
+      res.writeHead(result.status);
+      res.end(JSON.stringify(result.body));
       return;
     }
 

@@ -115,6 +115,16 @@ async function startRpcServerForTest() {
         return () => {};
       },
     }),
+    // Phase 4: memory routes are not exercised here; a stub satisfies the
+    // new MemoryBackend getter argument.
+    () => ({
+      listUserMemories() {
+        return [];
+      },
+      createUserMemory() {
+        throw new Error('memory routes are not exercised in this test');
+      },
+    }),
   );
 
   await new Promise((resolve, reject) => {
