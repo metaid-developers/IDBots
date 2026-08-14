@@ -893,6 +893,31 @@ export class DreamService {
         );
       }
     }
+
+    // L3b procedural-memory channel (SDD R4.2/R4.3): each capability learning
+    // the model distilled today becomes a 'draft' row in capability_drafts.
+    // This never touches the existing skill tables — validation/promotion into
+    // real skills is a later phase. A failure here must not fail the dream run.
+    const capabilityLearnings = Array.isArray(output.capabilityLearnings) ? output.capabilityLearnings : [];
+    if (capabilityLearnings.length > 0) {
+      try {
+        const inserted = this.deps.coworkStore.insertCapabilityDrafts(
+          metabotId,
+          date,
+          capabilityLearnings,
+        );
+        if (inserted > 0) {
+          console.log(
+            `[DreamService] Capability drafts for metabot ${metabotId} date ${date}: inserted=${inserted}`,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `[DreamService] Capability draft persistence failed for metabot ${metabotId} date ${date}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 }
 

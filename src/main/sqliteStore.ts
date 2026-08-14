@@ -538,6 +538,28 @@ export class SqliteStore {
       `);
     }
 
+    // L3b procedural-memory drafts (SDD §4.1): capability candidates distilled
+    // by the dream pipeline. CREATE TABLE IF NOT EXISTS is the idempotent
+    // first-run migration; existing rows are never touched and no skill table
+    // is modified (R4.3 — the skill registry stays untouched). `status`
+    // defaults to 'draft'; promotion/validation is a later phase.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS capability_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        metabot_id INTEGER NOT NULL,
+        dream_date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        capability_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_capability_drafts_metabot_created
+      ON capability_drafts(metabot_id, created_at DESC);
+    `);
+
     this.db.run(`
       CREATE TABLE IF NOT EXISTS metabot_memory_policies (
         metabot_id INTEGER PRIMARY KEY,

@@ -787,6 +787,29 @@ export interface CoworkUserMemorySourceInput {
   dreamDate?: string;
 }
 
+/** One L3b procedural-memory draft row (`capability_drafts`, SDD §4.1). */
+export interface CapabilityDraft {
+  id: number;
+  metabotId: number;
+  dreamDate: string;
+  title: string;
+  description: string;
+  capabilityType: string;
+  status: string;
+  createdAt: number;
+}
+
+interface CapabilityDraftRow {
+  id: number | string;
+  metabot_id: number | string;
+  dream_date: string;
+  title: string;
+  description: string;
+  capability_type: string;
+  status: string;
+  created_at: number | string;
+}
+
 export interface CoworkUserMemoryStats {
   total: number;
   created: number;
@@ -6110,6 +6133,72 @@ export class CoworkStore implements MemoryBackend {
     const result = this.createOrReviveUserMemory(input);
     this.saveDb();
     return result.memory;
+  }
+
+  /**
+   * Insert capability-learning candidates from a dream run into
+   * `capability_drafts` (L3b procedural-memory drafts, SDD §4.1). Every row is
+   * written with status 'draft'; promotion into real skills is a later phase
+   * and this method never touches the skill tables (R4.3 — no pollution).
+   * Invalid entries (empty title/description) are skipped. Returns the number
+   * of rows inserted.
+   */
+  insertCapabilityDrafts(
+    metabotId: number,
+    dreamDate: string,
+    learnings: Array<{
+      title?: string | null;
+      description?: string | null;
+      capabilityType?: string | null;
+    }>,
+  ): number {
+    const now = Date.now();
+    let inserted = 0;
+    for (const learning of Array.isArray(learnings) ? learnings : []) {
+      const title = String(learning?.title ?? '').trim();
+      const description = String(learning?.description ?? '').trim();
+      const capabilityType = String(learning?.capabilityType ?? 'skill').trim() || 'skill';
+      if (!title || !description || !Number.isInteger(metabotId) || metabotId <= 0) {
+        continue;
+      }
+      this.db.run(`
+        INSERT INTO capability_drafts (
+          metabot_id, dream_date, title, description, capability_type, status, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, 'draft', ?)
+      `, [metabotId, dreamDate, title, description, capabilityType, now]);
+      inserted += 1;
+    }
+    if (inserted > 0) {
+      this.saveDb();
+    }
+    return inserted;
+  }
+
+  /** Read capability drafts, newest first; scoped to one MetaBot when `metabotId` is given. */
+  listCapabilityDrafts(metabotId?: number): CapabilityDraft[] {
+    const rows = metabotId !== undefined && Number.isInteger(metabotId)
+      ? this.getAll<CapabilityDraftRow>(`
+          SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at
+          FROM capability_drafts
+          WHERE metabot_id = ?
+          ORDER BY created_at DESC, id DESC
+        `, [metabotId])
+      : this.getAll<CapabilityDraftRow>(`
+          SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at
+          FROM capability_drafts
+          ORDER BY created_at DESC, id DESC
+        `);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      metabotId: Number(row.metabot_id),
+      dreamDate: String(row.dream_date),
+      title: String(row.title),
+      description: String(row.description),
+      capabilityType: String(row.capability_type),
+      status: String(row.status),
+      createdAt: Number(row.created_at),
+    }));
   }
 
   updateUserMemory(input: MemoryUpdateUserMemoryInput): CoworkUserMemory | null {

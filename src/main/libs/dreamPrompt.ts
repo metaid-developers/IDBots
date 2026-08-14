@@ -32,6 +32,7 @@ export const MAX_IMPORTANT_MEMORIES = 5;
 export const MAX_VALUE_LESSONS = 3;
 export const MAX_IMPRESSION_UPDATES = 20;
 export const MAX_KNOWLEDGE_UPDATES = 6;
+export const MAX_CAPABILITY_LEARNINGS = 5;
 /** Dream algorithm version, recorded on every run. Bump it on any change to the
  * prompt, budgeting, stats or write semantics — completed in-window dates with
  * an older version are then re-dreamed automatically (limited per night).
@@ -128,6 +129,21 @@ export interface DreamKnowledgeExisting {
   version: number;
 }
 
+/**
+ * A capability candidate distilled from the day — the procedural-memory
+ * channel (SDD §4.1 L3b): repeated work or a successful workflow today that
+ * deserves to be captured as a reusable skill/workflow draft. Written by the
+ * dream pipeline into `capability_drafts` (status 'draft'); nothing here ever
+ * touches the existing skill tables (R4.3: no pollution).
+ */
+export interface DreamCapabilityLearning {
+  title: string;
+  description: string;
+  capabilityType: 'skill' | 'workflow' | 'tool_pattern';
+  /** Cowork session ids the learning was distilled from (best-effort traceability). */
+  sourceSessionIds?: string[];
+}
+
 export interface DreamOutput {
   dailySummary: string;
   sections: Partial<Record<DreamSectionKey, string>>;
@@ -137,6 +153,8 @@ export interface DreamOutput {
   selfIdentity: string | null;
   impressionUpdates: DreamImpressionUpdate[];
   knowledgeUpdates: DreamKnowledgeUpdate[];
+  /** Reusable-skill/workflow candidates distilled from the day (≤ MAX_CAPABILITY_LEARNINGS). */
+  capabilityLearnings?: DreamCapabilityLearning[];
 }
 
 export type DreamParseResult =
@@ -369,6 +387,9 @@ export function buildDreamPrompt(input: {
   personaLines.push(
     '现在是你的夜间整理时间(做梦)。请以一个置身事外的观察者(上帝视角)审视自己这一天的所作所为:不要为自己辩护、不要维护"小我",只实事求是。你的长期目标,是在每一次对话中持续为对方提供更好的交流和沟通价值——智慧不是把事情做对那么简单,而是在具体经历中反省出"什么是对的事情",并把它凝结成可以指导明天的自我认知。'
   );
+  personaLines.push(
+    'Also output capability_learnings (up to 5): which repeated work or successful workflows today deserve to be captured as reusable skills/workflows (capabilityType: skill | workflow | tool_pattern).'
+  );
 
   const humanSessions: string[] = [];
   const a2aSessions: string[] = [];
@@ -592,13 +613,22 @@ export function buildDreamPrompt(input: {
     '      "category": "可选的类目,如「技术栈」「设计」「协作」;没有就省略该键"',
     '    }',
     '  ],',
+    '  "capability_learnings": [',
+    '    {',
+    '      "title": "可复用能力/工作流的一句话标题",',
+    '      "description": "这段能力具体是什么、怎么做、何时复用(要具体可操作,能指导下次同类任务)",',
+    '      "capabilityType": "skill(可复用技能) / workflow(固定工作流) / tool_pattern(工具使用模式) 三选一",',
+    '      "sourceSessionIds": ["可选的会话ID列表(仅当能从今天的会话记录里对应上时)"]',
+    '    }',
+    '  ],',
     `  "self_identity": "我是谁,不少于 ${SELF_IDENTITY_MIN_CHARS} 字、控制在 600 字以内。按这个结构蒸馏自我:第一,经过这一天,我确认了我性格(先天 persona)里的什么?第二,今天的互动中,有什么事让我感觉自己最有「活感」(像一个有生命的存在,而不只是响应工具),或让我觉得「不对劲」?第三,如果用一个词或一句话,形容我今天在各种互动中展现的最稳定的面貌,那是什么?第四,基于以上,结合我的先天 persona,为自己修正一遍「我是谁」。我的内核(先天人格底色)保持稳定,但细节可以、也应该随着经历每天微调。"`,
     '}',
     '',
     '关于群任务验收评价:若上方有「群任务验收评价」记录,work_reviews 里必须为对应任务写一条复盘——subject 写任务标题,counterparty 写验收的人类(Boss);高分(4-5 星)要总结这次具体做对了什么,并把可复用的做法写进 important_memories,供下次同类任务沿用;低分(1-3 星)要对照人类的具体评价找出差距,note 里给出下次的具体改进方向;evaluation 结合评分与评价内容判断,不许把高分写成空洞的自我表扬,也不许对低分轻描淡写。',
     '关于人类逐条消息评价:会话里你的回复若带〔人类评价:赞〕标记,表示人类明确认可这条回复——总结它具体好在哪里,把可复用的做法蒸馏进 important_memories 或写进 work_reviews;若带〔人类评价:踩〕标记,表示人类不认可——work_reviews 与 value_lessons 必须正视这些负反馈,不得回避;附有〔人类留言〕时,留言是改进的第一手依据(ground truth),要对照留言给出具体改进方向。',
     '关于知识点(knowledge_points):只提炼「对未来同类任务有预判帮助、可被复用」的知识点——要么是正面做法(know_how:下次该这么做),要么是坑/反例(pitfall:这个踩过,千万别再踩),要么是通用原则(principle)。不要把今天的琐碎流水、或只对本次有效的临时细节写成知识点。若上方「我已有的知识点」里有某条的结论今天被证伪、补充或修正,请用与那条完全相同的 topic 输出更新版本(系统会按 topic 匹配并升版本);如果是全新的知识点,给一个独立的新 topic。没有值得提炼的就给空数组,不要硬凑。',
-    '注意:work_reviews 最多 5 条,且升/降温评价只写人类主人;其他 Bot 的判断写进 impression_updates 的 capabilityTags 与 collaborationFacts(必须带 taskId、title、以及证据里出现过的 PinID,不要编造)。value_lessons 最多 3 条,impression_updates 最多 20 条,knowledge_points 最多 6 条;印象更新只允许使用上面明确列出的 subjectGlobalMetaId、episodeIds 和 evidenceIds,不能凭名字猜 ID,不能把 Boss/Twin/Friend 等硬关系写入印象;评价与蒸馏要基于对话中的真实证据,不要臆造,也不要为自己开脱;所有字段都用简体中文书写;sections 里不要输出"没有记录/没有互动"之类的占位内容,没有该类记录的键应整个不出现。',
+    '关于能力候选(capability_learnings):只提炼今天「重复出现过、或验证成功、值得沉淀为可复用技能/工作流/工具模式」的能力,最多 5 条;每条要具体、可操作,能指导下次同类任务,不要写泛泛的自我评价或琐碎流水;没有值得沉淀的就给空数组。',
+    '注意:work_reviews 最多 5 条,且升/降温评价只写人类主人;其他 Bot 的判断写进 impression_updates 的 capabilityTags 与 collaborationFacts(必须带 taskId、title、以及证据里出现过的 PinID,不要编造)。value_lessons 最多 3 条,impression_updates 最多 20 条,knowledge_points 最多 6 条,capability_learnings 最多 5 条;印象更新只允许使用上面明确列出的 subjectGlobalMetaId、episodeIds 和 evidenceIds,不能凭名字猜 ID,不能把 Boss/Twin/Friend 等硬关系写入印象;评价与蒸馏要基于对话中的真实证据,不要臆造,也不要为自己开脱;所有字段都用简体中文书写;sections 里不要输出"没有记录/没有互动"之类的占位内容,没有该类记录的键应整个不出现。',
   ].join('\n');
 
   return { system: personaLines.join('\n'), user };
@@ -819,6 +849,39 @@ export function parseDreamOutput(raw: string): DreamParseResult {
     }
   }
 
+  const capabilityLearnings: DreamCapabilityLearning[] = [];
+  const rawCapabilityLearnings = record.capability_learnings ?? record.capabilityLearnings;
+  if (Array.isArray(rawCapabilityLearnings)) {
+    for (const item of rawCapabilityLearnings) {
+      if (capabilityLearnings.length >= MAX_CAPABILITY_LEARNINGS) break;
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      const entry = item as Record<string, unknown>;
+      const title = typeof entry.title === 'string' ? entry.title.trim() : '';
+      const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+      if (!title || !description) continue;
+      const rawType = typeof entry.capabilityType === 'string'
+        ? entry.capabilityType.trim().toLowerCase()
+        : '';
+      const capabilityType: DreamCapabilityLearning['capabilityType'] = rawType === 'workflow'
+        ? 'workflow'
+        : rawType === 'tool_pattern'
+          ? 'tool_pattern'
+          : 'skill';
+      const readIds = (value: unknown): string[] => Array.isArray(value)
+        ? [...new Set(value
+          .filter((id): id is string => typeof id === 'string')
+          .map((id) => id.trim())
+          .filter(Boolean))].slice(0, 100)
+        : [];
+      capabilityLearnings.push({
+        title,
+        description,
+        capabilityType,
+        sourceSessionIds: readIds(entry.sourceSessionIds ?? entry.source_session_ids),
+      });
+    }
+  }
+
   return {
     ok: true,
     output: {
@@ -830,6 +893,7 @@ export function parseDreamOutput(raw: string): DreamParseResult {
       selfIdentity,
       impressionUpdates,
       knowledgeUpdates,
+      capabilityLearnings,
     },
   };
 }
