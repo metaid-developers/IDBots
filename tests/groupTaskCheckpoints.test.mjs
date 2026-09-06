@@ -370,14 +370,14 @@ test('loop: chair [CHECKPOINT] opens a checkpoint (pause line + event + private 
     assert.equal(checkpoint.topic, '官网修改意见稿确认');
     assert.equal(checkpoint.openedMsgPinId, 'cp-open-i0');
 
-    const pauseLine = h.sends.find((send) => send.metabotId === 1 && send.content.includes('人工确认点'));
-    assert.ok(pauseLine, 'pause ceremony line posted as the chair');
-    assert.match(pauseLine.content, /官网修改意见稿确认/);
-    // The pause line carries the decision summary: the chair's [CHECKPOINT]
-    // message body with the tag itself stripped — the owner sees at a glance
-    // what needs a decision, without paging the transcript.
-    assert.match(pauseLine.content, /需要你拍板：各位，修改意见稿已整理好，先请主人过目。/);
-    assert.doesNotMatch(pauseLine.content, /\[CHECKPOINT/);
+    // Single-commander: no pause ceremony line is posted under the chair's
+    // name — the checkpoint reaches the owner through the private report
+    // (whose text the chair composes itself after reading the host note).
+    assert.equal(
+      h.sends.filter((send) => send.content.includes('人工确认点')).length,
+      0,
+      'no pause ceremony line',
+    );
 
     const changedEvents = h.events.filter((e) => e.type === 'groupTask:checkpointChanged');
     assert.equal(changedEvents.length, 1);
@@ -387,12 +387,13 @@ test('loop: chair [CHECKPOINT] opens a checkpoint (pause line + event + private 
     assert.equal(h.ownerReportCalls.length, 1, 'private checkpoint request sent to the owner');
     assert.equal(h.ownerReportCalls[0].kind, 'checkpoint');
     assert.equal(h.ownerReportCalls[0].checkpointId, checkpoint.id);
+    assert.ok(typeof h.ownerReportCalls[0].text === 'string' && h.ownerReportCalls[0].text.length > 0, 'the chair-composed report body ships to the owner');
   } finally {
     h.cleanup();
   }
 });
 
-test('loop: pause line falls back to topic-only when the chair body holds only the tag', async () => {
+test('loop: a topic-only [CHECKPOINT] still opens privately with no host post', async () => {
   const h = await createHarness();
   try {
     const task = h.createTask([2]);
@@ -403,10 +404,11 @@ test('loop: pause line falls back to topic-only when the chair body holds only t
     await h.loop.runTick();
 
     assert.ok(h.groupTaskStore.getOpenCheckpoint(task.id), 'checkpoint opened');
-    const pauseLine = h.sends.find((send) => send.metabotId === 1 && send.content.includes('人工确认点'));
-    assert.ok(pauseLine, 'pause ceremony line posted as the chair');
-    assert.doesNotMatch(pauseLine.content, /需要你拍板/, 'no summary clause when nothing but the tag');
-    assert.match(pauseLine.content, /意见稿确认/, 'topic still shown');
+    // Single-commander: no pause line at all — topic-only or not, the host
+    // stays silent and the owner learns of it through the private report.
+    assert.equal(h.sends.length, 0, 'the host posts nothing');
+    assert.equal(h.ownerReportCalls.length, 1, 'the private checkpoint report still goes out');
+    assert.ok(typeof h.ownerReportCalls[0].text === 'string' && h.ownerReportCalls[0].text.length > 0);
   } finally {
     h.cleanup();
   }
@@ -484,8 +486,13 @@ test('loop: [CHECKPOINT_RESOLVED] closes the checkpoint and work resumes', async
     assert.equal(resolved.resolution, '主人确认了修改意见稿');
     assert.equal(resolved.resolvedMsgPinId, 'cp-res-i0');
 
-    const resumeLine = h.sends.find((send) => send.metabotId === 1 && send.content.includes('人工确认点已通过'));
-    assert.ok(resumeLine, 'resume ceremony line posted as the chair');
+    // Single-commander: no resume ceremony line — resolution is recorded and
+    // surfaces through events and the private channels only.
+    assert.equal(
+      h.sends.filter((send) => send.metabotId === 1 && send.content.includes('人工确认点已通过')).length,
+      0,
+      'the host posts no resume line',
+    );
 
     const changedEvents = h.events.filter((e) => e.type === 'groupTask:checkpointChanged');
     assert.deepEqual(

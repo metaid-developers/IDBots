@@ -202,7 +202,7 @@ const createHarness = async (overrides = {}) => {
 // P0-2: worker ACK
 // ---------------------------------------------------------------------------
 
-test('auto-ACK: worker skill-turn dispatch posts [WORKING] before the turn; kv guard prevents double-ACK on reprocess', async () => {
+test('single-commander: worker skill-turn dispatch posts no ACK — only the turn reply; reprocessing never resurrects one', async () => {
   const h = await createHarness({
     coderChatSkills: ['web-search'],
     routing: () => ({ prompt: '<available_skills>web-search</available_skills>', activeSkillIds: ['web-search'] }),
@@ -215,22 +215,21 @@ test('auto-ACK: worker skill-turn dispatch posts [WORKING] before the turn; kv g
     });
     await h.loop.runTick();
 
-    assert.equal(h.sends.length, 2, 'ACK + turn reply');
-    assert.match(h.sends[0].content, /^\[WORKING\]/, 'ACK starts with the [WORKING] tag');
-    assert.equal(h.sends[1].content, 'skill-turn-reply');
-    const ackKey = `group_task_ack:${task.id}:2:${h.groupTaskStore.listGroupChatMessages(GROUP_ID, { limit: 1 })[0].id}`;
-    assert.equal(h.store.get(ackKey), '1', 'ACK kv guard written');
+    // Single-commander: the host is the environment, never a speaker —
+    // the worker's own turn reply is the only message (no [WORKING] ACK post).
+    assert.deepEqual(h.sends.map((s) => s.content), ['skill-turn-reply'], 'turn reply only — no ACK post');
 
     // Rewind the cursor so the SAME message reprocesses (simulating a retry):
-    // the guard must suppress a second ACK while the turn still runs. Direct
-    // SQL because updateLastProcessedMsgId is monotonic by design.
+    // a deleted ACK cannot resurrect, and the ACK kv guard is gone with it.
     h.state.nowMs += 25_000; // escape the worker cooldown
     h.db.run('UPDATE group_tasks SET last_processed_msg_id = 0 WHERE id = ?', [task.id]);
     await h.loop.runTick();
 
-    const ackCount = h.sends.filter((s) => s.content.startsWith('[WORKING]')).length;
-    assert.equal(ackCount, 1, 'exactly one ACK despite reprocessing');
-    assert.equal(h.sends.length, 3, 'ACK + two turn replies');
+    assert.equal(
+      h.sends.filter((s) => s.content.startsWith('[WORKING]')).length,
+      0,
+      'no ACK post on reprocessing either',
+    );
   } finally {
     h.cleanup();
   }
@@ -270,12 +269,15 @@ test('P14: chair protocol messages (carrying [DELIVERABLE]/[STATUS:] tags) never
       senderName: 'Twin Bot', content: '@Coder Bot [DELIVERABLE] 已收到上游成果，稍后派工',
     });
     await h.loop.runTick();
+    // Single-commander: the ACK machinery is gone. A chair note mentioning the
+    // worker still dispatches the worker's turn normally (the chair decides
+    // what is coordination via its own context) — but no template ACK post
+    // can ever appear.
     assert.equal(
       h.sends.filter((s) => s.content.startsWith('[WORKING]')).length,
       0,
-      'no template ACK for a protocol-tagged chair note',
+      'no ACK machinery left to misfire',
     );
-    assert.ok(h.logs.some((line) => line.includes('auto-ACK suppressed')));
   } finally {
     h.cleanup();
   }
@@ -398,7 +400,6 @@ test('Improvement #2: a chair [STATUS:REVIEW] verdict landing within the rework 
   });
   try {
     const task = h.createTask([2]);
-    const summaryCount = () => h.sends.filter((s) => s.content.includes('已进入验收阶段')).length;
 
     insertGroupMessage(h.db, {
       pinId: 'rv1-i0', senderMetaId: 'metaid-1', senderGlobalMetaId: 'gmid-twin',
@@ -407,7 +408,12 @@ test('Improvement #2: a chair [STATUS:REVIEW] verdict landing within the rework 
     await h.loop.runTick();
     assert.equal(h.groupTaskStore.getTaskById(task.id).status, 'review');
     assert.equal(h.sourceReviewReports.length, 1);
-    assert.equal(summaryCount(), 1);
+    // Single-commander: the host no longer posts an acceptance summary —
+    // review entry is reported through the owner/source-session channels only.
+    assert.equal(
+      h.sends.filter((s) => s.content.includes('已进入验收阶段')).length, 0,
+      'no host acceptance summary in the group',
+    );
 
     // The boss sends the just-reviewed task back to work 27s in.
     h.state.nowMs += 27_000;
@@ -421,7 +427,7 @@ test('Improvement #2: a chair [STATUS:REVIEW] verdict landing within the rework 
 
     // 3s later the chair's ALREADY-IN-FLIGHT verification turn lands its
     // verdict — the exact task #24 pattern. It must NOT flip the task back to
-    // review nor amplify itself into a second acceptance summary.
+    // review nor re-report through any channel.
     h.state.nowMs += 3_000;
     insertGroupMessage(h.db, {
       pinId: 'stale-rv-i0', senderMetaId: 'metaid-1', senderGlobalMetaId: 'gmid-twin',
@@ -434,11 +440,14 @@ test('Improvement #2: a chair [STATUS:REVIEW] verdict landing within the rework 
       'stale in-flight verdict debounced; task stays executing',
     );
     assert.equal(h.sourceReviewReports.length, 1, 'no re-report for the debounced verdict');
-    assert.equal(summaryCount(), 1, 'exactly one acceptance summary in the group');
+    assert.equal(
+      h.sends.filter((s) => s.content.includes('已进入验收阶段')).length, 0,
+      'still no acceptance summary for the debounced verdict',
+    );
     assert.ok(h.logs.some((line) => line.includes('stale in-flight verdict ignored')));
 
     // Past the debounce window, the chair's post-rework verdict enters review
-    // cleanly and every channel re-reports.
+    // cleanly and the channels re-report.
     h.state.nowMs += 31_000;
     insertGroupMessage(h.db, {
       pinId: 'rv2-i0', senderMetaId: 'metaid-1', senderGlobalMetaId: 'gmid-twin',
@@ -447,7 +456,6 @@ test('Improvement #2: a chair [STATUS:REVIEW] verdict landing within the rework 
     await h.loop.runTick();
     assert.equal(h.groupTaskStore.getTaskById(task.id).status, 'review');
     assert.equal(h.sourceReviewReports.length, 2, 'post-rework review re-reports');
-    assert.equal(summaryCount(), 2);
     assert.ok(h.store.get(`group_task_rework_at:${task.id}`) == null, 'stamp cleared on the accepted review entry');
   } finally {
     h.cleanup();
@@ -524,18 +532,13 @@ test('Improvement #2: a rework landing while the owner report is composed aborts
     await h.loop.runTick();
 
     // Improvement #1 reorder: the owner report composes BEFORE the group
-    // summary is posted. The rework landed mid-report, so posting a
-    // "已进入验收" summary now would be the same task #24 contradiction in
-    // message form (group says review, Tasks UI says executing) — the ceremony
-    // aborts instead, and the next review entry re-runs it cleanly (the rework
-    // hatch already cleared the delivery guards).
+    // summary would be posted. The rework landed mid-report, so a stale
+    // "已进入验收" summary is never posted (and the ceremony itself is gone
+    // under single-commander) — the next review entry re-runs the reports
+    // cleanly (the rework hatch already cleared the delivery guards).
     assert.equal(
       h.sends.filter((s) => s.content.includes('已进入验收阶段')).length, 0,
       'no review summary posted over the fresh rework',
-    );
-    assert.ok(
-      h.logs.some((line) => line.includes('review ceremony aborted')),
-      'the abort is observable in the logs',
     );
     assert.equal(h.sourceReviewReports.length, 0, 'no stale [GROUP_TASK_REVIEW] into the source session');
     assert.equal(ownerReports.length, 0, 'no stale A2A owner report');
@@ -591,7 +594,7 @@ test('Improvement #2: clearGroupTaskReviewDeliveryGuards resets every review-del
   assert.ok(kv.has('group_task_owner_reported:8'), 'other tasks untouched');
 });
 
-test('P5 (v1.2): a worker recently active BEFORE the assignment gets a single long-turn note, not a missed-ACK warning', async () => {
+test('P5 (v1.2): a worker recently active BEFORE the assignment gets a single long-turn fact, not a missed-ACK fact', async () => {
   const h = await createHarness();
   try {
     const task = h.createTask([2]);
@@ -612,22 +615,31 @@ test('P5 (v1.2): a worker recently active BEFORE the assignment gets a single lo
     h.state.nowMs += 4 * 60 * 1000; // past the 3-minute ACK timeout
     await h.loop.runTick();
 
-    const warnings = h.sends.filter((s) => s.content.includes('has not sent a [WORKING] ACK'));
-    assert.equal(warnings.length, 0, 'no missed-ACK warning for an engaged worker');
-    const notes = h.sends.filter((s) => s.content.includes('长回合执行中'));
-    assert.equal(notes.length, 1, 'exactly one neutral long-turn note');
+    // Single-commander: for an ENGAGED worker the watch retires silently —
+    // no missed-ACK fact, no long-turn fact, and the host posts nothing.
+    const noteCount = (kind) => Number(h.db.exec(
+      "SELECT COUNT(*) FROM group_task_host_notes WHERE task_id = ? AND kind = ?",
+      [task.id, kind],
+    )[0].values[0][0]);
+    assert.equal(noteCount('no_ack'), 0, 'no missed-ACK fact for an engaged worker');
+    assert.equal(noteCount('long_turn'), 0, 'no long-turn fact either — the watch retires silently');
+    assert.equal(
+      h.sends.filter((s) => s.content.includes('has not sent a [WORKING] ACK') || s.content.includes('长回合执行中')).length,
+      0,
+      'the host posts neither the warning nor the long-turn note',
+    );
 
-    // Watch consumed: a later tick with no new activity does not repeat either.
+    // Watch consumed: a later tick with no new activity does not start one.
     h.state.nowMs += 60 * 1000;
     await h.loop.runTick();
-    assert.equal(h.sends.filter((s) => s.content.includes('长回合执行中')).length, 1, 'note fires once');
-    assert.equal(h.sends.filter((s) => s.content.includes('has not sent a [WORKING] ACK')).length, 0);
+    assert.equal(noteCount('no_ack'), 0);
+    assert.equal(noteCount('long_turn'), 0);
   } finally {
     h.cleanup();
   }
 });
 
-test('P5 (v1.2): a worker silent past the engaged window still gets the real missed-ACK warning', async () => {
+test('P5 (v1.2): a worker silent past the engaged window still gets the real missed-ACK fact', async () => {
   const h = await createHarness();
   try {
     const task = h.createTask([2]);
@@ -645,8 +657,18 @@ test('P5 (v1.2): a worker silent past the engaged window still gets the real mis
     await h.loop.runTick();
     h.state.nowMs += 4 * 60 * 1000;
     await h.loop.runTick();
-    const warnings = h.sends.filter((s) => s.content.includes('has not sent a [WORKING] ACK'));
-    assert.equal(warnings.length, 1, 'genuinely missed assignment still warns the chair');
+    // Single-commander: the missed-ACK fact is an environment note the chair
+    // reads on the next delivery tick — never a host ⚠ post.
+    const noAckNotes = Number(h.db.exec(
+      "SELECT COUNT(*) FROM group_task_host_notes WHERE task_id = ? AND kind = 'no_ack'",
+      [task.id],
+    )[0].values[0][0]);
+    assert.equal(noAckNotes, 1, 'genuinely missed assignment still recorded for the chair');
+    assert.equal(
+      h.sends.filter((s) => s.content.includes('has not sent a [WORKING] ACK')).length,
+      0,
+      'the host itself posts nothing',
+    );
   } finally {
     h.cleanup();
   }
@@ -690,13 +712,16 @@ test('review-phase dispatch to workers logs the silence hint and never replies',
     });
     await h.loop.runTick();
 
-    // P1-2: workers stay silent, and the host now answers the swallowed
-    // dispatch with a visible [GROUP_TASK_NOTICE:dispatch_held] notice
-    // instead of only a host log line.
+    // Single-commander: workers stay silent, and the swallowed dispatch
+    // reaches the chair as a dispatch_held environment note — never as a
+    // host post under the chair's name.
     assert.equal(h.sends.filter((send) => send.metabotId === 2).length, 0, 'review phase: no worker reply');
-    assert.equal(h.sends.length, 1, 'one host dispatch-held notice as the chair');
-    assert.match(h.sends[0].content, /\[GROUP_TASK_NOTICE:dispatch_held\]/);
-    assert.match(h.sends[0].content, /Coder Bot/);
+    assert.equal(h.sends.length, 0, 'the host itself posts nothing');
+    const heldNotes = Number(h.db.exec(
+      "SELECT COUNT(*) FROM group_task_host_notes WHERE task_id = ? AND kind = 'dispatch_held'",
+      [task.id],
+    )[0].values[0][0]);
+    assert.equal(heldNotes, 1, 'dispatch-held fact recorded as a host note');
     assert.ok(
       h.logs.some((line) => line.includes('review-phase silence') && line.includes('Coder Bot')),
       'daemon logs the silenced dispatch so the chair knows why',
@@ -710,7 +735,7 @@ test('review-phase dispatch to workers logs the silence hint and never replies',
 // P2-6: [DEPENDS_ON] gate
 // ---------------------------------------------------------------------------
 
-test('[DEPENDS_ON] holds the worker dispatch until the upstream deliverable lands', async () => {
+test('[DEPENDS_ON] is declarative under single-commander — dispatch is never gated', async () => {
   const h = await createHarness();
   try {
     const task = h.createTask([2]);
@@ -719,45 +744,34 @@ test('[DEPENDS_ON] holds the worker dispatch until the upstream deliverable land
       senderName: 'Twin Bot', content: `@Coder Bot 写文案 [DEPENDS_ON: ${UPSTREAM_PINID}] 等上游交付后再动笔`,
     });
     await h.loop.runTick();
-    assert.equal(h.sends.length, 0, 'dispatch held while the upstream deliverable is missing');
 
-    // Upstream deliverable lands (from a worker; [DELIVERABLE] tag).
-    insertGroupMessage(h.db, {
-      pinId: 'upstream-i0', senderMetaId: 'metaid-2', senderGlobalMetaId: 'gmid-w2',
-      senderName: 'Coder Bot', content: `[DELIVERABLE] metaapp: metaapp://${UPSTREAM_PINID}`,
-    });
-    await h.loop.runTick(); // deliverable recorded (+ chair verifies it)
-    await h.loop.runTick(); // deferred worker dispatch proceeds
-
+    // Single-commander: the [DEPENDS_ON] dispatch gate is gone — sequencing
+    // is solely the chair's judgment. The worker turn dispatches immediately
+    // and no dispatch-held fact is recorded.
     const workerSends = h.sends.filter((s) => s.metabotId === 2);
-    assert.equal(workerSends.length, 1, 'deferred dispatch proceeds after the upstream deliverable arrives');
+    assert.equal(workerSends.length, 1, 'dispatch proceeds immediately');
     assert.match(workerSends[0].content, /^reply-for-/);
-    assert.ok(
-      h.logs.some((line) => line.includes('waits for upstream deliverable')),
-      'host logs the dependency hold',
-    );
+    const heldNotes = Number(h.db.exec(
+      "SELECT COUNT(*) FROM group_task_host_notes WHERE task_id = ? AND kind = 'dispatch_held'",
+      [task.id],
+    )[0].values[0][0]);
+    assert.equal(heldNotes, 0, 'no dispatch-held fact for a declarative DEPENDS_ON');
   } finally {
     h.cleanup();
   }
 });
 
-test('[DEPENDS_ON] bounded wait times out and proceeds anyway', async () => {
+test('[DEPENDS_ON] bounded wait override no longer holds anything either', async () => {
   const h = await createHarness({ dependencyWaitMaxMs: 1_000 });
   try {
-    const task = h.createTask([2]);
+    h.createTask([2]);
     insertGroupMessage(h.db, {
       pinId: 'dep-timeout-i0', senderMetaId: 'metaid-1', senderGlobalMetaId: 'gmid-twin',
       senderName: 'Twin Bot', content: `@Coder Bot step B [DEPENDS_ON: ${UPSTREAM_PINID}]`,
     });
     await h.loop.runTick();
-    assert.equal(h.sends.length, 0, 'held initially');
 
-    h.state.nowMs += 2_000; // past the 1s wait bound
-    await h.loop.runTick();
-    await h.loop.runTick();
-
-    assert.equal(h.sends.length, 1, 'dispatch proceeds after the bounded wait expires');
-    assert.ok(h.logs.some((line) => line.includes('timed out')), 'timeout logged');
+    assert.equal(h.sends.filter((s) => s.metabotId === 2).length, 1, 'dispatch proceeds immediately — no wait bound applies');
   } finally {
     h.cleanup();
   }

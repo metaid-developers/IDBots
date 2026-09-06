@@ -303,7 +303,7 @@ test('daemon: chair [PLAN_CHANGE] recorded (deduped on reprocess); worker tags i
   }
 });
 
-test('daemon: review entry surfaces the 方案变更 block in the group summary and the owner-report directive', async () => {
+test('daemon: review entry surfaces the 方案变更 block in the snapshot record and the owner-report directive', async () => {
   const h = await createDaemonHarness();
   try {
     const task = h.createTask();
@@ -320,11 +320,12 @@ test('daemon: review entry surfaces the 方案变更 block in the group summary 
     await h.loop.runTick();
 
     assert.equal(h.groupTaskStore.getTaskById(task.id).status, 'review');
-    // Group summary message carries the disclosure.
-    const summary = h.sends.find((s) => s.content.includes('已进入验收阶段'));
-    assert.ok(summary, 'acceptance summary posted');
-    assert.ok(summary.content.includes('方案变更：'), 'summary has the plan-change header');
-    assert.ok(summary.content.includes(CHANGE_LINE), 'summary carries the chair line verbatim');
+    // Single-commander: no group acceptance summary is posted — the snapshot
+    // record (Tasks UI) and the owner-report directive carry the disclosure.
+    assert.equal(
+      h.sends.filter((s) => s.content.includes('已进入验收阶段')).length, 0,
+      'no host acceptance summary in the group',
+    );
     // Snapshot record (Tasks UI renders from it).
     assert.deepEqual(h.groupTaskStore.getLatestAcceptanceSummary(task.id).planChanges, [CHANGE_LINE]);
     // Owner-report directive (narrated into the A2A + source-session reports).
@@ -347,9 +348,13 @@ test('daemon: a task with no plan change shows no block in any surface', async (
     });
     await h.loop.runTick();
 
-    const summary = h.sends.find((s) => s.content.includes('已进入验收阶段'));
-    assert.ok(summary, 'acceptance summary posted');
-    assert.ok(!summary.content.includes('方案变更'), 'no plan-change block');
+    // Single-commander: no group summary exists at all — verify via the
+    // snapshot and the owner-report directive instead.
+    assert.equal(
+      h.sends.filter((s) => s.content.includes('已进入验收阶段')).length, 0,
+      'no host acceptance summary in the group',
+    );
+    assert.ok(!h.sends.some((s) => s.content.includes('方案变更')), 'no plan-change block anywhere');
     const directiveCall = h.chatCalls.find((call) => call.userMessage.includes('owner-report directive'));
     assert.ok(directiveCall, 'owner report turn ran');
     assert.ok(!directiveCall.userMessage.includes('Plan changes'), 'directive omits the block entirely');
