@@ -56,7 +56,6 @@ import {
   StopCircleIcon,
   XMarkIcon,
   PaperAirplaneIcon,
-  ArrowUturnLeftIcon,
   SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
@@ -1540,39 +1539,12 @@ const renderGigSquareCard = (content: string): React.ReactNode | null => {
 const UserMessageItem: React.FC<{
   message: CoworkMessage;
   skills: Skill[];
-  /** Called when the user confirms a fork from this message. */
-  onFork?: (message: CoworkMessage, title?: string) => void | Promise<void>;
-  /** Called when the user confirms a rewind to this message. */
-  onRewind?: (message: CoworkMessage) => void | Promise<void>;
-}> = ({ message, skills, onFork, onRewind }) => {
+}> = ({ message, skills }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const [action, setAction] = useState<'fork' | 'rewind' | null>(null);
-  const [forkTitle, setForkTitle] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const isSteerMessage = message.metadata?.interactionKind === 'steer';
   const steerStatusKey = isSteerMessage
     ? STEER_STATUS_TRANSLATION_KEYS[String(message.metadata?.steerStatus)] ?? null
     : null;
-
-  const closeAction = () => {
-    setAction(null);
-    setForkTitle('');
-  };
-
-  const handleConfirmAction = async () => {
-    if (!action || isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      if (action === 'fork') {
-        await onFork?.(message, forkTitle.trim() || undefined);
-      } else {
-        await onRewind?.(message);
-      }
-      closeAction();
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   // Get skills used for this message
   const messageSkillIds = (message.metadata as CoworkMessageMetadata)?.skillIds || [];
@@ -1655,108 +1627,11 @@ const UserMessageItem: React.FC<{
                   content={message.content}
                   visible={isHovered}
                 />
-                {(onFork || onRewind) && (
-                  <span
-                    className={`inline-flex items-center gap-0.5 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}
-                  >
-                    {onFork && (
-                      <button
-                        type="button"
-                        onClick={() => setAction('fork')}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceInset hover:bg-claude-surfaceInset transition-colors"
-                        title={i18nService.t('coworkForkTitle')}
-                      >
-                        <DocumentDuplicateIcon className="h-3 w-3" />
-                        {i18nService.t('coworkForkLabel')}
-                      </button>
-                    )}
-                    {onRewind && (
-                      <button
-                        type="button"
-                        onClick={() => setAction('rewind')}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-red-500 dark:hover:text-red-400 hover:dark:bg-claude-darkSurfaceInset hover:bg-claude-surfaceInset transition-colors"
-                        title={i18nService.t('coworkRewindTitle')}
-                      >
-                        <ArrowUturnLeftIcon className="h-3 w-3" />
-                        {i18nService.t('coworkRewindLabel')}
-                      </button>
-                    )}
-                  </span>
-                )}
               </div>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Fork / Rewind confirmation modal */}
-      {action && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop"
-          onClick={closeAction}
-        >
-          <div
-            className="w-full max-w-sm mx-4 dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal overflow-hidden modal-content"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 px-5 py-4">
-              <div className="p-2 rounded-full bg-claude-surfaceHover dark:bg-claude-darkSurfaceHover">
-                {action === 'fork' ? (
-                  <DocumentDuplicateIcon className="h-5 w-5 text-claude-accent dark:text-claude-darkAccent" />
-                ) : (
-                  <ArrowUturnLeftIcon className="h-5 w-5 text-red-500" />
-                )}
-              </div>
-              <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
-                {i18nService.t(action === 'fork' ? 'coworkForkConfirmTitle' : 'coworkRewindConfirmTitle')}
-              </h2>
-            </div>
-
-            <div className="px-5 pb-4">
-              {action === 'fork' ? (
-                <>
-                  <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t('coworkForkConfirmMessage')}
-                  </p>
-                  <input
-                    type="text"
-                    value={forkTitle}
-                    onChange={(e) => setForkTitle(e.target.value)}
-                    placeholder={i18nService.t('coworkForkTitlePlaceholder')}
-                    className="mt-3 w-full rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset px-3 py-2 text-sm dark:text-claude-darkText text-claude-text placeholder:dark:text-claude-darkTextSecondary/50 placeholder:text-claude-textSecondary/50 focus:outline-none focus:ring-1 focus:ring-claude-accent/40"
-                  />
-                </>
-              ) : (
-                <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('coworkRewindConfirmMessage')}
-                </p>
-              )}
-            </div>
-
-            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t dark:border-claude-darkBorder border-claude-border">
-              <button
-                onClick={closeAction}
-                className="px-4 py-2 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-              >
-                {i18nService.t('cancel')}
-              </button>
-              <button
-                onClick={() => void handleConfirmAction()}
-                disabled={isSubmitting}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 ${
-                  action === 'rewind'
-                    ? 'bg-red-500 hover:opacity-90 text-white'
-                    : 'bg-claude-accent hover:opacity-90 text-claude-accentInk'
-                }`}
-              >
-                {isSubmitting
-                  ? i18nService.t('processing')
-                  : i18nService.t(action === 'fork' ? 'coworkForkConfirmAction' : 'coworkRewindConfirmAction')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
@@ -1767,12 +1642,15 @@ const AssistantMessageItem: React.FC<{
   mapDisplayText?: (value: string) => string;
   showCopyButton?: boolean;
   onOpenLocalFile?: (filePath: string, event: React.MouseEvent) => boolean | void;
+  /** Copies the conversation up to and including this message into a new session. */
+  onBranch?: (message: CoworkMessage) => void | Promise<void>;
 }> = ({
   message,
   resolveLocalFilePath,
   mapDisplayText,
   showCopyButton = false,
   onOpenLocalFile,
+  onBranch,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
@@ -1835,6 +1713,19 @@ const AssistantMessageItem: React.FC<{
             timestamp={message.timestamp}
             visible={isHovered}
           />
+          {onBranch && (
+            <button
+              type="button"
+              onClick={() => void onBranch(message)}
+              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:bg-claude-darkSurfaceInset hover:bg-claude-surfaceInset transition-all duration-200 ${
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              }`}
+              title={i18nService.t('coworkBranchNewChatTitle')}
+            >
+              <DocumentDuplicateIcon className="h-3 w-3" />
+              {i18nService.t('coworkBranchNewChatLabel')}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -2067,6 +1958,7 @@ const AssistantTurnBlock: React.FC<{
   showCopyButtons?: boolean;
   showImagePreviews?: boolean;
   onOpenLocalFile?: (filePath: string, event: React.MouseEvent) => boolean | void;
+  onBranch?: (message: CoworkMessage) => void | Promise<void>;
 }> = ({
   turn,
   resolveLocalFilePath,
@@ -2075,6 +1967,7 @@ const AssistantTurnBlock: React.FC<{
   showCopyButtons = true,
   showImagePreviews = true,
   onOpenLocalFile,
+  onBranch,
 }) => {
   const visibleAssistantItems = getVisibleAssistantItems(turn.assistantItems);
   // Collapsed by default once a turn completes; the header expands to reveal
@@ -2243,6 +2136,7 @@ const AssistantTurnBlock: React.FC<{
           mapDisplayText={mapDisplayText}
           showCopyButton={showCopyButtons && !hasToolGroupAfter}
           onOpenLocalFile={onOpenLocalFile}
+          onBranch={onBranch}
         />
       );
     }
@@ -2350,6 +2244,7 @@ const AssistantTurnBlock: React.FC<{
                   mapDisplayText={mapDisplayText}
                   showCopyButton={showCopyButtons}
                   onOpenLocalFile={onOpenLocalFile}
+                  onBranch={onBranch}
                 />
               </>
             ) : (
@@ -2457,6 +2352,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, [currentSession?.messages]);
   const skills = useSelector((state: RootState) => state.skill.skills);
   const currentModelId = useSelector((state: RootState) => state.model.selectedModel?.id);
+  // Title of the session this conversation was branched from, resolved from the
+  // session list for the "branched from" hint above the composer.
+  const branchedFromTitle = useSelector((state: RootState) => {
+    const parentId = currentSession?.parentSessionId;
+    if (!parentId) return null;
+    return state.cowork.sessions.find((session) => session.id === parentId)?.title ?? null;
+  });
   // Per-session model override (picked in this conversation's model selector).
   // Optimistic local state on top of the persisted currentSession.model; reset
   // when switching sessions. Provider rides along so colliding model ids
@@ -2576,6 +2478,17 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   };
   const [branchActionError, setBranchActionError] = useState<string | null>(null);
+  // Branch in a new chat: copies the conversation up to and including the
+  // assistant message into a fresh session and switches to it. The forked
+  // session records its origin (parentSessionId) for the "branched from" hint.
+  const handleBranchFromMessage = useCallback(async (msg: CoworkMessage) => {
+    if (!currentSession || isStreaming) return;
+    setBranchActionError(null);
+    const forked = await coworkService.forkSession(currentSession.id, msg.id);
+    if (!forked) {
+      setBranchActionError(i18nService.t('coworkForkFailed'));
+    }
+  }, [currentSession, isStreaming]);
   const detailRootRef = useRef<HTMLDivElement>(null);
   // Markdown viewer sidebar: .md/.markdown file links in assistant messages
   // open in this right-hand panel instead of an external app. The width is a
@@ -3623,22 +3536,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               <UserMessageItem
                 message={turn.userMessage}
                 skills={skills}
-                onFork={async (msg, title) => {
-                  if (isStreaming) return;
-                  setBranchActionError(null);
-                  const forked = await coworkService.forkSession(currentSession.id, msg.id, title);
-                  if (!forked) {
-                    setBranchActionError(i18nService.t('coworkForkFailed'));
-                  }
-                }}
-                onRewind={async (msg) => {
-                  if (isStreaming) return;
-                  setBranchActionError(null);
-                  const rewound = await coworkService.rewindSession(currentSession.id, msg.id);
-                  if (!rewound) {
-                    setBranchActionError(i18nService.t('coworkRewindFailed'));
-                  }
-                }}
               />
             </div>
           )}
@@ -3652,6 +3549,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 showCopyButtons={!isStreaming}
                 showImagePreviews
                 onOpenLocalFile={handleOpenLocalFile}
+                onBranch={handleBranchFromMessage}
               />
             </div>
           )}
@@ -4112,6 +4010,27 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               />
             </div>
           </div>
+          {currentSession.parentSessionId && (
+            <div className="max-w-[clamp(680px,64%,920px)] mx-auto mb-2">
+              <div className="flex items-center gap-2 rounded-lg border border-claude-border/60 dark:border-claude-darkBorder/60 bg-claude-surfaceMuted/60 dark:bg-claude-darkSurfaceMuted/60 px-3 py-2">
+                <DocumentDuplicateIcon className="h-3.5 w-3.5 shrink-0 text-claude-accent/70" />
+                <span className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('coworkBranchedFrom')}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const parentId = currentSession.parentSessionId;
+                      if (parentId) void coworkService.loadSession(parentId);
+                    }}
+                    className="mx-1 font-medium text-claude-accent hover:underline"
+                    title={i18nService.t('coworkBranchedFromOpenSource')}
+                  >
+                    {branchedFromTitle ?? i18nService.t('coworkBranchedFromUnknown')}
+                  </button>
+                </span>
+              </div>
+            </div>
+          )}
           {delegationBlocking && (
             <div className="max-w-[clamp(680px,64%,920px)] mx-auto mb-2">
               <div className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">

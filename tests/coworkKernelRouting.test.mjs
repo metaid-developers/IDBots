@@ -1,5 +1,6 @@
 // DSH-only kernel routing: Anthropic Messages rides pi-ai; sticky `dsh:`
-// handles stay on DSH. Pre-DSH Claude UUID sessions get an honest handoff.
+// handles stay on DSH. Sessions whose transcript the kernel never saw (legacy
+// pre-DSH handles, branched sessions) get an honest history handoff.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -14,7 +15,7 @@ const {
   isDshEligibleApiType,
   dshApiFormatOf,
   resolveKernelChoice,
-  buildClaudeToDshHandoff,
+  buildSessionHistoryHandoff,
 } = require('../dist-electron/main/libs/coworkKernelRouting.js')
 
 test('session handle helpers round-trip', () => {
@@ -50,10 +51,10 @@ test('local cowork is DSH-only including Anthropic Messages', () => {
   assert.equal(resolveKernelChoice({ apiType: 'anthropic', sessionHandle: 'sdk-123' }), 'dsh')
 })
 
-test('Claude-to-DSH handoff summarizes prior turns and stays bounded', () => {
-  assert.equal(buildClaudeToDshHandoff([]), '')
-  assert.equal(buildClaudeToDshHandoff([{ type: 'system', content: 'noise' }]), '')
-  const text = buildClaudeToDshHandoff([
+test('legacy-handle handoff summarizes prior turns and stays bounded', () => {
+  assert.equal(buildSessionHistoryHandoff([]), '')
+  assert.equal(buildSessionHistoryHandoff([{ type: 'system', content: 'noise' }]), '')
+  const text = buildSessionHistoryHandoff([
     { type: 'user', content: 'Remember the project is Twin.' },
     { type: 'assistant', content: 'I will keep Twin in the Twin folder.' },
     { type: 'tool_use', content: 'ignored' },
@@ -63,7 +64,20 @@ test('Claude-to-DSH handoff summarizes prior turns and stays bounded', () => {
   assert.match(text, /Assistant: I will keep Twin in the Twin folder\./)
   assert.doesNotMatch(text, /ignored/)
   const long = 'x'.repeat(800)
-  const clipped = buildClaudeToDshHandoff([{ type: 'user', content: long }])
+  const clipped = buildSessionHistoryHandoff([{ type: 'user', content: long }])
   assert.ok(clipped.length < 1200)
   assert.match(clipped, /…/)
+})
+
+test('branched-session handoff announces the branch origin with the same digest body', () => {
+  const text = buildSessionHistoryHandoff([
+    { type: 'user', content: 'Original session prompt.' },
+    { type: 'assistant', content: 'Original session reply.' },
+    { type: 'tool_result', content: 'ignored' },
+  ], 'branched-session')
+  assert.match(text, /branched from an earlier session/)
+  assert.match(text, /User: Original session prompt\./)
+  assert.match(text, /Assistant: Original session reply\./)
+  assert.doesNotMatch(text, /ignored/)
+  assert.match(text, /Do not claim you remember anything/)
 })

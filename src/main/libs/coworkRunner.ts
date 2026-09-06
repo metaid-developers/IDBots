@@ -18,7 +18,7 @@ import { DshStreamUiGate } from './dshStreamUiGate';
 import type { DshHostToolImagePayload, DshUsageSnapshot } from './dshKernel/types';
 import { foldDshUsageProjection, dshPromptSideTokens, dshContextUsageFromPressure } from './dshUsageProjection';
 import type { DshUsageStatsRow } from './dshUsageProjection';
-import { buildClaudeToDshHandoff, dshApiFormatOf, dshSessionIdOf, isDshSessionHandle, makeDshSessionHandle, resolveKernelChoice } from './coworkKernelRouting';
+import { buildSessionHistoryHandoff, dshApiFormatOf, dshSessionIdOf, isDshSessionHandle, makeDshSessionHandle, resolveKernelChoice } from './coworkKernelRouting';
 import { isExplicitMetaAppUserRequest, QUICK_ACTION_MESSAGE_SOURCE } from './metaAppGuard';
 import {
   copyDshSkillSessionEnvFile,
@@ -7282,11 +7282,20 @@ export class CoworkRunner extends EventEmitter {
     }
     const apiFormat = dshApiFormatOf(route.apiFormat);
     const modelLimits = resolveCurrentModelLimits(route.model);
-    const migratingFromClaude = Boolean(activeSession.claudeSessionId)
-      && !isDshSessionHandle(activeSession.claudeSessionId);
     let dshUserPrompt = prompt;
-    if (migratingFromClaude) {
-      const handoff = buildClaudeToDshHandoff(this.store.getSession(sessionId)?.messages ?? []);
+    const sessionRecord = this.store.getSession(sessionId);
+    const sessionMessages = sessionRecord?.messages ?? [];
+    const sessionParentId = sessionRecord?.parentSessionId ?? null;
+    // A stored handle without the `dsh:` prefix predates the unified kernel,
+    // so this turn starts a fresh transcript — bridge the UI history over.
+    const migratingFromLegacyHandle = Boolean(activeSession.claudeSessionId)
+      && !isDshSessionHandle(activeSession.claudeSessionId);
+    // First turn of a branched session: the copied history has never been seen
+    // by any kernel session (the branch parent's transcript is not inherited).
+    // Once this turn settles, the stored `dsh:` handle keeps it one-shot.
+    const startingBranchedSession = !activeSession.claudeSessionId && Boolean(sessionParentId);
+    if (migratingFromLegacyHandle) {
+      const handoff = buildSessionHistoryHandoff(sessionMessages, 'legacy-handle');
       if (handoff) {
         dshUserPrompt = `${handoff}\n\n${prompt}`;
         const notice = tApp(
@@ -7295,9 +7304,24 @@ export class CoworkRunner extends EventEmitter {
         );
         const stored = this.store.addMessage(sessionId, { type: 'system', content: notice });
         this.emit('message', sessionId, stored);
-        coworkLog('INFO', 'runDshSessionLocal', 'Injected Claude-to-DSH history handoff', {
+        coworkLog('INFO', 'runDshSessionLocal', 'Injected legacy-handle history handoff', {
           sessionId,
           priorHandle: activeSession.claudeSessionId,
+        });
+      }
+    } else if (startingBranchedSession) {
+      const handoff = buildSessionHistoryHandoff(sessionMessages, 'branched-session');
+      if (handoff) {
+        dshUserPrompt = `${handoff}\n\n${prompt}`;
+        const notice = tApp(
+          '此会话分支自另一会话，已把分支前的近期对话摘要交给当前内核。界面历史仍在。',
+          'This session was branched from another session; a digest of the recent branched history was handed to the current kernel. The UI history is unchanged.'
+        );
+        const stored = this.store.addMessage(sessionId, { type: 'system', content: notice });
+        this.emit('message', sessionId, stored);
+        coworkLog('INFO', 'runDshSessionLocal', 'Injected branched-session history handoff', {
+          sessionId,
+          parentSessionId: sessionParentId,
         });
       }
     }

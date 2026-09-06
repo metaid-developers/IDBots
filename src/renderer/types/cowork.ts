@@ -347,6 +347,10 @@ export interface CoworkSession {
   projectId?: string | null;
   /** Session goal set via the composer /goal command; null = none. */
   goal?: CoworkSessionGoal | null;
+  /** Source session this conversation was branched from; null = original session. */
+  parentSessionId?: string | null;
+  /** Message in the parent session the branch was cut at; null = original session. */
+  forkPointMessageId?: string | null;
 }
 
 /** Session goal state for the /goal command (active goals are injected per turn). */
