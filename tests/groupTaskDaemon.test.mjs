@@ -8801,3 +8801,70 @@ test('task #66 A: the bootstrap planning turn yields to a chair that already dis
     h.cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Task #66 optimizations: ① chain-health facts, ② verification economy
+// ---------------------------------------------------------------------------
+
+test('task #66 ①: two consecutive send failures record ONE chain_health note; first success records recovery', async () => {
+  const h = await createHarness({ workerCooldownMs: 0 });
+  const chainNotes = (taskId) => h.groupTaskStore.listPendingHostNotes(taskId)
+    .filter((note) => note.kind === 'chain_health');
+  const allChainNotes = () => Number(h.db.exec(
+    "SELECT COUNT(*) FROM group_task_host_notes WHERE kind = 'chain_health'",
+  )[0].values[0][0]);
+  try {
+    const task = h.createTask([2, 3]);
+    h.state.nowMs = Date.now();
+
+    // First failing send: below the threshold, no note yet.
+    h.state.sendFailures = new Set([2]);
+    insertGroupMessage(h.db, {
+      pinId: 'health-fail-1-i0', senderMetaId: 'metaid-3', senderGlobalMetaId: 'gmid-w3',
+      senderName: 'Designer Bot', content: '@Coder Bot ping',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000),
+    });
+    await h.loop.runTick();
+    assert.equal(allChainNotes(), 0, 'one failure does not alarm');
+    h.state.nowMs += 30_000;
+
+    // Second failing send: the backend-unreachable fact lands for the chair.
+    insertGroupMessage(h.db, {
+      pinId: 'health-fail-2-i0', senderMetaId: 'metaid-3', senderGlobalMetaId: 'gmid-w3',
+      senderName: 'Designer Bot', content: '@Coder Bot ping again',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000) + 1,
+    });
+    await h.loop.runTick();
+    const downNotes = chainNotes(task.id).filter((note) => note.body.includes('failed 2 consecutive times'));
+    assert.equal(downNotes.length, 1, 'two consecutive failures ring the bell once');
+    assert.match(downNotes[0].body, /usually the chain backend being unreachable/);
+
+    // Recovery: the first successful send records the recovery fact.
+    h.state.sendFailures = null;
+    insertGroupMessage(h.db, {
+      pinId: 'health-ok-i0', senderMetaId: 'metaid-3', senderGlobalMetaId: 'gmid-w3',
+      senderName: 'Designer Bot', content: '@Coder Bot third ping',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000) + 2,
+    });
+    await h.loop.runTick();
+    const recovered = chainNotes(task.id).filter((note) => note.body.includes('RECOVERED'));
+    assert.equal(recovered.length, 1, 'recovery note recorded on the first success');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('task #66 ②: the chair playbook carries the verification-economy rule', () => {
+  const prompt = buildGroupTaskSystemPrompt({
+    metabot: { name: 'Twin Bot' },
+    task: { title: 'T', goal: 'G' },
+    members: [
+      { name: 'Twin Bot', role: 'chair' },
+      { name: 'Coder Bot', role: 'worker' },
+    ],
+    botRole: 'chair',
+  });
+  assert.match(prompt, /VERIFICATION ECONOMY/);
+  assert.match(prompt, /Do NOT re-download and re-hash what a host verification fact or a worker-supplied checksum already confirms/);
+  assert.match(prompt, /SEMANTIC layer/);
+});

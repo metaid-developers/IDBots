@@ -2314,6 +2314,73 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
    * queue and `{ pinId: '' }` is returned; callers must treat an empty pinId
    * as "queued, delivered later by the drainer" and skip persisting it.
    */
+  /**
+   * Task #66 (optimization ①): task-level chain-backend health facts. The
+   * host is the FIRST to know on-chain sends are failing — during the
+   * observed backend outage the bots each spent minutes discovering it
+   * independently. Two consecutive send failures record ONE chain_health
+   * environment note for the chair (work can continue; publishing will keep
+   * failing); the first success afterwards records the recovery note. The
+   * state is per task and in-memory — an app restart mid-outage re-arms it
+   * after two fresh failures, which is the same information anyway.
+   */
+  const CHAIN_HEALTH_FAILURE_THRESHOLD = 2;
+  const chainHealthState = new Map<number, { consecutiveFailures: number; downSince: number; notifiedAt: number }>();
+  const noteChainHealthDegraded = async (taskId: number, error: unknown): Promise<void> => {
+    try {
+      const state = chainHealthState.get(taskId) ?? { consecutiveFailures: 0, downSince: 0, notifiedAt: 0 };
+      state.consecutiveFailures += 1;
+      if (state.downSince === 0) state.downSince = now();
+      const shouldNotify = state.consecutiveFailures >= CHAIN_HEALTH_FAILURE_THRESHOLD
+        && now() - state.notifiedAt >= 10 * 60_000;
+      chainHealthState.set(taskId, state);
+      if (!shouldNotify) return;
+      state.notifiedAt = now();
+      const reason = error instanceof Error ? error.message : String(error);
+      deps.getGroupTaskStore().recordHostNote({
+        taskId,
+        kind: 'chain_health',
+        target: 'on-chain backend',
+        dedupeKey: `chain_health_down:${taskId}:${Math.floor(now() / (10 * 60_000))}`,
+        body:
+          `On-chain group sends have failed ${state.consecutiveFailures} consecutive times ` +
+          `(last error: ${reason.slice(0, 160)}). This is usually the chain backend being unreachable — ` +
+          'every on-chain post (group messages, file uploads, publishes) will keep failing and retrying until ' +
+          'it recovers. Local work can continue; a recovery note will follow when sends succeed again. ' +
+          'Avoid stacking extra retries on top of the automatic ones.',
+      });
+      emitLog(
+        `[GroupTaskDaemon] Task ${taskId}: chain_health environment note recorded ` +
+        `(${state.consecutiveFailures} consecutive send failures)`,
+      );
+    } catch {
+      // health facts are best-effort — never shadow the original send error
+    }
+  };
+  const noteChainHealthRecovered = async (taskId: number): Promise<void> => {
+    try {
+      const state = chainHealthState.get(taskId);
+      if (!state || state.consecutiveFailures < CHAIN_HEALTH_FAILURE_THRESHOLD) {
+        if (state) chainHealthState.delete(taskId);
+        return;
+      }
+      chainHealthState.delete(taskId);
+      const outageMin = Math.max(1, Math.round((now() - state.downSince) / 60_000));
+      deps.getGroupTaskStore().recordHostNote({
+        taskId,
+        kind: 'chain_health',
+        target: 'on-chain backend',
+        dedupeKey: `chain_health_recovered:${taskId}:${now()}`,
+        body:
+          `On-chain sends have RECOVERED (the failure window lasted ~${outageMin} min). ` +
+          'Pending retries and queued publications can proceed now.',
+      });
+      emitLog(`[GroupTaskDaemon] Task ${taskId}: chain_health recovery note recorded (~${outageMin} min outage)`);
+    } catch {
+      // best-effort
+    }
+  };
+
   const postGroupMessage = async (
     taskId: number,
     metabotId: number,
@@ -2325,6 +2392,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       refreshDriverClaim(taskId);
       noteDriveActivity(taskId); // a posted message is real drive work
       noteTickProgress(); // a completed send proves the in-flight tick is alive
+      await noteChainHealthRecovered(taskId);
       return result;
     } catch (sendError) {
       if (isSponsorBroadcastPendingError(sendError)) {
@@ -2332,6 +2400,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
         await notifySenderOfQueuedDelivery(taskId, metabotId, content);
         return { pinId: '' };
       }
+      await noteChainHealthDegraded(taskId, sendError);
       // R7: the sender's reply was already written to its own task session
       // BEFORE the on-chain send (the daemon adds the assistant message first),
       // so on failure the bot would wrongly believe it had spoken and the group

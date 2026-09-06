@@ -69,7 +69,10 @@ Table `group_task_host_notes` (idempotent migration in `sqliteStore.ts`):
 - **Reliability**: 3 failed delivery attempts close the notes (consumed, null pin)
   with one origin-session anomaly, so a broken chair LLM cannot wedge the channel.
 - **Current kinds**: `no_ack`, `deadline`, `long_turn`, `join`, `parse`,
-  `dispatch_held`. Kinds are open-ended strings — new emitters pick a new kind.
+  `dispatch_held`, `chain_health` (task #66 ①: two consecutive on-chain send
+  failures record one backend-unreachable fact; the first success afterwards
+  records the recovery). Kinds are open-ended strings — new emitters pick a new
+  kind.
 
 Trigger: pending notes arm the chair turn at the top of each tick (deferred while
 a checkpoint or supervisor pause holds). Notes recorded mid-tick are delivered on
