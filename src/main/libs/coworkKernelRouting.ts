@@ -56,13 +56,26 @@ export function resolveKernelChoice(input: KernelRoutingInput): CoworkKernelChoi
 const HANDOFF_MAX_CHARS = 3500;
 const HANDOFF_LINE_CHARS = 500;
 
+export type SessionHistoryHandoffReason = 'legacy-handle' | 'branched-session';
+
+const SESSION_HANDOFF_HEADERS: Record<SessionHistoryHandoffReason, string> = {
+  'legacy-handle':
+    '[Session handoff] This conversation started on a previous kernel. The UI still shows those messages, but this kernel does not have that transcript. Recent turns:',
+  'branched-session':
+    '[Session handoff] This conversation was branched from an earlier session. The UI still shows the branched messages, but this kernel starts without that transcript. Recent turns from the branched history:',
+};
+
 /**
- * Compact UI-history digest for the first DSH turn of a pre-DSH (Claude UUID)
- * session. DSH cannot resume a Claude transcript; without this the UI looks
- * like a continuation while the model starts empty.
+ * Compact UI-history digest for a kernel turn that starts without the
+ * transcript those messages lived in: a session whose stored handle predates
+ * the unified DSH kernel (legacy-handle), or the first turn of a session
+ * branched from another one (branched-session — the branch copies UI history
+ * only, the parent's kernel transcript is not inherited). Without this digest
+ * the UI looks like a continuation while the model starts empty.
  */
-export function buildClaudeToDshHandoff(
-  messages: Array<{ type?: string; content?: string }>
+export function buildSessionHistoryHandoff(
+  messages: Array<{ type?: string; content?: string }>,
+  reason: SessionHistoryHandoffReason = 'legacy-handle'
 ): string {
   const lines: string[] = [];
   let used = 0;
@@ -79,7 +92,7 @@ export function buildClaudeToDshHandoff(
   }
   if (lines.length === 0) return '';
   return [
-    '[Session handoff] This conversation started on a previous kernel. The UI still shows those messages, but this kernel does not have that transcript. Recent turns:',
+    SESSION_HANDOFF_HEADERS[reason],
     ...lines,
     'Continue from this context. Do not claim you remember anything that is not in this handoff or the current user message.',
   ].join('\n');
