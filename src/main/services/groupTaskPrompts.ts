@@ -30,6 +30,8 @@ export interface GroupTaskPromptTask {
   title: string;
   goal: string;
   acceptanceCriteria?: string | null;
+  /** On-chain group pin id (64-hex + "i0") — shown so tools never guess it. */
+  groupId?: string | null;
 }
 
 export interface GroupTaskPromptMember {
@@ -106,6 +108,7 @@ function chairPlaybookRules(language: AppLanguage): string[] {
     '- ACCEPTANCE ALIGNMENT: the acceptance card judges ONLY what the acceptance criteria declared at creation say — nothing else. While executing, verify deliverables against those criteria as literally as possible. If a criterion is ambiguous (unclear scope, unclear output form), do NOT guess silently and do NOT save it for the review stage: ask the owner in-group (or via a checkpoint when it materially changes the outcome) and settle the interpretation BEFORE entering review. At review, report each criterion with its pass/fail verdict and evidence; anything you noticed that the criteria never asked for (e.g. on-chain state the criteria did not require) is an observation for the owner, NEVER an acceptance gap.',
     '- OpenTeam remote teammates (marked "remote teammate via OpenTeam" in the roster) are external collaborators from other users on the Agent Internet, not local bots. Welcome them as you would a new colleague, and @ their exact roster name when assigning work, just like any local member. Their replies come from their own machine and may arrive late or not at all — if a remote teammate stays unresponsive for a long stretch, re-assign the work and explain the change to the owner. Hold them to the same delivery standard as local members (`[DELIVERABLE]` lines, verified before acceptance).',
     '- NEVER disclose the owner\'s private data, wallet details, or anything from your private channels — the group sees only task-relevant information.',
+    '- ONE VOICE PER TURN: if you already posted your substantive answer mid-turn via the group_chat tool (send_group_message), close the turn with `[NO_REPLY]` — never repeat the same content as the turn\'s final reply (duplicate announcements read as double rulings to the group).',
     '- FREEZE PROTOCOL (finalization): once you judge a deliverable final (its verification has passed and no further changes are needed), declare it FROZEN by posting a message that ends with `[FREEZE: <pinid-or-metafile-uri>]` — this locks that exact version as the delivery reference. A frozen deliverable is immutable: the worker must NOT rebuild, re-publish, or silently swap its content afterwards; any later change is a NEW version and must be reported as a separate `[DELIVERABLE]` with its own pinid/MD5, never by overwriting the frozen one. When a worker keeps rebuilding after a freeze, re-state the frozen reference and its MD5/hash plainly in the group and hold the original as the delivery of record. The host may auto-flag later same-name revisions as a non-delivery version.',
   ];
 }
@@ -135,11 +138,15 @@ export function buildGroupTaskBlock(params: {
       )
     : ['(no members)'];
   const chairName = params.members.find((member) => member.role === 'chair')?.name ?? 'the chair';
+  const taskGroupId = (params.task.groupId ?? '').trim() || null;
   const ownerId = (params.ownerGlobalMetaId ?? '').trim();
   const environmentLines = [
     '## Group task environment',
     `- You are in a GROUP TASK: multiple bots collaborating on one owner's goal. Initiator and final acceptor is the OWNER (a human${ownerId ? `, globalMetaId \`${ownerId}\`` : ''}). ${chairName} (the owner's digital twin) chairs the group and verifies deliverables.`,
     '- All messages here are on-chain pins (MetaWeb) — a pinid is exactly 64 lowercase hex chars + `i0`; a buzz is a `/protocols/simplebuzz` post.',
+    ...(taskGroupId
+      ? [`- Current group id: \`${taskGroupId}\` — if you use the group_chat tool's send_group_message action mid-turn, pass EXACTLY this value as \`group_id\` (a bare number like 65 is the task number, never a group id).`]
+      : []),
     ...(params.currentTimeText?.trim() ? [`- ${params.currentTimeText.trim()}`] : []),
     '',
   ];
@@ -174,6 +181,7 @@ export function buildGroupTaskBlock(params: {
         '- @ the chair ONLY when your output needs its action (assignment, verification, unblocking). Never @ anyone for courtesy.',
         `- WORK STATUS PROTOCOL (A2A-style): when you accept an assignment, your reply should START with a \`[WORKING]\` status line — e.g. \`${workingExample}\` — so the group knows you are working, not offline or crashed. If the work spans multiple stages, include \`[WORKING]\` progress lines as stages complete.`,
         '- LONG-TASK HEARTBEAT: when a single step runs long (model download, video render, many-sample synthesis — anything past ~20 minutes), run it as a background command instead of a blocking foreground call, and post a heartbeat line like `[WORKING long-task, ETA 45 min]` before starting it, renewing the heartbeat before the ETA expires (the ETA number may be written in the owner language). While a heartbeat is valid the host treats you as working; without one, long silence is flagged as unreachable.',
+        '- MID-TURN GROUP MESSAGES: you may speak to the group DURING a turn with the group_chat tool (action `send_group_message`, `group_id` = the current group id listed in your environment block) — post progress lines and `[DELIVERABLE]` lines the moment results land instead of holding everything for the turn\'s end; mid-turn `[DELIVERABLE]` lines are recorded on the task ledger exactly like turn replies. Never guess or invent a group_id, and never substitute the task number. If you already delivered everything mid-turn, close the turn with `[NO_REPLY]` instead of repeating it as the final reply.',
         `- If you are on the roster but NOT assigned work (observer/standby), reply with \`${standbyExample}\` so the chair knows you are present and idle.`,
         '- Once the chair posts `[STATUS:REVIEW]`, the task is awaiting user acceptance — you will not speak again in this group (review-phase silence), and no farewell is needed.',
       ];

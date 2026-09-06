@@ -5641,6 +5641,21 @@ const getCoworkRunner = () => {
       // millisecond timestamp, AES via encryptGroupMessageECB).
       groupChat: {
         resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        // Task #65: inside a group-task worker/chair session the group_chat
+        // tool must never deliver to a guessed group id — resolve the
+        // session's bound task and hand back its real on-chain group id.
+        resolveSessionTaskGroupId: (sessionId) => {
+          try {
+            const mapping = getCoworkStore().getConversationMappingForSession('metaweb_group_task', sessionId);
+            if (!mapping) return null;
+            const match = /^group-task:(\d+)$/.exec((mapping.externalConversationId ?? '').trim());
+            if (!match) return null;
+            const groupId = getGroupTaskStore().getTaskById(Number(match[1]))?.groupId?.trim();
+            return groupId || null;
+          } catch {
+            return null;
+          }
+        },
         getMetabotDisplayName: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.name?.trim() || null,
         assignTask: (params) =>

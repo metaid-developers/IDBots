@@ -2444,7 +2444,7 @@ test('closeGroupTask: a failing close-out announcement never fails the close', a
 // G-04: supervisor intervention channel
 // ---------------------------------------------------------------------------
 
-test('superviseGroupTask: nudge records the signal and posts a supervisor notice; pause/resume gate dispatch with owner confirm', async () => {
+test('superviseGroupTask: nudge records the signal with NO group post (single-commander); pause/resume gate dispatch with owner confirm', async () => {
   const h = await createHarness();
   try {
     const detail = await groupTaskService.createGroupTask({
@@ -2456,7 +2456,8 @@ test('superviseGroupTask: nudge records the signal and posts a supervisor notice
     });
     const sendsBefore = h.calls.send.length;
 
-    // nudge → visible notice + pending signal row
+    // nudge → signal row only; NOTHING posts into the group under the chair's
+    // identity anymore (task #65 acceptance: the last impersonation is gone).
     const nudge = await groupTaskService.superviseGroupTask({
       taskId: detail.id,
       action: 'nudge',
@@ -2465,10 +2466,12 @@ test('superviseGroupTask: nudge records the signal and posts a supervisor notice
     });
     assert.equal(nudge.signal.kind, 'nudge');
     assert.equal(nudge.signal.processedAt, null, 'nudge waits for the chair response turn');
-    const notice = h.calls.send[sendsBefore];
-    assert.equal(notice.metabotId, 1, 'notice posted under the chair transport identity');
-    assert.match(notice.opts.content, /\[GROUP_TASK_NOTICE:supervisor\]/);
-    assert.match(notice.opts.content, /监督提示 → Coder Bot/);
+    assert.equal(
+      h.calls.send.length,
+      sendsBefore,
+      'no supervisor notice posted into the group',
+    );
+    assert.equal(nudge.signal.noticePinId ?? null, null, 'no notice pin recorded');
 
     // pause → local gate + pre-processed row
     const paused = await groupTaskService.superviseGroupTask({

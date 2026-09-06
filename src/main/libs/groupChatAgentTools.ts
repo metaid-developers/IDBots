@@ -31,7 +31,18 @@ export type GroupChatControl = {
     mention?: string[];
     network?: 'mvc' | 'doge' | 'btc';
   }): Promise<{ txids: string[]; pinId: string; totalCost?: number }>;
+  /**
+   * Task #65: when this cowork session belongs to a GROUP TASK, the on-chain
+   * group id of that task's group (else null). The send_group_message action
+   * routes to it regardless of what the model passed — a worker once guessed
+   * the numeric task id ("65") as the group id and its whole delivery receipt
+   * landed in a phantom on-chain group nobody reads.
+   */
+  resolveSessionTaskGroupId?: (sessionId: string) => string | null;
 };
+
+/** On-chain group id shape: the group's pin id — 64 lowercase hex + "i0". */
+const ON_CHAIN_GROUP_ID = /^[0-9a-f]{64}i0$/;
 
 /** Minimal shape of the claude-agent-sdk tool() helper we depend on. */
 type SdkToolFactory = (
@@ -85,14 +96,20 @@ export function buildGroupChatAgentTools(deps: {
       'action "join_group": on-chain SimpleGroupJoin (/protocols/simplegroupjoin, state 1). Pass the protocol key field `k` for a private group.',
       'action "send_group_message": send ONE group message (/protocols/simplegroupchat); pass plaintext `content` — the host AES-encrypts it before broadcast.',
       'To both join and keep chatting, call join_group first, then orchestrate.',
-      'group_id is the on-chain group pin id; never invent it — ask the user when unknown. target_metabot_name selects the acting MetaBot (case-insensitive); omit it to use the MetaBot that owns this session.',
+      'group_id is the on-chain group pin id: EXACTLY 64 lowercase hex characters followed by "i0" (66 chars total). A bare number (e.g. "65") is a task NUMBER, never a group id — never invent a group id; ask the user when unknown. In a group-task session, send_group_message auto-routes to your task\'s group, so pass the group id shown in your context. target_metabot_name selects the acting MetaBot (case-insensitive); omit it to use the MetaBot that owns this session.',
       'On-chain pins are permanent — do NOT join groups or post messages the user did not ask for. For private 1:1 messages use send_private_chat; for public posts use post_buzz.',
     ].join(' '),
     {
       action: z
         .enum(['orchestrate', 'join_group', 'send_group_message'])
         .describe('orchestrate = configure/refresh the autonomous reply task; join_group = SimpleGroupJoin; send_group_message = one AES-encrypted group message (SimpleGroupChat).'),
-      group_id: z.string().min(1).describe('On-chain group pin id (hex). Required for every action.'),
+      group_id: z
+        .string()
+        .min(1)
+        .describe(
+          'On-chain group pin id: exactly 64 lowercase hex chars + "i0" (66 chars, e.g. "4ffab5a8…e2e4i0"). '
+          + 'NOT the numeric task id (65 is a task number, not a group id). Required for every action.',
+        ),
       target_metabot_name: z
         .string()
         .optional()
@@ -168,9 +185,28 @@ export function buildGroupChatAgentTools(deps: {
       channel_id?: string;
       mention?: string[];
     }) => {
-      const groupId = asString(args.group_id);
-      if (!groupId) {
+      const rawGroupId = asString(args.group_id);
+      if (!rawGroupId) {
         return textResult('group_chat requires `group_id` (the on-chain group pin id). Do not invent one — ask the user.', true);
+      }
+      // Task #65: group-task sessions route send_group_message to the task's
+      // real group no matter what the model passed; every other call must at
+      // least carry a pinid-shaped group id (a bare task number like "65" is
+      // not one).
+      const sessionTaskGroupId = control.resolveSessionTaskGroupId?.(sessionId) ?? null;
+      let groupId = rawGroupId;
+      let routingNote = '';
+      if (sessionTaskGroupId) {
+        if (rawGroupId.toLowerCase() !== sessionTaskGroupId.toLowerCase()) {
+          groupId = sessionTaskGroupId;
+          routingNote = `\n- note: routed to this session's task group — you passed "${rawGroupId}", which is not that group id; the group id is the 64-hex+"i0" pin id shown in your context, never the task number.`;
+        }
+      } else if (!ON_CHAIN_GROUP_ID.test(rawGroupId)) {
+        return textResult(
+          `Invalid group_id "${rawGroupId}": an on-chain group id is the group's pin id — exactly 64 lowercase hex chars followed by "i0" (66 characters). `
+          + 'A bare number such as "65" is the TASK number, not a group id. Do not guess; ask for the real group id.',
+          true,
+        );
       }
 
       // Common MetaBot resolution: explicit target_metabot_name wins; otherwise
@@ -267,7 +303,7 @@ export function buildGroupChatAgentTools(deps: {
           mention: mention.length ? mention : undefined,
           network,
         });
-        return textResult(formatPinResult('Group message sent (SimpleGroupChat).', result));
+        return textResult(formatPinResult('Group message sent (SimpleGroupChat).', result) + routingNote);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`Send group message failed: ${msg}`, true);

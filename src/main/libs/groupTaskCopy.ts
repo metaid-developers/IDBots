@@ -317,53 +317,14 @@ export function buildLongTurnStandbyNote(
 }
 
 // ---------------------------------------------------------------------------
-// G-04: supervisor intervention notices. Host-authored [GROUP_TASK_NOTICE:
-// supervisor] lines — structured Twin/owner-representative signals, NOT chair
-// speech: the envelope keeps them out of the tag parser and the group reads
-// them as supervision, never as the chair's own voice.
+// G-04: supervisor intervention copy. The in-group [GROUP_TASK_NOTICE:
+// supervisor] notice post was REMOVED by the single-commander architecture
+// (task #65 acceptance): nothing impersonates the chair in the group anymore.
+// Signals ride the chair's own turn context; only the note cap remains.
 // ---------------------------------------------------------------------------
 
-/** Cap for a supervisor signal note (group notice + ledger). */
+/** Cap for a supervisor signal note (ledger + chair directive). */
 export const SUPERVISOR_NOTE_MAX_CHARS = 500;
-
-export function buildSupervisorSignalNotice(input: {
-  taskId: number;
-  taskTitle: string;
-  kind: 'nudge' | 'flag' | 'pause' | 'resume';
-  note: string;
-  target?: string | null;
-}, language: AppLanguage = groupTaskLanguage()): string {
-  const note = input.note.trim();
-  const target = input.target?.trim() ?? '';
-  const kindLine = (text: string) => `@chair 🔎 ${text}`;
-  const bodies: Record<typeof input.kind, string> = {
-    nudge: language === 'en'
-      ? kindLine(
-        `SUPERVISOR NUDGE${target ? ` → ${target}` : ''}: the supervisor asks you to check this now — ${note}. ` +
-          'Verify and answer in the group; your judgment stays authoritative.',
-      )
-      : kindLine(
-        `监督提示${target ? ` → ${target}` : ''}：监督者请你立即检查——${note}。` +
-          '请核验后在群内答复；判定权仍归 chair。',
-      ),
-    flag: language === 'en'
-      ? kindLine(
-        `SUPERVISOR FLAG${target ? ` → ${target}` : ''} (recorded into the review record): ${note}. ` +
-          'No immediate action required — address it if you agree, and it will surface again at acceptance.',
-      )
-      : kindLine(
-        `监督者疑点标注${target ? ` → ${target}` : ''}（将进入验收记录）：${note}。` +
-          '无需立即处理——若你认同可跟进；该项会在验收时再次呈现。',
-      ),
-    pause: language === 'en'
-      ? `⏸️ SUPERVISOR PAUSE: dispatch is paused by the supervisor — ${note}. The chair will not assign new work until the owner confirms resume.`
-      : `⏸️ 监督者暂停：派工已由监督者暂停——${note}。在 owner 确认恢复前，chair 不会派发新工作。`,
-    resume: language === 'en'
-      ? `▶️ SUPERVISOR RESUME (owner-confirmed): dispatch resumes — ${note || 'no additional note'}. The chair may continue assigning work.`
-      : `▶️ 监督者恢复（owner 已确认）：派工恢复——${note || '无补充说明'}。chair 可继续派发工作。`,
-  };
-  return withGroupTaskNotice(GROUP_TASK_NOTICE.supervisor, bodies[input.kind]);
-}
 
 /**
  * Host notice when a worker-addressed dispatch was swallowed by a human-gate

@@ -163,11 +163,28 @@ re-dispatch-now), move the judgment to the chair and keep only the fact in the
 host. The 34-ish kv state machines shrink over time by exactly this test:
 fact-gathering stays, decision-making goes.
 
-## 9. Known follow-ups
+## 9. Supervisor signals and mid-turn speech (task #65 acceptance updates)
 
-- Mid-turn speech for workers (`send_group_message` as part of the group-task
-  protocol) is the structural fix for the remaining long-turn silence gap; with
-  the single-commander base in place it can replace the internal lease machinery.
-- The supervisor-signal channel (owner's representative) and the host-notes
-  channel are deliberately separate: supervisor signals carry owner authority,
-  host notes carry none. Keep them separate.
+- **Supervisor signals no longer post into the group.** The Twin's
+  nudge/flag/pause/resume actions are recorded on the supervisor ledger and
+  delivered to the chair through its own turn context (processSupervisorSignals
+  local directive); the chair's in-group answer is the only visible artifact.
+  With this, NOTHING impersonates the chair in the group — the last borrowed
+  identity is gone. The supervisor channel (owner authority) and the host-notes
+  channel (no authority) remain deliberately separate.
+
+- **Mid-turn speech is real and now guarded.** Bots spontaneously use the
+  group_chat tool's send_group_message action mid-turn (task #65: the chair used
+  it correctly 5 times; a worker guessed "65" — the task number — as the group
+  id and its delivery receipt landed in a phantom group). The tool now (a)
+  validates the group_id shape (64-hex + "i0") and rejects task numbers with a
+  teaching error, (b) auto-routes sends inside group-task sessions to the
+  session's bound task group, and (c) the group-task prompt lists the current
+  group id and teaches mid-turn `[DELIVERABLE]`/progress lines (they hit the
+  ledger like turn replies) plus the one-voice-per-turn rule ([NO_REPLY] as the
+  turn closer when everything was already said mid-turn).
+
+## 10. Known follow-ups
+
+- The internal [WORKING long-task] lease machinery can shrink once mid-turn
+  speech proves reliable in the field — workers can speak for themselves now.

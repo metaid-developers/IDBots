@@ -3366,6 +3366,45 @@ test('prompts: English owner language uses English WORKING/STANDBY examples and 
 // Worldview/time/experience prompts, deliverable verification, owner report
 // ---------------------------------------------------------------------------
 
+test('prompts: task #65 — the current group id is listed and mid-turn speech is taught', () => {
+  const groupId = `${'4f'.repeat(32)}i0`;
+  const workerPrompt = buildGroupTaskSystemPrompt({
+    metabot: { name: 'Coder Bot' },
+    task: { title: 'T', goal: 'G', groupId },
+    members: [
+      { name: 'Twin Bot', role: 'chair' },
+      { name: 'Coder Bot', role: 'worker' },
+    ],
+    botRole: 'worker',
+  });
+  assert.match(workerPrompt, new RegExp(`- Current group id: \`${groupId}\``));
+  assert.match(workerPrompt, /pass EXACTLY this value as `group_id`/);
+  assert.match(workerPrompt, /a bare number like 65 is the task number, never a group id/);
+  assert.match(workerPrompt, /MID-TURN GROUP MESSAGES/);
+  assert.match(workerPrompt, /mid-turn `\[DELIVERABLE\]` lines are recorded on the task ledger exactly like turn replies/);
+
+  const chairPrompt = buildGroupTaskSystemPrompt({
+    metabot: { name: 'Twin Bot' },
+    task: { title: 'T', goal: 'G', groupId },
+    members: [
+      { name: 'Twin Bot', role: 'chair' },
+      { name: 'Coder Bot', role: 'worker' },
+    ],
+    botRole: 'chair',
+  });
+  assert.match(chairPrompt, /ONE VOICE PER TURN/);
+  assert.match(chairPrompt, /never repeat the same content as the turn's final reply/);
+
+  // No group id on the task row → the line is omitted, nothing misleading.
+  const noIdPrompt = buildGroupTaskSystemPrompt({
+    metabot: { name: 'Coder Bot' },
+    task: { title: 'T', goal: 'G', groupId: null },
+    members: [{ name: 'Twin Bot', role: 'chair' }, { name: 'Coder Bot', role: 'worker' }],
+    botRole: 'worker',
+  });
+  assert.doesNotMatch(noIdPrompt, /Current group id:/);
+});
+
 test('prompts: worldview block, time line, honesty and chair boundary', () => {
   const prompt = buildGroupTaskSystemPrompt({
     metabot: { name: 'Twin Bot' },
