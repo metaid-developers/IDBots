@@ -3379,6 +3379,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
         title: task.title,
         goal: task.goal,
         acceptanceCriteria: task.acceptanceCriteria,
+        groupId: task.groupId ?? null,
       },
       members: promptMembers,
       botRole,

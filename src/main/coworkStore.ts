@@ -2568,6 +2568,28 @@ export class CoworkStore implements MemoryBackend {
     return row ? this.mapConversationMappingRow(row) : null;
   }
 
+  /**
+   * Reverse lookup: the newest mapping of `channel` bound to a cowork session.
+   * Used by tooling that knows only the session (e.g. routing the group_chat
+   * tool inside a group-task worker session to its task group).
+   */
+  getConversationMappingForSession(
+    channel: string,
+    coworkSessionId: string,
+  ): CoworkConversationMapping | null {
+    const normalizedChannel = this.normalizeConversationChannel(channel);
+    const normalizedSessionId = String(coworkSessionId ?? '').trim();
+    if (!normalizedChannel || !normalizedSessionId) return null;
+    const row = this.getOne<CoworkConversationMappingRow>(`
+      SELECT channel, external_conversation_id, metabot_id, cowork_session_id, metadata_json, created_at, last_active_at
+      FROM cowork_conversation_mappings
+      WHERE channel = ? AND cowork_session_id = ?
+      ORDER BY last_active_at DESC, created_at DESC
+      LIMIT 1
+    `, [normalizedChannel, normalizedSessionId]);
+    return row ? this.mapConversationMappingRow(row) : null;
+  }
+
   upsertConversationMapping(input: {
     channel: string;
     externalConversationId: string;

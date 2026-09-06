@@ -8,7 +8,9 @@ const { buildGroupChatAgentTools } = require('../dist-electron/main/libs/groupCh
 const SESSION_ID = 'sess-group-1';
 const METABOT_ID = 7;
 const NAMED_METABOT_ID = 9;
-const GROUP_ID = 'ff00aa11bb22';
+// On-chain group ids are pin ids (64 lowercase hex + 'i0') — the tool validates
+// the shape, so every fixture uses a well-formed one.
+const GROUP_ID = `${'ab'.repeat(32)}i0`;
 
 function makeHarness(overrides = {}) {
   const calls = { resolveByName: [], displayName: [], assign: [], join: [], send: [], resolve: [] };
@@ -38,6 +40,11 @@ function makeHarness(overrides = {}) {
       if (overrides.sendError) throw overrides.sendError;
       return overrides.sendResult ?? { txids: ['tx-s'], pinId: 'msgPin1i0' };
     },
+    // Task #65: absent by default (a non-task session); tests pass
+    // `taskGroupId` to simulate a group-task session binding.
+    ...(overrides.taskGroupId !== undefined
+      ? { resolveSessionTaskGroupId: () => overrides.taskGroupId }
+      : {}),
   };
   const resolveMetabotId = (sessionId) => {
     calls.resolve.push(sessionId);
@@ -267,4 +274,49 @@ test('send_group_message surfaces control failures as an error result without th
   });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /Send group message failed: create-pin failed: HTTP 500/);
+});
+
+// ---------------------------------------------------------------------------
+// Task #65: group_id shape validation + group-task session routing
+// ---------------------------------------------------------------------------
+
+test('rejects a non-pinid group_id (the task number is not a group id) before any send', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.group_chat.handler({
+    action: 'send_group_message',
+    group_id: '65',
+    content: 'delivery receipt',
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /Invalid group_id "65"/);
+  assert.match(result.content[0].text, /64 lowercase hex chars/);
+  assert.equal(calls.send.length, 0, 'nothing is delivered to a phantom group');
+});
+
+test('group-task sessions route sends to the bound task group regardless of the passed id', async () => {
+  const taskGroup = `${'cd'.repeat(32)}i0`;
+  const { calls, byName } = makeHarness({ taskGroupId: taskGroup });
+  const result = await byName.group_chat.handler({
+    action: 'send_group_message',
+    group_id: '65',
+    content: '[DELIVERABLE] metafile://aa',
+  });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.send.length, 1);
+  assert.equal(calls.send[0].groupId, taskGroup, 'delivered to the real task group');
+  assert.match(result.content[0].text, /routed to this session's task group/);
+  assert.match(result.content[0].text, /"65"/);
+});
+
+test('group-task sessions send straight through when the correct group id is passed', async () => {
+  const taskGroup = `${'ef'.repeat(32)}i0`;
+  const { calls, byName } = makeHarness({ taskGroupId: taskGroup });
+  const result = await byName.group_chat.handler({
+    action: 'send_group_message',
+    group_id: taskGroup,
+    content: 'progress line',
+  });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.send[0].groupId, taskGroup);
+  assert.doesNotMatch(result.content[0].text, /routed to this session's task group/);
 });

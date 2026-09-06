@@ -79,16 +79,16 @@ When you spot a problem in a RUNNING task before the chair does (a delivery gap,
 
 | signal | when to use | effect |
 | ------ | ----------- | ------ |
-| `nudge` | ask the chair to check a specific member/deliverable NOW | host posts a visible supervisor notice; the chair answers in-group (its judgment stays authoritative) |
-| `flag` | record a suspicion/observation for the acceptance stage | host posts a notice; the line rides into the task's review record — no immediate action forced |
+| `nudge` | ask the chair to check a specific member/deliverable NOW | recorded on the supervisor ledger and delivered to the chair in its OWN turn context (a local directive); the chair answers in-group in its own voice — the host posts NOTHING into the group |
+| `flag` | record a suspicion/observation for the acceptance stage | recorded on the ledger; the line rides into the task's review record — no immediate action forced |
 | `pause` | dispatch must stop while the owner decides | host holds the planning turn + chair dispatch replies; recorded on the ledger |
 | `resume` | lift a pause AFTER the owner explicitly confirmed | requires `confirm_owner: true`; the RPC refuses otherwise |
 
 Rules:
 
-- **One chair voice stands**: these are structured signals, never chair speech — you never take the chair floor with them, and the chair keeps its authoritative judgment.
+- **One chair voice stands**: these are structured signals, never chair speech — you never take the chair floor with them, and the chair keeps its authoritative judgment. Nothing is posted into the group on your behalf either (single-commander): the signal reaches the chair privately and the chair's in-group answer is the visible artifact.
 - **`resume` needs the owner's own confirmation** — relay the owner's reply and pass `"confirm_owner": true` only then. The owner can also resume directly from the Tasks panel (the button IS the confirmation). Never resume on your own initiative.
-- All signals are visible in-group (host `[GROUP_TASK_NOTICE:supervisor]` notice), auditable (`show` returns the `supervisorSignals` trail), and snapshotted into the acceptance record at review.
+- All signals are auditable (`show` returns the `supervisorSignals` trail) and snapshotted into the acceptance record at review.
 
 ## Payload schemas
 

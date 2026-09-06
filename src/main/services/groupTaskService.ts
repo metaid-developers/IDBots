@@ -13,7 +13,6 @@ import {
   buildSourceSessionAcceptanceNotice,
   buildSourceSessionReviewFallback,
   buildSourceSessionReviewNotice,
-  buildSupervisorSignalNotice,
   copyAcceptanceCommentLine,
   copyAcceptanceRatingLine,
   copyDefaultObserverExpectation,
@@ -1804,10 +1803,11 @@ export async function postGroupTaskMessageAsOwner(
 //
 // The Twin (owner representative) supervises a RUNNING task through the
 // metabot-group-task skill: structured signals recorded on the supervisor
-// ledger, made visible in-group via a host notice (NOT a chair speech — the
-// [GROUP_TASK_NOTICE:supervisor] envelope keeps them out of the tag parser),
-// and snapshotted into the review record at acceptance. `pause` holds the
-// daemon's dispatch path until an owner-confirmed `resume`.
+// ledger, delivered to the chair through its own turn context (local
+// directive — the host never posts into the group), and snapshotted into the
+// review record at acceptance. The chair's in-group answer is the visible
+// artifact. `pause` holds the daemon's dispatch path until an
+// owner-confirmed `resume`.
 // ---------------------------------------------------------------------------
 
 export interface SuperviseGroupTaskInput {
@@ -1861,45 +1861,34 @@ export async function superviseGroupTask(
     throw new Error(`group task ${taskId} is already paused`);
   }
 
-  // Host-applied gates first (pause/resume take effect even if the notice
-  // post fails on-chain — the gate is local state, the notice is visibility).
+  // Host-applied gates first (pause/resume are local state, immediately in
+  // effect).
   if (action === 'pause') store.setTaskDispatchPausedAt(taskId, Date.now());
   if (action === 'resume') store.setTaskDispatchPausedAt(taskId, null);
 
-  let noticePinId: string | null = null;
-  try {
-    const notice = buildSupervisorSignalNotice({
-      taskId,
-      taskTitle: task.title,
-      kind: action,
-      note,
-      target,
-    });
-    const sent = await postGroupTaskMessage(taskId, task.chairMetabotId, notice);
-    noticePinId = sent.pinId ?? null;
-  } catch (error) {
-    console.warn(
-      `[GroupTask] Supervisor ${action} notice post failed for task ${taskId} (signal still recorded): ` +
-      `${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
+  // Single-commander (task #65 acceptance): the host no longer posts a
+  // [GROUP_TASK_NOTICE:supervisor] notice into the group under the chair's
+  // identity — nothing may impersonate the chair anymore. The signal is
+  // recorded on the supervisor ledger and delivered to the chair through its
+  // OWN turn (processSupervisorSignals injects the directive locally); the
+  // chair's in-group answer is the visible artifact, and the signal trail is
+  // auditable via `show` and snapshotted into the acceptance record.
   const signal = store.addSupervisorSignal({
     taskId,
     kind: action,
     note,
     target,
     createdBy: input.createdBy?.trim() || 'twin-supervisor',
-    noticePinId,
+    noticePinId: null,
   });
   // pause/resume are host-enforced: no chair response turn to wait for.
   if (action === 'pause' || action === 'resume') {
-    store.markSupervisorSignalsProcessed([signal.id], noticePinId);
+    store.markSupervisorSignalsProcessed([signal.id], null);
   }
   const fresh = store.getTaskById(taskId);
   console.log(
     `[GroupTask] Supervisor ${action} recorded for task ${taskId}` +
-    `${target ? ` (target: ${target})` : ''}${noticePinId ? ` (notice pin ${noticePinId})` : ''}`,
+    `${target ? ` (target: ${target})` : ''} (chair-prompt delivery; no group notice)`,
   );
   return {
     signal: action === 'pause' || action === 'resume'
