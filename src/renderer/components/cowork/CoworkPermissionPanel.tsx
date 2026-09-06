@@ -228,6 +228,11 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
     || Boolean(otherInputs[index]?.trim())
     || skippedQuestions[question.question] === true
   ));
+  const isCurrentQuestionComplete = Boolean(currentQuestion && (
+    answers[currentQuestion.question]?.trim()
+    || otherInputs[currentStep]?.trim()
+    || skippedQuestions[currentQuestion.question] === true
+  ));
 
   const handleApprove = () => {
     if (responding) return;
@@ -271,6 +276,20 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
   const handleDeny = () => {
     if (responding) return;
     onRespond({ behavior: 'deny', message: 'Permission denied' });
+  };
+
+  const handleNextQuestion = () => {
+    if (responding || isLastStep || !isCurrentQuestionComplete) return;
+    setCurrentStep((step) => Math.min(step + 1, totalSteps - 1));
+  };
+
+  const handleQuestionPrimaryAction = () => {
+    if (responding) return;
+    if (!isLastStep) {
+      handleNextQuestion();
+      return;
+    }
+    handleApprove();
   };
 
   if (isQuestionRequest && currentQuestion) {
@@ -330,6 +349,11 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
             type="text"
             value={otherInputs[currentStep] ?? ''}
             onChange={(event) => handleOtherInputChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              handleQuestionPrimaryAction();
+            }}
             placeholder={i18nService.t('coworkQuestionWizardOtherPlaceholder')}
             disabled={responding}
             className="mt-2.5 w-full rounded-xl border border-claude-border dark:border-claude-darkBorder bg-claude-bg/60 dark:bg-claude-darkBg/60 px-3 py-2 text-xs text-claude-text dark:text-claude-darkText placeholder:text-claude-textSecondary/60 dark:placeholder:text-claude-darkTextSecondary/60 focus:outline-none focus:ring-2 focus:ring-claude-accent/40 focus:border-claude-accent disabled:opacity-60"
@@ -345,7 +369,7 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
               <button type="button" onClick={() => setCurrentStep((step) => Math.max(step - 1, 0))} disabled={isFirstStep || responding} className="p-1.5 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-30" aria-label={i18nService.t('coworkQuestionWizardPrevious')}>
                 <ChevronLeftIcon className="h-4 w-4" />
               </button>
-              <button type="button" onClick={() => setCurrentStep((step) => Math.min(step + 1, totalSteps - 1))} disabled={isLastStep || responding} className="p-1.5 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-30" aria-label={i18nService.t('coworkQuestionWizardNext')}>
+              <button type="button" onClick={handleNextQuestion} disabled={isLastStep || responding || !isCurrentQuestionComplete} className="p-1.5 rounded-lg text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-30" aria-label={i18nService.t('coworkQuestionWizardNext')}>
                 <ChevronRightIcon className="h-4 w-4" />
               </button>
             </div>
@@ -353,8 +377,15 @@ const CoworkPermissionPanel: React.FC<CoworkPermissionPanelProps> = ({
           <button type="button" onClick={handleDeny} disabled={responding} className={`${totalSteps === 1 ? 'ml-auto' : ''} px-3 py-2 rounded-lg border border-claude-border dark:border-claude-darkBorder text-xs font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-900/20 dark:hover:text-red-300 disabled:opacity-60`}>
             {i18nService.t('coworkDeny')}
           </button>
-          <button type="button" onClick={handleApprove} disabled={!isQuestionComplete || responding} className="btn-idchat-primary-filled px-3 py-2 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
-            {responding ? i18nService.t('processing') : i18nService.t('coworkQuestionWizardSubmit')}
+          <button
+            type="button"
+            onClick={handleQuestionPrimaryAction}
+            disabled={responding || (isLastStep ? !isQuestionComplete : !isCurrentQuestionComplete)}
+            className="btn-idchat-primary-filled px-3 py-2 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {responding
+              ? i18nService.t('processing')
+              : i18nService.t(isLastStep ? 'coworkQuestionWizardSubmit' : 'coworkQuestionWizardNext')}
           </button>
         </div>
       </section>

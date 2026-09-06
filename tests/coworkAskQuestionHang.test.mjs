@@ -110,6 +110,24 @@ test('single-select choices and custom answers stay mutually exclusive', () => {
   assert.match(panelSource, /if \(!currentQuestion\.multiSelect && value\.trim\(\)\) \{[\s\S]*?delete next\[currentQuestion\.question\]/);
 });
 
+test('multi-step custom answers advance before the final submit', () => {
+  // A custom answer on the current question is enough to enable the primary
+  // action and move forward. It must not be gated on every later question.
+  assert.match(panelSource, /const isCurrentQuestionComplete = Boolean\(currentQuestion && \([\s\S]*?answers\[currentQuestion\.question\]\?\.trim\(\)[\s\S]*?otherInputs\[currentStep\]\?\.trim\(\)[\s\S]*?skippedQuestions\[currentQuestion\.question\] === true[\s\S]*?\)\);/);
+  assert.match(panelSource, /const handleNextQuestion = \(\) => \{[\s\S]*?!isCurrentQuestionComplete[\s\S]*?setCurrentStep\(\(step\) => Math\.min\(step \+ 1, totalSteps - 1\)\);[\s\S]*?\};/);
+  assert.match(panelSource, /const handleQuestionPrimaryAction = \(\) => \{[\s\S]*?if \(!isLastStep\) \{[\s\S]*?handleNextQuestion\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?handleApprove\(\);[\s\S]*?\};/);
+
+  // Only the last step submits, and it still requires every question to be
+  // answered or explicitly skipped.
+  assert.match(panelSource, /onClick=\{handleQuestionPrimaryAction\}/);
+  assert.match(panelSource, /disabled=\{responding \|\| \(isLastStep \? !isQuestionComplete : !isCurrentQuestionComplete\)\}/);
+  assert.match(panelSource, /i18nService\.t\(isLastStep \? 'coworkQuestionWizardSubmit' : 'coworkQuestionWizardNext'\)/);
+
+  // Enter mirrors the primary button, while IME composition must not submit.
+  assert.match(panelSource, /event\.key !== 'Enter' \|\| event\.nativeEvent\.isComposing/);
+  assert.match(panelSource, /event\.preventDefault\(\);[\s\S]*?handleQuestionPrimaryAction\(\);/);
+});
+
 test('composer takeover copy exists in both locales', () => {
   for (const key of [
     'coworkQuestionWizardOther',
