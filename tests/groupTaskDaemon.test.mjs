@@ -2209,7 +2209,12 @@ test('GT-04: an all-illegal chair directive stays put but is NEVER silent (audit
 
 test('GT-04: a backtick-quoted [STATUS:*] citation is never an instruction (escape hatch)', async () => {
   const logs = [];
-  const h = await createHarness({ emitLog: (message) => logs.push(message) });
+  // The planning-turn LLM sees the group log where the chair already
+  // dispatched (task #66 shape) and correctly answers [NO_REPLY].
+  const h = await createHarness({
+    emitLog: (message) => logs.push(message),
+    deps: { performChat: async () => '[NO_REPLY]' },
+  });
   try {
     const task = h.createTask([2], { activate: false }); // planning
     insertGroupMessage(h.db, {
@@ -8714,4 +8719,152 @@ test('fix-v2 P1-5: a corrupt-log recurrence within the rebuild cooldown escalate
   } finally {
     h.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Task #66 fixes A/B: mid-turn speech vs turn contracts
+// ---------------------------------------------------------------------------
+
+test('task #66 A: an empty final reply after mid-turn group_chat sends is a DELIVERED turn, not a failure', async () => {
+  const logs = [];
+  const h = await createHarness({
+    emitLog: (message) => logs.push(message),
+    coderChatSkills: ['web-search'],
+    routing: () => ({ prompt: '<available_skills>web-search</available_skills>', activeSkillIds: ['web-search'] }),
+    deps: {
+      // The skill turn sends ONE group message mid-turn via the group_chat
+      // tool and then ends with an empty final reply (ONE VOICE closer).
+      runSkillTurn: async (params) => {
+        h.coworkStore.addMessage(params.sessionId, {
+          type: 'tool_use',
+          content: 'Using tool: group_chat',
+          metadata: { toolName: 'group_chat', toolInput: { action: 'send_group_message', group_id: GROUP_ID } },
+        });
+        return { replyText: '', assistantMessageId: null };
+      },
+    },
+  });
+  try {
+    h.createTask([2]);
+    insertGroupMessage(h.db, {
+      pinId: 'midturn-assign-i0', senderMetaId: 'metaid-1', senderGlobalMetaId: 'gmid-twin',
+      senderName: 'Twin Bot', content: '@Coder Bot deliver the report',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000),
+    });
+    await h.loop.runTick();
+
+    assert.ok(
+      logs.some((line) => line.includes('delivered 1 group message(s) mid-turn via group_chat')),
+      'the turn is recognized as delivered mid-turn',
+    );
+    assert.ok(
+      !logs.some((line) => line.includes('turn failed') || line.includes('retry')),
+      'no failure path burned, no duplicate re-run queued',
+    );
+    // The daemon posts nothing on top of the tool-sent message.
+    assert.equal(h.sends.length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('task #66 A: the bootstrap planning turn yields to a chair that already dispatched in its own voice', async () => {
+  const logs = [];
+  // The planning-turn LLM sees the group log where the chair already
+  // dispatched (task #66 shape) and correctly answers [NO_REPLY].
+  const h = await createHarness({
+    emitLog: (message) => logs.push(message),
+    deps: { performChat: async () => '[NO_REPLY]' },
+  });
+  try {
+    const task = h.createTask([2], { activate: false }); // planning
+    // The chair (its own session) already greeted + dispatched a worker.
+    insertGroupMessage(h.db, {
+      pinId: 'chair-self-dispatch-i0', senderMetaId: 'metaid-1', senderGlobalMetaId: 'gmid-twin',
+      senderName: 'Twin Bot', content: '@Coder Bot you take S1, deliver in 20 minutes.',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000),
+    });
+    await h.loop.runTick();
+
+    assert.equal(h.store.get(`group_task_chair_planned:${task.id}`), '1', 'planning marked complete');
+    assert.ok(
+      logs.some((line) => line.includes('already dispatched in its own voice')),
+      'the bootstrap short-circuits without burning attempts',
+    );
+    assert.ok(
+      !logs.some((line) => line.includes('planning turn failed')),
+      'no attempt budget consumed',
+    );
+    // The daemon posts no plan of its own — the chair's dispatch stands.
+    assert.equal(h.sends.length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Task #66 optimizations: ① chain-health facts, ② verification economy
+// ---------------------------------------------------------------------------
+
+test('task #66 ①: two consecutive send failures record ONE chain_health note; first success records recovery', async () => {
+  const h = await createHarness({ workerCooldownMs: 0 });
+  const chainNotes = (taskId) => h.groupTaskStore.listPendingHostNotes(taskId)
+    .filter((note) => note.kind === 'chain_health');
+  const allChainNotes = () => Number(h.db.exec(
+    "SELECT COUNT(*) FROM group_task_host_notes WHERE kind = 'chain_health'",
+  )[0].values[0][0]);
+  try {
+    const task = h.createTask([2, 3]);
+    h.state.nowMs = Date.now();
+
+    // First failing send: below the threshold, no note yet.
+    h.state.sendFailures = new Set([2]);
+    insertGroupMessage(h.db, {
+      pinId: 'health-fail-1-i0', senderMetaId: 'metaid-3', senderGlobalMetaId: 'gmid-w3',
+      senderName: 'Designer Bot', content: '@Coder Bot ping',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000),
+    });
+    await h.loop.runTick();
+    assert.equal(allChainNotes(), 0, 'one failure does not alarm');
+    h.state.nowMs += 30_000;
+
+    // Second failing send: the backend-unreachable fact lands for the chair.
+    insertGroupMessage(h.db, {
+      pinId: 'health-fail-2-i0', senderMetaId: 'metaid-3', senderGlobalMetaId: 'gmid-w3',
+      senderName: 'Designer Bot', content: '@Coder Bot ping again',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000) + 1,
+    });
+    await h.loop.runTick();
+    const downNotes = chainNotes(task.id).filter((note) => note.body.includes('failed 2 consecutive times'));
+    assert.equal(downNotes.length, 1, 'two consecutive failures ring the bell once');
+    assert.match(downNotes[0].body, /usually the chain backend being unreachable/);
+
+    // Recovery: the first successful send records the recovery fact.
+    h.state.sendFailures = null;
+    insertGroupMessage(h.db, {
+      pinId: 'health-ok-i0', senderMetaId: 'metaid-3', senderGlobalMetaId: 'gmid-w3',
+      senderName: 'Designer Bot', content: '@Coder Bot third ping',
+      chainTimestamp: Math.floor(h.state.nowMs / 1000) + 2,
+    });
+    await h.loop.runTick();
+    const recovered = chainNotes(task.id).filter((note) => note.body.includes('RECOVERED'));
+    assert.equal(recovered.length, 1, 'recovery note recorded on the first success');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('task #66 ②: the chair playbook carries the verification-economy rule', () => {
+  const prompt = buildGroupTaskSystemPrompt({
+    metabot: { name: 'Twin Bot' },
+    task: { title: 'T', goal: 'G' },
+    members: [
+      { name: 'Twin Bot', role: 'chair' },
+      { name: 'Coder Bot', role: 'worker' },
+    ],
+    botRole: 'chair',
+  });
+  assert.match(prompt, /VERIFICATION ECONOMY/);
+  assert.match(prompt, /Do NOT re-download and re-hash what a host verification fact or a worker-supplied checksum already confirms/);
+  assert.match(prompt, /SEMANTIC layer/);
 });
