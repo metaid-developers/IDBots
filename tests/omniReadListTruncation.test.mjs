@@ -200,3 +200,79 @@ test('a single oversized row still returns valid JSON (raw head), never the row-
   assert.equal(typeof parsed.data.head, 'string');
   assert.ok(parsed.data.head.startsWith('[{'), 'the head carries the raw row array so the caller still sees its shape');
 });
+
+// --- Adversarial envelopes found by an independent reviewer of the first cut ---
+
+test('an incidental root-level array must not hijack the page (adversarial: root-array hijack)', async () => {
+  const payload = {
+    trace: Array.from({ length: 300 }, (_, i) => ({ step: i, detail: 't'.repeat(300) })),
+    data: { list: Array.from({ length: 100 }, (_, i) => ({ ...row(i) })), nextCursor: NEXT_CURSOR, total: 100 },
+  };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const text = (await omniRead.handler({ action: 'pins_by_path', path: '/protocols/agentpedia/rev', size: 100 })).content[0].text;
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.data.truncated, true, 'the page under data.list must be the one trimmed');
+  assert.equal(parsed.data.total, 100);
+  assert.equal(parsed.data.nextCursor, NEXT_CURSOR);
+  assert.ok(parsed.data.list.length < 100);
+  assert.deepEqual(parsed.data.list[0], row(0));
+  assert.ok(!('truncated' in parsed) || parsed.truncated === true, 'accounting must sit beside the page, not replace it');
+});
+
+test('a larger array in a sibling container must not hijack the page (adversarial: larger sibling array)', async () => {
+  const payload = {
+    data: { list: Array.from({ length: 20 }, (_, i) => ({ ...row(i) })), nextCursor: NEXT_CURSOR, total: 20 },
+    diagnostics: { samples: Array.from({ length: 900 }, (_, i) => ({ i, pad: 'd'.repeat(60) })) },
+  };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const parsed = JSON.parse((await omniRead.handler({ action: 'pins_by_path', path: '/x', size: 20 })).content[0].text);
+  assert.match(parsed.data.hint, /^list:/, 'the known page key wins over a larger unrelated array');
+  assert.equal(parsed.data.total, 20);
+  assert.equal(parsed.data.nextCursor, NEXT_CURSOR);
+  assert.ok(parsed.data.list.length < 20);
+});
+
+test('an oversized SIBLING is clamped and labelled instead of pushing the page onto the torn path (adversarial: giant scalar sibling)', async () => {
+  const payload = {
+    code: 1,
+    data: {
+      list: Array.from({ length: 50 }, (_, i) => ({ ...row(i) })),
+      nextCursor: NEXT_CURSOR,
+      total: 50,
+      blob: 'x'.repeat(30000),
+    },
+  };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const text = (await omniRead.handler({ action: 'pins_by_path', path: '/x', size: 50 })).content[0].text;
+  assert.ok(text.length <= MAX_RESULT_CHARS);
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.data.truncated, true);
+  assert.equal(parsed.data.returned, parsed.data.list.length);
+  assert.ok(parsed.data.list.length >= 1, 'the page must survive an oversized sibling');
+  assert.deepEqual(parsed.data.list[0], row(0));
+  assert.equal(parsed.data.nextCursor, NEXT_CURSOR);
+  assert.equal(parsed.data.total, 50);
+  assert.match(parsed.data.blob, /sibling trimmed: 30000 chars/, 'the clamped sibling must say it was trimmed');
+});
+
+// --- Documented boundaries: payloads that carry no usable page keep the note ---
+
+test('a bare top-level array payload has no page container and keeps the note (documented boundary)', async () => {
+  const payload = Array.from({ length: 200 }, (_, i) => ({ i, pad: 'p'.repeat(200) }));
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const text = (await omniRead.handler({ action: 'indexer_status' })).content[0].text;
+  assert.match(text, /\(truncated, narrow the query with cursor\/size\)/);
+  assert.ok(text.length <= MAX_RESULT_CHARS + 64, 'the note path stays within the documented 20000 + note budget');
+});
+
+test('a page whose rows are not objects keeps the note (documented boundary)', async () => {
+  const payload = { data: { list: Array.from({ length: 200 }, (_, i) => `row-${i}-${'s'.repeat(200)}`) } };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const text = (await omniRead.handler({ action: 'pins_by_path', path: '/x' })).content[0].text;
+  assert.match(text, /\(truncated, narrow the query with cursor\/size\)/);
+});
