@@ -41,12 +41,120 @@ const MAN_BASE = 'https://man.metaid.io';
 /** Keep large indexer payloads from flooding the conversation. */
 const MAX_RESULT_CHARS = 20000;
 
+/**
+ * Row-array keys the indexers are known to put list pages under (MANAPI
+ * `data.list`, the metaso feeds' `data.items`, follower lists). Preferred when
+ * present; any other array of objects at the same level is still accepted as a
+ * fallback (see listRowsIn) so a new endpoint shape cannot silently fall back to
+ * the torn-string cut.
+ */
+const LIST_ROW_KEYS = ['list', 'items', 'followerList', 'followingList'] as const;
+
+type ListRowsLocation = {
+  /** Object that owns the row array (`data` for both indexer families). */
+  container: Record<string, unknown>;
+  /** Key path from the payload root to `container`; [] means the root itself. */
+  containerPath: string[];
+  /** Key holding the row array inside `container`. */
+  key: string;
+  rows: Record<string, unknown>[];
+};
+
+function isRowArray(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((row) => row !== null && typeof row === 'object' && !Array.isArray(row));
+}
+
+/**
+ * The page inside one container: a known row key first, else the LARGEST array
+ * of plain objects (so an unfamiliar envelope still gets row-level treatment
+ * instead of a torn cut). Arrays nested inside a row are never candidates —
+ * only the container's own properties are inspected.
+ */
+function listRowsIn(container: Record<string, unknown>, containerPath: string[]): ListRowsLocation | null {
+  const known = LIST_ROW_KEYS.find((key) => isRowArray(container[key]));
+  if (known) {
+    return { container, containerPath, key: known, rows: container[known] as Record<string, unknown>[] };
+  }
+  let best: ListRowsLocation | null = null;
+  for (const [key, value] of Object.entries(container)) {
+    if (!isRowArray(value)) continue;
+    if (!best || value.length > best.rows.length) {
+      best = { container, containerPath, key, rows: value };
+    }
+  }
+  return best;
+}
+
+/** The page lives at the root (rare) or one level down under the indexer envelope's `data`. */
+function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
+  const atRoot = listRowsIn(data, []);
+  if (atRoot) return atRoot;
+  let best: ListRowsLocation | null = null;
+  for (const [key, value] of Object.entries(data)) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const nested = listRowsIn(value as Record<string, unknown>, [key]);
+    if (nested && (!best || nested.rows.length > best.rows.length)) best = nested;
+  }
+  return best;
+}
+
+/**
+ * Row-level truncation for over-budget list pages. A plain string cut hands the
+ * caller a TORN document: everything after the cut — including the server's own
+ * `nextCursor` — is unrecoverable, so a leading slice of the rows reads like the
+ * whole page. Live case (2026-09-24): `pins_by_path /protocols/agentpedia/rev
+ * size=100` answered 430,281 bytes / 100 rows / nextCursor present, while the
+ * tool returned 20,068 chars holding 5 whole rows and did not parse as JSON.
+ *
+ * The envelope therefore keeps every sibling field, drops only TRAILING rows,
+ * and adds `truncated` / `returned` / `hint` beside the page so the partial page
+ * is machine-checkable and the caller can page with `cursor` instead of
+ * guessing. When not even one whole row fits, the raw head of the row array is
+ * carried as a STRING (`head`) rather than cutting the document. Returns null
+ * when the payload is not a list page (the caller then keeps the legacy
+ * narrowing note).
+ */
+function truncateListPayload(data: Record<string, unknown>, budget: number): string | null {
+  const found = findListRows(data);
+  if (!found) return null;
+  const { container, containerPath, key, rows } = found;
+  const envelope = (kept: number, extra: Record<string, unknown> = {}): string => {
+    const trimmedContainer = {
+      ...container,
+      [key]: rows.slice(0, kept),
+      truncated: true,
+      returned: kept,
+      hint: `${key}: ${kept}/${rows.length} rows returned (result budget ${budget} chars) — treat this page as PARTIAL and continue with cursor/size; the server's own fields (total, nextCursor) are preserved.`,
+      ...extra,
+    };
+    const outer = containerPath.length === 0 ? trimmedContainer : { ...data, [containerPath[0]]: trimmedContainer };
+    return JSON.stringify(outer, null, 2);
+  };
+  for (let kept = rows.length - 1; kept >= 1; kept -= 1) {
+    const text = envelope(kept);
+    if (text.length <= budget) return text;
+  }
+  // Not a single whole row fits: stay parseable and hand back the raw head of the
+  // row array as a string, so the caller sees something instead of a torn tail.
+  const rowsJson = JSON.stringify(rows);
+  for (let take = Math.min(rowsJson.length, budget); take >= 1; take = Math.floor(take * 0.9)) {
+    const text = envelope(0, { head: rowsJson.slice(0, take) });
+    if (text.length <= budget) return text;
+  }
+  const emptyPage = envelope(0);
+  return emptyPage.length <= budget ? emptyPage : null;
+}
+
 function formatData(data: unknown): string {
   const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-  if (text.length > MAX_RESULT_CHARS) {
-    return `${truncateUtf16Units(text, MAX_RESULT_CHARS)}\n...(truncated, narrow the query with cursor/size)`;
+  if (text.length <= MAX_RESULT_CHARS) return text;
+  if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+    const trimmedList = truncateListPayload(data as Record<string, unknown>, MAX_RESULT_CHARS);
+    if (trimmedList) return trimmedList;
   }
-  return text;
+  return `${truncateUtf16Units(text, MAX_RESULT_CHARS)}\n...(truncated, narrow the query with cursor/size)`;
 }
 
 /**
@@ -149,6 +257,7 @@ export function buildOmniReaderAgentTools(deps: {
       'Pins: "pin" (pinId), "pin_version" (pinId + ver int, 0 = initial), "pin_list"/"metaid_list"/"block_list"/"mempool_list" (page, size), "pins_by_path" (path required, e.g. /protocols/simplebuzz, size 1-100, cursor), "pins_by_metaid" (metaid required, optional path), "pins_by_address" (address + path required), "pin_content" (pinId, returns the raw content body).',
       'Metafile index: "file_info" (pinId), "file_latest" (firstPinId), "files_by_creator" (address), "files_by_metaid" (metaid), "files_by_extension" (extension like .jpg required, optional metaid/timestamp/size); plus "indexer_status", "indexer_stats", "global_counts".',
       'Paged actions echo lastId/cursor in the response; pass it back for the next page. All parameters are URL-encoded automatically.',
+      'List pages that exceed the result budget come back as VALID JSON holding whole rows only, with `truncated: true` and `returned` telling you how much of the page you got; the server\'s own `total`/`nextCursor` are preserved, so when `truncated` is true the page is PARTIAL — page with cursor/size instead of treating it as the full list.',
       'Prefer search_metaids / metaid_profile for identity discovery and search_social_posts for full-text social search when those fit; omni_read is the low-level fallback returning raw indexer JSON. It never writes on-chain.',
     ].join(' '),
     {
