@@ -289,6 +289,26 @@ test('a property merely NAMED like a page must not mark its container (adversari
   assert.deepEqual(parsed.list, payload.list);
 });
 
+test('a summary block carrying only a total must not outrank the paged container (adversarial: stats block bigger than the page)', async () => {
+  const payload = {
+    data: { list: Array.from({ length: 100 }, (_, i) => ({ ...row(i) })), nextCursor: NEXT_CURSOR, total: 100 },
+    summary: { total: 'summary-total', items: Array.from({ length: 300 }, (_, i) => ({ i, pad: 's'.repeat(120) })) },
+  };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const text = (await omniRead.handler({ action: 'pins_by_path', path: '/x', size: 100 })).content[0].text;
+  assert.ok(text.length <= MAX_RESULT_CHARS);
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.data.truncated, true, 'the cursor-carrying container is the page');
+  assert.equal(parsed.data.nextCursor, NEXT_CURSOR);
+  assert.equal(parsed.data.total, 100);
+  assert.ok(parsed.data.list.length >= 1);
+  assert.deepEqual(parsed.data.list[0], row(0));
+  const summaryKeptWhole = parsed.summary?.total === 'summary-total';
+  const summaryLabelled = typeof parsed.summary === 'string' && /sibling omitted/.test(parsed.summary);
+  assert.ok(summaryKeptWhole || summaryLabelled, 'the summary block survives whole or as a labelled placeholder — never dropped silently');
+});
+
 // --- Documented boundaries: payloads that carry no usable page keep the note ---
 test('a bare top-level array payload has no page container and keeps the note (documented boundary)', async () => {
   const payload = Array.from({ length: 200 }, (_, i) => ({ i, pad: 'p'.repeat(200) }));
