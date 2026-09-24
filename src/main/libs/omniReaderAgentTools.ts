@@ -50,8 +50,12 @@ const MAX_RESULT_CHARS = 20000;
  */
 const LIST_ROW_KEYS = ['list', 'items', 'followerList', 'followingList'] as const;
 
-/** Marks a container as a paged envelope rather than an incidental object. */
-const PAGE_MARKER_KEYS = ['nextCursor', 'cursor', 'total', 'hasMore', 'page'] as const;
+/**
+ * Marks a container as a paged envelope rather than an incidental object. Used
+ * only to break ties: a property merely NAMED like a page is not treated as a
+ * page marker, so the list stays free of speculative names.
+ */
+const PAGE_MARKER_KEYS = ['nextCursor', 'cursor', 'total', 'hasMore'] as const;
 
 type ListRowsLocation = {
   /** Object that owns the row array (`data` for both indexer families). */
@@ -72,13 +76,33 @@ function isRowArray(value: unknown): value is Record<string, unknown>[] {
 const isPageContainer = (container: Record<string, unknown>): boolean =>
   PAGE_MARKER_KEYS.some((marker) => marker in container);
 
+/** Largest page wins; a container carrying page markers breaks a size tie. */
+function byPageSize(pool: ListRowsLocation[]): ListRowsLocation | null {
+  let best: ListRowsLocation | null = null;
+  for (const location of pool) {
+    const longer = best === null || location.rows.length > best.rows.length;
+    const tieWithMarker = best !== null
+      && location.rows.length === best.rows.length
+      && !isPageContainer(best.container)
+      && isPageContainer(location.container);
+    if (longer || tieWithMarker) best = location;
+  }
+  return best;
+}
+
 /**
- * Locate the page among the candidates at the root and one level down. Order of
- * precedence: a KNOWN row key first (a container carrying page markers wins a
- * tie, else the first in key order), and only when no known key qualifies the
- * largest array of plain objects at the root or one level down. Arrays nested
- * inside a row are never candidates — only a container's own properties are
- * inspected.
+ * Locate the page among the candidates at the root and one level down:
+ *
+ *  1. a KNOWN row key wins outright, whichever container it sits in — the
+ *     largest such array, with page markers only breaking a size tie — so an
+ *     incidental array (a root-level `trace`) or a bigger unrelated array in a
+ *     sibling container can never be mistaken for the page;
+ *  2. with no known key, an array of plain objects in a container carrying page
+ *     markers wins over one that does not;
+ *  3. otherwise the largest array of plain objects.
+ *
+ * Arrays nested inside a row are never candidates — only a container's own
+ * properties are inspected.
  */
 function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
   const containers: Array<{ container: Record<string, unknown>; path: string[] }> = [{ container: data, path: [] }];
@@ -97,15 +121,9 @@ function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
       else unknown.push(location);
     }
   }
-  if (known.length > 0) {
-    return known.find((location) => isPageContainer(location.container)) ?? known[0];
-  }
+  if (known.length > 0) return byPageSize(known);
   const marked = unknown.filter((location) => isPageContainer(location.container));
-  const pool = marked.length > 0 ? marked : unknown;
-  return pool.reduce<ListRowsLocation | null>(
-    (best, location) => (!best || location.rows.length > best.rows.length ? location : best),
-    null,
-  );
+  return byPageSize(marked.length > 0 ? marked : unknown);
 }
 
 /**
