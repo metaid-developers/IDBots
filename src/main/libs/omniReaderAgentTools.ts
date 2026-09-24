@@ -43,12 +43,15 @@ const MAX_RESULT_CHARS = 20000;
 
 /**
  * Row-array keys the indexers are known to put list pages under (MANAPI
- * `data.list`, the metaso feeds' `data.items`, follower lists). Preferred when
- * present; any other array of objects at the same level is still accepted as a
- * fallback (see listRowsIn) so a new endpoint shape cannot silently fall back to
- * the torn-string cut.
+ * `data.list`, the metaso feeds' `data.items`, follower lists). A known key
+ * always wins over an unknown array, wherever the two sit (root or one level
+ * down), so an incidental array such as a root-level `trace` or a bigger array
+ * in a sibling container can never be mistaken for the page.
  */
 const LIST_ROW_KEYS = ['list', 'items', 'followerList', 'followingList'] as const;
+
+/** Marks a container as a paged envelope rather than an incidental object. */
+const PAGE_MARKER_KEYS = ['nextCursor', 'cursor', 'total', 'hasMore', 'page'] as const;
 
 type ListRowsLocation = {
   /** Object that owns the row array (`data` for both indexer families). */
@@ -66,38 +69,43 @@ function isRowArray(value: unknown): value is Record<string, unknown>[] {
     && value.every((row) => row !== null && typeof row === 'object' && !Array.isArray(row));
 }
 
+const isPageContainer = (container: Record<string, unknown>): boolean =>
+  PAGE_MARKER_KEYS.some((marker) => marker in container);
+
 /**
- * The page inside one container: a known row key first, else the LARGEST array
- * of plain objects (so an unfamiliar envelope still gets row-level treatment
- * instead of a torn cut). Arrays nested inside a row are never candidates —
- * only the container's own properties are inspected.
+ * Locate the page among the candidates at the root and one level down. Order of
+ * precedence: a KNOWN row key first (a container carrying page markers wins a
+ * tie, else the first in key order), and only when no known key qualifies the
+ * largest array of plain objects at the root or one level down. Arrays nested
+ * inside a row are never candidates — only a container's own properties are
+ * inspected.
  */
-function listRowsIn(container: Record<string, unknown>, containerPath: string[]): ListRowsLocation | null {
-  const known = LIST_ROW_KEYS.find((key) => isRowArray(container[key]));
-  if (known) {
-    return { container, containerPath, key: known, rows: container[known] as Record<string, unknown>[] };
-  }
-  let best: ListRowsLocation | null = null;
-  for (const [key, value] of Object.entries(container)) {
-    if (!isRowArray(value)) continue;
-    if (!best || value.length > best.rows.length) {
-      best = { container, containerPath, key, rows: value };
+function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
+  const containers: Array<{ container: Record<string, unknown>; path: string[] }> = [{ container: data, path: [] }];
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      containers.push({ container: value as Record<string, unknown>, path: [key] });
     }
   }
-  return best;
-}
-
-/** The page lives at the root (rare) or one level down under the indexer envelope's `data`. */
-function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
-  const atRoot = listRowsIn(data, []);
-  if (atRoot) return atRoot;
-  let best: ListRowsLocation | null = null;
-  for (const [key, value] of Object.entries(data)) {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const nested = listRowsIn(value as Record<string, unknown>, [key]);
-    if (nested && (!best || nested.rows.length > best.rows.length)) best = nested;
+  const known: ListRowsLocation[] = [];
+  const unknown: ListRowsLocation[] = [];
+  for (const { container, path } of containers) {
+    for (const [key, value] of Object.entries(container)) {
+      if (!isRowArray(value)) continue;
+      const location: ListRowsLocation = { container, containerPath: path, key, rows: value };
+      if ((LIST_ROW_KEYS as readonly string[]).includes(key)) known.push(location);
+      else unknown.push(location);
+    }
   }
-  return best;
+  if (known.length > 0) {
+    return known.find((location) => isPageContainer(location.container)) ?? known[0];
+  }
+  const marked = unknown.filter((location) => isPageContainer(location.container));
+  const pool = marked.length > 0 ? marked : unknown;
+  return pool.reduce<ListRowsLocation | null>(
+    (best, location) => (!best || location.rows.length > best.rows.length ? location : best),
+    null,
+  );
 }
 
 /**
@@ -112,39 +120,75 @@ function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
  * and adds `truncated` / `returned` / `hint` beside the page so the partial page
  * is machine-checkable and the caller can page with `cursor` instead of
  * guessing. When not even one whole row fits, the raw head of the row array is
- * carried as a STRING (`head`) rather than cutting the document. Returns null
- * when the payload is not a list page (the caller then keeps the legacy
- * narrowing note).
+ * carried as a STRING (`head`); and when a SIBLING (not the page) is itself
+ * bigger than the whole budget, the siblings are clamped — labelled as trimmed —
+ * rather than letting them push the page back onto the torn-string path.
+ *
+ * Returns null when the payload carries no usable page (no array of plain
+ * objects at the root or one level down, e.g. a bare top-level array or a page
+ * whose rows are not objects): the caller then keeps the legacy narrowing note,
+ * which still announces the cut instead of hiding it.
  */
 function truncateListPayload(data: Record<string, unknown>, budget: number): string | null {
   const found = findListRows(data);
   if (!found) return null;
   const { container, containerPath, key, rows } = found;
-  const envelope = (kept: number, extra: Record<string, unknown> = {}): string => {
-    const trimmedContainer = {
-      ...container,
-      [key]: rows.slice(0, kept),
-      truncated: true,
-      returned: kept,
-      hint: `${key}: ${kept}/${rows.length} rows returned (result budget ${budget} chars) — treat this page as PARTIAL and continue with cursor/size; the server's own fields (total, nextCursor) are preserved.`,
-      ...extra,
-    };
-    const outer = containerPath.length === 0 ? trimmedContainer : { ...data, [containerPath[0]]: trimmedContainer };
+  const hint = (kept: number): string =>
+    `${key}: ${kept}/${rows.length} rows returned (result budget ${budget} chars) — treat this page as PARTIAL and continue with cursor/size; the server's own fields (total, nextCursor) are preserved.`;
+  const render = (pageContainer: Record<string, unknown>, outerSiblings: Record<string, unknown>, kept: number, extra: Record<string, unknown> = {}): string => {
+    const page = { ...pageContainer, [key]: rows.slice(0, kept), truncated: true, returned: kept, hint: hint(kept), ...extra };
+    const outer = containerPath.length === 0 ? page : { ...outerSiblings, [containerPath[0]]: page };
     return JSON.stringify(outer, null, 2);
   };
-  for (let kept = rows.length - 1; kept >= 1; kept -= 1) {
-    const text = envelope(kept);
-    if (text.length <= budget) return text;
-  }
-  // Not a single whole row fits: stay parseable and hand back the raw head of the
-  // row array as a string, so the caller sees something instead of a torn tail.
   const rowsJson = JSON.stringify(rows);
-  for (let take = Math.min(rowsJson.length, budget); take >= 1; take = Math.floor(take * 0.9)) {
-    const text = envelope(0, { head: rowsJson.slice(0, take) });
-    if (text.length <= budget) return text;
+  const attempt = (pageContainer: Record<string, unknown>, outerSiblings: Record<string, unknown>): string | null => {
+    for (let kept = rows.length - 1; kept >= 1; kept -= 1) {
+      const text = render(pageContainer, outerSiblings, kept);
+      if (text.length <= budget) return text;
+    }
+    // Not a single whole row fits: hand back the raw head of the row array as a
+    // string, so the caller sees its shape instead of a torn tail.
+    for (let take = Math.min(rowsJson.length, budget); take >= 1; take = Math.floor(take * 0.9)) {
+      const text = render(pageContainer, outerSiblings, 0, { head: rowsJson.slice(0, take) });
+      if (text.length <= budget) return text;
+    }
+    const emptyPage = render(pageContainer, outerSiblings, 0);
+    return emptyPage.length <= budget ? emptyPage : null;
+  };
+  const exact = attempt(container, data);
+  if (exact) return exact;
+  // A sibling larger than the whole budget must not defeat the page: clamp
+  // siblings (keeping a labelled preview) and retry. The page itself is never
+  // clamped this way.
+  return attempt(clampSiblings(container, key), clampSiblings(data, containerPath[0]));
+}
+
+/** Preview length kept for a sibling value that is clamped to make room for the page. */
+const SIBLING_PREVIEW_CHARS = 200;
+
+/**
+ * Shallow copy of `container` with every property except the page key bounded to
+ * a short, CLEARLY LABELLED preview. Used only as a second attempt, after the
+ * exact envelope failed to fit, so an oversized sibling cannot push the page
+ * back onto the torn-string path. The page itself is never passed through here.
+ */
+function clampSiblings(container: Record<string, unknown>, pageKey: string | undefined): Record<string, unknown> {
+  const clamped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(container)) {
+    if (key === pageKey) {
+      clamped[key] = value;
+    } else if (typeof value === 'string' && value.length > SIBLING_PREVIEW_CHARS) {
+      clamped[key] = `${value.slice(0, SIBLING_PREVIEW_CHARS)}…[sibling trimmed: ${value.length} chars; omitted from this truncated page]`;
+    } else if (value !== null && typeof value === 'object') {
+      const size = (JSON.stringify(value) ?? '').length;
+      clamped[key] = size > SIBLING_PREVIEW_CHARS
+        ? `[sibling omitted from this truncated page: ${Array.isArray(value) ? `array of ${value.length}` : 'object'} / ${size} chars]`
+        : value;
+    } else {
+      clamped[key] = value;
+    }
   }
-  const emptyPage = envelope(0);
-  return emptyPage.length <= budget ? emptyPage : null;
+  return clamped;
 }
 
 function formatData(data: unknown): string {
