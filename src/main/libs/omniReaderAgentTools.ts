@@ -76,6 +76,15 @@ function isRowArray(value: unknown): value is Record<string, unknown>[] {
 const isPageContainer = (container: Record<string, unknown>): boolean =>
   PAGE_MARKER_KEYS.some((marker) => marker in container);
 
+/**
+ * A cursor is the strong paging signal: it only appears on a real page envelope,
+ * whereas `total` also turns up on stats/summary blocks. Used ahead of the size
+ * comparison so a summary block carrying a `total` cannot outrank the page it
+ * summarises.
+ */
+const hasCursorToken = (container: Record<string, unknown>): boolean =>
+  'nextCursor' in container || 'cursor' in container;
+
 /** Largest page wins; a container carrying page markers breaks a size tie. */
 function byPageSize(pool: ListRowsLocation[]): ListRowsLocation | null {
   let best: ListRowsLocation | null = null;
@@ -93,13 +102,12 @@ function byPageSize(pool: ListRowsLocation[]): ListRowsLocation | null {
 /**
  * Locate the page among the candidates at the root and one level down:
  *
- *  1. a KNOWN row key wins outright, whichever container it sits in — the
- *     largest such array, with page markers only breaking a size tie — so an
- *     incidental array (a root-level `trace`) or a bigger unrelated array in a
- *     sibling container can never be mistaken for the page;
- *  2. with no known key, an array of plain objects in a container carrying page
- *     markers wins over one that does not;
- *  3. otherwise the largest array of plain objects.
+ *  1. a KNOWN row key wins outright, whichever container it sits in — among
+ *     those, a container carrying a cursor wins over one that does not, then the
+ *     largest array, with page markers only breaking a size tie — so an
+ *     incidental array (a root-level `trace`), a bigger unrelated array in a
+ *     sibling container, or a summary block cannot be mistaken for the page;
+ *  2. with no known key, the same order applies to unfamiliar arrays.
  *
  * Arrays nested inside a row are never candidates — only a container's own
  * properties are inspected.
@@ -121,9 +129,14 @@ function findListRows(data: Record<string, unknown>): ListRowsLocation | null {
       else unknown.push(location);
     }
   }
-  if (known.length > 0) return byPageSize(known);
-  const marked = unknown.filter((location) => isPageContainer(location.container));
-  return byPageSize(marked.length > 0 ? marked : unknown);
+  for (const pool of [known, unknown]) {
+    if (pool.length === 0) continue;
+    const withCursor = pool.filter((location) => hasCursorToken(location.container));
+    if (withCursor.length > 0) return byPageSize(withCursor);
+    const marked = pool.filter((location) => isPageContainer(location.container));
+    return byPageSize(marked.length > 0 ? marked : pool);
+  }
+  return null;
 }
 
 /**
