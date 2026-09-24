@@ -258,8 +258,38 @@ test('an oversized SIBLING is clamped and labelled instead of pushing the page o
   assert.match(parsed.data.blob, /sibling trimmed: 30000 chars/, 'the clamped sibling must say it was trimmed');
 });
 
-// --- Documented boundaries: payloads that carry no usable page keep the note ---
+test('two paged containers with a known key: the larger page wins, not the first one (adversarial: ambiguous double page)', async () => {
+  const payload = {
+    code: 1,
+    data: { list: Array.from({ length: 5 }, (_, i) => ({ ...row(i) })), nextCursor: 'short', total: 5 },
+    sidecar: { list: Array.from({ length: 100 }, (_, i) => ({ ...row(i) })), nextCursor: NEXT_CURSOR, total: 100 },
+  };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const text = (await omniRead.handler({ action: 'pins_by_path', path: '/x', size: 100 })).content[0].text;
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.sidecar.truncated, true, 'the larger real page is the one trimmed');
+  assert.equal(parsed.sidecar.nextCursor, NEXT_CURSOR);
+  assert.equal(parsed.sidecar.total, 100);
+  assert.ok(parsed.sidecar.list.length >= 1);
+  assert.deepEqual(parsed.data, payload.data, 'the smaller container stays untouched');
+});
 
+test('a property merely NAMED like a page must not mark its container (adversarial: marker-name collision)', async () => {
+  const payload = {
+    code: 1,
+    list: Array.from({ length: 4 }, (_, i) => ({ ...row(i) })),
+    page: { list: Array.from({ length: 100 }, (_, i) => ({ ...row(i) })), nextCursor: NEXT_CURSOR, total: 100 },
+  };
+  assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
+  const omniRead = makeHarness(payload).omni_read;
+  const parsed = JSON.parse((await omniRead.handler({ action: 'pins_by_path', path: '/x', size: 100 })).content[0].text);
+  assert.equal(parsed.page.truncated, true, 'the larger real page wins on size, not on the collision-prone marker name');
+  assert.equal(parsed.page.nextCursor, NEXT_CURSOR);
+  assert.deepEqual(parsed.list, payload.list);
+});
+
+// --- Documented boundaries: payloads that carry no usable page keep the note ---
 test('a bare top-level array payload has no page container and keeps the note (documented boundary)', async () => {
   const payload = Array.from({ length: 200 }, (_, i) => ({ i, pad: 'p'.repeat(200) }));
   assert.ok(JSON.stringify(payload, null, 2).length > MAX_RESULT_CHARS);
