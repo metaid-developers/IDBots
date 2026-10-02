@@ -92,10 +92,11 @@ export function formatSocialPostBullets(items: SocialPostItem[]): string {
       ? `[${snippet}](${buildPinBrowserUri({ pinId: item.pinId, path: item.protocolPath })})`
       : snippet;
     const head = `- **${snippetPart}** — by ${namePart} · ${formatTime(item.createdAt)}${own}`;
-    const meta = [
-      `likes ${item.likeCount}`,
-      `comments ${item.commentCount}`,
-      `quotes ${item.quoteCount}`,
+    const c = (v: number | null) => (v === null ? 'unavailable' : String(v));
+  const meta = [
+      `likes ${c(item.likeCount)}`,
+      `comments ${c(item.commentCount)}`,
+      `quotes ${c(item.quoteCount)}`,
       item.hotScore != null ? `hot ${item.hotScore}` : '',
       item.chainName ? `chain: ${item.chainName}` : '',
       item.pinId ? `pin: ${item.pinId}` : '',
@@ -123,7 +124,8 @@ export function formatSocialPostDetail(post: SocialPostCandidate): string {
     const updated = post.updatedAt && post.updatedAt !== post.createdAt ? formatTime(post.updatedAt) : '';
     lines.push(`- ${[`created: ${created}`, updated ? `updated: ${updated}` : ''].filter(Boolean).join(' | ')}`);
   }
-  lines.push(`- engagement: likes ${post.likeCount} | comments ${post.commentCount} | quotes ${post.quoteCount} | donates ${post.donateCount}`);
+  const cc = (v: number | null) => (v === null ? `unavailable (${post.countsCaliber})` : String(v));
+  lines.push(`- engagement: likes ${cc(post.likeCount)} | comments ${cc(post.commentCount)} | quotes ${cc(post.quoteCount)} | donates ${cc(post.donateCount)}`);
   const content = post.payload?.content?.trim();
   if (content) lines.push(`- content: ${truncate(content, 1500)}`);
   if (post.payload?.attachments?.length) lines.push(`- attachments: ${post.payload.attachments.join(', ')}`);

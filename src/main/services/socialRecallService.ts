@@ -41,10 +41,21 @@ export type SocialPostItem = {
   payload: SocialPostPayload;
   createdAt: number;
   updatedAt: number;
-  likeCount: number;
-  commentCount: number;
-  donateCount: number;
-  quoteCount: number;
+  /**
+   * Engagement counts. null = the upstream read surface returned no value for
+   * this count — a missing count is NEVER silently coerced to 0 (mirrors the
+   * surfProtocols likeCount convention); a real upstream 0 stays 0.
+   */
+  likeCount: number | null;
+  commentCount: number | null;
+  donateCount: number | null;
+  quoteCount: number | null;
+  /**
+   * Which read surface produced the counts in this item
+   * (default: metaso-p2p:/api/social). Consumers use it to annotate
+   * 'unavailable' output and keep cross-channel comparisons honest.
+   */
+  countsCaliber: string;
   /** Present only for sort=hot; raw engagement total. */
   hotScore?: number;
 };
@@ -129,6 +140,18 @@ function normalizePayload(raw: unknown): SocialPostPayload {
   return null;
 }
 
+export const SOCIAL_COUNTS_CALIBER = 'metaso-p2p:/api/social';
+
+/**
+ * Missing / non-numeric counts map to null (explicitly unavailable) instead of
+ * silently coercing to 0. A real numeric 0 stays 0.
+ */
+function optionalCount(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function normalizePost(raw: unknown): SocialPostItem {
   const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const authorRaw = record.author && typeof record.author === 'object'
@@ -149,10 +172,11 @@ function normalizePost(raw: unknown): SocialPostItem {
     payload: normalizePayload(record.payload),
     createdAt: Number(record.createdAt) || 0,
     updatedAt: Number(record.updatedAt) || 0,
-    likeCount: Number(record.likeCount) || 0,
-    commentCount: Number(record.commentCount) || 0,
-    donateCount: Number(record.donateCount) || 0,
-    quoteCount: Number(record.quoteCount) || 0,
+    likeCount: optionalCount(record.likeCount),
+    commentCount: optionalCount(record.commentCount),
+    donateCount: optionalCount(record.donateCount),
+    quoteCount: optionalCount(record.quoteCount),
+    countsCaliber: text(record.countsCaliber) || SOCIAL_COUNTS_CALIBER,
     hotScore: typeof record.hotScore === 'number' ? record.hotScore : undefined,
   };
 }

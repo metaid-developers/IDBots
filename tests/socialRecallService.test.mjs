@@ -142,6 +142,31 @@ test('getSocialFeed maps sort=hot and a raw-string payload', async () => {
   assert.equal(page.nextCursor, null);
 });
 
+test('engagement counts: missing stays null (never coerced to 0); real 0 stays 0; caliber present', async () => {
+  const capture = {};
+  const page = await getSocialFeed(
+    { size: 10 },
+    { fetchImpl: stubFetch({ code: 0, message: 'ok', data: { items: [
+      { ...SAMPLE_POST, likeCount: 0, commentCount: undefined, donateCount: undefined, quoteCount: undefined },
+    ], nextCursor: '', hasMore: false } }, capture) },
+  );
+  const item = page.items[0];
+  assert.equal(item.likeCount, 0);        // real upstream 0 preserved
+  assert.equal(item.commentCount, null);  // missing => explicit unavailable, NOT 0
+  assert.equal(item.donateCount, null);
+  assert.equal(item.quoteCount, null);
+  assert.equal(item.countsCaliber, 'metaso-p2p:/api/social');
+
+  const partial = await getSocialFeed(
+    { size: 10 },
+    { fetchImpl: stubFetch({ code: 0, message: 'ok', data: { items: [
+      { ...SAMPLE_POST, likeCount: 2, commentCount: 1, donateCount: undefined, quoteCount: undefined },  // donate/quote missing (upstream gap)
+    ], nextCursor: '', hasMore: false } }, {}) },
+  );
+  assert.equal(partial.items[0].donateCount, null);
+  assert.equal(partial.items[0].quoteCount, null);
+});
+
 test('getSocialPost hits the detail endpoint and throws SocialRecallNotFoundError on 40400', async () => {
   const capture = {};
   const post = await getSocialPost('b6b9449bi0', {
