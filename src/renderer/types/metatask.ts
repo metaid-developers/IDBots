@@ -171,8 +171,12 @@ export interface MetaTaskBoard {
   alerts: MetaTaskAlert[];
   /** Merged display identities across tasks (publisher + participants). */
   identities: Record<string, MetaTaskIdentity>;
-  /** Activation notice input: the v1.2 feature gate height (null = not gated). */
-  activation: { hAct2: number | null };
+  /**
+   * Activation notice inputs: hAct2 = the v1.2 feature gate, hAct3 = the v1.3
+   * competitive-mode gate (null = not announced yet; writer tools refuse
+   * competitive publishes until the boundary block reaches it).
+   */
+  activation: { hAct2: number | null; hAct3: number | null };
   refresh: {
     lastRefreshAtMs: number | null;
     lastOkAtMs: number | null;

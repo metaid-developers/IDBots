@@ -1,5 +1,5 @@
 import type { SqliteDatabase as Database } from '../../sqliteTypes';
-import { H_ACT2, type MetaTaskCollectedPath } from './constants';
+import { H_ACT2, H_ACT3, type MetaTaskCollectedPath } from './constants';
 import { estimateMetaTaskShares } from './estimate';
 import type {
   MetaTaskAlert,
@@ -502,7 +502,7 @@ export class MetaTaskProjectionStore {
       tasks,
       identities,
       alerts: this.listAlerts(),
-      activation: { hAct2: H_ACT2 },
+      activation: { hAct2: H_ACT2, hAct3: H_ACT3 },
       refresh: this.refreshInfo(),
     };
   }

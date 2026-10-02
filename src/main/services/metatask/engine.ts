@@ -365,8 +365,8 @@ const foldAmends = (input: {
 // Selected per task by `policy.mode === "competitive"` (absent ⇒ "tree", so
 // pre-v1.3 tasks replay byte-identically). No H_ACT3 height gate on the replay
 // side: no competitive task exists on-chain yet and pre-activation fixtures
-// must stay replayable — the writer side (agent tools, a later phase) refuses
-// pre-activation broadcasts.
+// must stay replayable — the writer side (metataskAgentTools.ts) refuses
+// pre-activation broadcasts instead, with an explicit pilot/testing override.
 
 /**
  * One competing candidate submission (competitive mode). There is no claim
@@ -1658,7 +1658,8 @@ export function replayMetaTask(
   // unknown value) means tree mode, so pre-v1.3 tasks replay byte-identically.
   // No H_ACT3 height gate here on purpose: no competitive task exists on-chain
   // yet and pre-activation fixtures must stay replayable — the writer side
-  // (agent tools) refuses pre-activation broadcasts instead (see H_ACT3).
+  // (metataskAgentTools.ts) refuses pre-activation broadcasts instead (see
+  // H_ACT3), with an explicit pilot/testing override.
   if (policy.mode === 'competitive') {
     return replayCompetitiveTask({
       byPath,

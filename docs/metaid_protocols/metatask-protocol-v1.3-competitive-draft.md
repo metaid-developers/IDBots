@@ -98,7 +98,17 @@ to 0). `release` is a no-op (accepted, ignored).
 
 - At publish: `deps` must reference existing nodes and be acyclic (checked
   alongside the existing Σweight=10000 / single-root invariants). Nodes with
-  `deps: []` are entry points.
+  `deps: []` are entry points. The full competitive publish invariant set
+  (writer-enforced, all before the first pin is spent):
+  1. `policy.finalnode` is required and must name a live node;
+  2. the deps graph has **exactly one sink** and that sink IS `finalnode`;
+  3. every node is reachable from some entry node and can reach the final
+     node (in a finite acyclic graph these follow from the unique-sink rule;
+     writers check them explicitly for diagnostics);
+  4. **every node carries a non-empty rubric**, pinned as `params.rubric`:
+     an array of strings with at least one non-empty entry — the reviewer's
+     acceptance checklist. A node without a rubric is unjudgeable open-ended
+     work and is rejected at publish.
 - A submission for node `N` **must** carry `parentrefs` naming exactly one
   submission pin for each `D ∈ deps(N)`; extra or missing keys make the
   submission `invalid_reference` (ignored for state, still hashed into
@@ -286,8 +296,9 @@ The decomposition wizard produces: node list + `deps` + per-node rubric
 (structured acceptance criteria) + weights (Σ=10000) + quorum + challenge TTL
 + workspace/artifact types. A local dry-run validator MUST pass before
 broadcast: acyclicity, Σweight, single sink + `finalnode` designated, rubric
-non-empty per node, artifact type consistent per node, reachable sink from
-every entry node. For development tasks the wizard additionally collects the
+non-empty per node (pinned at `params.rubric`: string array, ≥1 non-empty
+entry — §3.3), artifact type consistent per node, reachable sink from every
+entry node. For development tasks the wizard additionally collects the
 base repo and generates CI-style spec templates. (Wizard UX itself is a host
 concern, not protocol.)
 
@@ -311,7 +322,11 @@ concern, not protocol.)
   byte-identically under v1.2.1 rules. The 16-vector conformance set must
   remain green.
 - Writers (agent tools) refuse to broadcast competitive-mode tasks before
-  H_ACT3.
+  H_ACT3. Writer tooling MAY expose an explicit pre-activation override for
+  pilot/testing publishes (IDBots: `metatask_publish`'s
+  `allowPreActivation: true`, reported in the tool result); it is a host-side
+  escape hatch that never changes replay semantics — the engine applies no
+  height gate, so an overridden publish replays identically.
 
 ## 8. Conformance vectors (to add)
 

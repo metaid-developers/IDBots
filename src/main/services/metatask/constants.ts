@@ -58,8 +58,12 @@ export const H_ACT2: number | null = 191_500;
  * v1.3 competitive-mode activation gate (protocol v1.3.0 draft §7). NOT
  * enforced by the replay engine: no competitive-mode task exists on-chain yet,
  * so replay accepts `policy.mode: "competitive"` at any height (pre-activation
- * fixtures must stay replayable). The writer side (agent tools, a later phase)
- * is responsible for refusing pre-H_ACT3 broadcasts once the height lands.
+ * fixtures must stay replayable). The writer side (metatask_publish in
+ * metataskAgentTools.ts) refuses pre-activation broadcasts unless the caller
+ * passes the explicit pilot/testing escape hatch `allowPreActivation: true`;
+ * it reads the announced height from `board.activation.hAct3` (this constant,
+ * surfaced by the projection store) and compares it against the refresher's
+ * refresh-state boundary block.
  */
 export const H_ACT3: number | null = null;
 
