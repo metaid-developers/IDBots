@@ -167,6 +167,13 @@ export interface MetaTaskNodeProjection {
   params: Record<string, unknown> | null;
   /** Per-node verifier override (null = inherits task root spec). */
   specid: string | null;
+  /**
+   * The node's deps as published on the effective tree (v1.3; [] for pre-v1.3
+   * trees). Display/layout input only — competitive-mode chain-validity itself
+   * is engine-computed and exposed via the candidate flags; the renderer never
+   * re-derives it from deps.
+   */
+  deps: string[];
   status: MetaTaskNodeStatus;
   disputed: boolean;
   /** Effective claim, if any. Always null in competitive mode (no locks). */

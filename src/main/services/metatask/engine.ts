@@ -1195,6 +1195,9 @@ const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProje
         ? (treeRec.params as Record<string, unknown>)
         : null,
       specid: treeRec?.specid ?? null,
+      deps: treeRec && Array.isArray(treeRec.deps)
+        ? treeRec.deps.filter((dep): dep is string => typeof dep === 'string')
+        : [],
       status,
       disputed,
       holder: null, // competitive mode has no claim locks
@@ -2146,6 +2149,9 @@ export function replayMetaTask(
         ? (treeRec.params as Record<string, unknown>)
         : null,
       specid: treeRec?.specid ?? null,
+      deps: treeRec && Array.isArray(treeRec.deps)
+        ? treeRec.deps.filter((dep): dep is string => typeof dep === 'string')
+        : [],
       status,
       disputed,
       holder: holder
