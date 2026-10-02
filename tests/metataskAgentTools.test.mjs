@@ -324,6 +324,44 @@ test('metatask_publish: invariants checked before the first pin; roster→tree�
   assert.equal(specPayload.output, '');
   assert.equal(specPayload.validation, undefined);
   assert.match(ok.content[0].text, /discovery buzz/i);
+
+  // v1.3 draft §4.1: a declared workspace rides the root spec pin verbatim
+  // (metatask_publish and metatask_publish_spec share buildSpecPayload), and a
+  // placeholder baseRef is refused before the first pin of the sequence.
+  const withWorkspace = await handlers.metatask_publish({
+    title: 'git workspace task',
+    nodes: [
+      { id: 'r1', parent: null, title: 'root', kind: 'aggregate', weight: 4000 },
+      { id: 't1', parent: 'r1', title: 'leaf', kind: 'proof', weight: 6000 },
+    ],
+    spec: {
+      name: 'git-check',
+      lang: 'bash',
+      entry: 'check.sh',
+      script: 'make test',
+      workspace: { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) },
+    },
+    policy: { claimTtlHours: 48, verifyQuorum: 2, verifyWindowHours: 72 },
+  });
+  assert.equal(withWorkspace.isError, undefined);
+  const wsSpecPayload = JSON.parse(writes[6].metaidData.payload);
+  assert.deepEqual(wsSpecPayload.workspace, { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) });
+
+  const placeholderBase = await handlers.metatask_publish({
+    title: 'git workspace task',
+    nodes: [{ id: 'r1', parent: null, title: 'root', kind: 'aggregate', weight: 10000 }],
+    spec: {
+      name: 'git-check',
+      lang: 'bash',
+      entry: 'check.sh',
+      script: 'make test',
+      workspace: { type: 'git', baseRef: 'BASE_BUNDLE_URI:s2a-python-base' },
+    },
+    policy: { claimTtlHours: 48, verifyQuorum: 2, verifyWindowHours: 72 },
+  });
+  assert.equal(placeholderBase.isError, true);
+  assert.match(placeholderBase.content[0].text, /workspace\.baseRef/);
+  assert.equal(writes.length, 8, 'the workspace refusal precedes the whole pin sequence');
 });
 
 test('metatask_amend: publisher-only; bases from the current tree head', async () => {
@@ -552,6 +590,16 @@ test('metatask_publish_spec: exactly one spec pin, no carrier task, protocol pay
   assert.equal(out.hasValidation, true);
   assert.match(out.note, /specid/);
   assert.equal(write.folded, true, 'the write is followed by a projection refresh');
+
+  // v1.3 draft §4.1: a declared workspace rides the spec pin verbatim — this is
+  // what lets a git-bundle node's submit-side §4.2 enforcement see it at all.
+  const withWorkspace = await handlers.metatask_publish_spec(
+    specArgs({ workspace: { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) } }),
+  );
+  assert.equal(withWorkspace.isError, undefined, withWorkspace.content?.[0]?.text);
+  assert.equal(writes.length, 2);
+  const wsPayload = JSON.parse(writes[1].metaidData.payload);
+  assert.deepEqual(wsPayload.workspace, { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) });
 });
 
 test('metatask_publish_spec: validation block enforced before any spend', async () => {
@@ -603,6 +651,25 @@ test('metatask_publish_spec: validation block enforced before any spend', async 
   const emptyScript = await handlers.metatask_publish_spec(specArgs({ script: '   ' }));
   assert.equal(emptyScript.isError, true);
   assert.match(emptyScript.content[0].text, /verifier script/);
+
+  // v1.3 draft §4.1 workspace gate: a placeholder/unpinned baseRef or a
+  // malformed baseCommit is refused before any spend (a fossilized placeholder
+  // would dead-letter the node's §4.2 artifact contract).
+  const placeholderBase = await handlers.metatask_publish_spec(
+    specArgs({ workspace: { type: 'git', baseRef: 'BASE_BUNDLE_URI:s2a-python-base', baseCommit: '1'.repeat(40) } }),
+  );
+  assert.equal(placeholderBase.isError, true);
+  assert.match(placeholderBase.content[0].text, /workspace\.baseRef/);
+
+  const badBaseCommit = await handlers.metatask_publish_spec(
+    specArgs({ workspace: { type: 'git', baseCommit: 'abc' } }),
+  );
+  assert.equal(badBaseCommit.isError, true);
+  assert.match(badBaseCommit.content[0].text, /workspace\.baseCommit/);
+
+  const noWorkspaceType = await handlers.metatask_publish_spec(specArgs({ workspace: { baseCommit: null } }));
+  assert.equal(noWorkspaceType.isError, true);
+  assert.match(noWorkspaceType.content[0].text, /workspace\.type/);
 
   assert.equal(writes.length, 0, 'every gate refusal must happen before any chain spend');
 

@@ -95,6 +95,8 @@ interface SpecPayloadInput {
   input?: unknown;
   output?: unknown;
   validation?: Record<string, unknown>;
+  /** v1.3 draft §4.1 workspace declaration (git/metafile/inline/pin/…). */
+  workspace?: unknown;
 }
 
 /**
@@ -111,8 +113,43 @@ const buildSpecPayload = (spec: SpecPayloadInput): Record<string, unknown> => {
     input: spec.input ?? '',
     output: spec.output ?? '',
   };
+  if (isPlainObject(spec.workspace)) payload.workspace = spec.workspace;
   if (isPlainObject(spec.validation)) payload.validation = spec.validation;
   return payload;
+};
+
+/**
+ * Writer-side check for the v1.3 draft §4.1 spec.workspace declaration. The
+ * engine never reads `workspace` (except the submit tool's git-bundle
+ * enforcement on type:"git"), so a malformed declaration would silently dead-
+ * letter the artifact contract — refuse it before any spend. `type` must be a
+ * non-empty string (§4.1 lists git | metafile | inline | pin; later draft
+ * revisions may add types, so the writer does not freeze the enum). A
+ * declared `baseRef` must be a real pin:// | metafile:// reference — a
+ * publish-me-later placeholder would fossilize into the pinned spec.
+ */
+const specWorkspaceRefusal = (workspace: unknown): string | null => {
+  if (workspace === undefined || workspace === null) return null;
+  if (!isPlainObject(workspace)) {
+    return 'Refused: spec.workspace must be an object (draft §4.1: { type, baseRef?, baseCommit?, notes? }).';
+  }
+  const type = asString(workspace.type).trim();
+  if (!type) {
+    return 'Refused: spec.workspace.type is required when workspace is declared (draft §4.1: git | metafile | inline | pin).';
+  }
+  const baseRef = workspace.baseRef;
+  if (baseRef !== undefined && baseRef !== null) {
+    const ref = asString(baseRef).trim();
+    if (!ref) return 'Refused: spec.workspace.baseRef is empty — drop the key or pin the base bundle (draft §4.4).';
+    if (!SPEC_REF_RE.test(ref)) {
+      return `Refused: spec.workspace.baseRef must be a real pin:// | metafile:// reference (draft §4.4) — got "${ref}". Publish the base bundle first and substitute the placeholder.`;
+    }
+  }
+  const baseCommit = workspace.baseCommit;
+  if (baseCommit !== undefined && baseCommit !== null && !GIT_COMMIT_RE.test(asString(baseCommit))) {
+    return 'Refused: spec.workspace.baseCommit must be a full commit hash (40 hex chars) or null (draft §4.1).';
+  }
+  return null;
 };
 
 /** Refuse a missing/empty/bogus script reference; returns null when usable. */
@@ -200,6 +237,7 @@ const specFromDrafts = (drafts: Record<string, unknown>, specKey: string): SpecP
     input: raw.input,
     output: raw.output,
     validation: isPlainObject(raw.validation) ? raw.validation : undefined,
+    workspace: isPlainObject(raw.workspace) ? raw.workspace : undefined,
   };
 };
 
@@ -1137,6 +1175,7 @@ export function buildMetataskAgentTools(deps: {
         input: z.unknown().optional(),
         output: z.unknown().optional(),
         validation: z.record(z.string(), z.unknown()).optional(),
+        workspace: z.record(z.string(), z.unknown()).optional().describe('v1.3 draft §4.1 workspace declaration (type: git | metafile | inline | pin; git nodes carry baseRef/baseCommit pinning the base bundle).'),
       }).optional(),
       policy: z.object({
         mode: z.enum(['tree', 'competitive']).optional().describe('v1.3: execution mode; absent = "tree" (byte-identical to v1.2.1). "competitive" requires finalnode and is H_ACT3-gated.'),
@@ -1158,7 +1197,7 @@ export function buildMetataskAgentTools(deps: {
       title?: string;
       brief?: string;
       nodes?: Array<{ id?: string; parent?: string | null; title?: string; kind?: string; specid?: string | null; params?: Record<string, unknown>; deps?: string[]; weight?: number }>;
-      spec?: { name?: string; lang?: string; entry?: string; script?: string; input?: unknown; output?: unknown; validation?: Record<string, unknown> };
+      spec?: { name?: string; lang?: string; entry?: string; script?: string; input?: unknown; output?: unknown; workspace?: Record<string, unknown>; validation?: Record<string, unknown> };
       policy?: { mode?: string; finalnode?: string; claimTtlHours?: number; verifyQuorum?: number; verifyWindowHours?: number; rewardSat?: number; challengeTtlDays?: number; submitterShareBP?: number };
       tags?: string[];
       allowPreActivation?: boolean;
@@ -1320,10 +1359,13 @@ export function buildMetataskAgentTools(deps: {
               input: args.spec?.input,
               output: args.spec?.output,
               validation: args.spec?.validation,
+              workspace: args.spec?.workspace,
             };
         if (!asString(spec.name).trim() || !asString(spec.entry).trim()) {
           return textResult('Refused: a root verifier spec (name + entry) is required — every task needs a machine-checkable spec.', true);
         }
+        const workspaceRefusal = specWorkspaceRefusal(spec.workspace);
+        if (workspaceRefusal) return textResult(workspaceRefusal, true);
 
         // roster pin (same-side declaration) when the local roster can cross-review.
         // Flat sibling of the protocol root (the collector sweeps it as the
@@ -1432,6 +1474,7 @@ export function buildMetataskAgentTools(deps: {
       script: z.string().min(1).optional().describe('Inline verifier script text, or a pin:// | metafile:// reference when too long.'),
       input: z.unknown().optional().describe('Input descriptor (string or object); interpreted by the script.'),
       output: z.unknown().optional().describe('Output/verdict contract (string or object): pass | fail | invalid.'),
+      workspace: z.record(z.string(), z.unknown()).optional().describe('v1.3 draft §4.1 workspace declaration (type: git | metafile | inline | pin; git nodes carry baseRef/baseCommit pinning the base bundle).'),
       validation: z.record(z.string(), z.unknown()).optional().describe('v1.2.1 validation block: null_tolerance, enumeration_closure (closure + integer self-check count), proposition_fidelity (correspondence artifact pin). Required unless enforceHAct2Validation=false.'),
       enforceHAct2Validation: z.boolean().optional().describe('Default true: enforce the v1.2.1 three-item validation block. Set false only for a pre-H_ACT2 (v1.1-era) spec.'),
       draftsFile: z.string().min(1).optional().describe('Absolute path to a campaign drafts JSON (top-level specs{}); use with specKey instead of inline arguments.'),
@@ -1444,6 +1487,7 @@ export function buildMetataskAgentTools(deps: {
       script?: string;
       input?: unknown;
       output?: unknown;
+      workspace?: Record<string, unknown>;
       validation?: Record<string, unknown>;
       enforceHAct2Validation?: boolean;
       draftsFile?: string;
@@ -1462,6 +1506,7 @@ export function buildMetataskAgentTools(deps: {
           args.script !== undefined ||
           args.input !== undefined ||
           args.output !== undefined ||
+          args.workspace !== undefined ||
           args.validation !== undefined;
         let spec: SpecPayloadInput;
         if (draftsFile || specKey) {
@@ -1473,7 +1518,7 @@ export function buildMetataskAgentTools(deps: {
           }
           if (inlineProvided) {
             return textResult(
-              'Refused: pass either draftsFile+specKey OR inline arguments (name/lang/entry/script/input/output/validation), not both.',
+              'Refused: pass either draftsFile+specKey OR inline arguments (name/lang/entry/script/input/output/validation/workspace), not both.',
               true,
             );
           }
@@ -1490,6 +1535,7 @@ export function buildMetataskAgentTools(deps: {
             script: args.script,
             input: args.input,
             output: args.output,
+            workspace: args.workspace,
             validation: args.validation,
           };
         }
@@ -1501,6 +1547,8 @@ export function buildMetataskAgentTools(deps: {
         }
         const scriptRefusal = specScriptRefusal(spec.script);
         if (scriptRefusal) return textResult(scriptRefusal, true);
+        const workspaceRefusal = specWorkspaceRefusal(spec.workspace);
+        if (workspaceRefusal) return textResult(workspaceRefusal, true);
         const rawScript = typeof spec.script === 'string' ? spec.script : '';
         const trimmedScript = rawScript.trim();
         // A pin://|metafile:// reference is normalized; inline script bytes are
@@ -1523,6 +1571,7 @@ export function buildMetataskAgentTools(deps: {
             script,
             input: spec.input,
             output: spec.output,
+            workspace: spec.workspace,
             validation: spec.validation,
           }),
           'tool:metatask_publish_spec',

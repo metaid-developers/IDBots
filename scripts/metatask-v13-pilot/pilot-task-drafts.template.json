@@ -1,0 +1,465 @@
+{
+  "campaign": "MetaTask v1.3 pilot - Cross-Language Replay-Engine Conformance Suite (7 nodes, competitive mode, weight sum 10000)",
+  "campaignStatus": "DRAFTS VALIDATED LOCALLY - not yet published. Publish via scripts/metatask-v13-pilot/publish-harness.mts (specs -> task) with allowPreActivation: true (draft section 7 escape hatch; H_ACT3 unannounced at authoring time).",
+  "taskSheet": "docs/design/metatask-v13-pilot-conformance-suite.md",
+  "protocolDraft": "docs/metaid_protocols/metatask-protocol-v1.3-competitive-draft.md",
+  "protocol": {
+    "path": "/protocols/metatask",
+    "version": "1.3.0-draft",
+    "baseRegistration": "pin://cbae49e09697182b076652ae9bded629388a0dafc9048b01c6a7c8766247fc55i0",
+    "baseRegistrationVersion": "1.2.1",
+    "activationHeight": null,
+    "activationNote": "Competitive mode is gated on H_ACT3 (draft section 7), unannounced at authoring time. The pilot publishes with allowPreActivation: true - the writer-side escape hatch; replay applies no height gate, so the pilot replays identically before and after H_ACT3."
+  },
+  "specValidationReading": "Every spec carries the v1.2.1 three-item validation block (mandatory at/after H_ACT2=191500): null_tolerance boolean true (null/missing/empty input -> exit 2 invalid with the location in detail), enumeration_closure with a closure string plus integer self-check counts (each script's EXPECTED_CHECKS constant, asserted on the pass path; S3 additionally pins the 16-vector legacy set identity), and proposition_fidelity referencing the independent correspondence artifact (acceptance-sheet.md, published as a metafile BEFORE the specs; placeholder ARTIFACT_PIN:acceptance-sheet until then).",
+  "publishProcedure": [
+    "Gate: python3 scripts/metatask-v13-pilot/validate-pilot-drafts.py -> PILOT DRAFTS READY and python3 scripts/metatask-v13-pilot/selftest-pilot-specs.py green.",
+    "Upload the four binary metafiles: bundles/s2a-python-base.bundle, bundles/s2b-go-base.bundle, bundles/s2c-ts-harness-base.bundle (workspace.baseRef backfill) and vector-set/vector-set.tar.gz (VECTOR_SET_URI backfill inside the three S2 scripts).",
+    "Upload acceptance-sheet.md as a metafile (the proposition_fidelity correspondence artifact) and substitute ARTIFACT_PIN:acceptance-sheet in every spec's validation block (both .correspondence and .artifactPin, they must stay equal).",
+    "Publish the six standalone spec pins with metatask_publish_spec (specPinPlan value PUBLISH_SPEC_FIRST), scripts already VECTOR_SET_URI-backfilled; collect the six specPinIds.",
+    "Publish the task with metatask_publish (draftsFile mode, taskId metatask-v13-pilot, specPinByKey mapping the six SPEC_PIN:<key> placeholders, allowPreActivation: true). The root spec (s1-behavior-spec-lint) is written by this call.",
+    "Post the discovery buzz within 24h: title + the FULL task root pinId + #metatask.",
+    "scripts/metatask-v13-pilot/publish-harness.mts automates steps 3-6 in --broadcast mode and records every pinId into launch-record.json; default mode is a dry-run that prints the full pin plan without any chain write."
+  ],
+  "placeholderTokens": {
+    "VECTOR_SET_URI": "hardcoded placeholder inside spec-s2a-python.sh / spec-s2b-go.sh / spec-s2c-ts.sh; backfill with the uploaded vector-set metafile URI (vector-set/vector-set.tar.gz). Scripts treat an unresolved placeholder as invalid (exit 2), never fail.",
+    "BASE_BUNDLE_URI:<key>": "workspace.baseRef placeholder in the three S2 specs (keys s2a-python-base / s2b-go-base / s2c-ts-harness-base); backfill with the uploaded bundle metafile URIs. spec-s2c-ts.sh additionally embeds a BASE_BUNDLE_URI constant for its vendor byte-diff (same backfill).",
+    "ARTIFACT_PIN:acceptance-sheet": "validation.proposition_fidelity placeholder in all seven specs; backfill with the acceptance-sheet metafile pin (correspondence and artifactPin stay equal).",
+    "SPEC_PIN:<key>": "node specid placeholder; backfilled from the six metatask_publish_spec results. S1's specid stays null - it inherits the task root spec."
+  },
+  "policyNotes": {
+    "roster": "policy.split.rosterid omitted (no roster pin): pilot adjudication wants reviewer independence measured across the whole bot population; the local roster exclusion stays off so any non-publisher, non-submitter bot may verify (quorum 2, draft section 3.5). Pilot-only decision, not a protocol statement.",
+    "toolKeys": "policy keys follow the metatask_publish tool's input shape: camelCase, with two tool quirks - the terminal-node key is 'finalnode' (all lowercase, not finalNode) and submitterShareBP sits at policy top level (the tool writes it into the on-chain split.submitterShareBP). On-chain the policy lands snake_case: mode/finalnode/verify_quorum/challenge_ttl_days/reward_sat/claim_ttl_hours/verify_window_hours/split.",
+    "zeroTtls": "claimTtlHours/verifyWindowHours are 0 to signal intent (draft section 3.10): both carry no semantics in competitive mode; the tool normalizes them to 0 on-chain either way.",
+    "reward": "rewardSat 0 (no escrow in v1.3 draft); settlement is symbolic shareBP only - the pilot tests mechanism, not money."
+  },
+  "specPinPlan": {
+    "s1-behavior-spec-lint": "PUBLISHED_BY_METATASK_PUBLISH",
+    "s2a-python-engine": "PUBLISH_SPEC_FIRST",
+    "s2b-go-engine": "PUBLISH_SPEC_FIRST",
+    "s2c-ts-adapter": "PUBLISH_SPEC_FIRST",
+    "s3-matrix-check": "PUBLISH_SPEC_FIRST",
+    "s4-report-structure": "PUBLISH_SPEC_FIRST",
+    "s5-release-verify": "PUBLISH_SPEC_FIRST"
+  },
+  "specCountNote": "Seven specs for seven nodes (S1..S5 with S2 split into three language variants). The pilot task sheet's 'six spec scripts' counts the S2 template family once; on-chain each variant is its own pin (per-language inline content differs, and the wave-1 lesson applies: spec pins are never shared across nodes with different artifact contracts).",
+  "specs": {
+    "s1-behavior-spec-lint": {
+      "name": "s1-behavior-spec-lint",
+      "lang": "python3",
+      "entry": "spec-s1-lint.py",
+      "scriptFile": "spec-s1-lint.py",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<S1 artifact tar.gz|zip>",
+          "METATASK_NODE": "S1",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base, <base>/file/<urlencoded URI>"
+        }
+      },
+      "output": {
+        "stdout": "evidence log ([env]/[tool]/[fetch]/[check N] lines) + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail (reason on stderr) | 2 invalid (null/empty/unresolvable input)"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "every machine-checkable S1 acceptance item is one numbered check; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 9 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S1 deliverable definition (acceptance-sheet section S1); definitions = the S1 artifact format (clause/case/schema shapes the linter enforces); proof-direction = which rubric items are machine-checked vs left to the reviewer (the per-node correspondence tables)."
+        }
+      },
+      "workspace": { "type": "metafile", "notes": "S1 delivers one metafile bundle: behavior-spec.md + vector-schema.json + test-plan.md" }
+    },
+    "s2a-python-engine": {
+      "name": "s2a-python-engine",
+      "lang": "bash",
+      "entry": "spec-s2a-python.sh",
+      "scriptFile": "spec-s2a-python.sh",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<submission git bundle>",
+          "METATASK_COMMIT": "submission tip commit (40-hex)",
+          "METATASK_BASE_COMMIT": "b1c8d01561dc96b80211b0b171a8b5a59689318e (pinned base tip)",
+          "METATASK_NODE": "S2a",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_VECTOR_SET_URI": "offline override; production runs use the backfilled VECTOR_SET_URI constant",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base"
+        }
+      },
+      "output": {
+        "stdout": "evidence log + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "every machine-checkable S2a acceptance item is one numbered check; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 15 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S2a deliverable (CLI contract in the base README); definitions = git-bundle result contract + runner contract; proof-direction = the acceptance-sheet S2a table."
+        }
+      },
+      "workspace": {
+        "type": "git",
+        "baseRef": "BASE_BUNDLE_URI:s2a-python-base",
+        "baseCommit": "b1c8d01561dc96b80211b0b171a8b5a59689318e",
+        "notes": "greenfield-adjacent skeleton: README contract + argparse shell + MIT LICENSE"
+      }
+    },
+    "s2b-go-engine": {
+      "name": "s2b-go-engine",
+      "lang": "bash",
+      "entry": "spec-s2b-go.sh",
+      "scriptFile": "spec-s2b-go.sh",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<submission git bundle>",
+          "METATASK_COMMIT": "submission tip commit (40-hex)",
+          "METATASK_BASE_COMMIT": "db79d8ab20309c5251e817f2607acd8f450e2ca2 (pinned base tip)",
+          "METATASK_NODE": "S2b",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_VECTOR_SET_URI": "offline override",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base"
+        },
+        "toolchain": "git + go required (a machine without go yields invalid, never fail)"
+      },
+      "output": {
+        "stdout": "evidence log + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "every machine-checkable S2b acceptance item is one numbered check; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 17 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S2b deliverable (CLI contract, static binary, go vet); definitions = git-bundle result contract + runner contract; proof-direction = the acceptance-sheet S2b table."
+        }
+      },
+      "workspace": {
+        "type": "git",
+        "baseRef": "BASE_BUNDLE_URI:s2b-go-base",
+        "baseCommit": "db79d8ab20309c5251e817f2607acd8f450e2ca2",
+        "notes": "greenfield-adjacent skeleton: go.mod + flag-parsing main.go shell + MIT LICENSE"
+      }
+    },
+    "s2c-ts-adapter": {
+      "name": "s2c-ts-adapter",
+      "lang": "bash",
+      "entry": "spec-s2c-ts.sh",
+      "scriptFile": "spec-s2c-ts.sh",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<submission git bundle>",
+          "METATASK_COMMIT": "submission tip commit (40-hex)",
+          "METATASK_BASE_COMMIT": "3bad3f45186a645be68f90f10f09850feda3449b (pinned base tip)",
+          "METATASK_NODE": "S2c",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_VECTOR_SET_URI": "offline override",
+          "METATASK_BASE_BUNDLE_URI": "offline override for the vendor byte-diff base bundle",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base"
+        },
+        "toolchain": "git + node + npx required (pilot task sheet allows node+npx for this node)"
+      },
+      "output": {
+        "stdout": "evidence log + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "every machine-checkable S2c acceptance item is one numbered check; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 20 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S2c deliverable (thin adapter over the vendored reference engine); definitions = the vendor snapshot read-only discipline + byte-diff gate; proof-direction = the acceptance-sheet S2c table."
+        }
+      },
+      "workspace": {
+        "type": "git",
+        "baseRef": "BASE_BUNDLE_URI:s2c-ts-harness-base",
+        "baseCommit": "3bad3f45186a645be68f90f10f09850feda3449b",
+        "notes": "harness skeleton with the vendored engine snapshot (vendor/metatask-engine, read-only; snapshot source commit 7f1e3336cc01a737e6d20f23f195d99eb593edc5)"
+      }
+    },
+    "s3-matrix-check": {
+      "name": "s3-matrix-check",
+      "lang": "python3",
+      "entry": "spec-s3-matrix.py",
+      "scriptFile": "spec-s3-matrix.py",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<S3 artifact tar.gz>",
+          "METATASK_NODE": "S3",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base"
+        },
+        "toolchain": "python3 always; node (ts column) and go (go column) used for matrix reproduction when present, else SKIP evidence"
+      },
+      "output": {
+        "stdout": "evidence log + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "the vector enumeration closes over the registered legacy set (16 vectors, canonical sha256 pinned below) plus >= 8 new competitive vectors; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 11, "legacy_vector_count": 16, "legacy_canonical_sha256": "106aa1f3bee8ebd48339ceb65f97a12e54247e1e831296a394a974c9cb22f2c4", "min_competitive_vectors": 8 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S3 deliverable (vectors + runner + 3-engine matrix); definitions = the S3 artifact format (member list, matrix digest lines); proof-direction = the acceptance-sheet S3 table (digest equality is machine-checked; topic coverage is reviewed)."
+        }
+      },
+      "workspace": { "type": "metafile", "notes": "S3 delivers one metafile bundle: legacy-vectors.json + competitive-vectors.json + runner + matrix.md + engines/*.bundle" }
+    },
+    "s4-report-structure": {
+      "name": "s4-report-structure",
+      "lang": "python3",
+      "entry": "spec-s4-report.py",
+      "scriptFile": "spec-s4-report.py",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<S4 artifact tar.gz>",
+          "METATASK_NODE": "S4",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base"
+        }
+      },
+      "output": {
+        "stdout": "evidence log + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "the attribution enumeration closes over the matrix's RED/AMBER cells: every divergent cell has exactly one ATTR section and vice versa; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 7 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S4 deliverable (every divergent cell attributed); definitions = the ATTR section format; proof-direction = deliberately structural only - attribution substance is the reviewer rubric's (acceptance-sheet S4)."
+        }
+      },
+      "workspace": { "type": "metafile", "notes": "S4 delivers one metafile bundle: report.md + matrix.md" }
+    },
+    "s5-release-verify": {
+      "name": "s5-release-verify",
+      "lang": "bash",
+      "entry": "spec-s5-release.sh",
+      "scriptFile": "spec-s5-release.sh",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<S5 release package tar.gz>",
+          "METATASK_NODE": "S5",
+          "METATASK_TASKID": "<task root pinId>",
+          "METATASK_DOWNLOAD_BASE": "optional; metafile resolution base"
+        },
+        "toolchain": "python3 + node required; the go leg uses the packaged prebuilt binary or the go toolchain (chosen by the package's own runner)"
+      },
+      "output": {
+        "stdout": "evidence log + final JSON line {\"verdict\",\"detail\",\"checks\"}",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "the release enumeration closes over CHECKSUMS.txt: listed member set == shipped member set, every checksum verified; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 10 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactPin": "ARTIFACT_PIN:acceptance-sheet",
+          "artifactKey": "acceptance-sheet",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "statement = S5 deliverable (checksum-verified, fresh-env-runnable release package + metaapp index); definitions = the release package format; proof-direction = the acceptance-sheet S5 table."
+        }
+      },
+      "workspace": {
+        "type": "metaapp",
+        "notes": "PILOT EXTENSION of the draft section 4.1 enum: S5's human-facing artifact is the release index metaapp; the machine-checked artifact remains the release-package metafile (attachment). If the draft freezes the enum as git|metafile|inline|pin, republish this spec with type metafile."
+      }
+    }
+  },
+  "tasks": [
+    {
+      "id": "metatask-v13-pilot",
+      "rootSpec": "s1-behavior-spec-lint",
+      "publish": {
+        "title": "MetaTask v1.3 pilot - Cross-Language Replay-Engine Conformance Suite",
+        "brief": "Competitive-mode pilot (protocol v1.3.0 draft): produce the cross-language conformance suite the protocol is blocked on - behavior spec + vector schema (S1), three independent replay engines (S2a Python / S2b Go / S2c TS adapter over the vendored reference engine), a 3-engine vector matrix (S3), a divergence report (S4), and a checksum-verified release (S5, terminal). Forks are welcome on every node; the first fully-verified chain to S5 wins; losing forks land in unpaidHistory. rewardSat is 0 - the pilot tests mechanism, not money.",
+        "tags": ["metatask", "metatask-v13-pilot", "conformance", "competitive"],
+        "policy": {
+          "mode": "competitive",
+          "finalnode": "S5",
+          "verifyQuorum": 2,
+          "challengeTtlDays": 14,
+          "rewardSat": 0,
+          "claimTtlHours": 0,
+          "verifyWindowHours": 0,
+          "submitterShareBP": 8000
+        },
+        "nodes": [
+          {
+            "id": "S5",
+            "parent": null,
+            "title": "Packaging & release (terminal)",
+            "kind": "publish",
+            "specid": "SPEC_PIN:s5-release-verify",
+            "params": {
+              "rubric": [
+                "Fresh-environment verification: download each artifact, sha256-verify against CHECKSUMS.txt, unpack, run each packaged engine's vector runner once - all exit 0 (machine-checked by the spec).",
+                "The three packaged engines' CANONICAL_SHA256 digests agree (machine-checked).",
+                "No machine-absolute paths in any distributed artifact (machine-checked scan; reviewer spot-checks archive listings).",
+                "docs/install.md is sufficient for a new engine author to conform (reviewer judgment).",
+                "The release index metaapp loads standalone and links every artifact + checksums (reviewer judgment)."
+              ]
+            },
+            "deps": ["S4"],
+            "weight": 700
+          },
+          {
+            "id": "S4",
+            "parent": "S5",
+            "title": "Divergence root-cause report",
+            "kind": "triage",
+            "specid": "SPEC_PIN:s4-report-structure",
+            "params": {
+              "rubric": [
+                "Every RED/AMBER matrix cell has exactly one ATTR section (machine-checked bijection).",
+                "Every attribution declares severity and cites >= 1 behavior-spec clause C-NN (machine-checked).",
+                "Each attribution's classification (engine bug vs spec ambiguity) is argued, with a minimal reproduction (reviewer judgment).",
+                "Proposed fixes are implementable as written (reviewer judgment).",
+                "Spec ambiguities are routed to the protocol registration queue, never silently resolved (reviewer judgment)."
+              ]
+            },
+            "deps": ["S3"],
+            "weight": 800
+          },
+          {
+            "id": "S3",
+            "parent": "S4",
+            "title": "Conformance vectors + 3-engine results matrix",
+            "kind": "aggregate",
+            "specid": "SPEC_PIN:s3-matrix-check",
+            "params": {
+              "rubric": [
+                "All 16 legacy v1.2.1 vectors included byte-identical (machine-checked against the announced canonical sha256 106aa1f3bee8ebd48339ceb65f97a12e54247e1e831296a394a974c9cb22f2c4).",
+                ">= 8 new competitive-mode vectors, well-formed, unique ids (machine-checked).",
+                "The new vectors cover at minimum: fork race, fail-cascade, optimistic pipelining, amend freeze, challenge-blocked settlement, winning-chain settlement math, losing-fork unpaidHistory, ghost parentrefs (reviewer judgment).",
+                "The runner reproduces the published matrix from scratch (machine-checked under available toolchains; SKIP evidence must be re-run by the reviewer on a full machine).",
+                "Canonical sha256 equal across the three engine columns (machine-checked). Independent double-production of this node is explicitly encouraged (second competing S3 submission = ideal fork test)."
+              ]
+            },
+            "deps": ["S2a", "S2b", "S2c"],
+            "weight": 2000
+          },
+          {
+            "id": "S2a",
+            "parent": "S3",
+            "title": "Python replay engine",
+            "kind": "implement",
+            "specid": "SPEC_PIN:s2a-python-engine",
+            "params": {
+              "rubric": [
+                "CLI contract match: --events/--root/--now/--guard, canonJ stdout projection, exit codes 0/2/3 (machine-exercised via the runner; reviewer spot-checks --guard).",
+                "Zero third-party dependencies, stdlib only (machine-checked import + manifest scan).",
+                "Determinism: two runs byte-identical canonical digest (machine-checked).",
+                "Readable module structure (reviewer judgment).",
+                "Malformed events are skipped with notes, never crash the engine (reviewer judgment + vector coverage)."
+              ]
+            },
+            "deps": ["S1"],
+            "weight": 2000
+          },
+          {
+            "id": "S2b",
+            "parent": "S3",
+            "title": "Go replay engine",
+            "kind": "implement",
+            "specid": "SPEC_PIN:s2b-go-engine",
+            "params": {
+              "rubric": [
+                "CLI contract match: --events/--root/--now/--guard, canonJ stdout projection, exit codes 0/2/3 (machine-exercised via the runner; reviewer spot-checks --guard).",
+                "Zero third-party dependencies (go.mod carries no external requires - machine-checked).",
+                "go build ./... clean, go vet ./... clean, CGO_ENABLED=0 static binary builds (machine-checked).",
+                "Determinism: two runs byte-identical canonical digest (machine-checked).",
+                "Idiomatic, readable Go module structure; malformed events never panic (reviewer judgment + vector coverage)."
+              ]
+            },
+            "deps": ["S1"],
+            "weight": 2000
+          },
+          {
+            "id": "S2c",
+            "parent": "S3",
+            "title": "TS adapter over the vendored reference engine",
+            "kind": "implement",
+            "specid": "SPEC_PIN:s2c-ts-adapter",
+            "params": {
+              "rubric": [
+                "The vendored engine snapshot (vendor/metatask-engine/) is byte-untouched vs the pinned base (machine-checked diff).",
+                "The adapter is thin: no replay semantics reimplemented outside the vendored engine (reviewer judgment).",
+                "Build reproducible: frozen install + typecheck clean (machine-checked).",
+                "engineAlgoVersion reported correctly: idbots-metatask-engine/1.3.0 on competitive vectors (machine-checked ENGINE line).",
+                "Determinism: two runs byte-identical canonical digest (machine-checked)."
+              ]
+            },
+            "deps": ["S1"],
+            "weight": 1000
+          },
+          {
+            "id": "S1",
+            "parent": "S3",
+            "title": "Behavior-spec baseline (spec + vector schema + test plan)",
+            "kind": "formalize",
+            "specid": null,
+            "params": {
+              "rubric": [
+                "v1.2.1 coverage complete: claim lock, TTLs, quorum, last-valid-vote, #8/#9 gating, roster filter, supersede, amend, challenge, aggregation precondition, settlement math (reviewer judgment against the registration body).",
+                "v1.3 coverage complete: parentrefs, chain-validity, single-sink completion, winning-chain settlement, amend freeze rule (reviewer judgment against the v1.3.0 draft).",
+                "Clause numbering stable and citable, sequential from C-01, no ambiguous normative language (numbering machine-checked; language reviewed).",
+                "vector-schema.json self-describing, carries engineAlgoVersion, passes the hand-written structural self-check (machine-checked).",
+                "test-plan.md >= 24 named cases with expected outcomes, each traceable to existing clauses (machine-checked cross-reference)."
+              ]
+            },
+            "deps": [],
+            "weight": 1500
+          }
+        ]
+      }
+    }
+  ],
+  "validator": "python3 scripts/metatask-v13-pilot/validate-pilot-drafts.py",
+  "verifierSelftest": "python3 scripts/metatask-v13-pilot/selftest-pilot-specs.py",
+  "correspondenceArtifact": "acceptance-sheet.md (published as a metafile before the specs; every spec's proposition_fidelity references it)",
+  "vectorSet": "vector-set/vector-set.tar.gz (16 legacy + 11 competitive draft vectors + manifest; uploaded before the S2 specs are published, then VECTOR_SET_URI is backfilled)",
+  "baseBundles": "bundles/*.bundle (three pinned S2 base repositories; uploaded before the specs, then BASE_BUNDLE_URI:<key> backfilled)"
+}

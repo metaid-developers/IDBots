@@ -1,0 +1,5 @@
+{
+  "note": "MetaTask v1.3 pilot launch record. artifacts.*.uri are filled after the manual metafile uploads (base bundles x3, vector-set, acceptance-sheet); specs/task are filled by publish-harness.mts --broadcast. Until then every placeholder resolves synthetically in dry-run.",
+  "artifacts": {},
+  "specs": {}
+}
