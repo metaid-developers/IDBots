@@ -1,5 +1,67 @@
 {
   "note": "MetaTask v1.3 pilot launch record. artifacts.*.uri are filled after the manual metafile uploads (base bundles x3, vector-set, acceptance-sheet); specs/task are filled by publish-harness.mts --broadcast. Until then every placeholder resolves synthetically in dry-run.",
-  "artifacts": {},
-  "specs": {}
+  "artifacts": {
+    "s2a-python-base": {
+      "uri": "metafile://f25716f86b18d50671b89dbd824fdad11ecc5899da12b52fb795d5db614e0bb6i0.bundle",
+      "sha256": "0c7273cd235adbfdb343ffffd06596c18cc3367940fa15a5b26778b12c0b4ce4",
+      "bytes": 4036,
+      "uploadedAt": "2026-10-02T17:50:18.056187+00:00"
+    },
+    "s2b-go-base": {
+      "uri": "metafile://658058a0e2354bbdececbfd32c822e6e83685f2b020c64631989b1619f52b7b6i0.bundle",
+      "sha256": "8c21a6a911c20ca7a7d047ed3a7dca75beb5506988ca512253d85dde8d2771da",
+      "bytes": 4051,
+      "uploadedAt": "2026-10-02T17:50:18.056187+00:00"
+    },
+    "s2c-ts-harness-base": {
+      "uri": "metafile://fc2e9d25dda75d92adedcb73fc83b7f192b8a60e2050593cfd540df5e76aa0a5i0.bundle",
+      "sha256": "b9db1f28fa7d5936a41e86ba73a99ff6854d4f572cd8a0d5f2d53dd13f4c1777",
+      "bytes": 39815,
+      "uploadedAt": "2026-10-02T17:50:18.056187+00:00"
+    },
+    "vector-set": {
+      "uri": "metafile://71f09271a6be857a0f40200498381decab99d9d7f7049f32f69f2f0df11bc58ei0.gz",
+      "sha256": "4ec31fb80019ae3a9de27d9eb6dd228905230c3a611fd6e7f0d36e47ccf2b522",
+      "bytes": 7192,
+      "uploadedAt": "2026-10-02T17:50:18.056187+00:00"
+    },
+    "acceptance-sheet": {
+      "uri": "metafile://d7f836544764bf4ca68bd7903b7a6c7a978ff16e34a828e9b31c928cbec05ccci0.md",
+      "sha256": "8f4a88dd0db6abe8c62e1262d20d58d4df6a604f54bf322bc0a63ef7394eb3d9",
+      "bytes": 13913,
+      "uploadedAt": "2026-10-02T17:50:18.056187+00:00"
+    }
+  },
+  "specs": {
+    "s2a-python-engine": {
+      "pinId": "ea5cac579109b3c797d24568785e862ba3fb985c2bfc684be0f3e5f4bbcfefd8i0",
+      "publishedAt": "2026-10-02T17:50:42.915Z"
+    },
+    "s2b-go-engine": {
+      "pinId": "20a971da27ee51ef80144a6e99ae0ce2d83064df23ccef72316dd04d662de9eei0",
+      "publishedAt": "2026-10-02T17:50:44.595Z"
+    },
+    "s2c-ts-adapter": {
+      "pinId": "bd8618d06dd72902dd148417f583d3df2d7f5bf95b00a3baad23697e937b87c9i0",
+      "publishedAt": "2026-10-02T17:50:46.286Z"
+    },
+    "s3-matrix-check": {
+      "pinId": "83c5129a409b29633ae763964e56fe97c58ce14f6df343b111a5aff1baffa90fi0",
+      "publishedAt": "2026-10-02T17:50:47.868Z"
+    },
+    "s4-report-structure": {
+      "pinId": "b83fe918cb0d2f297168774707481906cd2d548151ffedc9e3b0ae5ef57dc89fi0",
+      "publishedAt": "2026-10-02T17:50:49.437Z"
+    },
+    "s5-release-verify": {
+      "pinId": "34a453cfa13b567ade32f62249c659162f6539479202bd92788261529bb3203ci0",
+      "publishedAt": "2026-10-02T17:50:50.670Z"
+    }
+  },
+  "task": {
+    "taskRootPinId": "fad848f86d360fb61f3308b4b9eae7f6c9816eeb8eef86f2bf911c70ab8bed10i0",
+    "treePinId": "db6afe0d25856d7c41ba743f40e3101b0d61e15fed01b8c8293e9ee75a10b019i0",
+    "specPinId": "63ada514c3b8dd47f56ab79e7e60906de20b2dd1586c243afff9870483458e3ci0",
+    "publishedAt": "2026-10-02T17:51:10.086Z"
+  }
 }
