@@ -1758,37 +1758,54 @@ test('metatask_amend: competitive add_node deps/rubric rules and post-fold invar
     assert.equal(writes.length, 0);
   }
 
-  // a legal add_node (extending ABOVE the finalnode: single sink preserved) goes through
-  {
-    const { events, rootPinId, treePinId } = compFixture({ author: SESSION_BOT });
-    const { handlers, writes } = buildHarness(events);
-    const ok = await handlers.metatask_amend({
-      rootPinId,
-      ops: [
-        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['r'], params: { rubric: ['c rubric'] } } },
-        { op: 'reweight', node: 'a', weight: 5000 },
-      ],
-    });
-    assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
-    const payload = JSON.parse(writes[0].metaidData.payload);
-    assert.equal(payload.bases, treePinId);
-    assert.equal(payload.ops[0].node.deps[0], 'r');
-  }
-
-  // a fold that creates a second sink is refused (§3.9 single-sink rule)
+  // add_node ABOVE the finalnode is refused (v1.3 pins the sink at finalnode)
   {
     const { events, rootPinId } = compFixture({ author: SESSION_BOT });
     const { handlers, writes } = buildHarness(events);
     const refused = await handlers.metatask_amend({
       rootPinId,
       ops: [
-        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['a'], params: { rubric: ['c rubric'] } } },
+        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['r'], params: { rubric: ['c rubric'] } } },
         { op: 'reweight', node: 'a', weight: 5000 },
       ],
     });
     assert.equal(refused.isError, true);
-    assert.match(refused.content[0].text, /exactly ONE deps sink/);
-    assert.match(refused.content[0].text, /c, r/);
+    assert.match(refused.content[0].text, /moves the deps sink off policy\.finalnode "r"/);
+    assert.match(refused.content[0].text, /§9 Q1/);
+    assert.equal(writes.length, 0);
+  }
+
+  // a middle-layer add_node (deps onto an unsatisfied non-final node; the sink
+  // stays the finalnode) goes through (§3.9)
+  {
+    const { events, rootPinId, treePinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const ok = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['a'], params: { rubric: ['c rubric'] } } },
+        { op: 'reweight', node: 'a', weight: 5000 },
+      ],
+    });
+    assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+    const payload = JSON.parse(writes[0].metaidData.payload);
+    assert.equal(payload.bases, treePinId);
+    assert.deepEqual(payload.ops[0].node.deps, ['a']);
+  }
+
+  // remove_node of the finalnode is refused (the terminal node must stay a live sink)
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'remove_node', node: 'r' },
+        { op: 'reweight', node: 'a', weight: 10000 },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /keep the designated terminal node "r" alive/);
     assert.equal(writes.length, 0);
   }
 });

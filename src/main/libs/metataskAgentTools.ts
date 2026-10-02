@@ -1548,7 +1548,7 @@ export function buildMetataskAgentTools(deps: {
 
   const amendTree = tool(
     'metatask_amend',
-    'Amend the task tree as the PUBLISHER only (the task root author). v1.2 minimal amend: ops may touch only nodes that were never effectively claimed (frozen-on-start); the weight invariant (sum=10000) must hold after the fold; the task must not be finalized. bases is filled automatically from the current tree head. COMPETITIVE MODE (v1.3 draft §3.9): the freeze condition is SATISFACTION instead — a node is frozen once it has a chain-valid verified submission (claims carry no freeze semantics); remove_node is rejected when another node lists the target in deps; add_node may introduce deps edges only onto unsatisfied existing nodes and the new node needs a non-empty params.rubric; the fold must preserve deps referential integrity, deps acyclicity and the single-sink rule. The chain replay is authoritative — if this tool accepts but replay rejects, the amend is dead on chain.',
+    'Amend the task tree as the PUBLISHER only (the task root author). v1.2 minimal amend: ops may touch only nodes that were never effectively claimed (frozen-on-start); the weight invariant (sum=10000) must hold after the fold; the task must not be finalized. bases is filled automatically from the current tree head. COMPETITIVE MODE (v1.3 draft §3.9): the freeze condition is SATISFACTION instead — a node is frozen once it has a chain-valid verified submission (claims carry no freeze semantics); remove_node is rejected when another node lists the target in deps; add_node may introduce deps edges only onto unsatisfied existing nodes and the new node needs a non-empty params.rubric; the fold must preserve deps referential integrity, deps acyclicity and the PINNED TERMINAL — policy.finalnode must stay a live deps sink, so a new layer ABOVE the finalnode is refused (terminal growth, incl. finalnode reassignment, is deferred to the multi-sink extension §9 Q1) while a middle-layer or isolated side-branch add_node (deps onto unsatisfied existing nodes, finalnode not among them) is allowed. The chain replay is authoritative — if this tool accepts but replay rejects, the amend is dead on chain.',
     {
       rootPinId: z.string().min(1),
       ops: z.array(
@@ -1715,10 +1715,12 @@ export function buildMetataskAgentTools(deps: {
         if (competitive) {
           // §3.9 fold invariants, writer-side (the engine re-checks them and
           // ignores the whole amend on violation): deps reference live nodes,
-          // deps acyclic, exactly one sink. The sink need NOT stay the
-          // finalnode — §3.9 preserves only the single-sink rule (an add_node
-          // extending ABOVE the finalnode is how the graph grows; terminal
-          // resolution then still prefers the named finalnode, draft §3.1).
+          // deps acyclic, and the TERMINAL STAYS PINNED — policy.finalnode
+          // must still be a live deps sink after the fold. v1.3 does not allow
+          // a new layer ABOVE the finalnode (that would move the sink off it;
+          // terminal growth incl. finalnode reassignment is deferred to the
+          // multi-sink extension, §9 Q1). A middle-layer or isolated
+          // side-branch add_node keeps the sink at finalnode and is allowed.
           const folded = Array.from(byId.values()).map((node) => ({
             id: node.id,
             deps: (node.deps ?? []).map((dep) => String(dep)),
@@ -1734,9 +1736,16 @@ export function buildMetataskAgentTools(deps: {
           if (!depsGraphAcyclic(folded)) {
             return textResult('Refused: the fold makes the deps graph cyclic (draft §3.9).', true);
           }
+          const finalnode = asString(detail.policy.finalNode).trim();
+          if (!byId.has(finalnode)) {
+            return textResult(`Refused: the fold must keep the designated terminal node "${finalnode}" alive (draft §3.9) — competitive amends cannot remove policy.finalnode.`, true);
+          }
           const sinks = depsSinkIds(folded);
-          if (sinks.length !== 1) {
-            return textResult(`Refused: the fold must preserve exactly ONE deps sink (draft §3.9) — found ${sinks.length} (${[...sinks].sort().join(', ')}).`, true);
+          if (!sinks.includes(finalnode)) {
+            return textResult(
+              `Refused: the fold moves the deps sink off policy.finalnode "${finalnode}" (sink would become ${[...sinks].sort().join(', ') || 'none'}) — v1.3 does not allow a new layer above the finalnode (draft §3.9); terminal growth, including finalnode reassignment, is deferred to the multi-sink extension (§9 Q1). A middle-layer or side-branch add_node (deps onto unfrozen existing nodes, finalnode NOT among them) keeps the sink at finalnode and is allowed.`,
+              true,
+            );
           }
         }
         const ops = (args.ops ?? []).map((rawOp) => {

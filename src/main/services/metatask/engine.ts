@@ -582,8 +582,15 @@ const makeCompOracle = (
  * are added: remove_node is rejected when any other node lists the target in
  * deps, and add_node may introduce deps edges only onto unfrozen existing
  * nodes. Every applied amend must additionally preserve deps-referential
- * integrity, deps-acyclicity and the single-sink rule; any failure ignores the
- * WHOLE amend (recorded), exactly as in tree mode.
+ * integrity, deps-acyclicity and the PINNED TERMINAL structure (draft §3.9):
+ * the resolved terminal node (policy.finalnode when it names a live node,
+ * else the unique sink, §3.1) must be the SAME live node before and after the
+ * fold and must still be a deps sink. An add_node growing a new layer ABOVE
+ * the finalnode (deps onto the finalnode) moves the sink off it and is
+ * rejected — terminal upward extension, including finalnode reassignment, is
+ * deferred to the multi-sink extension (§9 Q1); a middle-layer or isolated
+ * side-branch add_node keeps the sink/terminal at finalnode and applies.
+ * Any failure ignores the WHOLE amend (recorded), exactly as in tree mode.
  */
 const foldCompetitiveAmends = (input: {
   amends: MetaTaskChainEvent[];
@@ -753,13 +760,25 @@ const foldCompetitiveAmends = (input: {
         break;
       }
     }
+    // Terminal pinning (draft §3.9): the resolved terminal must be the same
+    // live node before and after the fold and must still be a deps sink.
+    // Growing a new layer above the finalnode (a new node whose deps include
+    // it) would move the sink off finalnode — rejected; middle-layer /
+    // side-branch additions leave finalnode a sink and pass.
+    const terminalBefore = compFinalNode(nodes, input.finalnode);
+    const terminalAfter = compFinalNode(scratch, input.finalnode);
+    const terminalPinned =
+      terminalBefore !== null &&
+      terminalAfter !== null &&
+      terminalAfter === terminalBefore &&
+      compSinkNodeIds(scratch).includes(terminalAfter);
     if (
       !ok ||
       sumWeights(scratch) !== 10000 ||
       !isAcyclic(scratch) ||
       !compDepsRefsValid(scratch) ||
       !compDepsAcyclic(scratch) ||
-      compSinkNodeIds(scratch).length !== 1
+      !terminalPinned
     ) {
       ignored.push({ pinId: amend.pinId, reason: 'amend_invariant_violation' });
       continue;

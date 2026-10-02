@@ -53,7 +53,7 @@ const buildCompTask = (over = {}) => {
     { id: 'a', parent: 'r', title: 'entry a', kind: 'proof', specid: null, params: {}, deps: [], weight: 4000 },
     { id: 'b', parent: 'r', title: 'entry b', kind: 'proof', specid: null, params: {}, deps: [], weight: 4000 },
   ];
-  const tree = ev('tree', { root: 'r', nodes }, { pinId: treePinId, author: P, height: 191_590 });
+  const tree = ev('tree', { root: over.treeRoot ?? 'r', nodes }, { pinId: treePinId, author: P, height: 191_590 });
   const policy = {
     mode: 'competitive',
     finalnode: 'r',
@@ -542,25 +542,36 @@ test('competitive: amend freeze follows chain-valid verified submissions (point-
     ] },
     { author: P, height: 191_613 }
   );
-  // add_node consuming the current sink (deps [r]) preserves the single-sink
-  // rule and applies; respec on the unfrozen node b applies too.
+  // Middle-layer add_node (deps onto the UNFROZEN entry b — the finalnode is
+  // not among them) keeps the sink pinned at r and applies; respec on the
+  // unfrozen node b applies too.
   const amend5 = ev(
     'amend',
     { taskid: rootPinId, bases: amend1.pinId, ops: [
-      { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', specid: null, params: {}, deps: ['r'], weight: 1000 } },
+      { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', specid: null, params: {}, deps: ['b'], weight: 1000 } },
       { op: 'reweight', node: 'r', weight: 500 },
       { op: 'respec', node: 'b', specid: 'specpin-new' },
     ] },
     { author: P, height: 191_614 }
   );
+  // add_node ABOVE the finalnode (deps [r]) would move the sink off the
+  // finalnode — rejected outright (draft §3.9 terminal pinning).
+  const amendSinkMove = ev(
+    'amend',
+    { taskid: rootPinId, bases: amend5.pinId, ops: [
+      { op: 'add_node', node: { id: 'd', parent: 'r', title: 'd', kind: 'proof', specid: null, params: {}, deps: ['r'], weight: 100 } },
+      { op: 'reweight', node: 'r', weight: 400 },
+    ] },
+    { author: P, height: 191_615 }
+  );
   // respec on the verified node a is rejected (frozen).
   const amend6 = ev(
     'amend',
     { taskid: rootPinId, bases: amend5.pinId, ops: [{ op: 'respec', node: 'a', specid: 'specpin-x' }] },
-    { author: P, height: 191_615 }
+    { author: P, height: 191_616 }
   );
   const verifyB = [passVote(subB.pinId, R1, { height: 191_620 }), passVote(subB.pinId, R2, { height: 191_621 })];
-  const events = [tree, task, subA, subB, ...verifyA, amend1, amend2, amend3, amend4, amend5, amend6, ...verifyB];
+  const events = [tree, task, subA, subB, ...verifyA, amend1, amend2, amend3, amend4, amend5, amendSinkMove, amend6, ...verifyB];
   const projection = replayMetaTask(events, { rootPinId });
 
   const byId = Object.fromEntries(projection.nodes.map((node) => [node.id, node]));
@@ -568,14 +579,86 @@ test('competitive: amend freeze follows chain-valid verified submissions (point-
   assert.equal(byId.b.weight, 4500, 'amend1 applied while b was unverified (point-in-time freeze)');
   assert.equal(byId.r.weight, 500);
   assert.equal(byId.b.specid, 'specpin-new', 'respec on an unfrozen node applies');
-  assert.ok(byId.c, 'add_node that consumes the sink preserves the single-sink rule');
-  assert.deepEqual(byId.c.deps, ['r']);
+  assert.ok(byId.c, 'middle-layer add_node (deps onto an unfrozen non-final node) keeps the sink at the finalnode and applies');
+  assert.deepEqual(byId.c.deps, ['b']);
+  assert.equal(byId.d, undefined, 'add_node above the finalnode is folded away');
   assert.equal(projection.amendHead, amend5.pinId);
   const reasons = new Map(projection.ignoredEvents.map((e) => [e.pinId, e.reason]));
   assert.equal(reasons.get(amend2.pinId), 'amend_invariant_violation');
   assert.equal(reasons.get(amend3.pinId), 'amend_invariant_violation', 'remove_node referenced in deps is rejected');
   assert.equal(reasons.get(amend4.pinId), 'amend_invariant_violation', 'deps edge onto a frozen node is rejected');
+  assert.equal(reasons.get(amendSinkMove.pinId), 'amend_invariant_violation', 'a new layer above the finalnode moves the sink off it and is rejected');
   assert.equal(reasons.get(amend6.pinId), 'amend_invariant_violation');
+});
+
+test('competitive: amend keeps the sink pinned at the finalnode (no layer above it)', () => {
+  const { tree, task, rootPinId, treePinId } = buildCompTask();
+  // A middle-layer add_node (deps onto the unfrozen entry a — the finalnode r
+  // is NOT among them) leaves r a deps sink: applies (draft §3.9).
+  const growSide = ev(
+    'amend',
+    { taskid: rootPinId, bases: treePinId, ops: [
+      { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', specid: null, params: {}, deps: ['a'], weight: 1000 } },
+      { op: 'reweight', node: 'r', weight: 1000 },
+    ] },
+    { author: P, height: 191_600 }
+  );
+  // Growing a new layer ABOVE the finalnode (the new node lists r in deps)
+  // moves the sink off r — the whole amend is ignored.
+  const growAbove = ev(
+    'amend',
+    { taskid: rootPinId, bases: growSide.pinId, ops: [
+      { op: 'add_node', node: { id: 'd', parent: 'r', title: 'd', kind: 'proof', specid: null, params: {}, deps: ['r'], weight: 500 } },
+      { op: 'reweight', node: 'a', weight: 3500 },
+    ] },
+    { author: P, height: 191_601 }
+  );
+  // Pruning the side branch again is legal (nothing lists it in deps and the
+  // terminal structure is untouched).
+  const pruneSide = ev(
+    'amend',
+    { taskid: rootPinId, bases: growSide.pinId, ops: [
+      { op: 'remove_node', node: 'c' },
+      { op: 'reweight', node: 'r', weight: 2000 },
+    ] },
+    { author: P, height: 191_602 }
+  );
+  const projection = replayMetaTask([tree, task, growSide, growAbove, pruneSide], { rootPinId });
+  const byId = Object.fromEntries(projection.nodes.map((node) => [node.id, node]));
+  assert.equal(byId.c, undefined, 'the side branch was pruned again');
+  assert.equal(byId.d, undefined, 'the layer above the finalnode never landed');
+  assert.equal(byId.r.weight, 2000);
+  assert.equal(projection.amendHead, pruneSide.pinId);
+  const reasons = new Map(projection.ignoredEvents.map((e) => [e.pinId, e.reason]));
+  assert.equal(reasons.get(growAbove.pinId), 'amend_invariant_violation', 'the sink must stay the finalnode');
+  assert.equal(reasons.get(growSide.pinId), undefined);
+  assert.equal(reasons.get(pruneSide.pinId), undefined);
+});
+
+test('competitive: amend cannot remove the finalnode even when nothing deps on it', () => {
+  // The finalnode is NOT the tree root here and no node lists it in deps, so
+  // only the terminal-pinning invariant stands between it and removal.
+  const nodes = [
+    { id: 'pkg', parent: null, title: 'root container', kind: 'aggregate', specid: null, params: {}, deps: [], weight: 2000 },
+    { id: 'f', parent: 'pkg', title: 'terminal', kind: 'proof', specid: null, params: {}, deps: ['x'], weight: 5000 },
+    { id: 'x', parent: 'pkg', title: 'entry', kind: 'proof', specid: null, params: {}, deps: [], weight: 3000 },
+  ];
+  const { tree, task, rootPinId, treePinId } = buildCompTask({ nodes, treeRoot: 'pkg', policyExtra: { finalnode: 'f' } });
+  const dropFinal = ev(
+    'amend',
+    { taskid: rootPinId, bases: treePinId, ops: [
+      { op: 'remove_node', node: 'f' },
+      { op: 'reweight', node: 'pkg', weight: 7000 },
+    ] },
+    { author: P, height: 191_600 }
+  );
+  const projection = replayMetaTask([tree, task, dropFinal], { rootPinId });
+  assert.equal(projection.amendHead, treePinId, 'the amend is ignored');
+  assert.ok(projection.nodes.some((node) => node.id === 'f'), 'the finalnode survives');
+  assert.ok(
+    projection.ignoredEvents.some((e) => e.pinId === dropFinal.pinId && e.reason === 'amend_invariant_violation'),
+    'removing the designated terminal node violates the fold invariants'
+  );
 });
 
 test('competitive: amend gates (publisher, H_ACT2, bases) and amend_task_finalized', () => {

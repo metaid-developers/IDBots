@@ -1,6 +1,6 @@
 {
   "protocolVersion": "1.3.0-draft",
-  "status": "PRE-ACTIVATION DRAFT — not part of the registered v1.2.1 conformance set; three-engine adoption and a canonical-hash announcement are pending H_ACT3 (draft §7).",
+  "status": "PRE-ACTIVATION DRAFT \u2014 not part of the registered v1.2.1 conformance set; three-engine adoption and a canonical-hash announcement are pending H_ACT3 (draft \u00a77).",
   "vectors": [
     {
       "id": "v13-01-fork-race",
@@ -2282,6 +2282,166 @@
           "v1310-subr0i0"
         ],
         "settlementShareSumBP": 10000
+      }
+    },
+    {
+      "id": "v13-11-amend-sink-pinning",
+      "events": [
+        {
+          "pinId": "v1311-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1311-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1311",
+            "brief": "",
+            "treeid": "v1311-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1311-amend1i0",
+          "path": "amend",
+          "author": "idq1cpublisher",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1311-task0i0",
+            "bases": "v1311-tree0i0",
+            "ops": [
+              {
+                "op": "add_node",
+                "node": {
+                  "id": "c",
+                  "parent": "r",
+                  "title": "side branch c",
+                  "kind": "proof",
+                  "specid": null,
+                  "params": {},
+                  "deps": [
+                    "a"
+                  ],
+                  "weight": 1000
+                }
+              },
+              {
+                "op": "reweight",
+                "node": "r",
+                "weight": 1000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1311-amend2i0",
+          "path": "amend",
+          "author": "idq1cpublisher",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1311-task0i0",
+            "bases": "v1311-amend1i0",
+            "ops": [
+              {
+                "op": "add_node",
+                "node": {
+                  "id": "d",
+                  "parent": "r",
+                  "title": "layer above final",
+                  "kind": "proof",
+                  "specid": null,
+                  "params": {},
+                  "deps": [
+                    "r"
+                  ],
+                  "weight": 500
+                }
+              },
+              {
+                "op": "reweight",
+                "node": "a",
+                "weight": 3500
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1311-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "open",
+          "b": "open",
+          "c": "open",
+          "r": "open"
+        },
+        "taskComplete": false,
+        "settlement": null,
+        "ignoredContains": {
+          "pinId": "v1311-amend2i0",
+          "reason": "amend_invariant_violation"
+        }
       }
     }
   ]

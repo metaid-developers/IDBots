@@ -118,7 +118,13 @@ to 0). `release` is a no-op (accepted, ignored).
   time, and there is **no ordering requirement** between parent and child
   submission heights. This permits optimistic pipelining (building on a parent
   that is still under review) at the builder's own risk: if the parent never
-  verifies, the descendant can never become chain-valid.
+  verifies, the descendant can never become chain-valid. One intermediate
+  state is worth pinning down: when the parent IS verified but its own
+  ancestor chain has not yet closed, a child built on it is still an ordinary
+  optimistic submission — writer tooling flags it `optimistic: true` with the
+  parent state `verified_but_ancestor_chain_unverified` — and is NOT
+  `invalid_reference`; it joins candidacy normally and becomes chain-valid
+  when the ancestor chain closes.
 - A submission for an entry node must omit `parentrefs`; an empty object `{}`
   counts as omitted, any key makes it `invalid_reference`.
 
@@ -203,11 +209,36 @@ amend's order key (so a later verification does not retroactively revoke an
 already-applied amend). Chain-validity itself stays boundary-evaluated
 (§3.1) — a later ancestor kill can un-satisfy a node again, matching tree
 mode's documented hindsight behavior.
+
+The folded tree must additionally satisfy the same four graph invariants as at
+publish (§3.3), evaluated on the terminal structure:
+
+1. `policy.finalnode` still names a live node after the fold;
+2. the deps graph is still acyclic (and referentially intact);
+3. the sink of the terminal deps closure is still `finalnode` —
+   mechanically, the resolved terminal node (§3.1) must be the **same live
+   node** before and after the fold and must still be a deps sink. In
+   particular, no amend may give `finalnode` a dependent: a new layer **above**
+   the finalnode would move the sink off it and is rejected. Terminal upward
+   extension — growing the task past its finalnode, including `finalnode`
+   reassignment — is deferred to the multi-sink extension (§9 Q1);
+4. every node in `finalnode`'s deps closure remains reachable from an entry
+   node and able to reach `finalnode` (`add_node` never rewires existing deps
+   and `remove_node` cannot touch a referenced node, so in practice these legs
+   reduce to rules 1–3).
+
+Any failure ignores the WHOLE amend (recorded), exactly as in tree mode.
 Additional competitive-mode rules:
 
 - `remove_node` is rejected if any other node lists the target in `deps`.
-- `add_node` may introduce new deps edges only among unfrozen nodes and must
-  preserve acyclicity and the single-sink rule.
+- `add_node` may introduce new deps edges only among unfrozen nodes. Under the
+  single-sink rule its only legal shape is a new node whose `deps` reference
+  only unfrozen existing nodes and which does not subsume the sink — i.e. a
+  middle-layer node or an isolated new side branch; the sink (and therefore
+  the terminal) stays `finalnode`. Such added nodes sit outside the terminal
+  deps closure: they are reviewable and recorded, but in v1.3 they can never
+  join the winning chain (§3.6) — meaningful terminal growth is the §9 Q1
+  extension.
 - `respec` on an unfrozen node is allowed (fixes impossible specs mid-flight);
   submissions already made against the old spec keep their old spec binding
   (they are judged under the spec that was current at their submission height).
@@ -243,7 +274,7 @@ For `workspace.type: "git"` nodes, the submission's `result` is:
 "result": {
   "type": "git-bundle",
   "commit": "<full sha>",
-  "baseCommit": "<sha>",
+  "baseCommit": "<full sha> | null (greenfield node, §4.4)",
   "repoHint": "https://github.com/… (optional, informational)"
 }
 ```
@@ -332,7 +363,9 @@ concern, not protocol.)
 
 Minimum new cases: fork race with quorum on both branches; fail-cascade
 through optimistic descendants; supersede on a fork; amend freeze on
-verified vs unverified nodes; challenge blocking settlement; winning-chain
+verified vs unverified nodes; amend-fold terminal pinning (a side-branch
+`add_node` applies, a new layer above `finalnode` is ignored); challenge
+blocking settlement; winning-chain
 settlement math incl. Laplace reviewer split; losing-fork `unpaidHistory`;
 ghost `parentrefs`; multi-dep join node; single-sink enforcement.
 
@@ -340,7 +373,10 @@ ghost `parentrefs`; multi-dep join node; single-sink enforcement.
 
 - **Q1 multi-sink tasks**: union resolution requires a deterministic rule
   (proposed: process sinks by winning verified time, first walk wins per
-  node). Deferred from v1.3 to keep settlement trivially auditable.
+  node). Deferred from v1.3 to keep settlement trivially auditable. The same
+  extension covers terminal upward extension — growing new layers above the
+  current terminal, including `finalnode` reassignment — which the v1.3 amend
+  fold forbids (§3.9).
 - **Q2 stale submissions**: no expiry in v1.3; if verifier attention proves
   the bottleneck, a `stale_after_hours` policy field may reintroduce window
   semantics. Practice first.
