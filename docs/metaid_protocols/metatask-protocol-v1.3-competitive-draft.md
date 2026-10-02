@@ -66,16 +66,25 @@ byte-identically under a v1.3 engine.
 - **`parentrefs`**: new optional field on `/submission`:
   `{ "parentrefs": { "<depNodeId>": "<submissionPinId>", … } }`.
 - **Verified submission**: a submission with ≥ `verify_quorum` counted pass
-  votes and zero counted fail votes (all v1.2.1 vote filters unchanged:
-  #8/#9 gating, last-valid-vote, submitter ≠ voter ≠ root author, same-side
-  roster exclusion).
+  votes and zero counted fail votes. Pass-counting keeps all v1.2.1 filters
+  (#8/#9 gating, last-valid-vote, submitter ≠ voter ≠ root author, same-side
+  roster exclusion). **Fail verdicts are identity-unfiltered** — any single
+  counted fail (valid #8 failreason, post-#8/#9 gates) kills its target,
+  matching tree mode's fail semantics; the identity filters constrain which
+  votes build toward quorum, not which votes kill.
 - **Verified time** of a submission: the order key `(height, txIndex)` of the
   counted pass vote that reached quorum.
 - **Chain-valid**: a submission is chain-valid iff it is verified **and** every
-  submission in `parentrefs` is itself chain-valid. Evaluated recursively at
-  replay; a submission whose ancestor is later killed by a fail verdict becomes
-  chain-invalid (cascade), and may become chain-valid again only if the
-  ancestor position is re-verified (§3.4).
+  submission in `parentrefs` is itself chain-valid. Chain-validity is
+  **boundary-evaluated**: it is computed over the full event set at the
+  evaluation boundary, so a submission whose ancestor is later killed by a fail
+  verdict becomes chain-invalid (cascade), and may become chain-valid again
+  only if the ancestor position is re-verified and re-pinned by a *new*
+  descendant submission (§3.4).
+- **Terminal-node resolution**: `policy.finalnode` wins if it names a live
+  node; otherwise, if the deps graph has exactly one sink, that sink is the
+  terminal; otherwise the task can never complete (writer tooling rejects such
+  tasks at publish — §5).
 
 ### 3.2 Claims are intent only
 
@@ -93,12 +102,15 @@ to 0). `release` is a no-op (accepted, ignored).
 - A submission for node `N` **must** carry `parentrefs` naming exactly one
   submission pin for each `D ∈ deps(N)`; extra or missing keys make the
   submission `invalid_reference` (ignored for state, still hashed into
-  `eventSetHash`).
+  `eventSetHash`). The referenced pin must be a submission **on the referenced
+  dep node** of the same task; anything else is `invalid_reference`.
 - A referenced parent submission **need not be verified yet** at submission
-  time. This permits optimistic pipelining (building on a parent that is still
-  under review) at the builder's own risk: if the parent never verifies, the
-  descendant can never become chain-valid.
-- A submission for an entry node must omit `parentrefs`.
+  time, and there is **no ordering requirement** between parent and child
+  submission heights. This permits optimistic pipelining (building on a parent
+  that is still under review) at the builder's own risk: if the parent never
+  verifies, the descendant can never become chain-valid.
+- A submission for an entry node must omit `parentrefs`; an empty object `{}`
+  counts as omitted, any key makes it `invalid_reference`.
 
 ### 3.4 Submission lifecycle & forks
 
@@ -133,9 +145,13 @@ forks are recorded but earn no settlement share in v1.3 (§9 Q3).
 - **Winning chain** = the winning submission plus, recursively, every
   submission named in its `parentrefs`. Because each submission names exactly
   one parent per dep and there is exactly one sink, the winning chain contains
-  **at most one submission per node** — no union-resolution ambiguity.
-- All later-completing chains are losing forks: recorded in
-  `unpaidHistory` (reason `losing_fork`), unpaid.
+  **at most one submission per node** — no union-resolution ambiguity. In the
+  manifest, `winningChain` lists member submission pinIds ordered by their
+  **node id ascending** (deterministic, content-only).
+- All other candidates are unpaid and recorded in `unpaidHistory` with one of
+  three reasons: `superseded` (author self-replaced), `failed` (killed by a
+  counted fail verdict), `losing_fork` (verified but off the winning chain).
+  Live unresolved candidates are not history entries.
 
 ### 3.7 Settlement
 
@@ -146,6 +162,10 @@ forks are recorded but earn no settlement share in v1.3 (§9 Q3).
   `a(r) = clamp(floor(10000·(correct+1)/(terminal+2)), 2500, 10000)`,
   unchanged.
 - Nodes not on the winning chain contribute nothing. Publisher share stays 0%.
+- Reviewer accuracy stats (`correct`/`terminal`) accumulate over votes on
+  **every terminally-resolved candidate** (verified or killed), not only
+  winning-chain submissions — a reviewer's track record reflects all their
+  adjudicated calls, while their *share* comes only from the winning chain.
 - The manifest is a pure replay output (D-5 unchanged): same fields as v1.2.1,
   plus `mode: "competitive"` and `winningChain: [submissionPinId, …]`.
   `disputed` remains non-empty-impossible because a manifest is only emitted
@@ -166,7 +186,13 @@ overturned, as in v1.2.1.
 
 Publisher-only, `bases` version chain, fold invariants (acyclic, Σweight=10000,
 single root) — all unchanged. The freeze condition changes: a node is frozen
-once it has ≥1 chain-valid verified submission (not "ever claimed").
+once it has ≥1 chain-valid verified submission (not "ever claimed"). Freeze
+applicability is **point-in-time**: a node counts as frozen for an amend iff it
+was satisfied by a submission whose verified time is strictly earlier than the
+amend's order key (so a later verification does not retroactively revoke an
+already-applied amend). Chain-validity itself stays boundary-evaluated
+(§3.1) — a later ancestor kill can un-satisfy a node again, matching tree
+mode's documented hindsight behavior.
 Additional competitive-mode rules:
 
 - `remove_node` is rejected if any other node lists the target in `deps`.
