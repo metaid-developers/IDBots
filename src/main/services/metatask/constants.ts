@@ -54,6 +54,15 @@ export const H_ACT = 190_000;
 /** v1.2 feature gate — published in the v1.2.1 registration body. */
 export const H_ACT2: number | null = 191_500;
 
+/**
+ * v1.3 competitive-mode activation gate (protocol v1.3.0 draft §7). NOT
+ * enforced by the replay engine: no competitive-mode task exists on-chain yet,
+ * so replay accepts `policy.mode: "competitive"` at any height (pre-activation
+ * fixtures must stay replayable). The writer side (agent tools, a later phase)
+ * is responsible for refusing pre-H_ACT3 broadcasts once the height lands.
+ */
+export const H_ACT3: number | null = null;
+
 export const hAct2Or = (value: number | null | undefined): number =>
   typeof value === 'number' && value >= 0 ? value : Number.POSITIVE_INFINITY;
 
@@ -65,3 +74,5 @@ export const REVIEWER_ACCURACY_FLOOR_BP = 2500;
 export const CHALLENGE_TTL_DAYS_DEFAULT = 14;
 
 export const ENGINE_ALGO_VERSION = 'idbots-metatask-engine/1.2.1';
+/** Competitive-mode tasks (v1.3.0 draft §6) report this version instead. */
+export const ENGINE_ALGO_VERSION_COMPETITIVE = 'idbots-metatask-engine/1.3.0';

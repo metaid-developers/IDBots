@@ -22,6 +22,13 @@ export interface TaskPolicyPayload {
   verify_window_hours?: number;
   reward_sat?: number;
   challenge_ttl_days?: number;
+  /**
+   * v1.3: per-task execution mode. Absent (or any non-"competitive" value)
+   * means "tree" — pre-v1.3 tasks replay byte-identically.
+   */
+  mode?: 'tree' | 'competitive' | string;
+  /** v1.3 competitive mode: the designated unique sink node (draft §3.1). */
+  finalnode?: string;
   split?: {
     submitterShareBP?: number;
     reviewerFloorBP?: number;
@@ -79,9 +86,59 @@ export interface ChallengeBody {
   withdraw?: boolean;
 }
 
+/**
+ * The fields the engine reads off a `/protocols/metatask/submission` body.
+ * v1.3 competitive mode adds `parentrefs`: exactly one submission pinId per
+ * `deps` entry of the node (entry nodes omit the field entirely).
+ */
+export interface SubmissionBody {
+  taskid?: string;
+  node?: string;
+  claimid?: string;
+  result?: Record<string, unknown>;
+  hash?: string;
+  contentType?: string;
+  attachment?: string | null;
+  supersedeid?: string;
+  childids?: string[];
+  parentrefs?: Record<string, string>;
+}
+
 // ── replay output ────────────────────────────────────────────────────────────
 
 export type MetaTaskNodeStatus = 'open' | 'claimed' | 'verified';
+
+/**
+ * One competing candidate submission on a node (v1.3 competitive mode).
+ * Exposed per node via `MetaTaskNodeProjection.submissions`; absent in tree
+ * mode, where a node has at most one effective submission per claim cycle.
+ */
+export interface MetaTaskSubmissionCandidate {
+  pinId: string;
+  submitter: string;
+  atMs: number;
+  /** Result payload as published (chain fact). */
+  result: Record<string, unknown> | null;
+  hash: string | null;
+  contentType: string | null;
+  attachment: string | null;
+  /** Validated parent references (depNodeId -> submission pinId); null on entry nodes. */
+  parentrefs: Record<string, string> | null;
+  /** Reached verify quorum with zero counted fail verdicts at the boundary. */
+  verified: boolean;
+  /** Verified AND every parentref ancestor recursively chain-valid (draft §3.1). */
+  chainValid: boolean;
+  /** Replaced by a valid same-author supersede. */
+  superseded: boolean;
+  /** Killed by a counted fail verdict (never revives; terminal). */
+  failed: boolean;
+  /** Counted pass/fail votes on THIS candidate (identity-filtered). */
+  passVotes: number;
+  failVotes: number;
+  /** Order key of the counted pass vote that reached quorum; null while unverified. */
+  verifiedHeight: number | null;
+  verifiedTxIndex: number | null;
+}
 
 export interface MetaTaskVoteSummary {
   voter: string;
@@ -112,9 +169,15 @@ export interface MetaTaskNodeProjection {
   specid: string | null;
   status: MetaTaskNodeStatus;
   disputed: boolean;
-  /** Effective claim, if any. */
+  /** Effective claim, if any. Always null in competitive mode (no locks). */
   holder: { pinId: string; claimant: string; sinceMs: number } | null;
-  /** Effective submission of the current cycle, if any. */
+  /**
+   * Tree mode: effective submission of the current claim cycle (unchanged).
+   * Competitive mode: the node's current leading candidate — the chain-valid
+   * verified submission with the smallest verified time (tie: submission order
+   * key) — or null while no candidate is chain-valid verified. The full
+   * candidate set is then in `submissions`.
+   */
   submission: {
     pinId: string;
     submitter: string;
@@ -125,7 +188,15 @@ export interface MetaTaskNodeProjection {
     hash: string | null;
     contentType: string | null;
     attachment: string | null;
+    /** Competitive mode only: validated parent references of this submission. */
+    parentrefs?: Record<string, string> | null;
   } | null;
+  /**
+   * Competitive mode only: every structurally valid candidate submission on
+   * this node, in chain order (includes superseded and failed candidates).
+   * Undefined in tree mode.
+   */
+  submissions?: MetaTaskSubmissionCandidate[];
   passVotes: number;
   failVotes: number;
   votes: MetaTaskVoteSummary[];
@@ -173,6 +244,13 @@ export interface MetaTaskSettlementManifest {
   unpaidHistory: { node: string; author: string; pinId: string; reason: string }[];
   disputed: string[];
   weightsTableHash: string;
+  /**
+   * v1.3: present on competitive-mode manifests only (draft §3.7); tree-mode
+   * manifests stay byte-identical to v1.2.1 and omit both fields.
+   */
+  mode?: 'competitive';
+  /** Submission pinIds of the winning chain, sorted by node id (draft §3.6). */
+  winningChain?: string[];
 }
 
 export interface MetaTaskTaskProjection {
@@ -192,13 +270,24 @@ export interface MetaTaskTaskProjection {
     /** σ actually used by the engine's split, clamped to [6000, 9000]
      * (defaults to 8000 when the task carries no split block). */
     submitterShareBP: number;
+    /** v1.3: the task's execution mode (absent policy.mode ⇒ "tree"). */
+    mode: 'tree' | 'competitive';
+    /** v1.3 competitive mode: policy.finalnode as published (null when absent). */
+    finalNode: string | null;
   };
   /** Tree in effect at boundary (after amend fold), with weights (null = legacy task). */
   nodes: TreeNodeBody[];
   /** Current tree head pinId: the original treeid, or the last effective amend (v1.2). */
   amendHead: string;
   nodeStates: Record<string, MetaTaskNodeProjection>;
-  progress: { total: number; verified: number; claimed: number; open: number; disputed: number };
+  /**
+   * `satisfied` counts nodes meeting the mode's completion predicate (tree:
+   * final-verified, identical to `verified`; competitive: has ≥1 chain-valid
+   * verified submission). In competitive mode `verified`/`claimed`/`open`
+   * classify nodes by their leading-candidate state (satisfied / live
+   * candidates only / none).
+   */
+  progress: { total: number; verified: number; claimed: number; open: number; disputed: number; satisfied: number };
   taskComplete: boolean;
   participants: MetaTaskParticipantStats[];
   /** Display identities keyed by metaId (publisher + participants + node actors). */
@@ -228,7 +317,7 @@ export interface MetaTaskBoardTask {
   publisher: string;
   tags: string[];
   taskComplete: boolean;
-  progress: { total: number; verified: number; claimed: number; open: number; disputed: number };
+  progress: { total: number; verified: number; claimed: number; open: number; disputed: number; satisfied?: number };
   participantCount: number;
   lastActivityMs: number;
   freshness: { boundaryBlock: number; evaluatedAtMs: number; eventCount: number };

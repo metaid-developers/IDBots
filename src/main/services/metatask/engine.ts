@@ -1,6 +1,7 @@
 import {
   CHALLENGE_TTL_DAYS_DEFAULT,
   ENGINE_ALGO_VERSION,
+  ENGINE_ALGO_VERSION_COMPETITIVE,
   H_ACT,
   H_ACT2,
   REVIEWER_ACCURACY_FLOOR_BP,
@@ -18,6 +19,7 @@ import type {
   MetaTaskParticipantStats,
   MetaTaskSettlementManifest,
   MetaTaskSettlementShare,
+  MetaTaskSubmissionCandidate,
   MetaTaskTaskProjection,
   MetaTaskVoteSummary,
   TaskBody,
@@ -70,6 +72,72 @@ interface CycleSubmission {
   height: number;
   supersedeid: string | null;
 }
+
+/** A last-valid verify vote after the pre-pass gates (#8/#9 + roster). */
+interface VoteRecord {
+  bot: string;
+  pinId: string;
+  body: Record<string, unknown>;
+  height: number;
+}
+
+/**
+ * Settlement weight table (shared by both modes): the effective tree's integer
+ * weights when every node carries 1..10000 summing to exactly 10000, else the
+ * legacy uniform floor(10000/N) fallback with the residue deliberately
+ * discarded (rev-2 ruling: never to the root).
+ */
+const resolveNodeWeights = (effectiveTree: Map<string, TreeNodeBody>): Map<string, number> => {
+  const weights = new Map<string, number>();
+  const nodeCount = effectiveTree.size;
+  let weightsValid = nodeCount > 0;
+  let totalWeight = 0;
+  if (weightsValid) {
+    for (const node of effectiveTree.values()) {
+      const w = node.weight;
+      if (typeof w !== 'number' || !Number.isInteger(w) || w < 1 || w > 10000) {
+        weightsValid = false;
+        break;
+      }
+      weights.set(node.id, w);
+      totalWeight += w;
+    }
+    if (totalWeight !== 10000) weightsValid = false;
+  }
+  if (!weightsValid) {
+    weights.clear();
+    const uniform = nodeCount > 0 ? Math.floor(10000 / nodeCount) : 0;
+    for (const id of effectiveTree.keys()) weights.set(id, uniform);
+  }
+  return weights;
+};
+
+/** Laplace-smoothed reviewer accuracy a(r), clamped to the protocol floor. */
+const reviewerAccuracy = (
+  participants: Map<string, MetaTaskParticipantStats>
+): Map<string, number> => {
+  const accuracy = new Map<string, number>();
+  for (const stats of participants.values()) {
+    const smoothed = Math.floor((10000 * (stats.reviewCorrect + 1)) / (stats.reviewTerminal + 2));
+    accuracy.set(stats.metaId, Math.min(10000, Math.max(REVIEWER_ACCURACY_FLOOR_BP, smoothed)));
+  }
+  return accuracy;
+};
+
+/** metaId -> split share accumulator (settlement + estimation share the shape). */
+type ShareParts = Map<string, { submittedBP: number; reviewedBP: number }>;
+
+const ensureShareParts = (
+  parts: ShareParts,
+  metaId: string
+): { submittedBP: number; reviewedBP: number } => {
+  let entry = parts.get(metaId);
+  if (!entry) {
+    entry = { submittedBP: 0, reviewedBP: 0 };
+    parts.set(metaId, entry);
+  }
+  return entry;
+};
 
 interface CycleRecord {
   node: string;
@@ -290,6 +358,994 @@ const foldAmends = (input: {
     head = amend.pinId;
   }
   return { nodes, ignored, head };
+};
+
+// ── competitive mode (protocol v1.3.0 draft §3) ──────────────────────────────
+//
+// Selected per task by `policy.mode === "competitive"` (absent ⇒ "tree", so
+// pre-v1.3 tasks replay byte-identically). No H_ACT3 height gate on the replay
+// side: no competitive task exists on-chain yet and pre-activation fixtures
+// must stay replayable — the writer side (agent tools, a later phase) refuses
+// pre-activation broadcasts.
+
+/**
+ * One competing candidate submission (competitive mode). There is no claim
+ * cycle: every structurally valid submission on a node competes, and a counted
+ * fail verdict kills only its own target — the node never "reopens".
+ */
+interface CompSubmission {
+  pinId: string;
+  node: string;
+  author: string;
+  atMs: number;
+  height: number;
+  txIndex: number;
+  /** Raw parentrefs as published (validated per tree state; null = omitted). */
+  parentrefs: Record<string, unknown> | null;
+  supersedeid: string | null;
+  /** Counted pass voters (identity-filtered), voter -> vote pinId. */
+  passVoters: Map<string, string>;
+  /** Killed by a counted fail verdict; terminal, never revives. */
+  failed: boolean;
+  /** Reached quorum with no counted fail standing at the boundary. */
+  verified: boolean;
+  /** Full order key of the counted pass vote that reached quorum (the
+   * "verified time", draft §3.1 — the pair plus the pin tie-breakers so the
+   * amend freeze can compare it point-in-time against an amend's order key). */
+  verifiedVote: { height: number; txIndex: number; timestampMs: number; pinId: string } | null;
+  /** Replaced by a valid same-author supersede; excluded from candidacy. */
+  superseded: boolean;
+}
+
+const compDepsOf = (tree: Map<string, TreeNodeBody>, nodeId: string): string[] => {
+  const node = tree.get(nodeId);
+  return node && Array.isArray(node.deps)
+    ? node.deps.filter((dep): dep is string => typeof dep === 'string')
+    : [];
+};
+
+/** Nodes no other node lists in `deps` (the draft §3.1 sink definition). */
+const compSinkNodeIds = (tree: Map<string, TreeNodeBody>): string[] => {
+  const referenced = new Set<string>();
+  for (const node of tree.values()) {
+    for (const dep of compDepsOf(tree, node.id)) referenced.add(dep);
+  }
+  return Array.from(tree.keys()).filter((id) => !referenced.has(id));
+};
+
+const compDepsRefsValid = (tree: Map<string, TreeNodeBody>): boolean => {
+  for (const id of tree.keys()) {
+    for (const dep of compDepsOf(tree, id)) {
+      if (!tree.has(dep)) return false;
+    }
+  }
+  return true;
+};
+
+const compDepsAcyclic = (tree: Map<string, TreeNodeBody>): boolean => {
+  const state = new Map<string, 1 | 2>(); // 1 = on the DFS stack, 2 = done
+  const visit = (id: string): boolean => {
+    const mark = state.get(id);
+    if (mark === 2) return true;
+    if (mark === 1) return false;
+    state.set(id, 1);
+    for (const dep of compDepsOf(tree, id)) {
+      if (!tree.has(dep)) continue; // dangling refs are ruled by compDepsRefsValid
+      if (!visit(dep)) return false;
+    }
+    state.set(id, 2);
+    return true;
+  };
+  for (const id of tree.keys()) {
+    if (!visit(id)) return false;
+  }
+  return true;
+};
+
+/**
+ * Terminal node resolution (draft §3.1/§3.6): `policy.finalnode` wins when it
+ * names a live node; when absent/invalid, fall back to the UNIQUE deps-sink;
+ * a multi-sink task without a valid finalnode never completes (the draft
+ * rejects such tasks at publish; replay stays deterministic on them).
+ */
+const compFinalNode = (tree: Map<string, TreeNodeBody>, finalnode: string): string | null => {
+  if (finalnode && tree.has(finalnode)) return finalnode;
+  const sinks = compSinkNodeIds(tree);
+  return sinks.length === 1 ? sinks[0] : null;
+};
+
+/**
+ * Structural parentrefs validation (draft §3.3) against a tree snapshot:
+ * exactly one existing same-task submission pin per deps entry, sitting on
+ * that dep node; entry nodes must omit parentrefs (an empty object carries no
+ * references and counts as omitted). A referenced parent need NOT be verified
+ * or even valid itself — optimistic pipelining — that is what chain-validity
+ * (not admission) is for. The draft does not require the parent to predate
+ * the child, so no ordering check is applied here.
+ */
+const compParentrefsValid = (
+  sub: CompSubmission,
+  tree: Map<string, TreeNodeBody>,
+  submissionByPin: Map<string, CompSubmission>
+): boolean => {
+  if (!tree.has(sub.node)) return false;
+  const deps = compDepsOf(tree, sub.node);
+  if (deps.length === 0) return sub.parentrefs === null || Object.keys(sub.parentrefs).length === 0;
+  const refs = sub.parentrefs;
+  if (!refs) return false;
+  const keys = Object.keys(refs);
+  if (keys.length !== deps.length) return false;
+  for (const dep of deps) {
+    const ref = refs[dep];
+    if (typeof ref !== 'string' || ref.length === 0) return false;
+    const target = submissionByPin.get(ref);
+    if (!target || target.node !== dep) return false;
+  }
+  return true;
+};
+
+interface CompOracle {
+  /**
+   * Node has ≥1 chain-valid verified candidate under this tree snapshot. With
+   * `asOfKey`, satisfaction is evaluated point-in-time: the candidate's
+   * verified time (its quorum vote's order key) must lie strictly before the
+   * key — the amend-freeze reading of "frozen once it has" (draft §3.9).
+   * Chain-validity itself is always boundary-evaluated (§3.1), matching the
+   * hindsight precedent of tree mode's verifiedNodeIds fold gate.
+   */
+  satisfied: (nodeId: string, asOfKey?: [number, number, number, string]) => boolean;
+  chainValid: (sub: CompSubmission) => boolean;
+  structurallyValid: (sub: CompSubmission) => boolean;
+  finalNode: string | null;
+}
+
+/**
+ * Chain-validity oracle over a tree snapshot (draft §3.1): a submission is
+ * chain-valid iff it is verified AND every parentref is recursively
+ * chain-valid. Evaluated over boundary-final vote state; superseded
+ * submissions are never chain-valid, which is what makes a superseded
+ * submission's descendants chain-invalid (§3.4). The in-progress marker keeps
+ * malformed dep cycles (publish-forbidden) deterministic instead of recursing
+ * forever. Memos make each oracle O(submissions + deps edges) per snapshot.
+ */
+const makeCompOracle = (
+  tree: Map<string, TreeNodeBody>,
+  submissions: CompSubmission[],
+  submissionByPin: Map<string, CompSubmission>,
+  finalnode: string
+): CompOracle => {
+  const byNode = new Map<string, CompSubmission[]>();
+  for (const sub of submissions) {
+    const list = byNode.get(sub.node) ?? [];
+    list.push(sub);
+    byNode.set(sub.node, list);
+  }
+  const validMemo = new Map<string, boolean>();
+  const structurallyValid = (sub: CompSubmission): boolean => {
+    let value = validMemo.get(sub.pinId);
+    if (value === undefined) {
+      value = compParentrefsValid(sub, tree, submissionByPin);
+      validMemo.set(sub.pinId, value);
+    }
+    return value;
+  };
+  const chainMemo = new Map<string, boolean>();
+  const chainValid = (sub: CompSubmission): boolean => {
+    const memoized = chainMemo.get(sub.pinId);
+    if (memoized !== undefined) return memoized;
+    chainMemo.set(sub.pinId, false); // cycle guard
+    let result = false;
+    if (structurallyValid(sub) && sub.verified && !sub.superseded) {
+      result = compDepsOf(tree, sub.node).every((dep) => {
+        const target = submissionByPin.get(asStr(sub.parentrefs?.[dep]));
+        return Boolean(target) && chainValid(target as CompSubmission);
+      });
+    }
+    chainMemo.set(sub.pinId, result);
+    return result;
+  };
+  const satisfied = (nodeId: string, asOfKey?: [number, number, number, string]): boolean =>
+    (byNode.get(nodeId) ?? []).some((sub) => {
+      if (!chainValid(sub)) return false;
+      if (!asOfKey) return true;
+      const verifiedAt: [number, number, number, string] = sub.verifiedVote
+        ? [
+            sub.verifiedVote.height >= 0 ? sub.verifiedVote.height : BIG,
+            sub.verifiedVote.txIndex,
+            sub.verifiedVote.timestampMs,
+            sub.verifiedVote.pinId,
+          ]
+        : [BIG, 0, 0, ''];
+      for (let i = 0; i < 4; i += 1) {
+        if (verifiedAt[i] !== asOfKey[i]) return verifiedAt[i] < asOfKey[i];
+      }
+      return false; // same order key: not strictly before
+    });
+  return {
+    satisfied,
+    chainValid,
+    structurallyValid,
+    finalNode: compFinalNode(tree, finalnode),
+  };
+};
+
+/**
+ * Amend fold for competitive mode (draft §3.9). Publisher authority, the bases
+ * version chain (earliest-wins conflicts) and the tree-mode fold invariants
+ * (Σweight=10000, parent-acyclic) are unchanged. The freeze condition becomes
+ * "the node has ≥1 chain-valid verified submission": satisfaction is evaluated
+ * POINT-IN-TIME (the candidate's verified time must lie strictly before the
+ * amend's order key — the "frozen once it has" reading), while chain-validity
+ * itself is boundary-evaluated (§3.1; the same hindsight component tree mode's
+ * verifiedNodeIds fold gate already carries — a later ancestor kill can
+ * retroactively un-freeze, deterministic per event set). Two deps-aware rules
+ * are added: remove_node is rejected when any other node lists the target in
+ * deps, and add_node may introduce deps edges only onto unfrozen existing
+ * nodes. Every applied amend must additionally preserve deps-referential
+ * integrity, deps-acyclicity and the single-sink rule; any failure ignores the
+ * WHOLE amend (recorded), exactly as in tree mode.
+ */
+const foldCompetitiveAmends = (input: {
+  amends: MetaTaskChainEvent[];
+  rootAuthor: string;
+  treePinId: string;
+  initialNodes: Map<string, TreeNodeBody>;
+  submissions: CompSubmission[];
+  submissionByPin: Map<string, CompSubmission>;
+  finalnode: string;
+  hAct2: number;
+}): { nodes: Map<string, TreeNodeBody>; ignored: { pinId: string; reason: string }[]; head: string } => {
+  const ignored: { pinId: string; reason: string }[] = [];
+  const nodes = new Map(input.initialNodes);
+  const takenBases = new Set<string>();
+  let head = input.treePinId;
+
+  for (const amend of input.amends) {
+    const amendKey = orderKey(amend);
+    const body = amend.body as unknown as AmendBody;
+    if (amend.height < input.hAct2) {
+      ignored.push({ pinId: amend.pinId, reason: 'below_h_act2' });
+      continue;
+    }
+    if (amend.author !== input.rootAuthor) {
+      ignored.push({ pinId: amend.pinId, reason: 'amend_not_publisher' });
+      continue;
+    }
+    const committedOracle = makeCompOracle(
+      nodes,
+      input.submissions,
+      input.submissionByPin,
+      input.finalnode
+    );
+    if (
+      committedOracle.finalNode !== null &&
+      committedOracle.satisfied(committedOracle.finalNode, amendKey)
+    ) {
+      ignored.push({ pinId: amend.pinId, reason: 'amend_task_finalized' });
+      continue;
+    }
+    if (asStr(body.bases) !== head) {
+      ignored.push({
+        pinId: amend.pinId,
+        reason: takenBases.has(asStr(body.bases)) ? 'amend_conflict' : 'amend_stale',
+      });
+      continue;
+    }
+    takenBases.add(asStr(body.bases));
+
+    // Apply ops to a scratch copy; commit only if every invariant holds.
+    const scratch = new Map(Array.from(nodes, ([id, node]) => [id, { ...node }]));
+    let ok = true;
+    const ops = Array.isArray(body.ops) ? body.ops : [];
+    for (const rawOp of ops) {
+      if (!rawOp || typeof rawOp !== 'object') {
+        ok = false;
+        break;
+      }
+      const op = rawOp as unknown as Record<string, unknown>;
+      const kind = asStr(op.op);
+      const targetId = asStr(op.node);
+      // Freeze oracle over the CURRENT scratch (earlier ops of this amend included).
+      const oracle = makeCompOracle(scratch, input.submissions, input.submissionByPin, input.finalnode);
+      if (kind === 'add_node') {
+        const raw = (op.newNode ?? op.node) as Record<string, unknown> | null;
+        const id = asStr(raw?.id);
+        const parent = asStr(raw?.parent);
+        if (!raw || !id || nodes.has(id) || scratch.has(id)) {
+          ok = false;
+          break;
+        }
+        const parentNode = scratch.get(parent);
+        if (!parentNode || oracle.satisfied(parent, amendKey)) {
+          ok = false;
+          break;
+        }
+        const newDeps = Array.isArray(raw.deps)
+          ? raw.deps.filter((d): d is string => typeof d === 'string')
+          : [];
+        // New deps edges may only land on unfrozen existing nodes (§3.9).
+        let depsOk = true;
+        for (const dep of newDeps) {
+          if (!scratch.has(dep) || oracle.satisfied(dep, amendKey)) {
+            depsOk = false;
+            break;
+          }
+        }
+        if (!depsOk) {
+          ok = false;
+          break;
+        }
+        const w = raw.weight;
+        scratch.set(id, {
+          id,
+          parent,
+          title: asStr(raw.title),
+          kind: asStr(raw.kind, 'proof'),
+          specid: typeof raw.specid === 'string' ? raw.specid : null,
+          params: (raw.params && typeof raw.params === 'object' ? raw.params : {}) as Record<string, unknown>,
+          deps: newDeps,
+          weight: typeof w === 'number' ? w : undefined,
+        });
+      } else if (kind === 'remove_node') {
+        const target = scratch.get(targetId);
+        if (!target || target.parent === null) {
+          ok = false;
+          break;
+        }
+        const stack = [targetId];
+        while (stack.length && ok) {
+          const current = stack.pop() as string;
+          if (oracle.satisfied(current, amendKey)) {
+            ok = false;
+            break;
+          }
+          for (const [id, node] of scratch) {
+            if (node.parent === current) stack.push(id);
+          }
+        }
+        if (!ok) break;
+        // Competitive rule (§3.9): rejected when any other node lists the
+        // target in deps (the depsRefsValid invariant below is the backstop).
+        let referenced = false;
+        for (const [id, node] of scratch) {
+          if (id === targetId) continue;
+          if (compDepsOf(scratch, id).includes(targetId)) {
+            referenced = true;
+            break;
+          }
+        }
+        if (referenced) {
+          ok = false;
+          break;
+        }
+        scratch.delete(targetId);
+      } else if (kind === 'reweight') {
+        const target = scratch.get(targetId);
+        const w = op.weight;
+        if (
+          !target ||
+          oracle.satisfied(targetId, amendKey) ||
+          typeof w !== 'number' ||
+          !Number.isInteger(w) ||
+          w < 1 ||
+          w > 10000
+        ) {
+          ok = false;
+          break;
+        }
+        target.weight = w;
+      } else if (kind === 'retitle') {
+        const target = scratch.get(targetId);
+        if (!target || oracle.satisfied(targetId, amendKey) || !truthyStr(op.title)) {
+          ok = false;
+          break;
+        }
+        target.title = asStr(op.title);
+      } else if (kind === 'respec') {
+        const target = scratch.get(targetId);
+        if (!target || oracle.satisfied(targetId, amendKey) || !truthyStr(op.specid)) {
+          ok = false;
+          break;
+        }
+        target.specid = asStr(op.specid);
+      } else {
+        ok = false;
+        break;
+      }
+    }
+    if (
+      !ok ||
+      sumWeights(scratch) !== 10000 ||
+      !isAcyclic(scratch) ||
+      !compDepsRefsValid(scratch) ||
+      !compDepsAcyclic(scratch) ||
+      compSinkNodeIds(scratch).length !== 1
+    ) {
+      ignored.push({ pinId: amend.pinId, reason: 'amend_invariant_violation' });
+      continue;
+    }
+    nodes.clear();
+    for (const [id, node] of scratch) nodes.set(id, node);
+    head = amend.pinId;
+  }
+  return { nodes, ignored, head };
+};
+
+/** Shared context handed to the competitive replay path (all pre-computed by
+ * the mode-agnostic front half of replayMetaTask). */
+interface CompetitiveReplayContext {
+  byPath: Map<string, MetaTaskChainEvent[]>;
+  taskSet: MetaTaskTaskEventSet;
+  policy: TaskPolicyPayload;
+  quorum: number;
+  ttlHours: number;
+  windowHours: number;
+  challengeTtlDays: number;
+  split: TaskPolicyPayload['split'] | null;
+  submitterShareBP: number;
+  hAct2: number;
+  now: number | null;
+  evaluatedAtMs: number;
+  submissionAuthorByPin: Map<string, string>;
+  submissionBodyByPin: Map<string, Record<string, unknown>>;
+  votesByTarget: Map<string, VoteRecord[]>;
+  lastVoteByPin: Map<string, VoteRecord>;
+  ignoredEvents: { pinId: string; reason: string }[];
+}
+
+/**
+ * Competitive-mode replay (v1.3 draft §3): no claim locks, competing candidate
+ * submissions per node, deps enforced via parentrefs, chain-validity recursion,
+ * first fully-verified chain to the terminal node wins, winner-chain-only
+ * settlement. Vote semantics (#8/#9 gates, last-valid-vote, identity and
+ * same-side roster filters) are the shared pre-pass — unchanged from v1.2.1.
+ */
+const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProjection => {
+  const { taskSet } = ctx;
+  const rootPin = taskSet.rootPin;
+  const rootAuthor = taskSet.rootAuthor;
+  const taskBody = taskSet.taskBody;
+  const policy = ctx.policy;
+  const quorum = ctx.quorum;
+  const now = ctx.now;
+  const ignoredEvents = ctx.ignoredEvents;
+  const finalnode = asStr(policy.finalnode);
+
+  // -- walk: submissions + acting votes (claims/releases are intent only) -----
+  // Claims never gate, never expire and never gate submissions (§3.2), so the
+  // walk does not read them; they remain eventSetHash members via taskEventSet.
+  const submissionByPin = new Map<string, CompSubmission>();
+  const compSubs: CompSubmission[] = [];
+  /** Latest non-superseded submission per (node, author) — the supersede tip. */
+  const tipByNodeAuthor = new Map<string, CompSubmission>();
+  const actingVotes = (ctx.byPath.get('verify') ?? []).filter((pin) => ctx.lastVoteByPin.has(pin.pinId));
+  const timeline = [...taskSet.submissions, ...actingVotes].sort(compareByOrderKey);
+
+  for (const pin of timeline) {
+    if (pin.path === 'submission') {
+      const node = asStr(pin.body.node);
+      if (!node) continue; // malformed: parity with tree mode's silent skip
+      const rawRefs = pin.body.parentrefs;
+      const sub: CompSubmission = {
+        pinId: pin.pinId,
+        node,
+        author: pin.author,
+        atMs: asNum(pin.timestampMs),
+        height: pin.height,
+        txIndex: asNum(pin.txIndex),
+        parentrefs:
+          rawRefs && typeof rawRefs === 'object' && !Array.isArray(rawRefs)
+            ? (rawRefs as Record<string, unknown>)
+            : null,
+        supersedeid:
+          typeof pin.body.supersedeid === 'string' && pin.body.supersedeid ? pin.body.supersedeid : null,
+        passVoters: new Map<string, string>(),
+        failed: false,
+        verified: false,
+        verifiedVote: null,
+        superseded: false,
+      };
+      if (!sub.supersedeid) {
+        // Unbounded competition (§3.4): no claim, no duplicate rejection.
+        submissionByPin.set(sub.pinId, sub);
+        compSubs.push(sub);
+        tipByNodeAuthor.set(`${node} ${sub.author}`, sub);
+        continue;
+      }
+      // Supersede = author self-replacement, same six predicates as v1.2.1
+      // (§3.4): the target exists among the author's own submissions on the
+      // SAME node, it is that author's current tip there, it is not the new
+      // pin itself, it is not already superseded, it has not reached quorum at
+      // this point of the walk, and both pins sit at/after H_ACT2.
+      const tip = tipByNodeAuthor.get(`${node} ${sub.author}`);
+      const target = tip && tip.pinId === sub.supersedeid ? tip : null;
+      if (
+        target &&
+        target.pinId !== sub.pinId &&
+        !target.superseded &&
+        !target.verified &&
+        pin.height >= ctx.hAct2 &&
+        target.height >= ctx.hAct2
+      ) {
+        target.superseded = true;
+        submissionByPin.set(sub.pinId, sub);
+        compSubs.push(sub);
+        tipByNodeAuthor.set(`${node} ${sub.author}`, sub);
+      } else {
+        ignoredEvents.push({ pinId: pin.pinId, reason: 'supersede_predicate_failed' });
+      }
+      continue;
+    }
+    // verify: only last-valid votes act (pre-pass already applied #8/#9 + roster).
+    const vote = ctx.lastVoteByPin.get(pin.pinId);
+    if (!vote) continue;
+    const target = submissionByPin.get(asStr(vote.body.targetid));
+    if (!target) continue; // unknown or supersede-rejected target: never state
+    if (vote.body.verdict === 'fail') {
+      // A counted fail verdict kills only its target submission (§3.4). As in
+      // tree mode (ruling three) the kill is NOT identity-filtered; it is
+      // terminal — later passes never revive the submission (§3.1: only the
+      // ancestor POSITION can be re-verified, by a new submission).
+      target.failed = true;
+      target.verified = false;
+      continue;
+    }
+    if (vote.body.verdict === 'pass') {
+      if (vote.bot === target.author || vote.bot === rootAuthor) continue; // identity: never counts
+      if (!target.passVoters.has(vote.bot)) target.passVoters.set(vote.bot, vote.pinId);
+      if (!target.failed && !target.verified && target.passVoters.size >= quorum) {
+        target.verified = true;
+        // Verified time (§3.1): the full order key of THIS quorum-reaching vote.
+        target.verifiedVote = {
+          height: pin.height,
+          txIndex: asNum(pin.txIndex),
+          timestampMs: asNum(pin.timestampMs),
+          pinId: pin.pinId,
+        };
+      }
+    }
+  }
+
+  // -- amend fold (competitive freeze condition + deps rules) -----------------
+  const treePin = taskSet.treePin;
+  const initialTree = treePin ? (treePin.body as unknown as TreeBody) : null;
+  const initialNodes = new Map<string, TreeNodeBody>();
+  if (initialTree && Array.isArray(initialTree.nodes)) {
+    for (const raw of initialTree.nodes) {
+      if (!raw || typeof raw !== 'object') continue;
+      initialNodes.set(String(raw.id), raw as TreeNodeBody);
+    }
+  }
+  const amendResult = foldCompetitiveAmends({
+    amends: (ctx.byPath.get('amend') ?? []).filter((p) => asStr(p.body.taskid) === rootPin.pinId),
+    rootAuthor,
+    treePinId: taskSet.treePinId,
+    initialNodes,
+    submissions: compSubs,
+    submissionByPin,
+    finalnode,
+    hAct2: ctx.hAct2,
+  });
+  ignoredEvents.push(...amendResult.ignored);
+  const effectiveTree = amendResult.nodes;
+  const amendHead = amendResult.head;
+
+  // -- effective-tree filter + final structural validation --------------------
+  // Same node-universe rule as tree mode: events naming a node outside the
+  // effective (post-amend) tree are chain facts about a node this task does
+  // not have. parentrefs are validated against the effective tree; a node's
+  // deps are immutable once it exists, so validation is stable across amends.
+  const effectiveNodeIds = new Set<string>(effectiveTree.keys());
+  const alreadyIgnoredPins = new Set(ignoredEvents.map((entry) => entry.pinId));
+  const markIgnored = (pinId: string, reason: string): void => {
+    if (alreadyIgnoredPins.has(pinId)) return;
+    alreadyIgnoredPins.add(pinId);
+    ignoredEvents.push({ pinId, reason });
+  };
+  for (const claim of ctx.byPath.get('claim') ?? []) {
+    if (asStr(claim.body.taskid) !== rootPin.pinId) continue;
+    if (!effectiveNodeIds.has(asStr(claim.body.node))) markIgnored(claim.pinId, 'unknown_node');
+  }
+  const finalOracle = makeCompOracle(effectiveTree, compSubs, submissionByPin, finalnode);
+  const validSubs: CompSubmission[] = [];
+  const validByNode = new Map<string, CompSubmission[]>();
+  for (const sub of compSubs) {
+    if (!effectiveNodeIds.has(sub.node)) {
+      markIgnored(sub.pinId, 'unknown_node');
+      continue;
+    }
+    if (!finalOracle.structurallyValid(sub)) {
+      markIgnored(sub.pinId, 'invalid_reference');
+      continue;
+    }
+    validSubs.push(sub);
+    const list = validByNode.get(sub.node) ?? [];
+    list.push(sub);
+    validByNode.set(sub.node, list);
+  }
+
+  // -- node satisfaction, completion, winning chain (§3.4/§3.6) ----------------
+  const normHeight = (height: number): number => (height >= 0 ? height : BIG);
+  // Leader order (§3.6): smallest verified time (height, txIndex of the
+  // quorum-reaching counted pass vote); ties broken by the submission's own
+  // (height, txIndex, pinId).
+  const leaderLess = (a: CompSubmission, b: CompSubmission): boolean => {
+    const av = a.verifiedVote ?? { height: -1, txIndex: 0 };
+    const bv = b.verifiedVote ?? { height: -1, txIndex: 0 };
+    if (normHeight(av.height) !== normHeight(bv.height)) return normHeight(av.height) < normHeight(bv.height);
+    if (av.txIndex !== bv.txIndex) return av.txIndex < bv.txIndex;
+    if (normHeight(a.height) !== normHeight(b.height)) return normHeight(a.height) < normHeight(b.height);
+    if (a.txIndex !== b.txIndex) return a.txIndex < b.txIndex;
+    return a.pinId < b.pinId;
+  };
+  const leaderOf = (nodeId: string): CompSubmission | null => {
+    let best: CompSubmission | null = null;
+    for (const sub of validByNode.get(nodeId) ?? []) {
+      if (!(sub.verified && finalOracle.chainValid(sub))) continue;
+      if (!best || leaderLess(sub, best)) best = sub;
+    }
+    return best;
+  };
+  const finalNode = finalOracle.finalNode;
+  const winner = finalNode !== null ? leaderOf(finalNode) : null;
+  const taskComplete = winner !== null;
+  // Winning chain = the winner plus the recursive parentrefs closure (§3.6).
+  // Exactly one parent per dep and a single sink ⇒ at most one submission per
+  // node, so the closure walk is unambiguous.
+  const winningChainByNode = new Map<string, CompSubmission>();
+  if (winner) {
+    const stack = [winner];
+    while (stack.length) {
+      const sub = stack.pop() as CompSubmission;
+      if (winningChainByNode.has(sub.node)) continue;
+      winningChainByNode.set(sub.node, sub);
+      for (const dep of compDepsOf(effectiveTree, sub.node)) {
+        const parent = submissionByPin.get(asStr(sub.parentrefs?.[dep]));
+        if (parent) stack.push(parent);
+      }
+    }
+  }
+  // The draft does not fix a winningChain array order; node-id ascending is
+  // deterministic and trivially auditable against the manifest's node table.
+  const winningChain = Array.from(winningChainByNode.keys())
+    .sort()
+    .map((nodeId) => (winningChainByNode.get(nodeId) as CompSubmission).pinId);
+  const winningPinIds = new Set(winningChain);
+
+  // -- challenges (H_ACT2-gated; target = current chain-valid verified) --------
+  const openChallenges = new Map<string, { pinId: string; node: string; author: string; target: string }>();
+  if (ctx.hAct2 !== Number.POSITIVE_INFINITY) {
+    // Challenge pins carry no taskid; they scope by target (a task submission).
+    const challenges = (ctx.byPath.get('challenge') ?? []).filter((p) =>
+      taskSet.knownTargets.has(asStr(p.body.targetid))
+    );
+    for (const ch of challenges) {
+      const body = ch.body as unknown as ChallengeBody;
+      const target = asStr(body.targetid);
+      const targetSub = submissionByPin.get(target) ?? null;
+      const submitter = ctx.submissionAuthorByPin.get(target) ?? '';
+      if (ch.height < ctx.hAct2) {
+        ignoredEvents.push({ pinId: ch.pinId, reason: 'below_h_act2' });
+        continue;
+      }
+      if (ch.author === submitter || ch.author === rootAuthor || !truthyStr(body.evidence)) {
+        ignoredEvents.push({ pinId: ch.pinId, reason: 'challenge_gate_failed' });
+        continue;
+      }
+      if (body.withdraw) {
+        for (const [key, open] of openChallenges) {
+          if (open.author === ch.author && open.target === target) openChallenges.delete(key);
+        }
+        continue;
+      }
+      const key = `${target} ${ch.author}`;
+      if (openChallenges.has(key)) {
+        ignoredEvents.push({ pinId: ch.pinId, reason: 'duplicate_open_challenge' });
+        continue;
+      }
+      // §3.8: the target must be a currently chain-valid verified submission —
+      // boundary-evaluated, so a target killed by a fail verdict (directly or
+      // via ancestor cascade) resolves the challenge as overturned here and it
+      // never revives (v1.2.1 parity).
+      if (!targetSub || !finalOracle.chainValid(targetSub)) {
+        ignoredEvents.push({ pinId: ch.pinId, reason: 'target_not_active_verified' });
+        continue;
+      }
+      if (
+        now !== null &&
+        asNum(ch.timestampMs) > 0 &&
+        now - asNum(ch.timestampMs) > ctx.challengeTtlDays * 86_400_000
+      ) {
+        ignoredEvents.push({ pinId: ch.pinId, reason: 'challenge_expired' });
+        continue;
+      }
+      openChallenges.set(key, { pinId: ch.pinId, node: targetSub.node, author: ch.author, target });
+    }
+  }
+  const disputedNodeIds = new Set<string>();
+  for (const open of openChallenges.values()) disputedNodeIds.add(open.node);
+
+  // -- node projections + participant stats -----------------------------------
+  const nodeStates: Record<string, MetaTaskNodeProjection> = {};
+  const participants = new Map<string, MetaTaskParticipantStats>();
+  const bump = (metaId: string): MetaTaskParticipantStats => {
+    let stats = participants.get(metaId);
+    if (!stats) {
+      stats = {
+        metaId,
+        effectiveClaims: 0,
+        submissions: 0,
+        verifiedContrib: 0,
+        reviewVotes: 0,
+        reviewCorrect: 0,
+        reviewTerminal: 0,
+      };
+      participants.set(metaId, stats);
+    }
+    return stats;
+  };
+  bump(rootAuthor);
+  // Claims are intent-only in competitive mode (§3.2): they never gate work,
+  // so none of them is "effective" and effectiveClaims stays 0 for everyone.
+  for (const sub of validSubs) {
+    bump(sub.author).submissions += 1;
+    if (finalOracle.chainValid(sub)) bump(sub.author).verifiedContrib += 1;
+    // Every counted vote on a valid candidate is review activity, whether the
+    // candidate leads, loses or is still open.
+    for (const vote of ctx.votesByTarget.get(sub.pinId) ?? []) {
+      if (vote.bot === sub.author || vote.bot === rootAuthor) continue;
+      bump(vote.bot).reviewVotes += 1;
+    }
+  }
+
+  const candidateEntry = (sub: CompSubmission): MetaTaskSubmissionCandidate => {
+    const body = ctx.submissionBodyByPin.get(sub.pinId);
+    const result = body?.result;
+    let passVotes = 0;
+    let failVotes = 0;
+    for (const vote of ctx.votesByTarget.get(sub.pinId) ?? []) {
+      // Same counting rule as the tree-mode node view: passes are
+      // identity-filtered, fails are not (ruling three parity).
+      if (vote.body.verdict === 'pass' && vote.bot !== sub.author && vote.bot !== rootAuthor) passVotes += 1;
+      if (vote.body.verdict === 'fail') failVotes += 1;
+    }
+    return {
+      pinId: sub.pinId,
+      submitter: sub.author,
+      atMs: sub.atMs,
+      result: result && typeof result === 'object' && !Array.isArray(result)
+        ? (result as Record<string, unknown>)
+        : null,
+      hash: asStr(body?.hash) || null,
+      contentType: asStr(body?.contentType) || null,
+      attachment: asStr(body?.attachment) || null,
+      parentrefs: sub.parentrefs as Record<string, string> | null,
+      verified: sub.verified,
+      chainValid: finalOracle.chainValid(sub),
+      superseded: sub.superseded,
+      failed: sub.failed,
+      passVotes,
+      failVotes,
+      verifiedHeight: sub.verifiedVote ? sub.verifiedVote.height : null,
+      verifiedTxIndex: sub.verifiedVote ? sub.verifiedVote.txIndex : null,
+    };
+  };
+
+  const progress = { total: 0, verified: 0, claimed: 0, open: 0, disputed: 0, satisfied: 0 };
+  const nodeSort = (a: string, b: string): number =>
+    a.length !== b.length ? a.length - b.length : a < b ? -1 : 1;
+  for (const node of Array.from(effectiveNodeIds).sort(nodeSort)) {
+    const treeRec = effectiveTree.get(node);
+    const candidates = validByNode.get(node) ?? [];
+    const leader = leaderOf(node);
+    const satisfied = leader !== null;
+    // Live candidate = not killed, not replaced: the node has work in flight.
+    const live = candidates.some((sub) => !sub.failed && !sub.superseded);
+    const status: MetaTaskNodeProjection['status'] = satisfied ? 'verified' : live ? 'claimed' : 'open';
+    const disputed = disputedNodeIds.has(node);
+    // The node-level vote view mirrors `submission`: the leading candidate's
+    // votes (the full per-candidate counts live in `submissions`).
+    const voteList: MetaTaskVoteSummary[] = [];
+    let passVotes = 0;
+    let failVotes = 0;
+    if (leader) {
+      for (const vote of ctx.votesByTarget.get(leader.pinId) ?? []) {
+        const identityOk = vote.bot !== leader.author && vote.bot !== rootAuthor;
+        if (vote.body.verdict === 'pass' && identityOk) passVotes += 1;
+        if (vote.body.verdict === 'fail') failVotes += 1;
+        voteList.push({
+          voter: vote.bot,
+          verdict: asStr(vote.body.verdict, 'invalid'),
+          pinId: vote.pinId,
+          counted: identityOk,
+          ignoreReason: identityOk ? null : 'identity_conflict',
+          semanticCheck: truthyStr(vote.body.semantic_check),
+          failreason: truthyStr(vote.body.failreason),
+        });
+      }
+    }
+    const leaderBody = leader ? ctx.submissionBodyByPin.get(leader.pinId) : undefined;
+    const leaderResult = leaderBody?.result;
+    nodeStates[node] = {
+      id: node,
+      parent: treeRec?.parent ?? null,
+      title: treeRec?.title ?? node,
+      kind: treeRec?.kind ?? 'proof',
+      weight: treeRec?.weight ?? null,
+      params: treeRec && treeRec.params && typeof treeRec.params === 'object'
+        ? (treeRec.params as Record<string, unknown>)
+        : null,
+      specid: treeRec?.specid ?? null,
+      status,
+      disputed,
+      holder: null, // competitive mode has no claim locks
+      submission: leader
+        ? {
+            pinId: leader.pinId,
+            submitter: leader.author,
+            atMs: leader.atMs,
+            superseded: false,
+            result:
+              leaderResult && typeof leaderResult === 'object' && !Array.isArray(leaderResult)
+                ? (leaderResult as Record<string, unknown>)
+                : null,
+            hash: asStr(leaderBody?.hash) || null,
+            contentType: asStr(leaderBody?.contentType) || null,
+            attachment: asStr(leaderBody?.attachment) || null,
+            parentrefs: leader.parentrefs as Record<string, string> | null,
+          }
+        : null,
+      submissions: candidates.map(candidateEntry),
+      passVotes,
+      failVotes,
+      votes: voteList,
+      cycleCount: 0, // no claim cycles in competitive mode
+    };
+    progress.total += 1;
+    if (disputed) progress.disputed += 1;
+    if (satisfied) {
+      progress.verified += 1;
+      progress.satisfied += 1;
+    } else if (live) progress.claimed += 1;
+    else progress.open += 1;
+  }
+
+  // Reviewer accuracy input: counted votes on terminally-resolved candidates
+  // (verified or killed), judged against the candidate's final outcome — the
+  // identity filter mirrors the settlement reviewer set exactly (tree parity).
+  for (const sub of validSubs) {
+    if (!sub.verified && !sub.failed) continue;
+    for (const vote of ctx.votesByTarget.get(sub.pinId) ?? []) {
+      if (vote.bot === sub.author || vote.bot === rootAuthor) continue;
+      const stats = bump(vote.bot);
+      stats.reviewTerminal += 1;
+      const correct =
+        (vote.body.verdict === 'pass' && sub.verified) || (vote.body.verdict === 'fail' && sub.failed);
+      if (correct) stats.reviewCorrect += 1;
+    }
+  }
+
+  // -- eventSetHash (recipe per rev-2, settlement section) ---------------------
+  const eventSetHash = sha256Hex(canonJ(taskSet.hashEntries));
+  const boundaryBlock = taskSet.boundaryBlock;
+
+  // -- settlement manifest (winner chain only, §3.7) ---------------------------
+  let settlement: MetaTaskSettlementManifest | null = null;
+  if (taskComplete && openChallenges.size === 0) {
+    const weights = resolveNodeWeights(effectiveTree);
+    const sigma = ctx.submitterShareBP;
+    const accuracy = reviewerAccuracy(participants);
+
+    const shareParts: ShareParts = new Map();
+    for (const [node, sub] of winningChainByNode) {
+      const w = weights.get(node) ?? 0;
+      if (w <= 0) continue;
+      const submitter = ensureShareParts(shareParts, sub.author);
+      const subBP = Math.floor((w * sigma) / 10000);
+      submitter.submittedBP += subBP;
+      const pool = w - subBP; // defined by subtraction: no double rounding
+      const subVotes = (ctx.votesByTarget.get(sub.pinId) ?? []).filter(
+        (vote) => vote.body.verdict === 'pass' && vote.bot !== sub.author && vote.bot !== rootAuthor
+      );
+      if (!subVotes.length) {
+        submitter.submittedBP += pool; // defensive: empty R(n) pool goes to the submitter
+        continue;
+      }
+      const accSum = subVotes.reduce(
+        (sum, vote) => sum + (accuracy.get(vote.bot) ?? REVIEWER_ACCURACY_FLOOR_BP),
+        0
+      );
+      for (const vote of subVotes) {
+        const a = accuracy.get(vote.bot) ?? REVIEWER_ACCURACY_FLOOR_BP;
+        ensureShareParts(shareParts, vote.bot).reviewedBP += Math.floor((pool * a) / accSum); // residue discarded
+      }
+    }
+    const shares: MetaTaskSettlementShare[] = Array.from(shareParts, ([metaId, parts]) => ({
+      metaId,
+      shareBP: parts.submittedBP + parts.reviewedBP,
+      from: parts,
+    })).sort((a, b) => b.shareBP - a.shareBP || (a.metaId < b.metaId ? -1 : 1));
+
+    // Losing/unpaid candidates, in chain order: superseded and killed
+    // candidates keep their tree-analogous audit trail; every other verified
+    // candidate that is not on the winning chain is a losing fork (§3.6).
+    // Open live candidates are pending work, not history.
+    const unpaidHistory: MetaTaskSettlementManifest['unpaidHistory'] = [];
+    for (const sub of validSubs) {
+      if (sub.superseded) {
+        unpaidHistory.push({ node: sub.node, author: sub.author, pinId: sub.pinId, reason: 'superseded' });
+      } else if (sub.failed) {
+        unpaidHistory.push({ node: sub.node, author: sub.author, pinId: sub.pinId, reason: 'failed' });
+      } else if (sub.verified && !winningPinIds.has(sub.pinId)) {
+        unpaidHistory.push({ node: sub.node, author: sub.author, pinId: sub.pinId, reason: 'losing_fork' });
+      }
+    }
+
+    const weightsTable = Array.from(weights, ([id, w]) => ({ id, weight: w })).sort((a, b) =>
+      a.id < b.id ? -1 : 1
+    );
+    settlement = {
+      taskid: rootPin.pinId,
+      boundaryBlock,
+      eventSetHash,
+      engineAlgoVersion: ENGINE_ALGO_VERSION_COMPETITIVE,
+      shares,
+      unpaidHistory,
+      disputed: [],
+      weightsTableHash: sha256Hex(canonJ(weightsTable)),
+      mode: 'competitive',
+      winningChain,
+    };
+  }
+
+  const taskScoped = taskSet.scopedByPin;
+  let lastActivityMs = 0;
+  for (const pin of taskScoped.values()) {
+    if (asNum(pin.timestampMs) > lastActivityMs) lastActivityMs = asNum(pin.timestampMs);
+  }
+
+  return {
+    rootPinId: rootPin.pinId,
+    title: asStr(taskBody.title, rootPin.pinId),
+    brief: asStr(taskBody.brief),
+    publisher: rootAuthor,
+    tags: Array.isArray(taskBody.tags)
+      ? taskBody.tags.filter((t): t is string => typeof t === 'string')
+      : [],
+    policy: {
+      // claimTtlHours / verifyWindowHours are reported as published but carry
+      // no semantics in competitive mode (§3.10; deadlines.ts skips them).
+      claimTtlHours: ctx.ttlHours,
+      verifyQuorum: quorum,
+      verifyWindowHours: ctx.windowHours,
+      rewardSat: asNum(policy.reward_sat, 0),
+      challengeTtlDays: ctx.challengeTtlDays,
+      hasSplit: Boolean(ctx.split),
+      rosterid: ctx.split?.rosterid ?? null,
+      submitterShareBP: ctx.submitterShareBP,
+      mode: 'competitive',
+      finalNode: finalnode || null,
+    },
+    nodes: Array.from(effectiveTree.values()),
+    amendHead,
+    nodeStates,
+    progress,
+    taskComplete,
+    participants: Array.from(participants.values()).sort(
+      (a, b) => b.verifiedContrib - a.verifiedContrib || (a.metaId < b.metaId ? -1 : 1)
+    ),
+    identities: {}, // enriched at the projection-store layer (local roster resolver)
+    settlement,
+    lastActivityMs,
+    freshness: {
+      boundaryBlock,
+      evaluatedAtMs: ctx.evaluatedAtMs,
+      eventCount: taskScoped.size,
+      eventSetHash,
+      expiryApplied: now !== null,
+    },
+    ignoredEvents,
+  };
 };
 
 export interface MetaTaskEventHashEntry {
@@ -563,12 +1619,6 @@ export function replayMetaTask(
     split?.rosterid && options.rosterPins
       ? rosterGroupsFor(options.rosterPins[split.rosterid])
       : [];
-  interface VoteRecord {
-    bot: string;
-    pinId: string;
-    body: Record<string, unknown>;
-    height: number;
-  }
   const ignoredEvents: { pinId: string; reason: string }[] = [];
   const lastVotes = new Map<string, VoteRecord>();
   for (const vote of byPath.get('verify') ?? []) {
@@ -602,6 +1652,34 @@ export function replayMetaTask(
   }
   const lastVoteByPin = new Map<string, VoteRecord>();
   for (const vote of lastVotes.values()) lastVoteByPin.set(vote.pinId, vote);
+
+  // -- mode selection (v1.3 draft §2) -----------------------------------------
+  // `policy.mode` is set once at publish and is amend-immutable; absent (or any
+  // unknown value) means tree mode, so pre-v1.3 tasks replay byte-identically.
+  // No H_ACT3 height gate here on purpose: no competitive task exists on-chain
+  // yet and pre-activation fixtures must stay replayable — the writer side
+  // (agent tools) refuses pre-activation broadcasts instead (see H_ACT3).
+  if (policy.mode === 'competitive') {
+    return replayCompetitiveTask({
+      byPath,
+      taskSet,
+      policy,
+      quorum,
+      ttlHours,
+      windowHours,
+      challengeTtlDays,
+      split,
+      submitterShareBP,
+      hAct2,
+      now,
+      evaluatedAtMs,
+      submissionAuthorByPin,
+      submissionBodyByPin,
+      votesByTarget,
+      lastVoteByPin,
+      ignoredEvents,
+    });
+  }
 
   // -- unified ordered walk ---------------------------------------------------
   // Claims, releases, submissions and last-valid votes interleave in global
@@ -1000,7 +2078,7 @@ export function replayMetaTask(
   bump(rootAuthor);
   for (const [author, count] of effectiveClaimCounts) bump(author).effectiveClaims = count;
 
-  const progress = { total: 0, verified: 0, claimed: 0, open: 0, disputed: 0 };
+  const progress = { total: 0, verified: 0, claimed: 0, open: 0, disputed: 0, satisfied: 0 };
   const nodeSort = (a: string, b: string): number =>
     a.length !== b.length ? a.length - b.length : a < b ? -1 : 1;
   for (const node of Array.from(nodeIds).sort(nodeSort)) {
@@ -1079,6 +2157,8 @@ export function replayMetaTask(
     progress.total += 1;
     if (disputed) progress.disputed += 1;
     if (isVerified) progress.verified += 1;
+    // Tree mode's completion predicate IS final-verified, so satisfied === verified.
+    if (isVerified) progress.satisfied += 1;
     else if (holder) progress.claimed += 1;
     else progress.open += 1;
     if (effective) {
@@ -1129,54 +2209,21 @@ export function replayMetaTask(
   // -- settlement manifest (v1.2) -------------------------------------------
   let settlement: MetaTaskSettlementManifest | null = null;
   if (taskComplete && openChallenges.size === 0) {
-    // The weight table keys STRICTLY on the effective tree: nodeIds is that
-    // same set (any other node id never survives the effective-tree filter),
-    // so a stray claim pin can no longer force the legacy uniform fallback.
-    const nodeCount = nodeIds.size;
-    const weights = new Map<string, number>();
-    let weightsValid = nodeCount > 0;
-    let totalWeight = 0;
-    if (weightsValid) {
-      for (const node of effectiveTree.values()) {
-        const w = node.weight;
-        if (typeof w !== 'number' || !Number.isInteger(w) || w < 1 || w > 10000) {
-          weightsValid = false;
-          break;
-        }
-        weights.set(node.id, w);
-        totalWeight += w;
-      }
-      if (totalWeight !== 10000) weightsValid = false;
-    }
-    if (!weightsValid) {
-      // Legacy tasks (pre-H_ACT2, no weight field): uniform floor(10000/N),
-      // residue deliberately discarded (rev-2 ruling: never to the root).
-      const uniform = nodeCount > 0 ? Math.floor(10000 / nodeCount) : 0;
-      for (const node of nodeIds) weights.set(node, uniform);
-    }
+    // The weight table keys STRICTLY on the effective tree: the tree-mode
+    // effective-node filter above guarantees the two sets are identical, so a
+    // stray claim pin can no longer force the legacy uniform fallback.
+    const weights = resolveNodeWeights(effectiveTree);
     const sigma = submitterShareBP;
 
-    const accuracy = new Map<string, number>();
-    for (const stats of participants.values()) {
-      const smoothed = Math.floor((10000 * (stats.reviewCorrect + 1)) / (stats.reviewTerminal + 2));
-      accuracy.set(stats.metaId, Math.min(10000, Math.max(REVIEWER_ACCURACY_FLOOR_BP, smoothed)));
-    }
+    const accuracy = reviewerAccuracy(participants);
 
-    const shareParts = new Map<string, { submittedBP: number; reviewedBP: number }>();
-    const ensureShare = (metaId: string): { submittedBP: number; reviewedBP: number } => {
-      let parts = shareParts.get(metaId);
-      if (!parts) {
-        parts = { submittedBP: 0, reviewedBP: 0 };
-        shareParts.set(metaId, parts);
-      }
-      return parts;
-    };
+    const shareParts: ShareParts = new Map();
     for (const node of nodeIds) {
       const cycle = activeCycleByNode.get(node);
       if (!cycle?.effective || !finalVerifiedPins.has(cycle.effective.pinId)) continue;
       const w = weights.get(node) ?? 0;
       if (w <= 0) continue;
-      const submitter = ensureShare(cycle.effective.author);
+      const submitter = ensureShareParts(shareParts, cycle.effective.author);
       const subBP = Math.floor((w * sigma) / 10000);
       submitter.submittedBP += subBP;
       const pool = w - subBP; // defined by subtraction: no double rounding
@@ -1193,7 +2240,7 @@ export function replayMetaTask(
       );
       for (const v of cycleVotes) {
         const a = accuracy.get(v.bot) ?? REVIEWER_ACCURACY_FLOOR_BP;
-        ensureShare(v.bot).reviewedBP += Math.floor((pool * a) / accSum); // residue discarded
+        ensureShareParts(shareParts, v.bot).reviewedBP += Math.floor((pool * a) / accSum); // residue discarded
       }
     }
     const shares: MetaTaskSettlementShare[] = Array.from(shareParts, ([metaId, parts]) => ({
@@ -1256,6 +2303,8 @@ export function replayMetaTask(
       hasSplit: Boolean(split),
       rosterid: split?.rosterid ?? null,
       submitterShareBP,
+      mode: 'tree',
+      finalNode: asStr(policy.finalnode) || null,
     },
     nodes: Array.from(effectiveTree.values()),
     amendHead,

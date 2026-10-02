@@ -53,15 +53,24 @@ export function nextTimeDeadlineMs(
   const challengeTtlDays = projection.policy?.challengeTtlDays ?? CHALLENGE_TTL_DAYS_DEFAULT;
   // The most conservative reading of a missing quorum is the smallest one.
   const quorum = Math.max(1, projection.policy?.verifyQuorum ?? 1);
+  // Competitive mode (v1.3 draft §3.10): claim_ttl_hours and
+  // verify_window_hours carry no semantics — claims are intent-only and
+  // submissions never expire — so neither clock may produce a deadline. Only
+  // the challenge TTL still applies. (Persisted rows from older versions lack
+  // policy.mode and read as tree; competitive nodes also always carry
+  // holder:null, so the two guards below agree.)
+  const isCompetitive = projection.policy?.mode === 'competitive';
 
-  for (const node of Object.values(projection.nodeStates ?? {})) {
-    const holder = node.holder;
-    if (holder && ttlHours > 0) {
-      candidates.push(holder.sinceMs + ttlHours * HOUR_MS);
-    }
-    const submission = node.submission;
-    if (submission && windowHours > 0 && (node.passVotes ?? 0) < quorum) {
-      candidates.push(submission.atMs + windowHours * HOUR_MS);
+  if (!isCompetitive) {
+    for (const node of Object.values(projection.nodeStates ?? {})) {
+      const holder = node.holder;
+      if (holder && ttlHours > 0) {
+        candidates.push(holder.sinceMs + ttlHours * HOUR_MS);
+      }
+      const submission = node.submission;
+      if (submission && windowHours > 0 && (node.passVotes ?? 0) < quorum) {
+        candidates.push(submission.atMs + windowHours * HOUR_MS);
+      }
     }
   }
 

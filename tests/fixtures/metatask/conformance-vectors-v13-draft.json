@@ -1,0 +1,2288 @@
+{
+  "protocolVersion": "1.3.0-draft",
+  "status": "PRE-ACTIVATION DRAFT — not part of the registered v1.2.1 conformance set; three-engine adoption and a canonical-hash announcement are pending H_ACT3 (draft §7).",
+  "vectors": [
+    {
+      "id": "v13-01-fork-race",
+      "events": [
+        {
+          "pinId": "v1301-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1301-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1301",
+            "brief": "",
+            "treeid": "v1301-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1301-suba1i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1301-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1301-suba2i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1301-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1301-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1301-suba1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1301-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1301-suba1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1301-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1301-suba2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1301-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1301-suba2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1301-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "open",
+          "r": "open"
+        },
+        "taskComplete": false,
+        "settlement": null
+      }
+    },
+    {
+      "id": "v13-02-optimistic-pipeline-settles",
+      "events": [
+        {
+          "pinId": "v1302-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1302-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1302",
+            "brief": "",
+            "treeid": "v1302-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1302-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1302-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1302-subb0i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1302-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1302-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter3",
+          "height": 191602,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1302-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1302-suba0i0",
+              "b": "v1302-subb0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1302-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1302-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1302-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1302-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1302-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1302-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1302-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1302-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1302-v5i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191614,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1302-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1302-v6i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191615,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1302-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1302-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "verified",
+          "r": "verified"
+        },
+        "taskComplete": true,
+        "engineAlgoVersion": "idbots-metatask-engine/1.3.0",
+        "winningChain": [
+          "v1302-suba0i0",
+          "v1302-subb0i0",
+          "v1302-subr0i0"
+        ],
+        "settlementShareSumBP": 10000
+      }
+    },
+    {
+      "id": "v13-03-fail-cascade",
+      "events": [
+        {
+          "pinId": "v1303-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1303-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1303",
+            "brief": "",
+            "treeid": "v1303-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1303-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1303-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1303-subb0i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1303-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1303-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter3",
+          "height": 191602,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1303-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1303-suba0i0",
+              "b": "v1303-subb0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1303-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1303-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1303-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1303-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1303-v5i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191614,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1303-v6i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191615,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1303-f1i0",
+          "path": "verify",
+          "author": "idq1creviewer3",
+          "height": 191620,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1303-suba0i0",
+            "verdict": "fail",
+            "method": "replayed spec; mismatch",
+            "semantic_check": "statement mismatch",
+            "failreason": "counterexample found"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1303-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "open",
+          "b": "verified",
+          "r": "claimed"
+        },
+        "taskComplete": false,
+        "settlement": null
+      }
+    },
+    {
+      "id": "v13-04-supersede-on-fork",
+      "events": [
+        {
+          "pinId": "v1304-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1304-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1304",
+            "brief": "",
+            "treeid": "v1304-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1304-suba1i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1304-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1304-suba2i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1304-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "supersedeid": "v1304-suba1i0"
+          }
+        },
+        {
+          "pinId": "v1304-subb0i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191602,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1304-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1304-subr1i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191603,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1304-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1304-suba1i0",
+              "b": "v1304-subb0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1304-subr2i0",
+          "path": "submission",
+          "author": "idq1csubmitter3",
+          "height": 191604,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1304-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1304-suba2i0",
+              "b": "v1304-subb0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1304-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-suba1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-suba1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-suba2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-suba2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v5i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191614,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v6i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191615,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v7i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191616,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-subr1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v8i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191617,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-subr1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-v9i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191618,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-subr2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1304-vai0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191619,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1304-subr2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1304-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "verified",
+          "r": "verified"
+        },
+        "taskComplete": true,
+        "winningChain": [
+          "v1304-suba2i0",
+          "v1304-subb0i0",
+          "v1304-subr2i0"
+        ],
+        "settlementShareSumBP": 10000
+      }
+    },
+    {
+      "id": "v13-05-ghost-parentrefs",
+      "events": [
+        {
+          "pinId": "v1305-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1305-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1305",
+            "brief": "",
+            "treeid": "v1305-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1305-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1305-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1305-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1305-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1305-suba0i0",
+              "b": "v1305-ghost0i0"
+            }
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1305-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "claimed",
+          "b": "open",
+          "r": "open"
+        },
+        "taskComplete": false,
+        "settlement": null,
+        "ignoredContains": {
+          "pinId": "v1305-subr0i0",
+          "reason": "invalid_reference"
+        }
+      }
+    },
+    {
+      "id": "v13-06-amend-freeze",
+      "events": [
+        {
+          "pinId": "v1306-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1306-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1306",
+            "brief": "",
+            "treeid": "v1306-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1306-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1306-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1306-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1306-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1306-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1306-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1306-amend1i0",
+          "path": "amend",
+          "author": "idq1cpublisher",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1306-task0i0",
+            "bases": "v1306-tree0i0",
+            "ops": [
+              {
+                "op": "reweight",
+                "node": "a",
+                "weight": 5000
+              },
+              {
+                "op": "reweight",
+                "node": "b",
+                "weight": 3000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1306-amend2i0",
+          "path": "amend",
+          "author": "idq1cpublisher",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1306-task0i0",
+            "bases": "v1306-tree0i0",
+            "ops": [
+              {
+                "op": "reweight",
+                "node": "b",
+                "weight": 4500
+              },
+              {
+                "op": "reweight",
+                "node": "r",
+                "weight": 1500
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1306-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "open",
+          "r": "open"
+        },
+        "taskComplete": false,
+        "settlement": null,
+        "ignoredContains": {
+          "pinId": "v1306-amend1i0",
+          "reason": "amend_invariant_violation"
+        }
+      }
+    },
+    {
+      "id": "v13-07-challenge-blocks-settlement",
+      "events": [
+        {
+          "pinId": "v1307-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1307-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1307",
+            "brief": "",
+            "treeid": "v1307-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1307-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1307-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1307-subb0i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1307-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1307-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter3",
+          "height": 191602,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1307-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1307-suba0i0",
+              "b": "v1307-subb0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1307-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1307-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1307-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1307-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1307-v5i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191614,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1307-v6i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191615,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1307-chal0i0",
+          "path": "challenge",
+          "author": "idq1cchallenger",
+          "height": 191620,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1307-subr0i0",
+            "category": "correctness",
+            "reason": "spec gap",
+            "evidence": "metafile://evidence"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1307-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "verified",
+          "r": "verified"
+        },
+        "taskComplete": true,
+        "settlement": null
+      }
+    },
+    {
+      "id": "v13-08-multi-sink-no-finalnode",
+      "events": [
+        {
+          "pinId": "v1308-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "r",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 5000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 5000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1308-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1308",
+            "brief": "",
+            "treeid": "v1308-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "verify_quorum": 1,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1308-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1308-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1308-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1308-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1308-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1308-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1308-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1308-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1308-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "r": "verified"
+        },
+        "taskComplete": false,
+        "settlement": null
+      }
+    },
+    {
+      "id": "v13-09-winning-chain-laplace-split",
+      "events": [
+        {
+          "pinId": "v1309-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "terminal",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "r",
+                "title": "entry a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              },
+              {
+                "id": "b",
+                "parent": "r",
+                "title": "entry b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 4000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1309-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1309",
+            "brief": "",
+            "treeid": "v1309-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 2,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1309-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1309-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1309-subb1i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1309-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1309-subb2i0",
+          "path": "submission",
+          "author": "idq1csubmitter3",
+          "height": 191602,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1309-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1309-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191603,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1309-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1309-suba0i0",
+              "b": "v1309-subb1i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1309-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-subb1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer3",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-subb1i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v5i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191614,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-subb2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v6i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191615,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-subb2i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v7i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191616,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1309-v8i0",
+          "path": "verify",
+          "author": "idq1creviewer2",
+          "height": 191617,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1309-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1309-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "verified",
+          "r": "verified"
+        },
+        "taskComplete": true,
+        "engineAlgoVersion": "idbots-metatask-engine/1.3.0",
+        "winningChain": [
+          "v1309-suba0i0",
+          "v1309-subb1i0",
+          "v1309-subr0i0"
+        ],
+        "settlementShareSumBP": 9997
+      }
+    },
+    {
+      "id": "v13-10-multi-dep-join",
+      "events": [
+        {
+          "pinId": "v1310-tree0i0",
+          "path": "tree",
+          "author": "idq1cpublisher",
+          "height": 191590,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "root": "r",
+            "nodes": [
+              {
+                "id": "r",
+                "parent": null,
+                "title": "root",
+                "kind": "aggregate",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "j"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "j",
+                "parent": "r",
+                "title": "join",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [
+                  "a",
+                  "b",
+                  "c"
+                ],
+                "weight": 2000
+              },
+              {
+                "id": "a",
+                "parent": "j",
+                "title": "a",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 2000
+              },
+              {
+                "id": "b",
+                "parent": "j",
+                "title": "b",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 2000
+              },
+              {
+                "id": "c",
+                "parent": "j",
+                "title": "c",
+                "kind": "proof",
+                "specid": null,
+                "params": {},
+                "deps": [],
+                "weight": 2000
+              }
+            ]
+          }
+        },
+        {
+          "pinId": "v1310-task0i0",
+          "path": "task",
+          "author": "idq1cpublisher",
+          "height": 191591,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "title": "v1.3 draft vector v1310",
+            "brief": "",
+            "treeid": "v1310-tree0i0",
+            "tags": [],
+            "policy": {
+              "mode": "competitive",
+              "finalnode": "r",
+              "verify_quorum": 1,
+              "challenge_ttl_days": 14,
+              "reward_sat": 0,
+              "split": {
+                "submitterShareBP": 8000
+              }
+            }
+          }
+        },
+        {
+          "pinId": "v1310-suba0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191600,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1310-task0i0",
+            "node": "a",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1310-subb0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191601,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1310-task0i0",
+            "node": "b",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1310-subc0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191602,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1310-task0i0",
+            "node": "c",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact"
+          }
+        },
+        {
+          "pinId": "v1310-subj0i0",
+          "path": "submission",
+          "author": "idq1csubmitter2",
+          "height": 191603,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1310-task0i0",
+            "node": "j",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "a": "v1310-suba0i0",
+              "b": "v1310-subb0i0",
+              "c": "v1310-subc0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1310-subr0i0",
+          "path": "submission",
+          "author": "idq1csubmitter1",
+          "height": 191604,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "taskid": "v1310-task0i0",
+            "node": "r",
+            "result": {
+              "type": "metafile",
+              "hash": "abababababababababababababababababababababababababababababababab"
+            },
+            "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "contentType": "application/json;utf-8",
+            "attachment": "metafile://artifact",
+            "parentrefs": {
+              "j": "v1310-subj0i0"
+            }
+          }
+        },
+        {
+          "pinId": "v1310-v1i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191610,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1310-suba0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1310-v2i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191611,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1310-subb0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1310-v3i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191612,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1310-subc0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1310-v4i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191613,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1310-subj0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        },
+        {
+          "pinId": "v1310-v5i0",
+          "path": "verify",
+          "author": "idq1creviewer1",
+          "height": 191614,
+          "txIndex": 0,
+          "timestampMs": 1790000000000,
+          "body": {
+            "targetid": "v1310-subr0i0",
+            "verdict": "pass",
+            "method": "replayed spec; hashes match",
+            "semantic_check": "statement matches"
+          }
+        }
+      ],
+      "options": {
+        "rootPinId": "v1310-task0i0"
+      },
+      "expect": {
+        "nodes": {
+          "a": "verified",
+          "b": "verified",
+          "c": "verified",
+          "j": "verified",
+          "r": "verified"
+        },
+        "taskComplete": true,
+        "winningChain": [
+          "v1310-suba0i0",
+          "v1310-subb0i0",
+          "v1310-subc0i0",
+          "v1310-subj0i0",
+          "v1310-subr0i0"
+        ],
+        "settlementShareSumBP": 10000
+      }
+    }
+  ]
+}
