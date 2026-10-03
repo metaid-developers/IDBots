@@ -77,6 +77,7 @@ test('memory hygiene config defaults, clamping and persisted roundtrip', async (
     assert.equal(defaults.tombstonePurgeDays, 365);
     assert.equal(defaults.knowledgeRevisionKeep, 5);
     assert.equal(defaults.dreamRunRetentionDays, 90);
+    assert.equal(defaults.capabilityDraftRetentionDays, 90);
 
     const saved = coworkStore.setMemoryHygieneConfig({
       observationRetentionDays: 1,
@@ -892,6 +893,46 @@ test('deep consolidation no-ops without performChat or with the switch off', asy
   try {
     const stats = await service.runNow();
     assert.equal(stats.counts.deepConsolidationBots, undefined, 'no LLM dep means the step is skipped silently');
+  } finally {
+    cleanup();
+  }
+});
+
+test('capability-drafts hygiene step purges expired rejected/draft rows inside the nightly run', async () => {
+  const NOW = new Date(2026, 7, 25, 10, 0).getTime();
+  const { cleanup, coworkStore, db, botId } = await setup(new Date(2026, 7, 25, 10, 0));
+  try {
+    const OLD = NOW - 100 * 86_400_000;
+    coworkStore.insertCapabilityDrafts(botId, '2026-01-01', [
+      { title: '过期草案', description: 'd', capabilityType: 'skill' },
+      { title: '过期否决稿', description: 'd', capabilityType: 'skill' },
+      { title: '幸存已验证', description: 'd', capabilityType: 'skill' },
+    ]);
+    const drafts = coworkStore.listCapabilityDrafts(botId);
+    coworkStore.updateCapabilityDraftValidation({
+      id: drafts.find((draft) => draft.title === '过期否决稿').id,
+      metabotId: botId,
+      status: 'rejected',
+      validationScore: 0.3,
+    });
+    coworkStore.updateCapabilityDraftValidation({
+      id: drafts.find((draft) => draft.title === '幸存已验证').id,
+      metabotId: botId,
+      status: 'validated',
+      validationScore: 0.9,
+    });
+    db.run('UPDATE capability_drafts SET created_at = ? WHERE metabot_id = ?', [OLD, botId]);
+
+    const stats = await new MemoryHygieneService({
+      coworkStore,
+      metabotStore: { listMetabots: () => [{ id: botId, globalmetaid: 'metaid://stub-owner' }] },
+      now: () => new Date(2026, 7, 25, 10, 0),
+    }).runNow();
+    assert.equal(stats.counts.capabilityDraftsPurged, 2, 'expired rejected + draft drain; validated survives');
+    assert.deepEqual(
+      coworkStore.listCapabilityDrafts(botId).map((draft) => draft.title),
+      ['幸存已验证'],
+    );
   } finally {
     cleanup();
   }

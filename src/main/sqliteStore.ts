@@ -643,6 +643,11 @@ export class SqliteStore {
       if (!draftCols.includes('promoted_procedure_id')) {
         this.db.run('ALTER TABLE capability_drafts ADD COLUMN promoted_procedure_id TEXT');
       }
+      // P1 periodic re-review: the last time the verdict panel looked at the
+      // draft (NULL = never re-reviewed; selection falls back to validated_at).
+      if (!draftCols.includes('last_reviewed_at')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN last_reviewed_at INTEGER');
+      }
     } catch (error) {
       console.warn('migrate capability_drafts validation columns:', error);
     }

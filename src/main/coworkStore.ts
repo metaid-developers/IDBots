@@ -910,6 +910,8 @@ export interface CapabilityDraft {
   /** P2 promotion: when/into which procedure this draft was promoted (NULL = never). */
   promotedAt: number | null;
   promotedProcedureId: string | null;
+  /** P1 re-review: the last time the verdict panel looked at this draft (NULL = never). */
+  lastReviewedAt: number | null;
 }
 
 interface CapabilityDraftRow {
@@ -928,6 +930,7 @@ interface CapabilityDraftRow {
   last_injected_at?: number | string | null;
   promoted_at?: number | string | null;
   promoted_procedure_id?: string | null;
+  last_reviewed_at?: number | string | null;
 }
 
 export interface CoworkUserMemoryStats {
@@ -7194,7 +7197,7 @@ export class CoworkStore implements MemoryBackend {
     const sql = `
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
              validation_score, validation_notes, validated_at, times_injected, last_injected_at,
-             promoted_at, promoted_procedure_id
+             promoted_at, promoted_procedure_id, last_reviewed_at
       FROM capability_drafts
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY created_at DESC, id DESC
@@ -7217,6 +7220,7 @@ export class CoworkStore implements MemoryBackend {
       lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
       promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
       promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+      lastReviewedAt: row.last_reviewed_at == null ? null : Number(row.last_reviewed_at),
     }));
   }
 
@@ -7290,7 +7294,7 @@ export class CoworkStore implements MemoryBackend {
     const rows = this.getAll<CapabilityDraftRow>(`
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
              validation_score, validation_notes, validated_at, times_injected, last_injected_at,
-             promoted_at, promoted_procedure_id
+             promoted_at, promoted_procedure_id, last_reviewed_at
       FROM capability_drafts
       WHERE metabot_id = ?
         AND status = 'validated'
@@ -7317,6 +7321,7 @@ export class CoworkStore implements MemoryBackend {
       lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
       promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
       promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+      lastReviewedAt: row.last_reviewed_at == null ? null : Number(row.last_reviewed_at),
     }));
   }
 
@@ -7349,7 +7354,9 @@ export class CoworkStore implements MemoryBackend {
   /**
    * Record the dream-time validation verdict for one capability draft
    * (Dream-RSI P0 replay gate). Only the validation columns and status move;
-   * the draft content itself is immutable dream output.
+   * the draft content itself is immutable dream output. Every verdict-panel
+   * contact also stamps last_reviewed_at — the periodic re-review
+   * (listReReviewableCapabilityDrafts) schedules from it.
    */
   updateCapabilityDraftValidation(input: {
     id: number;
@@ -7370,7 +7377,7 @@ export class CoworkStore implements MemoryBackend {
     if (!existing) return false;
     this.db.run(`
       UPDATE capability_drafts
-      SET status = ?, validation_score = ?, validation_notes = ?, validated_at = ?
+      SET status = ?, validation_score = ?, validation_notes = ?, validated_at = ?, last_reviewed_at = ?
       WHERE id = ? AND metabot_id = ?
     `, [
       input.status,
@@ -7381,11 +7388,127 @@ export class CoworkStore implements MemoryBackend {
         ? input.validationNotes.trim().slice(0, 500)
         : null,
       Date.now(),
+      Date.now(),
       id,
       metabotId,
     ]);
     this.saveDb();
     return true;
+  }
+
+  /**
+   * Candidates for the nightly periodic re-review (Dream-RSI P1): VALIDATED
+   * drafts whose last verdict-panel contact (last_reviewed_at, falling back
+   * to validated_at for pre-migration rows) is older than `olderThanMs`,
+   * oldest contact first. The re-review re-runs the same verdict prompt and
+   * evidence pool as the fresh-draft gate — a validated technique must keep
+   * surviving the bot's recorded history to keep its injection slot.
+   */
+  listReReviewableCapabilityDrafts(
+    metabotId: number,
+    options: { olderThanMs: number; limit: number },
+  ): CapabilityDraft[] {
+    const limit = Math.max(1, Math.floor(options.limit));
+    const rows = this.getAll<CapabilityDraftRow>(`
+      SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at,
+             promoted_at, promoted_procedure_id, last_reviewed_at
+      FROM capability_drafts
+      WHERE metabot_id = ?
+        AND status = 'validated'
+        AND COALESCE(last_reviewed_at, validated_at) IS NOT NULL
+        AND COALESCE(last_reviewed_at, validated_at) < ?
+      ORDER BY COALESCE(last_reviewed_at, validated_at) ASC, id ASC
+      LIMIT ?
+    `, [metabotId, Math.floor(Number(options.olderThanMs) || 0), limit]);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      metabotId: Number(row.metabot_id),
+      dreamDate: String(row.dream_date),
+      title: String(row.title),
+      description: String(row.description),
+      capabilityType: String(row.capability_type),
+      status: String(row.status),
+      createdAt: Number(row.created_at),
+      validationScore: row.validation_score == null ? null : Number(row.validation_score),
+      validationNotes: row.validation_notes == null ? null : String(row.validation_notes),
+      validatedAt: row.validated_at == null ? null : Number(row.validated_at),
+      timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
+      lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
+      promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
+      promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+      lastReviewedAt: row.last_reviewed_at == null ? null : Number(row.last_reviewed_at),
+    }));
+  }
+
+  /**
+   * Refresh the review bookkeeping of a draft that SURVIVED a periodic
+   * re-review (verdict stayed validated, keep_draft, or a rejected verdict
+   * too weak to demote): last_reviewed_at moves to now, and the score/notes
+   * take the panel's fresh reading when the verdict carries them. Status and
+   * validated_at stay untouched — the first-validation timestamp keeps
+   * driving the promotion calendar-distance guard.
+   */
+  markCapabilityDraftReviewed(input: {
+    id: number;
+    metabotId: number;
+    validationScore?: number | null;
+    validationNotes?: string | null;
+  }): boolean {
+    const id = Number(input.id);
+    const metabotId = Number(input.metabotId);
+    if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(metabotId) || metabotId <= 0) {
+      return false;
+    }
+    const sets: string[] = ['last_reviewed_at = ?'];
+    const params: Array<number | string | null> = [Date.now()];
+    if (typeof input.validationScore === 'number' && Number.isFinite(input.validationScore)) {
+      sets.push('validation_score = ?');
+      params.push(input.validationScore);
+    }
+    if (typeof input.validationNotes === 'string' && input.validationNotes.trim()) {
+      sets.push('validation_notes = ?');
+      params.push(input.validationNotes.trim().slice(0, 500));
+    }
+    params.push(id, metabotId);
+    this.db.run(
+      `UPDATE capability_drafts SET ${sets.join(', ')} WHERE id = ? AND metabot_id = ?`,
+      params,
+    );
+    const updated = (this.db.getRowsModified?.() || 0) > 0;
+    if (updated) {
+      this.saveDb();
+    }
+    return updated;
+  }
+
+  /**
+   * Retention cleanup (hygiene): physically delete 'rejected' and
+   * never-validated 'draft' rows older than the cutoff. These rows are DREAM
+   * BOOKKEEPING (verdict candidates and their corpses), not user memories —
+   * the capability they described lives on in the night's diary.
+   * 'validated' rows are NEVER deleted here; their quality control is the
+   * periodic re-review's job (dreamService).
+   */
+  purgeExpiredCapabilityDrafts(input: {
+    cutoffMs: number;
+    excludeMetabotIds?: ReadonlySet<number>;
+  }): number {
+    const cutoff = Math.floor(Number(input.cutoffMs) || 0);
+    const excluded = input.excludeMetabotIds ? [...input.excludeMetabotIds] : [];
+    const exclusion = excluded.length > 0
+      ? ` AND metabot_id NOT IN (${excluded.map(() => '?').join(', ')})`
+      : '';
+    this.db.run(
+      `DELETE FROM capability_drafts
+       WHERE status IN ('rejected', 'draft') AND created_at < ?${exclusion}`,
+      [cutoff, ...excluded],
+    );
+    const deleted = this.db.getRowsModified?.() || 0;
+    if (deleted > 0) {
+      this.saveDb();
+    }
+    return deleted;
   }
 
   updateUserMemory(input: MemoryUpdateUserMemoryInput): CoworkUserMemory | null {

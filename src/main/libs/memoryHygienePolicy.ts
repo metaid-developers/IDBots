@@ -26,6 +26,8 @@ export interface MemoryHygieneConfig {
   knowledgeRevisionKeep: number;
   /** Completed dream runs and fragment caches older than this are purged. */
   dreamRunRetentionDays: number;
+  /** Rejected / never-validated capability drafts (dream bookkeeping, not user memory) are physically deleted after this. */
+  capabilityDraftRetentionDays: number;
   /** LLM deep-consolidation pass: merge/retire the belief layer on a low-frequency cadence. */
   deepConsolidationEnabled: boolean;
   /** Minimum days between deep-consolidation runs for the same bot. */
@@ -41,6 +43,7 @@ export const DEFAULT_MEMORY_HYGIENE_CONFIG: MemoryHygieneConfig = {
   tombstonePurgeDays: 365,
   knowledgeRevisionKeep: 5,
   dreamRunRetentionDays: 90,
+  capabilityDraftRetentionDays: 90,
   deepConsolidationEnabled: true,
   // Weekly by default: dream writes add ~10 belief-layer rows per bot per
   // night with forceNew (per-date batch replacement skips cross-date dedupe
@@ -82,6 +85,7 @@ export function normalizeMemoryHygieneConfig(input: unknown): MemoryHygieneConfi
     tombstonePurgeDays: clampInt(raw.tombstonePurgeDays, defaults.tombstonePurgeDays, 30, 3650),
     knowledgeRevisionKeep: clampInt(raw.knowledgeRevisionKeep, defaults.knowledgeRevisionKeep, 1, 50),
     dreamRunRetentionDays: clampInt(raw.dreamRunRetentionDays, defaults.dreamRunRetentionDays, 30, 3650),
+    capabilityDraftRetentionDays: clampInt(raw.capabilityDraftRetentionDays, defaults.capabilityDraftRetentionDays, 30, 3650),
     deepConsolidationEnabled:
       typeof raw.deepConsolidationEnabled === 'boolean' ? raw.deepConsolidationEnabled : defaults.deepConsolidationEnabled,
     deepConsolidationIntervalDays: clampInt(
