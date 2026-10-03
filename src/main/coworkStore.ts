@@ -6905,10 +6905,13 @@ export class CoworkStore implements MemoryBackend {
         usageClass: input.usageClass ?? normalizeMemoryUsageClass(existing.usage_class),
         visibility: input.visibility ?? normalizeMemoryVisibility(existing.visibility),
       });
+      // Match queries only filter status != 'deleted', so a restatement can
+      // land on an archived row; revive must clear archived_at or the memory
+      // stays invisible to injection and listings forever.
       this.db.run(`
         UPDATE user_memories
         SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = 'created',
-            usage_class = ?, visibility = ?, updated_at = ?
+            usage_class = ?, visibility = ?, updated_at = ?, archived_at = NULL
         WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
       `, [
         mergedText,

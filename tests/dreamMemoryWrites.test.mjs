@@ -84,6 +84,38 @@ test('reviving an existing memory keeps its original origin', async () => {
   }
 });
 
+test('restating an archived memory revives it back into the active list', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = createCoworkStore(db);
+
+    const original = store.createUserMemory({
+      metabotId: 5, text: '用户偏好周五发布版本', scopeKind: 'owner', scopeKey: 'owner:self',
+      origin: 'dream',
+    });
+    assert.equal(store.archiveUserMemories({ ids: [original.id], archivedAt: Date.now() }), 1);
+    assert.equal(
+      store.listUserMemories({ metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self' }).length,
+      0,
+      'archived memory leaves default listings'
+    );
+
+    const revived = store.createUserMemory({
+      metabotId: 5, text: '用户偏好周五发布版本', scopeKind: 'owner', scopeKey: 'owner:self',
+    });
+    assert.equal(revived.id, original.id, 'restatement matches the archived row, no duplicate');
+    assert.equal(revived.archivedAt, null, 'revive clears the archive mark');
+
+    const active = store.listUserMemories({ metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self' });
+    assert.deepEqual(active.map((entry) => entry.id), [original.id], 'the memory is visible again');
+
+    const row = db.exec('SELECT archived_at FROM user_memories WHERE id = ?', [original.id]);
+    assert.equal(row[0].values[0][0], null, 'archived_at is NULL in storage');
+  } finally {
+    cleanup();
+  }
+});
+
 test('listUserMemories filters by usageClass', async () => {
   const { db, cleanup } = await createSqliteStore();
   try {
