@@ -69,6 +69,53 @@ test('isQuotaDshTurnError matches the kernel QUOTA code and upstream credit fing
   assert.equal(isQuotaDshTurnError(null), false);
 });
 
+test('isAuthDshTurnError classifies credential-rejection turn failures', async () => {
+  const { isAuthDshTurnError } = await import('../dist-electron/main/libs/coworkAssistantReply.js');
+
+  // Kernel-normalized auth codes.
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { code: 'AUTH', message: '401' } }),
+    true,
+  );
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { code: 'UNAUTHORIZED', message: '' } }),
+    true,
+  );
+  // The 2026-10-03 Windows report shape: DeepSeek's raw body relayed verbatim
+  // (code lost or non-normalized) — the fingerprint must catch it.
+  assert.equal(
+    isAuthDshTurnError({
+      kind: 'error',
+      error: { code: 'BAD_REQUEST', message: 'Authentication Fails, Your api key: ****9a6d is invalid (request_id: e79de9f8)' },
+    }),
+    true,
+  );
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { message: 'Invalid API key provided.' } }),
+    true,
+  );
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { message: 'Request unauthorized: missing bearer token' } }),
+    true,
+  );
+  // A bare 401 with no auth wording never classifies on its own.
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { code: 'SERVER', message: 'HTTP 401 after 3 retries (gateway id 40123)' } }),
+    false,
+  );
+  // Quota and transport failures must not classify as auth.
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { code: 'QUOTA', message: 'Insufficient Balance' } }),
+    false,
+  );
+  assert.equal(
+    isAuthDshTurnError({ kind: 'error', error: { code: 'TRANSPORT', message: 'fetch failed' } }),
+    false,
+  );
+  assert.equal(isAuthDshTurnError({ kind: 'completed' }), false);
+  assert.equal(isAuthDshTurnError(null), false);
+});
+
 test('isOverflowDshTurnError classifies context-overflow turn failures', async () => {
   const { isOverflowDshTurnError } = await import('../dist-electron/main/libs/coworkAssistantReply.js');
 

@@ -598,6 +598,26 @@ class ConfigService {
     await localStore.setItem(CONFIG_KEYS.APP_CONFIG, this.config);
   }
 
+  /**
+   * Re-read the persisted config from the store and adopt it as the in-memory
+   * config. Called after Settings saves so the form can show what is ACTUALLY
+   * stored: if the write silently failed or a migration reshaped a provider,
+   * the fields visibly reflect the persisted truth instead of the pre-save
+   * editor state (credential issues were otherwise undiagnosable — masked
+   * inputs hid which key each provider really holds).
+   */
+  async reloadFromStore(): Promise<AppConfig> {
+    const storedConfig = await localStore.getItem<AppConfig>(CONFIG_KEYS.APP_CONFIG);
+    if (storedConfig) {
+      this.config = normalizeDeepSeekAppConfig({
+        ...defaultConfig,
+        ...storedConfig,
+        providers: mergeProvidersConfig(undefined, storedConfig.providers) as AppConfig['providers'],
+      });
+    }
+    return this.config;
+  }
+
   getApiConfig() {
     return {
       apiKey: this.config.api.key,

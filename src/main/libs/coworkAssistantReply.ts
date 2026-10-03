@@ -108,6 +108,29 @@ export function isQuotaDshTurnError(outcome: { kind?: string; error?: { code?: s
 }
 
 /**
+ * Upstream "credential rejected" fingerprints mirrored from provider error
+ * bodies (OpenAI-compat relays, DeepSeek, aggregator gateways). ASCII upstream
+ * fingerprints only — never natural-language intent. A bare `401` never
+ * classifies on its own (ids and counts can carry it); it must be paired with
+ * auth wording in the same line.
+ */
+const AUTH_ERROR_MESSAGE_FINGERPRINT = /authentication[ _-]?fails?|auth[ _-]?failure|invalid[ _-](api[ _-]?)?(key|token)|api[ _-]?key[^\n]{0,24}is[ _-]?invalid|incorrect[ _-]api[ _-]?key|missing[ _-]api[ _-]?key|\bunauthorized\b|401[^\n]{0,40}(invalid|unauthorized|auth)/i;
+
+/** True when a DSH turn outcome failed because the upstream rejected the
+ *  credential — a kernel-normalized auth code, or an upstream auth-rejection
+ *  fingerprint in the raw message. The transcript error should name the exact
+ *  route and the key tail actually sent: with password-masked settings inputs
+ *  the operator otherwise cannot tell whether the failing key is the one they
+ *  just saved (2026-10-03 Windows report: a replaced DeepSeek key appeared to
+ *  keep "reverting" after relaunch). */
+export function isAuthDshTurnError(outcome: { kind?: string; error?: { code?: string; message?: string } }): boolean {
+  if (outcome?.kind !== 'error') return false;
+  const code = String(outcome.error?.code ?? '').toUpperCase();
+  if (code === 'AUTH' || code === 'AUTHENTICATION' || code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code === 'INVALID_API_KEY') return true;
+  return AUTH_ERROR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''));
+}
+
+/**
  * Upstream "request exceeds the model's context window" fingerprints mirrored
  * from provider error bodies (OpenAI-compat relays, DeepSeek, aggregator
  * gateways). ASCII upstream error fingerprints only — never natural-language
