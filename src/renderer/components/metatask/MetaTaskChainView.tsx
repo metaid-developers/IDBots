@@ -217,14 +217,15 @@ const MetaTaskChainView: React.FC<{
     return { byPin, stateByPin };
   }, [nodes, winningSet]);
 
-  /** The race line: the deepest LIVE chain through parentrefs — "if the reviews
-   * currently in flight pass, this is where the race stands". Pure display
-   * geometry over stored flags (a lookup walk, not chain-validity re-derivation):
-   * a candidate's coverage = how many distinct nodes its live ancestor closure
-   * spans; the tip maximizes coverage, then verified, then pass votes, then
-   * earliest submission. The gold thread stays the VERIFIED truth; the blue
-   * race line is the live extrapolation past it. */
-  const { racePath, raceTipId } = useMemo(() => {
+  /** The race line: the deepest UNVERIFIED live chain through parentrefs —
+   * "if the reviews in flight pass, this is where the race stands". Verified
+   * candidates are settled truth and can never be the tip (they already sit on
+   * the gold chain); their ancestors are still walked so the blue line visibly
+   * grows out of the gold one. Pure display geometry over stored flags (a
+   * lookup walk, not chain-validity re-derivation): coverage = how many
+   * distinct nodes a candidate's live ancestor closure spans; the tip maximizes
+   * coverage, then pass votes, then earliest submission. */
+  const { racePath, raceTipId, raceTipNodeId } = useMemo(() => {
     const pinToNode = new Map<string, string>();
     for (const node of nodes) for (const cand of node.submissions ?? []) pinToNode.set(cand.pinId, node.id);
     const isLive = (pinId: string): boolean => {
@@ -249,13 +250,12 @@ const MetaTaskChainView: React.FC<{
       return out;
     };
     let tip: MetaTaskSubmissionCandidate | null = null;
-    let tipScore: [number, number, number, number] | null = null;
+    let tipScore: [number, number, number] | null = null;
     for (const node of nodes) {
       for (const cand of node.submissions ?? []) {
-        if (!isLive(cand.pinId)) continue;
-        const score: [number, number, number, number] = [
+        if (!isLive(cand.pinId) || cand.verified) continue; // verified == already on the gold chain
+        const score: [number, number, number] = [
           closureOf(cand.pinId, new Set()).size,
-          cand.verified ? 1 : 0,
           cand.passVotes,
           -cand.atMs,
         ];
@@ -263,8 +263,7 @@ const MetaTaskChainView: React.FC<{
           !tipScore ||
           score[0] > tipScore[0] ||
           (score[0] === tipScore[0] && score[1] > tipScore[1]) ||
-          (score[0] === tipScore[0] && score[1] === tipScore[1] && score[2] > tipScore[2]) ||
-          (score[0] === tipScore[0] && score[1] === tipScore[1] && score[2] === tipScore[2] && score[3] > tipScore[3])
+          (score[0] === tipScore[0] && score[1] === tipScore[1] && score[2] > tipScore[2])
         ) {
           tip = cand;
           tipScore = score;
@@ -283,8 +282,28 @@ const MetaTaskChainView: React.FC<{
       };
       walk(tip.pinId, new Set());
     }
-    return { racePath, raceTipId: tip?.pinId ?? null };
+    return { racePath, raceTipId: tip?.pinId ?? null, raceTipNodeId: tip ? pinToNode.get(tip.pinId) ?? null : null };
   }, [nodes, byPin, stateByPin]);
+
+  /** Chain-level status line: the verified chain's node path (depth order) and
+   * the race front's node + submitter. Display geometry over stored flags. */
+  const statusLine = useMemo(() => {
+    const nameOf = (metaId: string): string => identities[metaId]?.name?.trim() || shortMetaId(metaId);
+    const chainNodeIds = nodes
+      .filter((node) => {
+        const leadPin = node.submission?.pinId;
+        if (!leadPin) return false;
+        const state = stateByPin.get(leadPin);
+        return state === 'leading' || state === 'winner';
+      })
+      .map((node) => node.id);
+    const tipCand = raceTipId ? byPin.get(raceTipId) : null;
+    return {
+      chainText: chainNodeIds.length > 0 ? chainNodeIds.join(' → ') : '—',
+      done: chainNodeIds.length,
+      frontText: tipCand && raceTipNodeId ? `${raceTipNodeId} · ${nameOf(tipCand.submitter)}` : null,
+    };
+  }, [nodes, stateByPin, identities, raceTipId, raceTipNodeId, byPin]);
 
   const edges = useMemo(() => {
     const specs: EdgeSpec[] = [];
@@ -436,6 +455,25 @@ const MetaTaskChainView: React.FC<{
           </span>
           {i18nService.t('metatask.chain.rulesRaceB')}
         </p>
+      </div>
+
+      {/* Chain-level status: verified path so far + where the race is */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[12px]">
+        <span className="inline-flex items-center gap-1.5 dark:text-claude-darkText text-claude-text">
+          <span className="inline-block h-2 w-2 rounded-full bg-amber-400 dark:bg-amber-300" />
+          <span className="font-semibold">{i18nService.t('metatask.chain.statusVerified')}</span>
+          <span className="font-mono">{statusLine.chainText}</span>
+          <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            ({statusLine.done}/{nodes.length})
+          </span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 dark:text-claude-darkText text-claude-text">
+          <span className="inline-block h-2 w-2 rounded-full bg-sky-500 dark:bg-sky-400" />
+          <span className="font-semibold">{i18nService.t('metatask.chain.statusFront')}</span>
+          <span className={statusLine.frontText ? 'font-mono' : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'}>
+            {statusLine.frontText ?? i18nService.t('metatask.chain.statusFrontNone')}
+          </span>
+        </span>
       </div>
 
       {/* Chain canvas: columns by deps depth, horizontal scroll, SVG edges */}

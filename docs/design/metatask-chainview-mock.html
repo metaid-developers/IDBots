@@ -179,8 +179,10 @@
 </div>
 
 <div class="explainer">
-  <p><strong>How this race works</strong> <span class="sep">·</span> Bots race through each step; reviewers verify submissions. <span class="sep">·</span> The <span style="color:var(--gold);font-weight:600">gold thread</span> is the leading chain — the first fully verified path to the finish splits the reward. <span class="sep">·</span> The <span style="color:var(--sky);font-weight:600">blue line</span> is the race front — the deepest in-review chain by reference (not yet verified).</p>
+  <p><strong>How this race works</strong> <span class="sep">·</span> Bots race through each step; reviewers verify submissions. <span class="sep">·</span> The <span style="color:var(--gold);font-weight:600">gold thread</span> is the verified chain — the first fully verified path to the finish splits the reward. <span class="sep">·</span> The <span style="color:var(--sky);font-weight:600">blue line</span> is the race front — the deepest in-review chain by reference (not yet verified).</p>
 </div>
+
+<div id="statusline" style="display:flex;gap:18px;align-items:center;margin:0 0 10px 4px;font-size:12px"></div>
 
 <div class="chain-scroll">
   <div class="chain" id="chain">
@@ -189,8 +191,8 @@
 </div>
 
 <div class="legend">
-  <span class="key"><span class="sw gold"></span>Leading chain</span>
-  <span class="key"><span class="sw em"></span>Verified, behind</span>
+  <span class="key"><span class="sw gold"></span>Verified chain</span>
+  <span class="key"><span class="sw em"></span>Verified, alternate</span>
   <span class="key"><span class="sw sky"></span>In review</span>
   <span class="key"><span class="sw" style="border-style:solid;border-color:var(--sky);box-shadow:0 0 5px -1px rgba(56,189,248,0.5)"></span>Race front (in-review chain)</span>
   <span class="key"><span class="sw vio"></span>Optimistic (parent unverified)</span>
@@ -245,8 +247,9 @@ function closure(c) {
 let tip = null, tipScore = null;
 for (const c of cands) {
   if (!isLive(c)) continue;
-  const score = [closure(c).size, c.state === 'leading' || c.state === 'behind' ? 1 : 0, c.pass, -c.time.length];
-  if (!tipScore || score[0] > tipScore[0] || (score[0] === tipScore[0] && score[2] > tipScore[2])) { tip = c; tipScore = score; }
+  if (c.state === 'leading' || c.state === 'behind') continue; // verified == already on the gold chain
+  const score = [closure(c).size, c.pass, -c.time.length];
+  if (!tipScore || score[0] > tipScore[0] || (score[0] === tipScore[0] && score[1] > tipScore[1])) { tip = c; tipScore = score; }
 }
 const racePath = new Set();
 (function walk(c) {
@@ -254,6 +257,22 @@ const racePath = new Set();
   racePath.add(c.id);
   for (const ref of Object.values(c.refs)) { const p = byId[ref]; if (p && isLive(p)) walk(p); }
 })(tip);
+
+// ── status line: verified chain path + race front ──
+{
+  const chainIds = steps.filter(st => cands.some(c => c.step === st.id && c.state === 'leading')).map(st => st.id);
+  const el = document.getElementById('statusline');
+  el.innerHTML = `
+    <span style="display:inline-flex;align-items:center;gap:6px">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--gold)"></span>
+      <b>Verified chain:</b> <span class="mono">${chainIds.join(' → ') || '—'}</span>
+      <span style="color:var(--text-2)">(${chainIds.length}/${steps.length})</span>
+    </span>
+    <span style="display:inline-flex;align-items:center;gap:6px">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--sky)"></span>
+      <b>Race front:</b> <span class="mono">${tip ? `${tip.step} · ${tip.bot}` : 'none in flight'}</span>
+    </span>`;
+}
 
 // ── render columns ──
 const chain = document.getElementById('chain');
@@ -265,7 +284,7 @@ for (const d of depths) {
     const mine = cands.filter(c => c.step === st.id);
     const verified = mine.filter(c => c.state === 'leading' || c.state === 'behind').length;
     const lead = mine.find(c => c.state === 'leading');
-    const stateWord = lead ? (st.terminal ? 'Winner' : 'Leading') + ' · ' + lead.bot
+    const stateWord = lead ? (st.terminal ? 'Winner' : 'Verified') + ' · ' + lead.bot
       : verified ? 'Verified'
       : mine.length && mine.every(c => c.state === 'optimistic') ? `${mine.length} optimistic`
       : mine.length ? `${mine.length} competing`
@@ -288,7 +307,7 @@ for (const d of depths) {
     for (const c of mine) {
       const onPath = racePath.has(c.id);
       const isTip = tip && c.id === tip.id && c.state !== 'leading';
-      const tag = isTip ? 'Race front' : { leading: 'Leading', behind: 'Verified · behind', review: 'In review', optimistic: 'Optimistic', failed: 'Rejected' }[c.state];
+      const tag = isTip ? 'Race front' : { leading: 'Verified', behind: 'Verified · alternate', review: 'In review', optimistic: 'Optimistic', failed: 'Rejected' }[c.state];
       const pips = Array.from({ length: QUORUM }, (_, i) =>
         `<span class="pip ${i < c.pass ? 'pass' : ''}"></span>`).join('') +
         (c.fail ? `<span class="pip fail"></span>` : '');
