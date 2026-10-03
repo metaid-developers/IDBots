@@ -995,6 +995,9 @@ export interface CapabilityDraft {
   /** P2 utilization: how often this draft was rendered into a prompt. */
   timesInjected: number;
   lastInjectedAt: number | null;
+  /** P2 promotion: when/into which procedure this draft was promoted (NULL = never). */
+  promotedAt: number | null;
+  promotedProcedureId: string | null;
 }
 
 interface CapabilityDraftRow {
@@ -1011,6 +1014,8 @@ interface CapabilityDraftRow {
   validated_at?: number | string | null;
   times_injected?: number | string | null;
   last_injected_at?: number | string | null;
+  promoted_at?: number | string | null;
+  promoted_procedure_id?: string | null;
 }
 
 export interface CoworkUserMemoryStats {
@@ -7173,7 +7178,8 @@ export class CoworkStore implements MemoryBackend {
       : null;
     const sql = `
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
-             validation_score, validation_notes, validated_at, times_injected, last_injected_at
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at,
+             promoted_at, promoted_procedure_id
       FROM capability_drafts
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY created_at DESC, id DESC
@@ -7194,6 +7200,8 @@ export class CoworkStore implements MemoryBackend {
       validatedAt: row.validated_at == null ? null : Number(row.validated_at),
       timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
       lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
+      promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
+      promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
     }));
   }
 
@@ -7249,6 +7257,78 @@ export class CoworkStore implements MemoryBackend {
       totalInjections: Number(row?.total_injections) || 0,
       activeDraftsLast24h: Number(row?.active_count) || 0,
     };
+  }
+
+  /**
+   * Candidates for the nightly promotion pass (Dream-RSI P2): validated drafts
+   * at/above `minScore` whose verdict is OLDER than `validatedBeforeMs` (the
+   * dream date's day start — the pragmatic stand-in for the full P1 re-review:
+   * a draft must survive at least one night of calendar distance before it
+   * hardens into procedure memory) and that were never promoted. Strongest
+   * score first, ties broken toward the oldest verdict.
+   */
+  listPromotableCapabilityDrafts(
+    metabotId: number,
+    options: { minScore: number; validatedBeforeMs: number; limit: number },
+  ): CapabilityDraft[] {
+    const limit = Math.max(1, Math.floor(options.limit));
+    const rows = this.getAll<CapabilityDraftRow>(`
+      SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at,
+             promoted_at, promoted_procedure_id
+      FROM capability_drafts
+      WHERE metabot_id = ?
+        AND status = 'validated'
+        AND validation_score >= ?
+        AND validated_at IS NOT NULL
+        AND validated_at < ?
+        AND promoted_at IS NULL
+      ORDER BY validation_score DESC, validated_at ASC, id ASC
+      LIMIT ?
+    `, [metabotId, Number(options.minScore) || 0, Math.floor(Number(options.validatedBeforeMs) || 0), limit]);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      metabotId: Number(row.metabot_id),
+      dreamDate: String(row.dream_date),
+      title: String(row.title),
+      description: String(row.description),
+      capabilityType: String(row.capability_type),
+      status: String(row.status),
+      createdAt: Number(row.created_at),
+      validationScore: row.validation_score == null ? null : Number(row.validation_score),
+      validationNotes: row.validation_notes == null ? null : String(row.validation_notes),
+      validatedAt: row.validated_at == null ? null : Number(row.validated_at),
+      timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
+      lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
+      promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
+      promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+    }));
+  }
+
+  /**
+   * Back-fill the promotion link after a draft was written into procedure
+   * memory. The `promoted_at IS NULL` guard makes a re-run of the same nightly
+   * pass a no-op (idempotent); returns false when the row was already promoted
+   * (or does not belong to the bot).
+   */
+  markCapabilityDraftPromoted(input: { id: number; metabotId: number; procedureId: string }): boolean {
+    const id = Number(input.id);
+    const metabotId = Number(input.metabotId);
+    const procedureId = String(input.procedureId ?? '').trim();
+    if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(metabotId) || metabotId <= 0 || !procedureId) {
+      return false;
+    }
+    this.db.run(
+      `UPDATE capability_drafts
+       SET promoted_at = ?, promoted_procedure_id = ?
+       WHERE id = ? AND metabot_id = ? AND promoted_at IS NULL`,
+      [Date.now(), procedureId, id, metabotId],
+    );
+    const updated = (this.db.getRowsModified?.() || 0) > 0;
+    if (updated) {
+      this.saveDb();
+    }
+    return updated;
   }
 
   /**

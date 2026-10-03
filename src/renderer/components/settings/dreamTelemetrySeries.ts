@@ -35,6 +35,8 @@ export interface DreamRunTelemetry {
     totalInjections?: number;
     activeDraftsLast24h?: number;
   } | null;
+  /** Drafts promoted into procedure memory this run (P2 promotion pass, since 2026-10-03). */
+  promotedCount?: number;
   weeklyLongDream?: boolean;
   durationMs?: number;
 }

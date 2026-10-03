@@ -39,6 +39,7 @@ function loadDreamServiceModule() {
 
 const { DreamService } = loadDreamServiceModule();
 const { DreamStore } = require('../dist-electron/main/dreamStore.js');
+const { MetaIDKnowledgeStore } = require('../dist-electron/main/metaidKnowledgeStore.js');
 
 const DAY = '2026-08-02';
 const DAY_START = new Date(2026, 7, 2).getTime();
@@ -114,16 +115,18 @@ test('schema migration adds validation columns idempotently', async () => {
 test('schema migration adds utilization columns; pre-existing rows default to zero/NULL', async () => {
   const { db, cleanup } = await createSqliteStore();
   try {
-    for (const column of ['times_injected', 'last_injected_at']) {
+    for (const column of ['times_injected', 'last_injected_at', 'promoted_at', 'promoted_procedure_id']) {
       assert.ok(getColumns(db, 'capability_drafts').includes(column), `missing column ${column}`);
     }
     db.run(
       `INSERT INTO capability_drafts (metabot_id, dream_date, title, description, capability_type, status, created_at)
        VALUES (5, '2026-08-01', '技巧', '描述', 'skill', 'validated', 1)`,
     );
-    const row = db.exec('SELECT times_injected, last_injected_at FROM capability_drafts')[0].values[0];
+    const row = db.exec('SELECT times_injected, last_injected_at, promoted_at, promoted_procedure_id FROM capability_drafts')[0].values[0];
     assert.equal(row[0], 0, 'times_injected defaults to 0');
     assert.equal(row[1], null, 'last_injected_at defaults to NULL');
+    assert.equal(row[2], null, 'promoted_at defaults to NULL (never promoted)');
+    assert.equal(row[3], null, 'promoted_procedure_id defaults to NULL');
   } finally {
     cleanup();
   }
@@ -353,6 +356,113 @@ test('dream run telemetry carries the capability utilization rollup', async () =
       { validatedDrafts: 1, totalInjections: 1, activeDraftsLast24h: 1 },
       'utilization section rides the run telemetry',
     );
+  } finally {
+    cleanup();
+  }
+});
+
+test('nightly pass promotes top validated drafts into procedure memory — guarded, capped, idempotent', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  const dreamStore = new DreamStore(db, () => {});
+  const knowledgeStore = new MetaIDKnowledgeStore(db, () => {}, () => 1000);
+  seedActivity(coworkStore, db);
+
+  const YESTERDAY = DAY_START - 86_400_000;
+  const seeds = [
+    { title: '技巧A', score: 0.95, validatedAt: YESTERDAY, promotable: true },
+    { title: '技巧B', score: 0.9, validatedAt: YESTERDAY, promotable: true },
+    { title: '技巧C', score: 0.88, validatedAt: YESTERDAY, promotable: true },
+    // Fourth in score order — over the per-night cap of 3.
+    { title: '技巧D', score: 0.86, validatedAt: YESTERDAY, promotable: false },
+    // Highest score but verdict stamped inside the dream date — the fresh
+    // verdict must wait one night of calendar distance.
+    { title: '技巧E', score: 0.99, validatedAt: DAY_START + 1000, promotable: false },
+    // Below the promotion threshold.
+    { title: '技巧F', score: 0.7, validatedAt: YESTERDAY, promotable: false },
+  ];
+  coworkStore.insertCapabilityDrafts(5, '2026-08-01', seeds.map((seed) => ({
+    title: seed.title,
+    description: `${seed.title}的行动描述`,
+    capabilityType: 'workflow',
+  })));
+  for (const seed of seeds) {
+    const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === seed.title);
+    coworkStore.updateCapabilityDraftValidation({
+      id: draft.id, metabotId: 5, status: 'validated', validationScore: seed.score,
+    });
+    db.run('UPDATE capability_drafts SET validated_at = ? WHERE id = ?', [seed.validatedAt, draft.id]);
+  }
+
+  const service = new DreamService({
+    coworkStore,
+    metabotStore: metabotStoreStub(),
+    dreamStore,
+    metaidKnowledgeStore: knowledgeStore,
+    llmTimeoutMs: 5000,
+    now: () => new Date(2026, 7, 3, 3, 0),
+    performChat: async () => JSON.stringify({
+      daily_summary: '普通的一天。',
+      sections: {},
+      work_reviews: [],
+      important_memories: [],
+      value_lessons: [],
+      self_identity: LONG_IDENTITY,
+      capability_learnings: [],
+    }),
+  });
+  try {
+    await service.runNow(5, DAY);
+
+    const procedures = knowledgeStore.listProcedures({ metabotId: 5, status: 'active' });
+    assert.deepEqual(
+      procedures.map((entry) => entry.title).sort(),
+      ['技巧A', '技巧B', '技巧C'],
+      'top-3 old-verdict drafts become procedures; cap/fresh/low-score stay behind',
+    );
+    const procedureA = procedures.find((entry) => entry.title === '技巧A');
+    assert.equal(procedureA.triggerText, '技巧A', 'trigger mirrors the draft title');
+    assert.deepEqual(procedureA.steps, ['技巧A的行动描述'], 'the actionable description becomes the ordered step');
+    assert.ok(procedureA.tags.includes('capability-draft'), 'provenance tag present');
+    assert.equal(procedureA.origin, 'dream');
+
+    for (const seed of seeds) {
+      const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === seed.title);
+      if (seed.promotable) {
+        assert.ok(draft.promotedAt > 0, `${seed.title} back-filled promoted_at`);
+        const linked = knowledgeStore.getProcedure(draft.promotedProcedureId);
+        assert.equal(linked?.title, seed.title, 'promoted_procedure_id points at the new procedure');
+      } else {
+        assert.equal(draft.promotedAt, null, `${seed.title} stays unpromoted`);
+        assert.equal(draft.promotedProcedureId, null);
+      }
+    }
+    assert.equal(dreamStore.getRun(5, DAY).telemetry.promotedCount, 3, 'telemetry counts the promotions');
+
+    const promotedAtBefore = Object.fromEntries(
+      coworkStore.listCapabilityDrafts(5).map((entry) => [entry.title, entry.promotedAt]),
+    );
+    const procedureIdsBefore = new Set(procedures.map((entry) => entry.id));
+    // Second pass: the promoted_at guard makes already-promoted drafts a
+    // no-op — A/B/C and their procedures stay byte-identical. The per-night
+    // cap only rate-limits throughput, so the one eligible backlog draft (D)
+    // drains now; E (fresh verdict) and F (low score) still never promote.
+    await service.runNow(5, DAY);
+    const after = knowledgeStore.listProcedures({ metabotId: 5, status: 'active' });
+    assert.equal(after.length, 4, 'only the capped backlog draft drains on the later pass');
+    const newProcedures = after.filter((entry) => !procedureIdsBefore.has(entry.id));
+    assert.deepEqual(newProcedures.map((entry) => entry.title), ['技巧D']);
+    for (const seed of seeds.filter((entry) => entry.promotable)) {
+      const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === seed.title);
+      assert.equal(draft.promotedAt, promotedAtBefore[seed.title], `${seed.title} is never re-promoted`);
+    }
+    const versionA = after.find((entry) => entry.title === '技巧A').version;
+    assert.equal(versionA, 1, 'existing procedures are not rewritten by the guard');
+    for (const title of ['技巧E', '技巧F']) {
+      const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === title);
+      assert.equal(draft.promotedAt, null, `${title} stays unpromoted across passes`);
+    }
+    assert.equal(dreamStore.getRun(5, DAY).telemetry.promotedCount, 1, 'second pass reports only the drained backlog');
   } finally {
     cleanup();
   }

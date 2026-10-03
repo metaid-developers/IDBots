@@ -604,6 +604,8 @@ export class SqliteStore {
         status TEXT NOT NULL DEFAULT 'draft',
         times_injected INTEGER NOT NULL DEFAULT 0,
         last_injected_at INTEGER,
+        promoted_at INTEGER,
+        promoted_procedure_id TEXT,
         created_at INTEGER NOT NULL
       );
     `);
@@ -631,6 +633,15 @@ export class SqliteStore {
       }
       if (!draftCols.includes('last_injected_at')) {
         this.db.run('ALTER TABLE capability_drafts ADD COLUMN last_injected_at INTEGER');
+      }
+      // P2 promotion back-link: set when the draft was promoted into procedure
+      // memory (metaid_knowledge_procedures). NULL = never promoted; the guard
+      // makes the nightly promotion pass idempotent.
+      if (!draftCols.includes('promoted_at')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN promoted_at INTEGER');
+      }
+      if (!draftCols.includes('promoted_procedure_id')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN promoted_procedure_id TEXT');
       }
     } catch (error) {
       console.warn('migrate capability_drafts validation columns:', error);
