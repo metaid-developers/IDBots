@@ -15,6 +15,7 @@ import {
   judgeTurnMemoryExtraction,
   type TurnMemoryExtractionChange,
 } from './libs/coworkMemoryJudge';
+import { evaluateConversationMemoryQuality } from './libs/coworkMemoryQuality';
 import { stripLoneSurrogates, truncateUtf16Units } from './libs/llmSafeText';
 import {
   parseSessionGoal,
@@ -49,6 +50,11 @@ import {
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 import { clampMemoryPromptMaxChars } from './memory/memoryPromptBlocks';
 import { clampMemoryImportance, deriveMemoryImportance } from './memory/memoryImportance';
+import {
+  normalizeMemoryMatchKey,
+  normalizeMemorySemanticKey,
+  scoreMemorySimilarity,
+} from './memory/memorySimilarity';
 import { BOT_WORKSPACE_DIR_NAME } from './libs/botWorkspace';
 import {
   normalizeMemoryHygieneConfig,
@@ -108,6 +114,16 @@ const DEFAULT_MEMORY_USER_MEMORIES_MAX_ITEMS = 30; // quota audit 2026-09-17 (F1
 const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;
 const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 120; // quota audit 2026-09-17 (F1): was 60
 const MEMORY_NEAR_DUPLICATE_MIN_SCORE = 0.82;
+/**
+ * Cross-night dream-write dedup (memory/persona audit P1): the bar sits below
+ * MEMORY_NEAR_DUPLICATE_MIN_SCORE because dream distillations reword the same
+ * rule much more freely than a same-scope restatement (production evidence:
+ * one「付费写链授权硬规则」rule came back as three wording variants across
+ * three nights).
+ */
+const DREAM_CROSS_NIGHT_DEDUP_MIN_SCORE = 0.75;
+/** Incoming dream text replaces the stored wording only when materially richer. */
+const DREAM_DEDUP_REPLACE_TEXT_MIN_LENGTH_RATIO = 1.3;
 const MEMORY_OPERATIONAL_PREFERENCE_RE = /(默认语言|回复格式|输出风格|回复风格|尽量简洁|保持简短|reply(?:\s+in)?|respond(?:\s+in)?|language|format|style|tone|markdown|concise|brief)/i;
 const MEMORY_PREFERENCE_RE = /(偏好|喜欢|prefer|preference|likes?|dislikes?)/i;
 const SCOPED_USER_MEMORIES_BACKFILL_KEY = 'userMemories.scopeBackfill.v1.completed';
@@ -305,110 +321,6 @@ function extractConversationSearchTerms(value: string): string[] {
   }
 
   return terms.slice(0, 8);
-}
-
-function normalizeMemoryMatchKey(value: string): string {
-  return normalizeMemoryText(value)
-    .toLowerCase()
-    .replace(/[\u0000-\u001f]/g, ' ')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function normalizeMemorySemanticKey(value: string): string {
-  const key = normalizeMemoryMatchKey(value);
-  if (!key) return '';
-  return key
-    .replace(/^(?:the user|user|i am|i m|i|my|me)\s+/i, '')
-    .replace(/^(?:该用户|这个用户|用户|本人|我的|我们|咱们|咱|我|你的|你)\s*/u, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function buildTokenFrequencyMap(value: string): Map<string, number> {
-  const tokens = value
-    .split(/\s+/g)
-    .map((token) => token.trim())
-    .filter(Boolean);
-  const map = new Map<string, number>();
-  for (const token of tokens) {
-    map.set(token, (map.get(token) || 0) + 1);
-  }
-  return map;
-}
-
-function scoreTokenOverlap(left: string, right: string): number {
-  const leftMap = buildTokenFrequencyMap(left);
-  const rightMap = buildTokenFrequencyMap(right);
-  if (leftMap.size === 0 || rightMap.size === 0) return 0;
-
-  let leftCount = 0;
-  let rightCount = 0;
-  let intersection = 0;
-  for (const count of leftMap.values()) leftCount += count;
-  for (const count of rightMap.values()) rightCount += count;
-  for (const [token, leftValue] of leftMap.entries()) {
-    intersection += Math.min(leftValue, rightMap.get(token) || 0);
-  }
-
-  const denominator = Math.min(leftCount, rightCount);
-  if (denominator <= 0) return 0;
-  return intersection / denominator;
-}
-
-function buildCharacterBigramMap(value: string): Map<string, number> {
-  const compact = value.replace(/\s+/g, '').trim();
-  if (!compact) return new Map<string, number>();
-  if (compact.length <= 1) return new Map<string, number>([[compact, 1]]);
-
-  const map = new Map<string, number>();
-  for (let index = 0; index < compact.length - 1; index += 1) {
-    const gram = compact.slice(index, index + 2);
-    map.set(gram, (map.get(gram) || 0) + 1);
-  }
-  return map;
-}
-
-function scoreCharacterBigramDice(left: string, right: string): number {
-  const leftMap = buildCharacterBigramMap(left);
-  const rightMap = buildCharacterBigramMap(right);
-  if (leftMap.size === 0 || rightMap.size === 0) return 0;
-
-  let leftCount = 0;
-  let rightCount = 0;
-  let intersection = 0;
-  for (const count of leftMap.values()) leftCount += count;
-  for (const count of rightMap.values()) rightCount += count;
-  for (const [gram, leftValue] of leftMap.entries()) {
-    intersection += Math.min(leftValue, rightMap.get(gram) || 0);
-  }
-
-  const denominator = leftCount + rightCount;
-  if (denominator <= 0) return 0;
-  return (2 * intersection) / denominator;
-}
-
-function scoreMemorySimilarity(left: string, right: string): number {
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-
-  const compactLeft = left.replace(/\s+/g, '');
-  const compactRight = right.replace(/\s+/g, '');
-  if (compactLeft && compactLeft === compactRight) {
-    return 1;
-  }
-
-  let phraseScore = 0;
-  if (compactLeft && compactRight && (compactLeft.includes(compactRight) || compactRight.includes(compactLeft))) {
-    phraseScore = Math.min(compactLeft.length, compactRight.length) / Math.max(compactLeft.length, compactRight.length);
-  }
-
-  return Math.max(
-    phraseScore,
-    scoreTokenOverlap(left, right),
-    scoreCharacterBigramDice(left, right)
-  );
 }
 
 function scoreMemoryTextQuality(value: string): number {
@@ -998,6 +910,8 @@ export interface CapabilityDraft {
   /** P2 promotion: when/into which procedure this draft was promoted (NULL = never). */
   promotedAt: number | null;
   promotedProcedureId: string | null;
+  /** P1 re-review: the last time the verdict panel looked at this draft (NULL = never). */
+  lastReviewedAt: number | null;
 }
 
 interface CapabilityDraftRow {
@@ -1016,6 +930,7 @@ interface CapabilityDraftRow {
   last_injected_at?: number | string | null;
   promoted_at?: number | string | null;
   promoted_procedure_id?: string | null;
+  last_reviewed_at?: number | string | null;
 }
 
 export interface CoworkUserMemoryStats {
@@ -7114,6 +7029,109 @@ export class CoworkStore implements MemoryBackend {
   }
 
   /**
+   * Dream-only creation with cross-night semantic dedup (memory/persona audit
+   * P1). The dream pipeline wrote every entry with forceNew — "authoritative
+   * per-date batches" — so the SAME rule kept coming back night after night
+   * with fresh wording and piled up as near-duplicate rows (~12-15% of all
+   * active memories in production), diluting the injection budget and
+   * bloating the belief layer. This entry point first scans the bot's ACTIVE
+   * memories of the same scope and usage class for a semantic match, using
+   * the same normalizeMemorySemanticKey + scoreMemorySimilarity pair the
+   * revive path uses (CJK-safe: character-bigram Dice plus word-level token
+   * overlap), at the dream-specific DREAM_CROSS_NIGHT_DEDUP_MIN_SCORE bar.
+   * On a hit the old row is REFRESHED instead of inserting a new one:
+   *   - updated_at = now — corroboration keeps the row inside the
+   *     recency-ordered candidate pools instead of aging out of them;
+   *   - importance = MAX(stored, what the incoming write would derive) — a
+   *     corroborated rule never loses standing;
+   *   - the producing night is appended to user_memory_sources (one
+   *     provenance row per night, same as a fresh write would add);
+   *   - text: the stored wording wins by default (a stable row keeps the
+   *     prompt surface stable); it is replaced only when the incoming text
+   *     is materially richer (>=30% longer), which also re-derives the
+   *     fingerprint. confidence / is_explicit / origin stay as stored.
+   * Same-day batch semantics are untouched: softDeleteDreamMemoriesForDate
+   * runs before the night's writes, so just-deleted same-date rows are
+   * invisible to this scan (status != 'created'); a re-dreamed day still
+   * rewrites its own batch. Archived rows are deliberately NOT match
+   * targets — bringing those back stays with the revive path. On a miss the
+   * write falls through to the legacy forceNew insert.
+   */
+  createDreamUserMemory(input: MemoryCreateUserMemoryInput): { memory: CoworkUserMemory; merged: boolean } {
+    const normalizedText = truncate(normalizeMemoryText(input.text), maxMemoryTextChars(input.usageClass));
+    if (!normalizedText) {
+      throw new Error('Memory text is required');
+    }
+    const metabotId = input.metabotId;
+    const scope = this.resolveMemoryScopeSelector(input);
+    const usageClass = input.usageClass ?? null;
+    const incomingKey = normalizeMemorySemanticKey(normalizedText);
+    if (incomingKey && usageClass) {
+      const candidates = this.getAll<CoworkUserMemoryRow>(`
+        SELECT ${MEMORY_ROW_SELECT_COLUMNS}
+        FROM user_memories
+        WHERE metabot_id = ? AND scope_kind = ? AND scope_key = ?
+          AND usage_class = ? AND status = 'created' AND archived_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 200
+      `, [metabotId, scope.kind, scope.key, usageClass]);
+      let bestCandidate: CoworkUserMemoryRow | null = null;
+      let bestScore = 0;
+      for (const candidate of candidates) {
+        const candidateKey = normalizeMemorySemanticKey(candidate.text);
+        if (!candidateKey) continue;
+        const score = scoreMemorySimilarity(candidateKey, incomingKey);
+        if (score <= bestScore) continue;
+        bestScore = score;
+        bestCandidate = candidate;
+      }
+      if (bestCandidate && bestScore >= DREAM_CROSS_NIGHT_DEDUP_MIN_SCORE) {
+        const mergedText = normalizedText.length >= Math.ceil(bestCandidate.text.length * DREAM_DEDUP_REPLACE_TEXT_MIN_LENGTH_RATIO)
+          ? normalizedText
+          : bestCandidate.text;
+        const mergedImportance = Math.max(
+          clampMemoryImportance(bestCandidate.importance),
+          input.importance !== undefined
+            ? clampMemoryImportance(input.importance)
+            : deriveMemoryImportance({
+              usageClass,
+              origin: 'dream',
+              isExplicit: input.isExplicit === true,
+            }),
+        );
+        this.db.run(`
+          UPDATE user_memories
+          SET text = ?, fingerprint = ?, updated_at = ?, importance = ?
+          WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+        `, [
+          mergedText,
+          buildMemoryFingerprint(mergedText),
+          Date.now(),
+          mergedImportance,
+          bestCandidate.id,
+          metabotId,
+          scope.kind,
+          scope.key,
+        ]);
+        this.addMemorySource(bestCandidate.id, metabotId, input.source);
+        this.saveDb();
+        const memory = this.getOne<CoworkUserMemoryRow>(`
+          SELECT ${MEMORY_ROW_SELECT_COLUMNS}
+          FROM user_memories
+          WHERE id = ?
+        `, [bestCandidate.id]);
+        if (!memory) {
+          throw new Error('Failed to reload merged dream memory');
+        }
+        return { memory: this.mapMemoryRow(memory), merged: true };
+      }
+    }
+    const created = this.createOrReviveUserMemory({ ...input, forceNew: true });
+    this.saveDb();
+    return { memory: created.memory, merged: false };
+  }
+
+  /**
    * Insert capability-learning candidates from a dream run into
    * `capability_drafts` (L3b procedural-memory drafts, SDD §4.1). Every row is
    * written with status 'draft'; the dream-time validation pass later promotes
@@ -7179,7 +7197,7 @@ export class CoworkStore implements MemoryBackend {
     const sql = `
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
              validation_score, validation_notes, validated_at, times_injected, last_injected_at,
-             promoted_at, promoted_procedure_id
+             promoted_at, promoted_procedure_id, last_reviewed_at
       FROM capability_drafts
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY created_at DESC, id DESC
@@ -7202,6 +7220,7 @@ export class CoworkStore implements MemoryBackend {
       lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
       promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
       promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+      lastReviewedAt: row.last_reviewed_at == null ? null : Number(row.last_reviewed_at),
     }));
   }
 
@@ -7275,7 +7294,7 @@ export class CoworkStore implements MemoryBackend {
     const rows = this.getAll<CapabilityDraftRow>(`
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
              validation_score, validation_notes, validated_at, times_injected, last_injected_at,
-             promoted_at, promoted_procedure_id
+             promoted_at, promoted_procedure_id, last_reviewed_at
       FROM capability_drafts
       WHERE metabot_id = ?
         AND status = 'validated'
@@ -7302,6 +7321,7 @@ export class CoworkStore implements MemoryBackend {
       lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
       promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
       promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+      lastReviewedAt: row.last_reviewed_at == null ? null : Number(row.last_reviewed_at),
     }));
   }
 
@@ -7334,7 +7354,9 @@ export class CoworkStore implements MemoryBackend {
   /**
    * Record the dream-time validation verdict for one capability draft
    * (Dream-RSI P0 replay gate). Only the validation columns and status move;
-   * the draft content itself is immutable dream output.
+   * the draft content itself is immutable dream output. Every verdict-panel
+   * contact also stamps last_reviewed_at — the periodic re-review
+   * (listReReviewableCapabilityDrafts) schedules from it.
    */
   updateCapabilityDraftValidation(input: {
     id: number;
@@ -7355,7 +7377,7 @@ export class CoworkStore implements MemoryBackend {
     if (!existing) return false;
     this.db.run(`
       UPDATE capability_drafts
-      SET status = ?, validation_score = ?, validation_notes = ?, validated_at = ?
+      SET status = ?, validation_score = ?, validation_notes = ?, validated_at = ?, last_reviewed_at = ?
       WHERE id = ? AND metabot_id = ?
     `, [
       input.status,
@@ -7366,11 +7388,127 @@ export class CoworkStore implements MemoryBackend {
         ? input.validationNotes.trim().slice(0, 500)
         : null,
       Date.now(),
+      Date.now(),
       id,
       metabotId,
     ]);
     this.saveDb();
     return true;
+  }
+
+  /**
+   * Candidates for the nightly periodic re-review (Dream-RSI P1): VALIDATED
+   * drafts whose last verdict-panel contact (last_reviewed_at, falling back
+   * to validated_at for pre-migration rows) is older than `olderThanMs`,
+   * oldest contact first. The re-review re-runs the same verdict prompt and
+   * evidence pool as the fresh-draft gate — a validated technique must keep
+   * surviving the bot's recorded history to keep its injection slot.
+   */
+  listReReviewableCapabilityDrafts(
+    metabotId: number,
+    options: { olderThanMs: number; limit: number },
+  ): CapabilityDraft[] {
+    const limit = Math.max(1, Math.floor(options.limit));
+    const rows = this.getAll<CapabilityDraftRow>(`
+      SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at,
+             promoted_at, promoted_procedure_id, last_reviewed_at
+      FROM capability_drafts
+      WHERE metabot_id = ?
+        AND status = 'validated'
+        AND COALESCE(last_reviewed_at, validated_at) IS NOT NULL
+        AND COALESCE(last_reviewed_at, validated_at) < ?
+      ORDER BY COALESCE(last_reviewed_at, validated_at) ASC, id ASC
+      LIMIT ?
+    `, [metabotId, Math.floor(Number(options.olderThanMs) || 0), limit]);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      metabotId: Number(row.metabot_id),
+      dreamDate: String(row.dream_date),
+      title: String(row.title),
+      description: String(row.description),
+      capabilityType: String(row.capability_type),
+      status: String(row.status),
+      createdAt: Number(row.created_at),
+      validationScore: row.validation_score == null ? null : Number(row.validation_score),
+      validationNotes: row.validation_notes == null ? null : String(row.validation_notes),
+      validatedAt: row.validated_at == null ? null : Number(row.validated_at),
+      timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
+      lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
+      promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
+      promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+      lastReviewedAt: row.last_reviewed_at == null ? null : Number(row.last_reviewed_at),
+    }));
+  }
+
+  /**
+   * Refresh the review bookkeeping of a draft that SURVIVED a periodic
+   * re-review (verdict stayed validated, keep_draft, or a rejected verdict
+   * too weak to demote): last_reviewed_at moves to now, and the score/notes
+   * take the panel's fresh reading when the verdict carries them. Status and
+   * validated_at stay untouched — the first-validation timestamp keeps
+   * driving the promotion calendar-distance guard.
+   */
+  markCapabilityDraftReviewed(input: {
+    id: number;
+    metabotId: number;
+    validationScore?: number | null;
+    validationNotes?: string | null;
+  }): boolean {
+    const id = Number(input.id);
+    const metabotId = Number(input.metabotId);
+    if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(metabotId) || metabotId <= 0) {
+      return false;
+    }
+    const sets: string[] = ['last_reviewed_at = ?'];
+    const params: Array<number | string | null> = [Date.now()];
+    if (typeof input.validationScore === 'number' && Number.isFinite(input.validationScore)) {
+      sets.push('validation_score = ?');
+      params.push(input.validationScore);
+    }
+    if (typeof input.validationNotes === 'string' && input.validationNotes.trim()) {
+      sets.push('validation_notes = ?');
+      params.push(input.validationNotes.trim().slice(0, 500));
+    }
+    params.push(id, metabotId);
+    this.db.run(
+      `UPDATE capability_drafts SET ${sets.join(', ')} WHERE id = ? AND metabot_id = ?`,
+      params,
+    );
+    const updated = (this.db.getRowsModified?.() || 0) > 0;
+    if (updated) {
+      this.saveDb();
+    }
+    return updated;
+  }
+
+  /**
+   * Retention cleanup (hygiene): physically delete 'rejected' and
+   * never-validated 'draft' rows older than the cutoff. These rows are DREAM
+   * BOOKKEEPING (verdict candidates and their corpses), not user memories —
+   * the capability they described lives on in the night's diary.
+   * 'validated' rows are NEVER deleted here; their quality control is the
+   * periodic re-review's job (dreamService).
+   */
+  purgeExpiredCapabilityDrafts(input: {
+    cutoffMs: number;
+    excludeMetabotIds?: ReadonlySet<number>;
+  }): number {
+    const cutoff = Math.floor(Number(input.cutoffMs) || 0);
+    const excluded = input.excludeMetabotIds ? [...input.excludeMetabotIds] : [];
+    const exclusion = excluded.length > 0
+      ? ` AND metabot_id NOT IN (${excluded.map(() => '?').join(', ')})`
+      : '';
+    this.db.run(
+      `DELETE FROM capability_drafts
+       WHERE status IN ('rejected', 'draft') AND created_at < ?${exclusion}`,
+      [cutoff, ...excluded],
+    );
+    const deleted = this.db.getRowsModified?.() || 0;
+    if (deleted > 0) {
+      this.saveDb();
+    }
+    return deleted;
   }
 
   updateUserMemory(input: MemoryUpdateUserMemoryInput): CoworkUserMemory | null {
@@ -8045,6 +8183,21 @@ export class CoworkStore implements MemoryBackend {
           result.skipped += 1;
           continue;
         }
+        // Conversation-memory quality gate (audit P1): deterministic, no LLM —
+        // near-verbatim copies of the source message and chitchat/self-intro
+        // candidates without a durable-fact predicate are rejected BEFORE the
+        // judge (and its possible boundary LLM call). Explicit remember-
+        // commands are never gated.
+        const quality = evaluateConversationMemoryQuality({
+          text: change.text,
+          sourceText: options.userText,
+          isExplicit: change.isExplicit,
+        });
+        if (!quality.accepted) {
+          result.judgeRejected += 1;
+          result.skipped += 1;
+          continue;
+        }
         const judge = await judgeMemoryCandidate({
           text: change.text,
           isExplicit: change.isExplicit,
@@ -8100,10 +8253,22 @@ export class CoworkStore implements MemoryBackend {
 
     // LLM-extracted entries are already curated by the extraction pass — no
     // second judge round. Same guard rules apply (explicit-only when implicit
-    // updates are off) and the same best-match delete flow.
+    // updates are off) and the same best-match delete flow. The deterministic
+    // conversation-memory quality gate (audit P1) still applies — the
+    // extraction pass is exactly where the peer-intro/pleasantry verbatim
+    // copies came from.
     for (const change of llmOnlyChanges) {
       if (change.action === 'add') {
         if (!options.implicitEnabled && !change.isExplicit) {
+          result.skipped += 1;
+          continue;
+        }
+        const quality = evaluateConversationMemoryQuality({
+          text: change.text,
+          sourceText: options.userText,
+          isExplicit: change.isExplicit,
+        });
+        if (!quality.accepted) {
           result.skipped += 1;
           continue;
         }

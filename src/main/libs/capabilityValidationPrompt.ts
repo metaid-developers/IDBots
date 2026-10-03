@@ -26,6 +26,15 @@ export const CAPABILITY_VALIDATION_SUMMARY_DAYS = 14;
 export const CAPABILITY_PROMOTION_MIN_SCORE = 0.85;
 /** Per-bot per-night promotion cap (flood guard). */
 export const CAPABILITY_PROMOTION_MAX_PER_NIGHT = 3;
+/**
+ * Periodic re-review (Dream-RSI P1): a VALIDATED draft whose last verdict-
+ * panel contact is older than this faces the same verdict panel again —
+ * techniques must keep surviving the bot's recorded history to keep their
+ * injection slots (validated was previously a lifetime appointment).
+ */
+export const CAPABILITY_REVIEW_INTERVAL_DAYS = 30;
+/** Per-bot per-night re-review cap; runs after the fresh-draft batch. */
+export const CAPABILITY_REVIEW_MAX_PER_NIGHT = 5;
 const SUMMARY_EVIDENCE_MAX_CHARS = 400;
 
 export interface CapabilityValidationDraftInput {

@@ -3720,6 +3720,22 @@ const startStartupMessageTier = (): void => {
       skillsRoots: skillMgr.getAllSkillRoots(),
       runSkillTurnViaCowork: (params) =>
         runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
+      // Minimal self-cognition pack for the direct reply paths (same narrow
+      // memory/dream seams the group-task daemon binds below).
+      listUserMemories: (metabotId, input) =>
+        getCoworkStore().getMemoryBackend().listUserMemories({
+          metabotId,
+          scope: createOwnerMemoryScope(),
+          usageClass: input.usageClass,
+          status: 'created',
+          includeDeleted: false,
+          limit: input.limit,
+          offset: 0,
+        }),
+      listDailySummaries: (metabotId, limit) => getDreamStore().listDailySummaries(metabotId, limit),
+      getEffectiveMemoryPolicy: (metabotId) => ({
+        memoryEnabled: getCoworkStore().getMemoryBackend().getEffectiveMemoryPolicyForMetabot(metabotId).memoryEnabled,
+      }),
     },
     () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
   );
@@ -4239,6 +4255,22 @@ const startStartupMessageTier = (): void => {
         createPin: (id, payload, options) => createPin(getMetabotStore(), id, payload, { ...options, feeRate: getGlobalFeeRate('mvc') }),
       });
     },
+    // Minimal self-cognition pack for the plain completion path (same narrow
+    // memory/dream seams the group-task daemon binds above).
+    listUserMemories: (metabotId, input) =>
+      getCoworkStore().getMemoryBackend().listUserMemories({
+        metabotId,
+        scope: createOwnerMemoryScope(),
+        usageClass: input.usageClass,
+        status: 'created',
+        includeDeleted: false,
+        limit: input.limit,
+        offset: 0,
+      }),
+    listDailySummaries: (metabotId, limit) => getDreamStore().listDailySummaries(metabotId, limit),
+    getEffectiveMemoryPolicy: (metabotId) => ({
+      memoryEnabled: getCoworkStore().getMemoryBackend().getEffectiveMemoryPolicyForMetabot(metabotId).memoryEnabled,
+    }),
     emitLog: (msg) => console.log(msg),
     getCoworkStore,
   });
@@ -13279,6 +13311,47 @@ if (!gotTheLock) {
       } catch (error) {
         rethrowSqliteWasmBoundsError(error);
         return { success: false, error: error instanceof Error ? error.message : 'Failed to list dream runs' };
+      }
+    });
+  });
+
+  ipcMain.handle('dream:listCapabilityDrafts', async (_event, options: { metabotId: number; limit?: number }) => {
+    return withSqliteRecovery('dream:listCapabilityDrafts', async () => {
+      try {
+        const metabotId = Number(options?.metabotId);
+        if (!Number.isInteger(metabotId) || metabotId <= 0) {
+          return { success: false, error: 'Invalid metabotId' };
+        }
+        // Read-only capability-draft rows for the MemorySettings list (P1):
+        // status / validation score / injection counters / promotion link.
+        // Review and cleanup stay with the nightly automation — the UI only
+        // renders state, it offers no actions.
+        const drafts = getCoworkStore().listCapabilityDrafts(metabotId, {
+          limit: Number.isInteger(options?.limit) && (options?.limit ?? 0) > 0 ? Math.floor(options!.limit!) : 200,
+        });
+        return { success: true, drafts };
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list capability drafts' };
+      }
+    });
+  });
+
+  ipcMain.handle('dream:listTelemetryDaily', async (_event, options: { metabotId: number; sinceDays?: number }) => {
+    return withSqliteRecovery('dream:listTelemetryDaily', async () => {
+      try {
+        const metabotId = Number(options?.metabotId);
+        if (!Number.isInteger(metabotId) || metabotId <= 0) {
+          return { success: false, error: 'Invalid metabotId' };
+        }
+        // Long-term telemetry rollup (audit P1): flat per-day rows the 90-day
+        // raw-run purge never touches. Read-only; the panel consumes this for
+        // quarterly trends.
+        const days = getDreamStore().listDreamTelemetryDaily(metabotId, options?.sinceDays);
+        return { success: true, days };
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list dream telemetry' };
       }
     });
   });

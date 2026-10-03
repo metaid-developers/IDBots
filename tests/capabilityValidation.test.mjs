@@ -549,3 +549,254 @@ test('validation runs even on an empty day when drafts are pending', async () =>
     cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Dream-RSI P1: periodic re-review of validated drafts + retention cleanup
+// ---------------------------------------------------------------------------
+
+test('schema migration adds last_reviewed_at; pre-existing rows default to NULL', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    assert.ok(getColumns(db, 'capability_drafts').includes('last_reviewed_at'), 'missing column last_reviewed_at');
+    db.run(
+      `INSERT INTO capability_drafts (metabot_id, dream_date, title, description, capability_type, status, created_at)
+       VALUES (5, '2026-08-01', '技巧', '描述', 'skill', 'validated', 1)`,
+    );
+    const row = db.exec('SELECT last_reviewed_at FROM capability_drafts')[0].values[0];
+    assert.equal(row[0], null, 'pre-migration rows read as never-reviewed (selection falls back to validated_at)');
+  } finally {
+    cleanup();
+  }
+});
+
+test('re-review selection picks the longest-unreviewed validated drafts past the interval', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    const DAYMS = 86_400_000;
+    const now = Date.now();
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+      { title: '最久未审', description: 'd', capabilityType: 'skill' },
+      { title: '次久未审', description: 'd', capabilityType: 'skill' },
+      { title: '刚审过', description: 'd', capabilityType: 'skill' },
+      { title: '未验证', description: 'd', capabilityType: 'skill' },
+      { title: '无评审时间戳', description: 'd', capabilityType: 'skill' },
+    ]);
+    const byTitle = (title) => coworkStore.listCapabilityDrafts(5).find((draft) => draft.title === title);
+    for (const title of ['最久未审', '次久未审', '刚审过', '无评审时间戳']) {
+      coworkStore.updateCapabilityDraftValidation({ id: byTitle(title).id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+    }
+    db.run('UPDATE capability_drafts SET last_reviewed_at = ? WHERE id = ?', [now - 45 * DAYMS, byTitle('最久未审').id]);
+    db.run('UPDATE capability_drafts SET last_reviewed_at = ? WHERE id = ?', [now - 35 * DAYMS, byTitle('次久未审').id]);
+    db.run('UPDATE capability_drafts SET last_reviewed_at = ? WHERE id = ?', [now - 5 * DAYMS, byTitle('刚审过').id]);
+    // Pre-migration shape: no last_reviewed_at — validated_at drives the schedule.
+    db.run('UPDATE capability_drafts SET validated_at = ?, last_reviewed_at = NULL WHERE id = ?', [now - 60 * DAYMS, byTitle('无评审时间戳').id]);
+
+    const due = coworkStore.listReReviewableCapabilityDrafts(5, { olderThanMs: now - 30 * DAYMS, limit: 5 });
+    assert.deepEqual(
+      due.map((draft) => draft.title),
+      ['无评审时间戳', '最久未审', '次久未审'],
+      'oldest panel contact first, validated only, COALESCE fallback to validated_at',
+    );
+    const capped = coworkStore.listReReviewableCapabilityDrafts(5, { olderThanMs: now - 30 * DAYMS, limit: 2 });
+    assert.deepEqual(capped.map((draft) => draft.title), ['无评审时间戳', '最久未审'], 'limit caps the nightly batch');
+    assert.equal(
+      coworkStore.listReReviewableCapabilityDrafts(7, { olderThanMs: now, limit: 5 }).length,
+      0,
+      'other bots never leak into the selection',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('updateCapabilityDraftValidation stamps last_reviewed_at; markCapabilityDraftReviewed refreshes without touching status or validated_at', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [{ title: '技巧', description: 'd', capabilityType: 'skill' }]);
+    const draft = coworkStore.listCapabilityDrafts(5)[0];
+    coworkStore.updateCapabilityDraftValidation({ id: draft.id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+    const after = coworkStore.listCapabilityDrafts(5)[0];
+    assert.ok(after.lastReviewedAt > 0, 'verdict-panel contact stamps last_reviewed_at');
+
+    const validatedAtBefore = after.validatedAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(
+      coworkStore.markCapabilityDraftReviewed({ id: draft.id, metabotId: 5, validationScore: 0.77, validationNotes: '复审维持' }),
+      true,
+    );
+    const refreshed = coworkStore.listCapabilityDrafts(5)[0];
+    assert.ok(refreshed.lastReviewedAt > after.lastReviewedAt, 'review bookkeeping refreshes');
+    assert.equal(refreshed.validationScore, 0.77, 'the panel fresh score is taken');
+    assert.equal(refreshed.validationNotes, '复审维持');
+    assert.equal(refreshed.validatedAt, validatedAtBefore, 'the first-verdict timestamp is untouched');
+    assert.equal(refreshed.status, 'validated', 'status is untouched');
+    assert.equal(coworkStore.markCapabilityDraftReviewed({ id: 99999, metabotId: 5 }), false, 'unknown id updates nothing');
+  } finally {
+    cleanup();
+  }
+});
+
+test('purgeExpiredCapabilityDrafts deletes only expired rejected/draft rows (validated never purged)', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    const DAYMS = 86_400_000;
+    const now = Date.now();
+    const OLD = now - 100 * DAYMS;
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+      { title: '过期否决稿', description: 'd', capabilityType: 'skill' },
+      { title: '过期草案', description: 'd', capabilityType: 'skill' },
+      { title: '近期否决稿', description: 'd', capabilityType: 'skill' },
+      { title: '过期已验证', description: 'd', capabilityType: 'skill' },
+    ]);
+    coworkStore.insertCapabilityDrafts(7, '2026-08-01', [{ title: '别家过期草案', description: 'd', capabilityType: 'skill' }]);
+    const byTitle = (title) => coworkStore.listCapabilityDrafts(5).find((draft) => draft.title === title);
+    coworkStore.updateCapabilityDraftValidation({ id: byTitle('过期否决稿').id, metabotId: 5, status: 'rejected', validationScore: 0.3 });
+    coworkStore.updateCapabilityDraftValidation({ id: byTitle('近期否决稿').id, metabotId: 5, status: 'rejected', validationScore: 0.3 });
+    coworkStore.updateCapabilityDraftValidation({ id: byTitle('过期已验证').id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+    db.run('UPDATE capability_drafts SET created_at = ? WHERE metabot_id = 5 AND title IN (?, ?)', [OLD, '过期否决稿', '过期草案']);
+    db.run('UPDATE capability_drafts SET created_at = ? WHERE title = ?', [OLD, '过期已验证']);
+    db.run('UPDATE capability_drafts SET created_at = ? WHERE metabot_id = 7', [OLD]);
+
+    const cutoff = now - 90 * DAYMS;
+    assert.equal(
+      coworkStore.purgeExpiredCapabilityDrafts({ cutoffMs: cutoff, excludeMetabotIds: new Set([7]) }),
+      2,
+      'only the expired rejected + draft rows of the included bots drain',
+    );
+    assert.deepEqual(
+      coworkStore.listCapabilityDrafts().map((draft) => draft.title).sort(),
+      ['别家过期草案', '近期否决稿', '过期已验证'].sort(),
+      'recent rows, validated rows and excluded bots survive',
+    );
+    assert.equal(coworkStore.purgeExpiredCapabilityDrafts({ cutoffMs: cutoff }), 1, 'exclusion lifted: the other bot drains');
+    assert.deepEqual(
+      coworkStore.listCapabilityDrafts().map((draft) => draft.title).sort(),
+      ['近期否决稿', '过期已验证'].sort(),
+      'validated drafts are never purged, however old',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('nightly re-review demotes stale validated drafts (archiving promoted procedures) and refreshes survivors', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  const dreamStore = new DreamStore(db, () => {});
+  const knowledgeStore = new MetaIDKnowledgeStore(db, () => {}, () => 1000);
+  seedActivity(coworkStore, db);
+
+  const DAYMS = 86_400_000;
+  const OLD = Date.now() - 31 * DAYMS;
+  const RECENT = Date.now() - 5 * DAYMS;
+  coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+    { title: '过期硬技巧', description: '曾经有效的做法', capabilityType: 'skill' },
+    { title: '长青技巧', description: '一直被验证的做法', capabilityType: 'workflow' },
+    { title: '新晋技巧', description: '刚验证的做法', capabilityType: 'skill' },
+  ]);
+  const byTitle = (title) => coworkStore.listCapabilityDrafts(5).find((draft) => draft.title === title);
+  for (const [title, score] of [['过期硬技巧', 0.95], ['长青技巧', 0.9], ['新晋技巧', 0.91]]) {
+    coworkStore.updateCapabilityDraftValidation({ id: byTitle(title).id, metabotId: 5, status: 'validated', validationScore: score });
+  }
+  db.run('UPDATE capability_drafts SET validated_at = ?, last_reviewed_at = ? WHERE id = ?', [OLD, OLD, byTitle('过期硬技巧').id]);
+  db.run('UPDATE capability_drafts SET validated_at = ?, last_reviewed_at = ? WHERE id = ?', [OLD, OLD, byTitle('长青技巧').id]);
+  db.run('UPDATE capability_drafts SET validated_at = ?, last_reviewed_at = ? WHERE id = ?', [RECENT, RECENT, byTitle('新晋技巧').id]);
+  // The stale draft was promoted into procedure memory earlier — demotion must
+  // close the loop and retire the hardened lesson too.
+  const promoted = knowledgeStore.upsertProcedure({
+    metabotId: 5, title: '过期硬技巧', triggerText: '过期硬技巧', steps: ['曾经有效的做法'], origin: 'dream',
+  });
+  coworkStore.markCapabilityDraftPromoted({ id: byTitle('过期硬技巧').id, metabotId: 5, procedureId: promoted.entry.id });
+
+  let panelCalls = 0;
+  const service = new DreamService({
+    coworkStore,
+    metabotStore: metabotStoreStub(),
+    dreamStore,
+    metaidKnowledgeStore: knowledgeStore,
+    llmTimeoutMs: 5000,
+    now: () => new Date(2026, 7, 3, 3, 0),
+    performChat: async (system, user) => {
+      if (system.includes('能力验证')) {
+        panelCalls += 1;
+        const verdicts = [...user.matchAll(/### 草案 #(\d+)[\s\S]*?标题:([^\n]+)/g)].map((match) => ({
+          id: Number(match[1]),
+          verdict: match[2].includes('过期') ? 'rejected' : 'validated',
+          score: match[2].includes('过期') ? 0.5 : 0.92,
+          rationale: `对照 ${DAY} 的日记裁决`,
+        }));
+        return JSON.stringify({ verdicts });
+      }
+      return JSON.stringify({
+        daily_summary: '普通的一天。',
+        sections: {},
+        work_reviews: [],
+        important_memories: [],
+        value_lessons: [],
+        self_identity: LONG_IDENTITY,
+        capability_learnings: [],
+      });
+    },
+  });
+  try {
+    await service.runNow(5, DAY);
+    assert.equal(panelCalls, 1, 'one panel covers the due re-review batch (no fresh drafts pending)');
+
+    const demoted = byTitle('过期硬技巧');
+    assert.equal(demoted.status, 'rejected', 'rejected below the promotion line demotes');
+    assert.equal(demoted.validationScore, 0.5);
+    assert.equal(
+      knowledgeStore.getProcedure(promoted.entry.id)?.status,
+      'archived',
+      'the promoted procedure is archived alongside the demotion',
+    );
+
+    const maintained = byTitle('长青技巧');
+    assert.equal(maintained.status, 'validated');
+    assert.equal(maintained.validationScore, 0.92, 'maintained verdict takes the fresh score');
+    assert.ok(maintained.lastReviewedAt > OLD, 'survivor refreshes last_reviewed_at');
+    assert.equal(maintained.validatedAt, OLD, 'validated_at keeps the first-verdict timestamp');
+
+    const notDue = byTitle('新晋技巧');
+    assert.equal(notDue.status, 'validated');
+    assert.equal(notDue.lastReviewedAt, RECENT, 'a recently-reviewed draft is not due');
+
+    const telemetry = dreamStore.getRun(5, DAY).telemetry;
+    assert.equal(telemetry.reReviewed, 2, 'the two due drafts faced the panel');
+    assert.equal(telemetry.demoted, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test('listCapabilityDrafts exposes the UI data shape consumed by dream:listCapabilityDrafts', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+      { title: '形状校验', description: '字段齐全性', capabilityType: 'workflow' },
+    ]);
+    const draft = coworkStore.listCapabilityDrafts(5)[0];
+    coworkStore.updateCapabilityDraftValidation({ id: draft.id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+    coworkStore.markCapabilityDraftsInjected([draft.id]);
+    coworkStore.markCapabilityDraftPromoted({ id: draft.id, metabotId: 5, procedureId: 'proc-1' });
+
+    const row = coworkStore.listCapabilityDrafts(5)[0];
+    // The exact field set the MemorySettings capability-drafts panel renders.
+    for (const field of ['id', 'metabotId', 'dreamDate', 'title', 'description', 'capabilityType', 'status', 'createdAt', 'validationScore', 'validationNotes', 'validatedAt', 'timesInjected', 'lastInjectedAt', 'promotedAt', 'promotedProcedureId', 'lastReviewedAt']) {
+      assert.ok(field in row, `draft row carries ${field}`);
+    }
+    assert.equal(row.status, 'validated');
+    assert.equal(row.validationScore, 0.9);
+    assert.equal(row.timesInjected, 1);
+    assert.ok(row.validatedAt > 0);
+    assert.ok(row.promotedAt > 0);
+    assert.equal(row.promotedProcedureId, 'proc-1');
+    assert.ok(row.lastReviewedAt > 0);
+  } finally {
+    cleanup();
+  }
+});

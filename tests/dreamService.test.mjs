@@ -318,6 +318,52 @@ test('diary trust audit grounds quoted spans against titles and raw record text'
   }
 });
 
+test('cross-night dedup merges near-duplicate memory writes and reports dedupMerged in the run telemetry', async () => {
+  const DAY2 = '2026-07-31';
+  const DAY2_START = new Date(2026, 6, 31).getTime();
+  const payloads = [];
+  const { db, cleanup, coworkStore, dreamStore, service } = await setup(async () =>
+    payloads.length > 0 ? payloads.shift() : makePayload()
+  );
+  try {
+    // Day-2 activity so the second run has a non-empty day.
+    const session2 = coworkStore.createSession('和客户聊海报', '/tmp/b', '', 'local', [], 5);
+    db.run(
+      'INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ['d2-m1', session2.id, 'user', '海报初稿好了吗', '{}', DAY2_START + 1000, 1]
+    );
+    db.run(
+      'INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ['d2-m2', session2.id, 'assistant', '好了,请验收', '{}', DAY2_START + 2000, 2]
+    );
+
+    payloads.push(makePayload({
+      important_memories: ['付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付'],
+    }));
+    await service.runNow(5, DAY);
+    payloads.push(makePayload({
+      // Night 2 restates the same hard rule with one clause appended.
+      important_memories: ['付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付,也不许代签'],
+    }));
+    await service.runNow(5, DAY2);
+
+    const facts = coworkStore.listUserMemories({
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'profile_fact', origin: 'dream', status: 'all',
+    });
+    assert.equal(facts.length, 1, 'the reworded rule refreshed the old row instead of adding a variant');
+    const night1Telemetry = dreamStore.getRun(5, DAY).telemetry ?? {};
+    assert.equal(night1Telemetry.dedupMerged, 0, 'first night had nothing to merge');
+    const night2Telemetry = dreamStore.getRun(5, DAY2).telemetry ?? {};
+    assert.equal(
+      night2Telemetry.dedupMerged,
+      3,
+      'all three corroborated classes (important_memories + value_lessons + work_reviews) merged on night 2',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 test('a concurrent manual trigger waits for the active queue run', async () => {
   let release;
   const blocked = new Promise((resolve) => { release = resolve; });
@@ -480,11 +526,19 @@ test('an older re-dreamed date must not regress the self-identity entry', async 
     assert.equal(identities[0].text, identityNew, 'older date must not overwrite the newer identity');
     assert.equal(coworkStore.getDreamIdentityLatestDate(5), DAY);
 
-    // The older date still gets its own memory batch, tagged by dream date.
+    // The older date still gets its own memory batch — but its texts are
+    // cross-night-deduped (audit P1): the identical restatement corroborates
+    // the existing row and appends its night to the provenance instead of
+    // piling up a duplicate batch.
     const facts = coworkStore.listUserMemories({
       metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'profile_fact', origin: 'dream', status: 'all',
     });
-    assert.equal(facts.length, 2, 'one batch per date, same text allowed across dates');
+    assert.equal(facts.length, 1, 'identical restatements merge across nights (audit P1 dedup)');
+    const factSourceDates = db.exec(
+      'SELECT dream_date FROM user_memory_sources WHERE memory_id = ? AND dream_date IS NOT NULL ORDER BY dream_date',
+      [facts[0].id]
+    )[0].values.map((row) => row[0]);
+    assert.deepEqual(factSourceDates, [OLD_DAY, DAY], 'both nights are recorded as provenance');
   } finally {
     cleanup();
   }
@@ -726,6 +780,42 @@ test('a terminal 400 is never re-driven in-run', async () => {
     const run = dreamStore.getRun(5, DAY);
     assert.equal(run.status, 'terminal-failed');
     assert.equal(llmCalls, 1, 'deterministic rejections fail immediately — re-driving the same prompt cannot help');
+  } finally {
+    cleanup();
+  }
+});
+
+test('telemetry flags a day with explicit human feedback and archives it to the long-term rollup', async () => {
+  const { db, cleanup, dreamStore, service } = await setup(async () => makePayload());
+  try {
+    // Thumb up the assistant's reply → the day carried explicit feedback.
+    db.run(
+      'INSERT INTO message_feedback (message_id, session_id, rating, comment, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ['m2', firstSessionId(db), 'up', null, DAY_START + 5000, DAY_START + 5000]
+    );
+    await service.runNow(5, DAY);
+
+    const run = dreamStore.getRun(5, DAY);
+    assert.equal(run.telemetry?.hasExplicitFeedback, true, 'a thumbed message marks the day in telemetry_json');
+    const daily = dreamStore.listDreamTelemetryDaily(5);
+    assert.equal(daily.length, 1, 'one rollup row per bot+date');
+    assert.equal(daily[0].dreamDate, DAY);
+    assert.equal(daily[0].hasExplicitFeedback, true);
+    assert.equal(daily[0].emptyDay, false);
+    assert.equal(daily[0].validationChecked, 0, 'flat columns mirror the telemetry blob');
+    assert.ok(daily[0].durationMs >= 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('telemetry marks an implicit-signal-free day as no explicit feedback', async () => {
+  const { cleanup, dreamStore, service } = await setup(async () => makePayload());
+  try {
+    await service.runNow(5, DAY);
+    const run = dreamStore.getRun(5, DAY);
+    assert.equal(run.telemetry?.hasExplicitFeedback, false, 'no thumbs and no acceptance ratings');
+    assert.equal(dreamStore.listDreamTelemetryDaily(5)[0].hasExplicitFeedback, false);
   } finally {
     cleanup();
   }

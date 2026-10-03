@@ -310,6 +310,10 @@ test('missing artifact continuation consumes newly queued A2A guidance', async (
   assert.deepEqual(consumed, [{ displaySessionId, metabotId: 1 }]);
   assert.match(runner.startSessionCalls[1].options.systemPrompt, /Human Operator Guidance/);
   assert.match(runner.startSessionCalls[1].options.systemPrompt, /立即继续调用工具生成真实文件/);
+  // The missing-artifact continuation runs in the same read-only memory mode
+  // as the initial order turn (audit P1).
+  assert.equal(runner.startSessionCalls[0].options.memoryReadOnly, true);
+  assert.equal(runner.startSessionCalls[1].options.memoryReadOnly, true);
 
   runner.emit('message', executionSessionId, {
     id: 'assistant-failure',

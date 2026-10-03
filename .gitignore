@@ -154,6 +154,7 @@ tests/*
 !tests/orchestratorCoworkBridgeSkillIds.test.mjs
 !tests/groupChatAllowChatSkillsRuntime.test.mjs
 !tests/groupChatOutboxDurability.test.mjs
+!tests/groupChatSelfCognition.test.mjs
 !tests/groupTaskStore.test.mjs
 !tests/groupTasksI18nKeys.test.mjs
 !tests/metabotWalletService.test.mjs
@@ -568,3 +569,6 @@ man_base_data_pebble/
 !tests/coworkDshSessionTitle.test.mjs
 !tests/botBrowserPreviewAct.test.ts
 !tests/memoryUserEditsTool.test.mjs
+!tests/orderMemoryReadOnly.test.mjs
+!tests/capabilityDraftsPanel.test.tsx
+!tests/dreamTelemetryPanel.test.tsx

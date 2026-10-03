@@ -22,12 +22,15 @@ import {
   CAPABILITY_VALIDATION_SUMMARY_DAYS,
   CAPABILITY_PROMOTION_MAX_PER_NIGHT,
   CAPABILITY_PROMOTION_MIN_SCORE,
+  CAPABILITY_REVIEW_INTERVAL_DAYS,
+  CAPABILITY_REVIEW_MAX_PER_NIGHT,
   buildCapabilityValidationPrompt,
   parseCapabilityValidationOutput,
 } from '../libs/capabilityValidationPrompt';
 import {
   buildCounterfactualReplayPrompt,
   extractNegativeDecisionPoints,
+  hasExplicitHumanFeedback,
   parseCounterfactualReplayOutput,
   pickCounterfactualLesson,
 } from '../libs/counterfactualReplayPrompt';
@@ -839,6 +842,7 @@ export class DreamService {
           weeklyLongDream,
           capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
           promotedCount: promotion.promoted,
+          hasExplicitFeedback: hasExplicitHumanFeedback(activity),
           durationMs: Date.now() - runStartedAtMs,
         });
         return;
@@ -866,10 +870,13 @@ export class DreamService {
           DREAM_SYNTHESIS_TIMEOUT_MS,
         );
       }
-      this.writeDreamResults(metabotId, date, output, activity, brain.llmId, isRepair, impressionSubjects, metabot.globalmetaid);
+      const writeResult = this.writeDreamResults(metabotId, date, output, activity, brain.llmId, isRepair, impressionSubjects, metabot.globalmetaid);
       this.deps.dreamStore.finishRun(metabotId, date, 'completed');
       console.log(`[DreamService] Dream completed for metabot ${metabotId} date ${date}${isRepair ? ' (version repair)' : ''}`);
       const validation = await this.validateCapabilityDraftsAfterDream(metabot, brain, date);
+      // P1 periodic re-review runs between the fresh-draft gate and the
+      // promotion pass: a just-demoted draft must not harden tonight.
+      const reReview = await this.reReviewValidatedCapabilityDrafts(metabot, brain, date);
       const promotion = this.promoteCapabilityDraftsToProcedures(metabot, date);
       const replay = await this.runCounterfactualReplayAfterDream(metabot, brain, date, activity);
       const weeklyLongDream = await this.maybeRunWeeklyLongDream(metabot, brain, date);
@@ -892,6 +899,17 @@ export class DreamService {
         weeklyLongDream,
         capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
         promotedCount: promotion.promoted,
+        // P1 periodic re-review (audit): how many validated drafts faced the
+        // verdict panel again tonight and how many were demoted off the
+        // injection roster (promoted procedures archived alongside).
+        reReviewed: reReview.reReviewed,
+        demoted: reReview.demoted,
+        // Cross-night semantic dedup (audit P1): how many of tonight's memory
+        // writes merged into an older row instead of inserting a variant.
+        dedupMerged: writeResult.dedupMerged,
+        // P1: any explicit human feedback today (thumbs up/down, acceptance
+        // rating) — separates "zero negative because good" from "no data".
+        hasExplicitFeedback: hasExplicitHumanFeedback(activity),
         durationMs: Date.now() - runStartedAtMs,
       });
     } catch (error) {
@@ -1075,6 +1093,121 @@ export class DreamService {
     } catch (error) {
       console.warn(
         `[DreamService] Capability validation failed for metabot ${metabot.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return zero;
+    }
+  }
+
+  /**
+   * Dream-RSI P1 periodic re-review: VALIDATED drafts whose last verdict-panel
+   * contact is older than CAPABILITY_REVIEW_INTERVAL_DAYS face the SAME verdict
+   * prompt and evidence pool as the fresh-draft gate (oldest contact first,
+   * capped per night). A validated technique was previously a lifetime
+   * appointment — now it must keep surviving the bot's recorded history.
+   *   - verdict=rejected below the promotion line → status 'rejected'; when
+   *     the draft had been promoted, its procedure is archived too, so the
+   *     demotion closes the loop instead of leaving a hardened lesson behind.
+   *   - every other outcome (validated / keep_draft / a rejected verdict too
+   *     weak to demote) → last_reviewed_at refreshes, and a maintained
+   *     validated verdict also takes the panel's fresh score.
+   * Runs after the fresh-draft gate, BEFORE the promotion pass (a just-
+   * demoted draft must not harden tonight), and never affects the dream run's
+   * recorded outcome.
+   */
+  private async reReviewValidatedCapabilityDrafts(
+    metabot: DreamMetabotLike,
+    brain: DreamBrainPair,
+    date: string,
+  ): Promise<{ reReviewed: number; demoted: number }> {
+    const zero = { reReviewed: 0, demoted: 0 };
+    try {
+      const pending = this.deps.coworkStore.listReReviewableCapabilityDrafts(metabot.id, {
+        olderThanMs: Date.now() - CAPABILITY_REVIEW_INTERVAL_DAYS * 86_400_000,
+        limit: CAPABILITY_REVIEW_MAX_PER_NIGHT,
+      });
+      if (pending.length === 0) return zero;
+      const recentSummaries = this.deps.dreamStore.listDailySummaries(
+        metabot.id,
+        CAPABILITY_VALIDATION_SUMMARY_DAYS,
+      );
+      const prompt = buildCapabilityValidationPrompt({
+        botName: metabot.name,
+        date,
+        drafts: pending.map((draft) => ({
+          id: draft.id,
+          dreamDate: draft.dreamDate,
+          title: draft.title,
+          description: draft.description,
+          capabilityType: draft.capabilityType,
+        })),
+        recentSummaries: recentSummaries.map((summary) => ({
+          summaryDate: summary.summaryDate,
+          summaryText: summary.summaryText,
+        })),
+      });
+      const raw = await this.callDreamLlm(prompt.system, prompt.user, brain, 4096);
+      const parsed = parseCapabilityValidationOutput(raw, new Set(pending.map((draft) => draft.id)));
+      if (!parsed.ok) {
+        console.warn(`[DreamService] Capability re-review parse failed for metabot ${metabot.id}: ${(parsed as { ok: false; error: string }).error}`);
+        return { ...zero, reReviewed: pending.length };
+      }
+      // Same grounding gate as the fresh-draft validation pass.
+      const evidenceDates = new Set([date, ...recentSummaries.map((summary) => summary.summaryDate)]);
+      const groundedVerdicts = parsed.verdicts.filter((verdict) => {
+        const citedDates = verdict.rationale.match(/\d{4}-\d{2}-\d{2}/g) ?? [];
+        return citedDates.every((cited) => evidenceDates.has(cited));
+      });
+      const droppedUngrounded = parsed.verdicts.length - groundedVerdicts.length;
+      if (droppedUngrounded > 0) {
+        console.warn(
+          `[DreamService] Dropped ${droppedUngrounded} capability re-review verdict(s) citing unrecorded diary dates for metabot ${metabot.id}`,
+        );
+      }
+      const byId = new Map(pending.map((draft) => [draft.id, draft]));
+      let demoted = 0;
+      for (const verdict of groundedVerdicts) {
+        const draft = byId.get(verdict.id);
+        if (!draft) continue;
+        const demote = verdict.verdict === 'rejected' && verdict.score < CAPABILITY_PROMOTION_MIN_SCORE;
+        if (demote) {
+          this.deps.coworkStore.updateCapabilityDraftValidation({
+            id: verdict.id,
+            metabotId: metabot.id,
+            status: 'rejected',
+            validationScore: verdict.score,
+            validationNotes: verdict.rationale,
+          });
+          demoted += 1;
+          // Loop closure: a demoted technique must not survive as hardened
+          // procedure memory either. The procedure's title is the draft's
+          // (the promotion pass writes it that way).
+          if (draft.promotedProcedureId && this.deps.metaidKnowledgeStore) {
+            try {
+              this.deps.metaidKnowledgeStore.archiveProcedureByTitle(metabot.id, draft.title);
+            } catch (error) {
+              console.warn(
+                `[DreamService] Archiving promoted procedure for demoted draft #${draft.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }
+          continue;
+        }
+        // The row survives the panel: refresh the review bookkeeping (a
+        // maintained validated verdict also takes the fresh score).
+        this.deps.coworkStore.markCapabilityDraftReviewed({
+          id: verdict.id,
+          metabotId: metabot.id,
+          validationScore: verdict.verdict === 'validated' ? verdict.score : null,
+          validationNotes: verdict.rationale,
+        });
+      }
+      console.log(
+        `[DreamService] Capability re-review for metabot ${metabot.id}: reReviewed=${pending.length}, demoted=${demoted}`,
+      );
+      return { reReviewed: pending.length, demoted };
+    } catch (error) {
+      console.warn(
+        `[DreamService] Capability re-review failed for metabot ${metabot.id}: ${error instanceof Error ? error.message : String(error)}`,
       );
       return zero;
     }
@@ -1368,7 +1501,7 @@ export class DreamService {
     isRepair: boolean,
     impressionSubjects: ReturnType<DreamService['buildDreamImpressionSubjects']>,
     observerGlobalMetaID?: string | null,
-  ): void {
+  ): { dedupMerged: number } {
     this.deps.dreamStore.upsertDailySummary({
       metabotId,
       summaryDate: date,
@@ -1408,8 +1541,13 @@ export class DreamService {
       console.log(`[DreamService] Replaced ${removed} existing dream memories for metabot ${metabotId} date ${date}`);
     }
 
+    // Cross-night dedup counter (audit P1): writes that landed on an older
+    // semantically-equivalent row refresh it instead of inserting a variant.
+    // Surfaces in the run telemetry as dedupMerged.
+    let dedupMerged = 0;
+
     for (const text of new Set(output.importantMemories)) {
-      this.deps.coworkStore.createUserMemory({
+      const write = this.deps.coworkStore.createDreamUserMemory({
         metabotId,
         text,
         scopeKind: 'owner',
@@ -1417,9 +1555,9 @@ export class DreamService {
         usageClass: 'profile_fact',
         origin: 'dream',
         isExplicit: true,
-        forceNew: true,
         source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
       });
+      if (write.merged) dedupMerged += 1;
     }
 
     const seenLessons = new Set<string>();
@@ -1436,7 +1574,7 @@ export class DreamService {
       const text = `${lesson.rule}(源自:${source})`;
       if (seenLessons.has(text)) continue;
       seenLessons.add(text);
-      this.deps.coworkStore.createUserMemory({
+      const write = this.deps.coworkStore.createDreamUserMemory({
         metabotId,
         text,
         scopeKind: 'owner',
@@ -1444,9 +1582,9 @@ export class DreamService {
         usageClass: 'value_boundary',
         origin: 'dream',
         isExplicit: true,
-        forceNew: true,
         source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
       });
+      if (write.merged) dedupMerged += 1;
     }
     if (unsourcedLessons > 0) {
       console.warn(
@@ -1464,7 +1602,7 @@ export class DreamService {
       ].filter(Boolean).join(';');
       if (seenReviews.has(text)) continue;
       seenReviews.add(text);
-      this.deps.coworkStore.createUserMemory({
+      const write = this.deps.coworkStore.createDreamUserMemory({
         metabotId,
         text,
         scopeKind: 'owner',
@@ -1472,9 +1610,9 @@ export class DreamService {
         usageClass: 'work_review',
         origin: 'dream',
         isExplicit: true,
-        forceNew: true,
         source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
       });
+      if (write.merged) dedupMerged += 1;
     }
 
     // Self-identity only moves forward in time: version repairs never touch
@@ -1607,6 +1745,8 @@ export class DreamService {
         );
       }
     }
+
+    return { dedupMerged };
   }
 }
 

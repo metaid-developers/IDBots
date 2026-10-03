@@ -14,6 +14,7 @@ const {
   parseTurnMemoryExtractionPayload,
 } = require('../dist-electron/main/libs/coworkMemoryJudge.js');
 const { isSubstantiveMemoryText } = require('../dist-electron/main/libs/coworkMemoryExtractor.js');
+const { evaluateConversationMemoryQuality } = require('../dist-electron/main/libs/coworkMemoryQuality.js');
 
 const makeTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-memory-turn-extract-'));
 
@@ -221,6 +222,147 @@ test('the extraction never runs when the LLM judge is disabled (cost guard)', as
     // Substantive-text guard also skips the runner.
     await applyTurn(h, { userText: 'ok', memoryLlmJudgeEnabled: true });
     assert.equal(called, 0, 'extraction skipped for non-substantive text');
+  } finally {
+    h.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Conversation-memory quality gate (memory/persona audit P1): deterministic
+// rejection of raw verbatim copies and chitchat/self-intro candidates before
+// persistence. Explicit remember-commands are never gated.
+// ---------------------------------------------------------------------------
+
+test('quality gate unit: the production garbage shapes are rejected with the right reasons', () => {
+  const evaluate = (text, sourceText, isExplicit = false) =>
+    evaluateConversationMemoryQuality({ text, sourceText: sourceText ?? text, isExplicit });
+
+  // A2A peer self-intro (zh, indefinite-article role descriptor).
+  assert.equal(
+    evaluate('我是 dnaai-scout,一个独立 Agent,正在寻找能帮助 Agent 建立可验证声誉的平台').reason,
+    'chitchat-or-intro',
+  );
+  // Pure pleasantry (en).
+  assert.equal(
+    evaluate('Understood. If you ever want to talk calibration about your reputation, my door is always open.').reason,
+    'chitchat-or-intro',
+  );
+  // Quote-block raw copy (zh, org-role intro under a '>' excerpt marker).
+  assert.equal(
+    evaluate('> 我是小峰,5F-Studio 的 chair,今天来对接需求').reason,
+    'chitchat-or-intro',
+  );
+  // Non-chitchat raw copy of the source sentence, no durable predicate.
+  const descriptive = '这个平台能帮助 Agent 建立可验证声誉和校准记录';
+  assert.equal(evaluate(descriptive, `我们做了个平台。${descriptive}。欢迎体验`).reason, 'verbatim-copy');
+  // Durable facts pass even as verbatim slices (the exemption).
+  assert.equal(evaluate('我住在杭州').accepted, true);
+  assert.equal(evaluate('我偏好 TypeScript').accepted, true);
+  assert.equal(evaluate('I prefer TypeScript over JavaScript').accepted, true);
+  // Explicit remember-commands are never gated.
+  assert.equal(
+    evaluate('Understood. If you ever want to talk calibration about your reputation, my door is always open.', undefined, true).reason,
+    'explicit-command',
+  );
+});
+
+test('quality gate rejects a peer self-intro copied from the message (regex implicit path)', async () => {
+  const h = await createHarness();
+  try {
+    const result = await applyTurn(h, {
+      userText: '我是 dnaai-scout,一个独立 Agent,正在寻找能帮助 Agent 建立可验证声誉的平台。',
+    });
+    assert.equal(result.created, 0, 'the raw self-intro never lands in memory');
+    assert.equal(result.judgeRejected, 1, 'the gate rejected the extracted candidate before the judge');
+    const memories = h.coworkStore.listUserMemories({ metabotId: 1, scopeKind: 'owner', scopeKey: 'owner:self', status: 'all' });
+    assert.equal(memories.length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('quality gate rejects a pure-pleasantry candidate from the turn extraction (LLM path)', async () => {
+  const h = await createHarness();
+  try {
+    setTurnMemoryExtractionRunner(async () => [
+      { action: 'add', text: 'Understood. If you ever want to talk calibration about your reputation, my door is always open.', isExplicit: false },
+    ]);
+    const result = await applyTurn(h, {
+      userText: 'We should definitely continue this conversation about calibration and reputation some time.',
+    });
+    assert.equal(result.created, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(result.llmReviewed, 0, 'gated before the reviewed counter');
+    const memories = h.coworkStore.listUserMemories({ metabotId: 1, scopeKind: 'owner', scopeKey: 'owner:self', status: 'all' });
+    assert.equal(memories.length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('quality gate rejects a quote-block raw copy (regex implicit path)', async () => {
+  const h = await createHarness();
+  try {
+    const result = await applyTurn(h, {
+      userText: '> 我是小峰,5F-Studio 的 chair,今天来对接需求。',
+    });
+    assert.equal(result.created, 0);
+    const memories = h.coworkStore.listUserMemories({ metabotId: 1, scopeKind: 'owner', scopeKey: 'owner:self', status: 'all' });
+    assert.equal(memories.length, 0);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('quality gate lets durable profile/preference facts through (zh + en)', async () => {
+  const h = await createHarness();
+  try {
+    const zh = await applyTurn(h, { userText: '我住在杭州,我偏好 TypeScript。' });
+    assert.equal(zh.created, 1, 'zh durable fact stored');
+    const en = await applyTurn(h, { userText: 'I live in Hangzhou and I prefer TypeScript over JavaScript.' });
+    assert.equal(en.created, 1, 'en durable fact stored');
+    const texts = h.coworkStore
+      .listUserMemories({ metabotId: 1, scopeKind: 'owner', scopeKey: 'owner:self', status: 'all' })
+      .map((entry) => entry.text);
+    assert.ok(texts.some((text) => text.includes('我住在杭州')), 'zh profile fact present');
+    assert.ok(texts.some((text) => text.includes('I live in Hangzhou')), 'en profile fact present');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('explicit remember-commands bypass the quality gate entirely', async () => {
+  const h = await createHarness();
+  try {
+    const direct = await applyTurn(h, { userText: '记住:我住在杭州' });
+    assert.equal(direct.created, 1, 'regex explicit channel writes as before');
+
+    // The turn-extraction channel with is_explicit=true: even a
+    // pleasantry-shaped text lands, because the human explicitly asked.
+    setTurnMemoryExtractionRunner(async () => [
+      { action: 'add', text: 'Understood. If you ever want to talk calibration about your reputation, my door is always open.', isExplicit: true },
+    ]);
+    const viaExtraction = await applyTurn(h, {
+      userText: 'Remember this: we can talk calibration about reputation whenever you want.',
+    });
+    assert.equal(viaExtraction.created, 1, 'explicit extraction-channel write is never gated');
+    const memories = h.coworkStore.listUserMemories({ metabotId: 1, scopeKind: 'owner', scopeKey: 'owner:self', status: 'all' });
+    assert.equal(memories.length, 2);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('a partial rewrite with new information passes the verbatim bar', async () => {
+  const h = await createHarness();
+  try {
+    setTurnMemoryExtractionRunner(async () => [
+      { action: 'add', text: '平台即将上线 Agent 声誉校准功能,支持链上凭证、校准对话与公开审计', isExplicit: false },
+    ]);
+    const result = await applyTurn(h, {
+      userText: '我们平台下周要上线 Agent 声誉校准功能,目前支持 MVC 链上凭证。',
+    });
+    assert.equal(result.created, 1, 'partial rewrite + new info is not treated as a verbatim copy');
   } finally {
     h.cleanup();
   }

@@ -397,7 +397,11 @@ test('chat-mode prompt keeps the persona block intact', () => {
     metabot: promptMetabot,
     membership: { ...promptMembershipBase, groupMode: 'chat' },
   });
-  assert.ok(chat.includes('You are Guest Bot'), 'persona block present');
+  // The persona block is the shared metabot_identity rendering (audit P1:
+  // the hand-rolled "You are <name>" guest line with (empty) fields is gone).
+  assert.ok(chat.includes('<metabot_identity>'), 'shared persona block present');
+  assert.ok(chat.includes('<name>Guest Bot</name>'), 'persona name carried');
+  assert.ok(!chat.includes('(empty)'), 'empty persona fields are skipped, not rendered as (empty)');
 });
 
 

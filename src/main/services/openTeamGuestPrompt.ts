@@ -4,15 +4,13 @@ import {
   groupTaskLanguage,
   type AppLanguage,
 } from '../libs/groupTaskCopy';
+import {
+  buildMetabotPersonaPrompt,
+  type MetabotPersonaPromptSource,
+} from '../libs/metabotPersonaPrompt';
 
-export interface OpenTeamGuestPromptMetabot {
+export interface OpenTeamGuestPromptMetabot extends MetabotPersonaPromptSource {
   name: string;
-  role?: string | null;
-  soul?: string | null;
-  goal?: string | null;
-  bio?: string | null;
-  /** Deprecated compatibility field; use bio. */
-  background?: string | null;
 }
 
 export interface OpenTeamGuestPromptMembership {
@@ -27,20 +25,14 @@ export interface OpenTeamGuestPromptMembership {
   groupMode?: 'task' | 'chat';
 }
 
-/** Persona block: who the bot is. Mirrors buildGroupTaskPersonaBlock's shape. */
+/**
+ * Persona block: who the bot is. Delegates to the shared persona builder so
+ * the guest bot carries the same identity in an external group as everywhere
+ * else (empty fields are skipped, never rendered as `(empty)`); the external-
+ * collaborator framing lives in the guest block below, never here.
+ */
 export function buildOpenTeamGuestPersonaBlock(metabot: OpenTeamGuestPromptMetabot): string {
-  const role = (metabot.role ?? '').trim();
-  const soul = (metabot.soul ?? '').trim();
-  const goal = (metabot.goal ?? '').trim();
-  const bio = (metabot.bio ?? metabot.background ?? '').trim();
-
-  return [
-    `You are ${metabot.name}, a MetaBot invited as an external collaborator into an on-chain group task.`,
-    `Role: ${role || '(empty)'}`,
-    `Soul: ${soul || '(empty)'}`,
-    `Goal: ${goal || '(empty)'}`,
-    `Bio: ${bio || '(empty)'}`,
-  ].join('\n');
+  return buildMetabotPersonaPrompt(metabot);
 }
 
 /**
@@ -131,7 +123,6 @@ export function buildOpenTeamGuestPrompt(params: {
 }): string {
   return [
     buildOpenTeamGuestPersonaBlock(params.metabot),
-    '',
     buildOpenTeamGuestBlock(params),
-  ].join('\n');
+  ].filter((section) => section.trim()).join('\n\n');
 }

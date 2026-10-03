@@ -221,6 +221,49 @@ export function buildExperiencePromptBlocksXml(input: {
     .join('\n\n');
 }
 
+/** Overall cap for the minimal self-cognition pack (identity never cut). */
+export const MINIMAL_SELF_COGNITION_MAX_CHARS = 2500;
+/** Char budget for the dream-summaries section inside the minimal pack. */
+export const MINIMAL_SELF_COGNITION_SUMMARIES_MAX_CHARS = 1500;
+
+/**
+ * Minimal self-cognition pack for the lightweight one-shot LLM paths that have
+ * no cowork runner to inject the full experience block (group-chat direct
+ * replies, OpenTeam guest plain turns): the protected self-identity entry —
+ * NEVER truncated — plus the last days' dream summaries under their own char
+ * budget (newest kept). Over the overall cap the summaries shrink first, then
+ * drop entirely; when the identity alone exceeds the cap the pack is returned
+ * whole — the identity instruction block's integrity beats the budget (same
+ * rule as buildGroupTaskExperienceBlock).
+ */
+export function buildMinimalSelfCognitionBlocks(input: {
+  identityText?: string | null;
+  summaries: ExperienceSummaryLike[];
+  maxChars?: number;
+}): string {
+  const cap = Math.max(500, Math.floor(input.maxChars ?? MINIMAL_SELF_COGNITION_MAX_CHARS));
+  const identityBlock = input.identityText ? buildSelfIdentityBlock(input.identityText) : '';
+  const attempts: Array<{ summariesMaxChars?: number; dropSummaries?: boolean }> = [
+    {},
+    { summariesMaxChars: 600 },
+    { dropSummaries: true },
+  ];
+  let lastBlock = '';
+  for (const attempt of attempts) {
+    const summariesBlock = attempt.dropSummaries
+      ? ''
+      : buildRecentDailySummariesBlock(
+          input.summaries,
+          attempt.summariesMaxChars ?? MINIMAL_SELF_COGNITION_SUMMARIES_MAX_CHARS
+        );
+    const block = [identityBlock, summariesBlock].filter((section) => section.trim()).join('\n\n');
+    if (!block) return '';
+    lastBlock = block;
+    if (block.length <= cap) return block;
+  }
+  return lastBlock;
+}
+
 export type ExperienceRecallGranularity = 'day' | 'week' | 'month';
 
 export interface ExperienceRecallArgs {

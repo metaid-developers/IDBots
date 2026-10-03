@@ -243,6 +243,22 @@ export class MemoryHygieneService {
         return { dreamRunsPurged: result.runsDeleted, dreamFragmentsPurged: result.fragmentsDeleted };
       },
     });
+    // Capability drafts (L3b): 'rejected' and never-validated 'draft' rows
+    // past the retention horizon are physically deleted. These are dream
+    // BOOKKEEPING rows (verdict candidates and their corpses), not user
+    // memories — the capability they described survives in the night's diary.
+    // 'validated' drafts never age out here; their quality control is the
+    // periodic re-review in dreamService.
+    this.steps.push({
+      name: 'capability-drafts',
+      run: (context) => {
+        const purged = context.coworkStore.purgeExpiredCapabilityDrafts({
+          cutoffMs: context.nowMs - context.config.capabilityDraftRetentionDays * 86_400_000,
+          excludeMetabotIds: context.disabledMetabotIds,
+        });
+        return { capabilityDraftsPurged: purged };
+      },
+    });
     // Culture layer: emergent entries that stopped earning injection slots
     // decay to archived (owner entries never auto-archived); revision
     // overflow is pruned like knowledge revisions.

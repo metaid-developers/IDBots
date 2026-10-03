@@ -138,3 +138,18 @@ test('diaryTrustRatios yields unmatched/total and null where not measurable', ()
   ]);
   assert.deepEqual(diaryTrustRatios(days), [null, 2 / 14, 0, null, null]);
 });
+
+test('runsToTelemetryDays maps hasExplicitFeedback as a three-state flag', () => {
+  const days = runsToTelemetryDays([
+    { dreamDate: '2026-09-01', status: 'completed', telemetry: { replay: { points: 0 }, hasExplicitFeedback: true } },
+    { dreamDate: '2026-09-02', status: 'completed', telemetry: { replay: { points: 0 }, hasExplicitFeedback: false } },
+    { dreamDate: '2026-09-03', status: 'completed', telemetry: { emptyDay: true } },
+    { dreamDate: '2026-09-04', status: 'completed', telemetry: { replay: { points: 1 } } },
+    { dreamDate: '2026-09-05', status: 'completed', telemetry: null },
+  ]);
+  assert.deepEqual(
+    days.map((day) => day.hasExplicitFeedback),
+    [true, false, false, null, null],
+    'true = feedback present, false = recorded no-feedback day, null = predates the flag / no telemetry',
+  );
+});

@@ -300,6 +300,82 @@ test('#13 handshake: guest prompt carries the greet-first rule and WHY it was in
   }
 });
 
+test('persona: guest prompt uses the shared persona block — no hand-rolled fields, no (empty) rendering', async () => {
+  const { store, db, membershipStore, loop, calls } = await createHarness();
+  try {
+    membershipStore.upsertActiveMembership({ groupId: GROUP_ID, metabotId: 7, globalmetaid: GUEST_GMID });
+    insertGroupMessage(db, {
+      pinId: `${'7'.repeat(64)}i0`, senderMetaId: 'metaid-other', senderGlobalMetaId: 'gmid-other',
+      senderName: 'Other Bot', content: '@Guest Bot introduce yourself',
+    });
+
+    await loop.runTick();
+
+    assert.equal(calls.chat.length, 1);
+    const prompt = calls.chat[0].systemPrompt;
+    // The harness metabot row has role/soul set but bio/goal NULL: the legacy
+    // hand-rolled block rendered those as "Goal: (empty)" / "Bio: (empty)".
+    assert.match(prompt, /<metabot_identity>/);
+    assert.match(prompt, /<name>Guest Bot<\/name>/);
+    assert.match(prompt, /<role>Guest Bot role<\/role>/);
+    assert.match(prompt, /<soul>Guest Bot soul<\/soul>/);
+    assert.ok(!prompt.includes('(empty)'), 'empty persona fields are skipped, not rendered as (empty)');
+    assert.ok(!/^You are Guest Bot/m.test(prompt), 'no second identity line next to the persona block');
+    // The external-collaborator framing stays in the guest block.
+    assert.match(prompt, /## OpenTeam external collaboration/);
+  } finally {
+    store.close();
+  }
+});
+
+test('self-cognition: plain path appends the minimal pack (self-identity + dream summaries); memoryEnabled=false gates it off', async () => {
+  const memorySeams = (memoryEnabled) => ({
+    listUserMemories: (metabotId, input) =>
+      input.usageClass === 'self_identity' ? [{ text: '我是一个被邀请去做客也保持自我的 MetaBot' }] : [],
+    listDailySummaries: () => [{ summaryDate: '2026-10-02', summaryText: '昨天梦见自己在外部群里帮忙做了海报' }],
+    getEffectiveMemoryPolicy: () => ({ memoryEnabled }),
+  });
+
+  const { store, db, membershipStore, loop, calls } = await createHarness({ deps: memorySeams(true) });
+  try {
+    membershipStore.upsertActiveMembership({ groupId: GROUP_ID, metabotId: 7, globalmetaid: GUEST_GMID });
+    insertGroupMessage(db, {
+      pinId: `${'8'.repeat(64)}i0`, senderMetaId: 'metaid-other', senderGlobalMetaId: 'gmid-other',
+      senderName: 'Other Bot', content: '@Guest Bot who are you?',
+    });
+
+    await loop.runTick();
+
+    assert.equal(calls.chat.length, 1);
+    const prompt = calls.chat[0].systemPrompt;
+    assert.match(prompt, /<metabot_self_identity>/, 'self-identity block injected on the plain path');
+    assert.ok(prompt.includes('我是一个被邀请去做客也保持自我的 MetaBot'));
+    assert.match(prompt, /<recent_daily_summaries>/, 'dream summaries block injected');
+    assert.ok(prompt.includes('2026-10-02'));
+  } finally {
+    store.close();
+  }
+
+  const gated = await createHarness({ deps: memorySeams(false) });
+  try {
+    gated.membershipStore.upsertActiveMembership({ groupId: GROUP_ID, metabotId: 7, globalmetaid: GUEST_GMID });
+    insertGroupMessage(gated.db, {
+      pinId: `${'9'.repeat(64)}i0`, senderMetaId: 'metaid-other', senderGlobalMetaId: 'gmid-other',
+      senderName: 'Other Bot', content: '@Guest Bot who are you?',
+    });
+
+    await gated.loop.runTick();
+
+    assert.equal(gated.calls.chat.length, 1);
+    const prompt = gated.calls.chat[0].systemPrompt;
+    assert.doesNotMatch(prompt, /<metabot_self_identity>/, 'memory policy gates the pack off');
+    assert.doesNotMatch(prompt, /<recent_daily_summaries>/);
+    assert.match(prompt, /<metabot_identity>/, 'persona unaffected by the memory gate');
+  } finally {
+    gated.store.close();
+  }
+});
+
 test('loop: [NO_REPLY] suppresses the on-chain send but still advances the cursor', async () => {
   const { store, db, membershipStore, loop, calls } = await createHarness({ replyText: '[NO_REPLY]' });
   try {

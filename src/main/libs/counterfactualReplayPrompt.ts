@@ -61,6 +61,24 @@ const truncate = (text: string, maxChars: number): string =>
   text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
 
 /**
+ * Did the day carry ANY explicit human feedback (audit P1)? True when at
+ * least one assistant message was thumbed (up OR down) or one group task was
+ * accepted with a star rating. Computed from the already-loaded dream
+ * activity (getActivityForDate) — no extra queries. This is the denominator
+ * that separates a day with zero negative decision points because the bot
+ * genuinely did well (feedback present, none negative) from a day where zero
+ * simply means the feedback channel was never exercised.
+ */
+export function hasExplicitHumanFeedback(activity: DreamDayActivity): boolean {
+  for (const session of activity.sessions) {
+    for (const message of session.messages) {
+      if (message.feedbackRating === 'up' || message.feedbackRating === 'down') return true;
+    }
+  }
+  return (activity.groupTasks ?? []).some((task) => task.rating != null);
+}
+
+/**
  * Pull the day's negative-outcome decision points out of the dream activity:
  * assistant messages the human thumbed down (with conversational context) and
  * group tasks accepted with a low rating. Ordered thumbs-down-with-comment

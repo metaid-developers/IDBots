@@ -295,6 +295,18 @@ test('buildDreamPrompt embeds persona, activity sections and the output contract
   assert.ok(!user.includes('不要轻易改动'), 'old rigid identity wording removed');
 });
 
+test('buildDreamPrompt carries the durability bar for the memory fields', () => {
+  const { user } = buildDreamPrompt({
+    botName: '小火',
+    date: '2026-08-01',
+    activity: { sessions: [], taskRuns: [], orderCount: 0 },
+  });
+  assert.ok(user.includes('About durability'), 'durability paragraph present');
+  assert.ok(user.includes('important_memories, value_lessons and work_reviews'), 'the bar names the three fields');
+  assert.ok(user.includes('STILL be useful next week'), 'only week-durable facts and lessons may be recorded');
+  assert.ok(user.includes('routine daily trivia'), 'day-to-day流水 is explicitly banned');
+});
+
 test('buildDreamPrompt truncates oversized activity within budget', () => {
   const hugeMessage = '很长的消息'.repeat(5000);
   const { user } = buildDreamPrompt({

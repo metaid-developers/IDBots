@@ -35,6 +35,11 @@ import { getMetaidRpcBase, getMetaidRpcToken } from './metaidRpcEndpoint';
 import { getEnhancedEnv } from '../libs/coworkUtil';
 import { buildMetabotPersonaPrompt } from '../libs/metabotPersonaPrompt';
 import { isPathWithin } from '../libs/runtimePaths';
+import {
+  buildMinimalSelfCognitionBlocks,
+  RECENT_SUMMARIES_PROMPT_DAYS,
+} from '../libs/experiencePromptBlocks';
+import type { MemoryUsageClass } from '../memory/memoryScope';
 
 const TICK_INTERVAL_MS = 10_000;
 const LOG_EVERY_N_TICKS = 6; // log summary every ~1 min when no trigger
@@ -193,6 +198,18 @@ export type RunSkillTurnViaCoworkFn = (params: {
   latestMessageSenderGlobalmetaid?: string | null;
   activeSkillIds?: string[];
 }) => Promise<string>;
+
+/** Narrow memory read (owner scope, created status) for the direct-path minimal self-cognition pack. */
+export type OrchestratorListUserMemoriesFn = (
+  metabotId: number,
+  input: { usageClass?: MemoryUsageClass; limit: number },
+) => Array<{ text: string }>;
+
+/** Recent dream summaries (newest first) for the direct-path minimal self-cognition pack. */
+export type OrchestratorListDailySummariesFn = (
+  metabotId: number,
+  limit: number,
+) => Array<{ summaryDate: string; summaryText: string }>;
 
 let tickIntervalId: ReturnType<typeof setInterval> | null = null;
 /** sql.js Database must not be used concurrently; skip overlapping orchestrator ticks. */
@@ -622,13 +639,7 @@ async function runReplyPipeline(
   getMetabotById: GetMetabotByIdFn,
   performChatCompletion: PerformChatCompletionFn,
   broadcastGroupChat: BroadcastGroupChatFn,
-  options?: {
-    getChatSkillsRoutingPrompt?: GetChatSkillsRoutingPromptFn;
-    skillsRoot?: string;
-    skillsRoots?: string[];
-    chatWithToolsOverride?: ChatWithToolsFn;
-    runSkillTurnViaCowork?: RunSkillTurnViaCoworkFn;
-  },
+  options?: OrchestratorOptions,
   triggerReason: TriggerReason = 'Probability'
 ): Promise<void> {
   const {
@@ -637,6 +648,9 @@ async function runReplyPipeline(
     skillsRoots,
     chatWithToolsOverride,
     runSkillTurnViaCowork,
+    listUserMemories,
+    listDailySummaries,
+    getEffectiveMemoryPolicy,
   } = options ?? {};
   const allowedRoots = skillsRoots?.length ? skillsRoots : skillsRoot ? [skillsRoot] : [];
   const metabot = getMetabotById(task.metabot_id);
@@ -707,9 +721,33 @@ async function runReplyPipeline(
   const coworkSystemPrompt = [channelPrompt, skillsSection]
     .filter((section) => section.trim())
     .join('\n\n');
+
+  // Minimal self-cognition pack (dream-written self-identity + recent dream
+  // summaries) for the DIRECT paths: without it the direct system prompt
+  // carries persona facts but none of the bot's dream-distilled "who am I",
+  // so the same bot answered differently here than in cowork turns. The
+  // cowork skill path is excluded — coworkRunner injects the full experience
+  // block into the turn tail, and a copy here would double it. Gated on the
+  // bot's memory policy (parity with the group-task/private-chat paths).
+  const buildSelfCognitionSection = (): string => {
+    if (!listUserMemories && !listDailySummaries) return '';
+    if (getEffectiveMemoryPolicy?.(metabot.id)?.memoryEnabled === false) return '';
+    try {
+      return buildMinimalSelfCognitionBlocks({
+        identityText: listUserMemories?.(metabot.id, { usageClass: 'self_identity', limit: 1 })?.[0]?.text ?? null,
+        summaries: listDailySummaries?.(metabot.id, RECENT_SUMMARIES_PROMPT_DAYS) ?? [],
+      });
+    } catch {
+      return '';
+    }
+  };
+  const selfCognitionSection = buildSelfCognitionSection();
+
   // Direct LLM paths (in-orchestrator tool loop, plain completion) have no
-  // coworkRunner to inject the persona, so it leads the system prompt.
-  const directSystemPrompt = [personaPrompt, channelPrompt, skillsSection]
+  // coworkRunner to inject the persona, so it leads the system prompt, with
+  // the self-cognition pack right behind it (identity cluster before the
+  // channel framing).
+  const directSystemPrompt = [personaPrompt, selfCognitionSection, channelPrompt, skillsSection]
     .filter((section) => section.trim())
     .join('\n\n');
 
@@ -950,6 +988,19 @@ export interface OrchestratorOptions {
   chatWithToolsOverride?: ChatWithToolsFn;
   /** When set, skill turn runs via CoworkRunner (same Read/Bash as Cowork) instead of in-orchestrator loop. */
   runSkillTurnViaCowork?: RunSkillTurnViaCoworkFn;
+  /**
+   * Memory/dream reads for the minimal self-cognition pack injected into the
+   * DIRECT reply paths (in-orchestrator tool loop and plain completion). The
+   * cowork skill path is excluded on purpose: coworkRunner already injects the
+   * full experience block into the turn tail. Unwired = no pack injected.
+   */
+  listUserMemories?: OrchestratorListUserMemoriesFn;
+  listDailySummaries?: OrchestratorListDailySummariesFn;
+  /**
+   * Per-bot memory policy (parity with the group-task/private-chat paths):
+   * memoryEnabled=false gates the self-cognition pack off. Unwired = enabled.
+   */
+  getEffectiveMemoryPolicy?: (metabotId: number) => { memoryEnabled: boolean } | null | undefined;
 }
 
 async function tick(
