@@ -42,7 +42,6 @@ import {
   type GroupTaskEntropyP0Config,
 } from '../libs/groupTaskEntropy';
 import { isNonAnswerAssistantReply } from '../libs/coworkAssistantReply';
-import { truncateUtf16Units } from '../libs/llmSafeText';
 import {
   formatWorkerEmptyHandoffError,
   hasSubstantiveActivity,
@@ -90,6 +89,8 @@ import {
   buildExperiencePromptBlocksXml,
   RECENT_SUMMARIES_PROMPT_DAYS,
 } from '../libs/experiencePromptBlocks';
+import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
+import type { MemoryUsageClass, MemoryVisibility } from '../memory/memoryScope';
 import {
   parseDeliverableLines,
   parseDeliverableSegments,
@@ -1138,9 +1139,100 @@ const TXID_FORMAT = /^[0-9a-f]{64}$/;
 const DELIVERABLE_ID_CANDIDATE = /\b(?:0[xX][0-9a-fA-F]{2,66}|[0-9a-fA-F]{16,66}(?:i0)?)\b/g;
 const MAX_VERIFICATION_CANDIDATES = 3;
 
-/** Hard cap for the appended A2A experience/memory block. */
-const EXPERIENCE_BLOCK_MAX_CHARS = 1500;
+/** Overall cap for the group-task experience block (section-trimmed, never tail-cut). */
+const GROUP_EXPERIENCE_BLOCK_MAX_CHARS = 4000;
+/** Char budget for the owner scoped-memory block riding every plain group-task turn. */
+const GROUP_MEMORY_BLOCK_MAX_CHARS = 3000;
+/** Char budget for the authoritative constraints block rendered from the task's [POSITION] ledger. */
+const GROUP_CONSTRAINTS_BLOCK_MAX_CHARS = 2000;
 const GROUP_COGNITION_BLOCK_MAX_CHARS = 3000;
+
+/**
+ * Group-task experience block with section-aware trimming — the replacement
+ * for the old whole-block 1500-char tail cut that routinely amputated
+ * everything after the identity block. self-identity is NEVER truncated; when
+ * the assembled block exceeds the cap, sections shrink in load-bearing order:
+ * daily summaries first, then proven techniques, then work reviews, and value
+ * boundaries last (the hardest-won rules). When even the most-trimmed assembly
+ * exceeds the cap it is returned whole — the identity instruction block's
+ * integrity beats the budget.
+ */
+export function buildGroupTaskExperienceBlock(input: {
+  identityText?: string | null;
+  valueBoundaries?: Array<{ text: string }>;
+  workReviews?: Array<{ text: string }>;
+  provenTechniques?: Array<{ title: string; description?: string | null }>;
+  summaries?: Array<{ summaryDate: string; summaryText: string }>;
+  maxChars?: number;
+}): string {
+  const cap = Math.max(500, Math.floor(input.maxChars ?? GROUP_EXPERIENCE_BLOCK_MAX_CHARS));
+  const boundaries = input.valueBoundaries ?? [];
+  const reviews = input.workReviews ?? [];
+  const techniques = input.provenTechniques ?? [];
+  const summaries = input.summaries ?? [];
+  const attempts: Array<{
+    summariesMaxChars?: number;
+    dropSummaries?: boolean;
+    techniqueCount: number;
+    reviewCount: number;
+    boundaryCount: number;
+  }> = [
+    { techniqueCount: 5, reviewCount: 5, boundaryCount: 5 },
+    { summariesMaxChars: 800, techniqueCount: 5, reviewCount: 5, boundaryCount: 5 },
+    { dropSummaries: true, techniqueCount: 5, reviewCount: 5, boundaryCount: 5 },
+    { dropSummaries: true, techniqueCount: 0, reviewCount: 5, boundaryCount: 5 },
+    { dropSummaries: true, techniqueCount: 0, reviewCount: 0, boundaryCount: 5 },
+    { dropSummaries: true, techniqueCount: 0, reviewCount: 0, boundaryCount: 3 },
+  ];
+  let lastBlock = '';
+  for (const attempt of attempts) {
+    const block = buildExperiencePromptBlocksXml({
+      identityText: input.identityText ?? null,
+      valueBoundaries: boundaries.slice(0, attempt.boundaryCount),
+      workReviews: reviews.slice(0, attempt.reviewCount),
+      provenTechniques: techniques.slice(0, attempt.techniqueCount),
+      summaries: attempt.dropSummaries ? [] : summaries,
+      ...(attempt.summariesMaxChars ? { maxChars: attempt.summariesMaxChars } : {}),
+    }).trim();
+    if (!block) return '';
+    lastBlock = block;
+    if (block.length <= cap) return block;
+  }
+  return lastBlock;
+}
+
+/**
+ * [Authoritative constraints] block: every [POSITION] statement on the task
+ * ledger (objections, boundary rulings, agreed conclusions recorded from
+ * member protocol lines), re-injected EVERY turn so a ruling survives long
+ * after it slides out of the 20-message group-log window. Over budget the
+ * OLDEST lines drop first — a constraint is only ever lifted by a newer
+ * recorded line.
+ */
+export function buildGroupTaskConstraintsBlock(
+  positions: Array<{ statement: string }>,
+  maxChars: number = GROUP_CONSTRAINTS_BLOCK_MAX_CHARS,
+): string {
+  const statements = positions
+    .map((position) => String(position.statement ?? '').trim())
+    .filter(Boolean);
+  if (statements.length === 0) return '';
+  const cap = Math.max(200, Math.floor(maxChars));
+  const render = (lines: string[], omitted: number): string => [
+    `[Authoritative constraints (host ledger) — recorded [POSITION] rulings that still bind this task${omitted > 0 ? `; ${omitted} oldest line(s) omitted` : ''}:`,
+    ...lines.map((line) => `- ${line}`),
+    'Apply them to every dispatch, verdict and status move; a constraint is lifted only by a newer recorded line that contradicts it.]',
+  ].join('\n');
+  let omitted = 0;
+  let lines = statements;
+  let block = render(lines, omitted);
+  while (block.length > cap && lines.length > 1) {
+    lines = lines.slice(1);
+    omitted += 1;
+    block = render(lines, omitted);
+  }
+  return block;
+}
 
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_WORKER_COOLDOWN_MS = 20_000;
@@ -1899,11 +1991,27 @@ export type GroupTaskDaemonSendOwnerReportFn = (params: {
   checkpointId?: number;
 }) => Promise<GroupTaskOwnerReportDeliveryResult>;
 
-/** Narrow memory read (owner scope, created status) for the A2A experience block. */
+/** One owner-scope memory row as the group-task prompt blocks consume it. */
+export interface GroupTaskDaemonMemoryEntry {
+  text: string;
+  usageClass?: MemoryUsageClass;
+  visibility?: MemoryVisibility;
+  updatedAt?: number;
+  lastUsedAt?: number | null;
+  importance?: number;
+}
+
+/** Narrow memory read (owner scope, created status) for the A2A experience + scoped-memory blocks. */
 export type GroupTaskDaemonListUserMemoriesFn = (
   metabotId: number,
-  input: { usageClass: 'self_identity' | 'value_boundary' | 'work_review'; limit: number },
-) => Array<{ text: string }>;
+  input: {
+    /** Omit to list every usage class (the scoped-memory block); the experience block queries one class at a time. */
+    usageClass?: MemoryUsageClass;
+    limit: number;
+    /** Group-task injection is a usage event for the hygiene decay clock. */
+    touchLastUsed?: boolean;
+  },
+) => GroupTaskDaemonMemoryEntry[];
 
 /** Recent dream summaries for the A2A experience block. */
 export type GroupTaskDaemonListDailySummariesFn = (
@@ -2040,8 +2148,19 @@ export interface GroupTaskDaemonDeps {
   chairResponseRedriveMs?: number;
   listUserMemories?: GroupTaskDaemonListUserMemoriesFn;
   listDailySummaries?: GroupTaskDaemonListDailySummariesFn;
+  /**
+   * Per-bot memory policy (G8 parity with the private-chat path): gates the
+   * experience block and the scoped-memory block, and carries the per-bot
+   * injection quota. Unwired = enabled with the default quota.
+   */
+  getEffectiveMemoryPolicy?: (metabotId: number) => {
+    memoryEnabled: boolean;
+    memoryUserMemoriesMaxItems: number;
+  };
   /** Dream-validated capability drafts ("proven techniques") for the experience block. */
-  listValidatedCapabilityDrafts?: (metabotId: number) => Array<{ title: string; description: string }>;
+  listValidatedCapabilityDrafts?: (metabotId: number) => Array<{ id?: number; title: string; description: string }>;
+  /** P2 utilization telemetry: bump injection counters for drafts actually rendered. Best-effort. */
+  markCapabilityDraftsInjected?: (ids: number[]) => void;
   getMetaIDGroupCognitionPromptBlock?: (input: {
     observerGlobalMetaID: string;
     roster: Array<{ globalMetaID: string | null; name: string; role: 'chair' | 'worker' }>;
@@ -3879,31 +3998,98 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
   };
 
   /**
-   * A2A experience/memory block for the responding bot, built with the SAME
-   * exported builder the private-chat path uses (buildExperiencePromptBlocksXml)
-   * fed through narrow injected memory/dream getters. '' when unwired or empty.
+   * A2A experience/memory block for the responding bot: section-trimmed by
+   * buildGroupTaskExperienceBlock (self-identity never cut), fed through the
+   * narrow injected memory/dream getters. '' when unwired, empty, or gated off
+   * by the bot's memory policy (G8 parity with the private-chat path).
    */
   const buildExperienceBlockFor = (bot: GroupTaskDaemonBotFull): string => {
     if (!deps.listUserMemories && !deps.listDailySummaries) return '';
+    if (deps.getEffectiveMemoryPolicy?.(bot.id)?.memoryEnabled === false) return '';
     try {
-      const identityEntry = deps.listUserMemories?.(bot.id, { usageClass: 'self_identity', limit: 1 })?.[0];
-      const valueBoundaries = deps.listUserMemories?.(bot.id, { usageClass: 'value_boundary', limit: 5 }) ?? [];
-      // Past work reviews (dream-written, aligned with the owner's acceptance
-      // ratings) — the recall path that keeps prior group-task feedback in play.
-      const workReviews = deps.listUserMemories?.(bot.id, { usageClass: 'work_review', limit: 5 }) ?? [];
       const provenTechniques = deps.listValidatedCapabilityDrafts?.(bot.id) ?? [];
-      const summaries = deps.listDailySummaries?.(bot.id, RECENT_SUMMARIES_PROMPT_DAYS) ?? [];
-      const block = buildExperiencePromptBlocksXml({
-        identityText: identityEntry?.text ?? null,
-        valueBoundaries,
-        workReviews,
+      const block = buildGroupTaskExperienceBlock({
+        identityText: deps.listUserMemories?.(bot.id, { usageClass: 'self_identity', limit: 1 })?.[0]?.text ?? null,
+        valueBoundaries: deps.listUserMemories?.(bot.id, { usageClass: 'value_boundary', limit: 5 }) ?? [],
+        // Past work reviews (dream-written, aligned with the owner's acceptance
+        // ratings) — the recall path that keeps prior group-task feedback in play.
+        workReviews: deps.listUserMemories?.(bot.id, { usageClass: 'work_review', limit: 5 }) ?? [],
         provenTechniques,
-        summaries,
+        summaries: deps.listDailySummaries?.(bot.id, RECENT_SUMMARIES_PROMPT_DAYS) ?? [],
+      });
+      // P2 utilization telemetry: only bump when the techniques block actually
+      // rendered (the section ladder drops it before boundaries/reviews).
+      const renderedDraftIds = provenTechniques
+        .map((draft) => Number(draft.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (renderedDraftIds.length > 0 && block.includes('<proven_techniques>')) {
+        try {
+          deps.markCapabilityDraftsInjected?.(renderedDraftIds);
+        } catch {
+          // telemetry is best-effort
+        }
+      }
+      return block;
+    } catch {
+      return '';
+    }
+  };
+
+  /**
+   * Owner-scope scoped-memory block (profile facts, preferences, operational
+   * preferences) for group-task turns, built with the SAME importance-aware
+   * builder the cowork runner and the private-chat path use. self_identity /
+   * value_boundary / work_review stay in the experience block above — never
+   * double-injected. Callers mount this block on the PLAIN path only: a skill
+   * turn goes through coworkRunner, which already injects its own scoped
+   * memory blocks into the turn tail. Gated on the bot's memory policy (G8).
+   */
+  const buildScopedMemoryBlockFor = (bot: GroupTaskDaemonBotFull, currentUserText?: string): string => {
+    if (!deps.listUserMemories) return '';
+    const policy = deps.getEffectiveMemoryPolicy?.(bot.id);
+    if (policy?.memoryEnabled === false) return '';
+    try {
+      const maxItems = Math.max(1, Math.floor(policy?.memoryUserMemoriesMaxItems ?? 30));
+      // Wide candidate pool (same contract as the cowork runner): the policy
+      // caps the final rendered count; the keyword scorer and the guaranteed
+      // importance tier pick from a deeper pool.
+      const candidatePoolLimit = Math.min(200, Math.max(maxItems, 120));
+      const entries = (deps.listUserMemories(bot.id, { limit: candidatePoolLimit, touchLastUsed: true }) ?? [])
+        .filter((entry) =>
+          entry.usageClass !== 'self_identity'
+          && entry.usageClass !== 'value_boundary'
+          && entry.usageClass !== 'work_review');
+      return buildScopedMemoryPromptBlocks({
+        // A group task is the owner's own fleet working on the owner's behalf:
+        // the explicit LOCAL channel renders the owner block (a null channel
+        // would fall back to the trigger text and read as external).
+        channel: 'cowork_ui',
+        currentUserText,
+        ownerEntries: entries.map((entry) => ({
+          text: entry.text,
+          usageClass: entry.usageClass,
+          visibility: entry.visibility,
+          updatedAt: entry.updatedAt ?? 0,
+          lastUsedAt: entry.lastUsedAt ?? null,
+          importance: entry.importance,
+        })),
+        maxOwnerEntries: maxItems,
+        maxTotalChars: GROUP_MEMORY_BLOCK_MAX_CHARS,
       }).trim();
-      if (!block) return '';
-      return block.length > EXPERIENCE_BLOCK_MAX_CHARS
-        ? `${truncateUtf16Units(block, EXPERIENCE_BLOCK_MAX_CHARS)}…`
-        : block;
+    } catch {
+      return '';
+    }
+  };
+
+  /**
+   * The task's recorded [POSITION] rulings as a per-turn authoritative block —
+   * the chair's constraints must not die when they slide out of the 20-message
+   * group-log window. '' when the ledger is empty (chat-mode groups never
+   * record positions) or the read fails.
+   */
+  const buildAuthoritativeConstraintsBlockFor = (task: GroupTask): string => {
+    try {
+      return buildGroupTaskConstraintsBlock(deps.getGroupTaskStore().listPositions(task.id));
     } catch {
       return '';
     }
@@ -3999,8 +4185,14 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
     promptMembers: DaemonPromptMember[],
     botRole: 'chair' | 'worker',
     ownerGlobalMetaId: string,
-  ): Promise<{ systemPrompt: string; volatileContext: string }> => {
+    options?: { currentUserText?: string },
+  ): Promise<{ systemPrompt: string; volatileContext: string; memoryContext: string }> => {
     const experienceBlock = buildExperienceBlockFor(bot);
+    const constraintsBlock = buildAuthoritativeConstraintsBlockFor(task);
+    // Scoped owner memories ride ONLY the plain path (callers prepend this to
+    // the stateless completion's user turn): a skill turn goes through
+    // coworkRunner, which already injects its own scoped memory blocks.
+    const memoryContext = buildScopedMemoryBlockFor(bot, options?.currentUserText);
     // Entropy P1 (narrow specific heat): a worker's collaboration partner is
     // the chair — dispatch, verification and arbitration all flow through it —
     // so peer impressions are loaded history the worker never acts on. Workers
@@ -4029,10 +4221,10 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       botRole,
       ownerGlobalMetaId: ownerGlobalMetaId || null,
     });
-    const volatileContext = [formatTurnTimeText(), cultureBlock, experienceBlock, cognitionBlock]
+    const volatileContext = [formatTurnTimeText(), cultureBlock, experienceBlock, constraintsBlock, cognitionBlock]
       .filter((section) => section?.trim())
       .join('\n\n');
-    return { systemPrompt, volatileContext };
+    return { systemPrompt, volatileContext, memoryContext };
   };
 
   /** Plausible pinid/txid candidates in a [DELIVERABLE] line (deduped, capped). */
@@ -4384,7 +4576,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       const systemPromptParts = await buildTurnSystemPrompt(bot, task, promptMembers, 'chair', ownerGlobalMetaId);
       const systemPrompt = systemPromptParts.systemPrompt;
       // Volatile context (time + experience/cognition) rides the user turn.
-      const directive = [systemPromptParts.volatileContext, buildOwnerReportDirective(store, task)]
+      const directive = [systemPromptParts.memoryContext, systemPromptParts.volatileContext, buildOwnerReportDirective(store, task)]
         .filter(Boolean)
         .join('\n\n');
       const brain = metabotBrainOptions(bot);
@@ -4583,7 +4775,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       const systemPromptParts = await buildTurnSystemPrompt(bot, task, promptMembers, 'chair', ownerGlobalMetaId);
       const systemPrompt = systemPromptParts.systemPrompt;
       // Volatile context (time + experience/cognition) rides the user turn.
-      const directive = [systemPromptParts.volatileContext, buildCheckpointReportDirective(store, task, checkpoint)]
+      const directive = [systemPromptParts.memoryContext, systemPromptParts.volatileContext, buildCheckpointReportDirective(store, task, checkpoint)]
         .filter(Boolean)
         .join('\n\n');
       const brain = metabotBrainOptions(bot);
@@ -6021,6 +6213,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       try {
         const systemPromptParts = await buildTurnSystemPrompt(bot, task, promptMembers, 'chair', (bot.boss_global_metaid ?? '').trim());
         const minimalDirective = [
+          systemPromptParts.memoryContext,
           systemPromptParts.volatileContext,
           '[SYSTEM planning directive — generated by the host, not a group participant]',
           'The group log already contains chair-authored opening content (welcome / candidates / voting / dispatches).',
@@ -6062,7 +6255,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       const systemPrompt = systemPromptParts.systemPrompt;
       // Volatile context (time + experience/cognition + remote-teammate facts)
       // rides the user turn.
-      const directive = [systemPromptParts.volatileContext, remoteStatusBlock, buildPlanningDirective(db, task, promptMembers)]
+      const directive = [systemPromptParts.memoryContext, systemPromptParts.volatileContext, remoteStatusBlock, buildPlanningDirective(db, task, promptMembers)]
         .filter(Boolean)
         .join('\n\n');
       const brain = metabotBrainOptions(bot);
@@ -6363,7 +6556,13 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       const canRunSkillTurn = Boolean(
         routing.prompt && routing.activeSkillIds.length > 0 && deps.runSkillTurn,
       );
-      const turnUserMessage = coworkStore.addMessage(session.id, { type: 'user', content: userTurn, metadata: { origin: 'group_task' } });
+      // Plain path only: a skill turn goes through coworkRunner, which already
+      // injects its own scoped memory blocks into the turn tail — the
+      // daemon-side memory block would duplicate them there.
+      const fullUserTurn = canRunSkillTurn
+        ? userTurn
+        : [systemPromptParts.memoryContext, userTurn].filter(Boolean).join('\n\n');
+      const turnUserMessage = coworkStore.addMessage(session.id, { type: 'user', content: fullUserTurn, metadata: { origin: 'group_task' } });
       let reply = '';
       if (canRunSkillTurn) {
         const skillSystemPrompt = [
@@ -6376,7 +6575,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
         const skillTurnResult = await deps.runSkillTurn!({
           sessionId: session.id,
           systemPrompt: skillSystemPrompt,
-          userMessage: userTurn,
+          userMessage: fullUserTurn,
           activeSkillIds: routing.activeSkillIds,
         });
         reply = (skillTurnResult.replyText ?? '').trim();
@@ -6384,7 +6583,7 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       } else {
         reply = (await performChatWithTimeout(
           systemPromptParts.systemPrompt,
-          userTurn,
+          fullUserTurn,
           brain.llmId ?? undefined,
           {
             llmProvider: brain.llmProvider,
@@ -6664,7 +6863,13 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
       const canRunSkillTurn = Boolean(
         routing.prompt && routing.activeSkillIds.length > 0 && deps.runSkillTurn,
       );
-      const turnUserMessage = coworkStore.addMessage(session.id, { type: 'user', content: userTurn, metadata: { origin: 'group_task' } });
+      // Plain path only: a skill turn goes through coworkRunner, which already
+      // injects its own scoped memory blocks into the turn tail — the
+      // daemon-side memory block would duplicate them there.
+      const fullUserTurn = canRunSkillTurn
+        ? userTurn
+        : [systemPromptParts.memoryContext, userTurn].filter(Boolean).join('\n\n');
+      const turnUserMessage = coworkStore.addMessage(session.id, { type: 'user', content: fullUserTurn, metadata: { origin: 'group_task' } });
       let reply = '';
       if (canRunSkillTurn) {
         const skillSystemPrompt = [
@@ -6677,14 +6882,14 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
         const skillTurnResult = await deps.runSkillTurn!({
           sessionId: session.id,
           systemPrompt: skillSystemPrompt,
-          userMessage: userTurn,
+          userMessage: fullUserTurn,
           activeSkillIds: routing.activeSkillIds,
         });
         reply = (skillTurnResult.replyText ?? '').trim();
       } else {
         reply = (await performChatWithTimeout(
           systemPromptParts.systemPrompt,
-          userTurn,
+          fullUserTurn,
           brain.llmId ?? undefined,
           {
             llmProvider: brain.llmProvider,
@@ -6777,7 +6982,10 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
     const db = deps.getStore().getDatabase();
     const coworkStore = deps.getCoworkStore();
 
-    const { systemPrompt: baseSystemPrompt, volatileContext } = await buildTurnSystemPrompt(bot, task, promptMembers, member.role, ownerGlobalMetaId);
+    const { systemPrompt: baseSystemPrompt, volatileContext, memoryContext } = await buildTurnSystemPrompt(
+      bot, task, promptMembers, member.role, ownerGlobalMetaId,
+      { currentUserText: message.content },
+    );
     // Volatile context (time + experience/cognition) rides the user turn so
     // the system prompt stays byte-stable across group turns.
     let userMessage = [volatileContext, buildGroupLogUserMessage(db, task, message, chairGlobalMetaId)]
@@ -6874,6 +7082,12 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
         error instanceof Error ? error.message : String(error),
       );
     };
+    // Plain path only: a skill turn goes through coworkRunner, which already
+    // injects its own scoped memory blocks into the turn tail — the
+    // daemon-side memory block would duplicate them there.
+    if (!canRunSkillTurn && memoryContext) {
+      userMessage = [memoryContext, userMessage].filter(Boolean).join('\n\n');
+    }
     const turnUserMessage = coworkStore.addMessage(session.id, { type: 'user', content: userMessage, metadata: { origin: 'group_task' } });
 
     let reply = '';

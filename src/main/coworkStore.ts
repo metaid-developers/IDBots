@@ -48,6 +48,7 @@ import {
 } from './memory/memoryScope';
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 import { clampMemoryPromptMaxChars } from './memory/memoryPromptBlocks';
+import { clampMemoryImportance, deriveMemoryImportance } from './memory/memoryImportance';
 import { BOT_WORKSPACE_DIR_NAME } from './libs/botWorkspace';
 import {
   normalizeMemoryHygieneConfig,
@@ -159,7 +160,7 @@ const coworkSessionActivityAtMessageSql = (sessionRef: string): string => `(
         )`;
 const MEMORY_ROW_SELECT_COLUMNS = `
   id, text, fingerprint, confidence, is_explicit, status,
-  created_at, updated_at, last_used_at, scope_kind, scope_key, usage_class, visibility, origin, archived_at
+  created_at, updated_at, last_used_at, scope_kind, scope_key, usage_class, visibility, origin, archived_at, importance
 `;
 const PRIVATE_CHAT_SIMPLEMSG_BACKFILL_TIME_WINDOW_MS = 10 * 60 * 1000;
 /**
@@ -951,6 +952,8 @@ export interface CoworkUserMemory {
   lastUsedAt: number | null;
   /** Hygiene decay mark: archived dream memories leave injection but stay restorable. */
   archivedAt?: number | null;
+  /** Recall weight: high-importance memories get guaranteed injection and late eviction. */
+  importance: number;
 }
 
 export interface CoworkUserMemorySource {
@@ -989,6 +992,12 @@ export interface CapabilityDraft {
   validationScore: number | null;
   validationNotes: string | null;
   validatedAt: number | null;
+  /** P2 utilization: how often this draft was rendered into a prompt. */
+  timesInjected: number;
+  lastInjectedAt: number | null;
+  /** P2 promotion: when/into which procedure this draft was promoted (NULL = never). */
+  promotedAt: number | null;
+  promotedProcedureId: string | null;
 }
 
 interface CapabilityDraftRow {
@@ -1003,6 +1012,10 @@ interface CapabilityDraftRow {
   validation_score?: number | null;
   validation_notes?: string | null;
   validated_at?: number | string | null;
+  times_injected?: number | string | null;
+  last_injected_at?: number | string | null;
+  promoted_at?: number | string | null;
+  promoted_procedure_id?: string | null;
 }
 
 export interface CoworkUserMemoryStats {
@@ -1229,6 +1242,7 @@ interface CoworkUserMemoryRow {
   visibility?: string | null;
   origin?: string | null;
   archived_at?: number | string | null;
+  importance?: number | string | null;
 }
 
 interface CoworkUserMemorySourceRow {
@@ -1732,6 +1746,24 @@ export class CoworkStore implements MemoryBackend {
       }
       if (!memoryColumns.includes('archived_at')) {
         this.db.run('ALTER TABLE user_memories ADD COLUMN archived_at INTEGER;');
+        changed = true;
+      }
+      if (!memoryColumns.includes('importance')) {
+        this.db.run('ALTER TABLE user_memories ADD COLUMN importance REAL NOT NULL DEFAULT 0.5;');
+        // One-time deterministic backfill; keep this CASE in sync with
+        // deriveMemoryImportance (src/main/memory/memoryImportance.ts).
+        this.db.run(`
+          UPDATE user_memories
+          SET importance = CASE
+            WHEN usage_class = 'self_identity' THEN 1.0
+            WHEN is_explicit = 1 THEN 0.9
+            WHEN origin = 'dream' AND usage_class = 'value_boundary' THEN 0.75
+            WHEN origin = 'dream' AND usage_class = 'work_review' THEN 0.7
+            WHEN origin = 'dream' AND usage_class = 'profile_fact' THEN 0.65
+            WHEN usage_class IN ('preference', 'operational_preference') THEN 0.6
+            ELSE 0.5
+          END
+        `);
         changed = true;
       }
       this.db.run(`
@@ -6801,6 +6833,7 @@ export class CoworkStore implements MemoryBackend {
       updatedAt: Number(row.updated_at),
       lastUsedAt: row.last_used_at === null ? null : Number(row.last_used_at),
       archivedAt: row.archived_at == null ? null : Number(row.archived_at),
+      importance: clampMemoryImportance(row.importance),
     };
   }
 
@@ -6905,10 +6938,25 @@ export class CoworkStore implements MemoryBackend {
         usageClass: input.usageClass ?? normalizeMemoryUsageClass(existing.usage_class),
         visibility: input.visibility ?? normalizeMemoryVisibility(existing.visibility),
       });
+      // Revive never lowers importance: keep the max of the stored value and
+      // what the merged row would derive today.
+      const mergedImportance = Math.max(
+        clampMemoryImportance(existing.importance),
+        input.importance !== undefined
+          ? clampMemoryImportance(input.importance)
+          : deriveMemoryImportance({
+            usageClass: mergedClassification.usageClass,
+            origin: normalizeMemoryOrigin(existing.origin),
+            isExplicit: mergedExplicit === 1,
+          }),
+      );
+      // Match queries only filter status != 'deleted', so a restatement can
+      // land on an archived row; revive must clear archived_at or the memory
+      // stays invisible to injection and listings forever.
       this.db.run(`
         UPDATE user_memories
         SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = 'created',
-            usage_class = ?, visibility = ?, updated_at = ?
+            usage_class = ?, visibility = ?, updated_at = ?, archived_at = NULL, importance = ?
         WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
       `, [
         mergedText,
@@ -6918,6 +6966,7 @@ export class CoworkStore implements MemoryBackend {
         mergedClassification.usageClass,
         mergedClassification.visibility,
         now,
+        mergedImportance,
         existing.id,
         metabotId,
         scope.kind,
@@ -6937,11 +6986,18 @@ export class CoworkStore implements MemoryBackend {
 
     const id = uuidv4();
     const origin = normalizeMemoryOrigin(input.origin);
+    const importance = input.importance !== undefined
+      ? clampMemoryImportance(input.importance)
+      : deriveMemoryImportance({
+        usageClass: classification.usageClass,
+        origin,
+        isExplicit: explicitFlag === 1,
+      });
     this.db.run(`
       INSERT INTO user_memories (
         id, metabot_id, text, fingerprint, confidence, is_explicit, status,
-        scope_kind, scope_key, usage_class, visibility, origin, created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, NULL)
+        scope_kind, scope_key, usage_class, visibility, origin, created_at, updated_at, last_used_at, importance
+      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, NULL, ?)
     `, [
       id,
       metabotId,
@@ -6956,6 +7012,7 @@ export class CoworkStore implements MemoryBackend {
       origin,
       now,
       now,
+      importance,
     ]);
     this.addMemorySource(id, metabotId, input.source);
 
@@ -7010,11 +7067,14 @@ export class CoworkStore implements MemoryBackend {
 
     const whereClause = `WHERE ${clauses.join(' AND ')}`;
 
+    // Recency = last use, else last edit: memories the bot keeps injecting
+    // (touchLastUsed) must not age out of the candidate pool just because
+    // their text never changes.
     const rows = this.getAll<CoworkUserMemoryRow>(`
       SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
       ${whereClause}
-      ORDER BY updated_at DESC
+      ORDER BY COALESCE(last_used_at, updated_at) DESC
       LIMIT ? OFFSET ?
     `, [...params, limit, offset]);
 
@@ -7118,7 +7178,8 @@ export class CoworkStore implements MemoryBackend {
       : null;
     const sql = `
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
-             validation_score, validation_notes, validated_at
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at,
+             promoted_at, promoted_procedure_id
       FROM capability_drafts
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY created_at DESC, id DESC
@@ -7137,7 +7198,137 @@ export class CoworkStore implements MemoryBackend {
       validationScore: row.validation_score == null ? null : Number(row.validation_score),
       validationNotes: row.validation_notes == null ? null : String(row.validation_notes),
       validatedAt: row.validated_at == null ? null : Number(row.validated_at),
+      timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
+      lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
+      promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
+      promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
     }));
+  }
+
+  /**
+   * P2 utilization telemetry (Dream-RSI): bump times_injected / last_injected_at
+   * for the drafts an injection path actually rendered into a
+   * `<proven_techniques>` prompt block — the same times_injected pattern as
+   * team_culture_entries. Returns the number of rows bumped.
+   */
+  markCapabilityDraftsInjected(ids: number[]): number {
+    const uniqueIds = Array.from(
+      new Set((ids ?? []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)),
+    );
+    if (uniqueIds.length === 0) return 0;
+    const now = Date.now();
+    const placeholders = uniqueIds.map(() => '?').join(', ');
+    this.db.run(
+      `UPDATE capability_drafts
+       SET times_injected = times_injected + 1, last_injected_at = ?
+       WHERE id IN (${placeholders})`,
+      [now, ...uniqueIds],
+    );
+    const bumped = this.db.getRowsModified?.() || 0;
+    if (bumped > 0) {
+      this.saveDb();
+    }
+    return bumped;
+  }
+
+  /**
+   * Utilization rollup for the nightly dream telemetry: how many validated
+   * drafts the bot has, their cumulative injection count, and how many were
+   * injected at least once since `activeSinceMs` (the dream service passes
+   * now-24h, i.e. drafts that were actually in play that day).
+   */
+  getCapabilityDraftUtilization(
+    metabotId: number,
+    activeSinceMs: number,
+  ): { validatedDrafts: number; totalInjections: number; activeDraftsLast24h: number } {
+    const row = this.getOne<{
+      validated_count: number | string;
+      total_injections: number | string | null;
+      active_count: number | string | null;
+    }>(`
+      SELECT COUNT(*) AS validated_count,
+             COALESCE(SUM(times_injected), 0) AS total_injections,
+             COALESCE(SUM(CASE WHEN last_injected_at >= ? THEN 1 ELSE 0 END), 0) AS active_count
+      FROM capability_drafts
+      WHERE metabot_id = ? AND status = 'validated'
+    `, [Math.floor(Number(activeSinceMs) || 0), metabotId]);
+    return {
+      validatedDrafts: Number(row?.validated_count) || 0,
+      totalInjections: Number(row?.total_injections) || 0,
+      activeDraftsLast24h: Number(row?.active_count) || 0,
+    };
+  }
+
+  /**
+   * Candidates for the nightly promotion pass (Dream-RSI P2): validated drafts
+   * at/above `minScore` whose verdict is OLDER than `validatedBeforeMs` (the
+   * dream date's day start — the pragmatic stand-in for the full P1 re-review:
+   * a draft must survive at least one night of calendar distance before it
+   * hardens into procedure memory) and that were never promoted. Strongest
+   * score first, ties broken toward the oldest verdict.
+   */
+  listPromotableCapabilityDrafts(
+    metabotId: number,
+    options: { minScore: number; validatedBeforeMs: number; limit: number },
+  ): CapabilityDraft[] {
+    const limit = Math.max(1, Math.floor(options.limit));
+    const rows = this.getAll<CapabilityDraftRow>(`
+      SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at,
+             promoted_at, promoted_procedure_id
+      FROM capability_drafts
+      WHERE metabot_id = ?
+        AND status = 'validated'
+        AND validation_score >= ?
+        AND validated_at IS NOT NULL
+        AND validated_at < ?
+        AND promoted_at IS NULL
+      ORDER BY validation_score DESC, validated_at ASC, id ASC
+      LIMIT ?
+    `, [metabotId, Number(options.minScore) || 0, Math.floor(Number(options.validatedBeforeMs) || 0), limit]);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      metabotId: Number(row.metabot_id),
+      dreamDate: String(row.dream_date),
+      title: String(row.title),
+      description: String(row.description),
+      capabilityType: String(row.capability_type),
+      status: String(row.status),
+      createdAt: Number(row.created_at),
+      validationScore: row.validation_score == null ? null : Number(row.validation_score),
+      validationNotes: row.validation_notes == null ? null : String(row.validation_notes),
+      validatedAt: row.validated_at == null ? null : Number(row.validated_at),
+      timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
+      lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
+      promotedAt: row.promoted_at == null ? null : Number(row.promoted_at),
+      promotedProcedureId: row.promoted_procedure_id == null ? null : String(row.promoted_procedure_id),
+    }));
+  }
+
+  /**
+   * Back-fill the promotion link after a draft was written into procedure
+   * memory. The `promoted_at IS NULL` guard makes a re-run of the same nightly
+   * pass a no-op (idempotent); returns false when the row was already promoted
+   * (or does not belong to the bot).
+   */
+  markCapabilityDraftPromoted(input: { id: number; metabotId: number; procedureId: string }): boolean {
+    const id = Number(input.id);
+    const metabotId = Number(input.metabotId);
+    const procedureId = String(input.procedureId ?? '').trim();
+    if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(metabotId) || metabotId <= 0 || !procedureId) {
+      return false;
+    }
+    this.db.run(
+      `UPDATE capability_drafts
+       SET promoted_at = ?, promoted_procedure_id = ?
+       WHERE id = ? AND metabot_id = ? AND promoted_at IS NULL`,
+      [Date.now(), procedureId, id, metabotId],
+    );
+    const updated = (this.db.getRowsModified?.() || 0) > 0;
+    if (updated) {
+      this.saveDb();
+    }
+    return updated;
   }
 
   /**
@@ -7214,11 +7405,20 @@ export class CoworkStore implements MemoryBackend {
       usageClass: input.usageClass ?? normalizeMemoryUsageClass(current.usage_class),
       visibility: input.visibility ?? normalizeMemoryVisibility(current.visibility),
     });
+    // Updates never lower importance, mirroring the revive path's MAX rule.
+    const nextImportance = Math.max(
+      clampMemoryImportance(current.importance),
+      deriveMemoryImportance({
+        usageClass: nextClassification.usageClass,
+        origin: normalizeMemoryOrigin(current.origin),
+        isExplicit: Number(nextExplicit) !== 0,
+      }),
+    );
 
     this.db.run(`
       UPDATE user_memories
       SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = ?,
-          usage_class = ?, visibility = ?, updated_at = ?
+          usage_class = ?, visibility = ?, updated_at = ?, importance = ?
       WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
     `, [
       nextText,
@@ -7229,6 +7429,7 @@ export class CoworkStore implements MemoryBackend {
       nextClassification.usageClass,
       nextClassification.visibility,
       now,
+      nextImportance,
       input.id,
       input.metabotId,
       scope.kind,

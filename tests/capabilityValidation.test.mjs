@@ -39,6 +39,7 @@ function loadDreamServiceModule() {
 
 const { DreamService } = loadDreamServiceModule();
 const { DreamStore } = require('../dist-electron/main/dreamStore.js');
+const { MetaIDKnowledgeStore } = require('../dist-electron/main/metaidKnowledgeStore.js');
 
 const DAY = '2026-08-02';
 const DAY_START = new Date(2026, 7, 2).getTime();
@@ -106,6 +107,97 @@ test('schema migration adds validation columns idempotently', async () => {
     for (const column of ['validation_score', 'validation_notes', 'validated_at']) {
       assert.ok(getColumns(db, 'capability_drafts').includes(column), `missing column ${column}`);
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test('schema migration adds utilization columns; pre-existing rows default to zero/NULL', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    for (const column of ['times_injected', 'last_injected_at', 'promoted_at', 'promoted_procedure_id']) {
+      assert.ok(getColumns(db, 'capability_drafts').includes(column), `missing column ${column}`);
+    }
+    db.run(
+      `INSERT INTO capability_drafts (metabot_id, dream_date, title, description, capability_type, status, created_at)
+       VALUES (5, '2026-08-01', '技巧', '描述', 'skill', 'validated', 1)`,
+    );
+    const row = db.exec('SELECT times_injected, last_injected_at, promoted_at, promoted_procedure_id FROM capability_drafts')[0].values[0];
+    assert.equal(row[0], 0, 'times_injected defaults to 0');
+    assert.equal(row[1], null, 'last_injected_at defaults to NULL');
+    assert.equal(row[2], null, 'promoted_at defaults to NULL (never promoted)');
+    assert.equal(row[3], null, 'promoted_procedure_id defaults to NULL');
+  } finally {
+    cleanup();
+  }
+});
+
+test('markCapabilityDraftsInjected bumps counters and stamps last_injected_at', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+      { title: '技巧甲', description: '描述甲', capabilityType: 'skill' },
+      { title: '技巧乙', description: '描述乙', capabilityType: 'workflow' },
+    ]);
+    const drafts = coworkStore.listCapabilityDrafts(5);
+    assert.equal(drafts.length, 2);
+    assert.ok(drafts.every((draft) => draft.timesInjected === 0 && draft.lastInjectedAt === null));
+
+    const ids = drafts.map((draft) => draft.id);
+    assert.equal(coworkStore.markCapabilityDraftsInjected(ids), 2);
+    assert.equal(coworkStore.markCapabilityDraftsInjected([ids[0]]), 1);
+    assert.equal(coworkStore.markCapabilityDraftsInjected([]), 0);
+    assert.equal(coworkStore.markCapabilityDraftsInjected([99999]), 0, 'unknown ids bump nothing');
+
+    const after = coworkStore.listCapabilityDrafts(5);
+    const first = after.find((draft) => draft.id === ids[0]);
+    const second = after.find((draft) => draft.id === ids[1]);
+    assert.equal(first.timesInjected, 2);
+    assert.equal(second.timesInjected, 1);
+    assert.ok(first.lastInjectedAt > 0);
+    assert.ok(second.lastInjectedAt > 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('getCapabilityDraftUtilization rolls up validated drafts, injections and the 24h-active set', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+      { title: '活跃甲', description: 'd', capabilityType: 'skill' },
+      { title: '活跃乙', description: 'd', capabilityType: 'skill' },
+      { title: '沉睡丙', description: 'd', capabilityType: 'skill' },
+      { title: '未验证丁', description: 'd', capabilityType: 'skill' },
+    ]);
+    const drafts = coworkStore.listCapabilityDrafts(5);
+    // listCapabilityDrafts is newest-first — locate by title, not by index.
+    const byTitle = (title) => drafts.find((draft) => draft.title === title);
+    for (const title of ['活跃甲', '活跃乙', '沉睡丙']) {
+      coworkStore.updateCapabilityDraftValidation({ id: byTitle(title).id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+    }
+    const activeA = byTitle('活跃甲');
+    const activeB = byTitle('活跃乙');
+    const sleeping = byTitle('沉睡丙');
+    coworkStore.markCapabilityDraftsInjected([activeA.id, activeB.id]);
+    coworkStore.markCapabilityDraftsInjected([activeA.id]);
+    // 沉睡丙 was injected once, but long before the 24h window.
+    const stale = Date.now() - 48 * 60 * 60 * 1000;
+    db.run('UPDATE capability_drafts SET times_injected = 1, last_injected_at = ? WHERE id = ?', [stale, sleeping.id]);
+
+    const rollup = coworkStore.getCapabilityDraftUtilization(5, Date.now() - 24 * 60 * 60 * 1000);
+    assert.deepEqual(rollup, { validatedDrafts: 3, totalInjections: 4, activeDraftsLast24h: 2 });
+
+    const noneActive = coworkStore.getCapabilityDraftUtilization(5, Date.now() + 1000);
+    assert.equal(noneActive.activeDraftsLast24h, 0, 'future cutoff empties the active set');
+
+    // Drafts of other bots never leak into the rollup.
+    assert.deepEqual(
+      coworkStore.getCapabilityDraftUtilization(7, Date.now() - 24 * 60 * 60 * 1000),
+      { validatedDrafts: 0, totalInjections: 0, activeDraftsLast24h: 0 },
+    );
   } finally {
     cleanup();
   }
@@ -222,6 +314,155 @@ test('dream run validates pending capability drafts against recorded history', a
     assert.equal(rejected.length, 1);
     assert.equal(rejected[0].title, '深夜连环追问');
     assert.equal(coworkStore.listCapabilityDrafts(5, { status: 'draft' }).length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('dream run telemetry carries the capability utilization rollup', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  const dreamStore = new DreamStore(db, () => {});
+  seedActivity(coworkStore, db);
+  // One pre-existing validated draft that was injected during the day.
+  coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+    { title: '既有技巧', description: '已经在用', capabilityType: 'skill' },
+  ]);
+  const existing = coworkStore.listCapabilityDrafts(5)[0];
+  coworkStore.updateCapabilityDraftValidation({ id: existing.id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+  coworkStore.markCapabilityDraftsInjected([existing.id]);
+
+  const service = new DreamService({
+    coworkStore,
+    metabotStore: metabotStoreStub(),
+    dreamStore,
+    llmTimeoutMs: 5000,
+    now: () => new Date(2026, 7, 3, 3, 0),
+    performChat: async () => JSON.stringify({
+      daily_summary: '普通的一天。',
+      sections: {},
+      work_reviews: [],
+      important_memories: [],
+      value_lessons: [],
+      self_identity: LONG_IDENTITY,
+      capability_learnings: [],
+    }),
+  });
+  try {
+    await service.runNow(5, DAY);
+    const telemetry = dreamStore.getRun(5, DAY).telemetry;
+    assert.deepEqual(
+      telemetry.capabilityUtilization,
+      { validatedDrafts: 1, totalInjections: 1, activeDraftsLast24h: 1 },
+      'utilization section rides the run telemetry',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('nightly pass promotes top validated drafts into procedure memory — guarded, capped, idempotent', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  const dreamStore = new DreamStore(db, () => {});
+  const knowledgeStore = new MetaIDKnowledgeStore(db, () => {}, () => 1000);
+  seedActivity(coworkStore, db);
+
+  const YESTERDAY = DAY_START - 86_400_000;
+  const seeds = [
+    { title: '技巧A', score: 0.95, validatedAt: YESTERDAY, promotable: true },
+    { title: '技巧B', score: 0.9, validatedAt: YESTERDAY, promotable: true },
+    { title: '技巧C', score: 0.88, validatedAt: YESTERDAY, promotable: true },
+    // Fourth in score order — over the per-night cap of 3.
+    { title: '技巧D', score: 0.86, validatedAt: YESTERDAY, promotable: false },
+    // Highest score but verdict stamped inside the dream date — the fresh
+    // verdict must wait one night of calendar distance.
+    { title: '技巧E', score: 0.99, validatedAt: DAY_START + 1000, promotable: false },
+    // Below the promotion threshold.
+    { title: '技巧F', score: 0.7, validatedAt: YESTERDAY, promotable: false },
+  ];
+  coworkStore.insertCapabilityDrafts(5, '2026-08-01', seeds.map((seed) => ({
+    title: seed.title,
+    description: `${seed.title}的行动描述`,
+    capabilityType: 'workflow',
+  })));
+  for (const seed of seeds) {
+    const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === seed.title);
+    coworkStore.updateCapabilityDraftValidation({
+      id: draft.id, metabotId: 5, status: 'validated', validationScore: seed.score,
+    });
+    db.run('UPDATE capability_drafts SET validated_at = ? WHERE id = ?', [seed.validatedAt, draft.id]);
+  }
+
+  const service = new DreamService({
+    coworkStore,
+    metabotStore: metabotStoreStub(),
+    dreamStore,
+    metaidKnowledgeStore: knowledgeStore,
+    llmTimeoutMs: 5000,
+    now: () => new Date(2026, 7, 3, 3, 0),
+    performChat: async () => JSON.stringify({
+      daily_summary: '普通的一天。',
+      sections: {},
+      work_reviews: [],
+      important_memories: [],
+      value_lessons: [],
+      self_identity: LONG_IDENTITY,
+      capability_learnings: [],
+    }),
+  });
+  try {
+    await service.runNow(5, DAY);
+
+    const procedures = knowledgeStore.listProcedures({ metabotId: 5, status: 'active' });
+    assert.deepEqual(
+      procedures.map((entry) => entry.title).sort(),
+      ['技巧A', '技巧B', '技巧C'],
+      'top-3 old-verdict drafts become procedures; cap/fresh/low-score stay behind',
+    );
+    const procedureA = procedures.find((entry) => entry.title === '技巧A');
+    assert.equal(procedureA.triggerText, '技巧A', 'trigger mirrors the draft title');
+    assert.deepEqual(procedureA.steps, ['技巧A的行动描述'], 'the actionable description becomes the ordered step');
+    assert.ok(procedureA.tags.includes('capability-draft'), 'provenance tag present');
+    assert.equal(procedureA.origin, 'dream');
+
+    for (const seed of seeds) {
+      const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === seed.title);
+      if (seed.promotable) {
+        assert.ok(draft.promotedAt > 0, `${seed.title} back-filled promoted_at`);
+        const linked = knowledgeStore.getProcedure(draft.promotedProcedureId);
+        assert.equal(linked?.title, seed.title, 'promoted_procedure_id points at the new procedure');
+      } else {
+        assert.equal(draft.promotedAt, null, `${seed.title} stays unpromoted`);
+        assert.equal(draft.promotedProcedureId, null);
+      }
+    }
+    assert.equal(dreamStore.getRun(5, DAY).telemetry.promotedCount, 3, 'telemetry counts the promotions');
+
+    const promotedAtBefore = Object.fromEntries(
+      coworkStore.listCapabilityDrafts(5).map((entry) => [entry.title, entry.promotedAt]),
+    );
+    const procedureIdsBefore = new Set(procedures.map((entry) => entry.id));
+    // Second pass: the promoted_at guard makes already-promoted drafts a
+    // no-op — A/B/C and their procedures stay byte-identical. The per-night
+    // cap only rate-limits throughput, so the one eligible backlog draft (D)
+    // drains now; E (fresh verdict) and F (low score) still never promote.
+    await service.runNow(5, DAY);
+    const after = knowledgeStore.listProcedures({ metabotId: 5, status: 'active' });
+    assert.equal(after.length, 4, 'only the capped backlog draft drains on the later pass');
+    const newProcedures = after.filter((entry) => !procedureIdsBefore.has(entry.id));
+    assert.deepEqual(newProcedures.map((entry) => entry.title), ['技巧D']);
+    for (const seed of seeds.filter((entry) => entry.promotable)) {
+      const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === seed.title);
+      assert.equal(draft.promotedAt, promotedAtBefore[seed.title], `${seed.title} is never re-promoted`);
+    }
+    const versionA = after.find((entry) => entry.title === '技巧A').version;
+    assert.equal(versionA, 1, 'existing procedures are not rewritten by the guard');
+    for (const title of ['技巧E', '技巧F']) {
+      const draft = coworkStore.listCapabilityDrafts(5).find((entry) => entry.title === title);
+      assert.equal(draft.promotedAt, null, `${title} stays unpromoted across passes`);
+    }
+    assert.equal(dreamStore.getRun(5, DAY).telemetry.promotedCount, 1, 'second pass reports only the drained backlog');
   } finally {
     cleanup();
   }

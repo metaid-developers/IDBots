@@ -176,6 +176,8 @@ export interface ListMetaIDKnowledgeOptions {
   query?: string;
   limit?: number;
   offset?: number;
+  /** Cold recall channel: widen the default/'active' filter to active+archived. Never widens to superseded. */
+  includeArchived?: boolean;
   /** Bump last_used_at on returned rows (recall reuse signal). */
   touchLastUsed?: boolean;
 }
@@ -868,8 +870,12 @@ export class MetaIDKnowledgeStore {
     const params: unknown[] = [metabotId];
     const statusFilter = options.status === 'all' ? null : normalizeStatus(options.status ?? 'active');
     if (statusFilter) {
-      clauses.push('status = ?');
-      params.push(statusFilter);
+      if (statusFilter === 'active' && options.includeArchived) {
+        clauses.push(`status IN ('active', 'archived')`);
+      } else {
+        clauses.push('status = ?');
+        params.push(statusFilter);
+      }
     }
     if (options.kind) {
       clauses.push('kind = ?');

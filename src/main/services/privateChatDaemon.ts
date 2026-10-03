@@ -5497,6 +5497,11 @@ async function processOne(
     // user, so they are intentionally present in A2A contexts; gated on the same
     // memory policy. Work reviews were previously group-task-only; private chats
     // benefit from the same acceptance-rating feedback.
+    // Validated capability drafts (Dream-RSI P0): only drafts that survived
+    // the dream-time validation pass are injected.
+    const provenTechniques = memoryPolicy.memoryEnabled
+      ? coworkStore.listCapabilityDrafts(metabot.id, { status: 'validated', limit: 5 })
+      : [];
     const experienceContext = memoryPolicy.memoryEnabled
       ? composeExperiencePromptBlocks({
           identityText: memoryBackend.listUserMemories({
@@ -5526,12 +5531,19 @@ async function processOne(
             limit: 5,
             offset: 0,
           }),
-          // Validated capability drafts (Dream-RSI P0): only drafts that
-          // survived the dream-time validation pass are injected.
-          provenTechniques: coworkStore.listCapabilityDrafts(metabot.id, { status: 'validated', limit: 5 }),
+          provenTechniques,
           summaries: getRecentDailySummaries?.(metabot.id, RECENT_SUMMARIES_PROMPT_DAYS) ?? [],
         })
       : '';
+    // P2 utilization telemetry: only bump when the techniques block actually
+    // rendered (the guidance ladder can drop it entirely). Best-effort.
+    if (provenTechniques.length > 0 && experienceContext.includes('<proven_techniques>')) {
+      try {
+        coworkStore.markCapabilityDraftsInjected(provenTechniques.map((draft) => draft.id));
+      } catch {
+        // telemetry is best-effort
+      }
+    }
     const systemPromptWithExperience = experienceContext ? `${systemPrompt}\n\n${experienceContext}` : systemPrompt;
     // A re-run of this row (after an empty-reply retry or a retriable skill-turn
     // error) carries an explicit host notice so the model knows why it is being

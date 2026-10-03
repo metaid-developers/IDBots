@@ -89,3 +89,61 @@ test('a single oversized top-ranked entry survives even a tiny budget', () => {
 
   assert.match(xml, /<ownerMemories>/);
 });
+
+test('a high-importance old memory is guaranteed injection over newer low-importance fillers', () => {
+  const filler = Array.from({ length: 35 }, (_, index) => ({
+    text: `aaa-filler-${String(index).padStart(2, '0')}`,
+    usageClass: 'profile_fact',
+    visibility: 'local_only',
+    updatedAt: 5000 + index,
+    lastUsedAt: null,
+    importance: 0.5,
+  }));
+  const xml = buildScopedMemoryPromptBlocks({
+    channel: 'cowork_ui',
+    ownerEntries: [
+      ...filler,
+      // Ranks dead last by relevance (text tie-break) and by recency — only
+      // the guaranteed importance tier can surface it.
+      {
+        text: 'zzz-old-explicit-instruction',
+        usageClass: 'profile_fact',
+        visibility: 'local_only',
+        updatedAt: 100,
+        lastUsedAt: null,
+        importance: 0.95,
+      },
+    ],
+    maxOwnerEntries: 12,
+  });
+
+  const lines = xml.split('\n').filter((line) => line.startsWith('- '));
+  assert.equal(lines.length, 12, 'policy maxItems still caps the final injection count');
+  assert.equal(lines[0], '- zzz-old-explicit-instruction', 'guaranteed tier renders first');
+});
+
+test('over-budget eviction drops the lowest importance first, not the oldest', () => {
+  const entry = (text, updatedAt, importance) => ({
+    text,
+    usageClass: 'profile_fact',
+    visibility: 'local_only',
+    updatedAt,
+    lastUsedAt: null,
+    importance,
+  });
+  // ~900 chars each (2712 total) vs the 2000 clamp floor: exactly one eviction.
+  const pad = (label) => label + 'x'.repeat(900 - label.length);
+  const xml = buildScopedMemoryPromptBlocks({
+    channel: 'cowork_ui',
+    ownerEntries: [
+      entry(pad('mid-low:'), 2000, 0.5),
+      entry(pad('new-low:'), 3000, 0.5),
+      entry(pad('old-high:'), 1000, 0.95),
+    ],
+    maxTotalChars: 50, // below the 2000 clamp floor → budget is 2000
+  });
+
+  assert.match(xml, /old-high:/, 'high-importance entry survives despite being the oldest');
+  assert.match(xml, /new-low:/);
+  assert.doesNotMatch(xml, /mid-low:/, 'lowest importance evicts first, oldest-among-low goes first');
+});

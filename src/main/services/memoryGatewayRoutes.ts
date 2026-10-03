@@ -206,7 +206,11 @@ function normalizeMemorySourceInput(value: unknown): Record<string, string> | un
 /**
  * POST /api/idbots/memory/list
  * Body: { metabot_id: number, scope?: { kind, key? }, status?: 'created'|'stale'|'deleted'|'all',
- *         usage_class?: string, query?: string, limit?: number, offset?: number }
+ *         usage_class?: string, query?: string, limit?: number, offset?: number,
+ *         include_archived?: boolean }
+ * `include_archived` (camelCase `includeArchived` also accepted) is the cold
+ * channel: hygiene-archived rows join the listing, each carrying its
+ * `archivedAt` timestamp; by default they are excluded.
  * Success: { success: true, memories: MemoryUserMemory[] } (camelCase, R4.1).
  */
 export function handleMemoryListRoute(
@@ -252,6 +256,7 @@ export function handleMemoryListRoute(
       query: typeof parsed.query === 'string' && parsed.query.trim() ? parsed.query.trim() : undefined,
       limit: limit !== undefined ? Math.min(limit, MAX_LIST_LIMIT) : undefined,
       offset,
+      includeArchived: parsed.include_archived === true || parsed.includeArchived === true,
     });
     return jsonOk({ memories: memories as MemoryUserMemory[] });
   } catch (error) {

@@ -1,15 +1,19 @@
 import type { MemoryUserMemory } from './memoryBackend';
 import { normalizeScopeChannel } from './memoryScope';
+import {
+  MEMORY_IMPORTANCE_GUARANTEED_MAX_ITEMS,
+  MEMORY_IMPORTANCE_GUARANTEED_THRESHOLD,
+} from './memoryImportance';
 
-export type MemoryPromptEntryLike = Pick<MemoryUserMemory, 'text' | 'usageClass' | 'visibility' | 'updatedAt' | 'lastUsedAt'>;
+export type MemoryPromptEntryLike = Pick<MemoryUserMemory, 'text' | 'usageClass' | 'visibility' | 'updatedAt' | 'lastUsedAt' | 'importance'>;
 
 /**
  * Byte budget for the whole rendered memory injection (all scoped blocks
  * combined). Memory earns its context (recall quality beats another tool
  * schema), so the default is generous — 12K chars ≈ 3K tokens, ~5x the
  * typical 20-entry block — but unbounded growth must not crowd out the
- * conversation itself. Over budget, entries are evicted oldest-first (by
- * lastUsedAt ?? updatedAt), never below the single top-ranked entry.
+ * conversation itself. Over budget, entries are evicted lowest-importance-first
+ * (ties: oldest lastUsedAt ?? updatedAt), never below the single top-ranked entry.
  */
 export const DEFAULT_MEMORY_PROMPT_MAX_CHARS = 12000;
 const MIN_MEMORY_PROMPT_MAX_CHARS = 2000;
@@ -46,8 +50,9 @@ export interface RankScopedMemoryEntriesInput {
   maxOwnerOperationalPreferences?: number;
   /**
    * Combined char budget across all rendered memory blocks. Over budget,
-   * entries are evicted oldest-first (lastUsedAt ?? updatedAt), never below
-   * the single top-ranked entry. Defaults to DEFAULT_MEMORY_PROMPT_MAX_CHARS.
+   * entries are evicted lowest-importance-first (ties: oldest
+   * lastUsedAt ?? updatedAt), never below the single top-ranked entry.
+   * Defaults to DEFAULT_MEMORY_PROMPT_MAX_CHARS.
    */
   maxTotalChars?: number;
 }
@@ -107,7 +112,7 @@ function rankEntries(
   currentUserText?: string,
   limit = 12
 ): RankedScopedMemoryEntry[] {
-  return [...(entries ?? [])]
+  const scored = [...(entries ?? [])]
     .filter((entry) => normalizePromptText(entry.text))
     .map((entry) => ({
       ...entry,
@@ -119,8 +124,21 @@ function rankEntries(
         return right.relevanceScore - left.relevanceScore;
       }
       return normalizePromptText(left.text).localeCompare(normalizePromptText(right.text));
-    })
-    .slice(0, limit);
+    });
+  // Guaranteed tier: high-importance memories (explicit user instructions,
+  // self-identity) always render ahead of the relevance-ranked rest, capped at
+  // MEMORY_IMPORTANCE_GUARANTEED_MAX_ITEMS — the char budget still trims them.
+  // The final count stays at the policy limit unless the guaranteed tier
+  // itself is larger.
+  const guaranteed = scored
+    .filter((entry) => (entry.importance ?? 0.5) >= MEMORY_IMPORTANCE_GUARANTEED_THRESHOLD)
+    .slice(0, MEMORY_IMPORTANCE_GUARANTEED_MAX_ITEMS);
+  if (guaranteed.length === 0) {
+    return scored.slice(0, limit);
+  }
+  const guaranteedSet = new Set<RankedScopedMemoryEntry>(guaranteed);
+  const rest = scored.filter((entry) => !guaranteedSet.has(entry));
+  return [...guaranteed, ...rest].slice(0, Math.max(limit, guaranteed.length));
 }
 
 function applyPromptCharBudget(
@@ -140,12 +158,17 @@ function applyPromptCharBudget(
   if (total <= budget) {
     return selection;
   }
-  // Evict globally oldest-first (recency = lastUsedAt ?? updatedAt), ties
-  // broken toward the lower-priority rank — but never evict the top-ranked
-  // entry overall: a budget must not zero memory out entirely.
+  // Evict globally by lowest importance first (ties: oldest recency =
+  // lastUsedAt ?? updatedAt, then the lower-priority rank) — but never evict
+  // the top-ranked entry overall: a budget must not zero memory out entirely.
   const evictionOrder = rankedFlat
     .map((entry, rankIndex) => ({ entry, rankIndex }))
     .sort((left, right) => {
+      const leftImportance = left.entry.importance ?? 0.5;
+      const rightImportance = right.entry.importance ?? 0.5;
+      if (leftImportance !== rightImportance) {
+        return leftImportance - rightImportance;
+      }
       const leftRecency = left.entry.lastUsedAt ?? left.entry.updatedAt ?? 0;
       const rightRecency = right.entry.lastUsedAt ?? right.entry.updatedAt ?? 0;
       if (leftRecency !== rightRecency) {

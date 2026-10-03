@@ -18,6 +18,14 @@ export const CAPABILITY_VALIDATION_MAX_DRAFTS = 10;
 export const CAPABILITY_VALIDATION_PROMOTE_MIN_SCORE = 0.6;
 /** Recent dream diaries handed to the validator as the replayable history. */
 export const CAPABILITY_VALIDATION_SUMMARY_DAYS = 14;
+/**
+ * Nightly promotion pass (Dream-RSI P2): only top-scored validated drafts
+ * harden into procedure memory — and only after they survived at least one
+ * night of calendar distance (see coworkStore.listPromotableCapabilityDrafts).
+ */
+export const CAPABILITY_PROMOTION_MIN_SCORE = 0.85;
+/** Per-bot per-night promotion cap (flood guard). */
+export const CAPABILITY_PROMOTION_MAX_PER_NIGHT = 3;
 const SUMMARY_EVIDENCE_MAX_CHARS = 400;
 
 export interface CapabilityValidationDraftInput {

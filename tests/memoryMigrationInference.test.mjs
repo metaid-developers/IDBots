@@ -25,6 +25,7 @@ test('sqlite store initializes scoped memory columns and indexes for fresh datab
     assert(columns.includes('scope_key'));
     assert(columns.includes('usage_class'));
     assert(columns.includes('visibility'));
+    assert(columns.includes('importance'));
 
     const indexNames = getIndexNames(db, 'user_memories');
     assert(indexNames.includes('idx_user_memories_scope_status_updated'));
@@ -243,6 +244,47 @@ test('scoped backfill preserves rows that already carry non-default scope metada
   assert.equal(migrated?.scope_key, 'metaweb_order:conversation:already-scoped');
   assert.equal(migrated?.usage_class, 'operational_preference');
   assert.equal(migrated?.visibility, 'external_safe');
+});
+
+test('importance column migrates idempotently and backfills deterministic values', async () => {
+  const db = await createLegacyMemoryDb();
+  // Simulate a 0.9.x-era row set: usage_class/origin exist, importance does not.
+  db.run("ALTER TABLE user_memories ADD COLUMN usage_class TEXT NOT NULL DEFAULT 'profile_fact'");
+  db.run("ALTER TABLE user_memories ADD COLUMN origin TEXT NOT NULL DEFAULT 'conversation'");
+
+  const now = Date.now();
+  const insert = (id, usageClass, origin, isExplicit) => db.run(`
+    INSERT INTO user_memories (
+      id, metabot_id, text, fingerprint, confidence, is_explicit, status,
+      usage_class, origin, created_at, updated_at, last_used_at
+    ) VALUES (?, 1, ?, ?, 0.8, ?, 'created', ?, ?, ?, ?, NULL)
+  `, [id, `text-${id}`, `fp-${id}`, isExplicit, usageClass, origin, now, now]);
+
+  insert('m-identity', 'self_identity', 'dream', 0);
+  insert('m-explicit', 'profile_fact', 'conversation', 1);
+  insert('m-dream-boundary', 'value_boundary', 'dream', 0);
+  insert('m-dream-review', 'work_review', 'dream', 0);
+  insert('m-dream-fact', 'profile_fact', 'dream', 0);
+  insert('m-preference', 'preference', 'conversation', 0);
+  insert('m-op-pref', 'operational_preference', 'dream', 0);
+  insert('m-plain', 'profile_fact', 'conversation', 0);
+
+  createCoworkStore(db);
+
+  const importanceOf = (id) => getRow(db, 'SELECT importance FROM user_memories WHERE id = ?', [id])?.importance;
+  assert.equal(importanceOf('m-identity'), 1.0);
+  assert.equal(importanceOf('m-explicit'), 0.9);
+  assert.equal(importanceOf('m-dream-boundary'), 0.75);
+  assert.equal(importanceOf('m-dream-review'), 0.7);
+  assert.equal(importanceOf('m-dream-fact'), 0.65);
+  assert.equal(importanceOf('m-preference'), 0.6);
+  assert.equal(importanceOf('m-op-pref'), 0.6);
+  assert.equal(importanceOf('m-plain'), 0.5);
+
+  // Idempotent: a second migration pass must not rewrite stored values.
+  db.run('UPDATE user_memories SET importance = 0.42 WHERE id = ?', ['m-plain']);
+  createCoworkStore(db);
+  assert.equal(importanceOf('m-plain'), 0.42, 'second pass leaves stored values alone');
 });
 
 test('legacy MEMORY.md migration only marks completion after a successful import', async () => {

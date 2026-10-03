@@ -20,6 +20,8 @@ import {
   CAPABILITY_VALIDATION_MAX_DRAFTS,
   CAPABILITY_VALIDATION_PROMOTE_MIN_SCORE,
   CAPABILITY_VALIDATION_SUMMARY_DAYS,
+  CAPABILITY_PROMOTION_MAX_PER_NIGHT,
+  CAPABILITY_PROMOTION_MIN_SCORE,
   buildCapabilityValidationPrompt,
   parseCapabilityValidationOutput,
 } from '../libs/capabilityValidationPrompt';
@@ -824,6 +826,7 @@ export class DreamService {
         // Pending capability drafts can still be validated against older
         // diaries even when today added no new activity.
         const validation = await this.validateCapabilityDraftsAfterDream(metabot, brain, date);
+        const promotion = this.promoteCapabilityDraftsToProcedures(metabot, date);
         // Empty days have no negative decision points, so the replay no-ops.
         const replay = await this.runCounterfactualReplayAfterDream(metabot, brain, date, activity);
         const weeklyLongDream = await this.maybeRunWeeklyLongDream(metabot, brain, date);
@@ -834,6 +837,8 @@ export class DreamService {
           validation,
           replay,
           weeklyLongDream,
+          capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
+          promotedCount: promotion.promoted,
           durationMs: Date.now() - runStartedAtMs,
         });
         return;
@@ -865,6 +870,7 @@ export class DreamService {
       this.deps.dreamStore.finishRun(metabotId, date, 'completed');
       console.log(`[DreamService] Dream completed for metabot ${metabotId} date ${date}${isRepair ? ' (version repair)' : ''}`);
       const validation = await this.validateCapabilityDraftsAfterDream(metabot, brain, date);
+      const promotion = this.promoteCapabilityDraftsToProcedures(metabot, date);
       const replay = await this.runCounterfactualReplayAfterDream(metabot, brain, date, activity);
       const weeklyLongDream = await this.maybeRunWeeklyLongDream(metabot, brain, date);
       const diaryRefs = this.auditDiaryRefs(output.dailySummary, activity, surfReport);
@@ -884,6 +890,8 @@ export class DreamService {
         validation,
         replay,
         weeklyLongDream,
+        capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
+        promotedCount: promotion.promoted,
         durationMs: Date.now() - runStartedAtMs,
       });
     } catch (error) {
@@ -960,6 +968,28 @@ export class DreamService {
     // Keep the original output rather than failing the whole run over length.
     console.warn('[DreamService] self_identity still below minimum after retry; keeping best effort output');
     return output.selfIdentity ? output : (retry.ok ? retry.output : output);
+  }
+
+  /**
+   * Dream-RSI P2 utilization rollup for the run telemetry: validated draft
+   * count, cumulative injections, and drafts injected within the last 24h —
+   * the "are dream-distilled techniques actually being used" evidence. Null on
+   * failure so telemetry writing never breaks the dream run.
+   */
+  private buildCapabilityUtilizationTelemetry(
+    metabotId: number,
+  ): { validatedDrafts: number; totalInjections: number; activeDraftsLast24h: number } | null {
+    try {
+      return this.deps.coworkStore.getCapabilityDraftUtilization(
+        metabotId,
+        Date.now() - 24 * 60 * 60 * 1000,
+      );
+    } catch (error) {
+      console.warn(
+        `[DreamService] Capability utilization telemetry unavailable for metabot ${metabotId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
   }
 
   /**
@@ -1045,6 +1075,71 @@ export class DreamService {
     } catch (error) {
       console.warn(
         `[DreamService] Capability validation failed for metabot ${metabot.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return zero;
+    }
+  }
+
+  /**
+   * Dream-RSI P2 promotion pass: top validated drafts harden into procedure
+   * memory (metaid_knowledge_procedures) so a learned lesson has lasting
+   * effect beyond the <proven_techniques> prompt hint. A draft qualifies only
+   * when its verdict is at least one night old (validated_at earlier than the
+   * dream date's day start — the pragmatic stand-in for the full P1 re-review
+   * mechanism: calendar distance instead of a second validation panel), scores
+   * >= CAPABILITY_PROMOTION_MIN_SCORE, and was never promoted; at most
+   * CAPABILITY_PROMOTION_MAX_PER_NIGHT per night per bot. The procedure keeps
+   * the draft's title as its own (upsert-by-fingerprint dedupes against
+   * existing procedures), the trigger mirrors the title, and the actionable
+   * description becomes the single ordered step; the draft rows back-link to
+   * the procedure id for provenance (procedures have no generic sources
+   * table). Runs synchronously after the validation gate and never affects
+   * the dream run's outcome.
+   */
+  private promoteCapabilityDraftsToProcedures(
+    metabot: DreamMetabotLike,
+    date: string,
+  ): { promoted: number } {
+    const zero = { promoted: 0 };
+    try {
+      if (!this.deps.metaidKnowledgeStore) return zero;
+      const { startMs } = getDayBoundsMs(date);
+      const candidates = this.deps.coworkStore.listPromotableCapabilityDrafts(metabot.id, {
+        minScore: CAPABILITY_PROMOTION_MIN_SCORE,
+        validatedBeforeMs: startMs,
+        limit: CAPABILITY_PROMOTION_MAX_PER_NIGHT,
+      });
+      let promoted = 0;
+      for (const draft of candidates) {
+        try {
+          const result = this.deps.metaidKnowledgeStore.upsertProcedure({
+            metabotId: metabot.id,
+            title: draft.title,
+            triggerText: draft.title,
+            steps: [draft.description],
+            tags: ['capability-draft', draft.capabilityType],
+            origin: 'dream',
+          });
+          const marked = this.deps.coworkStore.markCapabilityDraftPromoted({
+            id: draft.id,
+            metabotId: metabot.id,
+            procedureId: result.entry.id,
+          });
+          if (marked) promoted += 1;
+        } catch (error) {
+          // A single bad draft never aborts the rest of the batch.
+          console.warn(
+            `[DreamService] Capability draft #${draft.id} promotion failed for metabot ${metabot.id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      if (promoted > 0) {
+        console.log(`[DreamService] Promoted ${promoted} capability draft(s) into procedure memory for metabot ${metabot.id}`);
+      }
+      return { promoted };
+    } catch (error) {
+      console.warn(
+        `[DreamService] Capability promotion pass failed for metabot ${metabot.id}: ${error instanceof Error ? error.message : String(error)}`,
       );
       return zero;
     }

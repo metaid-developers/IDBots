@@ -24,6 +24,19 @@ export interface DreamRunTelemetry {
   diaryTotalRefs?: number;
   validation?: { checked?: number; validated?: number; rejected?: number };
   replay?: { points?: number; lessons?: number; pointsByKind?: Record<string, number> };
+  /**
+   * P2 capability-draft utilization (written since 2026-10-03): validated
+   * drafts on hand, cumulative <proven_techniques> injections, and drafts
+   * injected within the 24h before the run — the "are dream techniques
+   * actually used" evidence. Older runs have no section and render as a gap.
+   */
+  capabilityUtilization?: {
+    validatedDrafts?: number;
+    totalInjections?: number;
+    activeDraftsLast24h?: number;
+  } | null;
+  /** Drafts promoted into procedure memory this run (P2 promotion pass, since 2026-10-03). */
+  promotedCount?: number;
   weeklyLongDream?: boolean;
   durationMs?: number;
 }

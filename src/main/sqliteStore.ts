@@ -525,6 +525,7 @@ export class SqliteStore {
         usage_class TEXT NOT NULL DEFAULT 'profile_fact',
         visibility TEXT NOT NULL DEFAULT 'local_only',
         origin TEXT NOT NULL DEFAULT 'conversation',
+        importance REAL NOT NULL DEFAULT 0.5,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_used_at INTEGER
@@ -601,6 +602,10 @@ export class SqliteStore {
         description TEXT NOT NULL,
         capability_type TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft',
+        times_injected INTEGER NOT NULL DEFAULT 0,
+        last_injected_at INTEGER,
+        promoted_at INTEGER,
+        promoted_procedure_id TEXT,
         created_at INTEGER NOT NULL
       );
     `);
@@ -620,6 +625,23 @@ export class SqliteStore {
       }
       if (!draftCols.includes('validated_at')) {
         this.db.run('ALTER TABLE capability_drafts ADD COLUMN validated_at INTEGER');
+      }
+      // P2 utilization telemetry (Dream-RSI): injection counters for the
+      // <proven_techniques> block, same shape as team_culture_entries.
+      if (!draftCols.includes('times_injected')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN times_injected INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!draftCols.includes('last_injected_at')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN last_injected_at INTEGER');
+      }
+      // P2 promotion back-link: set when the draft was promoted into procedure
+      // memory (metaid_knowledge_procedures). NULL = never promoted; the guard
+      // makes the nightly promotion pass idempotent.
+      if (!draftCols.includes('promoted_at')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN promoted_at INTEGER');
+      }
+      if (!draftCols.includes('promoted_procedure_id')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN promoted_procedure_id TEXT');
       }
     } catch (error) {
       console.warn('migrate capability_drafts validation columns:', error);

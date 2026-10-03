@@ -88,6 +88,50 @@ test('knowledge_recall returns seeded know-how and pitfalls with kind labels', a
   }
 });
 
+test('knowledge_recall include_archived recovers archived entries with a marker, superseded never returns', async () => {
+  const { db, cleanup, knowledgeStore, runner, session } = await setup();
+  try {
+    knowledgeStore.upsertKnowledge({
+      metabotId: 5,
+      topic: '活跃的做法',
+      summary: '还在用的做法。',
+      kind: 'know_how',
+    });
+    const retired = knowledgeStore.upsertKnowledge({
+      metabotId: 5,
+      topic: '过时的坑',
+      summary: '已经归档的坑。',
+      kind: 'pitfall',
+    });
+    knowledgeStore.archiveKnowledge({ id: retired.entry.id, metabotId: 5 });
+    const superseded = knowledgeStore.upsertKnowledge({
+      metabotId: 5,
+      topic: '被替代的结论',
+      summary: '历史版本。',
+      kind: 'principle',
+    });
+    db.run(`UPDATE metaid_knowledge_entries SET status = 'superseded' WHERE id = ?`, [superseded.entry.id]);
+
+    const warm = runner.runKnowledgeRecallTool({}, session.id);
+    assert.equal(warm.isError, false);
+    assert.ok(warm.text.includes('活跃的做法'));
+    assert.ok(!warm.text.includes('过时的坑'), 'archived entries hidden by default');
+    assert.ok(!warm.text.includes('(archived)'));
+
+    const cold = runner.runKnowledgeRecallTool({ include_archived: true }, session.id);
+    assert.equal(cold.isError, false);
+    assert.ok(cold.text.includes('活跃的做法'));
+    assert.ok(cold.text.includes('过时的坑'), 'cold channel recovers the archived entry');
+    const archivedLine = cold.text.split('\n').find((line) => line.includes('过时的坑'));
+    assert.ok(archivedLine.includes('(archived)'), 'archived entry carries the marker');
+    const activeLine = cold.text.split('\n').find((line) => line.includes('活跃的做法'));
+    assert.ok(!activeLine.includes('(archived)'), 'active entry has no marker');
+    assert.ok(!cold.text.includes('被替代的结论'), 'superseded versions are never returned');
+  } finally {
+    cleanup();
+  }
+});
+
 test('knowledge_upsert creates a new entry, then rewrites it on the same topic', async () => {
   const { cleanup, knowledgeStore, runner, session } = await setup();
   try {

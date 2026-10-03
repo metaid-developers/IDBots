@@ -566,3 +566,4 @@ man_base_data_pebble/
 !tests/settingsUnarchiveRefreshStatic.test.mjs
 !tests/coworkDshSessionTitle.test.mjs
 !tests/botBrowserPreviewAct.test.ts
+!tests/memoryUserEditsTool.test.mjs
