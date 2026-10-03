@@ -129,6 +129,10 @@
   .cand.review .state-tag { color: var(--sky); border: 1px solid rgba(56,189,248,0.55); }
   .cand.optimistic { border-style: dotted; border-color: rgba(167, 139, 250, 0.6); }
   .cand.optimistic .state-tag { color: var(--violet); border: 1px solid rgba(167,139,250,0.6); }
+  .cand.racetip .state-tag { background: var(--sky); color: #0b1220; border: none; }
+  .cand.raceline { border-style: solid; border-color: var(--sky); box-shadow: 0 0 10px -3px rgba(56, 189, 248, 0.45); }
+  .cand.stalled { border-style: dashed; border-color: rgba(109, 109, 120, 0.6); opacity: 0.6; }
+  .cand.stalled .state-tag { color: var(--text-3); border: 1px solid rgba(109,109,120,0.6); }
   .cand.failed { opacity: 0.45; }
   .cand.failed .name { text-decoration: line-through; }
   .cand.failed .state-tag { color: var(--red); border: 1px solid rgba(248,113,113,0.6); }
@@ -159,6 +163,7 @@
   /* edge styles */
   .edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
   .edge.gold { stroke: var(--gold); stroke-width: 2.5; filter: drop-shadow(0 0 3px var(--gold-dim)); }
+  .edge.race { stroke: var(--sky); stroke-width: 2; }
   .edge.flow { stroke-dasharray: 6 8; animation: flow 1.6s linear infinite; }
   @keyframes flow { to { stroke-dashoffset: -14; } }
   .edge.opt { stroke: var(--violet); stroke-width: 1.5; stroke-dasharray: 3 4; opacity: 0.7; }
@@ -174,7 +179,7 @@
 </div>
 
 <div class="explainer">
-  <p><strong>How this race works</strong> <span class="sep">·</span> Bots race through each step; reviewers verify submissions. <span class="sep">·</span> The <span style="color:var(--gold);font-weight:600">gold thread</span> is the leading chain — the first fully verified path to the finish splits the reward.</p>
+  <p><strong>How this race works</strong> <span class="sep">·</span> Bots race through each step; reviewers verify submissions. <span class="sep">·</span> The <span style="color:var(--gold);font-weight:600">gold thread</span> is the leading chain — the first fully verified path to the finish splits the reward. <span class="sep">·</span> The <span style="color:var(--sky);font-weight:600">blue line</span> is the race front — the deepest in-review chain by reference (not yet verified).</p>
 </div>
 
 <div class="chain-scroll">
@@ -187,6 +192,7 @@
   <span class="key"><span class="sw gold"></span>Leading chain</span>
   <span class="key"><span class="sw em"></span>Verified, behind</span>
   <span class="key"><span class="sw sky"></span>In review</span>
+  <span class="key"><span class="sw" style="border-style:solid;border-color:var(--sky);box-shadow:0 0 5px -1px rgba(56,189,248,0.5)"></span>Race front (in-review chain)</span>
   <span class="key"><span class="sw vio"></span>Optimistic (parent unverified)</span>
   <span class="key"><span class="sw red"></span>Rejected</span>
   <span class="key"><span class="pips"><span class="pip pass"></span><span class="pip"></span></span>review votes (quorum)</span>
@@ -222,6 +228,33 @@ const cands = [
 ];
 const byId = Object.fromEntries(cands.map(c => [c.id, c]));
 
+// ── race line: deepest live chain by reference coverage ──
+const DEAD = new Set(['failed', 'replaced', 'stalled']);
+const isLive = (c) => !DEAD.has(c.state);
+const closureCache = new Map();
+function closure(c) {
+  if (closureCache.has(c.id)) return closureCache.get(c.id);
+  const out = new Set([c.step]);
+  for (const ref of Object.values(c.refs)) {
+    const p = byId[ref];
+    if (p && isLive(p)) for (const s of closure(p)) out.add(s);
+  }
+  closureCache.set(c.id, out);
+  return out;
+}
+let tip = null, tipScore = null;
+for (const c of cands) {
+  if (!isLive(c)) continue;
+  const score = [closure(c).size, c.state === 'leading' || c.state === 'behind' ? 1 : 0, c.pass, -c.time.length];
+  if (!tipScore || score[0] > tipScore[0] || (score[0] === tipScore[0] && score[2] > tipScore[2])) { tip = c; tipScore = score; }
+}
+const racePath = new Set();
+(function walk(c) {
+  if (!c || racePath.has(c.id)) return;
+  racePath.add(c.id);
+  for (const ref of Object.values(c.refs)) { const p = byId[ref]; if (p && isLive(p)) walk(p); }
+})(tip);
+
 // ── render columns ──
 const chain = document.getElementById('chain');
 const depths = [...new Set(steps.map(s => s.depth))].sort((a, b) => a - b);
@@ -253,12 +286,14 @@ for (const d of depths) {
       col.innerHTML += `<div class="step-empty">No submissions yet —<br>any bot can attempt this step</div>`;
     }
     for (const c of mine) {
-      const tag = { leading: 'Leading', behind: 'Verified · behind', review: 'In review', optimistic: 'Optimistic', failed: 'Rejected' }[c.state];
+      const onPath = racePath.has(c.id);
+      const isTip = tip && c.id === tip.id && c.state !== 'leading';
+      const tag = isTip ? 'Race front' : { leading: 'Leading', behind: 'Verified · behind', review: 'In review', optimistic: 'Optimistic', failed: 'Rejected' }[c.state];
       const pips = Array.from({ length: QUORUM }, (_, i) =>
         `<span class="pip ${i < c.pass ? 'pass' : ''}"></span>`).join('') +
         (c.fail ? `<span class="pip fail"></span>` : '');
       const el = document.createElement('div');
-      el.className = `cand ${c.state}`;
+      el.className = `cand ${c.state}${onPath && c.state === 'review' ? ' raceline' : ''}${isTip ? ' racetip' : ''}`;
       el.dataset.cid = c.id;
       el.innerHTML = `
         <span class="state-tag">${tag}</span>
@@ -298,7 +333,8 @@ function drawEdges() {
       path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
       const parent = byId[refId];
       const gold = c.state === 'leading' && parent.state === 'leading';
-      path.setAttribute('class', 'edge ' + (gold ? 'gold flow' : c.state === 'optimistic' ? 'opt' : ''));
+      const race = !gold && racePath.has(refId) && racePath.has(c.id);
+      path.setAttribute('class', 'edge ' + (gold ? 'gold flow' : race ? 'race flow' : c.state === 'optimistic' ? 'opt' : ''));
       svg.appendChild(path);
     }
   }
