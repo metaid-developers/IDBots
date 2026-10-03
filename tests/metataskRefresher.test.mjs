@@ -394,6 +394,30 @@ test('dirty key: a body change with identical pin ids and heights flips the key'
   );
 });
 
+test('dirty key: the projection-format salt invalidates pre-upgrade keys', () => {
+  const events = [
+    { pinId: TREE_PIN, path: 'tree', author: PUBLISHER, height: 189_900, txIndex: 0, timestampMs: T0, body: JSON.parse(Buffer.from(treeItem().contentBody, 'base64').toString('utf-8')) },
+    { pinId: TASK_PIN, path: 'task', author: PUBLISHER, height: 189_901, txIndex: 0, timestampMs: T0, body: JSON.parse(Buffer.from(taskItem().contentBody, 'base64').toString('utf-8')) },
+  ];
+  const taskSet = taskEventSet(events, { rootPinId: TASK_PIN });
+
+  // Reconstruct the pre-salt recipe inline (what an older build would have
+  // stored): identical events, no formatVersion member.
+  const legacyKey = sha256Hex(
+    canonJ({
+      confirmed: taskSet.hashEntries,
+      unconfirmed: taskSet.mempoolPinIds,
+      bodies: taskSet.scoped
+        .map((pin) => ({ pinId: pin.pinId, bodyHash: sha256Hex(canonJ(pin.body)) }))
+        .sort((a, b) => (a.pinId < b.pinId ? -1 : a.pinId > b.pinId ? 1 : 0)),
+      rosterPin: null,
+    })
+  );
+  assert.notEqual(taskDirtyKey(taskSet), legacyKey);
+  // ...and the salted key is still stable for identical inputs.
+  assert.equal(taskDirtyKey(taskSet), taskDirtyKey(taskEventSet(JSON.parse(JSON.stringify(events)), { rootPinId: TASK_PIN })));
+});
+
 // ── content recovery: end-to-end self-heal ───────────────────────────────────
 
 const BIG_TREE_PIN = 'treebig0000001i0';

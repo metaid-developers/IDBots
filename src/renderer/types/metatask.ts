@@ -218,6 +218,8 @@ export interface MetaTaskBoardTask {
   brief: string;
   publisher: string;
   tags: string[];
+  /** Execution mode (absent on legacy cached rows ⇒ treat as "tree"). */
+  mode?: 'tree' | 'competitive';
   taskComplete: boolean;
   /** v1.3 adds `satisfied` (mode completion predicate count); absent on
    * projections cached before v1.3. */

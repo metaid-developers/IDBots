@@ -476,6 +476,7 @@ export class MetaTaskProjectionStore {
           brief: projection.brief,
           publisher: projection.publisher,
           tags: projection.tags,
+          mode: projection.policy.mode === 'competitive' ? 'competitive' : 'tree',
           taskComplete: projection.taskComplete,
           progress: projection.progress,
           participantCount: projection.participants.length,

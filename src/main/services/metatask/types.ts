@@ -323,6 +323,9 @@ export interface MetaTaskBoardTask {
   brief: string;
   publisher: string;
   tags: string[];
+  /** The task's execution mode (absent policy.mode ⇒ "tree"). Drives the
+   * board card's participation draft wording (claim flow vs fork race). */
+  mode: 'tree' | 'competitive';
   taskComplete: boolean;
   progress: { total: number; verified: number; claimed: number; open: number; disputed: number; satisfied?: number };
   participantCount: number;

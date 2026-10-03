@@ -79,9 +79,9 @@ const mineKindText: Record<MineItemKind, string> = {
   voted: 'dark:text-claude-darkTextSecondary text-claude-textSecondary',
 };
 
-const participateDraft = (title: string, rootPinId: string, nodeHint?: string | null): void => {
+const participateDraft = (title: string, rootPinId: string, nodeHint?: string | null, competitive = false): void => {
   const text = i18nService
-    .t('metatask.participateDraft')
+    .t(competitive ? 'metatask.participateDraftCompetitive' : 'metatask.participateDraft')
     .replace('{title}', title)
     .replace('{root}', rootPinId)
     .replace(
@@ -163,6 +163,7 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
     a.id.localeCompare(b.id, undefined, { numeric: true })
   );
   const openNodes = nodes.filter((node) => node.status === 'open');
+  const isCompetitive = detail.policy.mode === 'competitive';
   const rootNode = nodes.find((node) => node.parent === null);
   const lifeStatus = metaTaskLifeStatus({
     taskComplete: detail.taskComplete,
@@ -347,7 +348,7 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
           {!detail.taskComplete && (
             <button
               type="button"
-              onClick={() => participateDraft(detail.title, detail.rootPinId, openNodes[0]?.id ?? null)}
+              onClick={() => participateDraft(detail.title, detail.rootPinId, openNodes[0]?.id ?? null, isCompetitive)}
               className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg btn-idchat-primary-filled"
             >
               <BoltIcon className="h-4 w-4" />
@@ -366,18 +367,18 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4">
         {/* How to join: open nodes as one-click participation candidates */}
         {!detail.taskComplete && openNodes.length > 0 && (
-          <section className="rounded-xl border border-brand/30 bg-brand/5 px-3 py-2.5">
-            <div className="text-xs font-medium text-brand">{i18nService.t('metatask.howToJoin')}</div>
+          <section className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2.5">
+            <div className="text-xs font-medium text-sky-700 dark:text-sky-300">{i18nService.t('metatask.howToJoin')}</div>
             <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-              {i18nService.t('metatask.howToJoinHint').replace('{count}', String(openNodes.length))}
+              {i18nService.t(isCompetitive ? 'metatask.howToJoinHintCompetitive' : 'metatask.howToJoinHint').replace('{count}', String(openNodes.length))}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {openNodes.slice(0, 6).map((node) => (
                 <button
                   key={node.id}
                   type="button"
-                  onClick={() => participateDraft(detail.title, detail.rootPinId, node.id)}
-                  className="inline-flex items-center gap-1.5 max-w-[200px] px-2 py-1 text-xs rounded-lg border border-brand/40 text-brand hover:bg-brand/10 transition-colors"
+                  onClick={() => participateDraft(detail.title, detail.rootPinId, node.id, isCompetitive)}
+                  className="inline-flex items-center gap-1.5 max-w-[200px] px-2 py-1 text-xs rounded-lg border border-sky-500/50 text-sky-700 dark:text-sky-300 hover:bg-sky-500/10 transition-colors"
                 >
                   <span className="font-mono shrink-0">{node.id}</span>
                   <span className="truncate">{node.title}</span>
@@ -498,7 +499,7 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
                         <span className="inline-flex items-center gap-1.5">
                           <MetaIdBadge metaId={participant.metaId} identities={identities} compact />
                           {rosterIds.has(participant.metaId) && (
-                            <span className="text-[11px] text-brand">{i18nService.t('metatask.mineTag')}</span>
+                            <span className="text-[11px] text-sky-600 dark:text-sky-400">{i18nService.t('metatask.mineTag')}</span>
                           )}
                         </span>
                       </td>
