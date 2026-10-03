@@ -1306,6 +1306,18 @@ interface ActiveSession {
   /** When true, this session will not read/write persistent user memories. */
   disableMemoryUpdates?: boolean;
   /**
+   * Read-only memory mode (paid order execution): the volatile READ injection
+   * (self-identity + experience + scoped memory blocks) and the read-only
+   * recall tools (experience_recall / knowledge_recall / procedure_recall /
+   * memory_user_edits list) stay available so the served customer gets the
+   * same dream-aligned persona as any other channel, while every WRITE stays
+   * disabled — the turn-end memory update, memory_user_edits add/update/
+   * delete, and the knowledge/procedure creator tools. Unlike
+   * disableMemoryUpdates (a full blackout for orchestrator sessions), the bot
+   * keeps reading "who it is" and its past work reviews.
+   */
+  memoryReadOnly?: boolean;
+  /**
    * M4 nightly study session marker: when set, the inline tool surface is
    * restricted to the learning allowlist (search_metaweb / read_metaweb_pin /
    * knowledge_base_* / procedure_* / knowledge_upsert) — on-chain writes,
@@ -1515,7 +1527,12 @@ const SERVICE_ORDER_A2A_SYSTEM_PROMPT_PROFILE: SystemPromptProfile = {
   id: 'service_order_a2a',
   workspaceSafetyMode: 'compact',
   localTimeMode: 'compact',
-  includeMemoryPromptBlocks: false,
+  // Memory READ injection restored for paid order turns (audit P1): the order
+  // session's memoryReadOnly gate keeps every write off while the volatile
+  // self-identity/experience/scoped-memory blocks align the served behavior
+  // with the bot's self-cognition. The Memory STRATEGY section (which carries
+  // the write invitations) stays off, as does the compact MetaWeb guidance.
+  includeMemoryPromptBlocks: true,
   includeMemoryStrategy: false,
   metawebMode: 'compact',
 };
@@ -3143,15 +3160,33 @@ export class CoworkRunner extends EventEmitter {
     };
   }
 
-  private isSessionMemoryEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
+  /**
+   * READ gate for the session memory surface: volatile injection (scoped
+   * memory blocks, self-identity + experience) and the read-only recall
+   * tools. disableMemoryUpdates blocks reads too (orchestrator blackout);
+   * memoryReadOnly does NOT — reads are its whole point.
+   */
+  private isSessionMemoryReadEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
     const target = activeSession ?? this.activeSessions.get(sessionId);
     if (target?.disableMemoryUpdates) return false;
     return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
   }
 
+  /**
+   * WRITE gate for the session memory surface: the turn-end memory update and
+   * every mutating tool (memory_user_edits add/update/delete, knowledge_upsert,
+   * procedure_save/archive, KB feeding tools). disableMemoryUpdates and
+   * memoryReadOnly both block writes; only a fully-enabled session writes.
+   */
+  private isSessionMemoryWriteEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
+    const target = activeSession ?? this.activeSessions.get(sessionId);
+    if (target?.disableMemoryUpdates || target?.memoryReadOnly) return false;
+    return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
+  }
+
   private applyTurnMemoryUpdatesForSession(sessionId: string): void {
     const policy = this.getSessionMemoryPolicy(sessionId);
-    if (!policy.memoryEnabled || !this.isSessionMemoryEnabled(sessionId)) {
+    if (!policy.memoryEnabled || !this.isSessionMemoryWriteEnabled(sessionId)) {
       return;
     }
 
@@ -3279,7 +3314,7 @@ export class CoworkRunner extends EventEmitter {
   ): string {
     const session = this.store.getSession(sessionId);
     const memoryPolicy = this.getSessionMemoryPolicy(sessionId);
-    const memoryEnabled = options?.enabled ?? this.isSessionMemoryEnabled(sessionId);
+    const memoryEnabled = options?.enabled ?? this.isSessionMemoryReadEnabled(sessionId);
     if (!memoryEnabled) {
       return '';
     }
@@ -3924,6 +3959,22 @@ export class CoworkRunner extends EventEmitter {
           failedCount: 1,
           changedIds: [],
           reason: 'could not resolve MetaBot for session',
+        }),
+        isError: true,
+      };
+    }
+    if (args.action !== 'list' && !this.isSessionMemoryWriteEnabled(sessionId)) {
+      // Read-only sessions (paid order execution) keep the list action (incl.
+      // the include_archived cold channel) but every mutation is rejected —
+      // the same write blackout disableMemoryUpdates implies, enforced here
+      // too so the host-tool dispatch path cannot bypass registration gating.
+      return {
+        text: this.formatMemoryUserEditsResult({
+          action: args.action,
+          successCount: 0,
+          failedCount: 1,
+          changedIds: [],
+          reason: 'memory writes are disabled for this session (read-only memory mode)',
         }),
         isError: true,
       };
@@ -6677,6 +6728,13 @@ export class CoworkRunner extends EventEmitter {
       systemPrompt?: string;
       autoApprove?: boolean;
       disableMemoryUpdates?: boolean;
+      /**
+       * Paid-order execution mode: memory READS (volatile self-identity /
+       * experience / scoped-memory injection and the read-only recall tools)
+       * stay on, memory WRITES (turn-end update + mutating tools) stay off.
+       * Mutually exclusive with disableMemoryUpdates (full blackout).
+       */
+      memoryReadOnly?: boolean;
       /** M4 nightly study session: restrict inline tools to the learning allowlist and cap metaweb-source KB adds at pinBudget. */
       metawebStudySession?: { pinBudget: number; kind?: 'topic' | 'qa-surf'; kbAddsUsed?: number };
   /**
@@ -6801,6 +6859,7 @@ export class CoworkRunner extends EventEmitter {
       disableRemoteServicesPrompt: Boolean(options.disableRemoteServicesPrompt),
       autoApprove: options.autoApprove ?? false,
       disableMemoryUpdates: Boolean(options.disableMemoryUpdates),
+      memoryReadOnly: Boolean(options.memoryReadOnly),
       metawebStudySession: options.metawebStudySession,
       metawebSurfSession: options.metawebSurfSession,
       permissionMode: options.permissionMode ?? session.permissionMode ?? 'default',
@@ -6829,7 +6888,10 @@ export class CoworkRunner extends EventEmitter {
       // at the head of the system prompt, so a live DB re-read per turn would let
       // any mid-session persona edit break DeepSeek's cached prefix.
       activeSession.personaBlock = personaBlock;
-      const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
+      // The Memory STRATEGY section carries the write invitations, so it
+      // follows the WRITE gate: a memoryReadOnly session keeps reads without
+      // being told to persist facts it cannot persist.
+      const sessionMemoryEnabled = this.isSessionMemoryWriteEnabled(sessionId, activeSession);
       // Only session-invariant blocks belong in the system prompt. The hot-layer
       // experience injection (self-identity + dream summaries, rewritten nightly)
       // rides the current user message via buildVolatileContextPrompt instead.
@@ -6957,7 +7019,10 @@ export class CoworkRunner extends EventEmitter {
       // Reuse the persona block frozen at session start (see startSession); fall
       // back to a fresh read only if this active session predates the freeze.
       const personaBlock = activeSession.personaBlock ?? this.buildMetabotPersonaBlock(sessionId);
-      const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
+      // The Memory STRATEGY section carries the write invitations, so it
+      // follows the WRITE gate: a memoryReadOnly session keeps reads without
+      // being told to persist facts it cannot persist.
+      const sessionMemoryEnabled = this.isSessionMemoryWriteEnabled(sessionId, activeSession);
       // Only session-invariant blocks belong in the system prompt. The hot-layer
       // experience injection (self-identity + dream summaries, rewritten nightly)
       // rides the current user message via buildVolatileContextPrompt instead.
@@ -8437,7 +8502,7 @@ export class CoworkRunner extends EventEmitter {
       const volatileBlocks = await this.buildVolatileContextPrompt(
         sessionId,
         prompt,
-        this.isSessionMemoryEnabled(sessionId, activeSession),
+        this.isSessionMemoryReadEnabled(sessionId, activeSession),
         systemPromptProfile,
         activeSession.disableRemoteServicesPrompt
       )
@@ -9603,7 +9668,11 @@ export class CoworkRunner extends EventEmitter {
    * registration time.
    */
   private buildSessionInlineTools(sessionId: string, tool: any, activeSession?: ActiveSession): any[] {
-    const sessionMemoryEnabled = this.isSessionMemoryEnabled(sessionId, activeSession);
+    // Read/write split (audit P1): a memoryReadOnly session (paid order
+    // execution) mounts the recall tools but none of the mutating ones;
+    // disableMemoryUpdates mounts neither (legacy orchestrator blackout).
+    const sessionMemoryReadEnabled = this.isSessionMemoryReadEnabled(sessionId, activeSession);
+    const sessionMemoryWriteEnabled = this.isSessionMemoryWriteEnabled(sessionId, activeSession);
     const memoryTools: any[] = [
       tool(
         'conversation_search',
@@ -9790,19 +9859,24 @@ export class CoworkRunner extends EventEmitter {
         )
       );
     }
-    if (sessionMemoryEnabled) {
+    if (sessionMemoryReadEnabled) {
       // The write-invitation clause follows memoryImplicitUpdateEnabled (off =
       // explicit user requests only; on = proactive durable-fact capture). The
       // Memory Strategy prompt rule mirrors this — keep the two consistent.
-      const memoryWritesInvitation = this.getSessionMemoryPolicy(sessionId).memoryImplicitUpdateEnabled
-        ? 'Use when the user states a durable fact ("I always want X", "记住我做的是 Y") or you discover one worth persisting.'
-        : 'Use only when the user explicitly asks to remember, update, list, or delete memory facts.';
+      // A read-only session instead gets a list-only description AND a
+      // list-only action enum, so the model physically cannot phrase a write.
+      const memoryReadOnly = !sessionMemoryWriteEnabled;
+      const memoryWritesInvitation = memoryReadOnly
+        ? 'This session is READ-ONLY for memories: only action=list is available — add/update/delete are rejected.'
+        : this.getSessionMemoryPolicy(sessionId).memoryImplicitUpdateEnabled
+          ? 'Use when the user states a durable fact ("I always want X", "记住我做的是 Y") or you discover one worth persisting.'
+          : 'Use only when the user explicitly asks to remember, update, list, or delete memory facts.';
       memoryTools.push(
         tool(
           'memory_user_edits',
           `Manage the current user's long-term memories — durable facts about them (role, preferences, ongoing projects) persisting across sessions. Record only non-obvious, durable facts, never ephemeral chat/task state. action=list (filter by query/status/limit; include_archived=true is the cold channel that also returns hygiene-archived rows, each marked (archived) — archived rows are excluded by default); add (requires text); update by id (requires text); delete by id. ${memoryWritesInvitation} List first to avoid duplicates; do not write every turn; when unsure whether a fact is durable, ASK rather than guess. Writes are persistent state.`,
           {
-            action: z.enum(['list', 'add', 'update', 'delete']),
+            action: memoryReadOnly ? z.enum(['list']) : z.enum(['list', 'add', 'update', 'delete']),
             id: z.string().optional(),
             text: z.string().optional(),
             confidence: z.number().min(0).max(1).optional(),
@@ -9851,7 +9925,7 @@ export class CoworkRunner extends EventEmitter {
         )
       );
     }
-    if (sessionMemoryEnabled && this.experienceStore) {
+    if (sessionMemoryReadEnabled && this.experienceStore) {
       memoryTools.push(
         tool(
           'experience_recall',
@@ -9873,7 +9947,7 @@ export class CoworkRunner extends EventEmitter {
         )
       );
     }
-    if (sessionMemoryEnabled && getChainContentHistoryStore()) {
+    if (sessionMemoryReadEnabled && getChainContentHistoryStore()) {
       memoryTools.push(
         tool(
           'chain_history_recall',
@@ -9895,7 +9969,7 @@ export class CoworkRunner extends EventEmitter {
         )
       );
     }
-    if (sessionMemoryEnabled && this.knowledgeStore) {
+    if (sessionMemoryReadEnabled && this.knowledgeStore) {
       // Tool-mount tightening (design 2026-09-27, decision 2A): recall tools
       // mount only when the bot already has content to recall; the creator
       // tools (knowledge_upsert / procedure_save) stay mounted so the first
@@ -9940,6 +10014,7 @@ export class CoworkRunner extends EventEmitter {
         )
       );
       }
+      if (sessionMemoryWriteEnabled) {
       memoryTools.push(
         tool(
           'knowledge_upsert',
@@ -9960,6 +10035,7 @@ export class CoworkRunner extends EventEmitter {
           }
         )
       );
+      }
       if (hasProcedures) {
       memoryTools.push(
         tool(
@@ -9980,6 +10056,7 @@ export class CoworkRunner extends EventEmitter {
         )
       );
       }
+      if (sessionMemoryWriteEnabled) {
       memoryTools.push(
         tool(
           'procedure_save',
@@ -10002,7 +10079,8 @@ export class CoworkRunner extends EventEmitter {
           }
         )
       );
-      if (hasProcedures) {
+      }
+      if (sessionMemoryWriteEnabled && hasProcedures) {
       memoryTools.push(
         tool(
           'procedure_archive',
@@ -10571,14 +10649,14 @@ export class CoworkRunner extends EventEmitter {
     // citation-queried at runtime (knowledge_base_query) and fed by
     // knowledge_base_add_document + knowledge_base_learn. The acting bot is
     // resolved from the session, with the same strict no-guess attribution as
-    // the memory/knowledge tools. Gated on sessionMemoryEnabled like every
-    // other memory-surface tool: the <knowledge_bases> prompt block already
-    // hides when memory is off, and the tools must not stay callable behind
-    // it — knowledge_base_learn(full:true) rebuilds whole indexes. M4 study
-    // sessions additionally get a budget-counting wrapper: metaweb-source
-    // adds are hard-capped at the job's pin budget (prompt guidance alone is
-    // not a budget).
-    if (sessionMemoryEnabled && this.knowledgeBase) {
+    // the memory/knowledge tools. Gated on the memory WRITE gate like every
+    // other mutating memory-surface tool: the bundle's whole purpose is
+    // feeding the stores, and knowledge_base_learn(full:true) rebuilds whole
+    // indexes — so a read-only session must not see even the query half
+    // behind a hidden write surface. M4 study sessions additionally get a
+    // budget-counting wrapper: metaweb-source adds are hard-capped at the
+    // job's pin budget (prompt guidance alone is not a budget).
+    if (sessionMemoryWriteEnabled && this.knowledgeBase) {
       const studySession = this.activeSessions.get(sessionId)?.metawebStudySession;
       const surfKbSession = this.activeSessions.get(sessionId)?.metawebSurfSession;
       const kbBudget = studySession?.pinBudget ?? surfKbSession?.kbBudget;
@@ -10621,7 +10699,7 @@ export class CoworkRunner extends EventEmitter {
     // The legacy metaweb_qa_surf_* aliases register only when the surf
     // control is also wired — a study-only embedding keeps the topic tools
     // (review P3: the two controls must not be hard-coupled).
-    if (sessionMemoryEnabled && this.metawebStudy) {
+    if (sessionMemoryWriteEnabled && this.metawebStudy) {
       memoryTools.push(
         ...buildMetawebStudyAgentTools({
           tool,
@@ -10924,7 +11002,7 @@ export class CoworkRunner extends EventEmitter {
     const volatileBlocks = await this.buildVolatileContextPrompt(
       sessionId,
       prompt,
-      this.isSessionMemoryEnabled(sessionId, activeSession),
+      this.isSessionMemoryReadEnabled(sessionId, activeSession),
       systemPromptProfile,
       activeSession.disableRemoteServicesPrompt
     );
@@ -11006,7 +11084,7 @@ export class CoworkRunner extends EventEmitter {
       cwd: cwdMapping.guestPath,
       workspaceRoot: cwdMapping.guestPath,
       hostWorkspaceRoot: cwdMapping.hostPath,
-      memoryEnabled: this.isSessionMemoryEnabled(sessionId, activeSession),
+      memoryEnabled: this.isSessionMemoryWriteEnabled(sessionId, activeSession),
       twinOrchestrationEnabled: Boolean(this.listLocalWorkers && this.isTwinSession(sessionId)),
       autoApprove: Boolean(activeSession.autoApprove),
       confirmationMode: activeSession.confirmationMode,
@@ -11557,7 +11635,7 @@ export class CoworkRunner extends EventEmitter {
       cwd: cwdMapping.guestPath,
       workspaceRoot: cwdMapping.guestPath,
       hostWorkspaceRoot: cwdMapping.hostPath,
-      memoryEnabled: this.isSessionMemoryEnabled(sessionId, activeSession),
+      memoryEnabled: this.isSessionMemoryWriteEnabled(sessionId, activeSession),
       twinOrchestrationEnabled: Boolean(this.listLocalWorkers && this.isTwinSession(sessionId)),
       autoApprove: Boolean(activeSession.autoApprove),
       confirmationMode: activeSession.confirmationMode,

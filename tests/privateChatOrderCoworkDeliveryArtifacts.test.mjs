@@ -589,8 +589,19 @@ test('runOrder isolates concurrent same-peer orders into separate execution sess
   assert.notEqual(firstExecutionSessionId, secondExecutionSessionId);
   assert.equal(store.hiddenSessionIds.has(firstExecutionSessionId), true);
   assert.equal(store.hiddenSessionIds.has(secondExecutionSessionId), true);
-  assert.equal(runner.startSessionCalls[0].options.disableMemoryUpdates, true);
-  assert.equal(runner.startSessionCalls[1].options.disableMemoryUpdates, true);
+  // Audit P1: order execution runs in READ-ONLY memory mode — volatile read
+  // injection and recall tools stay on, writes stay off (not the full
+  // disableMemoryUpdates blackout orchestrator sessions use).
+  assert.equal(runner.startSessionCalls[0].options.memoryReadOnly, true);
+  assert.equal(runner.startSessionCalls[1].options.memoryReadOnly, true);
+  assert.notEqual(runner.startSessionCalls[0].options.disableMemoryUpdates, true);
+  assert.notEqual(runner.startSessionCalls[1].options.disableMemoryUpdates, true);
+  // Each execution session carries the metaweb_order mapping so the read-only
+  // memory injection resolves the external (privacy-filtered) memory scope.
+  assert.deepEqual(
+    store.mappingCalls.filter((m) => m.channel === 'metaweb_order').map((m) => m.coworkSessionId).sort(),
+    [firstExecutionSessionId, secondExecutionSessionId].sort(),
+  );
 
   runner.emit('message', firstExecutionSessionId, {
     id: 'assistant-first',

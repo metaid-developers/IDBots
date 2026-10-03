@@ -568,3 +568,4 @@ man_base_data_pebble/
 !tests/coworkDshSessionTitle.test.mjs
 !tests/botBrowserPreviewAct.test.ts
 !tests/memoryUserEditsTool.test.mjs
+!tests/orderMemoryReadOnly.test.mjs

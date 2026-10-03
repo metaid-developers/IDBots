@@ -232,7 +232,12 @@ export class PrivateChatOrderCowork extends EventEmitter {
       systemPrompt: this.buildSystemPromptForRun(sessionId, request),
       skillIds: request.activeSkillIds,
       autoApprove: true,
-      disableMemoryUpdates: true,
+      // Audit P1: memory READS restored (volatile self-identity / experience /
+      // scoped-memory injection + recall tools) so the paying customer is
+      // served by the same dream-aligned persona as every other channel;
+      // WRITES stay disabled (read-only mode — no turn-end memory update, no
+      // mutating memory tools) to keep order turns from polluting memory.
+      memoryReadOnly: true,
       disableRemoteServicesPrompt: true,
     });
     this.setAccumulatorRunPromise(sessionId, startPromise);
@@ -317,6 +322,18 @@ export class PrivateChatOrderCowork extends EventEmitter {
     if (typeof this.coworkStore.setSessionHiddenFromList === 'function') {
       this.coworkStore.setSessionHiddenFromList(session.id, true);
     }
+    // Same metaweb_order mapping createOrderSession writes: without it the
+    // memory scope resolver reads this execution session as cowork_ui, and
+    // the read-only memory injection (audit P1) would render OWNER profile
+    // facts into a paying external customer's turn. With the mapping the
+    // external-channel privacy filter applies (conversation-scoped memories
+    // + external_safe operational preferences only).
+    this.coworkStore.upsertConversationMapping({
+      channel: 'metaweb_order',
+      externalConversationId: request.externalConversationId,
+      metabotId: request.metabotId,
+      coworkSessionId: session.id,
+    });
     return session.id;
   }
 
@@ -690,7 +707,8 @@ export class PrivateChatOrderCowork extends EventEmitter {
           systemPrompt: this.buildSystemPromptForRun(sessionId, request),
           skillIds: this.normalizeActiveSkillIds(request?.activeSkillIds),
           autoApprove: true,
-          disableMemoryUpdates: true,
+          // Same read-only memory mode as the initial run (see runOrder).
+          memoryReadOnly: true,
           disableRemoteServicesPrompt: true,
         });
       } catch (error) {
