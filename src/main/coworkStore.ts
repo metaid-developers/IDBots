@@ -108,6 +108,16 @@ const DEFAULT_MEMORY_USER_MEMORIES_MAX_ITEMS = 30; // quota audit 2026-09-17 (F1
 const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;
 const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 120; // quota audit 2026-09-17 (F1): was 60
 const MEMORY_NEAR_DUPLICATE_MIN_SCORE = 0.82;
+/**
+ * Cross-night dream-write dedup (memory/persona audit P1): the bar sits below
+ * MEMORY_NEAR_DUPLICATE_MIN_SCORE because dream distillations reword the same
+ * rule much more freely than a same-scope restatement (production evidence:
+ * one「付费写链授权硬规则」rule came back as three wording variants across
+ * three nights).
+ */
+const DREAM_CROSS_NIGHT_DEDUP_MIN_SCORE = 0.75;
+/** Incoming dream text replaces the stored wording only when materially richer. */
+const DREAM_DEDUP_REPLACE_TEXT_MIN_LENGTH_RATIO = 1.3;
 const MEMORY_OPERATIONAL_PREFERENCE_RE = /(默认语言|回复格式|输出风格|回复风格|尽量简洁|保持简短|reply(?:\s+in)?|respond(?:\s+in)?|language|format|style|tone|markdown|concise|brief)/i;
 const MEMORY_PREFERENCE_RE = /(偏好|喜欢|prefer|preference|likes?|dislikes?)/i;
 const SCOPED_USER_MEMORIES_BACKFILL_KEY = 'userMemories.scopeBackfill.v1.completed';
@@ -7111,6 +7121,109 @@ export class CoworkStore implements MemoryBackend {
     const result = this.createOrReviveUserMemory(input);
     this.saveDb();
     return result.memory;
+  }
+
+  /**
+   * Dream-only creation with cross-night semantic dedup (memory/persona audit
+   * P1). The dream pipeline wrote every entry with forceNew — "authoritative
+   * per-date batches" — so the SAME rule kept coming back night after night
+   * with fresh wording and piled up as near-duplicate rows (~12-15% of all
+   * active memories in production), diluting the injection budget and
+   * bloating the belief layer. This entry point first scans the bot's ACTIVE
+   * memories of the same scope and usage class for a semantic match, using
+   * the same normalizeMemorySemanticKey + scoreMemorySimilarity pair the
+   * revive path uses (CJK-safe: character-bigram Dice plus word-level token
+   * overlap), at the dream-specific DREAM_CROSS_NIGHT_DEDUP_MIN_SCORE bar.
+   * On a hit the old row is REFRESHED instead of inserting a new one:
+   *   - updated_at = now — corroboration keeps the row inside the
+   *     recency-ordered candidate pools instead of aging out of them;
+   *   - importance = MAX(stored, what the incoming write would derive) — a
+   *     corroborated rule never loses standing;
+   *   - the producing night is appended to user_memory_sources (one
+   *     provenance row per night, same as a fresh write would add);
+   *   - text: the stored wording wins by default (a stable row keeps the
+   *     prompt surface stable); it is replaced only when the incoming text
+   *     is materially richer (>=30% longer), which also re-derives the
+   *     fingerprint. confidence / is_explicit / origin stay as stored.
+   * Same-day batch semantics are untouched: softDeleteDreamMemoriesForDate
+   * runs before the night's writes, so just-deleted same-date rows are
+   * invisible to this scan (status != 'created'); a re-dreamed day still
+   * rewrites its own batch. Archived rows are deliberately NOT match
+   * targets — bringing those back stays with the revive path. On a miss the
+   * write falls through to the legacy forceNew insert.
+   */
+  createDreamUserMemory(input: MemoryCreateUserMemoryInput): { memory: CoworkUserMemory; merged: boolean } {
+    const normalizedText = truncate(normalizeMemoryText(input.text), maxMemoryTextChars(input.usageClass));
+    if (!normalizedText) {
+      throw new Error('Memory text is required');
+    }
+    const metabotId = input.metabotId;
+    const scope = this.resolveMemoryScopeSelector(input);
+    const usageClass = input.usageClass ?? null;
+    const incomingKey = normalizeMemorySemanticKey(normalizedText);
+    if (incomingKey && usageClass) {
+      const candidates = this.getAll<CoworkUserMemoryRow>(`
+        SELECT ${MEMORY_ROW_SELECT_COLUMNS}
+        FROM user_memories
+        WHERE metabot_id = ? AND scope_kind = ? AND scope_key = ?
+          AND usage_class = ? AND status = 'created' AND archived_at IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 200
+      `, [metabotId, scope.kind, scope.key, usageClass]);
+      let bestCandidate: CoworkUserMemoryRow | null = null;
+      let bestScore = 0;
+      for (const candidate of candidates) {
+        const candidateKey = normalizeMemorySemanticKey(candidate.text);
+        if (!candidateKey) continue;
+        const score = scoreMemorySimilarity(candidateKey, incomingKey);
+        if (score <= bestScore) continue;
+        bestScore = score;
+        bestCandidate = candidate;
+      }
+      if (bestCandidate && bestScore >= DREAM_CROSS_NIGHT_DEDUP_MIN_SCORE) {
+        const mergedText = normalizedText.length >= Math.ceil(bestCandidate.text.length * DREAM_DEDUP_REPLACE_TEXT_MIN_LENGTH_RATIO)
+          ? normalizedText
+          : bestCandidate.text;
+        const mergedImportance = Math.max(
+          clampMemoryImportance(bestCandidate.importance),
+          input.importance !== undefined
+            ? clampMemoryImportance(input.importance)
+            : deriveMemoryImportance({
+              usageClass,
+              origin: 'dream',
+              isExplicit: input.isExplicit === true,
+            }),
+        );
+        this.db.run(`
+          UPDATE user_memories
+          SET text = ?, fingerprint = ?, updated_at = ?, importance = ?
+          WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
+        `, [
+          mergedText,
+          buildMemoryFingerprint(mergedText),
+          Date.now(),
+          mergedImportance,
+          bestCandidate.id,
+          metabotId,
+          scope.kind,
+          scope.key,
+        ]);
+        this.addMemorySource(bestCandidate.id, metabotId, input.source);
+        this.saveDb();
+        const memory = this.getOne<CoworkUserMemoryRow>(`
+          SELECT ${MEMORY_ROW_SELECT_COLUMNS}
+          FROM user_memories
+          WHERE id = ?
+        `, [bestCandidate.id]);
+        if (!memory) {
+          throw new Error('Failed to reload merged dream memory');
+        }
+        return { memory: this.mapMemoryRow(memory), merged: true };
+      }
+    }
+    const created = this.createOrReviveUserMemory({ ...input, forceNew: true });
+    this.saveDb();
+    return { memory: created.memory, merged: false };
   }
 
   /**

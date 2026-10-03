@@ -433,3 +433,209 @@ test('restoreMissingSelfIdentities revives the newest deleted identity only', as
     cleanup();
   }
 });
+
+test('cross-night dream dedup: a near-duplicate write refreshes the old row instead of inserting', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = createCoworkStore(db);
+    const { DreamStore } = await import('../dist-electron/main/dreamStore.js').catch(() => import('../dist-electron/main/dreamStore.js'));
+    new DreamStore(db, () => {}); // ensures the dream_date column exists
+
+    const dreamSource = (dreamDate) => ({ sourceType: 'dream', sourceChannel: 'dream', dreamDate });
+    const night1Text = '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付';
+    const night1 = store.createDreamUserMemory({
+      metabotId: 5, text: night1Text, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true, importance: 0.95,
+      source: dreamSource('2026-09-30'),
+    });
+    assert.equal(night1.merged, false, 'the first night inserts a fresh row');
+    const before = db.exec('SELECT updated_at FROM user_memories WHERE id = ?', [night1.memory.id])[0].values[0][0];
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Night 2: the same hard rule with one clause appended (scores 1.0 by
+    // token containment) — must merge, never duplicate.
+    const night2 = store.createDreamUserMemory({
+      metabotId: 5, text: '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付,也不许代签',
+      scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-10-01'),
+    });
+    assert.equal(night2.merged, true, 'near-duplicate merges into the old row');
+    assert.equal(night2.memory.id, night1.memory.id, 'same row id, no variant inserted');
+
+    const active = store.listUserMemories({
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'profile_fact',
+    });
+    assert.equal(active.length, 1, 'no duplicate row in the active list');
+    const row = db.exec('SELECT text, updated_at, importance FROM user_memories WHERE id = ?', [night1.memory.id])[0].values[0];
+    assert.ok(Number(row[1]) > Number(before), 'updated_at refreshed so recency pools keep the row');
+    assert.equal(Number(row[2]), 0.95, 'importance never drops on merge');
+    assert.equal(row[0], night1Text, 'a shorter incoming wording keeps the stored text');
+
+    const sourceDates = db.exec(
+      'SELECT dream_date FROM user_memory_sources WHERE memory_id = ? AND dream_date IS NOT NULL ORDER BY dream_date',
+      [night1.memory.id]
+    )[0].values.map((r) => r[0]);
+    assert.deepEqual(sourceDates, ['2026-09-30', '2026-10-01'], 'each corroborating night appends provenance');
+  } finally {
+    cleanup();
+  }
+});
+
+test('cross-night dream dedup: materially richer incoming text replaces the wording; english texts merge too', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = createCoworkStore(db);
+    const { DreamStore } = await import('../dist-electron/main/dreamStore.js').catch(() => import('../dist-electron/main/dreamStore.js'));
+    new DreamStore(db, () => {});
+    const dreamSource = (dreamDate) => ({ sourceType: 'dream', sourceChannel: 'dream', dreamDate });
+
+    const night1 = store.createDreamUserMemory({
+      metabotId: 5, text: '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付',
+      scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-09-30'),
+    });
+    // Night 2: same rule + a whole new justification clause (>=30% longer) —
+    // the stored wording upgrades to the richer text.
+    const richerText = '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付;垫付造成的链上损失无法撤回,这一条没有任何例外';
+    const night2 = store.createDreamUserMemory({
+      metabotId: 5, text: richerText, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-10-01'),
+    });
+    assert.equal(night2.merged, true);
+    assert.equal(night2.memory.id, night1.memory.id);
+    assert.equal(night2.memory.text, richerText, 'materially richer incoming text replaces the stored wording');
+    assert.equal(night2.memory.importance, 0.9, 'importance is the max of stored and re-derived');
+
+    // English/mixed texts merge through the word-level token overlap.
+    const en1 = store.createDreamUserMemory({
+      metabotId: 5, text: 'Paid chain writes always require the owner explicit approval before broadcasting any transaction',
+      scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'value_boundary', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-09-30'),
+    });
+    const en2 = store.createDreamUserMemory({
+      metabotId: 5, text: 'Paid chain writes always require the owner explicit approval before broadcasting transactions and paying fees',
+      scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'value_boundary', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-10-01'),
+    });
+    assert.equal(en2.merged, true, 'english restatement merges');
+    assert.equal(en2.memory.id, en1.memory.id);
+    const boundaries = store.listUserMemories({
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'value_boundary',
+    });
+    assert.equal(boundaries.length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test('cross-night dream dedup: below-threshold texts still insert forceNew rows', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = createCoworkStore(db);
+    const { DreamStore } = await import('../dist-electron/main/dreamStore.js').catch(() => import('../dist-electron/main/dreamStore.js'));
+    new DreamStore(db, () => {});
+    const dreamSource = (dreamDate) => ({ sourceType: 'dream', sourceChannel: 'dream', dreamDate });
+    const base = {
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+    };
+
+    store.createDreamUserMemory({
+      ...base, text: '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付',
+      source: dreamSource('2026-09-30'),
+    });
+    // Heavily reworded variant (scores ~0.71, under the 0.75 bar): inserts.
+    const reworded = store.createDreamUserMemory({
+      ...base, text: '付费写链授权是硬规则:付费服务的链上写操作都得先拿到人类明确授权才执行,绝不垫付',
+      source: dreamSource('2026-10-01'),
+    });
+    assert.equal(reworded.merged, false, 'below the similarity bar keeps the forceNew insert');
+    // A different topic entirely (scores 0): inserts.
+    const offTopic = store.createDreamUserMemory({
+      ...base, text: '用户偏好周五发布新版本,发布后观察一天反馈',
+      source: dreamSource('2026-10-02'),
+    });
+    assert.equal(offTopic.merged, false);
+
+    const active = store.listUserMemories({
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'profile_fact',
+    });
+    assert.equal(active.length, 3, 'all three rows coexist');
+  } finally {
+    cleanup();
+  }
+});
+
+test('cross-night dream dedup leaves the same-day batch idempotency intact', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = createCoworkStore(db);
+    const { DreamStore } = await import('../dist-electron/main/dreamStore.js').catch(() => import('../dist-electron/main/dreamStore.js'));
+    new DreamStore(db, () => {});
+    const dreamSource = (dreamDate) => ({ sourceType: 'dream', sourceChannel: 'dream', dreamDate });
+    const text = '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付';
+
+    const night1 = store.createDreamUserMemory({
+      metabotId: 5, text, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-09-30'),
+    });
+    assert.equal(night1.merged, false);
+
+    // Re-dreaming the SAME day: the batch soft-delete runs first, so the
+    // rewrite must NOT match the just-deleted row (it is not active) — it
+    // inserts fresh, and exactly one active row survives.
+    assert.equal(store.softDeleteDreamMemoriesForDate(5, '2026-09-30'), 1);
+    const rewrite = store.createDreamUserMemory({
+      metabotId: 5, text, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-09-30'),
+    });
+    assert.equal(rewrite.merged, false, 'same-day rewrite never merges into the deleted batch row');
+    assert.notEqual(rewrite.memory.id, night1.memory.id, 'a fresh row replaces the batch');
+
+    const active = store.listUserMemories({
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'profile_fact',
+    });
+    assert.deepEqual(active.map((entry) => entry.id), [rewrite.memory.id], 'exactly one active row after the re-dream');
+    const all = store.listUserMemories({
+      metabotId: 5, scopeKind: 'owner', scopeKey: 'owner:self', usageClass: 'profile_fact', status: 'all', includeDeleted: true,
+    });
+    assert.equal(all.find((entry) => entry.id === night1.memory.id)?.status, 'deleted', 'the replaced batch row stays deleted');
+  } finally {
+    cleanup();
+  }
+});
+
+test('cross-night dream dedup does not match archived rows (revive path owns those)', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = createCoworkStore(db);
+    const { DreamStore } = await import('../dist-electron/main/dreamStore.js').catch(() => import('../dist-electron/main/dreamStore.js'));
+    new DreamStore(db, () => {});
+    const dreamSource = (dreamDate) => ({ sourceType: 'dream', sourceChannel: 'dream', dreamDate });
+    const text = '付费写链授权是硬规则:任何付费服务的链上写操作必须先取得人类明确授权,绝不垫付';
+
+    const archived = store.createDreamUserMemory({
+      metabotId: 5, text, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-09-30'),
+    });
+    store.archiveUserMemories({ ids: [archived.memory.id], archivedAt: Date.now() });
+
+    const write = store.createDreamUserMemory({
+      metabotId: 5, text, scopeKind: 'owner', scopeKey: 'owner:self',
+      usageClass: 'profile_fact', origin: 'dream', isExplicit: true,
+      source: dreamSource('2026-10-01'),
+    });
+    assert.equal(write.merged, false, 'archived rows are not merge targets');
+    assert.notEqual(write.memory.id, archived.memory.id, 'a new active row is inserted instead');
+  } finally {
+    cleanup();
+  }
+});

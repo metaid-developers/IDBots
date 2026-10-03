@@ -866,7 +866,7 @@ export class DreamService {
           DREAM_SYNTHESIS_TIMEOUT_MS,
         );
       }
-      this.writeDreamResults(metabotId, date, output, activity, brain.llmId, isRepair, impressionSubjects, metabot.globalmetaid);
+      const writeResult = this.writeDreamResults(metabotId, date, output, activity, brain.llmId, isRepair, impressionSubjects, metabot.globalmetaid);
       this.deps.dreamStore.finishRun(metabotId, date, 'completed');
       console.log(`[DreamService] Dream completed for metabot ${metabotId} date ${date}${isRepair ? ' (version repair)' : ''}`);
       const validation = await this.validateCapabilityDraftsAfterDream(metabot, brain, date);
@@ -892,6 +892,9 @@ export class DreamService {
         weeklyLongDream,
         capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
         promotedCount: promotion.promoted,
+        // Cross-night semantic dedup (audit P1): how many of tonight's memory
+        // writes merged into an older row instead of inserting a variant.
+        dedupMerged: writeResult.dedupMerged,
         durationMs: Date.now() - runStartedAtMs,
       });
     } catch (error) {
@@ -1368,7 +1371,7 @@ export class DreamService {
     isRepair: boolean,
     impressionSubjects: ReturnType<DreamService['buildDreamImpressionSubjects']>,
     observerGlobalMetaID?: string | null,
-  ): void {
+  ): { dedupMerged: number } {
     this.deps.dreamStore.upsertDailySummary({
       metabotId,
       summaryDate: date,
@@ -1408,8 +1411,13 @@ export class DreamService {
       console.log(`[DreamService] Replaced ${removed} existing dream memories for metabot ${metabotId} date ${date}`);
     }
 
+    // Cross-night dedup counter (audit P1): writes that landed on an older
+    // semantically-equivalent row refresh it instead of inserting a variant.
+    // Surfaces in the run telemetry as dedupMerged.
+    let dedupMerged = 0;
+
     for (const text of new Set(output.importantMemories)) {
-      this.deps.coworkStore.createUserMemory({
+      const write = this.deps.coworkStore.createDreamUserMemory({
         metabotId,
         text,
         scopeKind: 'owner',
@@ -1417,9 +1425,9 @@ export class DreamService {
         usageClass: 'profile_fact',
         origin: 'dream',
         isExplicit: true,
-        forceNew: true,
         source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
       });
+      if (write.merged) dedupMerged += 1;
     }
 
     const seenLessons = new Set<string>();
@@ -1436,7 +1444,7 @@ export class DreamService {
       const text = `${lesson.rule}(源自:${source})`;
       if (seenLessons.has(text)) continue;
       seenLessons.add(text);
-      this.deps.coworkStore.createUserMemory({
+      const write = this.deps.coworkStore.createDreamUserMemory({
         metabotId,
         text,
         scopeKind: 'owner',
@@ -1444,9 +1452,9 @@ export class DreamService {
         usageClass: 'value_boundary',
         origin: 'dream',
         isExplicit: true,
-        forceNew: true,
         source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
       });
+      if (write.merged) dedupMerged += 1;
     }
     if (unsourcedLessons > 0) {
       console.warn(
@@ -1464,7 +1472,7 @@ export class DreamService {
       ].filter(Boolean).join(';');
       if (seenReviews.has(text)) continue;
       seenReviews.add(text);
-      this.deps.coworkStore.createUserMemory({
+      const write = this.deps.coworkStore.createDreamUserMemory({
         metabotId,
         text,
         scopeKind: 'owner',
@@ -1472,9 +1480,9 @@ export class DreamService {
         usageClass: 'work_review',
         origin: 'dream',
         isExplicit: true,
-        forceNew: true,
         source: { sourceType: 'dream', sourceChannel: 'dream', dreamDate: date },
       });
+      if (write.merged) dedupMerged += 1;
     }
 
     // Self-identity only moves forward in time: version repairs never touch
@@ -1607,6 +1615,8 @@ export class DreamService {
         );
       }
     }
+
+    return { dedupMerged };
   }
 }
 
