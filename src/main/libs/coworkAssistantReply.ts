@@ -111,11 +111,40 @@ export function isQuotaDshTurnError(outcome: { kind?: string; error?: { code?: s
  * Upstream "request exceeds the model's context window" fingerprints mirrored
  * from provider error bodies (OpenAI-compat relays, DeepSeek, aggregator
  * gateways). ASCII upstream error fingerprints only — never natural-language
- * intent. A bare `400 status code` with no body does NOT classify on its own:
- * too many non-overflow failures share that shape; recovery for that shape is
- * paired with the compaction-failure signal in runDshSessionLocal instead.
+ * intent. Deliberately does NOT include the HTTP 413 "request (entity) too
+ * large" family — that shape is the transport byte cap (isBodyLimitDshTurnError),
+ * not a context-window problem. A bare `400 status code` with no body does NOT
+ * classify on its own: too many non-overflow failures share that shape;
+ * recovery for that shape is paired with the compaction-failure signal in
+ * runDshSessionLocal instead.
  */
-const OVERFLOW_ERROR_MESSAGE_FINGERPRINT = /maximum[ _-]context[ _-]length|context[ _-]length[ _-]?(exceed|too[ _-]long)|exceeds?[ _-]the[ _-]?(maximum[ _-]?)?(context|model)[ _-]?(length|window)|too[ _-]many[ _-](input[ _-])?tokens|prompt[ _-]is[ _-]too[ _-]long|request[ _-](entity[ _-])?too[ _-]large|input[ _-]?(length|tokens?)[ _-]exceed/i;
+const OVERFLOW_ERROR_MESSAGE_FINGERPRINT = /maximum[ _-]context[ _-]length|context[ _-]length[ _-]?(exceed|too[ _-]long)|exceeds?[ _-]the[ _-]?(maximum[ _-]?)?(context|model)[ _-]?(length|window)|too[ _-]many[ _-](input[ _-])?tokens|prompt[ _-]is[ _-]too[ _-]long|input[ _-]?(length|tokens?)[ _-]exceed/i;
+
+/**
+ * Upstream "request body exceeds the transport byte limit" fingerprints —
+ * the HTTP 413 family (nginx "413 Request Entity Too Large", express
+ * "request entity too large", the metaid-free relay's
+ * `413: request_too_large: ...` detail). ASCII transport fingerprints only.
+ * The `\b413\b` guard cannot match inside longer numbers (`4413`, `41312`).
+ */
+const BODY_LIMIT_ERROR_MESSAGE_FINGERPRINT = /\b413\b|request[ _-](entity[ _-])?too[ _-]large/i;
+
+/** True when a DSH turn outcome failed because the request BODY exceeded the
+ *  relay/transport byte cap (HTTP 413 family) — NOT because the conversation
+ *  crossed the model's context window (2026-10-04 metaid-free incident: the
+ *  relay's body cap answered `413: request_too_large` for long sessions and
+ *  for the compaction request alike, and the old classifier mistook it for
+ *  overflow, switching sessions onto the paid fallback brain while the real
+ *  fix was a client-side contextWindow misconfiguration). A 413 at realistic
+ *  context sizes is a history-management anomaly (the serialized history
+ *  should be a few hundred KB against a 2MB cap), so callers must surface it
+ *  as its own error and must NOT spend the fallback model's quota on it. */
+export function isBodyLimitDshTurnError(outcome: { kind?: string; error?: { code?: string; message?: string } }): boolean {
+  if (outcome?.kind !== 'error') return false;
+  const code = String(outcome.error?.code ?? '').toUpperCase();
+  if (code === 'REQUEST_TOO_LARGE' || code === 'PAYLOAD_TOO_LARGE') return true;
+  return BODY_LIMIT_ERROR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''));
+}
 
 /** True when a DSH turn outcome failed because the request exceeded the
  *  model's context window — a kernel-normalized overflow code, or an upstream
@@ -134,7 +163,11 @@ export function isOverflowDshTurnError(
   // (2026-09-28 cowork.log: opencode zen deepseek-flash returned
   // `{ message: '400 status code (no body)', code: 'CONTEXT_WINDOW_EXCEEDED' }`
   // three times on the wedged session).
-  if (code === 'CONTEXT_LENGTH' || code === 'CONTEXT_OVERFLOW' || code === 'CONTEXT_WINDOW_EXCEEDED' || code === 'REQUEST_TOO_LARGE' || code === 'PAYLOAD_TOO_LARGE') return true;
+  if (code === 'CONTEXT_LENGTH' || code === 'CONTEXT_OVERFLOW' || code === 'CONTEXT_WINDOW_EXCEEDED') return true;
+  // The 413 body-limit family is decisive NON-overflow: it fires on request
+  // byte size before the model ever counts tokens, and it must never route a
+  // session onto the fallback brain (see isBodyLimitDshTurnError).
+  if (isBodyLimitDshTurnError(outcome)) return false;
   if (OVERFLOW_ERROR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''))) return true;
   // Bare `400 status code (no body)` never classifies on the message alone —
   // but when the SAME turn also logged a failed auto-compaction (the

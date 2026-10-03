@@ -366,3 +366,42 @@ test('mergeProvidersConfig applies explicit provider credential updates', () => 
   assert.equal(merged?.deepseek.apiFormat, 'anthropic');
 });
 
+test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to the server-enforced 64K/4K values', () => {
+  // The 2026-10-04 metaid-free 413 incident: installs provisioned while the
+  // canonical table mirrored the deepseek-flash preset (1M window / 32K
+  // output) carry that wrong entry in their stored config. The upstream
+  // enforces 64000/4096, so load-time normalization must rewrite it back —
+  // that is what moves the auto-compaction trigger from ~800K tokens (never
+  // reachable: the upstream 400s at ~64K) down to ~57K.
+  const staleProvisioned = {
+    'metaid-free': {
+      enabled: true,
+      apiKey: 'mrk_stale-install',
+      baseUrl: 'https://www.metaso.network/assist-open-api/v2/assist/llm/v1',
+      apiFormat: 'openai' as const,
+      name: 'IDBots-Free',
+      models: [
+        {
+          id: 'deepseek-chat',
+          name: 'deepseek-flash',
+          contextWindow: 1_000_000,
+          maxOutputTokens: 32_768,
+          supportsImage: false,
+          options: { reasoningEffort: 'max', thinking: { type: 'enabled' } },
+        },
+      ],
+    },
+  };
+
+  const merged = mergeProvidersConfig(staleProvisioned, undefined);
+
+  const model = merged?.['metaid-free']?.models?.find(({ id }) => id === 'deepseek-chat');
+  assert.ok(model);
+  assert.equal(model.contextWindow, 64_000);
+  assert.equal(model.maxOutputTokens, 4_096);
+  // Everything the canonical table does not own stays untouched.
+  assert.equal(model.name, 'deepseek-flash');
+  assert.deepEqual(model.options, { reasoningEffort: 'max', thinking: { type: 'enabled' } });
+  assert.equal(merged?.['metaid-free']?.apiKey, 'mrk_stale-install');
+});
+

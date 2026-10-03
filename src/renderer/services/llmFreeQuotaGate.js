@@ -34,19 +34,20 @@ export function getFreeProviderModelDisplayName(modelId) {
 
 /**
  * Canonical client-side limits/options for known free-relay model ids. The
- * relay's bootstrap payload still reports the legacy DeepSeek V3 wire values
- * for `deepseek-chat` (contextWindow 64000 / maxOutputTokens 4096) while the
- * relay actually serves the current flash model (deepseek-flash, formerly
- * deepseek-v4-flash) upstream — so the known id mirrors the deepseek
- * provider's deepseek-flash preset exactly (keep in sync with
- * DEEPSEEK_DEFAULT_MODELS in ../config.ts; supportsImage stays false here
- * because the relay's own image support is unverified). Ids absent from this
- * table keep whatever the relay reported.
+ * relay upstream enforces the legacy DeepSeek V3 wire values for
+ * `deepseek-chat` — context_window 64000 / max_output_tokens 4096
+ * (server-confirmed 2026-10-04: requests beyond ~64K tokens are rejected by
+ * the upstream with 400 "maximum context length" no matter what the client
+ * believes), so the known id mirrors those exact values (the relay's
+ * bootstrap/models payload reports the same numbers; the table pins them so
+ * a future relay-side drift cannot silently re-wedge compaction).
+ * supportsImage stays false because the relay's image support is unverified.
+ * Ids absent from this table keep whatever the relay reported.
  */
 const FREE_PROVIDER_MODEL_CANONICAL = {
   'deepseek-chat': {
-    contextWindow: 1_000_000,
-    maxOutputTokens: 32_768,
+    contextWindow: 64_000,
+    maxOutputTokens: 4_096,
     supportsImage: false,
     options: { reasoningEffort: 'max', thinking: { type: 'enabled' } },
   },
