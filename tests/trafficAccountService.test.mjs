@@ -15,6 +15,7 @@ const {
   claimFreeGrant,
   createRechargeOrder,
   ensureTrafficAccount,
+  gatewayForPlanCurrency,
   getConfiguredTrafficApiBase,
   getConfiguredTrafficPinMode,
   getFreeGrantCampaignStatus,
@@ -676,6 +677,53 @@ test('resolveRechargeGateway honors the kvStore override in non-packaged builds 
   store.set('traffic.rechargeGateway', 'bogus');
   assert.equal(resolveRechargeGateway(), 'paypal');
   assert.throws(() => setTrafficSettingsSnapshot({ rechargeGateway: 'stripe' }), /rechargeGateway/);
+});
+
+test('gatewayForPlanCurrency maps CNY plans to alipay and everything else to paypal', async () => {
+  assert.equal(gatewayForPlanCurrency('CNY'), 'alipay');
+  assert.equal(gatewayForPlanCurrency('cny'), 'alipay');
+  assert.equal(gatewayForPlanCurrency('USD'), 'paypal');
+  assert.equal(gatewayForPlanCurrency('EUR'), 'paypal');
+  assert.equal(gatewayForPlanCurrency(''), 'paypal');
+});
+
+test('resolveRechargeGateway honors an explicit preferred gateway and rejects unknown ones', async () => {
+  await makeServiceFixture({ fetchImpl: createFetchStub([]) });
+  assert.equal(resolveRechargeGateway('alipay'), 'alipay');
+  assert.equal(resolveRechargeGateway('paypal'), 'paypal');
+  assert.throws(() => resolveRechargeGateway('stripe'), /Unsupported recharge gateway/);
+});
+
+test('resolveRechargeGateway lets the dev override win over the preferred gateway', async () => {
+  await makeServiceFixture({ fetchImpl: createFetchStub([]) });
+  setTrafficSettingsSnapshot({ rechargeGateway: 'mock' });
+  assert.equal(resolveRechargeGateway('alipay'), 'mock');
+  setTrafficSettingsSnapshot({ rechargeGateway: '' });
+  assert.equal(resolveRechargeGateway('alipay'), 'alipay');
+});
+
+test('createRechargeOrder sends an explicit alipay gateway and keeps the QR payload', async () => {
+  let captured = null;
+  const fetchImpl = createFetchStub([
+    ['/v1/traffic/recharge/orders', (init) => {
+      captured = { body: JSON.parse(init.body) };
+      return {
+        orderId: 'recharge-order-alipay',
+        payAmount: 10,
+        payCurrency: 'CNY',
+        trafficBytes: 100000000,
+        gatewayParams: { qrCode: 'https://qr.alipay.com/bax00000demo' },
+      };
+    }],
+    ['/v1/traffic/accounts', accountPayload()],
+  ]);
+  await makeServiceFixture({ fetchImpl });
+
+  const order = await createRechargeOrder('cny_10_100mb', 'alipay');
+  assert.equal(order.orderId, 'recharge-order-alipay');
+  assert.equal(order.payCurrency, 'CNY');
+  assert.equal(order.gatewayParams.qrCode, 'https://qr.alipay.com/bax00000demo');
+  assert.deepEqual(captured.body, { planId: 'cny_10_100mb', gateway: 'alipay' });
 });
 
 test('mockConfirmRechargeOrder signs traffic-recharge-confirm and invalidates the balance cache', async () => {
