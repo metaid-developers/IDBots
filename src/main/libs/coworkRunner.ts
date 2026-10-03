@@ -5441,6 +5441,16 @@ export class CoworkRunner extends EventEmitter {
       provenTechniques,
       summaries,
     });
+    // P2 utilization telemetry: only bump when the techniques block actually
+    // rendered (the guidance ladder can drop it entirely). Best-effort — a
+    // telemetry write must never break a turn.
+    if (provenTechniques.length > 0 && experienceBlock.includes('<proven_techniques>')) {
+      try {
+        this.store.markCapabilityDraftsInjected(provenTechniques.map((draft) => draft.id));
+      } catch {
+        // telemetry is best-effort
+      }
+    }
     // Knowledge hot-layer: surface the bot's most relevant reusable knowledge
     // points (know-how + pitfalls) so they proactively guide new work. Co-located
     // with the experience blocks rather than injected separately, to keep the

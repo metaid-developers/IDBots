@@ -834,6 +834,7 @@ export class DreamService {
           validation,
           replay,
           weeklyLongDream,
+          capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
           durationMs: Date.now() - runStartedAtMs,
         });
         return;
@@ -884,6 +885,7 @@ export class DreamService {
         validation,
         replay,
         weeklyLongDream,
+        capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
         durationMs: Date.now() - runStartedAtMs,
       });
     } catch (error) {
@@ -960,6 +962,28 @@ export class DreamService {
     // Keep the original output rather than failing the whole run over length.
     console.warn('[DreamService] self_identity still below minimum after retry; keeping best effort output');
     return output.selfIdentity ? output : (retry.ok ? retry.output : output);
+  }
+
+  /**
+   * Dream-RSI P2 utilization rollup for the run telemetry: validated draft
+   * count, cumulative injections, and drafts injected within the last 24h —
+   * the "are dream-distilled techniques actually being used" evidence. Null on
+   * failure so telemetry writing never breaks the dream run.
+   */
+  private buildCapabilityUtilizationTelemetry(
+    metabotId: number,
+  ): { validatedDrafts: number; totalInjections: number; activeDraftsLast24h: number } | null {
+    try {
+      return this.deps.coworkStore.getCapabilityDraftUtilization(
+        metabotId,
+        Date.now() - 24 * 60 * 60 * 1000,
+      );
+    } catch (error) {
+      console.warn(
+        `[DreamService] Capability utilization telemetry unavailable for metabot ${metabotId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
   }
 
   /**

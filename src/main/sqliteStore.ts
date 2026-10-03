@@ -602,6 +602,8 @@ export class SqliteStore {
         description TEXT NOT NULL,
         capability_type TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft',
+        times_injected INTEGER NOT NULL DEFAULT 0,
+        last_injected_at INTEGER,
         created_at INTEGER NOT NULL
       );
     `);
@@ -621,6 +623,14 @@ export class SqliteStore {
       }
       if (!draftCols.includes('validated_at')) {
         this.db.run('ALTER TABLE capability_drafts ADD COLUMN validated_at INTEGER');
+      }
+      // P2 utilization telemetry (Dream-RSI): injection counters for the
+      // <proven_techniques> block, same shape as team_culture_entries.
+      if (!draftCols.includes('times_injected')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN times_injected INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!draftCols.includes('last_injected_at')) {
+        this.db.run('ALTER TABLE capability_drafts ADD COLUMN last_injected_at INTEGER');
       }
     } catch (error) {
       console.warn('migrate capability_drafts validation columns:', error);

@@ -992,6 +992,9 @@ export interface CapabilityDraft {
   validationScore: number | null;
   validationNotes: string | null;
   validatedAt: number | null;
+  /** P2 utilization: how often this draft was rendered into a prompt. */
+  timesInjected: number;
+  lastInjectedAt: number | null;
 }
 
 interface CapabilityDraftRow {
@@ -1006,6 +1009,8 @@ interface CapabilityDraftRow {
   validation_score?: number | null;
   validation_notes?: string | null;
   validated_at?: number | string | null;
+  times_injected?: number | string | null;
+  last_injected_at?: number | string | null;
 }
 
 export interface CoworkUserMemoryStats {
@@ -7168,7 +7173,7 @@ export class CoworkStore implements MemoryBackend {
       : null;
     const sql = `
       SELECT id, metabot_id, dream_date, title, description, capability_type, status, created_at,
-             validation_score, validation_notes, validated_at
+             validation_score, validation_notes, validated_at, times_injected, last_injected_at
       FROM capability_drafts
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY created_at DESC, id DESC
@@ -7187,7 +7192,63 @@ export class CoworkStore implements MemoryBackend {
       validationScore: row.validation_score == null ? null : Number(row.validation_score),
       validationNotes: row.validation_notes == null ? null : String(row.validation_notes),
       validatedAt: row.validated_at == null ? null : Number(row.validated_at),
+      timesInjected: Math.max(0, Math.floor(Number(row.times_injected) || 0)),
+      lastInjectedAt: row.last_injected_at == null ? null : Number(row.last_injected_at),
     }));
+  }
+
+  /**
+   * P2 utilization telemetry (Dream-RSI): bump times_injected / last_injected_at
+   * for the drafts an injection path actually rendered into a
+   * `<proven_techniques>` prompt block — the same times_injected pattern as
+   * team_culture_entries. Returns the number of rows bumped.
+   */
+  markCapabilityDraftsInjected(ids: number[]): number {
+    const uniqueIds = Array.from(
+      new Set((ids ?? []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)),
+    );
+    if (uniqueIds.length === 0) return 0;
+    const now = Date.now();
+    const placeholders = uniqueIds.map(() => '?').join(', ');
+    this.db.run(
+      `UPDATE capability_drafts
+       SET times_injected = times_injected + 1, last_injected_at = ?
+       WHERE id IN (${placeholders})`,
+      [now, ...uniqueIds],
+    );
+    const bumped = this.db.getRowsModified?.() || 0;
+    if (bumped > 0) {
+      this.saveDb();
+    }
+    return bumped;
+  }
+
+  /**
+   * Utilization rollup for the nightly dream telemetry: how many validated
+   * drafts the bot has, their cumulative injection count, and how many were
+   * injected at least once since `activeSinceMs` (the dream service passes
+   * now-24h, i.e. drafts that were actually in play that day).
+   */
+  getCapabilityDraftUtilization(
+    metabotId: number,
+    activeSinceMs: number,
+  ): { validatedDrafts: number; totalInjections: number; activeDraftsLast24h: number } {
+    const row = this.getOne<{
+      validated_count: number | string;
+      total_injections: number | string | null;
+      active_count: number | string | null;
+    }>(`
+      SELECT COUNT(*) AS validated_count,
+             COALESCE(SUM(times_injected), 0) AS total_injections,
+             COALESCE(SUM(CASE WHEN last_injected_at >= ? THEN 1 ELSE 0 END), 0) AS active_count
+      FROM capability_drafts
+      WHERE metabot_id = ? AND status = 'validated'
+    `, [Math.floor(Number(activeSinceMs) || 0), metabotId]);
+    return {
+      validatedDrafts: Number(row?.validated_count) || 0,
+      totalInjections: Number(row?.total_injections) || 0,
+      activeDraftsLast24h: Number(row?.active_count) || 0,
+    };
   }
 
   /**

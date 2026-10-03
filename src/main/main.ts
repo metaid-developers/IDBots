@@ -4116,6 +4116,9 @@ const startStartupMessageTier = (): void => {
     listDailySummaries: (metabotId, limit) => getDreamStore().listDailySummaries(metabotId, limit),
     listValidatedCapabilityDrafts: (metabotId) =>
       getCoworkStore().listCapabilityDrafts(metabotId, { status: 'validated', limit: 5 }),
+    markCapabilityDraftsInjected: (ids) => {
+      getCoworkStore().markCapabilityDraftsInjected(ids);
+    },
     buildTeamCultureBlock: () => {
       try {
         const cultureStore = getTeamCultureStore();

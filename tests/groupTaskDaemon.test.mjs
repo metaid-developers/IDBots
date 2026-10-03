@@ -4125,6 +4125,33 @@ test('chair [POSITION] constraints reach every turn via the authoritative block,
   }
 });
 
+test('validated drafts rendered into the group experience block bump their injection counters', async () => {
+  const marked = [];
+  const h = await createHarness({
+    listUserMemories: () => [],
+    listDailySummaries: () => [{ summaryDate: '2026-08-03', summaryText: 'Worked on the MetaApp.' }],
+    deps: {
+      listValidatedCapabilityDrafts: () => [{ id: 42, title: '先验证再交付', description: '交付前自检' }],
+      markCapabilityDraftsInjected: (ids) => marked.push(...ids),
+    },
+  });
+  try {
+    h.createTask([2]);
+    insertGroupMessage(h.db, {
+      pinId: 'draft-i0', senderMetaId: 'metaid-h', senderGlobalMetaId: 'gmid-boss',
+      senderName: 'Human', content: '@Coder Bot go',
+    });
+    await h.loop.runTick();
+    assert.match(h.chatCalls[0].userMessage, /<proven_techniques>/, 'the draft rendered into the prompt');
+    // Each responding turn (chair floor-control + mentioned worker) reports
+    // the ids of the drafts its own prompt actually rendered.
+    assert.ok(marked.length >= 1, 'at least one turn reported rendered drafts');
+    assert.ok(marked.every((id) => id === 42), 'only the actually rendered draft id is reported');
+  } finally {
+    h.cleanup();
+  }
+});
+
 test('group cognition projection is observer-relative and wired into per-bot prompts', async () => {
   const cognitionCalls = [];
   const h = await createHarness({

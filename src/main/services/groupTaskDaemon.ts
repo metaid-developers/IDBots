@@ -2158,7 +2158,9 @@ export interface GroupTaskDaemonDeps {
     memoryUserMemoriesMaxItems: number;
   };
   /** Dream-validated capability drafts ("proven techniques") for the experience block. */
-  listValidatedCapabilityDrafts?: (metabotId: number) => Array<{ title: string; description: string }>;
+  listValidatedCapabilityDrafts?: (metabotId: number) => Array<{ id?: number; title: string; description: string }>;
+  /** P2 utilization telemetry: bump injection counters for drafts actually rendered. Best-effort. */
+  markCapabilityDraftsInjected?: (ids: number[]) => void;
   getMetaIDGroupCognitionPromptBlock?: (input: {
     observerGlobalMetaID: string;
     roster: Array<{ globalMetaID: string | null; name: string; role: 'chair' | 'worker' }>;
@@ -4005,15 +4007,29 @@ export function createGroupTaskDaemonLoop(deps: GroupTaskDaemonDeps): GroupTaskD
     if (!deps.listUserMemories && !deps.listDailySummaries) return '';
     if (deps.getEffectiveMemoryPolicy?.(bot.id)?.memoryEnabled === false) return '';
     try {
-      return buildGroupTaskExperienceBlock({
+      const provenTechniques = deps.listValidatedCapabilityDrafts?.(bot.id) ?? [];
+      const block = buildGroupTaskExperienceBlock({
         identityText: deps.listUserMemories?.(bot.id, { usageClass: 'self_identity', limit: 1 })?.[0]?.text ?? null,
         valueBoundaries: deps.listUserMemories?.(bot.id, { usageClass: 'value_boundary', limit: 5 }) ?? [],
         // Past work reviews (dream-written, aligned with the owner's acceptance
         // ratings) — the recall path that keeps prior group-task feedback in play.
         workReviews: deps.listUserMemories?.(bot.id, { usageClass: 'work_review', limit: 5 }) ?? [],
-        provenTechniques: deps.listValidatedCapabilityDrafts?.(bot.id) ?? [],
+        provenTechniques,
         summaries: deps.listDailySummaries?.(bot.id, RECENT_SUMMARIES_PROMPT_DAYS) ?? [],
       });
+      // P2 utilization telemetry: only bump when the techniques block actually
+      // rendered (the section ladder drops it before boundaries/reviews).
+      const renderedDraftIds = provenTechniques
+        .map((draft) => Number(draft.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (renderedDraftIds.length > 0 && block.includes('<proven_techniques>')) {
+        try {
+          deps.markCapabilityDraftsInjected?.(renderedDraftIds);
+        } catch {
+          // telemetry is best-effort
+        }
+      }
+      return block;
     } catch {
       return '';
     }
