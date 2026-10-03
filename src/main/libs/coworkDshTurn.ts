@@ -1472,8 +1472,13 @@ export class DshTurnHub {
       if (nextJson !== slot.lastConfigJson && (inFlight > 0 || kernelSideBusy)) {
         const changedKeys = dshConfigChangedKeys(slot.lastConfigJson, nextJson)
         const callerRouteJson = JSON.stringify(providerRouteOf(input.provider))
+        // The route JSON records the credential's env NAME only; the key VALUE
+        // rides the child env the running process was spawned with. A rotated
+        // API key must count as unserved, or this deferral keeps answering
+        // from the old process with the old credential until app restart.
         const servedByRunningRuntime =
           lastProviderRouteJsonOf(slot.lastConfigJson, input.provider.key) === callerRouteJson
+          && runningEnvApiKeyOf(slot.lastConfigJson, input.provider.key) === input.provider.apiKey
         if (servedByRunningRuntime) {
           this.opts.log?.('warn',
             'config changed but the running runtime serves this turn; restart deferred until quiescence',
@@ -1823,6 +1828,18 @@ export function lastProviderRouteJsonOf(configJson: string, providerKey: string)
     return route === undefined ? null : JSON.stringify(route)
   } catch {
     return null
+  }
+}
+
+/** API key value the running runtime's child env holds for a provider route,
+ *  parsed from the config snapshot the process was spawned/restarted with.
+ *  Undefined when the snapshot has no credential recorded for the route. */
+export function runningEnvApiKeyOf(configJson: string, providerKey: string): string | undefined {
+  try {
+    const parsed = JSON.parse(configJson) as { env?: Record<string, string | undefined> }
+    return parsed.env?.[dshProviderApiKeyEnv(providerKey)]
+  } catch {
+    return undefined
   }
 }
 
