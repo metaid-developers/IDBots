@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { ChainWriteCreatePin } from './postBuzzAgentTools';
 import { innerHash, outerHash } from '../services/metatask/canon';
 import { rosterPinsFromEvents } from '../services/metatask/collector';
-import { METATASK_ROSTER_PATH } from '../services/metatask/constants';
+import { H_ACT3, METATASK_ROSTER_PATH } from '../services/metatask/constants';
 import { estimateMetaTaskShares } from '../services/metatask/estimate';
 import { replayMetaTask } from '../services/metatask/engine';
 import type {
@@ -95,6 +95,8 @@ interface SpecPayloadInput {
   input?: unknown;
   output?: unknown;
   validation?: Record<string, unknown>;
+  /** v1.3 draft §4.1 workspace declaration (git/metafile/inline/pin/…). */
+  workspace?: unknown;
 }
 
 /**
@@ -111,8 +113,43 @@ const buildSpecPayload = (spec: SpecPayloadInput): Record<string, unknown> => {
     input: spec.input ?? '',
     output: spec.output ?? '',
   };
+  if (isPlainObject(spec.workspace)) payload.workspace = spec.workspace;
   if (isPlainObject(spec.validation)) payload.validation = spec.validation;
   return payload;
+};
+
+/**
+ * Writer-side check for the v1.3 draft §4.1 spec.workspace declaration. The
+ * engine never reads `workspace` (except the submit tool's git-bundle
+ * enforcement on type:"git"), so a malformed declaration would silently dead-
+ * letter the artifact contract — refuse it before any spend. `type` must be a
+ * non-empty string (§4.1 lists git | metafile | inline | pin; later draft
+ * revisions may add types, so the writer does not freeze the enum). A
+ * declared `baseRef` must be a real pin:// | metafile:// reference — a
+ * publish-me-later placeholder would fossilize into the pinned spec.
+ */
+const specWorkspaceRefusal = (workspace: unknown): string | null => {
+  if (workspace === undefined || workspace === null) return null;
+  if (!isPlainObject(workspace)) {
+    return 'Refused: spec.workspace must be an object (draft §4.1: { type, baseRef?, baseCommit?, notes? }).';
+  }
+  const type = asString(workspace.type).trim();
+  if (!type) {
+    return 'Refused: spec.workspace.type is required when workspace is declared (draft §4.1: git | metafile | inline | pin).';
+  }
+  const baseRef = workspace.baseRef;
+  if (baseRef !== undefined && baseRef !== null) {
+    const ref = asString(baseRef).trim();
+    if (!ref) return 'Refused: spec.workspace.baseRef is empty — drop the key or pin the base bundle (draft §4.4).';
+    if (!SPEC_REF_RE.test(ref)) {
+      return `Refused: spec.workspace.baseRef must be a real pin:// | metafile:// reference (draft §4.4) — got "${ref}". Publish the base bundle first and substitute the placeholder.`;
+    }
+  }
+  const baseCommit = workspace.baseCommit;
+  if (baseCommit !== undefined && baseCommit !== null && !GIT_COMMIT_RE.test(asString(baseCommit))) {
+    return 'Refused: spec.workspace.baseCommit must be a full commit hash (40 hex chars) or null (draft §4.1).';
+  }
+  return null;
 };
 
 /** Refuse a missing/empty/bogus script reference; returns null when usable. */
@@ -200,6 +237,7 @@ const specFromDrafts = (drafts: Record<string, unknown>, specKey: string): SpecP
     input: raw.input,
     output: raw.output,
     validation: isPlainObject(raw.validation) ? raw.validation : undefined,
+    workspace: isPlainObject(raw.workspace) ? raw.workspace : undefined,
   };
 };
 
@@ -330,6 +368,138 @@ const specValidationRefusal = (validation: unknown): string | null => {
   return null;
 };
 
+// ── competitive mode (protocol v1.3.0 draft §3/§4) ───────────────────────────
+// Writer-side mirrors of the engine's competitive invariants. Every check runs
+// BEFORE the first pin is spent: a task/submission that replay would ignore or
+// leave unsatisfiable is refused locally instead of dying on-chain.
+
+interface CompetitiveNodeShape {
+  id: string;
+  deps: string[];
+  params: Record<string, unknown>;
+}
+
+/** deps-DAG sinks: nodes no other node lists in `deps` (draft §3.1). */
+const depsSinkIds = (nodes: readonly CompetitiveNodeShape[]): string[] => {
+  const referenced = new Set<string>();
+  for (const node of nodes) for (const dep of node.deps) referenced.add(dep);
+  return nodes.filter((node) => !referenced.has(node.id)).map((node) => node.id);
+};
+
+/** DFS over deps edges (node -> what it depends on); dangling refs are ruled separately. */
+const depsGraphAcyclic = (nodes: readonly CompetitiveNodeShape[]): boolean => {
+  const byId = new Map(nodes.map((node) => [node.id, node] as const));
+  const state = new Map<string, 1 | 2>(); // 1 = on the DFS stack, 2 = done
+  const visit = (id: string): boolean => {
+    const mark = state.get(id);
+    if (mark === 2) return true;
+    if (mark === 1) return false;
+    state.set(id, 1);
+    for (const dep of byId.get(id)?.deps ?? []) {
+      if (!byId.has(dep)) continue;
+      if (!visit(dep)) return false;
+    }
+    state.set(id, 2);
+    return true;
+  };
+  for (const node of nodes) {
+    if (!visit(node.id)) return false;
+  }
+  return true;
+};
+
+/**
+ * Writer-side competitive tree invariants (draft §3.1/§3.3, authoring list §5):
+ * `finalnode` names a live node; the deps graph is acyclic with exactly ONE
+ * sink and that sink IS the final node; every node is reachable from an entry
+ * node (deps: []) and can reach the final node. In a finite acyclic graph the
+ * two reachability legs are already implied by the unique-sink rule — they are
+ * checked anyway so a breach reports the precise broken leg, and so the rule
+ * survives a future relaxation of the single-sink rule (§9 Q1).
+ */
+const competitiveGraphRefusal = (
+  nodes: readonly CompetitiveNodeShape[],
+  finalnode: string,
+): string | null => {
+  const byId = new Map(nodes.map((node) => [node.id, node] as const));
+  if (!byId.has(finalnode)) {
+    return `Refused: policy.finalnode "${finalnode}" is not a node of this task — competitive mode requires the designated terminal node to be a live tree node (draft §3.1).`;
+  }
+  if (!depsGraphAcyclic(nodes)) {
+    return 'Refused: the deps graph is cyclic — competitive mode enforces deps as a partial-order DAG (draft §3.3).';
+  }
+  const sinks = depsSinkIds(nodes);
+  if (sinks.length !== 1) {
+    return `Refused: competitive mode requires exactly ONE deps sink (draft §3.1) — found ${sinks.length} (${[...sinks].sort().join(', ')}).`;
+  }
+  if (sinks[0] !== finalnode) {
+    return `Refused: the unique deps sink is "${sinks[0]}" but policy.finalnode is "${finalnode}" — the designated terminal node must BE the sink (draft §3.1).`;
+  }
+  // Reverse adjacency: dep -> the nodes that depend on it (work-flow direction).
+  const dependents = new Map<string, string[]>();
+  for (const node of nodes) {
+    for (const dep of node.deps) {
+      const list = dependents.get(dep) ?? [];
+      list.push(node.id);
+      dependents.set(dep, list);
+    }
+  }
+  const flowClosure = (starts: string[]): Set<string> => {
+    const seen = new Set<string>();
+    const queue = [...starts];
+    while (queue.length) {
+      const current = queue.pop() as string;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const next of dependents.get(current) ?? []) queue.push(next);
+    }
+    return seen;
+  };
+  const fromEntries = flowClosure(nodes.filter((node) => node.deps.length === 0).map((node) => node.id));
+  for (const node of nodes) {
+    if (!fromEntries.has(node.id)) {
+      return `Refused: node ${node.id} is not reachable from any entry node (deps: []) — every node must sit on the work flow (draft §3.3).`;
+    }
+  }
+  // "Can reach the final node" = sits inside finalnode's transitive deps
+  // closure (walk deps edges backward from the terminal node).
+  const toFinal = new Set<string>();
+  const stack = [finalnode];
+  while (stack.length) {
+    const current = stack.pop() as string;
+    if (toFinal.has(current)) continue;
+    toFinal.add(current);
+    for (const dep of byId.get(current)?.deps ?? []) stack.push(dep);
+  }
+  for (const node of nodes) {
+    if (!toFinal.has(node.id)) {
+      return `Refused: node ${node.id} can never feed the terminal node "${finalnode}" — every node must reach the final node through deps (draft §3.3).`;
+    }
+  }
+  return null;
+};
+
+/**
+ * Every competitive node carries a non-empty rubric (draft §3.3, pinned
+ * location: `params.rubric` — an array of strings with at least one non-empty
+ * entry). The rubric is the reviewer's acceptance checklist; without it a node
+ * is unjudgeable open-ended work.
+ */
+const competitiveRubricRefusal = (node: { id: string; params: Record<string, unknown> }): string | null => {
+  const rubric = node.params?.rubric;
+  if (!Array.isArray(rubric)) {
+    return `Refused: node ${node.id} has no rubric — competitive mode pins per-node acceptance criteria at params.rubric, an array of strings with at least one non-empty entry (draft §3.3).`;
+  }
+  const entries = rubric.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+  if (entries.length === 0) {
+    return `Refused: node ${node.id} rubric has no non-empty entry — params.rubric needs at least one concrete acceptance criterion (draft §3.3).`;
+  }
+  return null;
+};
+
+/** Full git commit hash (sha1/sha256 hex) for git-bundle results (draft §4.2). */
+const GIT_COMMIT_RE = /^[0-9a-f]{40}$/i;
+
 export function buildMetataskAgentTools(deps: {
   tool: SdkToolFactory;
   control: MetaTaskAgentControl;
@@ -380,8 +550,12 @@ export function buildMetataskAgentTools(deps: {
     return detail;
   };
 
-  /** Replay guard: the node must exist and be open (expiry applied) before any spend. */
-  const guardOpenNode = (
+  /**
+   * Replay guard: the task must replay and the node must exist before any
+   * spend. Status gating is the caller's job — it differs by mode (tree: the
+   * node must be open; competitive: claims are intent-only and never gated).
+   */
+  const guardKnownNode = (
     events: MetaTaskChainEvent[],
     rootPinId: string,
     node: string,
@@ -398,10 +572,34 @@ export function buildMetataskAgentTools(deps: {
     }
     const nodeState = projection.nodeStates[node];
     if (!nodeState) return { ok: false, reason: `node "${node}" not found in task ${rootPinId}` };
-    if (nodeState.status !== 'open') {
-      return { ok: false, reason: `claim-rejected:${node}:${nodeState.status}` };
-    }
     return { ok: true, projection };
+  };
+
+  /**
+   * H_ACT3 write-side gate (draft §7): competitive tasks must not be broadcast
+   * before the announced activation height. The boundary block is read from
+   * the refresher's refresh state (the same source metatask_list reports), the
+   * announced height from board.activation.hAct3 (the constants.ts value
+   * surfaced by the projection store). allowPreActivation is the explicit
+   * pilot/testing escape hatch — replay has no height gate, so an overridden
+   * publish replays fine; the refusal only exists to protect the real
+   * activation procedure.
+   */
+  const hAct3GateRefusal = (allowPreActivation: boolean): string | null => {
+    if (allowPreActivation) return null;
+    const board = refresher().board() as MetaTaskBoard | null;
+    const hAct3 = board?.activation?.hAct3 ?? H_ACT3;
+    if (hAct3 === null || hAct3 === undefined) {
+      return 'Refused: competitive mode is gated on H_ACT3, which has not been announced yet (draft §7 — activation lands only after the three-engine conformance set is green). For pilot/testing publishes pass allowPreActivation: true.';
+    }
+    const boundaryBlock = board?.refresh?.boundaryBlock;
+    if (typeof boundaryBlock !== 'number' || boundaryBlock < 0) {
+      return `Refused: competitive mode activates at H_ACT3=${hAct3}, but the local chain boundary block is unknown (no refresh state yet) — run metatask_list refresh=true first, or pass allowPreActivation: true for pilot/testing.`;
+    }
+    if (boundaryBlock < hAct3) {
+      return `Refused: competitive mode activates at H_ACT3=${hAct3}; the local boundary block is ${boundaryBlock}. Pre-activation competitive tasks must not be broadcast (draft §7); for pilot/testing publishes pass allowPreActivation: true.`;
+    }
+    return null;
   };
 
   // ── reads ──────────────────────────────────────────────────────────────────
@@ -552,7 +750,7 @@ export function buildMetataskAgentTools(deps: {
 
   const claimNode = tool(
     'metatask_claim',
-    'Claim an OPEN node of an on-chain MetaTask as this session\'s MetaBot. Runs the replay guard FIRST (claimTTL / review-window expiry included) and refuses without spending when the node is not open — output `claim-rejected:<node>:<state>`. The task root author (publisher) is refused its own task nodes (protocol §12 item 6: submitter != task root author — no self-claim). Before claiming, read the task with metatask_get so you actually intend to do the node\'s work: an effective claim starts a TTL clock and, per protocol, freezing the node against publisher amends.',
+    'Claim an OPEN node of an on-chain MetaTask as this session\'s MetaBot. Runs the replay guard FIRST (claimTTL / review-window expiry included) and refuses without spending when the node is not open — output `claim-rejected:<node>:<state>`. The task root author (publisher) is refused its own task nodes (protocol §12 item 6: submitter != task root author — no self-claim). Before claiming, read the task with metatask_get so you actually intend to do the node\'s work: an effective claim starts a TTL clock and, per protocol, freezing the node against publisher amends. COMPETITIVE MODE (v1.3, policy.mode=competitive): claims are an intent signal only (draft §3.2) — no lock is taken, the guard never refuses because a node already has submissions or satisfied candidates, and the claimPinId is NOT needed by metatask_submit; the result carries intentOnly: true.',
     {
       rootPinId: z.string().min(1).describe('Task root pinId.'),
       node: z.string().min(1).describe('Node id from the task tree (metatask_get).'),
@@ -563,8 +761,13 @@ export function buildMetataskAgentTools(deps: {
         if ('error' in who) return textResult(who.error, true);
         const rootPinId = String(args.rootPinId ?? '');
         const node = String(args.node ?? '');
-        const guard = guardOpenNode(refresher().loadEvents(), rootPinId, node);
+        const guard = guardKnownNode(refresher().loadEvents(), rootPinId, node);
         if (guard.ok === false) return textResult(guard.reason, true);
+        const competitive = guard.projection.policy.mode === 'competitive';
+        const nodeState = guard.projection.nodeStates[node];
+        if (!competitive && nodeState?.status !== 'open') {
+          return textResult(`claim-rejected:${node}:${nodeState?.status ?? 'unknown'}`, true);
+        }
         if (guard.projection.publisher === who.globalMetaId) {
           return textResult(
             'Refused: protocol §12 item 6 (submitter != task root author) — you published this MetaTask, so claiming its nodes would be a self-claim; publisher work does not earn a submitter share. Let another bot claim it.',
@@ -578,7 +781,10 @@ export function buildMetataskAgentTools(deps: {
           txids: result.txids,
           node,
           taskid: rootPinId,
-          note: 'keep the claimPinId — your submission must reference it. Chain indexing lags; the guard result reflects the boundary block.',
+          ...(competitive ? { intentOnly: true } : {}),
+          note: competitive
+            ? 'competitive mode: this claim is an INTENT SIGNAL only (draft §3.2) — it takes no lock, expires nothing, and metatask_submit does not reference it. Other bots may submit on the same node; the first fully-verified chain wins.'
+            : 'keep the claimPinId — your submission must reference it. Chain indexing lags; the guard result reflects the boundary block.',
         });
       } catch (error) {
         return textResult(`Claim failed: ${error instanceof Error ? error.message : String(error)}`, true);
@@ -588,16 +794,17 @@ export function buildMetataskAgentTools(deps: {
 
   const submitWork = tool(
     'metatask_submit',
-    'Submit the work certificate for a node you hold a claim on. You provide the result OBJECT (without any hash — the tool computes the inner hash sha256(canonJ(result minus hash)) and embeds it, then the outer sha256(canonJ(result)) per the frozen canon); the tool checks the claim is still the effective holder and yours. Aggregate nodes require childIds (all children verified, per the aggregation rule). Use supersedePinId to replace YOUR earlier submission of the same claim cycle before it is verified (six-predicate supersede, both ends must be at/after H_ACT2 once announced).',
+    'Submit the work certificate for a node. You provide the result OBJECT (without any hash — the tool computes the inner hash sha256(canonJ(result minus hash)) and embeds it, then the outer sha256(canonJ(result)) per the frozen canon). TREE MODE: the node must be claim-held by you (claimPinId required, checked against the effective holder); aggregate nodes require childIds (all children verified, per the aggregation rule). COMPETITIVE MODE (v1.3, policy.mode=competitive): no claim exists — claimPinId is not needed (ignored when passed), and deps are enforced via parentRefs instead: one submission pinId per dep node of this node, each pin an EXISTING submission of this task sitting on THAT dep node (anything else replays as invalid_reference — refused here before any spend; an empty {} counts as omitted on entry nodes). A referenced parent need not be verified yet (draft §3.3 optimistic pipelining): the result then carries optimistic: true with the at-risk parents listed — if a parent never verifies (or is killed), this submission can never become chain-valid. References to DEAD parents (killed by a fail verdict, superseded, or themselves invalid_reference) are refused outright. When the node\'s effective spec declares workspace.type "git" (draft §4.2), result MUST be { type: "git-bundle", commit: <full sha>, baseCommit: <full sha | null for greenfield> } with attachment metafile://<git bundle>. Use supersedePinId to replace YOUR earlier submission (tree: same claim cycle; competitive: your tip on the same node — six-predicate supersede, both ends at/after H_ACT2).',
     {
       rootPinId: z.string().min(1),
       node: z.string().min(1),
-      claimPinId: z.string().min(1).describe('The claim pin returned by metatask_claim.'),
+      claimPinId: z.string().min(1).optional().describe('Tree mode: REQUIRED — the claim pin returned by metatask_claim. Competitive mode: not needed (no claim locks); ignored when passed.'),
       result: z.record(z.string(), z.unknown()).describe('Result object WITHOUT a hash field; task-specific fields per the node spec.'),
       contentType: z.string().optional().describe('Recorded metadata only (never gates verification). Default application/json;utf-8.'),
-      attachment: z.string().optional().describe('Artifact URI: pin:// | metafile:// | metaapp://.'),
-      childIds: z.array(z.string()).optional().describe('Aggregate nodes only: verified child submission pinIds (canonical mirror rule).'),
-      supersedePinId: z.string().optional().describe('Your earlier submission pinId being replaced (same claim cycle).'),
+      attachment: z.string().optional().describe('Artifact URI: pin:// | metafile:// | metaapp://. git-workspace nodes: metafile:// REQUIRED (draft §4.2).'),
+      childIds: z.array(z.string()).optional().describe('Tree mode, aggregate nodes only: verified child submission pinIds (canonical mirror rule). Refused in competitive mode — use parentRefs.'),
+      parentRefs: z.record(z.string(), z.string()).optional().describe('Competitive mode only (draft §3.3): depNodeId -> submissionPinId, exactly one existing submission pin per dep of this node. Omit (or {}) on entry nodes.'),
+      supersedePinId: z.string().optional().describe('Your earlier submission pinId being replaced (tree: same claim cycle; competitive: your tip on the same node).'),
     },
     async (args: {
       rootPinId?: string;
@@ -607,6 +814,7 @@ export function buildMetataskAgentTools(deps: {
       contentType?: string;
       attachment?: string;
       childIds?: string[];
+      parentRefs?: Record<string, string>;
       supersedePinId?: string;
     }) => {
       try {
@@ -614,29 +822,174 @@ export function buildMetataskAgentTools(deps: {
         if ('error' in who) return textResult(who.error, true);
         const rootPinId = String(args.rootPinId ?? '');
         const node = String(args.node ?? '');
-        const claimPinId = String(args.claimPinId ?? '');
         const detail = await projectionAfterRefresh(rootPinId);
         if (!detail) return textResult(`MetaTask root not found: ${rootPinId}`, true);
         const nodeState = detail.nodeStates[node];
         if (!nodeState) return textResult(`Node "${node}" not found.`, true);
-        if (!nodeState.holder || nodeState.holder.pinId !== claimPinId) {
-          return textResult(
-            `claim-rejected:${node}:${nodeState.status} — the effective claim is ${nodeState.holder?.pinId ?? 'none'} (yours: ${claimPinId}).`,
-            true,
-          );
-        }
-        if (nodeState.holder.claimant !== who.globalMetaId) {
-          return textResult('That claim belongs to a different bot.', true);
-        }
-        if (detail.nodes.length > 0) {
-          const treeNode = detail.nodes.find((candidate) => candidate.id === node);
-          const isAggregate = treeNode?.kind === 'aggregate';
-          const childIds = (args.childIds ?? []).map((id) => String(id));
-          if (isAggregate && childIds.length === 0) {
-            return textResult('Aggregate nodes require childIds (all children verified).', true);
+        const competitive = detail.policy.mode === 'competitive';
+        // One event-pool snapshot for every check in this call (parentRefs
+        // existence, spec workspace, fresh replay) — never mix snapshots.
+        const allEvents = refresher().loadEvents();
+        const childIds = (args.childIds ?? []).map((id) => String(id));
+        let claimPinId = '';
+        let parentrefs: Record<string, string> | null = null;
+        let optimisticParents: { parent: string; pinId: string; state: string }[] = [];
+        let claimPinIdIgnored = false;
+        let effectiveProjection = detail;
+        if (!competitive) {
+          // ── tree mode (v1.2.1 semantics, unchanged) ──
+          claimPinId = String(args.claimPinId ?? '');
+          if (!nodeState.holder || nodeState.holder.pinId !== claimPinId) {
+            return textResult(
+              `claim-rejected:${node}:${nodeState.status} — the effective claim is ${nodeState.holder?.pinId ?? 'none'} (yours: ${claimPinId}).`,
+              true,
+            );
           }
-          if (!isAggregate && childIds.length > 0) {
-            return textResult('Leaf nodes must not carry childIds.', true);
+          if (nodeState.holder.claimant !== who.globalMetaId) {
+            return textResult('That claim belongs to a different bot.', true);
+          }
+          if (detail.nodes.length > 0) {
+            const treeNode = detail.nodes.find((candidate) => candidate.id === node);
+            const isAggregate = treeNode?.kind === 'aggregate';
+            if (isAggregate && childIds.length === 0) {
+              return textResult('Aggregate nodes require childIds (all children verified).', true);
+            }
+            if (!isAggregate && childIds.length > 0) {
+              return textResult('Leaf nodes must not carry childIds.', true);
+            }
+          }
+        } else {
+          // ── competitive mode (v1.3 draft §3.3) ──
+          if (detail.publisher === who.globalMetaId) {
+            return textResult(
+              'Refused: protocol §12 item 6 (submitter != task root author) — you published this MetaTask, so its submissions must come from other bots (publisher work earns no submitter share).',
+              true,
+            );
+          }
+          if (childIds.length > 0) {
+            return textResult('Refused: childIds are the tree-mode aggregation rule — competitive mode enforces deps via parentRefs instead (draft §3.10).', true);
+          }
+          claimPinIdIgnored = Boolean(asString(args.claimPinId).trim());
+          // Fresh replay over the current event pool, so the parentRefs
+          // existence check and the optimistic evaluation read the SAME event
+          // set the engine would (a persisted projection could lag the pool).
+          const guard = guardKnownNode(allEvents, rootPinId, node);
+          if (guard.ok === false) return textResult(guard.reason, true);
+          effectiveProjection = guard.projection;
+          const treeNode = guard.projection.nodes.find((candidate) => candidate.id === node);
+          const deps = (Array.isArray(treeNode?.deps) ? treeNode?.deps : [])?.map((dep) => String(dep)) ?? [];
+          const rawRefs = isPlainObject(args.parentRefs) ? args.parentRefs : null;
+          const refs: Record<string, string> = {};
+          for (const [key, value] of Object.entries(rawRefs ?? {})) refs[key] = asString(value).trim();
+          if (deps.length === 0) {
+            if (Object.keys(refs).length > 0) {
+              return textResult(
+                `Refused: node ${node} is an entry node (deps: []) — parentRefs must be omitted (an empty object counts as omitted; any key replays as invalid_reference, draft §3.3).`,
+                true,
+              );
+            }
+          } else {
+            const missing = deps.filter((dep) => !refs[dep]);
+            const extra = Object.keys(refs).filter((key) => !deps.includes(key));
+            if (missing.length > 0 || extra.length > 0) {
+              return textResult(
+                `Refused: parentRefs must name exactly one submission pin per dep of node ${node} (${deps.join(', ')}) — ${[
+                  missing.length ? `missing: ${missing.join(', ')}` : '',
+                  extra.length ? `extra: ${extra.join(', ')}` : '',
+                ]
+                  .filter(Boolean)
+                  .join('; ')}. Anything else replays as invalid_reference (draft §3.3).`,
+                true,
+              );
+            }
+            // Engine parity: each referenced pin must be an EXISTING submission
+            // of THIS task sitting on THAT dep node (draft §3.3) — the same
+            // check that makes a bad reference invalid_reference on-chain.
+            const taskSubmissions = allEvents.filter(
+              (event) => event.path === 'submission' && asString(event.body.taskid) === rootPinId,
+            );
+            for (const dep of deps) {
+              const ref = refs[dep];
+              if (!ref) {
+                return textResult(`Refused: parentRefs.${dep} is empty — one submission pinId per dep (draft §3.3).`, true);
+              }
+              const target = taskSubmissions.find((event) => event.pinId === ref);
+              if (!target) {
+                return textResult(
+                  `Refused: parentRefs.${dep} = ${ref} is not a submission of this task in the local event pool — it would replay as invalid_reference (draft §3.3). If the parent was just published, refresh first (metatask_list refresh=true).`,
+                  true,
+                );
+              }
+              const targetNode = asString(target.body.node);
+              if (targetNode !== dep) {
+                return textResult(
+                  `Refused: parentRefs.${dep} = ${ref} sits on node "${targetNode}", not on dep node "${dep}" — it would replay as invalid_reference (draft §3.3).`,
+                  true,
+                );
+              }
+            }
+            parentrefs = Object.fromEntries(deps.map((dep) => [dep, refs[dep]]));
+            // Optimistic pipelining (draft §3.3): a parent need not be verified
+            // YET — allowed, but flagged. A DEAD parent (failed / superseded /
+            // itself invalid_reference) can never become chain-valid, so
+            // building on it is guaranteed-wasted gas: refused.
+            const doomed: string[] = [];
+            optimisticParents = [];
+            for (const dep of deps) {
+              const ref = (parentrefs as Record<string, string>)[dep];
+              const candidate = (guard.projection.nodeStates[dep]?.submissions ?? []).find(
+                (entry) => entry.pinId === ref,
+              );
+              if (!candidate) {
+                doomed.push(`${dep}:${ref} (itself invalid_reference at replay)`);
+              } else if (candidate.failed) {
+                doomed.push(`${dep}:${ref} (killed by a counted fail verdict)`);
+              } else if (candidate.superseded) {
+                doomed.push(`${dep}:${ref} (superseded by its author)`);
+              } else if (!candidate.verified) {
+                optimisticParents.push({ parent: dep, pinId: ref, state: 'unverified' });
+              } else if (!candidate.chainValid) {
+                optimisticParents.push({ parent: dep, pinId: ref, state: 'verified_but_ancestor_chain_unverified' });
+              }
+            }
+            if (doomed.length > 0) {
+              return textResult(
+                `Refused: referenced parent submission(s) can never become chain-valid — ${doomed.join('; ')}. Resubmit against a live parent (draft §3.4).`,
+                true,
+              );
+            }
+          }
+        }
+        // Artifact enforcement (draft §4.2): when the node's EFFECTIVE spec
+        // (per-node specid override, else the task root spec) declares
+        // workspace.type "git", the submission must be a verifiable git bundle.
+        const taskPin = allEvents.find((event) => event.path === 'task' && event.pinId === rootPinId);
+        const effectiveSpecid =
+          effectiveProjection.nodeStates[node]?.specid ?? asString(taskPin?.body?.specid ?? '');
+        const specPin = effectiveSpecid
+          ? allEvents.find((event) => event.path === 'spec' && event.pinId === effectiveSpecid)
+          : undefined;
+        const workspace = specPin?.body?.workspace;
+        if (isPlainObject(workspace) && workspace.type === 'git') {
+          const resultObject = args.result ?? {};
+          if (resultObject.type !== 'git-bundle') {
+            return textResult(
+              `Refused: node ${node} runs in a git workspace (draft §4.2) — result.type must be "git-bundle" (got ${asString(resultObject.type) || 'missing'}).`,
+              true,
+            );
+          }
+          if (!GIT_COMMIT_RE.test(asString(resultObject.commit))) {
+            return textResult('Refused: git-bundle result.commit must be the full commit hash (40 hex chars).', true);
+          }
+          const baseCommit = resultObject.baseCommit;
+          if (!(baseCommit === null || GIT_COMMIT_RE.test(asString(baseCommit)))) {
+            return textResult('Refused: git-bundle result.baseCommit must be a full commit hash (40 hex chars), or null for a greenfield node (draft §4.4).', true);
+          }
+          if (!asString(args.attachment).startsWith('metafile://')) {
+            return textResult(
+              'Refused: a git-workspace submission must attach the git bundle as attachment metafile://<bundle> (draft §4.2) — upload it first (metabot-upload-file / metabot-upload-largefile).',
+              true,
+            );
           }
         }
         const result = { ...(args.result ?? {}) };
@@ -644,20 +997,20 @@ export function buildMetataskAgentTools(deps: {
         const inner = innerHash(result);
         result.hash = inner;
         const outer = outerHash(result);
-        const childIds = (args.childIds ?? []).map((id) => String(id));
-        if (childIds.length > 0) {
+        if (!competitive && childIds.length > 0) {
           result.childids = childIds; // canonical source; top-level mirrors it
         }
         const payload: Record<string, unknown> = {
           taskid: rootPinId,
           node,
-          claimid: claimPinId,
+          ...(competitive ? {} : { claimid: claimPinId }),
           result,
           hash: outer,
           contentType: args.contentType ?? 'application/json;utf-8',
           attachment: args.attachment ?? null,
-          childids: childIds,
+          childids: competitive ? [] : childIds,
         };
+        if (parentrefs) payload.parentrefs = parentrefs;
         if (args.supersedePinId) payload.supersedeid = String(args.supersedePinId);
         const written = await writePin(who.metabotId, 'submission', payload, 'tool:metatask_submit');
         void refresher().refreshOnce('metatask_submit');
@@ -666,7 +1019,21 @@ export function buildMetataskAgentTools(deps: {
           txids: written.txids,
           innerHash: inner,
           outerHash: outer,
-          note: 'the review window is now open — independent reviewers vote on this submission pinId.',
+          ...(competitive
+            ? {
+                mode: 'competitive',
+                parentrefs,
+                optimistic: optimisticParents.length > 0,
+                ...(optimisticParents.length > 0 ? { optimisticParents } : {}),
+                ...(claimPinIdIgnored ? { claimPinIdIgnored: true } : {}),
+                note:
+                  optimisticParents.length > 0
+                    ? 'OPTIMISTIC PIPELINE: at least one referenced parent is not yet verified (or its own ancestor chain is unverified) — if a referenced parent never verifies, or is killed by a fail verdict, this submission can NEVER become chain-valid (draft §3.3). Reviewers vote on each candidate independently.'
+                    : 'all referenced parents are verified and chain-valid at the local boundary block — reviewers now vote on this submission pinId.',
+              }
+            : {
+                note: 'the review window is now open — independent reviewers vote on this submission pinId.',
+              }),
         });
       } catch (error) {
         return textResult(`Submit failed: ${error instanceof Error ? error.message : String(error)}`, true);
@@ -741,7 +1108,7 @@ export function buildMetataskAgentTools(deps: {
 
   const releaseClaim = tool(
     'metatask_release',
-    'Voluntarily release your effective claim on a node (you cannot finish the work; the node reopens for others). The claim pin and node must match the current holder and be yours. Note: v1.2 cancelled the old 24h priority re-claim window — after release anyone may claim; correction of a submitted work uses supersede instead.',
+    'Voluntarily release your effective claim on a node (you cannot finish the work; the node reopens for others). The claim pin and node must match the current holder and be yours. Note: v1.2 cancelled the old 24h priority re-claim window — after release anyone may claim; correction of a submitted work uses supersede instead. COMPETITIVE MODE (v1.3): there are no claim locks — release is an on-chain no-op (draft §3.2) and this tool refuses it rather than spending a pin on an ignored signal; corrections use metatask_submit supersedePinId.',
     {
       rootPinId: z.string().min(1),
       node: z.string().min(1),
@@ -753,6 +1120,12 @@ export function buildMetataskAgentTools(deps: {
         if ('error' in who) return textResult(who.error, true);
         const detail = await projectionAfterRefresh(String(args.rootPinId ?? ''));
         if (!detail) return textResult(`MetaTask root not found: ${args.rootPinId}`, true);
+        if (detail.policy.mode === 'competitive') {
+          return textResult(
+            'Refused: competitive mode has no claim locks — release is accepted on-chain but ignored (draft §3.2), so spending a pin on it buys nothing. To correct your own submission use metatask_submit with supersedePinId; to signal abandonment, simply stop working the node.',
+            true,
+          );
+        }
         const nodeState = detail.nodeStates[String(args.node ?? '')];
         if (!nodeState?.holder || nodeState.holder.pinId !== String(args.claimPinId ?? '')) {
           return textResult('That claim is not the current effective holder of the node.', true);
@@ -778,7 +1151,7 @@ export function buildMetataskAgentTools(deps: {
 
   const publishTask = tool(
     'metatask_publish',
-    'Publish a new on-chain MetaTask as this session\'s MetaBot (you become the task root author = publisher). Publish order is roster-pin (auto, when the local roster has 2+ bots) → tree → spec → task; nothing is spent before every invariant passes: single root, acyclic parents, integer weights 1..10000 summing to EXACTLY 10000 across all nodes, quorum >= 1, TTL/window > 0. RECOMMENDED for campaign launches: pass draftsFile (absolute path to the machine-validated campaign drafts JSON) + taskId instead of re-typing title/nodes/spec/policy by hand, because file mode removes LLM transcription errors on large nested arguments — a real launch failed when a large nested validation block was reproduced by hand, came out mangled, and was misread as a gate disagreement. File mode also substitutes SPEC_PIN:<key> node specid placeholders with the pinIds you pass in specPinByKey (unmapped placeholders are refused). Never mix the two modes: either draftsFile+taskId, or inline arguments. After publishing you MUST post a discovery buzz within 24h (title + the full task-root pinId + #metatask) — use the post_buzz tool.',
+    'Publish a new on-chain MetaTask as this session\'s MetaBot (you become the task root author = publisher). Publish order is roster-pin (auto, when the local roster has 2+ bots) → tree → spec → task; nothing is spent before every invariant passes: single root, acyclic parents, integer weights 1..10000 summing to EXACTLY 10000 across all nodes, quorum >= 1, TTL/window > 0. RECOMMENDED for campaign launches: pass draftsFile (absolute path to the machine-validated campaign drafts JSON) + taskId instead of re-typing title/nodes/spec/policy by hand, because file mode removes LLM transcription errors on large nested arguments — a real launch failed when a large nested validation block was reproduced by hand, came out mangled, and was misread as a gate disagreement. File mode also substitutes SPEC_PIN:<key> node specid placeholders with the pinIds you pass in specPinByKey (unmapped placeholders are refused). Never mix the two modes: either draftsFile+taskId, or inline arguments. After publishing you MUST post a discovery buzz within 24h (title + the full task-root pinId + #metatask) — use the post_buzz tool. COMPETITIVE MODE (v1.3 draft): set policy.mode="competitive" + policy.finalnode (the designated terminal node). Extra invariants, all checked before the first pin: deps acyclic; EXACTLY ONE deps sink and it IS finalnode; every node reachable from an entry node and able to reach finalnode; every node carries a non-empty rubric at params.rubric (string array, >= 1 non-empty entry). claimTtlHours/verifyWindowHours carry no semantics in competitive mode (draft §3.10) — any provided value is normalized to 0 and reported in the result. Competitive publishes are REFUSED before H_ACT3 activation (draft §7; boundary block from the local refresh state) unless you pass allowPreActivation: true — the pilot/testing escape hatch.',
     {
       title: z.string().min(1).optional(),
       brief: z.string().optional().describe('What the task is about; shown to every participant.'),
@@ -789,7 +1162,7 @@ export function buildMetataskAgentTools(deps: {
           title: z.string().min(1),
           kind: z.enum(['triage', 'search', 'proof', 'aggregate', 'formalize']),
           specid: z.string().nullable().optional().describe('Per-node verifier override; default inherits the root spec.'),
-          params: z.record(z.string(), z.unknown()).optional(),
+          params: z.record(z.string(), z.unknown()).optional().describe('Node parameters; competitive mode REQUIRES params.rubric (string array, >= 1 non-empty entry).'),
           deps: z.array(z.string()).optional(),
           weight: z.number().int().min(1).max(10000).describe('Settlement weight in basis points; ALL nodes sum to exactly 10000.'),
         }),
@@ -802,16 +1175,20 @@ export function buildMetataskAgentTools(deps: {
         input: z.unknown().optional(),
         output: z.unknown().optional(),
         validation: z.record(z.string(), z.unknown()).optional(),
+        workspace: z.record(z.string(), z.unknown()).optional().describe('v1.3 draft §4.1 workspace declaration (type: git | metafile | inline | pin; git nodes carry baseRef/baseCommit pinning the base bundle).'),
       }).optional(),
       policy: z.object({
-        claimTtlHours: z.number().int().positive(),
+        mode: z.enum(['tree', 'competitive']).optional().describe('v1.3: execution mode; absent = "tree" (byte-identical to v1.2.1). "competitive" requires finalnode and is H_ACT3-gated.'),
+        finalnode: z.string().min(1).optional().describe('Competitive mode: the designated terminal node — must be the UNIQUE deps sink. Refused in tree mode.'),
+        claimTtlHours: z.number().int().positive().optional().describe('Tree mode: required positive integer. Competitive mode: ignored (normalized to 0).'),
         verifyQuorum: z.number().int().min(1),
-        verifyWindowHours: z.number().int().positive(),
+        verifyWindowHours: z.number().int().positive().optional().describe('Tree mode: required positive integer. Competitive mode: ignored (normalized to 0).'),
         rewardSat: z.number().int().optional().describe('Stays 0 in v1.2 (escrow excluded).'),
         challengeTtlDays: z.number().int().positive().optional().describe('Default 14.'),
         submitterShareBP: z.number().int().min(6000).max(9000).optional().describe('Default 8000.'),
       }).optional(),
       tags: z.array(z.string()).optional(),
+      allowPreActivation: z.boolean().optional().describe('Competitive mode only: publish before H_ACT3 activation (pilot/testing escape hatch, draft §7). Never use for production campaigns.'),
       draftsFile: z.string().min(1).optional().describe('Absolute path to a campaign drafts JSON (top-level specs{} + tasks[]); use with taskId instead of inline arguments.'),
       taskId: z.string().min(1).optional().describe('tasks[] entry id in the draftsFile (its `publish` object and `rootSpec` are used).'),
       specPinByKey: z.record(z.string(), z.string()).optional().describe('File mode only: spec key -> published specPinId, substituting SPEC_PIN:<key> node specid placeholders.'),
@@ -820,9 +1197,10 @@ export function buildMetataskAgentTools(deps: {
       title?: string;
       brief?: string;
       nodes?: Array<{ id?: string; parent?: string | null; title?: string; kind?: string; specid?: string | null; params?: Record<string, unknown>; deps?: string[]; weight?: number }>;
-      spec?: { name?: string; lang?: string; entry?: string; script?: string; input?: unknown; output?: unknown; validation?: Record<string, unknown> };
-      policy?: { claimTtlHours?: number; verifyQuorum?: number; verifyWindowHours?: number; rewardSat?: number; challengeTtlDays?: number; submitterShareBP?: number };
+      spec?: { name?: string; lang?: string; entry?: string; script?: string; input?: unknown; output?: unknown; workspace?: Record<string, unknown>; validation?: Record<string, unknown> };
+      policy?: { mode?: string; finalnode?: string; claimTtlHours?: number; verifyQuorum?: number; verifyWindowHours?: number; rewardSat?: number; challengeTtlDays?: number; submitterShareBP?: number };
       tags?: string[];
+      allowPreActivation?: boolean;
       draftsFile?: string;
       taskId?: string;
       specPinByKey?: Record<string, string>;
@@ -868,11 +1246,51 @@ export function buildMetataskAgentTools(deps: {
         if (!title) return textResult('Refused: title is empty.', true);
         const policy = (fileInput ? fileInput.policy : args.policy ?? {}) as Record<string, unknown>;
         const quorum = Number(policy.verifyQuorum ?? 0);
-        const ttlHours = Number(policy.claimTtlHours ?? 0);
-        const windowHours = Number(policy.verifyWindowHours ?? 0);
         if (!Number.isInteger(quorum) || quorum < 1) return textResult('Refused: verifyQuorum must be an integer >= 1.', true);
-        if (!Number.isInteger(ttlHours) || ttlHours <= 0) return textResult('Refused: claimTtlHours must be a positive integer.', true);
-        if (!Number.isInteger(windowHours) || windowHours <= 0) return textResult('Refused: verifyWindowHours must be a positive integer.', true);
+
+        // Mode selection (draft §2): absent/"tree" = tree mode (byte-identical
+        // pre-v1.3 behavior); "competitive" opts into the v1.3 rules.
+        const modeRaw = asString(policy.mode).trim();
+        if (modeRaw && modeRaw !== 'tree' && modeRaw !== 'competitive') {
+          return textResult(
+            `Refused: policy.mode must be "tree" or "competitive" (got "${modeRaw}") — unknown modes replay as tree mode, which is never the intent of passing one.`,
+            true,
+          );
+        }
+        const competitive = modeRaw === 'competitive';
+        const finalnode = asString(policy.finalnode).trim();
+        if (!competitive && finalnode) {
+          return textResult('Refused: policy.finalnode only applies to competitive mode (draft §3.1) — drop it or set policy.mode="competitive".', true);
+        }
+        if (competitive && !finalnode) {
+          return textResult('Refused: competitive mode requires policy.finalnode — the designated terminal node, which must be the unique deps sink (draft §3.1).', true);
+        }
+        if (competitive) {
+          const gate = hAct3GateRefusal(args.allowPreActivation === true);
+          if (gate) return textResult(gate, true);
+        }
+
+        // claim_ttl_hours / verify_window_hours carry no semantics in
+        // competitive mode (draft §3.10 — no lock to reclaim, submissions do
+        // not expire): any provided value is normalized to 0 and reported,
+        // rather than refusing callers that fill the tree-mode schema fields
+        // out of habit. The chain ignores them either way.
+        const policyWarnings: string[] = [];
+        let ttlHours = Number(policy.claimTtlHours ?? 0);
+        let windowHours = Number(policy.verifyWindowHours ?? 0);
+        if (competitive) {
+          if (ttlHours !== 0) {
+            policyWarnings.push(`claim_ttl_hours normalized to 0 (provided ${asString(policy.claimTtlHours) || policy.claimTtlHours}; ignored in competitive mode, draft §3.10)`);
+            ttlHours = 0;
+          }
+          if (windowHours !== 0) {
+            policyWarnings.push(`verify_window_hours normalized to 0 (provided ${asString(policy.verifyWindowHours) || policy.verifyWindowHours}; ignored in competitive mode, draft §3.10)`);
+            windowHours = 0;
+          }
+        } else {
+          if (!Number.isInteger(ttlHours) || ttlHours <= 0) return textResult('Refused: claimTtlHours must be a positive integer.', true);
+          if (!Number.isInteger(windowHours) || windowHours <= 0) return textResult('Refused: verifyWindowHours must be a positive integer.', true);
+        }
 
         const rawNodes: Array<Record<string, unknown>> = fileInput
           ? fileInput.nodes
@@ -920,6 +1338,17 @@ export function buildMetataskAgentTools(deps: {
             cursor = byId.get(cursor)?.parent ?? null;
           }
         }
+        // Competitive publish invariants (draft §3.1/§3.3, authoring list §5):
+        // deps DAG with exactly one sink == finalnode, full work-flow
+        // reachability, and a non-empty params.rubric per node.
+        if (competitive) {
+          const graphRefusal = competitiveGraphRefusal(nodes, finalnode);
+          if (graphRefusal) return textResult(graphRefusal, true);
+          for (const node of nodes) {
+            const rubricRefusal = competitiveRubricRefusal(node);
+            if (rubricRefusal) return textResult(rubricRefusal, true);
+          }
+        }
         const spec: SpecPayloadInput = fileInput
           ? fileInput.spec
           : {
@@ -930,10 +1359,13 @@ export function buildMetataskAgentTools(deps: {
               input: args.spec?.input,
               output: args.spec?.output,
               validation: args.spec?.validation,
+              workspace: args.spec?.workspace,
             };
         if (!asString(spec.name).trim() || !asString(spec.entry).trim()) {
           return textResult('Refused: a root verifier spec (name + entry) is required — every task needs a machine-checkable spec.', true);
         }
+        const workspaceRefusal = specWorkspaceRefusal(spec.workspace);
+        if (workspaceRefusal) return textResult(workspaceRefusal, true);
 
         // roster pin (same-side declaration) when the local roster can cross-review.
         // Flat sibling of the protocol root (the collector sweeps it as the
@@ -996,6 +1428,9 @@ export function buildMetataskAgentTools(deps: {
             verify_window_hours: windowHours,
             reward_sat: Number.isInteger(policy.rewardSat) ? Number(policy.rewardSat) : 0,
             challenge_ttl_days: Number.isInteger(policy.challengeTtlDays) ? Number(policy.challengeTtlDays) : 14,
+            // Tree mode publishes byte-identically to pre-v1.3: mode/finalnode
+            // keys exist only on competitive tasks.
+            ...(competitive ? { mode: 'competitive', finalnode } : {}),
             split: { submitterShareBP: shareBP, rosterid },
           },
           tags,
@@ -1011,6 +1446,16 @@ export function buildMetataskAgentTools(deps: {
           txids: [...treePin.txids, ...specPin.txids, ...taskPin.txids],
           source: fileInput ? 'draftsFile' : 'inline',
           ...(fileInput ? { taskId: fileInput.taskId } : {}),
+          ...(competitive
+            ? {
+                mode: 'competitive',
+                finalnode,
+                ...(args.allowPreActivation === true
+                  ? { preActivationOverride: true, activationNote: 'published before H_ACT3 via allowPreActivation (pilot/testing escape hatch, draft §7) — replay accepts it, but production campaigns must wait for the announced activation height.' }
+                  : {}),
+                ...(policyWarnings.length > 0 ? { policyWarnings } : {}),
+              }
+            : {}),
           reminder: 'Post the discovery buzz within 24h: title + the FULL task root pinId + #metatask tag (use post_buzz).',
         });
       } catch (error) {
@@ -1029,6 +1474,7 @@ export function buildMetataskAgentTools(deps: {
       script: z.string().min(1).optional().describe('Inline verifier script text, or a pin:// | metafile:// reference when too long.'),
       input: z.unknown().optional().describe('Input descriptor (string or object); interpreted by the script.'),
       output: z.unknown().optional().describe('Output/verdict contract (string or object): pass | fail | invalid.'),
+      workspace: z.record(z.string(), z.unknown()).optional().describe('v1.3 draft §4.1 workspace declaration (type: git | metafile | inline | pin; git nodes carry baseRef/baseCommit pinning the base bundle).'),
       validation: z.record(z.string(), z.unknown()).optional().describe('v1.2.1 validation block: null_tolerance, enumeration_closure (closure + integer self-check count), proposition_fidelity (correspondence artifact pin). Required unless enforceHAct2Validation=false.'),
       enforceHAct2Validation: z.boolean().optional().describe('Default true: enforce the v1.2.1 three-item validation block. Set false only for a pre-H_ACT2 (v1.1-era) spec.'),
       draftsFile: z.string().min(1).optional().describe('Absolute path to a campaign drafts JSON (top-level specs{}); use with specKey instead of inline arguments.'),
@@ -1041,6 +1487,7 @@ export function buildMetataskAgentTools(deps: {
       script?: string;
       input?: unknown;
       output?: unknown;
+      workspace?: Record<string, unknown>;
       validation?: Record<string, unknown>;
       enforceHAct2Validation?: boolean;
       draftsFile?: string;
@@ -1059,6 +1506,7 @@ export function buildMetataskAgentTools(deps: {
           args.script !== undefined ||
           args.input !== undefined ||
           args.output !== undefined ||
+          args.workspace !== undefined ||
           args.validation !== undefined;
         let spec: SpecPayloadInput;
         if (draftsFile || specKey) {
@@ -1070,7 +1518,7 @@ export function buildMetataskAgentTools(deps: {
           }
           if (inlineProvided) {
             return textResult(
-              'Refused: pass either draftsFile+specKey OR inline arguments (name/lang/entry/script/input/output/validation), not both.',
+              'Refused: pass either draftsFile+specKey OR inline arguments (name/lang/entry/script/input/output/validation/workspace), not both.',
               true,
             );
           }
@@ -1087,6 +1535,7 @@ export function buildMetataskAgentTools(deps: {
             script: args.script,
             input: args.input,
             output: args.output,
+            workspace: args.workspace,
             validation: args.validation,
           };
         }
@@ -1098,6 +1547,8 @@ export function buildMetataskAgentTools(deps: {
         }
         const scriptRefusal = specScriptRefusal(spec.script);
         if (scriptRefusal) return textResult(scriptRefusal, true);
+        const workspaceRefusal = specWorkspaceRefusal(spec.workspace);
+        if (workspaceRefusal) return textResult(workspaceRefusal, true);
         const rawScript = typeof spec.script === 'string' ? spec.script : '';
         const trimmedScript = rawScript.trim();
         // A pin://|metafile:// reference is normalized; inline script bytes are
@@ -1120,6 +1571,7 @@ export function buildMetataskAgentTools(deps: {
             script,
             input: spec.input,
             output: spec.output,
+            workspace: spec.workspace,
             validation: spec.validation,
           }),
           'tool:metatask_publish_spec',
@@ -1145,7 +1597,7 @@ export function buildMetataskAgentTools(deps: {
 
   const amendTree = tool(
     'metatask_amend',
-    'Amend the task tree as the PUBLISHER only (the task root author). v1.2 minimal amend: ops may touch only nodes that were never effectively claimed (frozen-on-start); the weight invariant (sum=10000) must hold after the fold; the task must not be finalized. bases is filled automatically from the current tree head. The chain replay is authoritative — if this tool accepts but replay rejects, the amend is dead on chain.',
+    'Amend the task tree as the PUBLISHER only (the task root author). v1.2 minimal amend: ops may touch only nodes that were never effectively claimed (frozen-on-start); the weight invariant (sum=10000) must hold after the fold; the task must not be finalized. bases is filled automatically from the current tree head. COMPETITIVE MODE (v1.3 draft §3.9): the freeze condition is SATISFACTION instead — a node is frozen once it has a chain-valid verified submission (claims carry no freeze semantics); remove_node is rejected when another node lists the target in deps; add_node may introduce deps edges only onto unsatisfied existing nodes and the new node needs a non-empty params.rubric; the fold must preserve deps referential integrity, deps acyclicity and the PINNED TERMINAL — policy.finalnode must stay a live deps sink, so a new layer ABOVE the finalnode is refused (terminal growth, incl. finalnode reassignment, is deferred to the multi-sink extension §9 Q1) while a middle-layer or isolated side-branch add_node (deps onto unsatisfied existing nodes, finalnode not among them) is allowed. The chain replay is authoritative — if this tool accepts but replay rejects, the amend is dead on chain.',
     {
       rootPinId: z.string().min(1),
       ops: z.array(
@@ -1183,14 +1635,30 @@ export function buildMetataskAgentTools(deps: {
         if (detail.taskComplete) {
           return textResult('Refused: the task is finalized (root verified) — settlement must never be retroactively recomputable.', true);
         }
-        // Writer-side checks (conservative: ANY claim ever seen freezes a node).
+        // Writer-side checks. Tree mode (unchanged): conservative — ANY claim
+        // ever seen freezes a node. Competitive mode (draft §3.9): the freeze
+        // condition is SATISFACTION — a node freezes once it has a chain-valid
+        // verified submission at the boundary (status "verified" in the
+        // competitive projection), matching the engine's point-in-time rule
+        // (a satisfied node is certainly frozen for an amend published now);
+        // claims are intent-only there and freeze nothing.
+        const competitive = detail.policy.mode === 'competitive';
         const events = refresher().loadEvents();
         const claimedEver = new Set(
           events
             .filter((event) => event.path === 'claim' && asString(event.body.taskid) === rootPinId)
             .map((event) => asString(event.body.node)),
         );
-        const byId = new Map<string, { id: string; parent: string | null; title: string; kind: string; specid?: string | null; weight?: number }>(
+        const satisfiedNow = (nodeId: string): boolean => detail.nodeStates[nodeId]?.status === 'verified';
+        const isFrozen = competitive ? satisfiedNow : (nodeId: string): boolean => claimedEver.has(nodeId);
+        const frozenMessage = (nodeId: string): string =>
+          competitive
+            ? `Refused: node ${nodeId} is satisfied (a chain-valid verified submission exists) — frozen against amends (draft §3.9).`
+            : `Refused: node ${nodeId} has been claimed before — frozen-on-start (v1.2 minimal amend).`;
+        const byId = new Map<
+          string,
+          { id: string; parent: string | null; title: string; kind: string; specid?: string | null; params?: Record<string, unknown>; deps?: string[]; weight?: number }
+        >(
           detail.nodes.map((node) => [node.id, { ...node }]),
         );
         for (const rawOp of args.ops ?? []) {
@@ -1203,8 +1671,27 @@ export function buildMetataskAgentTools(deps: {
             if (!raw || !id || byId.has(id)) return textResult('Refused: add_node with missing or duplicate id.', true);
             const parentNode = byId.get(parent);
             if (!parentNode) return textResult(`Refused: add_node parent ${parent} not found.`, true);
-            if (detail.nodeStates[parent]?.status === 'verified' || detail.nodeStates[parent]?.holder) {
-              return textResult(`Refused: parent ${parent} is claimed or verified.`, true);
+            if (competitive ? satisfiedNow(parent) : detail.nodeStates[parent]?.status === 'verified' || detail.nodeStates[parent]?.holder) {
+              return textResult(
+                competitive
+                  ? `Refused: parent ${parent} is satisfied — new nodes cannot hang off a frozen node (draft §3.9).`
+                  : `Refused: parent ${parent} is claimed or verified.`,
+                true,
+              );
+            }
+            const newDeps = (Array.isArray(raw.deps) ? raw.deps : []).map((dep) => String(dep));
+            const newParams = (raw.params && typeof raw.params === 'object' ? raw.params : {}) as Record<string, unknown>;
+            if (competitive) {
+              // §3.9: new deps edges may only land on unfrozen existing nodes.
+              for (const dep of newDeps) {
+                if (!byId.has(dep)) return textResult(`Refused: add_node ${id} references unknown dep ${dep}.`, true);
+                if (satisfiedNow(dep)) {
+                  return textResult(`Refused: add_node ${id} may not depend on ${dep} — it is satisfied (frozen), so the edge would bind new work to a sealed result (draft §3.9).`, true);
+                }
+              }
+              // The publish rubric invariant (§3.3) applies to added nodes too.
+              const rubricRefusal = competitiveRubricRefusal({ id, params: newParams });
+              if (rubricRefusal) return textResult(rubricRefusal, true);
             }
             byId.set(id, {
               id,
@@ -1212,23 +1699,43 @@ export function buildMetataskAgentTools(deps: {
               title: asString(raw.title),
               kind: asString(raw.kind, 'proof'),
               specid: raw.specid === undefined || raw.specid === null ? null : asString(raw.specid),
-              params: {},
-              deps: [],
+              params: newParams,
+              deps: newDeps,
               weight: Number(raw.weight),
             } as never);
           } else {
             const target = byId.get(nodeId);
             if (!target) return textResult(`Refused: node ${nodeId} not found.`, true);
-            if (claimedEver.has(nodeId)) {
-              return textResult(`Refused: node ${nodeId} has been claimed before — frozen-on-start (v1.2 minimal amend).`, true);
+            if (isFrozen(nodeId)) {
+              return textResult(frozenMessage(nodeId), true);
             }
             if (op === 'remove_node') {
               const stack = [nodeId];
               while (stack.length) {
                 const current = stack.pop() as string;
-                if (claimedEver.has(current)) return textResult(`Refused: subtree of ${nodeId} contains a claimed node.`, true);
+                if (isFrozen(current)) {
+                  return textResult(
+                    competitive
+                      ? `Refused: subtree of ${nodeId} contains a satisfied node (${current}) — frozen (draft §3.9).`
+                      : `Refused: subtree of ${nodeId} contains a claimed node.`,
+                    true,
+                  );
+                }
                 for (const candidate of byId.values()) {
                   if (candidate.parent === current) stack.push(candidate.id);
+                }
+              }
+              if (competitive) {
+                // §3.9: a node referenced by another node's deps cannot be
+                // removed (the post-fold deps-integrity check is the backstop).
+                const referencing = Array.from(byId.values()).filter(
+                  (candidate) => candidate.id !== nodeId && (candidate.deps ?? []).includes(nodeId),
+                );
+                if (referencing.length > 0) {
+                  return textResult(
+                    `Refused: node ${nodeId} is listed in deps by ${referencing.map((candidate) => candidate.id).join(', ')} — remove or rewire the dependents first (draft §3.9).`,
+                    true,
+                  );
                 }
               }
               byId.delete(nodeId);
@@ -1253,6 +1760,42 @@ export function buildMetataskAgentTools(deps: {
         }
         if (totalWeight !== 10000) {
           return textResult(`Refused: weights must sum to exactly 10000 after the fold (got ${totalWeight}).`, true);
+        }
+        if (competitive) {
+          // §3.9 fold invariants, writer-side (the engine re-checks them and
+          // ignores the whole amend on violation): deps reference live nodes,
+          // deps acyclic, and the TERMINAL STAYS PINNED — policy.finalnode
+          // must still be a live deps sink after the fold. v1.3 does not allow
+          // a new layer ABOVE the finalnode (that would move the sink off it;
+          // terminal growth incl. finalnode reassignment is deferred to the
+          // multi-sink extension, §9 Q1). A middle-layer or isolated
+          // side-branch add_node keeps the sink at finalnode and is allowed.
+          const folded = Array.from(byId.values()).map((node) => ({
+            id: node.id,
+            deps: (node.deps ?? []).map((dep) => String(dep)),
+            params: (node.params ?? {}) as Record<string, unknown>,
+          }));
+          for (const node of folded) {
+            for (const dep of node.deps) {
+              if (!byId.has(dep)) {
+                return textResult(`Refused: after the fold, node ${node.id} references dep ${dep} which no longer exists (draft §3.9 deps integrity).`, true);
+              }
+            }
+          }
+          if (!depsGraphAcyclic(folded)) {
+            return textResult('Refused: the fold makes the deps graph cyclic (draft §3.9).', true);
+          }
+          const finalnode = asString(detail.policy.finalNode).trim();
+          if (!byId.has(finalnode)) {
+            return textResult(`Refused: the fold must keep the designated terminal node "${finalnode}" alive (draft §3.9) — competitive amends cannot remove policy.finalnode.`, true);
+          }
+          const sinks = depsSinkIds(folded);
+          if (!sinks.includes(finalnode)) {
+            return textResult(
+              `Refused: the fold moves the deps sink off policy.finalnode "${finalnode}" (sink would become ${[...sinks].sort().join(', ') || 'none'}) — v1.3 does not allow a new layer above the finalnode (draft §3.9); terminal growth, including finalnode reassignment, is deferred to the multi-sink extension (§9 Q1). A middle-layer or side-branch add_node (deps onto unfrozen existing nodes, finalnode NOT among them) keeps the sink at finalnode and is allowed.`,
+              true,
+            );
+          }
         }
         const ops = (args.ops ?? []).map((rawOp) => {
           if (asString(rawOp?.op) === 'add_node') {

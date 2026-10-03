@@ -1,0 +1,23 @@
+{
+  "createdAt": "2026-10-03",
+  "files": {
+    "competitive-vectors.json": {
+      "bytes": 71587,
+      "canonicalSha256": "3000d17ff9281886ccfbc175713cb8fa658d505fe7cf86a3045d610caa2c796c",
+      "protocolVersion": "1.3.0-draft",
+      "role": "competitive",
+      "sha256": "5b594b1e0c5f426ed5f05a6060fe2864f82043f0f75be2c56c49232516717f8d",
+      "vectors": 11
+    },
+    "conformance-vectors.json": {
+      "bytes": 45534,
+      "canonicalSha256": "106aa1f3bee8ebd48339ceb65f97a12e54247e1e831296a394a974c9cb22f2c4",
+      "protocolVersion": "1.2.1",
+      "role": "legacy",
+      "sha256": "f8396fe28ccea2c20f075b845d662237127ce299fecad279f4d2e097b9df4c0c",
+      "vectors": 16
+    }
+  },
+  "note": "legacy = the registered v1.2.1 conformance set (byte copy); competitive = the v1.3.0 draft set (PRE-ACTIVATION, free to change until H_ACT3)",
+  "setId": "metatask-v13-pilot-vectors"
+}

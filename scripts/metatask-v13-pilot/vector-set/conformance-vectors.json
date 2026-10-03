@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "protocolVersion": "1.2.1",
+  "engineAlgoVersion": "idbots-metatask-engine/1.2.1",
+  "note": "MetaTask engine conformance vector set (registration body v1.2.1, conformance.fixtureSet). Canonical artifact for the three engines (Python skill / metaso Go indexer / IDBots TS engine); the canonical-JSON sha256 of THIS file is announced by the registration publisher alongside the pinned copy. Hash expectations come from Appendix A of the registration body (frozen, independently recomputed). Replay vectors use the MetaTaskChainEvent shape: {pinId, path, author, height, txIndex, timestampMs, body}. Defaults exercised: H_ACT=190000, H_ACT2=191500 (per-vector hAct/hAct2 overrides allowed in options).",
+  "hashConstants": { "hAct": 190000, "hAct2": 191500 },
+  "vectors": [
+    {
+      "id": "h01-appendix-a-positive-1",
+      "kind": "hash",
+      "input": { "node": "n4", "type": "counterexample", "n": 8, "candidates": 28, "primes_found": 0, "samples": [259, 289] },
+      "expectInner": "6ccdb15eaebd14d0c1b5d3c629d708c6e66af4be53f10ab5a4c7dade3a3e371c",
+      "expectOuter": "80df13f4a673b804920607ec260c99348724e96e1f165383d3fdbaa0e8df5ede"
+    },
+    {
+      "id": "h02-appendix-a-positive-2-cjk-null",
+      "kind": "hash",
+      "input": { "node": "节点甲", "type": "triage", "well_defined": false, "note": null },
+      "expectInner": "72778ba8597bebe051efbafd729b2c510aaa9202cc4e105d6506efeb19127609",
+      "expectOuter": "07740603fd75770dd206dd6ee60392b082d0cc1282dc00fcf8f6c67324cb57df"
+    },
+    {
+      "id": "r01-open",
+      "kind": "replay",
+      "description": "Unclaimed tree node is open.",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } }
+      ],
+      "expect": { "nodes": { "r1": "open", "t1": "open" }, "taskComplete": false }
+    },
+    {
+      "id": "r02-claimed",
+      "kind": "replay",
+      "description": "Effective claim holds the node in claimed.",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189900, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } }
+      ],
+      "expect": { "nodes": { "t1": "claimed" }, "taskComplete": false }
+    },
+    {
+      "id": "r03-verified",
+      "kind": "replay",
+      "description": "Quorum pass votes with zero valid fails verify a leaf (pre-H_ACT2 heights: no #8/#9 requirements).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189900, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000001i0", "path": "submission", "author": "idq1sub", "height": 189910, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000001i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000001", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "path": "verify", "author": "idq1rev1", "height": 189920, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000002i0", "path": "verify", "author": "idq1rev2", "height": 189921, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } }
+      ],
+      "expect": { "nodes": { "t1": "verified" }, "taskComplete": false }
+    },
+    {
+      "id": "r04-ttl-expired",
+      "kind": "replay",
+      "description": "Claim TTL expiry (48h) reopens the node when a clock is provided.",
+      "options": { "now": 1790176400000 },
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 48, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189900, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } }
+      ],
+      "expect": { "nodes": { "t1": "open" }, "taskComplete": false }
+    },
+    {
+      "id": "r05-released-no-resurrection",
+      "kind": "replay",
+      "description": "Release reopens; the claim that lost the lock race never resurrects.",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189900, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000002i0", "path": "claim", "author": "idq1rev1", "height": 189901, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "rel000000000000000000000000000000000000000000000000000001i0", "path": "release", "author": "idq1sub", "height": 189902, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000001i0" } }
+      ],
+      "expect": { "nodes": { "t1": "open" }, "taskComplete": false }
+    },
+    {
+      "id": "r06-missing-semantic-check-not-counted",
+      "kind": "replay",
+      "description": "Vote at height >= H_ACT without semantic_check is stored but never counted (#9): quorum unmet.",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 190010, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000001i0", "path": "submission", "author": "idq1sub", "height": 190020, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000001i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000001", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "path": "verify", "author": "idq1rev1", "height": 190030, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000002i0", "path": "verify", "author": "idq1rev2", "height": 190031, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass", "semantic_check": "statement matches" } }
+      ],
+      "expect": { "nodes": { "t1": "claimed" }, "ignoredContains": { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "reason": "missing_semantic_check" }, "taskComplete": false }
+    },
+    {
+      "id": "r07-hact-boundary-exempt",
+      "kind": "replay",
+      "description": "Identical missing-semantic_check vote at height 189999 (below H_ACT) still counts (#8/#9 exempt).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189990, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000001i0", "path": "submission", "author": "idq1sub", "height": 189991, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000001i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000001", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "path": "verify", "author": "idq1rev1", "height": 189999, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000002i0", "path": "verify", "author": "idq1rev2", "height": 189998, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } }
+      ],
+      "expect": { "nodes": { "t1": "verified" }, "taskComplete": false }
+    },
+    {
+      "id": "r08-hact-boundary-gated",
+      "kind": "replay",
+      "description": "Same-shaped vote at height 190000 (at H_ACT) is not counted (#8/#9 live).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189990, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000001i0", "path": "submission", "author": "idq1sub", "height": 189991, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000001i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000001", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "path": "verify", "author": "idq1rev1", "height": 190000, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000002i0", "path": "verify", "author": "idq1rev2", "height": 189998, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } }
+      ],
+      "expect": { "nodes": { "t1": "claimed" }, "ignoredContains": { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "reason": "missing_semantic_check" }, "taskComplete": false }
+    },
+    {
+      "id": "r09-last-valid-vote-wins",
+      "kind": "replay",
+      "description": "Per-bot fail-then-pass double votes resolve to the LAST valid vote (pilot #01 root pattern, standing engine reading below H_ACT2).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000001i0", "path": "tree", "author": "idq1pub", "height": 189800, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "leaf", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 7000 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000001i0", "path": "task", "author": "idq1pub", "height": 189801, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000001i0", "policy": { "verify_quorum": 2, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000001i0", "path": "claim", "author": "idq1sub", "height": 189900, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000001i0", "path": "submission", "author": "idq1sub", "height": 189910, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000001i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000001i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000001", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000001i0", "path": "verify", "author": "idq1rev1", "height": 189920, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "fail", "method": "counterexample", "failreason": "row 3" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000002i0", "path": "verify", "author": "idq1rev2", "height": 189921, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "fail", "method": "counterexample", "failreason": "row 3" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000003i0", "path": "verify", "author": "idq1rev1", "height": 189930, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000004i0", "path": "verify", "author": "idq1rev2", "height": 189931, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000001i0", "verdict": "pass", "method": "replay pass" } }
+      ],
+      "expect": { "nodes": { "t1": "verified" }, "taskComplete": false }
+    },
+    {
+      "id": "r10-agg-parent-blocked-hact2",
+      "kind": "replay",
+      "description": "v1.2.1 aggregation precondition: parent with quorum but an unverified child is NOT verified (H_ACT2 era, parent submission >= 191500).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000002i0", "path": "tree", "author": "idq1pub", "height": 191501, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "a", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 }, { "id": "t2", "parent": "r1", "title": "b", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000002i0", "path": "task", "author": "idq1pub", "height": 191502, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000002i0", "policy": { "verify_quorum": 1, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000011i0", "path": "claim", "author": "idq1sub", "height": 191610, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000002i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000011i0", "path": "submission", "author": "idq1sub", "height": 191611, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000002i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000011i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000011", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000011i0", "path": "verify", "author": "idq1rev1", "height": 191612, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000011i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000012i0", "path": "claim", "author": "idq1rev2", "height": 191613, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000002i0", "node": "t2" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000013i0", "path": "claim", "author": "idq1sub", "height": 191620, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000002i0", "node": "r1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000013i0", "path": "submission", "author": "idq1sub", "height": 191621, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000002i0", "node": "r1", "claimid": "clm000000000000000000000000000000000000000000000000000013i0", "result": { "type": "table", "rows": [], "childids": ["sub000000000000000000000000000000000000000000000000000011i0"] }, "hash": "0000000000000000000000000000000000000000000000000000000000000013", "contentType": "application/json;utf-8", "attachment": null, "childids": ["sub000000000000000000000000000000000000000000000000000011i0"] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000013i0", "path": "verify", "author": "idq1rev1", "height": 191622, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000013i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } }
+      ],
+      "expect": { "nodes": { "t1": "verified", "t2": "claimed", "r1": "claimed" }, "taskComplete": false, "settlement": null }
+    },
+    {
+      "id": "r11-agg-grandfathered",
+      "kind": "replay",
+      "description": "Same shape below H_ACT2: the parent keeps its recorded vote-level verified state (pilot #01 pattern; disclosedDivergence grandfather).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000003i0", "path": "tree", "author": "idq1pub", "height": 189700, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "a", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 }, { "id": "t2", "parent": "r1", "title": "b", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000003i0", "path": "task", "author": "idq1pub", "height": 189701, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000003i0", "policy": { "verify_quorum": 1, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000021i0", "path": "claim", "author": "idq1sub", "height": 189710, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000003i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000021i0", "path": "submission", "author": "idq1sub", "height": 189711, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000003i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000021i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000021", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000021i0", "path": "verify", "author": "idq1rev1", "height": 189712, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000021i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000022i0", "path": "claim", "author": "idq1rev2", "height": 189713, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000003i0", "node": "t2" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000023i0", "path": "claim", "author": "idq1sub", "height": 189720, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000003i0", "node": "r1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000023i0", "path": "submission", "author": "idq1sub", "height": 189721, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000003i0", "node": "r1", "claimid": "clm000000000000000000000000000000000000000000000000000023i0", "result": { "type": "table", "rows": [], "childids": ["sub000000000000000000000000000000000000000000000000000021i0"] }, "hash": "0000000000000000000000000000000000000000000000000000000000000023", "contentType": "application/json;utf-8", "attachment": null, "childids": ["sub000000000000000000000000000000000000000000000000000021i0"] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000023i0", "path": "verify", "author": "idq1rev1", "height": 189722, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000023i0", "verdict": "pass", "method": "replay pass" } }
+      ],
+      "expect": { "nodes": { "t1": "verified", "t2": "claimed", "r1": "verified" }, "taskComplete": true }
+    },
+    {
+      "id": "r12-agg-all-green-settles",
+      "kind": "replay",
+      "description": "All children verified + childids match: parent verifies, root completes, integer settlement sums to exactly 10000.",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000004i0", "path": "tree", "author": "idq1pub", "height": 191501, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "a", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 }, { "id": "t2", "parent": "r1", "title": "b", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000004i0", "path": "task", "author": "idq1pub", "height": 191502, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000004i0", "policy": { "verify_quorum": 1, "claim_ttl_hours": 0, "verify_window_hours": 0, "split": { "submitterShareBP": 8000 } }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000031i0", "path": "claim", "author": "idq1sub", "height": 191610, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000004i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000031i0", "path": "submission", "author": "idq1sub", "height": 191611, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000004i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000031i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000031", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000031i0", "path": "verify", "author": "idq1rev1", "height": 191612, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000031i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000032i0", "path": "claim", "author": "idq1sub", "height": 191613, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000004i0", "node": "t2" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000032i0", "path": "submission", "author": "idq1sub", "height": 191614, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000004i0", "node": "t2", "claimid": "clm000000000000000000000000000000000000000000000000000032i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000032", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000032i0", "path": "verify", "author": "idq1rev2", "height": 191615, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000032i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000033i0", "path": "claim", "author": "idq1sub", "height": 191620, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000004i0", "node": "r1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000033i0", "path": "submission", "author": "idq1sub", "height": 191621, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000004i0", "node": "r1", "claimid": "clm000000000000000000000000000000000000000000000000000033i0", "result": { "type": "table", "rows": [], "childids": ["sub000000000000000000000000000000000000000000000000000031i0", "sub000000000000000000000000000000000000000000000000000032i0"] }, "hash": "0000000000000000000000000000000000000000000000000000000000000033", "contentType": "application/json;utf-8", "attachment": null, "childids": ["sub000000000000000000000000000000000000000000000000000031i0", "sub000000000000000000000000000000000000000000000000000032i0"] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000033i0", "path": "verify", "author": "idq1rev1", "height": 191622, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000033i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } }
+      ],
+      "expect": { "nodes": { "t1": "verified", "t2": "verified", "r1": "verified" }, "taskComplete": true, "settlementShareSumBP": 10000 }
+    },
+    {
+      "id": "r13-agg-childids-mismatch",
+      "kind": "replay",
+      "description": "Children verified but the aggregate lists a foreign pin: parent blocked (childids must correspond exactly).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000005i0", "path": "tree", "author": "idq1pub", "height": 191501, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "r1", "nodes": [ { "id": "r1", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [], "weight": 3000 }, { "id": "t1", "parent": "r1", "title": "a", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 }, { "id": "t2", "parent": "r1", "title": "b", "kind": "proof", "specid": null, "params": {}, "deps": [], "weight": 3500 } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000005i0", "path": "task", "author": "idq1pub", "height": 191502, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000005i0", "policy": { "verify_quorum": 1, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000041i0", "path": "claim", "author": "idq1sub", "height": 191610, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000005i0", "node": "t1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000041i0", "path": "submission", "author": "idq1sub", "height": 191611, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000005i0", "node": "t1", "claimid": "clm000000000000000000000000000000000000000000000000000041i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000041", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000041i0", "path": "verify", "author": "idq1rev1", "height": 191612, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000041i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000042i0", "path": "claim", "author": "idq1sub", "height": 191613, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000005i0", "node": "t2" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000042i0", "path": "submission", "author": "idq1sub", "height": 191614, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000005i0", "node": "t2", "claimid": "clm000000000000000000000000000000000000000000000000000042i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000042", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000042i0", "path": "verify", "author": "idq1rev2", "height": 191615, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000042i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000043i0", "path": "claim", "author": "idq1sub", "height": 191620, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000005i0", "node": "r1" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000043i0", "path": "submission", "author": "idq1sub", "height": 191621, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000005i0", "node": "r1", "claimid": "clm000000000000000000000000000000000000000000000000000043i0", "result": { "type": "table", "rows": [], "childids": ["sub000000000000000000000000000000000000000000000000000041i0", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefi0"] }, "hash": "0000000000000000000000000000000000000000000000000000000000000043", "contentType": "application/json;utf-8", "attachment": null, "childids": ["sub000000000000000000000000000000000000000000000000000041i0", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefi0"] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000043i0", "path": "verify", "author": "idq1rev1", "height": 191622, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000043i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } }
+      ],
+      "expect": { "nodes": { "t1": "verified", "t2": "verified", "r1": "claimed" }, "taskComplete": false }
+    },
+    {
+      "id": "r14-settlement-legacy-residue-discarded",
+      "kind": "replay",
+      "description": "Legacy weights (pre-H_ACT2 tree, no weight field): uniform floor(10000/3), the 1bp residue is discarded (total 9999).",
+      "options": {},
+      "events": [
+        { "pinId": "tree000000000000000000000000000000000000000000000000000006i0", "path": "tree", "author": "idq1pub", "height": 189700, "txIndex": 0, "timestampMs": 1790000000000, "body": { "root": "a", "nodes": [ { "id": "a", "parent": null, "title": "root", "kind": "aggregate", "specid": null, "params": {}, "deps": [] }, { "id": "b", "parent": "a", "title": "b", "kind": "proof", "specid": null, "params": {}, "deps": [] }, { "id": "c", "parent": "a", "title": "c", "kind": "proof", "specid": null, "params": {}, "deps": [] } ] } },
+        { "pinId": "task000000000000000000000000000000000000000000000000000006i0", "path": "task", "author": "idq1pub", "height": 189701, "txIndex": 0, "timestampMs": 1790000000000, "body": { "title": "v", "treeid": "tree000000000000000000000000000000000000000000000000000006i0", "policy": { "verify_quorum": 1, "claim_ttl_hours": 0, "verify_window_hours": 0 }, "tags": [] } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000051i0", "path": "claim", "author": "idq1sub", "height": 189900, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000006i0", "node": "b" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000051i0", "path": "submission", "author": "idq1sub", "height": 189910, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000006i0", "node": "b", "claimid": "clm000000000000000000000000000000000000000000000000000051i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000051", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000051i0", "path": "verify", "author": "idq1rev1", "height": 189920, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000051i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000052i0", "path": "claim", "author": "idq1sub2", "height": 189921, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000006i0", "node": "c" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000052i0", "path": "submission", "author": "idq1sub2", "height": 189922, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000006i0", "node": "c", "claimid": "clm000000000000000000000000000000000000000000000000000052i0", "result": { "type": "table", "rows": [] }, "hash": "0000000000000000000000000000000000000000000000000000000000000052", "contentType": "application/json;utf-8", "attachment": null, "childids": [] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000052i0", "path": "verify", "author": "idq1rev1", "height": 189923, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000052i0", "verdict": "pass", "method": "replay pass" } },
+        { "pinId": "clm000000000000000000000000000000000000000000000000000053i0", "path": "claim", "author": "idq1sub3", "height": 189924, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000006i0", "node": "a" } },
+        { "pinId": "sub000000000000000000000000000000000000000000000000000053i0", "path": "submission", "author": "idq1sub3", "height": 191625, "txIndex": 0, "timestampMs": 1790000000000, "body": { "taskid": "task000000000000000000000000000000000000000000000000000006i0", "node": "a", "claimid": "clm000000000000000000000000000000000000000000000000000053i0", "result": { "type": "table", "rows": [], "childids": ["sub000000000000000000000000000000000000000000000000000051i0", "sub000000000000000000000000000000000000000000000000000052i0"] }, "hash": "0000000000000000000000000000000000000000000000000000000000000053", "contentType": "application/json;utf-8", "attachment": null, "childids": ["sub000000000000000000000000000000000000000000000000000051i0", "sub000000000000000000000000000000000000000000000000000052i0"] } },
+        { "pinId": "vot000000000000000000000000000000000000000000000000000053i0", "path": "verify", "author": "idq1rev2", "height": 191626, "txIndex": 0, "timestampMs": 1790000000000, "body": { "targetid": "sub000000000000000000000000000000000000000000000000000053i0", "verdict": "pass", "method": "replay pass", "semantic_check": "ok" } }
+      ],
+      "expect": { "nodes": { "a": "verified", "b": "verified", "c": "verified" }, "taskComplete": true, "settlementShareSumBP": 9999 }
+    }
+  ]
+}

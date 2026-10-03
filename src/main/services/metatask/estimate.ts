@@ -23,6 +23,14 @@ import type {
  * same σ clamp, same R(n) filter, same Laplace accuracy a(r), same integer
  * rounding (floor at every step, residue discarded).
  *
+ * Competitive mode (v1.3): the same loop answers the draft §3.7 estimation
+ * extension — "if the task completed now via the currently leading partial
+ * chain". The engine projects each satisfied node's leading candidate (earliest
+ * chain-valid verified submission) as `node.submission` with status `verified`,
+ * so paying every verified node its leader's split yields exactly the leading
+ * partial chain; once the task completes the leading candidate on every node IS
+ * the winning-chain member, so the estimate still equals the manifest.
+ *
  * The only intentional difference is reachability: the engine falls back to
  * REVIEWER_ACCURACY_FLOOR_BP (2500) for a reviewer missing from its accuracy
  * map, which cannot happen for a reviewer whose vote counted; here an unknown

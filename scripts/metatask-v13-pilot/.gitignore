@@ -1,0 +1,4 @@
+.build/
+.selftest-work/
+__pycache__/
+base-repos/sources/s2c-ts-harness-base/node_modules/

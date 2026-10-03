@@ -5,6 +5,7 @@ import { RootState } from '../../store';
 import { metaTaskService } from '../../services/metatask';
 import { i18nService } from '../../services/i18n';
 import MetaIdBadge from './MetaIdBadge';
+import MetaTaskChainView from './MetaTaskChainView';
 import MetaTaskTreeMap from './MetaTaskTreeMap';
 import {
   metaTaskChildrenOf,
@@ -424,15 +425,26 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
           </section>
         )}
 
-        {/* Structure overview: status at a glance, click to locate nodes */}
-        <MetaTaskTreeMap
-          root={rootNode}
-          groups={groups}
-          topLeaves={topLeaves}
-          childrenOf={childrenOf}
-          onSelectNode={selectNodeFromMap}
-          onToggleGroup={toggleGroupFromMap}
-        />
+        {/* Structure overview: competitive tasks race as a deps chain (v1.3);
+            tree tasks keep the group/dot structure map */}
+        {detail.policy.mode === 'competitive' ? (
+          <MetaTaskChainView
+            detail={detail}
+            onSelectNode={(nodeId) => {
+              const node = detail.nodeStates[nodeId];
+              selectNodeFromMap(nodeId, node?.parent && groupIdSet.has(node.parent) ? node.parent : null);
+            }}
+          />
+        ) : (
+          <MetaTaskTreeMap
+            root={rootNode}
+            groups={groups}
+            topLeaves={topLeaves}
+            childrenOf={childrenOf}
+            onSelectNode={selectNodeFromMap}
+            onToggleGroup={toggleGroupFromMap}
+          />
+        )}
 
         {/* Nodes: grouped by aggregate; each row expands to the branch content */}
         <section>

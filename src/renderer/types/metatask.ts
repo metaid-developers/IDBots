@@ -22,6 +22,41 @@ export interface MetaTaskVoteSummary {
   failreason: boolean;
 }
 
+/**
+ * One competing candidate submission on a node (v1.3 competitive mode).
+ * Exposed per node via `MetaTaskNodeProjection.submissions`; absent in tree
+ * mode, where a node has at most one effective submission per claim cycle.
+ * Every flag here (verified / chainValid / superseded / failed) is engine
+ * replay output — the renderer maps them to display states, it never
+ * re-derives them.
+ */
+export interface MetaTaskSubmissionCandidate {
+  pinId: string;
+  submitter: string;
+  atMs: number;
+  /** Result payload as published (chain fact). */
+  result: Record<string, unknown> | null;
+  hash: string | null;
+  contentType: string | null;
+  attachment: string | null;
+  /** Validated parent references (depNodeId -> submission pinId); null on entry nodes. */
+  parentrefs: Record<string, string> | null;
+  /** Reached verify quorum with zero counted fail verdicts at the boundary. */
+  verified: boolean;
+  /** Verified AND every parentref ancestor recursively chain-valid (draft §3.1). */
+  chainValid: boolean;
+  /** Replaced by a valid same-author supersede. */
+  superseded: boolean;
+  /** Killed by a counted fail verdict (never revives; terminal). */
+  failed: boolean;
+  /** Counted pass/fail votes on THIS candidate (identity-filtered). */
+  passVotes: number;
+  failVotes: number;
+  /** Order key of the counted pass vote that reached quorum; null while unverified. */
+  verifiedHeight: number | null;
+  verifiedTxIndex: number | null;
+}
+
 export interface MetaTaskNodeProjection {
   id: string;
   parent: string | null;
@@ -30,9 +65,21 @@ export interface MetaTaskNodeProjection {
   weight: number | null;
   params: Record<string, unknown> | null;
   specid: string | null;
+  /**
+   * The node's deps as published on the effective tree (v1.3; [] for pre-v1.3
+   * trees). Drives chain-view layout only — candidate state flags are
+   * engine-computed and must not be re-derived from deps in the renderer.
+   */
+  deps: string[];
   status: MetaTaskNodeStatus;
   disputed: boolean;
   holder: { pinId: string; claimant: string; sinceMs: number } | null;
+  /**
+   * Tree mode: effective submission of the current claim cycle (unchanged).
+   * Competitive mode: the node's current leading candidate (chain-valid
+   * verified, smallest verified time) — or null while none qualifies. The full
+   * candidate set is then in `submissions`.
+   */
   submission: {
     pinId: string;
     submitter: string;
@@ -42,7 +89,15 @@ export interface MetaTaskNodeProjection {
     hash: string | null;
     contentType: string | null;
     attachment: string | null;
+    /** Competitive mode only: validated parent references of this submission. */
+    parentrefs?: Record<string, string> | null;
   } | null;
+  /**
+   * Competitive mode only: every structurally valid candidate submission on
+   * this node, in chain order (includes superseded and failed candidates).
+   * Undefined in tree mode.
+   */
+  submissions?: MetaTaskSubmissionCandidate[];
   passVotes: number;
   failVotes: number;
   votes: MetaTaskVoteSummary[];
@@ -89,6 +144,13 @@ export interface MetaTaskSettlementManifest {
   unpaidHistory: { node: string; author: string; pinId: string; reason: string }[];
   disputed: string[];
   weightsTableHash: string;
+  /**
+   * v1.3: present on competitive-mode manifests only (draft §3.7); tree-mode
+   * manifests stay byte-identical to v1.2.1 and omit both fields.
+   */
+  mode?: 'competitive';
+  /** Submission pinIds of the winning chain, sorted by node id (draft §3.6). */
+  winningChain?: string[];
 }
 
 export interface MetaTaskTaskProjection {
@@ -108,10 +170,29 @@ export interface MetaTaskTaskProjection {
     /** σ actually used by the engine's split, clamped to [6000, 9000]
      * (defaults to 8000 when the task carries no split block). */
     submitterShareBP: number;
+    /** v1.3: the task's execution mode (absent policy.mode ⇒ "tree"). */
+    mode: 'tree' | 'competitive';
+    /** v1.3 competitive mode: policy.finalnode as published (null when absent). */
+    finalNode: string | null;
   };
-  nodes: { id: string; parent: string | null; title: string; kind: string; weight?: number }[];
+  nodes: {
+    id: string;
+    parent: string | null;
+    title: string;
+    kind: string;
+    weight?: number;
+    /** v1.3 deps as published (absent on pre-v1.3 trees). */
+    deps?: string[];
+  }[];
   nodeStates: Record<string, MetaTaskNodeProjection>;
-  progress: { total: number; verified: number; claimed: number; open: number; disputed: number };
+  /**
+   * `satisfied` counts nodes meeting the mode's completion predicate (tree:
+   * final-verified, identical to `verified`; competitive: has ≥1 chain-valid
+   * verified submission). In competitive mode `verified`/`claimed`/`open`
+   * classify nodes by their leading-candidate state (satisfied / live
+   * candidates only / none).
+   */
+  progress: { total: number; verified: number; claimed: number; open: number; disputed: number; satisfied: number };
   taskComplete: boolean;
   participants: MetaTaskParticipantStats[];
   identities: Record<string, MetaTaskIdentity>;
@@ -138,7 +219,9 @@ export interface MetaTaskBoardTask {
   publisher: string;
   tags: string[];
   taskComplete: boolean;
-  progress: { total: number; verified: number; claimed: number; open: number; disputed: number };
+  /** v1.3 adds `satisfied` (mode completion predicate count); absent on
+   * projections cached before v1.3. */
+  progress: { total: number; verified: number; claimed: number; open: number; disputed: number; satisfied?: number };
   participantCount: number;
   lastActivityMs: number;
   freshness: { boundaryBlock: number; evaluatedAtMs: number; eventCount: number };
@@ -171,8 +254,12 @@ export interface MetaTaskBoard {
   alerts: MetaTaskAlert[];
   /** Merged display identities across tasks (publisher + participants). */
   identities: Record<string, MetaTaskIdentity>;
-  /** Activation notice input: the v1.2 feature gate height (null = not gated). */
-  activation: { hAct2: number | null };
+  /**
+   * Activation notice inputs: hAct2 = the v1.2 feature gate, hAct3 = the v1.3
+   * competitive-mode gate (null = not announced yet; writer tools refuse
+   * competitive publishes until the boundary block reaches it).
+   */
+  activation: { hAct2: number | null; hAct3: number | null };
   refresh: {
     lastRefreshAtMs: number | null;
     lastOkAtMs: number | null;

@@ -324,6 +324,44 @@ test('metatask_publish: invariants checked before the first pin; roster→tree�
   assert.equal(specPayload.output, '');
   assert.equal(specPayload.validation, undefined);
   assert.match(ok.content[0].text, /discovery buzz/i);
+
+  // v1.3 draft §4.1: a declared workspace rides the root spec pin verbatim
+  // (metatask_publish and metatask_publish_spec share buildSpecPayload), and a
+  // placeholder baseRef is refused before the first pin of the sequence.
+  const withWorkspace = await handlers.metatask_publish({
+    title: 'git workspace task',
+    nodes: [
+      { id: 'r1', parent: null, title: 'root', kind: 'aggregate', weight: 4000 },
+      { id: 't1', parent: 'r1', title: 'leaf', kind: 'proof', weight: 6000 },
+    ],
+    spec: {
+      name: 'git-check',
+      lang: 'bash',
+      entry: 'check.sh',
+      script: 'make test',
+      workspace: { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) },
+    },
+    policy: { claimTtlHours: 48, verifyQuorum: 2, verifyWindowHours: 72 },
+  });
+  assert.equal(withWorkspace.isError, undefined);
+  const wsSpecPayload = JSON.parse(writes[6].metaidData.payload);
+  assert.deepEqual(wsSpecPayload.workspace, { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) });
+
+  const placeholderBase = await handlers.metatask_publish({
+    title: 'git workspace task',
+    nodes: [{ id: 'r1', parent: null, title: 'root', kind: 'aggregate', weight: 10000 }],
+    spec: {
+      name: 'git-check',
+      lang: 'bash',
+      entry: 'check.sh',
+      script: 'make test',
+      workspace: { type: 'git', baseRef: 'BASE_BUNDLE_URI:s2a-python-base' },
+    },
+    policy: { claimTtlHours: 48, verifyQuorum: 2, verifyWindowHours: 72 },
+  });
+  assert.equal(placeholderBase.isError, true);
+  assert.match(placeholderBase.content[0].text, /workspace\.baseRef/);
+  assert.equal(writes.length, 8, 'the workspace refusal precedes the whole pin sequence');
 });
 
 test('metatask_amend: publisher-only; bases from the current tree head', async () => {
@@ -552,6 +590,16 @@ test('metatask_publish_spec: exactly one spec pin, no carrier task, protocol pay
   assert.equal(out.hasValidation, true);
   assert.match(out.note, /specid/);
   assert.equal(write.folded, true, 'the write is followed by a projection refresh');
+
+  // v1.3 draft §4.1: a declared workspace rides the spec pin verbatim — this is
+  // what lets a git-bundle node's submit-side §4.2 enforcement see it at all.
+  const withWorkspace = await handlers.metatask_publish_spec(
+    specArgs({ workspace: { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) } }),
+  );
+  assert.equal(withWorkspace.isError, undefined, withWorkspace.content?.[0]?.text);
+  assert.equal(writes.length, 2);
+  const wsPayload = JSON.parse(writes[1].metaidData.payload);
+  assert.deepEqual(wsPayload.workspace, { type: 'git', baseRef: 'metafile://basebundle0001', baseCommit: '1'.repeat(40) });
 });
 
 test('metatask_publish_spec: validation block enforced before any spend', async () => {
@@ -603,6 +651,25 @@ test('metatask_publish_spec: validation block enforced before any spend', async 
   const emptyScript = await handlers.metatask_publish_spec(specArgs({ script: '   ' }));
   assert.equal(emptyScript.isError, true);
   assert.match(emptyScript.content[0].text, /verifier script/);
+
+  // v1.3 draft §4.1 workspace gate: a placeholder/unpinned baseRef or a
+  // malformed baseCommit is refused before any spend (a fossilized placeholder
+  // would dead-letter the node's §4.2 artifact contract).
+  const placeholderBase = await handlers.metatask_publish_spec(
+    specArgs({ workspace: { type: 'git', baseRef: 'BASE_BUNDLE_URI:s2a-python-base', baseCommit: '1'.repeat(40) } }),
+  );
+  assert.equal(placeholderBase.isError, true);
+  assert.match(placeholderBase.content[0].text, /workspace\.baseRef/);
+
+  const badBaseCommit = await handlers.metatask_publish_spec(
+    specArgs({ workspace: { type: 'git', baseCommit: 'abc' } }),
+  );
+  assert.equal(badBaseCommit.isError, true);
+  assert.match(badBaseCommit.content[0].text, /workspace\.baseCommit/);
+
+  const noWorkspaceType = await handlers.metatask_publish_spec(specArgs({ workspace: { baseCommit: null } }));
+  assert.equal(noWorkspaceType.isError, true);
+  assert.match(noWorkspaceType.content[0].text, /workspace\.type/);
 
   assert.equal(writes.length, 0, 'every gate refusal must happen before any chain spend');
 
@@ -1075,4 +1142,737 @@ test('metatask_publish_spec: enumeration_closure accepts an integer at any depth
   assert.match(noClosure.content[0].text, /closure/);
 
   assert.equal(writes.length, 2, 'only the two accepted specs were written');
+});
+
+// ── competitive mode (v1.3 draft): writer-side discipline ────────────────────
+// The replay engine has no H_ACT3 gate (pre-activation fixtures must replay);
+// the WRITER side is where competitive tasks are shaped, validated and gated.
+// Fixtures live at heights >= 191_590 so H_ACT (#8/#9 vote gates) and H_ACT2
+// are live. The writer-side rulings under test: publish invariants (finalnode
+// / single sink / rubric / deps DAG), H_ACT3 gating with the allowPreActivation
+// escape hatch, ttl/window normalization, parentRefs validation with the
+// invalid_reference parity refusal, optimistic pipelining flags, git-bundle
+// artifact enforcement, intent-only claims, and the satisfaction-based amend
+// freeze.
+
+const COMP_REVIEWER_A = 'idq1creviewerA0000000000000000000';
+const COMP_REVIEWER_B = 'idq1creviewerB0000000000000000000';
+const COMP_SUBMITTER = 'idq1csubmitterX0000000000000000000';
+const COMMIT_A = 'a'.repeat(40);
+const COMMIT_B = 'b'.repeat(40);
+
+/** Competitive fixture: entry a (deps []) -> terminal r (deps [a]); r is the unique sink = finalnode. */
+const compFixture = (over = {}) => {
+  const treePinId = nextPinId();
+  const rootPinId = nextPinId();
+  const author = over.author ?? FOREIGN_PUBLISHER;
+  const nodes = over.nodes ?? [
+    { id: 'r', parent: null, title: 'terminal', kind: 'aggregate', specid: null, params: { rubric: ['rubric for r'] }, deps: ['a'], weight: 4000 },
+    { id: 'a', parent: 'r', title: 'entry a', kind: 'proof', specid: null, params: { rubric: ['rubric for a'] }, deps: [], weight: 6000 },
+  ];
+  const tree = ev('tree', { root: 'r', nodes }, { pinId: treePinId, author, height: 191_590 });
+  const task = ev(
+    'task',
+    {
+      title: 'competitive fixture',
+      brief: '',
+      treeid: treePinId,
+      ...(over.specid ? { specid: over.specid } : {}),
+      policy: {
+        mode: 'competitive',
+        finalnode: 'r',
+        verify_quorum: 2,
+        claim_ttl_hours: 0,
+        verify_window_hours: 0,
+        ...(over.policyExtra ?? {}),
+      },
+      tags: [],
+    },
+    { pinId: rootPinId, author, height: 191_591 },
+  );
+  return { events: [tree, task], treePinId, rootPinId };
+};
+
+const compVote = (targetPinId, author, height, verdict = 'pass') =>
+  ev(
+    'verify',
+    {
+      targetid: targetPinId,
+      verdict,
+      method: `spec rerun ${verdict}`,
+      semantic_check: 'checked the rubric items',
+      ...(verdict === 'fail' ? { failreason: 'rubric item 1 unmet' } : {}),
+    },
+    { author, height },
+  );
+
+/** A foreign submission on entry node a plus the two pass votes that verify it (quorum 2). */
+const verifiedParentOnA = (rootPinId) => {
+  const sub = ev(
+    'submission',
+    {
+      taskid: rootPinId,
+      node: 'a',
+      result: { type: 'metafile' },
+      hash: '5'.repeat(64),
+      contentType: 'application/json;utf-8',
+      attachment: null,
+      childids: [],
+    },
+    { author: COMP_SUBMITTER, height: 191_600 },
+  );
+  return {
+    sub,
+    events: [sub, compVote(sub.pinId, COMP_REVIEWER_A, 191_601), compVote(sub.pinId, COMP_REVIEWER_B, 191_602)],
+  };
+};
+
+test('metatask_publish: competitive mode is H_ACT3-gated, with an explicit pre-activation escape hatch', async () => {
+  const compArgs = (policyExtra = {}) => ({
+    title: 'competitive task',
+    nodes: [
+      { id: 'r', parent: null, title: 'terminal', kind: 'aggregate', weight: 4000, deps: ['a'], params: { rubric: ['rubric r'] } },
+      { id: 'a', parent: 'r', title: 'entry', kind: 'proof', weight: 6000, params: { rubric: ['rubric a'] } },
+    ],
+    spec: { name: 'check', lang: 'bash', entry: 'check.sh', script: 'echo pass' },
+    policy: { mode: 'competitive', finalnode: 'r', verifyQuorum: 2, ...policyExtra },
+  });
+
+  // H_ACT3 not announced (constants.ts) and no board state: refused, no spend.
+  {
+    const { handlers, writes } = buildHarness([]);
+    const refused = await handlers.metatask_publish(compArgs());
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /H_ACT3/);
+    assert.match(refused.content[0].text, /allowPreActivation/);
+    assert.equal(writes.length, 0);
+  }
+
+  // Announced height, boundary below it: refused.
+  {
+    const { handlers, writes } = buildHarness([], {
+      board: { refresh: { boundaryBlock: 199_999 }, activation: { hAct2: 191_500, hAct3: 200_000 } },
+    });
+    const refused = await handlers.metatask_publish(compArgs());
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /H_ACT3=200000/);
+    assert.match(refused.content[0].text, /199999/);
+    assert.equal(writes.length, 0);
+  }
+
+  // Announced height reached: publishes without the escape hatch.
+  {
+    const { handlers, writes } = buildHarness([], {
+      board: { refresh: { boundaryBlock: 200_000 }, activation: { hAct2: 191_500, hAct3: 200_000 } },
+    });
+    const ok = await handlers.metatask_publish(compArgs());
+    assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+    const taskPayload = JSON.parse(writes[writes.length - 1].metaidData.payload);
+    assert.equal(taskPayload.policy.mode, 'competitive');
+    assert.equal(taskPayload.policy.finalnode, 'r');
+    const out = JSON.parse(ok.content[0].text);
+    assert.equal(out.mode, 'competitive');
+    assert.equal(out.finalnode, 'r');
+    assert.equal(out.preActivationOverride, undefined);
+  }
+
+  // Not announced but explicitly overridden: the escape hatch publishes and is reported.
+  {
+    const { handlers, writes } = buildHarness([]);
+    const ok = await handlers.metatask_publish({ ...compArgs(), allowPreActivation: true });
+    assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+    const out = JSON.parse(ok.content[0].text);
+    assert.equal(out.preActivationOverride, true);
+    assert.match(out.activationNote, /H_ACT3/);
+    assert.ok(writes.length > 0);
+  }
+
+  // Announced but boundary unknown (never refreshed): refused without the override.
+  {
+    const { handlers, writes } = buildHarness([], {
+      board: { refresh: { boundaryBlock: null }, activation: { hAct2: 191_500, hAct3: 200_000 } },
+    });
+    const refused = await handlers.metatask_publish(compArgs());
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /boundary block is unknown/);
+    assert.equal(writes.length, 0);
+  }
+});
+
+test('metatask_publish: competitive invariants are enforced before the first pin', async () => {
+  const base = () => ({
+    title: 'competitive task',
+    spec: { name: 'check', lang: 'bash', entry: 'check.sh', script: 'echo pass' },
+    policy: { mode: 'competitive', finalnode: 'r', verifyQuorum: 2 },
+    allowPreActivation: true,
+  });
+  const rubric = { rubric: ['acceptance criterion'] };
+  const twoNodes = (over = {}) => [
+    { id: 'r', parent: null, title: 'terminal', kind: 'aggregate', weight: 4000, deps: ['a'], params: rubric, ...(over.r ?? {}) },
+    { id: 'a', parent: 'r', title: 'entry', kind: 'proof', weight: 6000, params: rubric, ...(over.a ?? {}) },
+  ];
+
+  // finalnode missing
+  {
+    const { handlers, writes } = buildHarness([]);
+    const args = base();
+    delete args.policy.finalnode;
+    const refused = await handlers.metatask_publish({ ...args, nodes: twoNodes() });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /requires policy\.finalnode/);
+    assert.equal(writes.length, 0);
+  }
+
+  // finalnode names no live node
+  {
+    const { handlers, writes } = buildHarness([]);
+    const args = base();
+    args.policy.finalnode = 'nope';
+    const refused = await handlers.metatask_publish({ ...args, nodes: twoNodes() });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /"nope" is not a node/);
+    assert.equal(writes.length, 0);
+  }
+
+  // deps cycle
+  {
+    const { handlers, writes } = buildHarness([]);
+    const refused = await handlers.metatask_publish({
+      ...base(),
+      nodes: [
+        { id: 'r', parent: null, title: 'terminal', kind: 'aggregate', weight: 5000, deps: ['a'], params: rubric },
+        { id: 'a', parent: 'r', title: 'entry', kind: 'proof', weight: 5000, deps: ['r'], params: rubric },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /deps graph is cyclic/);
+    assert.equal(writes.length, 0);
+  }
+
+  // multiple sinks (a stray branch that never feeds the final node)
+  {
+    const { handlers, writes } = buildHarness([]);
+    const refused = await handlers.metatask_publish({
+      ...base(),
+      nodes: [
+        ...twoNodes(),
+        { id: 'x', parent: 'r', title: 'stray', kind: 'proof', weight: 1, params: rubric },
+      ].map((node) => (node.id === 'a' ? { ...node, weight: 5999 } : node)),
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /exactly ONE deps sink/);
+    assert.match(refused.content[0].text, /r, x/);
+    assert.equal(writes.length, 0);
+  }
+
+  // single sink but finalnode points elsewhere
+  {
+    const { handlers, writes } = buildHarness([]);
+    const args = base();
+    args.policy.finalnode = 'a';
+    const refused = await handlers.metatask_publish({ ...args, nodes: twoNodes() });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /unique deps sink is "r"/);
+    assert.equal(writes.length, 0);
+  }
+
+  // rubric missing / empty
+  {
+    const { handlers, writes } = buildHarness([]);
+    const noRubric = await handlers.metatask_publish({
+      ...base(),
+      nodes: [
+        { id: 'r', parent: null, title: 'terminal', kind: 'aggregate', weight: 4000, deps: ['a'], params: rubric },
+        { id: 'a', parent: 'r', title: 'entry', kind: 'proof', weight: 6000 },
+      ],
+    });
+    assert.equal(noRubric.isError, true);
+    assert.match(noRubric.content[0].text, /node a has no rubric/);
+    assert.match(noRubric.content[0].text, /params\.rubric/);
+
+    const emptyRubric = await handlers.metatask_publish({
+      ...base(),
+      nodes: twoNodes({ a: { params: { rubric: ['   '] } } }),
+    });
+    assert.equal(emptyRubric.isError, true);
+    assert.match(emptyRubric.content[0].text, /no non-empty entry/);
+    assert.equal(writes.length, 0);
+  }
+
+  // unknown dep reference (the shared pre-v1.3 check, still first)
+  {
+    const { handlers, writes } = buildHarness([]);
+    const refused = await handlers.metatask_publish({
+      ...base(),
+      nodes: twoNodes({ a: { deps: ['ghost'] } }),
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /unknown dep ghost/);
+    assert.equal(writes.length, 0);
+  }
+
+  // unknown mode / finalnode in tree mode
+  {
+    const { handlers, writes } = buildHarness([]);
+    const badMode = await handlers.metatask_publish({
+      ...base(),
+      nodes: twoNodes(),
+      policy: { mode: 'race', finalnode: 'r', verifyQuorum: 2 },
+    });
+    assert.equal(badMode.isError, true);
+    assert.match(badMode.content[0].text, /must be "tree" or "competitive"/);
+
+    const treeFinalnode = await handlers.metatask_publish({
+      title: 'tree task',
+      nodes: [{ id: 'r', parent: null, title: 'root', kind: 'aggregate', weight: 10000, params: {} }],
+      spec: { name: 'check', lang: 'bash', entry: 'check.sh', script: 'echo pass' },
+      policy: { claimTtlHours: 1, verifyQuorum: 1, verifyWindowHours: 1, finalnode: 'r' },
+    });
+    assert.equal(treeFinalnode.isError, true);
+    assert.match(treeFinalnode.content[0].text, /only applies to competitive mode/);
+    assert.equal(writes.length, 0);
+  }
+});
+
+test('metatask_publish: competitive ttl/window normalize to 0 with a warning, not a refusal', async () => {
+  const { handlers, writes } = buildHarness([]);
+  const ok = await handlers.metatask_publish({
+    title: 'competitive task',
+    nodes: [
+      { id: 'r', parent: null, title: 'terminal', kind: 'aggregate', weight: 4000, deps: ['a'], params: { rubric: ['rubric r'] } },
+      { id: 'a', parent: 'r', title: 'entry', kind: 'proof', weight: 6000, params: { rubric: ['rubric a'] } },
+    ],
+    spec: { name: 'check', lang: 'bash', entry: 'check.sh', script: 'echo pass' },
+    policy: { mode: 'competitive', finalnode: 'r', verifyQuorum: 2, claimTtlHours: 48, verifyWindowHours: 72 },
+    allowPreActivation: true,
+  });
+  assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+  const taskPayload = JSON.parse(writes[writes.length - 1].metaidData.payload);
+  assert.equal(taskPayload.policy.claim_ttl_hours, 0);
+  assert.equal(taskPayload.policy.verify_window_hours, 0);
+  const out = JSON.parse(ok.content[0].text);
+  assert.equal(out.policyWarnings.length, 2);
+  assert.match(out.policyWarnings[0], /claim_ttl_hours normalized to 0/);
+  assert.match(out.policyWarnings[1], /verify_window_hours normalized to 0/);
+});
+
+test('metatask_submit: competitive parentRefs validation and optimistic flagging', async () => {
+  // entry node must omit parentRefs (an empty object counts as omitted)
+  {
+    const { events, rootPinId } = compFixture();
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_submit({
+      rootPinId,
+      node: 'a',
+      result: { type: 'metafile' },
+      parentRefs: { a: 'somepin' },
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /entry node/);
+    assert.match(refused.content[0].text, /invalid_reference/);
+    const omitted = await handlers.metatask_submit({
+      rootPinId,
+      node: 'a',
+      result: { type: 'metafile' },
+      parentRefs: {},
+    });
+    assert.equal(omitted.isError, undefined, omitted.content?.[0]?.text);
+    assert.equal(writes.length, 1);
+  }
+
+  // dep node: missing key / extra key
+  {
+    const { events, rootPinId } = compFixture();
+    const { handlers, writes } = buildHarness(events);
+    const missing = await handlers.metatask_submit({ rootPinId, node: 'r', result: { type: 'aggregate' } });
+    assert.equal(missing.isError, true);
+    assert.match(missing.content[0].text, /missing: a/);
+    const extra = await handlers.metatask_submit({
+      rootPinId,
+      node: 'r',
+      result: { type: 'aggregate' },
+      parentRefs: { a: nextPinId(), zzz: nextPinId() },
+    });
+    assert.equal(extra.isError, true);
+    assert.match(extra.content[0].text, /extra: zzz/);
+    assert.equal(writes.length, 0);
+  }
+
+  // ghost pin / pin on the wrong node — invalid_reference parity, refused pre-spend
+  {
+    const { events, rootPinId } = compFixture();
+    const foreignSubOnR = ev(
+      'submission',
+      {
+        taskid: rootPinId,
+        node: 'r',
+        result: { type: 'aggregate' },
+        hash: '6'.repeat(64),
+        contentType: 'application/json;utf-8',
+        attachment: null,
+        childids: [],
+      },
+      { author: COMP_SUBMITTER, height: 191_600 },
+    );
+    const { handlers, writes } = buildHarness([...events, foreignSubOnR]);
+    const ghost = await handlers.metatask_submit({
+      rootPinId,
+      node: 'r',
+      result: { type: 'aggregate' },
+      parentRefs: { a: 'ghostpin000000000000000000000000000000i0' },
+    });
+    assert.equal(ghost.isError, true);
+    assert.match(ghost.content[0].text, /not a submission of this task/);
+    const wrongNode = await handlers.metatask_submit({
+      rootPinId,
+      node: 'r',
+      result: { type: 'aggregate' },
+      parentRefs: { a: foreignSubOnR.pinId },
+    });
+    assert.equal(wrongNode.isError, true);
+    assert.match(wrongNode.content[0].text, /sits on node "r", not on dep node "a"/);
+    assert.equal(writes.length, 0);
+  }
+
+  // happy path: no claimPinId needed, entry submission then an optimistic join
+  {
+    const { events, rootPinId } = compFixture();
+    const { handlers, writes } = buildHarness(events);
+    const subA = await handlers.metatask_submit({ rootPinId, node: 'a', result: { type: 'metafile', note: 'work' } });
+    assert.equal(subA.isError, undefined, subA.content?.[0]?.text);
+    const outA = JSON.parse(subA.content[0].text);
+    assert.equal(outA.mode, 'competitive');
+    assert.equal(outA.optimistic, false);
+    const payloadA = JSON.parse(writes[0].metaidData.payload);
+    assert.equal(payloadA.claimid, undefined, 'competitive submissions carry no claimid');
+    assert.equal('parentrefs' in payloadA, false, 'entry node omits parentrefs');
+    assert.deepEqual(payloadA.childids, []);
+
+    // the harness folds the write back into the pool synchronously
+    const join = await handlers.metatask_submit({
+      rootPinId,
+      node: 'r',
+      result: { type: 'aggregate' },
+      parentRefs: { a: outA.submissionPinId },
+    });
+    assert.equal(join.isError, undefined, join.content?.[0]?.text);
+    const outR = JSON.parse(join.content[0].text);
+    assert.equal(outR.optimistic, true);
+    assert.deepEqual(outR.optimisticParents, [{ parent: 'a', pinId: outA.submissionPinId, state: 'unverified' }]);
+    assert.match(outR.note, /OPTIMISTIC PIPELINE/);
+    const payloadR = JSON.parse(writes[1].metaidData.payload);
+    assert.deepEqual(payloadR.parentrefs, { a: outA.submissionPinId });
+  }
+
+  // a VERIFIED parent clears the optimistic flag
+  {
+    const { events, rootPinId } = compFixture();
+    const parent = verifiedParentOnA(rootPinId);
+    const { handlers } = buildHarness([...events, ...parent.events]);
+    const join = await handlers.metatask_submit({
+      rootPinId,
+      node: 'r',
+      result: { type: 'aggregate' },
+      parentRefs: { a: parent.sub.pinId },
+    });
+    assert.equal(join.isError, undefined, join.content?.[0]?.text);
+    const out = JSON.parse(join.content[0].text);
+    assert.equal(out.optimistic, false);
+    assert.equal(out.optimisticParents, undefined);
+    assert.match(out.note, /verified and chain-valid/);
+  }
+
+  // a parent killed by a fail verdict can never be chain-valid: refused
+  {
+    const { events, rootPinId } = compFixture();
+    const sub = ev(
+      'submission',
+      {
+        taskid: rootPinId,
+        node: 'a',
+        result: { type: 'metafile' },
+        hash: '7'.repeat(64),
+        contentType: 'application/json;utf-8',
+        attachment: null,
+        childids: [],
+      },
+      { author: COMP_SUBMITTER, height: 191_600 },
+    );
+    const fail = compVote(sub.pinId, COMP_REVIEWER_A, 191_601, 'fail');
+    const { handlers, writes } = buildHarness([...events, sub, fail]);
+    const refused = await handlers.metatask_submit({
+      rootPinId,
+      node: 'r',
+      result: { type: 'aggregate' },
+      parentRefs: { a: sub.pinId },
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /can never become chain-valid/);
+    assert.match(refused.content[0].text, /fail verdict/);
+    assert.equal(writes.length, 0);
+  }
+
+  // the publisher is refused its own competitive task (§12 item 6)
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_submit({ rootPinId, node: 'a', result: { type: 'metafile' } });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /§12 item 6/);
+    assert.equal(writes.length, 0);
+  }
+
+  // a passed claimPinId is ignored (and reported), childIds are refused
+  {
+    const { events, rootPinId } = compFixture();
+    const { handlers, writes } = buildHarness(events);
+    const withClaim = await handlers.metatask_submit({
+      rootPinId,
+      node: 'a',
+      result: { type: 'metafile' },
+      claimPinId: 'claim-not-needed',
+    });
+    assert.equal(withClaim.isError, undefined, withClaim.content?.[0]?.text);
+    assert.equal(JSON.parse(withClaim.content[0].text).claimPinIdIgnored, true);
+    const withChildren = await handlers.metatask_submit({
+      rootPinId,
+      node: 'a',
+      result: { type: 'metafile' },
+      childIds: ['childpin'],
+    });
+    assert.equal(withChildren.isError, true);
+    assert.match(withChildren.content[0].text, /parentRefs instead/);
+    assert.equal(writes.length, 1);
+  }
+
+  // tree mode still refuses a missing claimPinId (schema made it optional, the holder check did not move)
+  {
+    const { events, rootPinId } = buildForeignTask();
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_submit({ rootPinId, node: 't1', result: { type: 'triage' } });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /claim-rejected:t1/);
+    assert.equal(writes.length, 0);
+  }
+});
+
+test('metatask_submit: git workspace specs force git-bundle artifacts', async () => {
+  const specPinId = nextPinId();
+  const gitSpec = ev(
+    'spec',
+    {
+      name: 'git-check',
+      lang: 'bash',
+      entry: 'check.sh',
+      script: 'make test',
+      input: '',
+      output: '',
+      workspace: { type: 'git', baseCommit: COMMIT_B },
+    },
+    { pinId: specPinId, author: FOREIGN_PUBLISHER, height: 191_589 },
+  );
+  const { events, rootPinId } = compFixture({ specid: specPinId });
+  const { handlers, writes } = buildHarness([gitSpec, ...events]);
+
+  const wrongType = await handlers.metatask_submit({ rootPinId, node: 'a', result: { type: 'metafile' } });
+  assert.equal(wrongType.isError, true);
+  assert.match(wrongType.content[0].text, /result\.type must be "git-bundle"/);
+
+  const noCommit = await handlers.metatask_submit({ rootPinId, node: 'a', result: { type: 'git-bundle' } });
+  assert.equal(noCommit.isError, true);
+  assert.match(noCommit.content[0].text, /commit must be the full commit hash/);
+
+  const badCommit = await handlers.metatask_submit({
+    rootPinId,
+    node: 'a',
+    result: { type: 'git-bundle', commit: 'abc', baseCommit: COMMIT_B },
+  });
+  assert.equal(badCommit.isError, true);
+  assert.match(badCommit.content[0].text, /40 hex/);
+
+  const badAttachment = await handlers.metatask_submit({
+    rootPinId,
+    node: 'a',
+    result: { type: 'git-bundle', commit: COMMIT_A, baseCommit: COMMIT_B },
+    attachment: 'https://github.com/x/y',
+  });
+  assert.equal(badAttachment.isError, true);
+  assert.match(badAttachment.content[0].text, /metafile:\/\//);
+  assert.equal(writes.length, 0, 'every artifact refusal precedes any spend');
+
+  const ok = await handlers.metatask_submit({
+    rootPinId,
+    node: 'a',
+    result: { type: 'git-bundle', commit: COMMIT_A, baseCommit: COMMIT_B },
+    attachment: 'metafile://bundle0001',
+  });
+  assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+  assert.equal(writes.length, 1);
+
+  // greenfield: baseCommit null is allowed (draft §4.4)
+  const greenfield = await handlers.metatask_submit({
+    rootPinId,
+    node: 'a',
+    result: { type: 'git-bundle', commit: COMMIT_B, baseCommit: null },
+    attachment: 'metafile://bundle0002',
+  });
+  assert.equal(greenfield.isError, undefined, greenfield.content?.[0]?.text);
+  assert.equal(writes.length, 2);
+});
+
+test('metatask_claim/release: competitive claims are intent-only; release is refused as a no-op', async () => {
+  const { events, rootPinId } = compFixture();
+  const parent = verifiedParentOnA(rootPinId); // node a already satisfied
+  const { handlers, writes } = buildHarness([...events, ...parent.events]);
+
+  // A tree-mode guard would refuse a satisfied node; competitive claims never gate.
+  const intent = await handlers.metatask_claim({ rootPinId, node: 'a' });
+  assert.equal(intent.isError, undefined, intent.content?.[0]?.text);
+  const out = JSON.parse(intent.content[0].text);
+  assert.equal(out.intentOnly, true);
+  assert.match(out.note, /INTENT SIGNAL/);
+  assert.equal(writes[0].metaidData.path, '/protocols/metatask/claim');
+
+  const released = await handlers.metatask_release({ rootPinId, node: 'a', claimPinId: out.claimPinId });
+  assert.equal(released.isError, true);
+  assert.match(released.content[0].text, /no claim locks/);
+  assert.match(released.content[0].text, /supersedePinId/);
+  assert.equal(writes.length, 1, 'the release refusal must not spend a pin');
+
+  // the publisher self-claim refusal still applies in competitive mode
+  const own = compFixture({ author: SESSION_BOT });
+  const mine = buildHarness(own.events);
+  const refused = await mine.handlers.metatask_claim({ rootPinId: own.rootPinId, node: 'a' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /§12 item 6/);
+  assert.equal(mine.writes.length, 0);
+});
+
+test('metatask_amend: competitive freeze is satisfaction, not "ever claimed"', async () => {
+  // A claim alone freezes NOTHING in competitive mode (intent only, §3.2/§3.9).
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const intentClaim = ev('claim', { taskid: rootPinId, node: 'a' }, { author: COMP_SUBMITTER, height: 191_600 });
+    const { handlers, writes } = buildHarness([...events, intentClaim]);
+    const ok = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'reweight', node: 'a', weight: 5000 },
+        { op: 'reweight', node: 'r', weight: 5000 },
+      ],
+    });
+    assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].metaidData.path, '/protocols/metatask/amend');
+  }
+
+  // A satisfied node (chain-valid verified submission) IS frozen (§3.9).
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const parent = verifiedParentOnA(rootPinId);
+    const { handlers, writes } = buildHarness([...events, ...parent.events]);
+    const refused = await handlers.metatask_amend({
+      rootPinId,
+      ops: [{ op: 'reweight', node: 'a', weight: 5000 }],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /node a is satisfied/);
+    assert.equal(writes.length, 0);
+  }
+
+  // remove_node is rejected while another node lists the target in deps (§3.9).
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_amend({ rootPinId, ops: [{ op: 'remove_node', node: 'a' }] });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /listed in deps by r/);
+    assert.equal(writes.length, 0);
+  }
+});
+
+test('metatask_amend: competitive add_node deps/rubric rules and post-fold invariants', async () => {
+  // add_node with a deps edge onto a SATISFIED node is refused (§3.9)
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const parent = verifiedParentOnA(rootPinId);
+    const { handlers, writes } = buildHarness([...events, ...parent.events]);
+    const refused = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['a'], params: { rubric: ['c rubric'] } } },
+        { op: 'reweight', node: 'a', weight: 5000 },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /may not depend on a/);
+    assert.equal(writes.length, 0);
+  }
+
+  // add_node needs a rubric in competitive mode (the publish invariant, §3.3)
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['r'] } },
+        { op: 'reweight', node: 'a', weight: 5000 },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /no rubric/);
+    assert.equal(writes.length, 0);
+  }
+
+  // add_node ABOVE the finalnode is refused (v1.3 pins the sink at finalnode)
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['r'], params: { rubric: ['c rubric'] } } },
+        { op: 'reweight', node: 'a', weight: 5000 },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /moves the deps sink off policy\.finalnode "r"/);
+    assert.match(refused.content[0].text, /§9 Q1/);
+    assert.equal(writes.length, 0);
+  }
+
+  // a middle-layer add_node (deps onto an unsatisfied non-final node; the sink
+  // stays the finalnode) goes through (§3.9)
+  {
+    const { events, rootPinId, treePinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const ok = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'add_node', node: { id: 'c', parent: 'r', title: 'c', kind: 'proof', weight: 1000, deps: ['a'], params: { rubric: ['c rubric'] } } },
+        { op: 'reweight', node: 'a', weight: 5000 },
+      ],
+    });
+    assert.equal(ok.isError, undefined, ok.content?.[0]?.text);
+    const payload = JSON.parse(writes[0].metaidData.payload);
+    assert.equal(payload.bases, treePinId);
+    assert.deepEqual(payload.ops[0].node.deps, ['a']);
+  }
+
+  // remove_node of the finalnode is refused (the terminal node must stay a live sink)
+  {
+    const { events, rootPinId } = compFixture({ author: SESSION_BOT });
+    const { handlers, writes } = buildHarness(events);
+    const refused = await handlers.metatask_amend({
+      rootPinId,
+      ops: [
+        { op: 'remove_node', node: 'r' },
+        { op: 'reweight', node: 'a', weight: 10000 },
+      ],
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /keep the designated terminal node "r" alive/);
+    assert.equal(writes.length, 0);
+  }
 });
