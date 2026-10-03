@@ -525,6 +525,7 @@ export class SqliteStore {
         usage_class TEXT NOT NULL DEFAULT 'profile_fact',
         visibility TEXT NOT NULL DEFAULT 'local_only',
         origin TEXT NOT NULL DEFAULT 'conversation',
+        importance REAL NOT NULL DEFAULT 0.5,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_used_at INTEGER

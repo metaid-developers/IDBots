@@ -25,6 +25,8 @@ export interface MemoryUserMemory {
   lastUsedAt: number | null;
   /** Hygiene-archive timestamp; null/undefined means the row is active. */
   archivedAt?: number | null;
+  /** Recall weight derived at write time (see memoryImportance.ts). */
+  importance?: number;
 }
 
 export interface MemoryUserMemorySourceInput {
@@ -79,6 +81,8 @@ export interface MemoryCreateUserMemoryInput extends MemoryScopeSelectorInput, M
   confidence?: number;
   isExplicit?: boolean;
   origin?: MemoryOrigin;
+  /** Explicit importance override; when omitted the store derives it (memoryImportance.ts). */
+  importance?: number;
   source?: MemoryUserMemorySourceInput;
   metabotId: number;
   /**

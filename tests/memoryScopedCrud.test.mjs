@@ -118,3 +118,69 @@ test('scoped stats and housekeeping stay inside the requested scope bucket', asy
   assert.equal(ownerStats.stale, 1);
   assert.equal(contactStats.created, 1);
 });
+
+test('create derives importance from class/origin/explicit, override wins, revive keeps the max', async () => {
+  const db = await createLegacyMemoryDb();
+  const store = createCoworkStore(db);
+
+  const explicit = store.createUserMemory({
+    metabotId: 1, text: '用户明确交代每周五发布版本', scopeKind: 'owner', scopeKey: 'owner:self', isExplicit: true,
+  });
+  assert.equal(explicit.importance, 0.9);
+
+  const identity = store.createUserMemory({
+    metabotId: 1, text: '我是用户的专属助手', scopeKind: 'owner', scopeKey: 'owner:self',
+    usageClass: 'self_identity', origin: 'dream', forceNew: true,
+  });
+  assert.equal(identity.importance, 1.0);
+
+  const review = store.createUserMemory({
+    metabotId: 1, text: '工作评价:交付获得高度赞扬', scopeKind: 'owner', scopeKey: 'owner:self',
+    usageClass: 'work_review', origin: 'dream', forceNew: true,
+  });
+  assert.equal(review.importance, 0.7);
+
+  const overridden = store.createUserMemory({
+    metabotId: 1, text: '手动调低重要度的一条记录', scopeKind: 'owner', scopeKey: 'owner:self',
+    importance: 0.3, forceNew: true,
+  });
+  assert.equal(overridden.importance, 0.3);
+
+  const plain = store.createUserMemory({
+    metabotId: 1, text: '后来被用户再次强调的事实', scopeKind: 'owner', scopeKey: 'owner:self',
+  });
+  assert.equal(plain.importance, 0.5);
+  const raised = store.createUserMemory({
+    metabotId: 1, text: '后来被用户再次强调的事实', scopeKind: 'owner', scopeKey: 'owner:self', isExplicit: true,
+  });
+  assert.equal(raised.id, plain.id, 'restatement revives the same row');
+  assert.equal(raised.importance, 0.9, 'revive raises to the newly derived value');
+
+  const lowered = store.createUserMemory({
+    metabotId: 1, text: '后来被用户再次强调的事实', scopeKind: 'owner', scopeKey: 'owner:self',
+  });
+  assert.equal(lowered.importance, 0.9, 'revive never lowers stored importance');
+});
+
+test('listUserMemories orders by last use so injected memories do not age out', async () => {
+  const db = await createLegacyMemoryDb();
+  const store = createCoworkStore(db);
+
+  const stale = store.createUserMemory({
+    metabotId: 1, text: '最老创建但天天被注入使用', scopeKind: 'owner', scopeKey: 'owner:self',
+  });
+  const newest = store.createUserMemory({
+    metabotId: 1, text: '昨晚刚写入的新记忆', scopeKind: 'owner', scopeKey: 'owner:self',
+  });
+  db.run('UPDATE user_memories SET updated_at = ? WHERE id = ?', [1000, stale.id]);
+  db.run('UPDATE user_memories SET updated_at = ? WHERE id = ?', [2000, newest.id]);
+
+  const listIds = () => store
+    .listUserMemories({ metabotId: 1, scopeKind: 'owner', scopeKey: 'owner:self' })
+    .map((memory) => memory.id);
+
+  assert.deepEqual(listIds(), [newest.id, stale.id], 'without a usage signal, freshest edit leads');
+
+  db.run('UPDATE user_memories SET last_used_at = ? WHERE id = ?', [3000, stale.id]);
+  assert.deepEqual(listIds(), [stale.id, newest.id], 'a used memory outranks a fresher untouched edit');
+});

@@ -3298,6 +3298,11 @@ export class CoworkRunner extends EventEmitter {
       peerGlobalMetaId: session?.peerGlobalMetaId,
     });
 
+    // The candidate pool is deliberately wider than the injection quota: the
+    // policy maxItems still governs how many entries finally render, while the
+    // keyword scorer and the guaranteed-importance tier need a deep enough
+    // pool to pick from (200 = the store's own list limit cap).
+    const candidatePoolLimit = Math.min(200, Math.max(memoryPolicy.memoryUserMemoriesMaxItems, 120));
     const ownerEntries = resolvedScopes.ownerReadPolicy === 'none'
       ? []
       : this.getMemoryBackend().listUserMemories({
@@ -3305,7 +3310,7 @@ export class CoworkRunner extends EventEmitter {
           scope: createOwnerMemoryScope(),
           status: 'created',
           includeDeleted: false,
-          limit: Math.max(memoryPolicy.memoryUserMemoriesMaxItems, 12),
+          limit: candidatePoolLimit,
           offset: 0,
           // Injection IS the usage event for the decay clock: rows surfaced
           // here keep last_used_at fresh so hygiene never archives memories
@@ -3318,7 +3323,7 @@ export class CoworkRunner extends EventEmitter {
           scope: resolvedScopes.writeScope,
           status: 'created',
           includeDeleted: false,
-          limit: memoryPolicy.memoryUserMemoriesMaxItems,
+          limit: candidatePoolLimit,
           offset: 0,
           touchLastUsed: true,
         })
@@ -3329,7 +3334,7 @@ export class CoworkRunner extends EventEmitter {
           scope: resolvedScopes.writeScope,
           status: 'created',
           includeDeleted: false,
-          limit: memoryPolicy.memoryUserMemoriesMaxItems,
+          limit: candidatePoolLimit,
           offset: 0,
           touchLastUsed: true,
         })

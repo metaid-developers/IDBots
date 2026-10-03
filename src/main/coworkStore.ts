@@ -48,6 +48,7 @@ import {
 } from './memory/memoryScope';
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 import { clampMemoryPromptMaxChars } from './memory/memoryPromptBlocks';
+import { clampMemoryImportance, deriveMemoryImportance } from './memory/memoryImportance';
 import { BOT_WORKSPACE_DIR_NAME } from './libs/botWorkspace';
 import {
   normalizeMemoryHygieneConfig,
@@ -159,7 +160,7 @@ const coworkSessionActivityAtMessageSql = (sessionRef: string): string => `(
         )`;
 const MEMORY_ROW_SELECT_COLUMNS = `
   id, text, fingerprint, confidence, is_explicit, status,
-  created_at, updated_at, last_used_at, scope_kind, scope_key, usage_class, visibility, origin, archived_at
+  created_at, updated_at, last_used_at, scope_kind, scope_key, usage_class, visibility, origin, archived_at, importance
 `;
 const PRIVATE_CHAT_SIMPLEMSG_BACKFILL_TIME_WINDOW_MS = 10 * 60 * 1000;
 /**
@@ -951,6 +952,8 @@ export interface CoworkUserMemory {
   lastUsedAt: number | null;
   /** Hygiene decay mark: archived dream memories leave injection but stay restorable. */
   archivedAt?: number | null;
+  /** Recall weight: high-importance memories get guaranteed injection and late eviction. */
+  importance: number;
 }
 
 export interface CoworkUserMemorySource {
@@ -1229,6 +1232,7 @@ interface CoworkUserMemoryRow {
   visibility?: string | null;
   origin?: string | null;
   archived_at?: number | string | null;
+  importance?: number | string | null;
 }
 
 interface CoworkUserMemorySourceRow {
@@ -1732,6 +1736,24 @@ export class CoworkStore implements MemoryBackend {
       }
       if (!memoryColumns.includes('archived_at')) {
         this.db.run('ALTER TABLE user_memories ADD COLUMN archived_at INTEGER;');
+        changed = true;
+      }
+      if (!memoryColumns.includes('importance')) {
+        this.db.run('ALTER TABLE user_memories ADD COLUMN importance REAL NOT NULL DEFAULT 0.5;');
+        // One-time deterministic backfill; keep this CASE in sync with
+        // deriveMemoryImportance (src/main/memory/memoryImportance.ts).
+        this.db.run(`
+          UPDATE user_memories
+          SET importance = CASE
+            WHEN usage_class = 'self_identity' THEN 1.0
+            WHEN is_explicit = 1 THEN 0.9
+            WHEN origin = 'dream' AND usage_class = 'value_boundary' THEN 0.75
+            WHEN origin = 'dream' AND usage_class = 'work_review' THEN 0.7
+            WHEN origin = 'dream' AND usage_class = 'profile_fact' THEN 0.65
+            WHEN usage_class IN ('preference', 'operational_preference') THEN 0.6
+            ELSE 0.5
+          END
+        `);
         changed = true;
       }
       this.db.run(`
@@ -6801,6 +6823,7 @@ export class CoworkStore implements MemoryBackend {
       updatedAt: Number(row.updated_at),
       lastUsedAt: row.last_used_at === null ? null : Number(row.last_used_at),
       archivedAt: row.archived_at == null ? null : Number(row.archived_at),
+      importance: clampMemoryImportance(row.importance),
     };
   }
 
@@ -6905,13 +6928,25 @@ export class CoworkStore implements MemoryBackend {
         usageClass: input.usageClass ?? normalizeMemoryUsageClass(existing.usage_class),
         visibility: input.visibility ?? normalizeMemoryVisibility(existing.visibility),
       });
+      // Revive never lowers importance: keep the max of the stored value and
+      // what the merged row would derive today.
+      const mergedImportance = Math.max(
+        clampMemoryImportance(existing.importance),
+        input.importance !== undefined
+          ? clampMemoryImportance(input.importance)
+          : deriveMemoryImportance({
+            usageClass: mergedClassification.usageClass,
+            origin: normalizeMemoryOrigin(existing.origin),
+            isExplicit: mergedExplicit === 1,
+          }),
+      );
       // Match queries only filter status != 'deleted', so a restatement can
       // land on an archived row; revive must clear archived_at or the memory
       // stays invisible to injection and listings forever.
       this.db.run(`
         UPDATE user_memories
         SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = 'created',
-            usage_class = ?, visibility = ?, updated_at = ?, archived_at = NULL
+            usage_class = ?, visibility = ?, updated_at = ?, archived_at = NULL, importance = ?
         WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
       `, [
         mergedText,
@@ -6921,6 +6956,7 @@ export class CoworkStore implements MemoryBackend {
         mergedClassification.usageClass,
         mergedClassification.visibility,
         now,
+        mergedImportance,
         existing.id,
         metabotId,
         scope.kind,
@@ -6940,11 +6976,18 @@ export class CoworkStore implements MemoryBackend {
 
     const id = uuidv4();
     const origin = normalizeMemoryOrigin(input.origin);
+    const importance = input.importance !== undefined
+      ? clampMemoryImportance(input.importance)
+      : deriveMemoryImportance({
+        usageClass: classification.usageClass,
+        origin,
+        isExplicit: explicitFlag === 1,
+      });
     this.db.run(`
       INSERT INTO user_memories (
         id, metabot_id, text, fingerprint, confidence, is_explicit, status,
-        scope_kind, scope_key, usage_class, visibility, origin, created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, NULL)
+        scope_kind, scope_key, usage_class, visibility, origin, created_at, updated_at, last_used_at, importance
+      ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, NULL, ?)
     `, [
       id,
       metabotId,
@@ -6959,6 +7002,7 @@ export class CoworkStore implements MemoryBackend {
       origin,
       now,
       now,
+      importance,
     ]);
     this.addMemorySource(id, metabotId, input.source);
 
@@ -7013,11 +7057,14 @@ export class CoworkStore implements MemoryBackend {
 
     const whereClause = `WHERE ${clauses.join(' AND ')}`;
 
+    // Recency = last use, else last edit: memories the bot keeps injecting
+    // (touchLastUsed) must not age out of the candidate pool just because
+    // their text never changes.
     const rows = this.getAll<CoworkUserMemoryRow>(`
       SELECT ${MEMORY_ROW_SELECT_COLUMNS}
       FROM user_memories
       ${whereClause}
-      ORDER BY updated_at DESC
+      ORDER BY COALESCE(last_used_at, updated_at) DESC
       LIMIT ? OFFSET ?
     `, [...params, limit, offset]);
 
@@ -7217,11 +7264,20 @@ export class CoworkStore implements MemoryBackend {
       usageClass: input.usageClass ?? normalizeMemoryUsageClass(current.usage_class),
       visibility: input.visibility ?? normalizeMemoryVisibility(current.visibility),
     });
+    // Updates never lower importance, mirroring the revive path's MAX rule.
+    const nextImportance = Math.max(
+      clampMemoryImportance(current.importance),
+      deriveMemoryImportance({
+        usageClass: nextClassification.usageClass,
+        origin: normalizeMemoryOrigin(current.origin),
+        isExplicit: Number(nextExplicit) !== 0,
+      }),
+    );
 
     this.db.run(`
       UPDATE user_memories
       SET text = ?, fingerprint = ?, confidence = ?, is_explicit = ?, status = ?,
-          usage_class = ?, visibility = ?, updated_at = ?
+          usage_class = ?, visibility = ?, updated_at = ?, importance = ?
       WHERE id = ? AND metabot_id = ? AND scope_kind = ? AND scope_key = ?
     `, [
       nextText,
@@ -7232,6 +7288,7 @@ export class CoworkStore implements MemoryBackend {
       nextClassification.usageClass,
       nextClassification.visibility,
       now,
+      nextImportance,
       input.id,
       input.metabotId,
       scope.kind,
