@@ -8,6 +8,10 @@
 // deferred to the next quiescent ensureKernel (lastConfigJson keeps the
 // running config so the diff stays visible). When it is NOT served, the
 // successor/drain handover covers it (coworkDshRuntimeDrain.test.mjs).
+// 2026-10-03 refresh: since 3f04cf70 the hub also treats recent kernel-side
+// activity as busy (10-minute grace), so "the next quiescent ensureKernel"
+// needs that grace to expire. The test shrinks the grace via
+// kernelActivityGraceMs and sleeps past it before the apply turn.
 // Requires: npm run compile:electron + dsh-runtime/node_modules.
 
 import assert from 'node:assert/strict'
@@ -76,6 +80,13 @@ test('config flap during a long tool call defers the restart; the in-flight turn
     sessionRoot,
     log: (level, message, detail) => logs.push({ level, message, detail: detail ?? {} }),
     mcpServersProvider: () => mcpServers,
+    // The hub treats a kernel as busy while it has recent activity (host-less
+    // subagent work has no controller to count — 3f04cf70), defaulting to a
+    // 10-minute grace. A 500ms grace lets "quiescence" actually arrive inside
+    // the test (after turn C's predecessors settle) while the deferral under
+    // live activity — the behavior under test — is driven by the in-flight
+    // controller, not the timer.
+    kernelActivityGraceMs: 500,
   })
   const callbacks = () => ({
     onMessage: () => `m-${Math.random().toString(36).slice(2)}`,
@@ -124,7 +135,12 @@ test('config flap during a long tool call defers the restart; the in-flight turn
       'the diff log names the changed field')
 
     // After quiescence the next turn applies the pending config (a real
-    // restart) and still succeeds.
+    // restart) and still succeeds. Quiescence = no in-flight turns AND the
+    // kernel-side activity grace expired: sleep past the 500ms test grace so
+    // turn B's end boundary (the last kernel activity) ages out, or turn C
+    // would defer a second time — with the production 10-minute grace it
+    // always did, which is what this test's stale expectation missed.
+    await sleep(800)
     const outC = await runTurn('c', 'hello again')
     assert.notEqual(outC.kind, 'error', `turn C must succeed after the deferred apply: ${JSON.stringify(outC).slice(0, 200)}`)
     const ensureRuntimeCount = logs.filter((l) => l.message.includes('dshKernel.ensureRuntime')).length
