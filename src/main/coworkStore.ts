@@ -15,6 +15,7 @@ import {
   judgeTurnMemoryExtraction,
   type TurnMemoryExtractionChange,
 } from './libs/coworkMemoryJudge';
+import { evaluateConversationMemoryQuality } from './libs/coworkMemoryQuality';
 import { stripLoneSurrogates, truncateUtf16Units } from './libs/llmSafeText';
 import {
   parseSessionGoal,
@@ -49,6 +50,11 @@ import {
 import { resolveMemoryScopes, type ResolveMemoryScopesInput } from './memory/memoryScopeResolver';
 import { clampMemoryPromptMaxChars } from './memory/memoryPromptBlocks';
 import { clampMemoryImportance, deriveMemoryImportance } from './memory/memoryImportance';
+import {
+  normalizeMemoryMatchKey,
+  normalizeMemorySemanticKey,
+  scoreMemorySimilarity,
+} from './memory/memorySimilarity';
 import { BOT_WORKSPACE_DIR_NAME } from './libs/botWorkspace';
 import {
   normalizeMemoryHygieneConfig,
@@ -315,110 +321,6 @@ function extractConversationSearchTerms(value: string): string[] {
   }
 
   return terms.slice(0, 8);
-}
-
-function normalizeMemoryMatchKey(value: string): string {
-  return normalizeMemoryText(value)
-    .toLowerCase()
-    .replace(/[\u0000-\u001f]/g, ' ')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function normalizeMemorySemanticKey(value: string): string {
-  const key = normalizeMemoryMatchKey(value);
-  if (!key) return '';
-  return key
-    .replace(/^(?:the user|user|i am|i m|i|my|me)\s+/i, '')
-    .replace(/^(?:该用户|这个用户|用户|本人|我的|我们|咱们|咱|我|你的|你)\s*/u, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function buildTokenFrequencyMap(value: string): Map<string, number> {
-  const tokens = value
-    .split(/\s+/g)
-    .map((token) => token.trim())
-    .filter(Boolean);
-  const map = new Map<string, number>();
-  for (const token of tokens) {
-    map.set(token, (map.get(token) || 0) + 1);
-  }
-  return map;
-}
-
-function scoreTokenOverlap(left: string, right: string): number {
-  const leftMap = buildTokenFrequencyMap(left);
-  const rightMap = buildTokenFrequencyMap(right);
-  if (leftMap.size === 0 || rightMap.size === 0) return 0;
-
-  let leftCount = 0;
-  let rightCount = 0;
-  let intersection = 0;
-  for (const count of leftMap.values()) leftCount += count;
-  for (const count of rightMap.values()) rightCount += count;
-  for (const [token, leftValue] of leftMap.entries()) {
-    intersection += Math.min(leftValue, rightMap.get(token) || 0);
-  }
-
-  const denominator = Math.min(leftCount, rightCount);
-  if (denominator <= 0) return 0;
-  return intersection / denominator;
-}
-
-function buildCharacterBigramMap(value: string): Map<string, number> {
-  const compact = value.replace(/\s+/g, '').trim();
-  if (!compact) return new Map<string, number>();
-  if (compact.length <= 1) return new Map<string, number>([[compact, 1]]);
-
-  const map = new Map<string, number>();
-  for (let index = 0; index < compact.length - 1; index += 1) {
-    const gram = compact.slice(index, index + 2);
-    map.set(gram, (map.get(gram) || 0) + 1);
-  }
-  return map;
-}
-
-function scoreCharacterBigramDice(left: string, right: string): number {
-  const leftMap = buildCharacterBigramMap(left);
-  const rightMap = buildCharacterBigramMap(right);
-  if (leftMap.size === 0 || rightMap.size === 0) return 0;
-
-  let leftCount = 0;
-  let rightCount = 0;
-  let intersection = 0;
-  for (const count of leftMap.values()) leftCount += count;
-  for (const count of rightMap.values()) rightCount += count;
-  for (const [gram, leftValue] of leftMap.entries()) {
-    intersection += Math.min(leftValue, rightMap.get(gram) || 0);
-  }
-
-  const denominator = leftCount + rightCount;
-  if (denominator <= 0) return 0;
-  return (2 * intersection) / denominator;
-}
-
-function scoreMemorySimilarity(left: string, right: string): number {
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-
-  const compactLeft = left.replace(/\s+/g, '');
-  const compactRight = right.replace(/\s+/g, '');
-  if (compactLeft && compactLeft === compactRight) {
-    return 1;
-  }
-
-  let phraseScore = 0;
-  if (compactLeft && compactRight && (compactLeft.includes(compactRight) || compactRight.includes(compactLeft))) {
-    phraseScore = Math.min(compactLeft.length, compactRight.length) / Math.max(compactLeft.length, compactRight.length);
-  }
-
-  return Math.max(
-    phraseScore,
-    scoreTokenOverlap(left, right),
-    scoreCharacterBigramDice(left, right)
-  );
 }
 
 function scoreMemoryTextQuality(value: string): number {
@@ -8158,6 +8060,21 @@ export class CoworkStore implements MemoryBackend {
           result.skipped += 1;
           continue;
         }
+        // Conversation-memory quality gate (audit P1): deterministic, no LLM —
+        // near-verbatim copies of the source message and chitchat/self-intro
+        // candidates without a durable-fact predicate are rejected BEFORE the
+        // judge (and its possible boundary LLM call). Explicit remember-
+        // commands are never gated.
+        const quality = evaluateConversationMemoryQuality({
+          text: change.text,
+          sourceText: options.userText,
+          isExplicit: change.isExplicit,
+        });
+        if (!quality.accepted) {
+          result.judgeRejected += 1;
+          result.skipped += 1;
+          continue;
+        }
         const judge = await judgeMemoryCandidate({
           text: change.text,
           isExplicit: change.isExplicit,
@@ -8213,10 +8130,22 @@ export class CoworkStore implements MemoryBackend {
 
     // LLM-extracted entries are already curated by the extraction pass — no
     // second judge round. Same guard rules apply (explicit-only when implicit
-    // updates are off) and the same best-match delete flow.
+    // updates are off) and the same best-match delete flow. The deterministic
+    // conversation-memory quality gate (audit P1) still applies — the
+    // extraction pass is exactly where the peer-intro/pleasantry verbatim
+    // copies came from.
     for (const change of llmOnlyChanges) {
       if (change.action === 'add') {
         if (!options.implicitEnabled && !change.isExplicit) {
+          result.skipped += 1;
+          continue;
+        }
+        const quality = evaluateConversationMemoryQuality({
+          text: change.text,
+          sourceText: options.userText,
+          isExplicit: change.isExplicit,
+        });
+        if (!quality.accepted) {
           result.skipped += 1;
           continue;
         }
