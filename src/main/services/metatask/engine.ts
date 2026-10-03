@@ -1549,9 +1549,18 @@ export function taskEventSet(
  * re-dirtied ONCE on upgrade (one extra replay per task, then stable again).
  * The engine's protocol eventSetHash recipe is untouched by this.
  *
+ * `PROJECTION_FORMAT_VERSION` salts the key with the projection FORMAT version
+ * (not the protocol version): whenever the projection shape or replay semantics
+ * change (e.g. competitive mode added `submissions`/`satisfied`), cached
+ * projections written by an older build are invalidated once, forcing a single
+ * re-replay per root — otherwise a pre-upgrade cache would keep serving the old
+ * format forever because the chain events did not change.
+ *
  * Equal keys ⇒ the same inputs produce the same projection, time-driven expiry
  * aside; that residual is covered by nextTimeDeadlineMs.
  */
+export const PROJECTION_FORMAT_VERSION = 2;
+
 export const taskDirtyKey = (
   taskSet: MetaTaskTaskEventSet,
   options: { rosterPins?: Record<string, unknown> } = {}
@@ -1562,6 +1571,7 @@ export const taskDirtyKey = (
     .sort((a, b) => (a.pinId < b.pinId ? -1 : a.pinId > b.pinId ? 1 : 0));
   return sha256Hex(
     canonJ({
+      formatVersion: PROJECTION_FORMAT_VERSION,
       confirmed: taskSet.hashEntries,
       unconfirmed: taskSet.mempoolPinIds,
       bodies,

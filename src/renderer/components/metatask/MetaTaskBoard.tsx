@@ -14,10 +14,11 @@ import { formatMetaTaskRelativeTime } from './metaTaskFormat';
 import type { MetaTaskAlert, MetaTaskBoardTask, MetaTaskIdentity } from '../../types/metatask';
 
 /** Prefilled participation draft: the bot reads the task, picks an open node,
- * claims with the guard and completes it (prose-first; the button never acts). */
-const participateDraft = (title: string, rootPinId: string, nodeHint?: string | null): void => {
+ * claims with the guard and completes it (prose-first; the button never acts).
+ * Competitive tasks get the lock-free fork-race wording instead. */
+const participateDraft = (title: string, rootPinId: string, nodeHint?: string | null, competitive = false): void => {
   const text = i18nService
-    .t('metatask.participateDraft')
+    .t(competitive ? 'metatask.participateDraftCompetitive' : 'metatask.participateDraft')
     .replace('{title}', title)
     .replace('{root}', rootPinId)
     .replace(
@@ -35,6 +36,7 @@ interface GroupedAlert {
   alert: MetaTaskAlert;
   count: number;
   taskTitle: string;
+  competitive: boolean;
 }
 
 const MetaTaskBoard: React.FC = () => {
@@ -58,14 +60,16 @@ const MetaTaskBoard: React.FC = () => {
   const groupedAlerts: GroupedAlert[] = useMemo(() => {
     const byKey = new Map<string, GroupedAlert>();
     for (const alert of board?.alerts ?? []) {
-      const taskTitle = tasks.find((task) => task.rootPinId === alert.rootPinId)?.title ?? '';
+      const task = tasks.find((t) => t.rootPinId === alert.rootPinId);
+      const taskTitle = task?.title ?? '';
+      const competitive = task?.mode === 'competitive';
       const key = `${alert.kind}|${alert.rootPinId}|${alert.node ?? ''}`;
       const existing = byKey.get(key);
       if (existing) {
         existing.count += 1;
         if (alert.createdAtMs > existing.alert.createdAtMs) existing.alert = alert;
       } else {
-        byKey.set(key, { key, alert, count: 1, taskTitle });
+        byKey.set(key, { key, alert, count: 1, taskTitle, competitive });
       }
     }
     return Array.from(byKey.values()).slice(0, 4);
@@ -152,7 +156,7 @@ const MetaTaskBoard: React.FC = () => {
       {/* Actionable alert cards (grouped; each offers the participate handoff) */}
       {groupedAlerts.length > 0 && (
         <div className="mx-4 mt-3 space-y-2">
-          {groupedAlerts.map(({ key, alert, count, taskTitle }) => {
+          {groupedAlerts.map(({ key, alert, count, taskTitle, competitive }) => {
             const isClosing = alert.kind === 'closing_drive';
             const message = isClosing
               ? i18nService
@@ -192,7 +196,7 @@ const MetaTaskBoard: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => participateDraft(taskTitle || alert.rootPinId, alert.rootPinId, alert.node)}
+                  onClick={() => participateDraft(taskTitle || alert.rootPinId, alert.rootPinId, alert.node, competitive)}
                   className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-500 transition-colors"
                 >
                   <BoltIcon className="h-3.5 w-3.5" />
@@ -342,7 +346,7 @@ const MetaTaskCard: React.FC<{ task: MetaTaskBoardTask; identities?: Record<stri
       {!task.taskComplete && (
         <button
           type="button"
-          onClick={() => participateDraft(task.title, task.rootPinId)}
+          onClick={() => participateDraft(task.title, task.rootPinId, null, task.mode === 'competitive')}
           className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg btn-idchat-primary-filled"
         >
           <BoltIcon className="h-3.5 w-3.5" />
