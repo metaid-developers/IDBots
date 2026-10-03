@@ -324,3 +324,29 @@ stays blocked until either:
 
 Either way it is a pure `PaymentGateway` addition — no client contract change
 beyond a new gateway name and (for (a)) a new tab label.
+
+---
+
+## 14. Delivery Notes (2026-10-04, assist-base-service)
+
+The backend adapter shipped as specified. Recorded deltas from this document,
+all accepted:
+
+- §5.2 `buyer_logon_id`: no gateway-meta JSON column exists on
+  `tb_traffic_recharge_order`, so the buyer id is **masked-logged** (first 3
+  chars + `***`) instead of persisted. Accepted for v1; add the column if
+  support workflows need it.
+- §9 seed set: delivered `cny_10_1gb`, `cny_30_3_5gb`, `cny_68_8gb` **plus**
+  `cny_1_10mb` (¥1 → 10 MB), which is the default plan of the client
+  acceptance script (`scripts/traffic-e2e/run-alipay-acceptance.mjs`).
+- Legacy plan `cny_10_100mb` is still active and conflicts with the new
+  `cny_10_1gb` (same price, 10× less traffic) — ops to archive the legacy row
+  when seeding the new plans.
+- Implementation notes: pure-HTTP hand-rolled RSA2 (zero new deps, §3 option
+  B); janitor `ReconcileAlipayOrders()` sweeps `created` alipay orders older
+  than 2 min every 5 min; expiry sweep closes Alipay orders via
+  `alipay.trade.close` with `ACQ.TRADE_NOT_EXIST` treated as success.
+- Pre-approval behavior confirmed: `precreate` returns
+  `ACQ.PRODUCT_NOT_EFFECTIVE`, the order row stays `created`, and the 24 h
+  janitor closes it — expected, and a usable error-path test before the
+  merchant app review passes.
