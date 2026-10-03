@@ -4104,7 +4104,15 @@ const startStartupMessageTier = (): void => {
         includeDeleted: false,
         limit: input.limit,
         offset: 0,
-      }).map((entry) => ({ text: entry.text })),
+        touchLastUsed: input.touchLastUsed === true,
+      }),
+    getEffectiveMemoryPolicy: (metabotId) => {
+      const policy = getCoworkStore().getMemoryBackend().getEffectiveMemoryPolicyForMetabot(metabotId);
+      return {
+        memoryEnabled: policy.memoryEnabled,
+        memoryUserMemoriesMaxItems: policy.memoryUserMemoriesMaxItems,
+      };
+    },
     listDailySummaries: (metabotId, limit) => getDreamStore().listDailySummaries(metabotId, limit),
     listValidatedCapabilityDrafts: (metabotId) =>
       getCoworkStore().listCapabilityDrafts(metabotId, { status: 'validated', limit: 5 }),

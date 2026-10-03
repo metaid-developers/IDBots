@@ -40,6 +40,8 @@ const {
   hasProseDependencyDeclaration,
   hasWorkerUpstreamWait,
   adjudicateStatusDirectives,
+  buildGroupTaskExperienceBlock,
+  buildGroupTaskConstraintsBlock,
   PROSE_DEPENDENCY_EXEMPTION_MAX_MS,
 } = require('../dist-electron/main/services/groupTaskDaemon.js');
 const { buildGroupTaskSystemPrompt } = require('../dist-electron/main/services/groupTaskPrompts.js');
@@ -3965,6 +3967,161 @@ test('experience block: memory/dream deps feed the A2A builder; absent deps omit
     assert.ok(!withoutMemory.chatCalls[0].systemPrompt.includes('self_identity'));
   } finally {
     withoutMemory.cleanup();
+  }
+});
+
+test('group experience block: section trimming replaces the 1500 tail cut, self-identity always whole', () => {
+  const identityText = `IDENTITY-${'x'.repeat(100)}`;
+  const summaries = Array.from({ length: 3 }, (_, index) => ({
+    summaryDate: `2026-08-0${index + 1}`,
+    summaryText: `day-${index} ${'s'.repeat(300)} tail-marker-${index}`,
+  }));
+  const valueBoundaries = Array.from({ length: 5 }, (_, index) => ({ text: `boundary-${index}` }));
+  const workReviews = Array.from({ length: 5 }, (_, index) => ({ text: `review-${index}` }));
+
+  // ~3150 chars of content: the old 1500 tail cut would amputate everything
+  // after the identity block; the ladder keeps every section under the 4000 cap.
+  const full = buildGroupTaskExperienceBlock({ identityText, valueBoundaries, workReviews, summaries });
+  assert.ok(full.length > 1500, 'no longer hard-capped at 1500');
+  assert.ok(full.length <= 4000, 'bounded by the raised cap');
+  assert.ok(full.includes(identityText), 'identity survives whole');
+  assert.ok(full.includes('tail-marker-2'), 'the last diary day is not tail-amputated');
+  assert.ok(full.includes('boundary-0'), 'boundaries survive');
+
+  // Over the cap: daily summaries shrink first, boundaries last.
+  const over = buildGroupTaskExperienceBlock({
+    identityText,
+    valueBoundaries,
+    workReviews,
+    // One oversized day always renders whole in the summaries block (builder
+    // contract), so the only way under the cap is dropping the section.
+    summaries: [{ summaryDate: '2026-08-01', summaryText: 's'.repeat(6000) }],
+    maxChars: 2500,
+  });
+  assert.ok(over.length <= 2500, 'over-cap input comes back under the cap');
+  assert.ok(over.includes(identityText), 'identity still whole over budget');
+  assert.ok(!over.includes('<recent_daily_summaries>'), 'summaries are the first section dropped');
+  assert.ok(over.includes('boundary-0'), 'boundaries are the last section standing');
+});
+
+test('authoritative constraints block renders the [POSITION] ledger, newest lines survive the budget', () => {
+  assert.equal(buildGroupTaskConstraintsBlock([]), '');
+
+  const block = buildGroupTaskConstraintsBlock([
+    { statement: 'UI 必须先过设计评审' },
+    { statement: '周五才允许发布' },
+  ]);
+  assert.match(block, /\[Authoritative constraints \(host ledger\)/);
+  assert.match(block, /UI 必须先过设计评审/);
+  assert.match(block, /周五才允许发布/);
+
+  const over = buildGroupTaskConstraintsBlock(
+    Array.from({ length: 10 }, (_, index) => ({ statement: `constraint-${index} ${'x'.repeat(400)}` })),
+    1200,
+  );
+  assert.ok(over.length <= 1200, 'bounded by the block cap');
+  assert.ok(over.includes('constraint-9'), 'newest line survives');
+  assert.ok(!over.includes('constraint-0 '), 'oldest lines drop first');
+  assert.match(over, /oldest line\(s\) omitted/);
+});
+
+test('scoped owner memories inject into plain-path group turns, skip the skill path, and respect memoryEnabled (G8)', async () => {
+  const memoryEntries = [
+    { text: 'The owner prefers weekly Friday releases', usageClass: 'preference', visibility: 'local_only', updatedAt: 100, lastUsedAt: null, importance: 0.9 },
+    { text: 'I am the twin.', usageClass: 'self_identity', visibility: 'local_only', updatedAt: 90, lastUsedAt: null, importance: 1.0 },
+  ];
+  const memoryDep = (metabotId, input) => {
+    if (input.usageClass === 'self_identity') return memoryEntries.filter((entry) => entry.usageClass === 'self_identity');
+    if (input.usageClass) return [];
+    return memoryEntries;
+  };
+
+  // Plain path (no routing hit): the scoped block rides the user turn.
+  const plain = await createHarness({ listUserMemories: memoryDep });
+  try {
+    plain.createTask([2]);
+    insertGroupMessage(plain.db, {
+      pinId: 'scope-i0', senderMetaId: 'metaid-h', senderGlobalMetaId: 'gmid-boss',
+      senderName: 'Human', content: '@Coder Bot go',
+    });
+    await plain.loop.runTick();
+    const userMessage = plain.chatCalls[0].userMessage;
+    assert.match(userMessage, /<ownerMemories>/);
+    assert.match(userMessage, /weekly Friday releases/);
+    const memoryBlock = userMessage.slice(userMessage.indexOf('<ownerMemories>'), userMessage.indexOf('</ownerMemories>'));
+    assert.ok(!memoryBlock.includes('I am the twin.'), 'experience-owned classes never double into the scoped block');
+  } finally {
+    plain.cleanup();
+  }
+
+  // Skill path: coworkRunner injects its own scoped memory blocks, so the
+  // daemon-side block must NOT duplicate into the skill turn's user message.
+  const skill = await createHarness({
+    listUserMemories: memoryDep,
+    routing: { prompt: 'skill routing prompt', activeSkillIds: ['skill-x'] },
+  });
+  try {
+    skill.createTask([2]);
+    insertGroupMessage(skill.db, {
+      pinId: 'scope-skill-i0', senderMetaId: 'metaid-h', senderGlobalMetaId: 'gmid-boss',
+      senderName: 'Human', content: '@Coder Bot go',
+    });
+    await skill.loop.runTick();
+    assert.ok(skill.skillTurnCalls.length >= 1, 'routing hit runs the skill turn');
+    for (const call of skill.skillTurnCalls) {
+      assert.ok(!call.userMessage.includes('<ownerMemories>'), 'no double injection on the skill path');
+    }
+    assert.equal(skill.chatCalls.length, 0, 'plain completion never ran');
+  } finally {
+    skill.cleanup();
+  }
+
+  // G8: memoryEnabled=false gates the block out (parity with private chat).
+  const gated = await createHarness({
+    listUserMemories: memoryDep,
+    deps: { getEffectiveMemoryPolicy: () => ({ memoryEnabled: false, memoryUserMemoriesMaxItems: 30 }) },
+  });
+  try {
+    gated.createTask([2]);
+    insertGroupMessage(gated.db, {
+      pinId: 'scope-off-i0', senderMetaId: 'metaid-h', senderGlobalMetaId: 'gmid-boss',
+      senderName: 'Human', content: '@Coder Bot go',
+    });
+    await gated.loop.runTick();
+    assert.ok(!gated.chatCalls[0].userMessage.includes('<ownerMemories>'), 'memoryEnabled=false omits the scoped block');
+    assert.ok(!gated.chatCalls[0].userMessage.includes('weekly Friday releases'));
+  } finally {
+    gated.cleanup();
+  }
+});
+
+test('chair [POSITION] constraints reach every turn via the authoritative block, long after leaving the message window', async () => {
+  const h = await createHarness();
+  try {
+    const task = h.createTask([2]);
+    // A ruling recorded on the ledger rounds ago — never a recent group message.
+    h.groupTaskStore.addPosition({
+      taskId: task.id,
+      msgPinId: 'pos-pin-1',
+      authorGlobalmetaid: 'gmid-twin',
+      statement: '永远先出设计稿再写代码',
+      lineNo: 1,
+    });
+    insertGroupMessage(h.db, {
+      pinId: 'late-i0', senderMetaId: 'metaid-h', senderGlobalMetaId: 'gmid-boss',
+      senderName: 'Human', content: '@Coder Bot go',
+    });
+    await h.loop.runTick();
+    const userMessage = h.chatCalls[0].userMessage;
+    assert.match(userMessage, /\[Authoritative constraints \(host ledger\)/);
+    assert.match(userMessage, /永远先出设计稿再写代码/);
+    const logSection = userMessage.slice(userMessage.indexOf('recent group log'));
+    assert.ok(
+      !logSection.includes('永远先出设计稿再写代码'),
+      'the ruling is NOT in the recent-log window — only the authoritative block carries it',
+    );
+  } finally {
+    h.cleanup();
   }
 });
 
