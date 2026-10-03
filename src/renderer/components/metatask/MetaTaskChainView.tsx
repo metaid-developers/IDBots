@@ -38,11 +38,14 @@ type CandState =
   | 'awaitingDeps'
   | 'optimistic'
   | 'replaced'
-  | 'rejected';
+  | 'rejected'
+  | 'stalled';
 
 /** Pure display mapping over engine flags — see the ordering comment in the
  * task design: terminal truth first (killed / replaced), then the gold
- * settlement override, then verified position, then review pipeline. */
+ * settlement override, then verified position, then review pipeline. 'stalled'
+ * = the candidate itself is live but a referenced parent was rejected/replaced,
+ * so the chain under it can never close (a new submission must re-pin). */
 const candidateState = (
   node: MetaTaskNodeProjection,
   cand: MetaTaskSubmissionCandidate,
@@ -52,12 +55,18 @@ const candidateState = (
   if (cand.failed) return 'rejected';
   if (cand.superseded) return 'replaced';
   if (winningSet?.has(cand.pinId)) return 'winner';
+  const refs = cand.parentrefs ?? {};
+  const refPins = Object.values(refs);
+  if (refPins.some((pin) => {
+    const parent = byPin.get(pin);
+    return parent !== undefined && (parent.failed || parent.superseded);
+  })) {
+    return 'stalled';
+  }
   if (cand.verified && cand.chainValid) {
     return node.submission?.pinId === cand.pinId ? 'leading' : 'behind';
   }
   if (cand.verified) return 'awaitingDeps'; // verified but an ancestor is not chain-valid
-  const refs = cand.parentrefs ?? {};
-  const refPins = Object.values(refs);
   const allParentsChainValid = refPins.every((pin) => byPin.get(pin)?.chainValid === true);
   return allParentsChainValid ? 'inReview' : 'optimistic';
 };
@@ -76,7 +85,12 @@ const cardTone: Record<CandState, string> = {
   optimistic: 'border-dotted border-violet-500/60 dark:border-violet-400/60',
   replaced: 'opacity-40',
   rejected: 'opacity-45',
+  stalled: 'border-dashed border-slate-400/60 dark:border-slate-500/60 opacity-60',
 };
+
+/** In-review candidates sitting on the race line (the deepest live chain) get
+ * a solid sky border instead of dashed — "this one currently carries the race". */
+const onRaceLineTone = 'border-solid border-sky-500 dark:border-sky-400 shadow-[0_0_10px_-3px_rgba(56,189,248,0.45)]';
 
 const tagTone: Record<CandState, string> = {
   winner: 'bg-amber-400 dark:bg-amber-300 text-slate-900',
@@ -93,12 +107,15 @@ const tagTone: Record<CandState, string> = {
     'border border-slate-400/50 text-slate-500 dark:text-slate-400 bg-claude-bg dark:bg-claude-darkBg',
   rejected:
     'border border-red-500/60 dark:border-red-400/60 text-red-600 dark:text-red-400 bg-claude-bg dark:bg-claude-darkBg',
+  stalled:
+    'border border-slate-400/60 text-slate-500 dark:text-slate-400 bg-claude-bg dark:bg-claude-darkBg',
 };
 
 interface EdgeSpec {
   from: string;
   to: string;
   gold: boolean;
+  race: boolean;
   opt: boolean;
 }
 
@@ -136,6 +153,7 @@ const shortMetaId = (metaId: string): string =>
 const CHAIN_VIEW_CSS = `
 .metatask-chain-edge { fill: none; stroke-width: 1.5; }
 .metatask-chain-edge-gold { stroke-width: 2.5; filter: drop-shadow(0 0 3px rgba(245, 184, 61, 0.35)); }
+.metatask-chain-edge-race { stroke-width: 2; }
 .metatask-chain-edge-opt { stroke-dasharray: 3 4; opacity: 0.7; }
 .metatask-chain-edge-flow { stroke-dasharray: 6 8; animation: metatask-chain-edge-flow 1.6s linear infinite; }
 @keyframes metatask-chain-edge-flow { to { stroke-dashoffset: -14; } }
@@ -199,6 +217,75 @@ const MetaTaskChainView: React.FC<{
     return { byPin, stateByPin };
   }, [nodes, winningSet]);
 
+  /** The race line: the deepest LIVE chain through parentrefs — "if the reviews
+   * currently in flight pass, this is where the race stands". Pure display
+   * geometry over stored flags (a lookup walk, not chain-validity re-derivation):
+   * a candidate's coverage = how many distinct nodes its live ancestor closure
+   * spans; the tip maximizes coverage, then verified, then pass votes, then
+   * earliest submission. The gold thread stays the VERIFIED truth; the blue
+   * race line is the live extrapolation past it. */
+  const { racePath, raceTipId } = useMemo(() => {
+    const pinToNode = new Map<string, string>();
+    for (const node of nodes) for (const cand of node.submissions ?? []) pinToNode.set(cand.pinId, node.id);
+    const isLive = (pinId: string): boolean => {
+      const state = stateByPin.get(pinId);
+      return state !== undefined && state !== 'rejected' && state !== 'replaced' && state !== 'stalled';
+    };
+    const closureMemo = new Map<string, Set<string>>();
+    const closureOf = (pinId: string, visiting: Set<string>): Set<string> => {
+      const hit = closureMemo.get(pinId);
+      if (hit) return hit;
+      const out = new Set<string>();
+      const nodeId = pinToNode.get(pinId);
+      if (nodeId) out.add(nodeId);
+      if (visiting.has(pinId)) return out;
+      visiting.add(pinId);
+      for (const ref of Object.values(byPin.get(pinId)?.parentrefs ?? {})) {
+        if (!isLive(ref)) continue;
+        for (const id of closureOf(ref, visiting)) out.add(id);
+      }
+      visiting.delete(pinId);
+      closureMemo.set(pinId, out);
+      return out;
+    };
+    let tip: MetaTaskSubmissionCandidate | null = null;
+    let tipScore: [number, number, number, number] | null = null;
+    for (const node of nodes) {
+      for (const cand of node.submissions ?? []) {
+        if (!isLive(cand.pinId)) continue;
+        const score: [number, number, number, number] = [
+          closureOf(cand.pinId, new Set()).size,
+          cand.verified ? 1 : 0,
+          cand.passVotes,
+          -cand.atMs,
+        ];
+        if (
+          !tipScore ||
+          score[0] > tipScore[0] ||
+          (score[0] === tipScore[0] && score[1] > tipScore[1]) ||
+          (score[0] === tipScore[0] && score[1] === tipScore[1] && score[2] > tipScore[2]) ||
+          (score[0] === tipScore[0] && score[1] === tipScore[1] && score[2] === tipScore[2] && score[3] > tipScore[3])
+        ) {
+          tip = cand;
+          tipScore = score;
+        }
+      }
+    }
+    const racePath = new Set<string>();
+    if (tip) {
+      const walk = (pinId: string, visiting: Set<string>): void => {
+        if (visiting.has(pinId)) return;
+        visiting.add(pinId);
+        racePath.add(pinId);
+        for (const ref of Object.values(byPin.get(pinId)?.parentrefs ?? {})) {
+          if (isLive(ref)) walk(ref, visiting);
+        }
+      };
+      walk(tip.pinId, new Set());
+    }
+    return { racePath, raceTipId: tip?.pinId ?? null };
+  }, [nodes, byPin, stateByPin]);
+
   const edges = useMemo(() => {
     const specs: EdgeSpec[] = [];
     for (const node of nodes) {
@@ -214,13 +301,14 @@ const MetaTaskChainView: React.FC<{
           const gold = winningSet
             ? winningSet.has(from) && winningSet.has(cand.pinId)
             : fromState === 'leading' && toState === 'leading';
-          const opt = !gold && (toState === 'optimistic' || toState === 'awaitingDeps');
-          specs.push({ from, to: cand.pinId, gold, opt });
+          const race = !gold && racePath.has(from) && racePath.has(cand.pinId);
+          const opt = !gold && !race && (toState === 'optimistic' || toState === 'awaitingDeps');
+          specs.push({ from, to: cand.pinId, gold, race, opt });
         }
       }
     }
     return specs;
-  }, [nodes, byPin, stateByPin, winningSet]);
+  }, [nodes, byPin, stateByPin, winningSet, racePath]);
 
   const edgesRef = useRef<EdgeSpec[]>(edges);
   edgesRef.current = edges;
@@ -253,9 +341,11 @@ const MetaTaskChainView: React.FC<{
         'class',
         edge.gold
           ? 'metatask-chain-edge metatask-chain-edge-gold metatask-chain-edge-flow stroke-amber-400 dark:stroke-amber-300 motion-reduce:animate-none'
-          : edge.opt
-            ? 'metatask-chain-edge metatask-chain-edge-opt stroke-violet-400 dark:stroke-violet-300'
-            : 'metatask-chain-edge stroke-claude-border dark:stroke-claude-darkBorder',
+          : edge.race
+            ? 'metatask-chain-edge metatask-chain-edge-race metatask-chain-edge-flow stroke-sky-500 dark:stroke-sky-400 motion-reduce:animate-none'
+            : edge.opt
+              ? 'metatask-chain-edge metatask-chain-edge-opt stroke-violet-400 dark:stroke-violet-300'
+              : 'metatask-chain-edge stroke-claude-border dark:stroke-claude-darkBorder',
       );
       svgEl.appendChild(path);
     }
@@ -339,6 +429,12 @@ const MetaTaskChainView: React.FC<{
             {i18nService.t('metatask.chain.rulesGoldWord')}
           </span>
           {i18nService.t('metatask.chain.rulesGoldB')}
+          <span className="dark:text-claude-darkTextSecondary text-claude-textSecondary"> · </span>
+          {i18nService.t('metatask.chain.rulesRaceA')}
+          <span className="font-semibold text-sky-600 dark:text-sky-400">
+            {i18nService.t('metatask.chain.rulesRaceWord')}
+          </span>
+          {i18nService.t('metatask.chain.rulesRaceB')}
         </p>
       </div>
 
@@ -407,6 +503,8 @@ const MetaTaskChainView: React.FC<{
 
                 {candidates.map((cand) => {
                   const state = stateByPin.get(cand.pinId) ?? 'optimistic';
+                  const onRaceLine = racePath.has(cand.pinId) && state === 'inReview';
+                  const isRaceTip = cand.pinId === raceTipId && state !== 'leading' && state !== 'winner';
                   const isYou = rosterIds.has(cand.submitter);
                   const disputeRing =
                     node.disputed && node.submission?.pinId === cand.pinId ? (
@@ -419,13 +517,17 @@ const MetaTaskChainView: React.FC<{
                       data-cand-pin={cand.pinId}
                       title={cand.pinId}
                       onClick={() => onSelectNode(node.id)}
-                      className={`relative rounded-[10px] border px-[11px] pt-[9px] pb-2 text-left transition-transform hover:-translate-y-px dark:bg-claude-darkSurface bg-claude-surface ${cardTone[state]}`}
+                      className={`relative rounded-[10px] border px-[11px] pt-[9px] pb-2 text-left transition-transform hover:-translate-y-px dark:bg-claude-darkSurface bg-claude-surface ${onRaceLine ? onRaceLineTone : cardTone[state]}`}
                     >
                       {disputeRing}
                       <span
-                        className={`absolute -top-[7px] right-2 rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${tagTone[state]}`}
+                        className={`absolute -top-[7px] right-2 rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${
+                          isRaceTip
+                            ? 'bg-sky-500 text-white dark:bg-sky-400 dark:text-slate-900'
+                            : tagTone[state]
+                        }`}
                       >
-                        {tagLabel(state)}
+                        {isRaceTip ? i18nService.t('metatask.chain.tag.raceFront') : tagLabel(state)}
                       </span>
                       <span className="flex items-center gap-1.5 min-w-0">
                         <span className={state === 'rejected' ? 'line-through' : undefined}>
@@ -498,6 +600,10 @@ const MetaTaskChainView: React.FC<{
           {i18nService.t('metatask.chain.legend.inReview')}
         </span>
         <span className="inline-flex items-center gap-1.5">
+          <span className={`${legendSwatch} border-solid border-sky-500 dark:border-sky-400 shadow-[0_0_5px_-1px_rgba(56,189,248,0.5)]`} />
+          {i18nService.t('metatask.chain.legend.raceLine')}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
           <span className={`${legendSwatch} border-dotted border-violet-500/60 dark:border-violet-400/60`} />
           {i18nService.t('metatask.chain.legend.awaitingDeps')}
         </span>
@@ -512,6 +618,10 @@ const MetaTaskChainView: React.FC<{
         <span className="inline-flex items-center gap-1.5">
           <span className={`${legendSwatch} border-red-500/60 opacity-45 dark:border-red-400/60`} />
           {i18nService.t('metatask.chain.legend.rejected')}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className={`${legendSwatch} border-dashed border-slate-400/60 opacity-60 dark:border-slate-500/60`} />
+          {i18nService.t('metatask.chain.legend.stalled')}
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-flex items-center gap-[3px]">
