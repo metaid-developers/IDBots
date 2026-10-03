@@ -3720,6 +3720,22 @@ const startStartupMessageTier = (): void => {
       skillsRoots: skillMgr.getAllSkillRoots(),
       runSkillTurnViaCowork: (params) =>
         runOrchestratorSkillTurn(getCoworkRunner(), getCoworkStore(), params),
+      // Minimal self-cognition pack for the direct reply paths (same narrow
+      // memory/dream seams the group-task daemon binds below).
+      listUserMemories: (metabotId, input) =>
+        getCoworkStore().getMemoryBackend().listUserMemories({
+          metabotId,
+          scope: createOwnerMemoryScope(),
+          usageClass: input.usageClass,
+          status: 'created',
+          includeDeleted: false,
+          limit: input.limit,
+          offset: 0,
+        }),
+      listDailySummaries: (metabotId, limit) => getDreamStore().listDailySummaries(metabotId, limit),
+      getEffectiveMemoryPolicy: (metabotId) => ({
+        memoryEnabled: getCoworkStore().getMemoryBackend().getEffectiveMemoryPolicyForMetabot(metabotId).memoryEnabled,
+      }),
     },
     () => triggerDaemonWasmRecovery('cognitiveOrchestrator')
   );
@@ -4239,6 +4255,22 @@ const startStartupMessageTier = (): void => {
         createPin: (id, payload, options) => createPin(getMetabotStore(), id, payload, { ...options, feeRate: getGlobalFeeRate('mvc') }),
       });
     },
+    // Minimal self-cognition pack for the plain completion path (same narrow
+    // memory/dream seams the group-task daemon binds above).
+    listUserMemories: (metabotId, input) =>
+      getCoworkStore().getMemoryBackend().listUserMemories({
+        metabotId,
+        scope: createOwnerMemoryScope(),
+        usageClass: input.usageClass,
+        status: 'created',
+        includeDeleted: false,
+        limit: input.limit,
+        offset: 0,
+      }),
+    listDailySummaries: (metabotId, limit) => getDreamStore().listDailySummaries(metabotId, limit),
+    getEffectiveMemoryPolicy: (metabotId) => ({
+      memoryEnabled: getCoworkStore().getMemoryBackend().getEffectiveMemoryPolicyForMetabot(metabotId).memoryEnabled,
+    }),
     emitLog: (msg) => console.log(msg),
     getCoworkStore,
   });

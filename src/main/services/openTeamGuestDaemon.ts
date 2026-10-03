@@ -51,6 +51,11 @@ import { isOpenTeamTaskStatusTerminal, parseOpenTeamTaskStatusTag } from '../lib
 import { buildOpenTeamGuestPrompt } from './openTeamGuestPrompt';
 import { ensureOpenTeamGuestSession, corruptSessionLogSignature, isCorruptSessionLogError } from './groupTaskSession';
 import {
+  buildMinimalSelfCognitionBlocks,
+  RECENT_SUMMARIES_PROMPT_DAYS,
+} from '../libs/experiencePromptBlocks';
+import type { MemoryUsageClass } from '../memory/memoryScope';
+import {
   buildGuestMetafileDeliverableLine,
   buildGuestNoteDeliverableLine,
   collectGuestDeliverableFiles,
@@ -273,6 +278,18 @@ export interface OpenTeamGuestDaemonSqliteLike {
   getDatabase(): Database;
 }
 
+/** Narrow memory read (owner scope, created status) for the plain-path minimal self-cognition pack. */
+export type OpenTeamGuestListUserMemoriesFn = (
+  metabotId: number,
+  input: { usageClass?: MemoryUsageClass; limit: number },
+) => Array<{ text: string }>;
+
+/** Recent dream summaries (newest first) for the plain-path minimal self-cognition pack. */
+export type OpenTeamGuestListDailySummariesFn = (
+  metabotId: number,
+  limit: number,
+) => Array<{ summaryDate: string; summaryText: string }>;
+
 export interface OpenTeamGuestDaemonDeps {
   getStore: () => OpenTeamGuestDaemonSqliteLike;
   getMetabotStore: () => MetabotStore;
@@ -328,6 +345,19 @@ export interface OpenTeamGuestDaemonDeps {
    * injected group context snapshot). Also used by the M3 skill-turn path.
    */
   getCoworkStore?: () => CoworkStore;
+  /**
+   * Memory/dream reads for the minimal self-cognition pack (self-identity +
+   * recent dream summaries) appended to the PLAIN completion path only. Skill
+   * turns are excluded: they run through the cowork runner, which injects the
+   * full experience block into the turn tail itself. Unwired = no pack.
+   */
+  listUserMemories?: OpenTeamGuestListUserMemoriesFn;
+  listDailySummaries?: OpenTeamGuestListDailySummariesFn;
+  /**
+   * Per-bot memory policy (parity with the group-task/private-chat paths):
+   * memoryEnabled=false gates the self-cognition pack off. Unwired = enabled.
+   */
+  getEffectiveMemoryPolicy?: (metabotId: number) => { memoryEnabled: boolean } | null | undefined;
 }
 
 export interface OpenTeamGuestDaemonLoop {
@@ -711,6 +741,26 @@ export function createOpenTeamGuestDaemonLoop(deps: OpenTeamGuestDaemonDeps): Op
     });
     const userMessage = buildGroupLogUserMessage(db, membership, message);
 
+    // Minimal self-cognition pack (dream-written self-identity + recent dream
+    // summaries) for the PLAIN completion path: without it the guest prompt
+    // carries persona facts but none of the bot's dream-distilled "who am I".
+    // Skill turns are excluded — the cowork runner injects the full experience
+    // block into the turn tail itself, and a copy here would double it. Gated
+    // on the bot's memory policy (parity with the group-task path).
+    const buildSelfCognitionSection = (): string => {
+      if (!deps.listUserMemories && !deps.listDailySummaries) return '';
+      if (deps.getEffectiveMemoryPolicy?.(bot.id)?.memoryEnabled === false) return '';
+      try {
+        return buildMinimalSelfCognitionBlocks({
+          identityText: deps.listUserMemories?.(bot.id, { usageClass: 'self_identity', limit: 1 })?.[0]?.text ?? null,
+          summaries: deps.listDailySummaries?.(bot.id, RECENT_SUMMARIES_PROMPT_DAYS) ?? [],
+        });
+      } catch {
+        return '';
+      }
+    };
+    const selfCognitionSection = buildSelfCognitionSection();
+
     // Skill routing (mirrors groupTaskDaemon): when the bot has chat skills
     // enabled and routing hits, run ONE skill turn in the guest's cowork
     // session; otherwise (or on any routing failure) fall back to the plain
@@ -836,8 +886,11 @@ export function createOpenTeamGuestDaemonLoop(deps: OpenTeamGuestDaemonDeps): Op
       const brain = metabotBrainOptions(bot);
       const llmId = brain.llmId ?? undefined;
       const fallbackLlmId = brain.fallbackLlmId;
+      const plainSystemPrompt = [systemPrompt, selfCognitionSection]
+        .filter((section) => section.trim())
+        .join('\n\n');
       reply = (
-        await deps.performChat(systemPrompt, userMessage, llmId, {
+        await deps.performChat(plainSystemPrompt, userMessage, llmId, {
           llmProvider: brain.llmProvider,
           fallbackLlmId,
           fallbackLlmProvider: brain.fallbackLlmProvider,

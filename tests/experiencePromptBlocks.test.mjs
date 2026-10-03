@@ -6,10 +6,13 @@ let buildValueBoundariesBlock;
 let buildWorkReviewsBlock;
 let buildRecentDailySummariesBlock;
 let buildExperiencePromptBlocksXml;
+let buildMinimalSelfCognitionBlocks;
 let resolveExperienceRecallQuery;
 let formatExperienceRecallResults;
 let RECENT_SUMMARIES_MAX_CHARS;
 let RECALL_WARM_DAYS;
+let MINIMAL_SELF_COGNITION_MAX_CHARS;
+let MINIMAL_SELF_COGNITION_SUMMARIES_MAX_CHARS;
 try {
   ({
     buildSelfIdentityBlock,
@@ -17,10 +20,13 @@ try {
     buildWorkReviewsBlock,
     buildRecentDailySummariesBlock,
     buildExperiencePromptBlocksXml,
+    buildMinimalSelfCognitionBlocks,
     resolveExperienceRecallQuery,
     formatExperienceRecallResults,
     RECENT_SUMMARIES_MAX_CHARS,
     RECALL_WARM_DAYS,
+    MINIMAL_SELF_COGNITION_MAX_CHARS,
+    MINIMAL_SELF_COGNITION_SUMMARIES_MAX_CHARS,
   } = await import('../dist-electron/main/libs/experiencePromptBlocks.js'));
 } catch {
   ({
@@ -29,10 +35,13 @@ try {
     buildWorkReviewsBlock,
     buildRecentDailySummariesBlock,
     buildExperiencePromptBlocksXml,
+    buildMinimalSelfCognitionBlocks,
     resolveExperienceRecallQuery,
     formatExperienceRecallResults,
     RECENT_SUMMARIES_MAX_CHARS,
     RECALL_WARM_DAYS,
+    MINIMAL_SELF_COGNITION_MAX_CHARS,
+    MINIMAL_SELF_COGNITION_SUMMARIES_MAX_CHARS,
   } = await import('../dist-electron/main/libs/experiencePromptBlocks.js'));
 }
 
@@ -180,4 +189,57 @@ test('formatExperienceRecallResults renders entries, session refs and the reuse 
   const longText = '长'.repeat(2000);
   const truncated = formatExperienceRecallResults([{ summaryDate: '2026-08-03', summaryText: longText }]);
   assert.ok(truncated.includes('…'));
+});
+
+test('buildMinimalSelfCognitionBlocks renders identity + dream summaries and stays under the cap', () => {
+  const pack = buildMinimalSelfCognitionBlocks({
+    identityText: '我是一个 <专注> 视频创作的 MetaBot',
+    summaries: [
+      { summaryDate: '2026-10-02', summaryText: '第二天帮主人发了三个 buzz' },
+      { summaryDate: '2026-10-01', summaryText: '第一天起步' },
+    ],
+  });
+  assert.ok(pack.includes('<metabot_self_identity>'), 'identity block present');
+  assert.ok(pack.includes('&lt;专注&gt;'), 'identity still xml-escaped');
+  assert.ok(pack.includes('<recent_daily_summaries>'), 'dream summaries present');
+  assert.ok(pack.includes('2026-10-02'));
+  assert.ok(pack.length <= MINIMAL_SELF_COGNITION_MAX_CHARS, 'within the overall cap');
+  // No value boundaries / work reviews / techniques — the minimal pack is identity + dreams only.
+  assert.ok(!pack.includes('<value_boundaries>'));
+  assert.ok(!pack.includes('<work_reviews>'));
+  assert.ok(!pack.includes('<proven_techniques>'));
+
+  assert.equal(buildMinimalSelfCognitionBlocks({ summaries: [] }), '', 'nothing to inject renders empty');
+  assert.equal(buildMinimalSelfCognitionBlocks({ identityText: '  ', summaries: [] }), '');
+});
+
+test('buildMinimalSelfCognitionBlocks keeps the newest dream days within the summaries budget', () => {
+  const longDay = (n) => `第${n}天 `.repeat(1) + '梦'.repeat(900);
+  const pack = buildMinimalSelfCognitionBlocks({
+    identityText: '我是谁',
+    summaries: [
+      { summaryDate: '2026-10-03', summaryText: longDay(3) },
+      { summaryDate: '2026-10-02', summaryText: longDay(2) },
+      { summaryDate: '2026-10-01', summaryText: longDay(1) },
+    ],
+  });
+  assert.ok(pack.includes('2026-10-03'), 'newest day survives the summaries cap');
+  assert.ok(!pack.includes('2026-10-01'), 'oldest day dropped first');
+  const summariesSection = pack.slice(pack.indexOf('<recent_daily_summaries>'));
+  assert.ok(
+    summariesSection.length <= MINIMAL_SELF_COGNITION_SUMMARIES_MAX_CHARS + 500,
+    'summaries section respects its own char budget',
+  );
+});
+
+test('buildMinimalSelfCognitionBlocks never truncates the identity, even past the overall cap', () => {
+  const longIdentity = `我是${'一个很长的自我认知'.repeat(400)}的 MetaBot`;
+  const pack = buildMinimalSelfCognitionBlocks({
+    identityText: longIdentity,
+    summaries: [{ summaryDate: '2026-10-03', summaryText: '今天的梦' }],
+  });
+  assert.ok(pack.includes('<metabot_self_identity>'), 'identity survives');
+  assert.ok(pack.includes(longIdentity), 'identity text is never cut');
+  assert.ok(!pack.includes('<recent_daily_summaries>'), 'summaries drop entirely before identity is touched');
+  assert.ok(pack.length > MINIMAL_SELF_COGNITION_MAX_CHARS, 'cap yields to identity integrity');
 });
