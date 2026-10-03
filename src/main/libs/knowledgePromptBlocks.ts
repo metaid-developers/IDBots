@@ -25,6 +25,8 @@ export interface KnowledgePromptEntry {
   kind: 'know_how' | 'pitfall' | 'principle';
   category?: string | null;
   version?: number;
+  /** Cold-channel recall only: entry is status='archived', render the marker. */
+  archived?: boolean;
 }
 
 const KIND_LABEL: Record<KnowledgePromptEntry['kind'], string> = {
@@ -109,9 +111,10 @@ export function formatKnowledgeRecallResults(entries: KnowledgePromptEntry[]): s
     const label = KIND_LABEL[entry.kind === 'pitfall' ? 'pitfall' : entry.kind === 'principle' ? 'principle' : 'know_how'];
     const category = typeof entry.category === 'string' && entry.category.trim() ? `[${entry.category}] ` : '';
     const versionSuffix = typeof entry.version === 'number' && entry.version > 1 ? ` (v${entry.version})` : '';
+    const archivedMark = entry.archived === true ? ' (archived)' : '';
     const topic = truncate(entry.topic, KNOWLEDGE_TOPIC_MAX_CHARS);
     const summary = truncate(entry.summary, RECALL_ENTRY_MAX_CHARS);
-    lines.push(`- 【${label}】${category}${topic}${versionSuffix}: ${summary}`);
+    lines.push(`- 【${label}】${category}${topic}${versionSuffix}${archivedMark}: ${summary}`);
   }
   lines.push('');
   lines.push('These are reusable knowledge points from your own past work. Apply the know-how, avoid the pitfalls (坑), and revise any entry with knowledge_upsert when you learn something better.');

@@ -1639,6 +1639,8 @@ export interface CoworkKnowledgeStore {
     kind?: 'know_how' | 'pitfall' | 'principle';
     query?: string;
     limit?: number;
+    /** Cold recall channel: include status='archived' entries alongside active ones. */
+    includeArchived?: boolean;
     touchLastUsed?: boolean;
   }): Array<{
     id: string;
@@ -1648,6 +1650,7 @@ export interface CoworkKnowledgeStore {
     category: string | null;
     tags: string[];
     version: number;
+    status: 'active' | 'superseded' | 'archived';
     updatedAt: number;
   }>;
   upsertKnowledge(input: {
@@ -3658,6 +3661,7 @@ export class CoworkRunner extends EventEmitter {
     kind?: 'know_how' | 'pitfall' | 'principle';
     category?: string;
     limit?: number;
+    include_archived?: boolean;
   }, sessionId: string): { text: string; isError: boolean } {
     const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     if (metabotId == null) {
@@ -3674,6 +3678,7 @@ export class CoworkRunner extends EventEmitter {
         kind: args.kind,
         query: typeof args.query === 'string' ? args.query.trim() || undefined : undefined,
         limit,
+        includeArchived: args.include_archived === true,
         touchLastUsed: true,
       });
       const filtered = typeof args.category === 'string' && args.category.trim()
@@ -3685,6 +3690,7 @@ export class CoworkRunner extends EventEmitter {
         kind: entry.kind,
         category: entry.category,
         version: entry.version,
+        archived: entry.status === 'archived',
       }));
       return { text: formatKnowledgeRecallResults(entries), isError: false };
     } catch (error) {
@@ -3902,6 +3908,7 @@ export class CoworkRunner extends EventEmitter {
     is_explicit?: boolean;
     limit?: number;
     query?: string;
+    include_archived?: boolean;
   }, sessionId: string): { text: string; isError: boolean } {
     const metabotId = this.getMemoryBackend().resolveMetabotIdForMemory(sessionId);
     if (metabotId == null) {
@@ -3934,13 +3941,16 @@ export class CoworkRunner extends EventEmitter {
         query: args.query,
         status: 'all',
         includeDeleted: true,
+        // Cold channel (opt-in): hygiene-archived rows stay retrievable with an
+        // "(archived)" marker; the default keeps them out of the listing.
+        includeArchived: args.include_archived === true,
         limit: args.limit ?? 20,
         offset: 0,
       });
       const payload = entries.length === 0
         ? 'memories=(empty)'
         : entries
-          .map((entry) => `${entry.id} | ${entry.status} | explicit=${entry.isExplicit ? 1 : 0} | ${entry.text}`)
+          .map((entry) => `${entry.id} | ${entry.status}${entry.archivedAt != null ? ' (archived)' : ''} | explicit=${entry.isExplicit ? 1 : 0} | ${entry.text}`)
           .join('\n');
       return {
         text: this.formatMemoryUserEditsResult({
@@ -7575,6 +7585,7 @@ export class CoworkRunner extends EventEmitter {
           is_explicit: typeof toolInput.is_explicit === 'boolean' ? toolInput.is_explicit : undefined,
           limit: typeof toolInput.limit === 'number' ? toolInput.limit : undefined,
           query: typeof toolInput.query === 'string' ? toolInput.query : undefined,
+          include_archived: toolInput.include_archived === true,
         }, sessionId);
         return {
           success: !result.isError,
@@ -7623,6 +7634,7 @@ export class CoworkRunner extends EventEmitter {
           kind,
           category: typeof toolInput.category === 'string' ? toolInput.category : undefined,
           limit: typeof toolInput.limit === 'number' ? toolInput.limit : undefined,
+          include_archived: toolInput.include_archived === true,
         }, sessionId);
         return { success: !result.isError, text: result.text };
       }
@@ -9773,7 +9785,7 @@ export class CoworkRunner extends EventEmitter {
       memoryTools.push(
         tool(
           'memory_user_edits',
-          `Manage the current user's long-term memories — durable facts about them (role, preferences, ongoing projects) persisting across sessions. Record only non-obvious, durable facts, never ephemeral chat/task state. action=list (filter by query/status/limit); add (requires text); update by id (requires text); delete by id. ${memoryWritesInvitation} List first to avoid duplicates; do not write every turn; when unsure whether a fact is durable, ASK rather than guess. Writes are persistent state.`,
+          `Manage the current user's long-term memories — durable facts about them (role, preferences, ongoing projects) persisting across sessions. Record only non-obvious, durable facts, never ephemeral chat/task state. action=list (filter by query/status/limit; include_archived=true is the cold channel that also returns hygiene-archived rows, each marked (archived) — archived rows are excluded by default); add (requires text); update by id (requires text); delete by id. ${memoryWritesInvitation} List first to avoid duplicates; do not write every turn; when unsure whether a fact is durable, ASK rather than guess. Writes are persistent state.`,
           {
             action: z.enum(['list', 'add', 'update', 'delete']),
             id: z.string().optional(),
@@ -9783,6 +9795,7 @@ export class CoworkRunner extends EventEmitter {
             is_explicit: z.boolean().optional(),
             limit: z.number().int().min(1).max(200).optional(),
             query: z.string().optional(),
+            include_archived: z.boolean().optional(),
           },
           async (args: {
             action: 'list' | 'add' | 'update' | 'delete';
@@ -9793,6 +9806,7 @@ export class CoworkRunner extends EventEmitter {
             is_explicit?: boolean;
             limit?: number;
             query?: string;
+            include_archived?: boolean;
           }) => {
             try {
               const result = this.runMemoryUserEditsTool(args, sessionId);
@@ -9893,14 +9907,15 @@ export class CoworkRunner extends EventEmitter {
       memoryTools.push(
         tool(
           'knowledge_recall',
-          'Recall YOUR OWN distilled knowledge points (经验/知识点) — know-how, pitfalls (坑), principles from past work. query keyword-searches topic+summary; kind filters know_how/pitfall/principle; limit caps the count (1-50). Use before starting a task that resembles past work, to reuse what worked and avoid traps you already hit. Not user facts (memory_user_edits) or day logs (experience_recall). An empty result means you have not distilled a point about this yet.',
+          'Recall YOUR OWN distilled knowledge points (经验/知识点) — know-how, pitfalls (坑), principles from past work. query keyword-searches topic+summary; kind filters know_how/pitfall/principle; limit caps the count (1-50); include_archived=true is the cold channel that also returns archived entries, each marked (archived) — archived entries are excluded by default and superseded (replaced) versions are never returned. Use before starting a task that resembles past work, to reuse what worked and avoid traps you already hit. Not user facts (memory_user_edits) or day logs (experience_recall). An empty result means you have not distilled a point about this yet.',
           {
             query: z.string().optional(),
             kind: z.enum(['know_how', 'pitfall', 'principle']).optional(),
             category: z.string().optional(),
             limit: z.number().int().min(1).max(50).optional(),
+            include_archived: z.boolean().optional(),
           },
-          async (args: { query?: string; kind?: 'know_how' | 'pitfall' | 'principle'; category?: string; limit?: number }) => {
+          async (args: { query?: string; kind?: 'know_how' | 'pitfall' | 'principle'; category?: string; limit?: number; include_archived?: boolean }) => {
             const result = this.runKnowledgeRecallTool(args, sessionId);
             return {
               content: [{ type: 'text', text: result.text }],

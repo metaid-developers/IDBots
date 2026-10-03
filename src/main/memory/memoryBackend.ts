@@ -23,6 +23,8 @@ export interface MemoryUserMemory {
   createdAt: number;
   updatedAt: number;
   lastUsedAt: number | null;
+  /** Hygiene-archive timestamp; null/undefined means the row is active. */
+  archivedAt?: number | null;
 }
 
 export interface MemoryUserMemorySourceInput {

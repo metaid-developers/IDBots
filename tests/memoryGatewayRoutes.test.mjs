@@ -182,6 +182,33 @@ test('list filters by scope, status, usage_class and query', async () => {
   }
 });
 
+test('list include_archived is the cold channel for archived rows, response carries archivedAt', async () => {
+  const { coworkStore, cleanup } = await makeMemoryBackend();
+  try {
+    const created = handleMemoryCreateRoute(() => coworkStore, createBody({
+      text: 'archived gateway memory',
+      origin: 'dream',
+    }));
+    assert.equal(created.status, 200);
+    const memoryId = created.body.memory.id;
+    assert.equal(coworkStore.archiveUserMemories({ ids: [memoryId], archivedAt: 1700000000000 }), 1);
+
+    const hidden = handleMemoryListRoute(() => coworkStore, JSON.stringify({ metabot_id: 1 }));
+    assert.equal(hidden.body.memories.length, 0, 'archived row hidden by default');
+
+    // Both spellings pass through to the backend (snake_case convention + camelCase alias).
+    for (const flag of [{ include_archived: true }, { includeArchived: true }]) {
+      const cold = handleMemoryListRoute(() => coworkStore, JSON.stringify({ metabot_id: 1, ...flag }));
+      assert.equal(cold.status, 200);
+      assert.equal(cold.body.memories.length, 1, JSON.stringify(flag));
+      assert.equal(cold.body.memories[0].id, memoryId);
+      assert.equal(cold.body.memories[0].archivedAt, 1700000000000, 'response row carries the archive marker');
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('create with a source provenance records a source row', async () => {
   const { db, coworkStore, cleanup } = await makeMemoryBackend();
   try {

@@ -240,6 +240,31 @@ test('countActive and listKnowledgeForDream expose a compact active view', async
   }
 });
 
+test('listKnowledge includeArchived widens active to active+archived, never superseded', async () => {
+  const db = await createLegacyMemoryDb();
+  const store = new MetaIDKnowledgeStore(db, () => {}, () => 1000);
+
+  store.upsertKnowledge({ metabotId: 1, topic: '活跃点', summary: 'a', kind: 'know_how' });
+  const archived = store.upsertKnowledge({ metabotId: 1, topic: '归档点', summary: 'b', kind: 'pitfall' });
+  store.archiveKnowledge({ id: archived.entry.id, metabotId: 1 });
+  const superseded = store.upsertKnowledge({ metabotId: 1, topic: '被替代点', summary: 'c', kind: 'know_how' });
+  db.run(`UPDATE metaid_knowledge_entries SET status = 'superseded' WHERE id = ?`, [superseded.entry.id]);
+
+  const activeOnly = store.listKnowledge({ metabotId: 1 }).map((entry) => entry.topic);
+  assert.deepEqual(activeOnly, ['活跃点'], 'default listing hides archived and superseded');
+
+  const cold = store.listKnowledge({ metabotId: 1, includeArchived: true });
+  assert.deepEqual(
+    cold.map((entry) => entry.topic).sort(),
+    ['归档点', '活跃点'],
+    'cold channel returns archived alongside active, superseded stays hidden'
+  );
+  assert.equal(cold.find((entry) => entry.topic === '归档点').status, 'archived');
+
+  const explicitArchived = store.listKnowledge({ metabotId: 1, status: 'archived', includeArchived: true });
+  assert.deepEqual(explicitArchived.map((entry) => entry.topic), ['归档点'], 'explicit status wins over the widening');
+});
+
 test('invalid kind/origin values are rejected by the schema CHECK constraints', async () => {
   const db = await createLegacyMemoryDb();
   const store = new MetaIDKnowledgeStore(db, () => {}, () => 1000);
