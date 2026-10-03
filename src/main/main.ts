@@ -13315,6 +13315,28 @@ if (!gotTheLock) {
     });
   });
 
+  ipcMain.handle('dream:listCapabilityDrafts', async (_event, options: { metabotId: number; limit?: number }) => {
+    return withSqliteRecovery('dream:listCapabilityDrafts', async () => {
+      try {
+        const metabotId = Number(options?.metabotId);
+        if (!Number.isInteger(metabotId) || metabotId <= 0) {
+          return { success: false, error: 'Invalid metabotId' };
+        }
+        // Read-only capability-draft rows for the MemorySettings list (P1):
+        // status / validation score / injection counters / promotion link.
+        // Review and cleanup stay with the nightly automation — the UI only
+        // renders state, it offers no actions.
+        const drafts = getCoworkStore().listCapabilityDrafts(metabotId, {
+          limit: Number.isInteger(options?.limit) && (options?.limit ?? 0) > 0 ? Math.floor(options!.limit!) : 200,
+        });
+        return { success: true, drafts };
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list capability drafts' };
+      }
+    });
+  });
+
   ipcMain.handle('dream:runNow', async (_event, options: { metabotId: number; date?: string }) => {
     return withSqliteRecovery('dream:runNow', async () => {
       try {

@@ -569,3 +569,4 @@ man_base_data_pebble/
 !tests/botBrowserPreviewAct.test.ts
 !tests/memoryUserEditsTool.test.mjs
 !tests/orderMemoryReadOnly.test.mjs
+!tests/capabilityDraftsPanel.test.tsx

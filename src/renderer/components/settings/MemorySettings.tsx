@@ -29,6 +29,7 @@ import type {
 } from '../../types/cowork';
 import MetaIDContactPanel, { ContactGlobalMetaIdHint } from './MetaIDContactPanel';
 import DreamTelemetryPanel from './DreamTelemetryPanel';
+import CapabilityDraftsPanel, { type CapabilityDraftItem } from './CapabilityDraftsPanel';
 import BrainIcon from '../icons/BrainIcon';
 
 type MetabotOption = {
@@ -169,6 +170,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [dreamSummaries, setDreamSummaries] = useState<DreamDiarySummary[]>([]);
   const [dreamRuns, setDreamRuns] = useState<DreamDiaryRun[]>([]);
   const [dreamLoading, setDreamLoading] = useState(false);
+  const [capabilityDrafts, setCapabilityDrafts] = useState<CapabilityDraftItem[]>([]);
   const [dreamExpandedId, setDreamExpandedId] = useState<string | null>(null);
   const [dreamRunDate, setDreamRunDate] = useState<string>(() => {
     const now = new Date();
@@ -507,13 +509,15 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     if (metabotId == null) {
       setDreamSummaries([]);
       setDreamRuns([]);
+      setCapabilityDrafts([]);
       return;
     }
     setDreamLoading(true);
     try {
-      const [summariesResult, runsResult] = await Promise.all([
+      const [summariesResult, runsResult, draftsResult] = await Promise.all([
         window.electron?.dream?.listDailySummaries({ metabotId, limit: 60 }),
         window.electron?.dream?.listRuns({ metabotId, limit: 60 }),
+        window.electron?.dream?.listCapabilityDrafts({ metabotId, limit: 200 }),
       ]);
       setDreamSummaries(
         (summariesResult?.success && Array.isArray(summariesResult.summaries) ? summariesResult.summaries : []) as DreamDiarySummary[],
@@ -521,10 +525,14 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       setDreamRuns(
         (runsResult?.success && Array.isArray(runsResult.runs) ? runsResult.runs : []) as DreamDiaryRun[],
       );
+      setCapabilityDrafts(
+        (draftsResult?.success && Array.isArray(draftsResult.drafts) ? draftsResult.drafts : []) as CapabilityDraftItem[],
+      );
     } catch (loadError) {
       console.error('Failed to load dream diary:', loadError);
       setDreamSummaries([]);
       setDreamRuns([]);
+      setCapabilityDrafts([]);
     } finally {
       setDreamLoading(false);
     }
@@ -1366,6 +1374,7 @@ const MemorySettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         <div className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary break-words">{dreamNotice}</div>
       )}
       <DreamTelemetryPanel runs={dreamRuns} />
+      <CapabilityDraftsPanel drafts={capabilityDrafts} loading={dreamLoading} />
       <div className="max-h-[520px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
         {dreamLoading ? (
           <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">{i18nService.t('loading')}</div>

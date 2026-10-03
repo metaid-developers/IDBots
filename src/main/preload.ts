@@ -1186,6 +1186,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('dream:listDailySummaries', options),
     listRuns: (options: { metabotId: number; limit?: number }) =>
       ipcRenderer.invoke('dream:listRuns', options),
+    listCapabilityDrafts: (options: { metabotId: number; limit?: number }) =>
+      ipcRenderer.invoke('dream:listCapabilityDrafts', options),
     runNow: (options: { metabotId: number; date?: string }) =>
       ipcRenderer.invoke('dream:runNow', options),
     onStatusChanged: (callback: (payload: { metabotId: number; dreaming: boolean }) => void) => {

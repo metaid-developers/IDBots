@@ -1859,6 +1859,28 @@ interface IElectronAPI {
       }>;
       error?: string;
     }>;
+    listCapabilityDrafts: (options: { metabotId: number; limit?: number }) => Promise<{
+      success: boolean;
+      drafts?: Array<{
+        id: number;
+        metabotId: number;
+        dreamDate: string;
+        title: string;
+        description: string;
+        capabilityType: string;
+        status: 'draft' | 'validated' | 'rejected';
+        createdAt: number;
+        validationScore: number | null;
+        validationNotes: string | null;
+        validatedAt: number | null;
+        timesInjected: number;
+        lastInjectedAt: number | null;
+        promotedAt: number | null;
+        promotedProcedureId: string | null;
+        lastReviewedAt: number | null;
+      }>;
+      error?: string;
+    }>;
     runNow: (options: { metabotId: number; date?: string }) => Promise<{
       success: boolean;
       metabotId?: number;

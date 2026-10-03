@@ -771,3 +771,32 @@ test('nightly re-review demotes stale validated drafts (archiving promoted proce
     cleanup();
   }
 });
+
+test('listCapabilityDrafts exposes the UI data shape consumed by dream:listCapabilityDrafts', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  const coworkStore = createCoworkStore(db);
+  try {
+    coworkStore.insertCapabilityDrafts(5, '2026-08-01', [
+      { title: '形状校验', description: '字段齐全性', capabilityType: 'workflow' },
+    ]);
+    const draft = coworkStore.listCapabilityDrafts(5)[0];
+    coworkStore.updateCapabilityDraftValidation({ id: draft.id, metabotId: 5, status: 'validated', validationScore: 0.9 });
+    coworkStore.markCapabilityDraftsInjected([draft.id]);
+    coworkStore.markCapabilityDraftPromoted({ id: draft.id, metabotId: 5, procedureId: 'proc-1' });
+
+    const row = coworkStore.listCapabilityDrafts(5)[0];
+    // The exact field set the MemorySettings capability-drafts panel renders.
+    for (const field of ['id', 'metabotId', 'dreamDate', 'title', 'description', 'capabilityType', 'status', 'createdAt', 'validationScore', 'validationNotes', 'validatedAt', 'timesInjected', 'lastInjectedAt', 'promotedAt', 'promotedProcedureId', 'lastReviewedAt']) {
+      assert.ok(field in row, `draft row carries ${field}`);
+    }
+    assert.equal(row.status, 'validated');
+    assert.equal(row.validationScore, 0.9);
+    assert.equal(row.timesInjected, 1);
+    assert.ok(row.validatedAt > 0);
+    assert.ok(row.promotedAt > 0);
+    assert.equal(row.promotedProcedureId, 'proc-1');
+    assert.ok(row.lastReviewedAt > 0);
+  } finally {
+    cleanup();
+  }
+});
