@@ -2125,13 +2125,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
     { key: 'user',           label: i18nService.t('userSettingsTab'), icon: <UserCircleIcon className="h-5 w-5" /> },
     { key: 'general',        label: i18nService.t('general'),        icon: <Cog6ToothIcon className="h-5 w-5" /> },
     { key: 'model',          label: i18nService.t('model'),          icon: <CubeIcon className="h-5 w-5" /> },
+    { key: 'coworkMemory',   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
+    { key: 'traffic',        label: i18nService.t('trafficTab'),     icon: <BoltIcon className="h-5 w-5" /> },
     { key: 'skills',         label: i18nService.t('skills'),         icon: <PuzzlePieceIcon className="h-5 w-5" /> },
     { key: 'projects',       label: i18nService.t('projectsTab'),    icon: <BriefcaseIcon className="h-5 w-5" /> },
     { key: 'im',             label: i18nService.t('imBot'),          icon: <ChatBubbleLeftIcon className="h-5 w-5" /> },
-    { key: 'coworkMemory',   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
     { key: 'archivedChats',  label: i18nService.t('archivedChatsTab'),  icon: <ArchiveBoxIcon className="h-5 w-5" /> },
-    { key: 'paramsConfig',    label: i18nService.t('paramsAndConfig'), icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" /></svg> },
-    { key: 'traffic',         label: i18nService.t('trafficTab'),     icon: <BoltIcon className="h-5 w-5" /> },
   ], [language]);
 
   const activeTabLabel = useMemo(() => {
