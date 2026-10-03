@@ -1451,10 +1451,18 @@ const TrafficSettings: React.FC = () => {
                 <p className={hintClass}>{i18nService.t('trafficRechargePlansEmpty')}</p>
               )}
               {showMethodTabs && (
-                <div className="inline-flex rounded-lg border dark:border-claude-darkBorder border-claude-border p-0.5 mb-2">
+                <div className="grid grid-cols-2 gap-2 mb-3">
                   {([
-                    { value: 'alipay' as const, title: i18nService.t('trafficRechargeMethodAlipay') },
-                    { value: 'paypal' as const, title: i18nService.t('trafficRechargeMethodPaypal') },
+                    {
+                      value: 'alipay' as const,
+                      title: i18nService.t('trafficRechargeMethodAlipay'),
+                      subtitle: i18nService.t('trafficRechargeMethodAlipaySub'),
+                    },
+                    {
+                      value: 'paypal' as const,
+                      title: i18nService.t('trafficRechargeMethodPaypal'),
+                      subtitle: i18nService.t('trafficRechargeMethodPaypalSub'),
+                    },
                   ]).map((option) => {
                     const selected = rechargeMethod === option.value;
                     return (
@@ -1462,17 +1470,33 @@ const TrafficSettings: React.FC = () => {
                         key={option.value}
                         type="button"
                         onClick={() => handleSelectMethod(option.value)}
-                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
                           selected
-                            ? 'bg-claude-accent text-claude-accentInk'
-                            : 'dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText'
+                            ? 'border-claude-accent bg-claude-accent/10'
+                            : 'dark:border-claude-darkBorder border-claude-border dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
                         }`}
                       >
-                        {option.title}
+                        <div className="flex items-center gap-1.5">
+                          {selected && <CheckIcon className="h-3.5 w-3.5 text-claude-accent shrink-0" />}
+                          <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                            {option.title}
+                          </span>
+                        </div>
+                        <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5">
+                          {option.subtitle}
+                        </div>
                       </button>
                     );
                   })}
                 </div>
+              )}
+              {!showMethodTabs && !gatewayForced && visiblePlans.length > 0 && (
+                <p className={`${hintClass} mb-2`}>
+                  {i18nService.t('trafficRechargeSingleMethod').replace(
+                    '{method}',
+                    i18nService.t(rechargeMethod === 'alipay' ? 'trafficRechargeMethodAlipay' : 'trafficRechargeMethodPaypal'),
+                  )}
+                </p>
               )}
               {pricingPlans && pricingPlans.length > 0 && visiblePlans.length === 0 && (
                 <p className={hintClass}>{i18nService.t('trafficRechargePlansEmpty')}</p>
@@ -1521,7 +1545,11 @@ const TrafficSettings: React.FC = () => {
                   onClick={handleCreateOrder}
                   disabled={orderBusy || !selectedPlanId || pricingLoading}
                 >
-                  {orderBusy ? i18nService.t('trafficRechargeCreating') : i18nService.t('trafficRechargePay')}
+                  {orderBusy
+                    ? i18nService.t('trafficRechargeCreating')
+                    : gatewayForced
+                      ? i18nService.t('trafficRechargePay')
+                      : i18nService.t(rechargeMethod === 'alipay' ? 'trafficRechargePayWithAlipay' : 'trafficRechargePayWithPaypal')}
                 </button>
               </div>
             </>
@@ -1543,8 +1571,15 @@ const TrafficSettings: React.FC = () => {
                 <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
                   {formatTraffic(activeOrder.trafficBytes)}
                 </span>
-                <span className="text-sm font-semibold tabular-nums dark:text-claude-darkText text-claude-text">
-                  {formatPlanPrice(activeOrder.payCurrency, activeOrder.payAmount)}
+                <span className="flex items-center gap-2">
+                  <span className="rounded-full bg-claude-accent/10 border border-claude-accent/30 px-2 py-0.5 text-[10px] text-claude-accent">
+                    {activeOrder.gateway === 'mock'
+                      ? 'mock'
+                      : i18nService.t(activeOrder.gateway === 'alipay' ? 'trafficRechargeMethodAlipay' : 'trafficRechargeMethodPaypal')}
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums dark:text-claude-darkText text-claude-text">
+                    {formatPlanPrice(activeOrder.payCurrency, activeOrder.payAmount)}
+                  </span>
                 </span>
               </div>
               {activeOrder.gateway === 'alipay' && (
@@ -1568,6 +1603,9 @@ const TrafficSettings: React.FC = () => {
                   <ArrowPathIcon className="h-4 w-4 animate-spin dark:text-claude-darkTextSecondary text-claude-textSecondary shrink-0" />
                   <span className={hintClass}>{i18nService.t('trafficRechargeChecking')}</span>
                 </div>
+              )}
+              {activeOrder.gateway !== 'mock' && (
+                <p className={`${hintClass} mt-2`}>{i18nService.t('trafficRechargeOrderExpiryHint')}</p>
               )}
               {orderError && <p className="text-xs text-red-500 mt-2">{orderError}</p>}
               <div className="flex flex-wrap justify-end gap-2 mt-4">
