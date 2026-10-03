@@ -1881,6 +1881,37 @@ interface IElectronAPI {
       }>;
       error?: string;
     }>;
+    listTelemetryDaily: (options: { metabotId: number; sinceDays?: number }) => Promise<{
+      success: boolean;
+      days?: Array<{
+        metabotId: number;
+        dreamDate: string;
+        emptyDay: boolean;
+        fragmentCount: number | null;
+        estimatedActivityTokens: number | null;
+        outputChars: number | null;
+        durationMs: number | null;
+        implicitSignals: number | null;
+        diaryTotalRefs: number | null;
+        diaryUnmatchedRefs: number | null;
+        validationChecked: number | null;
+        validationValidated: number | null;
+        validationRejected: number | null;
+        replayPoints: number | null;
+        replayLessons: number | null;
+        capabilityValidatedDrafts: number | null;
+        capabilityTotalInjections: number | null;
+        capabilityActiveDraftsLast24h: number | null;
+        promotedCount: number | null;
+        reReviewed: number | null;
+        demoted: number | null;
+        dedupMerged: number | null;
+        hasExplicitFeedback: boolean;
+        extraJson: Record<string, unknown>;
+        updatedAt: number;
+      }>;
+      error?: string;
+    }>;
     runNow: (options: { metabotId: number; date?: string }) => Promise<{
       success: boolean;
       metabotId?: number;

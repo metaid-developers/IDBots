@@ -37,6 +37,17 @@ export interface DreamRunTelemetry {
   } | null;
   /** Drafts promoted into procedure memory this run (P2 promotion pass, since 2026-10-03). */
   promotedCount?: number;
+  /** P1 re-review counts (since 2026-10-03): validated drafts re-judged / demoted this run. */
+  reReviewed?: number;
+  demoted?: number;
+  /** Cross-night dream-memory dedup merges this run (since 2026-10-03). */
+  dedupMerged?: number;
+  /**
+   * Any explicit human feedback that day — thumbs up/down on a message, or a
+   * group-task acceptance rating (since 2026-10-03). False days render their
+   * negative-point bars hollow: zero there may mean "no data", not "good".
+   */
+  hasExplicitFeedback?: boolean;
   weeklyLongDream?: boolean;
   durationMs?: number;
 }
@@ -61,6 +72,12 @@ export interface TelemetryDay {
   /** Total quoted spans in the diary; null when the run predates the denominator (or empty day). */
   totalRefs: number | null;
   activityTokens: number | null;
+  /**
+   * Any explicit human feedback that day (thumbs up/down, acceptance rating).
+   * False = the negative-point count is unreliable as a "did well" signal;
+   * null = no telemetry for the day at all.
+   */
+  hasExplicitFeedback: boolean | null;
 }
 
 export interface DreamRunLike {
@@ -93,6 +110,7 @@ const nullDay = (date: string): TelemetryDay => ({
   unmatchedRefs: null,
   totalRefs: null,
   activityTokens: null,
+  hasExplicitFeedback: null,
 });
 
 /**
@@ -126,6 +144,14 @@ export function runsToTelemetryDays(runs: DreamRunLike[]): TelemetryDay[] {
       unmatchedRefs: emptyDay ? null : coerceNumber(telemetry.diaryUnmatchedRefs),
       totalRefs: emptyDay ? null : (coerceNumber(telemetry.diaryTotalRefs) ?? null),
       activityTokens: emptyDay ? 0 : (coerceNumber(telemetry.estimatedActivityTokens) ?? 0),
+      // Three-state: false = telemetry explicitly recorded a no-feedback day
+      // (hollow bars); true = feedback present; null = the run predates the
+      // flag, so nothing is known (keep the normal amber rendering).
+      hasExplicitFeedback: emptyDay
+        ? false
+        : typeof telemetry.hasExplicitFeedback === 'boolean'
+          ? telemetry.hasExplicitFeedback
+          : null,
     });
   }
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));

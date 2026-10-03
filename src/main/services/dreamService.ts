@@ -30,6 +30,7 @@ import {
 import {
   buildCounterfactualReplayPrompt,
   extractNegativeDecisionPoints,
+  hasExplicitHumanFeedback,
   parseCounterfactualReplayOutput,
   pickCounterfactualLesson,
 } from '../libs/counterfactualReplayPrompt';
@@ -841,6 +842,7 @@ export class DreamService {
           weeklyLongDream,
           capabilityUtilization: this.buildCapabilityUtilizationTelemetry(metabotId),
           promotedCount: promotion.promoted,
+          hasExplicitFeedback: hasExplicitHumanFeedback(activity),
           durationMs: Date.now() - runStartedAtMs,
         });
         return;
@@ -905,6 +907,9 @@ export class DreamService {
         // Cross-night semantic dedup (audit P1): how many of tonight's memory
         // writes merged into an older row instead of inserting a variant.
         dedupMerged: writeResult.dedupMerged,
+        // P1: any explicit human feedback today (thumbs up/down, acceptance
+        // rating) — separates "zero negative because good" from "no data".
+        hasExplicitFeedback: hasExplicitHumanFeedback(activity),
         durationMs: Date.now() - runStartedAtMs,
       });
     } catch (error) {

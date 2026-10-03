@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { SqliteDatabase as Database } from './sqliteTypes';
+import { formatBotWorkspaceDate } from './libs/botWorkspace';
 
 /**
  * Dream consolidation storage layer.
@@ -34,6 +35,43 @@ export interface DreamRun {
   telemetry: Record<string, unknown> | null;
   startedAt: number;
   completedAt: number | null;
+}
+
+/**
+ * Long-term telemetry rollup (audit P1): one flat row per bot per dream date
+ * in metabot_dream_telemetry_daily. Trend-bearing metrics are queryable
+ * columns; extraJson keeps the full-fidelity telemetry blob. Written at
+ * updateRunTelemetry time so the 90-day raw-run purge never takes the
+ * quarterly trend down with it — this table is never purged.
+ */
+export interface DreamTelemetryDaily {
+  metabotId: number;
+  dreamDate: string;
+  emptyDay: boolean;
+  fragmentCount: number | null;
+  estimatedActivityTokens: number | null;
+  outputChars: number | null;
+  durationMs: number | null;
+  implicitSignals: number | null;
+  diaryTotalRefs: number | null;
+  diaryUnmatchedRefs: number | null;
+  validationChecked: number | null;
+  validationValidated: number | null;
+  validationRejected: number | null;
+  replayPoints: number | null;
+  replayLessons: number | null;
+  capabilityValidatedDrafts: number | null;
+  capabilityTotalInjections: number | null;
+  capabilityActiveDraftsLast24h: number | null;
+  promotedCount: number | null;
+  reReviewed: number | null;
+  demoted: number | null;
+  dedupMerged: number | null;
+  /** Any explicit human feedback that day (thumbs up/down, task acceptance rating). */
+  hasExplicitFeedback: boolean;
+  /** Full-fidelity telemetry blob (the same object telemetry_json stores). */
+  extraJson: Record<string, unknown>;
+  updatedAt: number;
 }
 
 /** One weekly "long dream" row — the cross-day thematic consolidation (P2b). */
@@ -438,6 +476,43 @@ export class DreamStore {
     } catch (error) {
       console.warn('[DreamStore] Failed to verify user_memory_sources dream columns:', error);
     }
+    // Long-term telemetry rollup (memory/persona audit P1): one FLAT row per
+    // bot per dream date with the trend-bearing metrics as queryable columns
+    // plus the full-fidelity telemetry blob. Written at updateRunTelemetry
+    // time (not at purge time), so the 90-day raw-run purge
+    // (purgeOldRunsAndFragments) only removes history the rollup already
+    // keeps — the quarterly RSI trend survives. This table is NEVER purged.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metabot_dream_telemetry_daily (
+        metabot_id INTEGER NOT NULL,
+        dream_date TEXT NOT NULL,
+        empty_day INTEGER NOT NULL DEFAULT 0,
+        fragment_count INTEGER,
+        estimated_activity_tokens INTEGER,
+        output_chars INTEGER,
+        duration_ms INTEGER,
+        implicit_signals INTEGER,
+        diary_total_refs INTEGER,
+        diary_unmatched_refs INTEGER,
+        validation_checked INTEGER,
+        validation_validated INTEGER,
+        validation_rejected INTEGER,
+        replay_points INTEGER,
+        replay_lessons INTEGER,
+        capability_validated_drafts INTEGER,
+        capability_total_injections INTEGER,
+        capability_active_drafts_last24h INTEGER,
+        promoted_count INTEGER,
+        re_reviewed INTEGER,
+        demoted INTEGER,
+        dedup_merged INTEGER,
+        has_explicit_feedback INTEGER NOT NULL DEFAULT 0,
+        extra_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(metabot_id, dream_date)
+      );
+    `);
     this.backfillLegacyDreamMemoryDates();
   }
 
@@ -619,10 +694,154 @@ export class DreamStore {
         SET telemetry_json = ?, updated_at = ?
         WHERE metabot_id = ? AND dream_date = ?
       `, [JSON.stringify(telemetry), Date.now(), metabotId, dreamDate]);
+      // Same-moment rollup (audit P1): the long-term daily row accumulates
+      // continuously, so the 90-day raw-run purge only deletes history the
+      // rollup already keeps.
+      this.upsertTelemetryDaily(metabotId, dreamDate, telemetry);
       this.saveDb();
     } catch (error) {
       console.warn('[DreamStore] Failed to write run telemetry:', error);
     }
+  }
+
+  /**
+   * Long-term telemetry rollup (audit P1): one flat row per (bot, dream date).
+   * Re-dreaming / repairing a date OVERWRITES the row (UNIQUE anchor) so the
+   * trend always reflects the latest verdict of that day. Null-safe: every
+   * missing metric stays NULL (a genuinely unmeasurable day, e.g. pre-
+   * denominator runs), never a fabricated zero. Never purged.
+   */
+  private upsertTelemetryDaily(metabotId: number, dreamDate: string, telemetry: Record<string, unknown>): void {
+    const num = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : null;
+    const nested = (value: unknown): Record<string, unknown> | null =>
+      typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+    const validation = nested(telemetry.validation);
+    const replay = nested(telemetry.replay);
+    const utilization = nested(telemetry.capabilityUtilization);
+    const now = Date.now();
+    this.db.run(`
+      INSERT INTO metabot_dream_telemetry_daily (
+        metabot_id, dream_date, empty_day, fragment_count, estimated_activity_tokens,
+        output_chars, duration_ms, implicit_signals, diary_total_refs, diary_unmatched_refs,
+        validation_checked, validation_validated, validation_rejected, replay_points, replay_lessons,
+        capability_validated_drafts, capability_total_injections, capability_active_drafts_last24h,
+        promoted_count, re_reviewed, demoted, dedup_merged, has_explicit_feedback,
+        extra_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(metabot_id, dream_date) DO UPDATE SET
+        empty_day = excluded.empty_day,
+        fragment_count = excluded.fragment_count,
+        estimated_activity_tokens = excluded.estimated_activity_tokens,
+        output_chars = excluded.output_chars,
+        duration_ms = excluded.duration_ms,
+        implicit_signals = excluded.implicit_signals,
+        diary_total_refs = excluded.diary_total_refs,
+        diary_unmatched_refs = excluded.diary_unmatched_refs,
+        validation_checked = excluded.validation_checked,
+        validation_validated = excluded.validation_validated,
+        validation_rejected = excluded.validation_rejected,
+        replay_points = excluded.replay_points,
+        replay_lessons = excluded.replay_lessons,
+        capability_validated_drafts = excluded.capability_validated_drafts,
+        capability_total_injections = excluded.capability_total_injections,
+        capability_active_drafts_last24h = excluded.capability_active_drafts_last24h,
+        promoted_count = excluded.promoted_count,
+        re_reviewed = excluded.re_reviewed,
+        demoted = excluded.demoted,
+        dedup_merged = excluded.dedup_merged,
+        has_explicit_feedback = excluded.has_explicit_feedback,
+        extra_json = excluded.extra_json,
+        updated_at = excluded.updated_at
+    `, [
+      metabotId,
+      dreamDate,
+      telemetry.emptyDay === true ? 1 : 0,
+      num(telemetry.fragmentCount),
+      num(telemetry.estimatedActivityTokens),
+      num(telemetry.outputChars),
+      num(telemetry.durationMs),
+      num(telemetry.implicitSignals),
+      num(telemetry.diaryTotalRefs),
+      num(telemetry.diaryUnmatchedRefs),
+      num(validation?.checked),
+      num(validation?.validated),
+      num(validation?.rejected),
+      num(replay?.points),
+      num(replay?.lessons),
+      num(utilization?.validatedDrafts),
+      num(utilization?.totalInjections),
+      num(utilization?.activeDraftsLast24h),
+      num(telemetry.promotedCount),
+      num(telemetry.reReviewed),
+      num(telemetry.demoted),
+      num(telemetry.dedupMerged),
+      telemetry.hasExplicitFeedback === true ? 1 : 0,
+      JSON.stringify(telemetry),
+      now,
+      now,
+    ]);
+  }
+
+  /**
+   * Read the long-term telemetry rollup (audit P1), ascending by dream date.
+   * `sinceDays` (when > 0) keeps only dates within that lookback window —
+   * the rollup itself is never purged, so the window is a read-side choice.
+   * The IPC dream:listTelemetryDaily passes this shape straight through.
+   */
+  listDreamTelemetryDaily(metabotId: number, sinceDays?: number): DreamTelemetryDaily[] {
+    const params: Array<number | string> = [metabotId];
+    let where = 'metabot_id = ?';
+    if (Number.isInteger(sinceDays) && (sinceDays ?? 0) > 0) {
+      where += ' AND dream_date >= ?';
+      params.push(formatBotWorkspaceDate(new Date(Date.now() - Math.floor(sinceDays!) * 86_400_000)));
+    }
+    const rows = this.getAll<Record<string, unknown>>(`
+      SELECT * FROM metabot_dream_telemetry_daily
+      WHERE ${where}
+      ORDER BY dream_date ASC
+    `, params);
+    return rows.map((row) => {
+      let extraJson: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(String(row.extra_json ?? '{}'));
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          extraJson = parsed as Record<string, unknown>;
+        }
+      } catch {
+        extraJson = {};
+      }
+      const numOrNull = (value: unknown): number | null => (value == null ? null : Number(value));
+      return {
+        metabotId: Number(row.metabot_id),
+        dreamDate: String(row.dream_date),
+        emptyDay: Number(row.empty_day) !== 0,
+        fragmentCount: numOrNull(row.fragment_count),
+        estimatedActivityTokens: numOrNull(row.estimated_activity_tokens),
+        outputChars: numOrNull(row.output_chars),
+        durationMs: numOrNull(row.duration_ms),
+        implicitSignals: numOrNull(row.implicit_signals),
+        diaryTotalRefs: numOrNull(row.diary_total_refs),
+        diaryUnmatchedRefs: numOrNull(row.diary_unmatched_refs),
+        validationChecked: numOrNull(row.validation_checked),
+        validationValidated: numOrNull(row.validation_validated),
+        validationRejected: numOrNull(row.validation_rejected),
+        replayPoints: numOrNull(row.replay_points),
+        replayLessons: numOrNull(row.replay_lessons),
+        capabilityValidatedDrafts: numOrNull(row.capability_validated_drafts),
+        capabilityTotalInjections: numOrNull(row.capability_total_injections),
+        capabilityActiveDraftsLast24h: numOrNull(row.capability_active_drafts_last24h),
+        promotedCount: numOrNull(row.promoted_count),
+        reReviewed: numOrNull(row.re_reviewed),
+        demoted: numOrNull(row.demoted),
+        dedupMerged: numOrNull(row.dedup_merged),
+        hasExplicitFeedback: Number(row.has_explicit_feedback) !== 0,
+        extraJson,
+        updatedAt: Number(row.updated_at),
+      };
+    });
   }
 
   /** Newest-first weekly summaries within [dateFrom, dateTo] (YYYY-MM-DD, inclusive). */

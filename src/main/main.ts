@@ -13337,6 +13337,25 @@ if (!gotTheLock) {
     });
   });
 
+  ipcMain.handle('dream:listTelemetryDaily', async (_event, options: { metabotId: number; sinceDays?: number }) => {
+    return withSqliteRecovery('dream:listTelemetryDaily', async () => {
+      try {
+        const metabotId = Number(options?.metabotId);
+        if (!Number.isInteger(metabotId) || metabotId <= 0) {
+          return { success: false, error: 'Invalid metabotId' };
+        }
+        // Long-term telemetry rollup (audit P1): flat per-day rows the 90-day
+        // raw-run purge never touches. Read-only; the panel consumes this for
+        // quarterly trends.
+        const days = getDreamStore().listDreamTelemetryDaily(metabotId, options?.sinceDays);
+        return { success: true, days };
+      } catch (error) {
+        rethrowSqliteWasmBoundsError(error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to list dream telemetry' };
+      }
+    });
+  });
+
   ipcMain.handle('dream:runNow', async (_event, options: { metabotId: number; date?: string }) => {
     return withSqliteRecovery('dream:runNow', async () => {
       try {

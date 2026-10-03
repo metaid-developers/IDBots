@@ -8,6 +8,7 @@ const require = Module.createRequire(import.meta.url);
 
 const {
   extractNegativeDecisionPoints,
+  hasExplicitHumanFeedback,
   buildCounterfactualReplayPrompt,
   parseCounterfactualReplayOutput,
   pickCounterfactualLesson,
@@ -329,4 +330,55 @@ test('a clean day (no negative points) skips the replay LLM call entirely', asyn
   } finally {
     cleanup();
   }
+});
+
+test('hasExplicitHumanFeedback flags thumbs and acceptance ratings, not implicit-only days', () => {
+  const base = { sessions: [], taskRuns: [], orderCount: 0, groupTasks: [] };
+  assert.equal(hasExplicitHumanFeedback(base), false, 'empty day has none');
+  assert.equal(
+    hasExplicitHumanFeedback({
+      ...base,
+      implicitSignals: [{ kind: 'reask', sessionId: 's1', messageIndex: 2, text: '对方又问了一遍同样的问题' }],
+    }),
+    false,
+    'implicit signals alone are not explicit feedback',
+  );
+  assert.equal(
+    hasExplicitHumanFeedback({
+      ...base,
+      sessions: [{
+        sessionId: 's1', title: 't', sessionType: 'standard', peerName: null, isOrder: false,
+        messages: [{ type: 'assistant', content: '好', createdAt: 1, feedbackRating: 'up' }],
+      }],
+    }),
+    true,
+    'a thumbs-up counts (the feedback channel was exercised)',
+  );
+  assert.equal(
+    hasExplicitHumanFeedback({
+      ...base,
+      sessions: [{
+        sessionId: 's1', title: 't', sessionType: 'standard', peerName: null, isOrder: false,
+        messages: [{ type: 'assistant', content: '好', createdAt: 1, feedbackRating: 'down' }],
+      }],
+    }),
+    true,
+    'a thumbs-down counts',
+  );
+  assert.equal(
+    hasExplicitHumanFeedback({
+      ...base,
+      groupTasks: [{ taskId: 7, title: '官网海报', goal: 'g', memberRole: 'worker', rating: 5, ratingComment: null, phase: 'accepted' }],
+    }),
+    true,
+    'an acceptance rating counts',
+  );
+  assert.equal(
+    hasExplicitHumanFeedback({
+      ...base,
+      groupTasks: [{ taskId: 8, title: '未评分任务', goal: 'g', memberRole: 'chair', rating: null, ratingComment: null, phase: 'accepted' }],
+    }),
+    false,
+    'an unrated closure is not explicit feedback',
+  );
 });

@@ -784,3 +784,39 @@ test('a terminal 400 is never re-driven in-run', async () => {
     cleanup();
   }
 });
+
+test('telemetry flags a day with explicit human feedback and archives it to the long-term rollup', async () => {
+  const { db, cleanup, dreamStore, service } = await setup(async () => makePayload());
+  try {
+    // Thumb up the assistant's reply → the day carried explicit feedback.
+    db.run(
+      'INSERT INTO message_feedback (message_id, session_id, rating, comment, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ['m2', firstSessionId(db), 'up', null, DAY_START + 5000, DAY_START + 5000]
+    );
+    await service.runNow(5, DAY);
+
+    const run = dreamStore.getRun(5, DAY);
+    assert.equal(run.telemetry?.hasExplicitFeedback, true, 'a thumbed message marks the day in telemetry_json');
+    const daily = dreamStore.listDreamTelemetryDaily(5);
+    assert.equal(daily.length, 1, 'one rollup row per bot+date');
+    assert.equal(daily[0].dreamDate, DAY);
+    assert.equal(daily[0].hasExplicitFeedback, true);
+    assert.equal(daily[0].emptyDay, false);
+    assert.equal(daily[0].validationChecked, 0, 'flat columns mirror the telemetry blob');
+    assert.ok(daily[0].durationMs >= 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('telemetry marks an implicit-signal-free day as no explicit feedback', async () => {
+  const { cleanup, dreamStore, service } = await setup(async () => makePayload());
+  try {
+    await service.runNow(5, DAY);
+    const run = dreamStore.getRun(5, DAY);
+    assert.equal(run.telemetry?.hasExplicitFeedback, false, 'no thumbs and no acceptance ratings');
+    assert.equal(dreamStore.listDreamTelemetryDaily(5)[0].hasExplicitFeedback, false);
+  } finally {
+    cleanup();
+  }
+});

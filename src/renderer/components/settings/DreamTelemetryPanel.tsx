@@ -188,9 +188,49 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
   const renderFailureBars = () =>
     days.map((day, index) => {
       const value = day.negativePoints;
-      if (value == null || value <= 0) return null;
-      const height = Math.max(1, (Math.min(value, failureMax) / failureMax) * innerH());
       const x = PAD_X + failureGeometry.slotW * index + (failureGeometry.slotW - failureGeometry.barW) / 2;
+      // No-feedback days (audit P1): hollow gray instead of the amber fill —
+      // a zero (or low) count there may mean the feedback channel was never
+      // exercised, not that the bot did well. Feedback days keep the amber
+      // fill; a feedback day with zero points draws nothing at all (a real,
+      // evidenced zero).
+      const noFeedback = day.hasExplicitFeedback === false;
+      if (value == null || (value <= 0 && !noFeedback)) return null;
+      if (value <= 0) {
+        // Zero points on a no-feedback day: a hollow baseline tick so the day
+        // stays visually distinct from an evidenced zero.
+        return (
+          <rect
+            key={`${day.date}-neg-empty`}
+            x={x}
+            y={PAD_TOP + innerH() - 3}
+            width={failureGeometry.barW}
+            height={3}
+            fill="none"
+            stroke={COLOR_GRAY}
+            strokeWidth={1}
+          >
+            <title>{`${day.date} · ${i18nService.t('dreamTelemetryNoFeedback')}`}</title>
+          </rect>
+        );
+      }
+      const height = Math.max(1, (Math.min(value, failureMax) / failureMax) * innerH());
+      if (noFeedback) {
+        return (
+          <rect
+            key={`${day.date}-neg-nf`}
+            x={x}
+            y={PAD_TOP + innerH() - height}
+            width={failureGeometry.barW}
+            height={height}
+            fill="none"
+            stroke={COLOR_GRAY}
+            strokeWidth={1}
+          >
+            <title>{`${day.date} · ${value} · ${i18nService.t('dreamTelemetryNoFeedback')}`}</title>
+          </rect>
+        );
+      }
       return (
         <rect
           key={`${day.date}-neg`}
@@ -200,7 +240,9 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
           height={height}
           fill={COLOR_AMBER}
           fillOpacity={0.45}
-        />
+        >
+          <title>{`${day.date} · ${value}`}</title>
+        </rect>
       );
     });
 
@@ -243,6 +285,11 @@ const DreamTelemetryPanel: React.FC<DreamTelemetryPanelProps> = ({ runs }) => {
           title={i18nService.t('dreamTelemetryFailures')}
           headline={failureMaLatest == null ? '–' : failureMaLatest.toFixed(1)}
           caption={i18nService.t('dreamTelemetryFailuresHint')}
+          legend={(
+            <div className="mt-1 flex items-center gap-3 text-[9px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              <LegendDot color={COLOR_GRAY} label={i18nService.t('dreamTelemetryNoFeedback')} />
+            </div>
+          )}
         >
           <ChartSvg>
             {renderFailureBars()}

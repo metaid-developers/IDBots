@@ -570,3 +570,4 @@ man_base_data_pebble/
 !tests/memoryUserEditsTool.test.mjs
 !tests/orderMemoryReadOnly.test.mjs
 !tests/capabilityDraftsPanel.test.tsx
+!tests/dreamTelemetryPanel.test.tsx

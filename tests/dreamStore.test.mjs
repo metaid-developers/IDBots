@@ -546,3 +546,98 @@ test('getActivityForDate caps chain writes/reads per kind so a heavy day cannot 
     cleanup();
   }
 });
+
+test('telemetry daily rollup upserts at updateRunTelemetry time and survives the raw-run purge', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = new DreamStore(db, () => {});
+    store.beginRun(5, '2026-07-30', null, 1);
+    store.finishRun(5, '2026-07-30', 'completed');
+    store.updateRunTelemetry(5, '2026-07-30', {
+      emptyDay: false,
+      fragmentCount: 3,
+      estimatedActivityTokens: 1200,
+      outputChars: 5678,
+      durationMs: 4200,
+      implicitSignals: 2,
+      diaryTotalRefs: 5,
+      diaryUnmatchedRefs: 1,
+      validation: { checked: 4, validated: 2, rejected: 1 },
+      replay: { points: 2, lessons: 1 },
+      capabilityUtilization: { validatedDrafts: 3, totalInjections: 9, activeDraftsLast24h: 2 },
+      promotedCount: 1,
+      reReviewed: 2,
+      demoted: 1,
+      dedupMerged: 4,
+      hasExplicitFeedback: true,
+      customFutureKey: 'kept-in-extra-json',
+    });
+
+    const first = store.listDreamTelemetryDaily(5);
+    assert.equal(first.length, 1);
+    const row = first[0];
+    assert.equal(row.dreamDate, '2026-07-30');
+    assert.equal(row.emptyDay, false);
+    assert.equal(row.fragmentCount, 3);
+    assert.equal(row.estimatedActivityTokens, 1200);
+    assert.equal(row.outputChars, 5678);
+    assert.equal(row.durationMs, 4200);
+    assert.equal(row.implicitSignals, 2);
+    assert.equal(row.diaryTotalRefs, 5);
+    assert.equal(row.diaryUnmatchedRefs, 1);
+    assert.equal(row.validationChecked, 4);
+    assert.equal(row.validationValidated, 2);
+    assert.equal(row.validationRejected, 1);
+    assert.equal(row.replayPoints, 2);
+    assert.equal(row.replayLessons, 1);
+    assert.equal(row.capabilityValidatedDrafts, 3);
+    assert.equal(row.capabilityTotalInjections, 9);
+    assert.equal(row.capabilityActiveDraftsLast24h, 2);
+    assert.equal(row.promotedCount, 1);
+    assert.equal(row.reReviewed, 2);
+    assert.equal(row.demoted, 1);
+    assert.equal(row.dedupMerged, 4);
+    assert.equal(row.hasExplicitFeedback, true);
+    assert.equal(row.extraJson.customFutureKey, 'kept-in-extra-json', 'the full-fidelity blob rides extraJson');
+
+    // Re-dream / repair coverage: the same date's rollup is overwritten in
+    // place, never duplicated, and missing metrics go back to NULL.
+    store.updateRunTelemetry(5, '2026-07-30', { emptyDay: false, replay: { points: 0, lessons: 0 }, hasExplicitFeedback: false });
+    const overwritten = store.listDreamTelemetryDaily(5);
+    assert.equal(overwritten.length, 1, 'still one row per bot+date');
+    assert.equal(overwritten[0].validationChecked, null, 'missing metrics stay NULL, never stale');
+    assert.equal(overwritten[0].replayPoints, 0);
+    assert.equal(overwritten[0].hasExplicitFeedback, false);
+
+    // The 90-day raw-run purge never touches the rollup.
+    const purged = store.purgeOldRunsAndFragments({ cutoffDateKey: '2026-12-31' });
+    assert.ok(purged.runsDeleted >= 1, 'raw run rows drain past the horizon');
+    assert.equal(store.getRun(5, '2026-07-30'), null, 'the raw run row is gone');
+    const surviving = store.listDreamTelemetryDaily(5);
+    assert.equal(surviving.length, 1, 'the daily rollup survives the purge');
+    assert.equal(surviving[0].dreamDate, '2026-07-30');
+  } finally {
+    cleanup();
+  }
+});
+
+test('listDreamTelemetryDaily honors the sinceDays window and ascending order', async () => {
+  const { db, cleanup } = await createSqliteStore();
+  try {
+    const store = new DreamStore(db, () => {});
+    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const recent = fmt(now);
+    const old = fmt(new Date(now.getTime() - 120 * 86_400_000));
+    store.beginRun(5, recent, null, 1);
+    store.updateRunTelemetry(5, recent, { replay: { points: 1, lessons: 0 } });
+    store.beginRun(5, old, null, 1);
+    store.updateRunTelemetry(5, old, { replay: { points: 2, lessons: 1 } });
+
+    assert.deepEqual(store.listDreamTelemetryDaily(5).map((row) => row.dreamDate), [old, recent], 'ascending, unbounded');
+    assert.deepEqual(store.listDreamTelemetryDaily(5, 30).map((row) => row.dreamDate), [recent], 'the sinceDays window filters');
+    assert.deepEqual(store.listDreamTelemetryDaily(7), [], 'other bots never leak in');
+  } finally {
+    cleanup();
+  }
+});
