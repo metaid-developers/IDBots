@@ -1,6 +1,6 @@
 import { getUpdateCheckUrl, getFallbackDownloadUrl } from './endpoints';
 
-export const UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
+export const UPDATE_POLL_INTERVAL_MS = 30 * 60 * 1000;
 export const UPDATE_HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000;
 
 type ChangeLogLang = {
