@@ -5,6 +5,9 @@ gateway (merchant account ready); see `phase4-paypal-backend-requirements.md`
 for the authoritative contract. The Stripe + Alipay plan below is kept for
 history and may still apply when a second gateway is added behind the same
 `PaymentGateway` seam.
+Update (2026-10-03): the Alipay half is now specified as 当面付 QR recharge in
+`phase5-alipay-backend-requirements.md` (no ICP-filed domain required); Stripe
+remains unscheduled.
 Roadmap ref: `roadmap.md` Phase 4 (M4.1–M4.4).
 Decision on record: mock payment first; **Stripe + Alipay ship together**;
 integrating either one alone is not considered done.

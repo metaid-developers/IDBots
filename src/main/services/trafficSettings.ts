@@ -11,8 +11,9 @@
  * - traffic.apiBase: assist-service base URL override (integration testing);
  *   empty/unset means the production default baked into the clients.
  * - traffic.rechargeGateway: recharge payment-gateway override (dev-only E2E
- *   testing): 'paypal' | 'mock'; empty/unset means PayPal (the same gateway
- *   every build uses by default). Packaged builds ignore this override.
+ *   testing): 'paypal' | 'mock' | 'alipay'; empty/unset means automatic
+ *   (packaged builds pick by plan currency: CNY → Alipay, other → PayPal).
+ *   Packaged builds ignore this override.
  */
 
 export const TRAFFIC_MODE_KEY = 'traffic.mode';
@@ -22,8 +23,8 @@ export const TRAFFIC_RECHARGE_GATEWAY_KEY = 'traffic.rechargeGateway';
 
 export type TrafficPinMode = 'traffic' | 'selfpay';
 export type TrafficFallbackPolicy = 'selfpay' | 'strict';
-/** '' = auto (packaging decides); 'paypal' | 'mock' = explicit dev override. */
-export type RechargeGatewayOverride = '' | 'paypal' | 'mock';
+/** '' = auto (plan currency decides); 'paypal' | 'mock' | 'alipay' = explicit dev override. */
+export type RechargeGatewayOverride = '' | 'paypal' | 'mock' | 'alipay';
 
 export function normalizeTrafficPinMode(value: unknown): TrafficPinMode {
   return String(value ?? '').trim().toLowerCase() === 'selfpay' ? 'selfpay' : 'traffic';
@@ -65,14 +66,14 @@ export function readTrafficApiBase(reader: TrafficSettingsReader | null | undefi
 
 /**
  * Normalize the recharge-gateway override for persistence: '' (auto),
- * 'paypal', or 'mock'. Throws on anything else (callers surface the error
- * and must not persist).
+ * 'paypal', 'mock', or 'alipay'. Throws on anything else (callers surface the
+ * error and must not persist).
  */
 export function normalizeRechargeGatewayOverride(value: unknown): RechargeGatewayOverride {
   const text = String(value ?? '').trim().toLowerCase();
   if (!text) return '';
-  if (text === 'paypal' || text === 'mock') return text;
-  throw new Error("traffic.rechargeGateway must be 'paypal', 'mock', or empty");
+  if (text === 'paypal' || text === 'mock' || text === 'alipay') return text;
+  throw new Error("traffic.rechargeGateway must be 'paypal', 'mock', 'alipay', or empty");
 }
 
 /** Configured recharge-gateway override; never throws, '' (auto) when unset or invalid. */
@@ -112,7 +113,7 @@ export interface TrafficSettingsSnapshot {
   fallbackPolicy: TrafficFallbackPolicy;
   /** Configured assist-service base URL override; '' = production default. */
   apiBase: string;
-  /** Recharge gateway override; '' = default (PayPal in every build; dev-only override can force mock). */
+  /** Recharge gateway override; '' = automatic (plan currency decides; dev-only override can force a gateway). */
   rechargeGateway: RechargeGatewayOverride;
 }
 

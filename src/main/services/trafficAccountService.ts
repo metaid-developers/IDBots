@@ -828,7 +828,8 @@ export async function getTrafficUsageSummary(): Promise<TrafficUsageSummary> {
 }
 
 // ---------------------------------------------------------------------------
-// Pricing + recharge (mock payment for development; real gateways in Phase 4)
+// Pricing + recharge (PayPal live since Phase 4; Alipay QR since Phase 5;
+// mock payment for development)
 // ---------------------------------------------------------------------------
 
 export interface TrafficPricingPlan {
@@ -865,8 +866,18 @@ export interface TrafficRechargeOrderStatus {
 }
 
 /** Recharge gateways the backend payment-gateway seam can accept. */
-export const RECHARGE_GATEWAYS = ['paypal', 'mock'] as const;
+export const RECHARGE_GATEWAYS = ['paypal', 'mock', 'alipay'] as const;
 export type RechargeGateway = (typeof RECHARGE_GATEWAYS)[number];
+
+/**
+ * Default gateway for a pricing-plan currency (Phase 5): CNY plans go to
+ * Alipay (当面付 QR, no ICP-filed domain required); every other currency goes
+ * to PayPal. The renderer mirrors this mapping when it builds the payment
+ * method tabs — keep the two in sync.
+ */
+export function gatewayForPlanCurrency(payCurrency: string): RechargeGateway {
+  return normalizeText(payCurrency).toUpperCase() === 'CNY' ? 'alipay' : 'paypal';
+}
 
 /**
  * Whether this process is a packaged Electron app. Electron is loaded lazily
@@ -883,13 +894,16 @@ export function isPackagedApp(): boolean {
 }
 
 /**
- * Gateway used for new recharge orders. Every build defaults to the real
- * PayPal gateway so the dev experience matches production exactly — the mock
- * gateway must never be able to credit traffic in production (Phase 4
- * requirement) and is only reachable in non-packaged builds via the kvStore
- * `traffic.rechargeGateway` override (Advanced settings / test harnesses).
+ * Gateway used for new recharge orders. Resolution order:
+ * 1. Non-packaged builds honor the kvStore `traffic.rechargeGateway` override
+ *    (Advanced settings / test harnesses) — the mock gateway must never be
+ *    reachable in production (Phase 4 requirement).
+ * 2. An explicit `preferred` gateway (renderer picks it from the selected
+ *    plan's currency, see gatewayForPlanCurrency) — validated against
+ *    RECHARGE_GATEWAYS, anything else throws before any HTTP call.
+ * 3. Default 'paypal' so legacy callers (no preference) behave as before.
  */
-export function resolveRechargeGateway(): RechargeGateway {
+export function resolveRechargeGateway(preferred?: string): RechargeGateway {
   if (!isPackagedApp()) {
     try {
       const override = readRechargeGatewayOverride(getKvStore());
@@ -897,6 +911,13 @@ export function resolveRechargeGateway(): RechargeGateway {
     } catch {
       // store unavailable — fall through to the default
     }
+  }
+  const normalized = normalizeText(preferred).toLowerCase();
+  if (normalized) {
+    if ((RECHARGE_GATEWAYS as readonly string[]).includes(normalized)) {
+      return normalized as RechargeGateway;
+    }
+    throw new TrafficApiError({ stage: 'recharge', message: `Unsupported recharge gateway: ${normalized}` });
   }
   return 'paypal';
 }
@@ -928,20 +949,19 @@ export async function getTrafficPricing(): Promise<TrafficPricingPlan[]> {
 
 /**
  * Create a recharge order for the local identity's account. The gateway comes
- * from resolveRechargeGateway() (PayPal by default everywhere; the dev-only
- * kvStore override can force mock) and is validated against RECHARGE_GATEWAYS
- * before hitting the backend.
+ * from resolveRechargeGateway(gateway): an explicit caller preference (the
+ * renderer derives it from the plan currency) wins in packaged builds, while
+ * non-packaged builds let the kvStore override (mock) take precedence. The
+ * result is validated against RECHARGE_GATEWAYS before hitting the backend.
  */
 export async function createRechargeOrder(
   planId: string,
-  gateway: RechargeGateway = resolveRechargeGateway(),
+  gateway?: string,
 ): Promise<TrafficRechargeOrder> {
+  const resolvedGateway = resolveRechargeGateway(gateway);
   const normalizedPlanId = normalizeText(planId);
   if (!normalizedPlanId) {
     throw new TrafficApiError({ stage: 'recharge', message: 'planId is required' });
-  }
-  if (!RECHARGE_GATEWAYS.includes(gateway)) {
-    throw new TrafficApiError({ stage: 'recharge', message: `Unsupported recharge gateway: ${String(gateway)}` });
   }
   const identity = requireIdentity();
   const account = await requireAccount();
@@ -952,7 +972,7 @@ export async function createRechargeOrder(
     stage: 'recharge',
     method: 'POST',
     path: '/v1/traffic/recharge/orders',
-    body: { planId: normalizedPlanId, gateway },
+    body: { planId: normalizedPlanId, gateway: resolvedGateway },
     identity: { address: identity.mvcAddress, timestamp, signature },
   });
   const record = data as Record<string, unknown>;
@@ -1425,9 +1445,13 @@ export function registerTrafficAccountIpcHandlers(deps: { ipcMain: IpcMainLike }
       return { success: false, error: getErrorMessage(error) };
     }
   });
-  ipcMain.handle('traffic:createRechargeOrder', async (_event, input: { planId?: string }) => {
+  ipcMain.handle('traffic:createRechargeOrder', async (_event, input: { planId?: string; gateway?: unknown }) => {
     try {
-      return { success: true, order: await createRechargeOrder(String(input?.planId ?? '')) };
+      const requested = normalizeText(input?.gateway);
+      return {
+        success: true,
+        order: await createRechargeOrder(String(input?.planId ?? ''), requested || undefined),
+      };
     } catch (error) {
       return { success: false, error: getErrorMessage(error) };
     }

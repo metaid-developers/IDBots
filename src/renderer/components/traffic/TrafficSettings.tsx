@@ -1,13 +1,15 @@
 /**
  * Traffic Settings panel.
  * Sections in one tab: billing-mode toggle (account quota vs MetaBot
- * self-pay), available quota with the free-grant claim banner, PayPal recharge
- * (plan picker → order → browser checkout → status polling), redeem-code
- * entry, and usage (per-bot daily table, 30-day summary, ledger).
+ * self-pay), available quota with the free-grant claim banner, recharge
+ * (plan picker → order → PayPal browser checkout or Alipay QR scan → status
+ * polling), redeem-code entry, and usage (per-bot daily table, 30-day
+ * summary, ledger).
  * UI copy goes through i18nService (zh/en), same as Settings/UserSettings.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import {
   ArrowPathIcon,
   BoltIcon,
@@ -32,8 +34,8 @@ type TrafficSettingsInfo = {
   fallbackPolicy: 'selfpay' | 'strict';
   /** Configured assist-service base URL override; '' = production default. */
   apiBase: string;
-  /** Recharge gateway override; '' = default (PayPal in every build; dev-only override can force mock). */
-  rechargeGateway: '' | 'paypal' | 'mock';
+  /** Recharge gateway override; '' = automatic (plan currency decides: CNY → Alipay, other → PayPal). */
+  rechargeGateway: '' | 'paypal' | 'mock' | 'alipay';
 };
 type TrafficAccountInfo = {
   accountId: string;
@@ -141,9 +143,11 @@ type TrafficRechargeOrderStatusInfo = {
 
 type ActiveRechargeOrder = {
   orderId: string;
-  gateway: 'paypal' | 'mock';
-  /** PayPal checkout URL extracted from gatewayParams ('' for mock orders). */
+  gateway: 'paypal' | 'mock' | 'alipay';
+  /** PayPal checkout URL extracted from gatewayParams ('' for mock/alipay orders). */
   approvalUrl: string;
+  /** Alipay 当面付 QR content extracted from gatewayParams ('' unless alipay). */
+  qrCode: string;
   payAmount: number;
   payCurrency: string;
   trafficBytes: number;
@@ -177,6 +181,26 @@ const extractApprovalUrl = (gatewayParams: unknown): string => {
   }
   return '';
 };
+
+// The Alipay 当面付 precreate response carries the QR payload string in
+// gatewayParams (phase5-alipay-backend-requirements.md); the client renders it
+// as a QR image. Accept the likely key variants until the contract locks.
+const extractQrCode = (gatewayParams: unknown): string => {
+  if (!gatewayParams || typeof gatewayParams !== 'object') return '';
+  const record = gatewayParams as Record<string, unknown>;
+  for (const key of ['qrCode', 'qr_code', 'qrCodeContent', 'codeUrl', 'code_url']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+};
+
+// Payment-method tab model: CNY plans are paid via Alipay (当面付 QR),
+// everything else via PayPal — mirrors gatewayForPlanCurrency in
+// main/services/trafficAccountService.ts (keep the two in sync).
+type RechargeMethod = 'paypal' | 'alipay';
+const gatewayForPlanCurrency = (payCurrency: string): RechargeMethod =>
+  String(payCurrency || '').toUpperCase() === 'CNY' ? 'alipay' : 'paypal';
 
 const hasMockToken = (gatewayParams: unknown): boolean => {
   if (!gatewayParams || typeof gatewayParams !== 'object') return false;
@@ -345,16 +369,18 @@ const TrafficSettings: React.FC = () => {
   const [redeemOpen, setRedeemOpen] = useState(false);
   const [tariffOpen, setTariffOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
-  const [rechargeGateway, setRechargeGateway] = useState<'paypal' | 'mock' | null>(null);
+  const [rechargeGateway, setRechargeGateway] = useState<'paypal' | 'mock' | 'alipay' | null>(null);
   const [gatewayPackaged, setGatewayPackaged] = useState(false);
   const [pricingPlans, setPricingPlans] = useState<TrafficPricingPlanInfo[] | null>(null);
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingError, setPricingError] = useState('');
   const [selectedPlanId, setSelectedPlanId] = useState('');
+  const [rechargeMethod, setRechargeMethod] = useState<RechargeMethod>('paypal');
   const [activeOrder, setActiveOrder] = useState<ActiveRechargeOrder | null>(null);
   const [orderPhase, setOrderPhase] = useState<RechargeOrderPhase>('pick');
   const [orderError, setOrderError] = useState('');
   const [orderBusy, setOrderBusy] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
   const orderPollTimerRef = useRef<number | null>(null);
   const orderPollDeadlineRef = useRef(0);
   const [redeemCodeInput, setRedeemCodeInput] = useState('');
@@ -398,6 +424,21 @@ const TrafficSettings: React.FC = () => {
 
   // Stop an in-flight order poll when the component unmounts.
   useEffect(() => stopOrderPolling, [stopOrderPolling]);
+
+  // Render the Alipay 当面付 QR payload as an image while the active order
+  // carries one; cleared when the order resets or carries no QR content.
+  useEffect(() => {
+    const content = activeOrder?.gateway === 'alipay' ? activeOrder.qrCode : '';
+    if (!content) {
+      setQrDataUrl('');
+      return undefined;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(content, { margin: 1, width: 220 })
+      .then((url) => { if (!cancelled) setQrDataUrl(url); })
+      .catch(() => { if (!cancelled) setQrDataUrl(''); });
+    return () => { cancelled = true; };
+  }, [activeOrder]);
 
   const closeRecharge = useCallback(() => {
     stopOrderPolling();
@@ -745,9 +786,17 @@ const TrafficSettings: React.FC = () => {
       if (res.success && res.plans) {
         const active = res.plans.filter((plan) => plan.status === 1);
         setPricingPlans(active);
-        setSelectedPlanId((current) => (
-          current && active.some((plan) => plan.planId === current) ? current : (active[0]?.planId ?? '')
-        ));
+        // Default the payment method to Alipay when CNY plans exist (China
+        // users are the Phase 5 target), otherwise PayPal.
+        const defaultMethod: RechargeMethod = active.some((plan) => gatewayForPlanCurrency(plan.payCurrency) === 'alipay')
+          ? 'alipay'
+          : 'paypal';
+        setRechargeMethod(defaultMethod);
+        setSelectedPlanId((current) => {
+          if (current && active.some((plan) => plan.planId === current)) return current;
+          const group = active.filter((plan) => gatewayForPlanCurrency(plan.payCurrency) === defaultMethod);
+          return (group[0] ?? active[0])?.planId ?? '';
+        });
       } else {
         setPricingPlans(null);
         setPricingError(describeTrafficError(res.error || '', 'trafficErrLoadPricing'));
@@ -759,6 +808,14 @@ const TrafficSettings: React.FC = () => {
       setPricingLoading(false);
     }
   }, [trafficApi]);
+
+  const handleSelectMethod = useCallback((method: RechargeMethod) => {
+    setRechargeMethod(method);
+    setSelectedPlanId((current) => {
+      const group = (pricingPlans ?? []).filter((plan) => gatewayForPlanCurrency(plan.payCurrency) === method);
+      return current && group.some((plan) => plan.planId === current) ? current : (group[0]?.planId ?? '');
+    });
+  }, [pricingPlans]);
 
   const openRecharge = () => {
     setRechargeOpen(true);
@@ -818,21 +875,29 @@ const TrafficSettings: React.FC = () => {
     setOrderBusy(true);
     setOrderError('');
     try {
-      const res = await trafficApi.createRechargeOrder({ planId });
+      // Pick the gateway from the plan currency; the main process still lets a
+      // non-packaged mock override win, so omit it entirely under mock.
+      const plan = (pricingPlans ?? []).find((item) => item.planId === planId);
+      const requestedGateway = rechargeGateway === 'mock' || !plan
+        ? undefined
+        : gatewayForPlanCurrency(plan.payCurrency);
+      const res = await trafficApi.createRechargeOrder({ planId, gateway: requestedGateway });
       if (!res.success || !res.order) {
         setOrderError(describeRechargeError(res.error || '', 'trafficErrCreateOrder'));
         return;
       }
       const approvalUrl = extractApprovalUrl(res.order.gatewayParams);
-      if (!approvalUrl && !hasMockToken(res.order.gatewayParams)) {
-        // Neither a PayPal link nor a mock token: unexpected gateway response.
+      const qrCode = extractQrCode(res.order.gatewayParams);
+      if (!approvalUrl && !qrCode && !hasMockToken(res.order.gatewayParams)) {
+        // No checkout link, no QR payload, no mock token: unexpected gateway response.
         setOrderError(i18nService.t('trafficRechargeUnavailable'));
         return;
       }
       const order: ActiveRechargeOrder = {
         orderId: res.order.orderId,
-        gateway: approvalUrl ? 'paypal' : 'mock',
+        gateway: qrCode ? 'alipay' : approvalUrl ? 'paypal' : 'mock',
         approvalUrl,
+        qrCode,
         payAmount: res.order.payAmount,
         payCurrency: res.order.payCurrency,
         trafficBytes: res.order.trafficBytes,
@@ -841,6 +906,8 @@ const TrafficSettings: React.FC = () => {
       setOrderPhase('paying');
       if (order.gateway === 'paypal') {
         window.electron.shell.openExternal(order.approvalUrl).catch(() => {});
+      }
+      if (order.gateway !== 'mock') {
         startOrderPolling(order.orderId);
       }
     } catch (error) {
@@ -893,6 +960,17 @@ const TrafficSettings: React.FC = () => {
   // (the local-journal fallback aggregates ascending; both get sorted here).
   const visibleDailyRows = [...(dailyRows ?? dailyFallbackRows ?? [])]
     .sort((a, b) => b.date.localeCompare(a.date) || a.botAddress.localeCompare(b.botAddress));
+  // Payment-method model for the recharge modal: a configured dev override
+  // forces one gateway for every plan (single unfiltered list, no tabs);
+  // otherwise plans split by currency (CNY → Alipay, other → PayPal) and the
+  // user picks the method via tabs when both groups exist.
+  const gatewayForced = Boolean(settings?.rechargeGateway);
+  const alipayPlans = (pricingPlans ?? []).filter((plan) => gatewayForPlanCurrency(plan.payCurrency) === 'alipay');
+  const paypalPlans = (pricingPlans ?? []).filter((plan) => gatewayForPlanCurrency(plan.payCurrency) !== 'alipay');
+  const showMethodTabs = !gatewayForced && alipayPlans.length > 0 && paypalPlans.length > 0;
+  const visiblePlans = gatewayForced
+    ? (pricingPlans ?? [])
+    : (rechargeMethod === 'alipay' ? alipayPlans : paypalPlans);
   // Prefer the server claimable flag; also treat enabled && !claimed as
   // claimable (same backend formula) so a missing/false claimable field
   // cannot hide the button. If status failed after the account exists,
@@ -1280,6 +1358,7 @@ const TrafficSettings: React.FC = () => {
                   >
                     <option value="">{i18nService.t('trafficGatewayAuto')}</option>
                     <option value="paypal">PayPal</option>
+                    <option value="alipay">Alipay（支付宝）</option>
                     <option value="mock">mock</option>
                   </select>
                 </div>
@@ -1371,9 +1450,60 @@ const TrafficSettings: React.FC = () => {
               {!pricingLoading && !pricingError && pricingPlans && pricingPlans.length === 0 && (
                 <p className={hintClass}>{i18nService.t('trafficRechargePlansEmpty')}</p>
               )}
-              {pricingPlans && pricingPlans.length > 0 && (
+              {showMethodTabs && (
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {([
+                    {
+                      value: 'alipay' as const,
+                      title: i18nService.t('trafficRechargeMethodAlipay'),
+                      subtitle: i18nService.t('trafficRechargeMethodAlipaySub'),
+                    },
+                    {
+                      value: 'paypal' as const,
+                      title: i18nService.t('trafficRechargeMethodPaypal'),
+                      subtitle: i18nService.t('trafficRechargeMethodPaypalSub'),
+                    },
+                  ]).map((option) => {
+                    const selected = rechargeMethod === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => handleSelectMethod(option.value)}
+                        className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          selected
+                            ? 'border-claude-accent bg-claude-accent/10'
+                            : 'dark:border-claude-darkBorder border-claude-border dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          {selected && <CheckIcon className="h-3.5 w-3.5 text-claude-accent shrink-0" />}
+                          <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                            {option.title}
+                          </span>
+                        </div>
+                        <div className="text-[10px] dark:text-claude-darkTextSecondary text-claude-textSecondary mt-0.5">
+                          {option.subtitle}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {!showMethodTabs && !gatewayForced && visiblePlans.length > 0 && (
+                <p className={`${hintClass} mb-2`}>
+                  {i18nService.t('trafficRechargeSingleMethod').replace(
+                    '{method}',
+                    i18nService.t(rechargeMethod === 'alipay' ? 'trafficRechargeMethodAlipay' : 'trafficRechargeMethodPaypal'),
+                  )}
+                </p>
+              )}
+              {pricingPlans && pricingPlans.length > 0 && visiblePlans.length === 0 && (
+                <p className={hintClass}>{i18nService.t('trafficRechargePlansEmpty')}</p>
+              )}
+              {visiblePlans.length > 0 && (
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-0.5">
-                  {pricingPlans.map((plan) => {
+                  {visiblePlans.map((plan) => {
                     const selected = plan.planId === selectedPlanId;
                     return (
                       <button
@@ -1415,7 +1545,11 @@ const TrafficSettings: React.FC = () => {
                   onClick={handleCreateOrder}
                   disabled={orderBusy || !selectedPlanId || pricingLoading}
                 >
-                  {orderBusy ? i18nService.t('trafficRechargeCreating') : i18nService.t('trafficRechargePay')}
+                  {orderBusy
+                    ? i18nService.t('trafficRechargeCreating')
+                    : gatewayForced
+                      ? i18nService.t('trafficRechargePay')
+                      : i18nService.t(rechargeMethod === 'alipay' ? 'trafficRechargePayWithAlipay' : 'trafficRechargePayWithPaypal')}
                 </button>
               </div>
             </>
@@ -1427,33 +1561,83 @@ const TrafficSettings: React.FC = () => {
                 {i18nService.t('trafficRechargeWaitingTitle')}
               </h4>
               <p className={`${hintClass} mb-3`}>
-                {i18nService.t(activeOrder.gateway === 'mock' ? 'trafficRechargeMockWaitingDesc' : 'trafficRechargeWaitingDesc')}
+                {i18nService.t(activeOrder.gateway === 'mock'
+                  ? 'trafficRechargeMockWaitingDesc'
+                  : activeOrder.gateway === 'alipay'
+                    ? 'trafficRechargeAlipayWaitingDesc'
+                    : 'trafficRechargeWaitingDesc')}
               </p>
               <div className={`${cardClass} flex items-center justify-between`}>
                 <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
                   {formatTraffic(activeOrder.trafficBytes)}
                 </span>
-                <span className="text-sm font-semibold tabular-nums dark:text-claude-darkText text-claude-text">
-                  {formatPlanPrice(activeOrder.payCurrency, activeOrder.payAmount)}
+                <span className="flex items-center gap-2">
+                  <span className="rounded-full bg-claude-accent/10 border border-claude-accent/30 px-2 py-0.5 text-[10px] text-claude-accent">
+                    {activeOrder.gateway === 'mock'
+                      ? 'mock'
+                      : i18nService.t(activeOrder.gateway === 'alipay' ? 'trafficRechargeMethodAlipay' : 'trafficRechargeMethodPaypal')}
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums dark:text-claude-darkText text-claude-text">
+                    {formatPlanPrice(activeOrder.payCurrency, activeOrder.payAmount)}
+                  </span>
                 </span>
               </div>
-              {activeOrder.gateway === 'paypal' && (
+              {activeOrder.gateway === 'alipay' && (
+                <div className="flex flex-col items-center mt-3">
+                  {qrDataUrl ? (
+                    <img
+                      src={qrDataUrl}
+                      alt={i18nService.t('trafficRechargeScanQrHint')}
+                      className="h-[220px] w-[220px] rounded-xl border dark:border-claude-darkBorder border-claude-border bg-white p-1"
+                    />
+                  ) : (
+                    <div className="h-[220px] w-[220px] rounded-xl border dark:border-claude-darkBorder border-claude-border flex items-center justify-center">
+                      <ArrowPathIcon className="h-5 w-5 animate-spin dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                    </div>
+                  )}
+                  <p className={`${hintClass} mt-2`}>{i18nService.t('trafficRechargeScanQrHint')}</p>
+                </div>
+              )}
+              {activeOrder.gateway !== 'mock' && (
                 <div className="flex items-center gap-2 mt-3">
                   <ArrowPathIcon className="h-4 w-4 animate-spin dark:text-claude-darkTextSecondary text-claude-textSecondary shrink-0" />
                   <span className={hintClass}>{i18nService.t('trafficRechargeChecking')}</span>
                 </div>
               )}
+              {activeOrder.gateway !== 'mock' && (
+                <p className={`${hintClass} mt-2`}>{i18nService.t('trafficRechargeOrderExpiryHint')}</p>
+              )}
               {orderError && <p className="text-xs text-red-500 mt-2">{orderError}</p>}
               <div className="flex flex-wrap justify-end gap-2 mt-4">
-                {activeOrder.gateway === 'paypal' ? (
+                {activeOrder.gateway === 'mock' ? (
+                  <button
+                    type="button"
+                    className={primaryButtonClass}
+                    onClick={handleMockConfirm}
+                    disabled={orderBusy}
+                  >
+                    {orderBusy ? i18nService.t('trafficRechargeChecking') : i18nService.t('trafficRechargeMockConfirm')}
+                  </button>
+                ) : (
                   <>
-                    <button
-                      type="button"
-                      className={ghostButtonClass}
-                      onClick={() => window.electron.shell.openExternal(activeOrder.approvalUrl).catch(() => {})}
-                    >
-                      {i18nService.t('trafficRechargeReopenLink')}
-                    </button>
+                    {activeOrder.gateway === 'paypal' && (
+                      <button
+                        type="button"
+                        className={ghostButtonClass}
+                        onClick={() => window.electron.shell.openExternal(activeOrder.approvalUrl).catch(() => {})}
+                      >
+                        {i18nService.t('trafficRechargeReopenLink')}
+                      </button>
+                    )}
+                    {activeOrder.gateway === 'alipay' && /^https?:\/\//i.test(activeOrder.qrCode) && (
+                      <button
+                        type="button"
+                        className={ghostButtonClass}
+                        onClick={() => window.electron.shell.openExternal(activeOrder.qrCode).catch(() => {})}
+                      >
+                        {i18nService.t('trafficRechargeOpenCashierPage')}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={ghostButtonClass}
@@ -1463,15 +1647,6 @@ const TrafficSettings: React.FC = () => {
                       {orderBusy ? i18nService.t('trafficRechargeChecking') : i18nService.t('trafficRechargeCheckNow')}
                     </button>
                   </>
-                ) : (
-                  <button
-                    type="button"
-                    className={primaryButtonClass}
-                    onClick={handleMockConfirm}
-                    disabled={orderBusy}
-                  >
-                    {orderBusy ? i18nService.t('trafficRechargeChecking') : i18nService.t('trafficRechargeMockConfirm')}
-                  </button>
                 )}
                 <button type="button" className={ghostButtonClass} onClick={backToPlanPicker}>
                   {i18nService.t('trafficRechargeBackToPlans')}

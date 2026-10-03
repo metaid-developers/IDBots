@@ -174,8 +174,8 @@ interface TrafficSettingsInfo {
   fallbackPolicy: 'selfpay' | 'strict';
   /** Configured assist-service base URL override; '' = production default. */
   apiBase: string;
-  /** Recharge gateway override; '' = default (PayPal in every build; dev-only override can force mock). */
-  rechargeGateway: '' | 'paypal' | 'mock';
+  /** Recharge gateway override; '' = automatic (plan currency decides: CNY → Alipay, other → PayPal). */
+  rechargeGateway: '' | 'paypal' | 'mock' | 'alipay';
 }
 
 interface LlmRelayModelInfo {
@@ -1401,8 +1401,8 @@ interface IElectronAPI {
     bindAllBots: () => Promise<{ success: boolean; summary?: TrafficBindSummaryInfo; error?: string }>;
     getLocalJournal: (input?: { limit?: number; botAddress?: string }) => Promise<{ success: boolean; entries?: TrafficSpendJournalEntryInfo[]; error?: string }>;
     getPricing: () => Promise<{ success: boolean; plans?: TrafficPricingPlanInfo[]; error?: string }>;
-    getRechargeGateway: () => Promise<{ success: boolean; gateway?: 'paypal' | 'mock'; packaged?: boolean; error?: string }>;
-    createRechargeOrder: (input: { planId: string }) => Promise<{ success: boolean; order?: TrafficRechargeOrderInfo; error?: string }>;
+    getRechargeGateway: () => Promise<{ success: boolean; gateway?: 'paypal' | 'mock' | 'alipay'; packaged?: boolean; error?: string }>;
+    createRechargeOrder: (input: { planId: string; gateway?: 'paypal' | 'mock' | 'alipay' }) => Promise<{ success: boolean; order?: TrafficRechargeOrderInfo; error?: string }>;
     getRechargeOrder: (input: { orderId: string }) => Promise<{ success: boolean; order?: TrafficRechargeOrderStatusInfo; error?: string }>;
     mockConfirmRechargeOrder: (input: { orderId: string }) => Promise<{ success: boolean; order?: TrafficRechargeOrderStatusInfo; error?: string }>;
     getFreeGrantCampaignStatus: () => Promise<{ success: boolean; campaign?: TrafficFreeGrantCampaignStatusInfo; error?: string; errorCode?: string }>;
