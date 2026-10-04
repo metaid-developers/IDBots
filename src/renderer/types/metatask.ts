@@ -20,6 +20,22 @@ export interface MetaTaskVoteSummary {
   ignoreReason: string | null;
   semanticCheck: boolean;
   failreason: boolean;
+  /**
+   * The submission pin this vote targets (vote.body.targetid). The node-level
+   * `votes` list only carries the leading/effective submission's votes; the
+   * candidate drawer filters it by this field to rebuild ONE candidate's
+   * review timeline. Absent on projections cached before format v3 — the
+   * drawer falls back to the whole node list then.
+   */
+  targetid?: string;
+  /** Genesis block height of the vote pin (review-timeline anchor). */
+  height?: number;
+  /** Vote pin timestamp in ms (review-timeline display). */
+  timestampMs?: number;
+  /** Full failreason text when the verdict carries one (else null/absent). */
+  failreasonText?: string | null;
+  /** Full semantic_check text when the vote carries one (else null/absent). */
+  semanticCheckText?: string | null;
 }
 
 /**

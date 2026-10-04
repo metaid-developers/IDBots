@@ -79,6 +79,8 @@ interface VoteRecord {
   pinId: string;
   body: Record<string, unknown>;
   height: number;
+  /** Vote pin timestamp (ms) — projected for the candidate review timeline. */
+  timestampMs: number;
 }
 
 /**
@@ -1180,6 +1182,13 @@ const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProje
           ignoreReason: identityOk ? null : 'identity_conflict',
           semanticCheck: truthyStr(vote.body.semantic_check),
           failreason: truthyStr(vote.body.failreason),
+          // Candidate-drawer review timeline inputs: the drawer filters this
+          // node-level list by `targetid` to rebuild one candidate's votes.
+          targetid: asStr(vote.body.targetid),
+          height: vote.height,
+          timestampMs: vote.timestampMs,
+          failreasonText: asStr(vote.body.failreason) || null,
+          semanticCheckText: asStr(vote.body.semantic_check) || null,
         });
       }
     }
@@ -1559,7 +1568,7 @@ export function taskEventSet(
  * Equal keys ⇒ the same inputs produce the same projection, time-driven expiry
  * aside; that residual is covered by nextTimeDeadlineMs.
  */
-export const PROJECTION_FORMAT_VERSION = 2;
+export const PROJECTION_FORMAT_VERSION = 3;
 
 export const taskDirtyKey = (
   taskSet: MetaTaskTaskEventSet,
@@ -1673,6 +1682,7 @@ export function replayMetaTask(
       pinId: vote.pinId,
       body: vote.body,
       height: vote.height,
+      timestampMs: vote.timestampMs,
     });
   }
   const votesByTarget = new Map<string, VoteRecord[]>();
@@ -2150,6 +2160,13 @@ export function replayMetaTask(
           ignoreReason: identityOk ? null : 'identity_conflict',
           semanticCheck: truthyStr(v.body.semantic_check),
           failreason: truthyStr(v.body.failreason),
+          // Candidate-drawer review timeline inputs: the drawer filters this
+          // node-level list by `targetid` to rebuild one candidate's votes.
+          targetid: asStr(v.body.targetid),
+          height: v.height,
+          timestampMs: v.timestampMs,
+          failreasonText: asStr(v.body.failreason) || null,
+          semanticCheckText: asStr(v.body.semantic_check) || null,
         });
       }
     }

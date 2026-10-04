@@ -258,6 +258,42 @@ test('votes: submitter and root author pass votes never count', () => {
   assert.equal(projection.nodeStates.t1.status, 'claimed'); // 1 counted pass < 2
 });
 
+test('votes: review-timeline enrichment fields project through (targetid/height/timestampMs/texts)', () => {
+  const { tree, task, rootPinId } = buildTask();
+  const claim = claimOn(rootPinId, 't1', S, { height: 190_010 });
+  const sub = submitOn(rootPinId, 't1', claim.pinId, S, { height: 190_020 });
+  const pass = voteOn(sub.pinId, 'pass', R1, { height: 190_030, timestampMs: 1_790_100_000_000 });
+  const fail = voteOn(sub.pinId, 'fail', R2, { height: 190_031, timestampMs: 1_790_100_100_000 });
+  // Pre-H_ACT vote without semantic_check/failreason bodies: stored ungated,
+  // so its text fields must project as null (the "no text" branch).
+  const bare = voteOn(sub.pinId, 'pass', C, { height: 189_950, semanticCheck: false, timestampMs: 1_790_099_000_000 });
+  const projection = replayMetaTask([tree, task, claim, sub, pass, fail, bare], { rootPinId });
+  const votes = projection.nodeStates.t1.votes;
+  assert.equal(votes.length, 3);
+  const byVoter = new Map(votes.map((vote) => [vote.voter, vote]));
+
+  const passVote = byVoter.get(R1);
+  assert.equal(passVote.targetid, sub.pinId);
+  assert.equal(passVote.height, 190_030);
+  assert.equal(passVote.timestampMs, 1_790_100_000_000);
+  assert.equal(passVote.semanticCheckText, 'statement matches; definitions aligned');
+  assert.equal(passVote.failreasonText, null);
+
+  const failVote = byVoter.get(R2);
+  assert.equal(failVote.targetid, sub.pinId);
+  assert.equal(failVote.height, 190_031);
+  assert.equal(failVote.timestampMs, 1_790_100_100_000);
+  assert.equal(failVote.failreasonText, 'counterexample found in row 3');
+  assert.equal(failVote.semanticCheckText, 'statement matches; definitions aligned');
+
+  const bareVote = byVoter.get(C);
+  assert.equal(bareVote.targetid, sub.pinId);
+  assert.equal(bareVote.height, 189_950);
+  assert.equal(bareVote.timestampMs, 1_790_099_000_000);
+  assert.equal(bareVote.semanticCheckText, null);
+  assert.equal(bareVote.failreasonText, null);
+});
+
 // ── settlement (v1.2 §11) ────────────────────────────────────────────────────
 
 const settledTwoNodeTask = () => {

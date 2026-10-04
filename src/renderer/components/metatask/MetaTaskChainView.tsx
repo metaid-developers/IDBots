@@ -4,6 +4,17 @@ import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
 import MetaIdBadge from './MetaIdBadge';
 import { formatMetaTaskRelativeTime } from './metaTaskFormat';
+import {
+  candidateState,
+  candCardTone,
+  candTagLabel,
+  candTagTone,
+  candidatesByPin,
+  onRaceLineTone,
+  shortMetaId,
+  shortPin,
+} from './metaTaskCandidateState';
+import type { CandState } from './metaTaskCandidateState';
 import type {
   MetaTaskNodeProjection,
   MetaTaskSubmissionCandidate,
@@ -22,7 +33,9 @@ import type {
  * pure mapping over the engine-computed candidate flags (verified / chainValid
  * / superseded / failed), the node's leading candidate (`node.submission`),
  * and — for the in-review lookup only — the STORED chainValid flag of the
- * referenced candidates (a table lookup, not a chain-validity recursion).
+ * referenced candidates (a table lookup, not a chain-validity recursion). The
+ * mapping itself lives in ./metaTaskCandidateState (shared with the node
+ * sections and the candidate drawer).
  *
  * Gold vs amber channel note: the leading/winner signal (amber border +
  * attached glow shadow) is deliberately a different visual channel from the
@@ -30,86 +43,6 @@ import type {
  * ring the TreeMap puts on dots) — both use the amber family but can never be
  * confused, and a leading AND disputed card shows both.
  */
-type CandState =
-  | 'winner'
-  | 'leading'
-  | 'behind'
-  | 'inReview'
-  | 'awaitingDeps'
-  | 'optimistic'
-  | 'replaced'
-  | 'rejected'
-  | 'stalled';
-
-/** Pure display mapping over engine flags — see the ordering comment in the
- * task design: terminal truth first (killed / replaced), then the gold
- * settlement override, then verified position, then review pipeline. 'stalled'
- * = the candidate itself is live but a referenced parent was rejected/replaced,
- * so the chain under it can never close (a new submission must re-pin). */
-const candidateState = (
-  node: MetaTaskNodeProjection,
-  cand: MetaTaskSubmissionCandidate,
-  byPin: Map<string, MetaTaskSubmissionCandidate>,
-  winningSet: Set<string> | null,
-): CandState => {
-  if (cand.failed) return 'rejected';
-  if (cand.superseded) return 'replaced';
-  if (winningSet?.has(cand.pinId)) return 'winner';
-  const refs = cand.parentrefs ?? {};
-  const refPins = Object.values(refs);
-  if (refPins.some((pin) => {
-    const parent = byPin.get(pin);
-    return parent !== undefined && (parent.failed || parent.superseded);
-  })) {
-    return 'stalled';
-  }
-  if (cand.verified && cand.chainValid) {
-    return node.submission?.pinId === cand.pinId ? 'leading' : 'behind';
-  }
-  if (cand.verified) return 'awaitingDeps'; // verified but an ancestor is not chain-valid
-  const allParentsChainValid = refPins.every((pin) => byPin.get(pin)?.chainValid === true);
-  return allParentsChainValid ? 'inReview' : 'optimistic';
-};
-
-const tagLabel = (state: CandState): string => i18nService.t(`metatask.chain.tag.${state}`);
-
-/** Card chrome per display state (border treatment is the state channel). */
-const cardTone: Record<CandState, string> = {
-  winner:
-    'border-amber-400 dark:border-amber-300 shadow-[0_0_0_1px_#f5b83d,0_0_18px_-4px_rgba(245,184,61,0.35)]',
-  leading:
-    'border-amber-400 dark:border-amber-300 shadow-[0_0_0_1px_#f5b83d,0_0_18px_-4px_rgba(245,184,61,0.35)]',
-  behind: 'border-emerald-500/50 dark:border-emerald-400/50',
-  inReview: 'border-dashed border-sky-500/60 dark:border-sky-400/60',
-  awaitingDeps: 'border-dotted border-violet-500/60 dark:border-violet-400/60',
-  optimistic: 'border-dotted border-violet-500/60 dark:border-violet-400/60',
-  replaced: 'opacity-40',
-  rejected: 'opacity-45',
-  stalled: 'border-dashed border-slate-400/60 dark:border-slate-500/60 opacity-60',
-};
-
-/** In-review candidates sitting on the race line (the deepest live chain) get
- * a solid sky border instead of dashed — "this one currently carries the race". */
-const onRaceLineTone = 'border-solid border-sky-500 dark:border-sky-400 shadow-[0_0_10px_-3px_rgba(56,189,248,0.45)]';
-
-const tagTone: Record<CandState, string> = {
-  winner: 'bg-amber-400 dark:bg-amber-300 text-slate-900',
-  leading: 'bg-amber-400 dark:bg-amber-300 text-slate-900',
-  behind:
-    'border border-emerald-500/50 dark:border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-claude-bg dark:bg-claude-darkBg',
-  inReview:
-    'border border-sky-500/60 dark:border-sky-400/60 text-sky-600 dark:text-sky-400 bg-claude-bg dark:bg-claude-darkBg',
-  awaitingDeps:
-    'border border-violet-500/60 dark:border-violet-400/60 text-violet-600 dark:text-violet-400 bg-claude-bg dark:bg-claude-darkBg',
-  optimistic:
-    'border border-violet-500/60 dark:border-violet-400/60 text-violet-600 dark:text-violet-400 bg-claude-bg dark:bg-claude-darkBg',
-  replaced:
-    'border border-slate-400/50 text-slate-500 dark:text-slate-400 bg-claude-bg dark:bg-claude-darkBg',
-  rejected:
-    'border border-red-500/60 dark:border-red-400/60 text-red-600 dark:text-red-400 bg-claude-bg dark:bg-claude-darkBg',
-  stalled:
-    'border border-slate-400/60 text-slate-500 dark:text-slate-400 bg-claude-bg dark:bg-claude-darkBg',
-};
 
 interface EdgeSpec {
   from: string;
@@ -141,12 +74,6 @@ const computeDepths = (nodes: MetaTaskNodeProjection[]): Map<string, number> => 
   return memo;
 };
 
-const shortPin = (pinId: string): string =>
-  pinId.length > 10 ? `${pinId.slice(0, 5)}…${pinId.slice(-3)}` : pinId;
-
-const shortMetaId = (metaId: string): string =>
-  metaId.length > 14 ? `${metaId.slice(0, 8)}…${metaId.slice(-4)}` : metaId;
-
 /** SVG/edge CSS that Tailwind cannot express: the gold flow keyframes (gated
  * on prefers-reduced-motion, belt-and-braces with motion-reduce:animate-none
  * on the paths) and the terminal column's dashed-gold underline. */
@@ -164,7 +91,13 @@ const CHAIN_VIEW_CSS = `
 const MetaTaskChainView: React.FC<{
   detail: MetaTaskTaskProjection;
   onSelectNode: (nodeId: string) => void;
-}> = ({ detail, onSelectNode }) => {
+  /**
+   * Competitive detail v2: clicking a candidate card opens the candidate
+   * drawer instead of jumping to the node row. Optional so tree-mode callers
+   * (and older hosts) keep the onSelectNode behavior unchanged.
+   */
+  onSelectCandidate?: (nodeId: string, pinId: string) => void;
+}> = ({ detail, onSelectNode, onSelectCandidate }) => {
   const rosterMetaIds = useSelector((state: RootState) => state.metatask.board?.localRosterMetaIds) ?? [];
   const rosterIds = useMemo(() => new Set(rosterMetaIds), [rosterMetaIds]);
   const chainRef = useRef<HTMLDivElement | null>(null);
@@ -204,11 +137,8 @@ const MetaTaskChainView: React.FC<{
   /** Candidate lookup + display state for every candidate (the edge pass and
    * the in-review parent lookup both read this table). */
   const { byPin, stateByPin } = useMemo(() => {
-    const byPin = new Map<string, MetaTaskSubmissionCandidate>();
+    const byPin = candidatesByPin(nodes);
     const stateByPin = new Map<string, CandState>();
-    for (const node of nodes) {
-      for (const cand of node.submissions ?? []) byPin.set(cand.pinId, cand);
-    }
     for (const node of nodes) {
       for (const cand of node.submissions ?? []) {
         stateByPin.set(cand.pinId, candidateState(node, cand, byPin, winningSet));
@@ -564,18 +494,18 @@ const MetaTaskChainView: React.FC<{
                       type="button"
                       data-cand-pin={cand.pinId}
                       title={cand.pinId}
-                      onClick={() => onSelectNode(node.id)}
-                      className={`relative rounded-[10px] border px-[11px] pt-[9px] pb-2 text-left transition-transform hover:-translate-y-px dark:bg-claude-darkSurface bg-claude-surface ${onRaceLine ? onRaceLineTone : cardTone[state]}`}
+                      onClick={() => (onSelectCandidate ? onSelectCandidate(node.id, cand.pinId) : onSelectNode(node.id))}
+                      className={`relative rounded-[10px] border px-[11px] pt-[9px] pb-2 text-left transition-transform hover:-translate-y-px dark:bg-claude-darkSurface bg-claude-surface ${onRaceLine ? onRaceLineTone : candCardTone[state]}`}
                     >
                       {disputeRing}
                       <span
                         className={`absolute -top-[7px] right-2 rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${
                           isRaceTip
                             ? 'bg-sky-500 text-white dark:bg-sky-400 dark:text-slate-900'
-                            : tagTone[state]
+                            : candTagTone[state]
                         }`}
                       >
-                        {isRaceTip ? i18nService.t('metatask.chain.tag.raceFront') : tagLabel(state)}
+                        {isRaceTip ? i18nService.t('metatask.chain.tag.raceFront') : candTagLabel(state)}
                       </span>
                       <span className="flex items-center gap-1.5 min-w-0">
                         <span className={state === 'rejected' ? 'line-through' : undefined}>
