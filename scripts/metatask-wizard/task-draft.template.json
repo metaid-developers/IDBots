@@ -1,0 +1,174 @@
+{
+  "_comment": "Blank campaign-drafts template for a competitive-mode MetaTask (protocol v1.3 draft). Copy this file, fill every REPLACE marker, then gate on: python3 scripts/metatask-wizard/validate-task-draft.py <your-file>.json -> TASK DRAFT READY. Publish with metatask_publish (draftsFile mode + taskId). Shape mirrors scripts/metatask-v13-pilot/pilot-task-drafts.json (the golden sample).",
+  "campaign": "REPLACE: one-line campaign description (N nodes, competitive mode, weight sum 10000)",
+  "campaignStatus": "REPLACE: e.g. DRAFTS VALIDATED LOCALLY - not yet published. Note the H_ACT3 activation state and whether allowPreActivation: true is needed (draft section 7 escape hatch).",
+  "protocolDraft": "docs/metaid_protocols/metatask-protocol-v1.3-competitive-draft.md",
+  "protocol": {
+    "path": "/protocols/metatask",
+    "version": "1.3.0-draft",
+    "baseRegistration": "pin://cbae49e09697182b076652ae9bded629388a0dafc9048b01c6a7c8766247fc55i0",
+    "baseRegistrationVersion": "1.2.1",
+    "activationHeight": null,
+    "activationNote": "Competitive mode is gated on H_ACT3 (draft section 7). Before activation, publishing needs metatask_publish's allowPreActivation: true writer-side escape hatch; replay applies no height gate."
+  },
+  "specValidationReading": "Every spec carries the v1.2.1 three-item validation block (mandatory at/after H_ACT2=191500): null_tolerance boolean true, enumeration_closure with a closure string plus integer self-check counts, and proposition_fidelity referencing an INDEPENDENT correspondence artifact published BEFORE the specs (placeholder ARTIFACT_PIN:<key> until then).",
+  "publishProcedure": [
+    "Gate: python3 scripts/metatask-wizard/validate-task-draft.py <this-file> -> TASK DRAFT READY.",
+    "Upload every binary/artifact metafile the specs reference (base bundles, vector sets, correspondence artifacts) and backfill the matching placeholders in this file; re-run the gate.",
+    "Publish each standalone spec pin with metatask_publish_spec (draftsFile + specKey; every specPinPlan entry marked PUBLISH_SPEC_FIRST); collect the specPinIds.",
+    "Publish the task with metatask_publish (draftsFile + taskId, specPinByKey mapping each SPEC_PIN:<key> placeholder to its specPinId; allowPreActivation: true while H_ACT3 is unannounced). The root spec is written by this call.",
+    "Post the discovery buzz within 24h: task title + the FULL task root pinId + #metatask."
+  ],
+  "placeholderTokens": {
+    "ARTIFACT_PIN:<key>": "validation.proposition_fidelity placeholder; backfill with the correspondence artifact's metafile/pin URI after upload (correspondence and artifactPin stay equal).",
+    "BASE_BUNDLE_URI:<key>": "workspace.baseRef placeholder for git nodes; backfill with the uploaded base git-bundle metafile URI.",
+    "SPEC_PIN:<key>": "node specid placeholder; resolved at publish time by metatask_publish's specPinByKey argument. A node whose specid stays null inherits the task root spec."
+  },
+  "policyNotes": {
+    "toolKeys": "policy keys follow the metatask_publish tool's input shape: camelCase, with two tool quirks - the terminal-node key is 'finalnode' (all lowercase, not finalNode) and submitterShareBP sits at policy top level (the tool writes it into the on-chain split.submitterShareBP). On-chain the policy lands snake_case.",
+    "zeroTtls": "claimTtlHours/verifyWindowHours are 0 to signal intent (draft section 3.10): both carry no semantics in competitive mode; the tool normalizes them to 0 on-chain either way.",
+    "reward": "rewardSat 0 - the v1.3 draft has no reward escrow; settlement is symbolic shareBP only.",
+    "roster": "policy.split.rosterid omitted: any non-publisher, non-submitter bot may verify. Pinning a roster narrows the reviewer pool - do it only deliberately."
+  },
+  "specPinPlan": {
+    "root-spec-key": "PUBLISHED_BY_METATASK_PUBLISH",
+    "node-spec-key": "PUBLISH_SPEC_FIRST"
+  },
+  "specs": {
+    "root-spec-key": {
+      "_comment": "The task root verifier spec (written onto the task root pin by metatask_publish). Nodes with specid: null are judged by this spec. One spec per DISTINCT artifact contract - never share a spec pin across nodes with different deliverable shapes.",
+      "name": "root-spec-key",
+      "lang": "python3",
+      "entry": "spec-root.py",
+      "script": "#!/usr/bin/env python3\n\"\"\"REPLACE: CI-style verifier (protocol draft section 4.3). Reads METATASK_ARTIFACT_URI / METATASK_NODE / METATASK_TASKID from the environment, prints an evidence log, exits 0 pass / 1 fail / 2 invalid (null or unresolvable input).\"\"\"\nimport os\nimport sys\nartifact = os.environ.get('METATASK_ARTIFACT_URI', '').strip()\nif not artifact:\n    print('invalid: METATASK_ARTIFACT_URI is empty')\n    sys.exit(2)\nprint('REPLACE: real checks here')\nsys.exit(0)",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<submission artifact>",
+          "METATASK_NODE": "REPLACE: node id this spec judges",
+          "METATASK_TASKID": "<task root pinId>"
+        }
+      },
+      "output": {
+        "stdout": "evidence log + final verdict line",
+        "exitCode": "0 pass | 1 fail | 2 invalid (null/empty/unresolvable input)"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "REPLACE: what the machine checks enumerate; the pass path asserts the check counter equals the declared expected_count",
+          "selfcheck": { "expected_count": 1 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:correspondence-doc",
+          "artifactPin": "ARTIFACT_PIN:correspondence-doc",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "REPLACE: statement = the deliverable definition; definitions = the artifact format the script enforces; proof-direction = which rubric items are machine-checked vs reviewer judgment."
+        }
+      },
+      "workspace": { "type": "metafile", "notes": "REPLACE: artifact type. git nodes use type git + baseRef (pin:// | metafile:// | BASE_BUNDLE_URI:<key>) + baseCommit (40-hex or null for greenfield) and their submissions are git bundles (result.type git-bundle, draft section 4.2)." }
+    },
+    "node-spec-key": {
+      "_comment": "Example standalone spec for a node with its own artifact contract (publish it BEFORE the task via metatask_publish_spec; the node's specid references it as SPEC_PIN:node-spec-key). Delete this entry if every node inherits the root spec.",
+      "name": "node-spec-key",
+      "lang": "python3",
+      "entry": "spec-node.py",
+      "script": "#!/usr/bin/env python3\n\"\"\"REPLACE: node-level verifier.\"\"\"\nimport os\nimport sys\nartifact = os.environ.get('METATASK_ARTIFACT_URI', '').strip()\nif not artifact:\n    print('invalid: METATASK_ARTIFACT_URI is empty')\n    sys.exit(2)\nprint('REPLACE: real checks here')\nsys.exit(0)",
+      "input": {
+        "env": {
+          "METATASK_ARTIFACT_URI": "metafile://<submission artifact>",
+          "METATASK_NODE": "REPLACE",
+          "METATASK_TASKID": "<task root pinId>"
+        }
+      },
+      "output": {
+        "stdout": "evidence log + final verdict line",
+        "exitCode": "0 pass | 1 fail | 2 invalid"
+      },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": {
+          "closure": "REPLACE",
+          "selfcheck": { "expected_count": 1 }
+        },
+        "proposition_fidelity": {
+          "correspondence": "ARTIFACT_PIN:correspondence-doc",
+          "artifactPin": "ARTIFACT_PIN:correspondence-doc",
+          "coverage": ["statement", "definitions", "proof-direction"],
+          "note": "REPLACE"
+        }
+      },
+      "workspace": { "type": "metafile", "notes": "REPLACE" }
+    }
+  },
+  "tasks": [
+    {
+      "id": "REPLACE-task-id",
+      "rootSpec": "root-spec-key",
+      "publish": {
+        "_comment": "This object is what metatask_publish consumes. Nodes are listed terminal-first here only for readability; order is irrelevant (ids wire the graph). Tree convention: the single parent:null root sits ON the terminal node (finalnode) so the chain view reads left-to-right.",
+        "title": "REPLACE: task title (this is what the discovery buzz repeats)",
+        "brief": "REPLACE: one paragraph - what the campaign produces, that forks are welcome on every node, that the first fully-verified chain to the finalnode wins, that losing forks land in unpaidHistory, and that rewardSat is 0 (mechanism, not money).",
+        "tags": ["metatask", "REPLACE-campaign-tag", "competitive"],
+        "policy": {
+          "_comment": "Tool input shape (camelCase). finalnode is the tool's all-lowercase spelling. submitterShareBP lands on-chain as split.submitterShareBP. claimTtlHours/verifyWindowHours carry no semantics in competitive mode - keep 0. rewardSat stays 0 (no escrow in v1.3). verifyQuorum 2 was the pilot floor; consider 3 for production.",
+          "mode": "competitive",
+          "finalnode": "N3",
+          "verifyQuorum": 2,
+          "challengeTtlDays": 14,
+          "rewardSat": 0,
+          "claimTtlHours": 0,
+          "verifyWindowHours": 0,
+          "submitterShareBP": 8000
+        },
+        "nodes": [
+          {
+            "id": "N3",
+            "parent": null,
+            "title": "REPLACE: terminal node title",
+            "kind": "publish",
+            "specid": null,
+            "params": {
+              "_comment": "rubric = the reviewer's acceptance checklist (draft section 3.3: non-empty string array, >= 1 non-empty entry). Every entry must be DECIDABLE: a reviewer can objectively pass/fail it. Mark which items are machine-checked by the spec vs reviewer judgment. Include non-functional budgets (latency/cost/size) where relevant.",
+              "rubric": [
+                "REPLACE: sample - All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked by the spec).",
+                "REPLACE: sample - The output report cites every vector id exactly once in the summary table (reviewer judgment)."
+              ]
+            },
+            "deps": ["N2"],
+            "weight": 3000
+          },
+          {
+            "id": "N2",
+            "parent": "N3",
+            "title": "REPLACE: middle node title",
+            "kind": "implement",
+            "specid": "SPEC_PIN:node-spec-key",
+            "params": {
+              "rubric": [
+                "REPLACE: decidable acceptance item 1",
+                "REPLACE: decidable acceptance item 2"
+              ]
+            },
+            "deps": ["N1"],
+            "weight": 3500
+          },
+          {
+            "id": "N1",
+            "parent": "N3",
+            "title": "REPLACE: entry node title",
+            "kind": "formalize",
+            "specid": null,
+            "params": {
+              "rubric": [
+                "REPLACE: decidable acceptance item 1",
+                "REPLACE: decidable acceptance item 2"
+              ]
+            },
+            "deps": [],
+            "weight": 3500
+          }
+        ]
+      }
+    }
+  ]
+}

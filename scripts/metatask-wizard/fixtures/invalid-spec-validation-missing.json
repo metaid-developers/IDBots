@@ -1,0 +1,41 @@
+{
+  "campaign": "selftest fixture: spec validation block missing proposition_fidelity — expect FAIL validation",
+  "specs": {
+    "root-spec": {
+      "name": "root-spec",
+      "lang": "python3",
+      "entry": "spec-root.py",
+      "script": "#!/usr/bin/env python3\nprint('fixture verifier')",
+      "input": { "env": { "METATASK_ARTIFACT_URI": "metafile://<artifact>", "METATASK_NODE": "N1", "METATASK_TASKID": "<task root pinId>" } },
+      "output": { "exitCode": "0 pass | 1 fail | 2 invalid" },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": { "closure": "every fixture acceptance item is one numbered check", "selfcheck": { "expected_count": 1 } }
+      },
+      "workspace": { "type": "metafile" }
+    }
+  },
+  "tasks": [
+    {
+      "id": "fixture-spec-validation",
+      "rootSpec": "root-spec",
+      "publish": {
+        "title": "Fixture task with an incomplete spec validation block",
+        "brief": "Minimal invalid fixture: the root spec's validation block lacks proposition_fidelity (mandatory at/after H_ACT2).",
+        "tags": ["metatask", "fixture"],
+        "policy": { "mode": "competitive", "finalnode": "N3", "verifyQuorum": 2, "challengeTtlDays": 14, "rewardSat": 0, "claimTtlHours": 0, "verifyWindowHours": 0, "submitterShareBP": 8000 },
+        "nodes": [
+          { "id": "N3", "parent": null, "title": "Terminal node", "kind": "publish", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": ["N2"], "weight": 3000 },
+          { "id": "N2", "parent": "N3", "title": "Middle node", "kind": "implement", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": ["N1"], "weight": 3500 },
+          { "id": "N1", "parent": "N3", "title": "Entry node", "kind": "formalize", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": [], "weight": 3500 }
+        ]
+      }
+    }
+  ]
+}
