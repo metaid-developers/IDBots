@@ -22,15 +22,17 @@ test('getFreeProviderModelDisplayName maps relay wire ids to product names', () 
   assert.equal(getFreeProviderModelDisplayName(undefined), undefined);
 });
 
-test('getFreeProviderModelCanonical mirrors the deepseek-flash preset for the relay wire id', () => {
-  // The relay bootstrap payload still reports the legacy V3 wire values
-  // (64K context / 4K output) for deepseek-chat while actually serving
-  // deepseek-flash; the canonical config must match the deepseek provider's
-  // deepseek-flash preset (1M context, 32K output, thinking on at max effort).
+test('getFreeProviderModelCanonical pins the relay-enforced upstream limits for the wire id', () => {
+  // Server-confirmed 2026-10-04: the metaid-free upstream enforces the legacy
+  // V3 wire values for deepseek-chat (context_window 64000 /
+  // max_output_tokens 4096) — requests beyond ~64K tokens are rejected with
+  // 400 "maximum context length" no matter what the client believes. The
+  // canonical config must pin those exact values so compaction triggers at
+  // min(0.9*64000, 64000-4096-2560) ≈ 57K tokens, not ~800K.
   const canonical = getFreeProviderModelCanonical('deepseek-chat');
   assert.ok(canonical);
-  assert.equal(canonical.contextWindow, 1_000_000);
-  assert.equal(canonical.maxOutputTokens, 32_768);
+  assert.equal(canonical.contextWindow, 64_000);
+  assert.equal(canonical.maxOutputTokens, 4_096);
   assert.equal(canonical.supportsImage, false);
   assert.equal(canonical.options.reasoningEffort, 'max');
   assert.deepEqual(canonical.options.thinking, { type: 'enabled' });

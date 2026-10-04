@@ -92,10 +92,6 @@ test('isOverflowDshTurnError classifies context-overflow turn failures', async (
     isOverflowDshTurnError({ kind: 'error', error: { message: 'prompt is too long: 190000 tokens > 131072 maximum' } }),
     true,
   );
-  assert.equal(
-    isOverflowDshTurnError({ kind: 'error', error: { code: 'REQUEST_TOO_LARGE', message: '' } }),
-    true,
-  );
   // The 2026-09-28 compaction-deadlock incident shape: a bodyless 400 only
   // classifies when the same turn also failed auto-compaction.
   const bodyless400 = { kind: 'error', error: { code: 'ERROR', message: '400 status code (no body)' } };
@@ -111,4 +107,36 @@ test('isOverflowDshTurnError classifies context-overflow turn failures', async (
   );
   assert.equal(isOverflowDshTurnError({ kind: 'completed' }), false);
   assert.equal(isOverflowDshTurnError(null), false);
+});
+
+test('HTTP 413 body-limit deaths classify as body-limit, never as context overflow', async () => {
+  const { isBodyLimitDshTurnError, isOverflowDshTurnError } = await import('../dist-electron/main/libs/coworkAssistantReply.js');
+
+  // The 2026-10-04 metaid-free incident shapes: the relay's transport byte
+  // cap answered `413: request_too_large` for long sessions and for the
+  // compaction request alike; the kernel normalizes the status to
+  // REQUEST_TOO_LARGE. These are body-size (transport) failures, NOT context
+  // overflow — they must never switch the session onto the fallback brain.
+  const bodyLimitOutcomes = [
+    { kind: 'error', error: { code: 'REQUEST_TOO_LARGE', message: '413: request_too_large: body 262168 bytes > llm.max_request_bytes 2097152' } },
+    { kind: 'error', error: { code: 'PAYLOAD_TOO_LARGE', message: '' } },
+    { kind: 'error', error: { code: 'BAD_REQUEST', message: '413: request_too_large' } },
+    { kind: 'error', error: { message: '413 Request Entity Too Large' } },
+    { kind: 'error', error: { message: 'request entity too large' } },
+    { kind: 'error', error: { message: '413: request_too_large' } },
+  ];
+  for (const outcome of bodyLimitOutcomes) {
+    assert.equal(isBodyLimitDshTurnError(outcome), true, JSON.stringify(outcome));
+    assert.equal(isOverflowDshTurnError(outcome), false, JSON.stringify(outcome));
+    // Even a failed same-turn compaction must not reclassify a 413 as
+    // overflow — the compaction request died of the same body cap.
+    assert.equal(isOverflowDshTurnError(outcome, { compactionFailedThisTurn: true }), false, JSON.stringify(outcome));
+  }
+  // \b413\b must not match inside longer numbers.
+  assert.equal(isBodyLimitDshTurnError({ kind: 'error', error: { message: 'you requested 64413 tokens but the maximum context length is 64000' } }), false);
+  // Non-413 failures must not classify as body-limit.
+  assert.equal(isBodyLimitDshTurnError({ kind: 'error', error: { code: 'CONTEXT_WINDOW_EXCEEDED', message: '400 status code (no body)' } }), false);
+  assert.equal(isBodyLimitDshTurnError({ kind: 'error', error: { message: 'prompt is too long: 190000 tokens > 131072 maximum' } }), false);
+  assert.equal(isBodyLimitDshTurnError({ kind: 'completed' }), false);
+  assert.equal(isBodyLimitDshTurnError(null), false);
 });

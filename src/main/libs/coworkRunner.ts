@@ -42,7 +42,7 @@ import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
-import { CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, OVERFLOW_TURN_RESUME_PROMPT, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT } from './coworkAssistantReply';
+import { CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isBodyLimitDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, OVERFLOW_TURN_RESUME_PROMPT, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -9132,6 +9132,16 @@ export class CoworkRunner extends EventEmitter {
       // operator what actually fixes it (compact / fresh session), ending the
       // retry-the-same-400 dead loop.
       const gateOverflow = isOverflowDshTurnError(outcome, { compactionFailedThisTurn });
+      // The HTTP 413 body-limit family (kernel REQUEST_TOO_LARGE /
+      // "413 request too large") is deliberately NOT in this chain
+      // (2026-10-04 metaid-free incident): 413 fires on the request's
+      // serialized byte size against the relay's transport cap, before the
+      // model ever counts tokens — at realistic context sizes it is a
+      // history-management anomaly, not a context-window problem, and
+      // spending the fallback brain's (often paid) quota on it would only
+      // mask the bug. isOverflowDshTurnError rejects that family, so a 413
+      // falls straight through to the terminal error settlement below, which
+      // reports it with its own dedicated notice.
       if (
         outcome.kind === 'error'
         && !activeSession.abortController.signal.aborted
@@ -9252,7 +9262,19 @@ export class CoworkRunner extends EventEmitter {
               ` (The session history has exceeded model ${lastAttemptRoute.model}'s context window and automatic compaction is rejected too, so this session cannot continue as-is: try the manual compact button in the header; if compaction still fails, start a fresh session and have the bot carry a summary of the key conclusions over.)`
             )}`
           : '';
-        this.handleError(sessionId, `DSH turn failed: ${failureDetail}${quotaNotice}${overflowNotice}`);
+        // HTTP 413 body-limit death (2026-10-04 metaid-free incident): the
+        // relay's transport byte cap (now 2MB) rejected the request before
+        // the model ever saw it. That is a history-management anomaly, not a
+        // context-window problem, so it gets its own notice and — unlike
+        // overflow — never routes onto the fallback brain (no paid quota
+        // spent on a transport failure).
+        const bodyLimitNotice = isBodyLimitDshTurnError(outcome)
+          ? ` ${tApp(
+              `（请求体超过模型服务商的传输字节上限（413 request too large），本轮已终止。这通常是会话历史管理异常而非模型上下文窗口问题：本地历史已保留，未切换备用模型。请点击顶部压缩按钮手动压缩历史；若压缩仍失败，请新开会话并让 Bot 摘要携带关键结论过去；若反复出现，请附带 cowork.log 反馈。）`,
+              ` (The request body exceeded the provider's transport byte limit (413 request too large) and the turn was aborted. This is a session-history management anomaly rather than a model context-window problem: local history is preserved and no fallback model was switched to. Try the manual compact button in the header; if compaction still fails, start a fresh session and have the bot carry a summary of the key conclusions over; if this keeps recurring, please report it with cowork.log.)`
+            )}`
+          : '';
+        this.handleError(sessionId, `DSH turn failed: ${failureDetail}${quotaNotice}${bodyLimitNotice}${overflowNotice}`);
         this.clearPendingPermissions(sessionId);
         this.settleDshSteerSubmissions(activeSession, 'failed', `DSH turn failed: ${failureDetail}`);
         this.removeActiveSession(sessionId, activeSession);

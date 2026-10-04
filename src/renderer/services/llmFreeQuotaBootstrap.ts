@@ -77,9 +77,9 @@ async function provisionProviderConfig(result: LlmRelayBootstrapResult): Promise
     name: getFreeProviderModelDisplayName(model.id),
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
-    // Known relay ids (deepseek-chat = deepseek-flash upstream) override
-    // the relay's stale wire values with the canonical deepseek-provider
-    // preset; unknown ids keep the relay-reported fields untouched.
+    // Known relay ids (deepseek-chat) pin the server-enforced upstream
+    // limits (64K window / 4K output); unknown ids keep the relay-reported
+    // fields untouched.
     ...getFreeProviderModelCanonical(model.id),
   }));
   await configService.updateConfig({
