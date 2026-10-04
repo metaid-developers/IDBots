@@ -224,8 +224,14 @@ const MetaTaskChainView: React.FC<{
    * grows out of the gold one. Pure display geometry over stored flags (a
    * lookup walk, not chain-validity re-derivation): coverage = how many
    * distinct nodes a candidate's live ancestor closure spans; the tip maximizes
-   * coverage, then pass votes, then earliest submission. */
+   * coverage, then pass votes, then earliest submission. Once the task is
+   * complete the race is over — no tip, no line, even if some candidate's
+   * review never resolved (stale candidates on a finished race are not a
+   * front). */
   const { racePath, raceTipId, raceTipNodeId } = useMemo(() => {
+    if (detail.taskComplete) {
+      return { racePath: new Set<string>(), raceTipId: null, raceTipNodeId: null };
+    }
     const pinToNode = new Map<string, string>();
     for (const node of nodes) for (const cand of node.submissions ?? []) pinToNode.set(cand.pinId, node.id);
     const isLive = (pinId: string): boolean => {
@@ -283,7 +289,7 @@ const MetaTaskChainView: React.FC<{
       walk(tip.pinId, new Set());
     }
     return { racePath, raceTipId: tip?.pinId ?? null, raceTipNodeId: tip ? pinToNode.get(tip.pinId) ?? null : null };
-  }, [nodes, byPin, stateByPin]);
+  }, [nodes, byPin, stateByPin, detail.taskComplete]);
 
   /** Chain-level status line: the verified chain's node path (depth order) and
    * the race front's node + submitter. Display geometry over stored flags. */
@@ -301,9 +307,10 @@ const MetaTaskChainView: React.FC<{
     return {
       chainText: chainNodeIds.length > 0 ? chainNodeIds.join(' → ') : '—',
       done: chainNodeIds.length,
+      settled: detail.taskComplete,
       frontText: tipCand && raceTipNodeId ? `${raceTipNodeId} · ${nameOf(tipCand.submitter)}` : null,
     };
-  }, [nodes, stateByPin, identities, raceTipId, raceTipNodeId, byPin]);
+  }, [nodes, stateByPin, identities, raceTipId, raceTipNodeId, byPin, detail.taskComplete]);
 
   const edges = useMemo(() => {
     const specs: EdgeSpec[] = [];
@@ -471,7 +478,10 @@ const MetaTaskChainView: React.FC<{
           <span className="inline-block h-2 w-2 rounded-full bg-sky-500 dark:bg-sky-400" />
           <span className="font-semibold">{i18nService.t('metatask.chain.statusFront')}</span>
           <span className={statusLine.frontText ? 'font-mono' : 'dark:text-claude-darkTextSecondary text-claude-textSecondary'}>
-            {statusLine.frontText ?? i18nService.t('metatask.chain.statusFrontNone')}
+            {statusLine.frontText ??
+              (statusLine.settled
+                ? i18nService.t('metatask.chain.statusFrontSettled')
+                : i18nService.t('metatask.chain.statusFrontNone'))}
           </span>
         </span>
       </div>
