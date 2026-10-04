@@ -22,6 +22,7 @@ import {
   UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import { AlipayIcon, PayPalIcon } from '../icons/payments';
 import {
   DEFAULT_FREE_GRANT_BYTES,
   TRAFFIC_LOW_BALANCE_BYTES,
@@ -1478,6 +1479,11 @@ const TrafficSettings: React.FC = () => {
                       >
                         <div className="flex items-center gap-1.5">
                           {selected && <CheckIcon className="h-3.5 w-3.5 text-claude-accent shrink-0" />}
+                          {option.value === 'alipay' ? (
+                            <AlipayIcon className="h-5 w-5 shrink-0" />
+                          ) : (
+                            <PayPalIcon className="h-5 w-5 shrink-0" />
+                          )}
                           <span className="text-sm font-medium dark:text-claude-darkText text-claude-text">
                             {option.title}
                           </span>
