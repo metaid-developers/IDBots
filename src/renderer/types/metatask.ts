@@ -71,6 +71,13 @@ export interface MetaTaskSubmissionCandidate {
   /** Order key of the counted pass vote that reached quorum; null while unverified. */
   verifiedHeight: number | null;
   verifiedTxIndex: number | null;
+  /**
+   * This candidate's own review timeline, built by the engine for every
+   * candidate (not just the leader the node-level `votes` list mirrors).
+   * Absent on projections cached before this field existed — the candidate
+   * drawer falls back to filtering the node-level list by `targetid` then.
+   */
+  votes?: MetaTaskVoteSummary[];
 }
 
 export interface MetaTaskNodeProjection {

@@ -96,16 +96,25 @@ const MetaTaskCandidateDrawer: React.FC<{
     return detail.settlement && Array.isArray(chain) ? new Set(chain) : null;
   }, [detail.settlement]);
 
-  /** Review timeline of THIS candidate. Format-v3 projections carry each
-   * vote's `targetid`, so the node-level list filters down exactly. Older
-   * cached votes lack the field: fall back to the node list as-is (the
-   * pre-v3 "votes of the node's effective submission" behavior). */
+  /** Review timeline of THIS candidate. Fresh projections carry a per-candidate
+   * `votes` list straight from the engine (still filtered by `targetid` as a
+   * second guard against a stale/foreign entry). Older cached projections lack
+   * it: fall back to the format-v3 node-level list filtered by `targetid`, or
+   * to the node list as-is when even that field is missing (the pre-v3 "votes
+   * of the node's effective submission" behavior). */
   const votes = useMemo(() => {
     if (!node || !cand) return [] as MetaTaskVoteSummary[];
+    const sortByTime = (list: MetaTaskVoteSummary[]): MetaTaskVoteSummary[] =>
+      [...list].sort((a, b) => (a.timestampMs ?? 0) - (b.timestampMs ?? 0));
+    if (Array.isArray(cand.votes)) {
+      return sortByTime(
+        cand.votes.filter((vote) => !vote.targetid || vote.targetid === cand.pinId)
+      );
+    }
     const all = node.votes ?? [];
     const hasTarget = all.some((vote) => typeof vote.targetid === 'string' && vote.targetid.length > 0);
     const filtered = hasTarget ? all.filter((vote) => vote.targetid === cand.pinId) : all;
-    return [...filtered].sort((a, b) => (a.timestampMs ?? 0) - (b.timestampMs ?? 0));
+    return sortByTime(filtered);
   }, [node, cand]);
 
   if (!node || !cand) return null;

@@ -138,6 +138,13 @@ export interface MetaTaskSubmissionCandidate {
   /** Order key of the counted pass vote that reached quorum; null while unverified. */
   verifiedHeight: number | null;
   verifiedTxIndex: number | null;
+  /**
+   * This candidate's own review timeline (same counted/ignoreReason rules as
+   * the node-level `votes` list, which only mirrors the leader). Built in
+   * competitive mode; absent on projections cached before this field existed
+   * and in tree mode (which has no candidates at all).
+   */
+  votes?: MetaTaskVoteSummary[];
 }
 
 export interface MetaTaskVoteSummary {
