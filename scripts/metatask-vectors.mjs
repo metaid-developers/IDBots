@@ -27,8 +27,20 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { replayMetaTask } = require('../dist-electron/main/services/metatask/engine.js');
 const { innerHash, outerHash, canonJ, sha256Hex } = require('../dist-electron/main/services/metatask/canon.js');
+const { ENGINE_ALGO_VERSION, ENGINE_ALGO_VERSION_COMPETITIVE } = require('../dist-electron/main/services/metatask/constants.js');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The three-engine conformance anchor (v1.3.0 registration, conformance
+ * section): every engine replays all vectors and emits
+ * CANONICAL_SHA256 = sha256(utf8(canonJ(outputs))), where each vector
+ * contributes {id, inner, outer} (hash vectors) or
+ * {id, nodes{nodeId:status}, taskComplete, engineAlgoVersion} (replay vectors,
+ * version string per the task's policy.mode). The registered anchor digest is
+ * 726959e97e354b1489c2baa4923702193e0b1ce38871cfc1bca830eb9e9dcfd0.
+ */
+const outputs = [];
 
 const runSet = (setPath) => {
   const set = JSON.parse(readFileSync(setPath, 'utf-8'));
@@ -38,6 +50,7 @@ const runSet = (setPath) => {
     if (vector.kind === 'hash') {
       const inner = innerHash(vector.input);
       const outer = outerHash({ ...vector.input, hash: inner });
+      outputs.push({ id: vector.id, inner, outer });
       if (inner === vector.expectInner && outer === vector.expectOuter) {
         console.log(`PASS ${vector.id}`);
       } else {
@@ -48,6 +61,17 @@ const runSet = (setPath) => {
     }
     try {
       const projection = replayMetaTask(vector.events, vector.options ?? {});
+      const nodes = {};
+      for (const [nodeId, nodeState] of Object.entries(projection.nodeStates ?? {})) {
+        nodes[nodeId] = nodeState?.status ?? 'missing';
+      }
+      outputs.push({
+        id: vector.id,
+        nodes,
+        taskComplete: projection.taskComplete === true,
+        engineAlgoVersion:
+          projection.policy?.mode === 'competitive' ? ENGINE_ALGO_VERSION_COMPETITIVE : ENGINE_ALGO_VERSION,
+      });
       const notes = [];
       let ok = true;
       for (const [node, status] of Object.entries(vector.expect.nodes ?? {})) {
@@ -129,5 +153,8 @@ if (existsSync(draftSetPath)) {
   console.log(`draft canonical sha256: ${draft.canonicalSha256}`);
   failed += draft.failed;
 }
+
+console.log(`\nCANONICAL_SHA256 ${sha256Hex(canonJ(outputs))}`);
+console.log('(three-engine anchor, v1.3.0 registration: 726959e97e354b1489c2baa4923702193e0b1ce38871cfc1bca830eb9e9dcfd0)');
 
 process.exit(failed > 0 ? 1 : 0);

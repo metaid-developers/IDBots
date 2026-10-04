@@ -557,6 +557,79 @@ test('v1.2.1 aggregation precondition: childids mismatch blocks the parent', () 
   assert.equal(projection.taskComplete, false);
 });
 
+test('v1.2.2 ruling 2: the top-level↔result childids MIRROR comparison is positional', () => {
+  const t1pin = 'aggt1sub00000000000000000000000000i0';
+  const t2pin = 'aggt2sub00000000000000000000000000i0';
+  const aggMirrorEvents = ({ topIds, resultIds }) => {
+    const { tree, task, rootPinId } = buildAggregationTask();
+    const c1 = claimOn(rootPinId, 't1', S, { height: 191_610 });
+    const s1 = submitOn(rootPinId, 't1', c1.pinId, S, { height: 191_611, pinId: t1pin });
+    const v1 = voteOn(t1pin, 'pass', R1, { height: 191_612 });
+    const c2 = claimOn(rootPinId, 't2', S, { height: 191_613 });
+    const s2 = submitOn(rootPinId, 't2', c2.pinId, S, { height: 191_614, pinId: t2pin });
+    const v2 = voteOn(t2pin, 'pass', R2, { height: 191_615 });
+    const cr = claimOn(rootPinId, 'r1', S, { height: 191_620 });
+    const sr = ev(
+      'submission',
+      {
+        taskid: rootPinId,
+        node: 'r1',
+        claimid: cr.pinId,
+        result: { type: 'table', hash: '0'.repeat(64), rows: [], childids: resultIds },
+        hash: '1'.repeat(64),
+        contentType: 'application/json;utf-8',
+        attachment: null,
+        childids: topIds,
+      },
+      { author: S, height: 191_621, pinId: 'aggrsubmirror0000000000000000000000i0' }
+    );
+    const vr = voteOn(sr.pinId, 'pass', R1, { height: 191_622 });
+    return { events: [tree, task, c1, s1, v1, c2, s2, v2, cr, sr, vr], rootPinId };
+  };
+
+  // Mirror positionally equal (same order): precondition can pass.
+  {
+    const { events, rootPinId } = aggMirrorEvents({ topIds: [t1pin, t2pin], resultIds: [t1pin, t2pin] });
+    const projection = replayMetaTask(events, { rootPinId });
+    assert.equal(projection.nodeStates.r1.status, 'verified');
+  }
+  // Mirror same elements but reordered: precondition FAILS (mirror is
+  // positional, even though the precondition set-compare itself is not).
+  {
+    const { events, rootPinId } = aggMirrorEvents({ topIds: [t1pin, t2pin], resultIds: [t2pin, t1pin] });
+    const projection = replayMetaTask(events, { rootPinId });
+    assert.equal(projection.nodeStates.r1.status, 'claimed');
+    assert.equal(projection.taskComplete, false);
+  }
+  // Only result.childids present: precondition set-compare stays order-insensitive.
+  {
+    const { tree, task, rootPinId } = buildAggregationTask();
+    const c1 = claimOn(rootPinId, 't1', S, { height: 191_610 });
+    const s1 = submitOn(rootPinId, 't1', c1.pinId, S, { height: 191_611, pinId: t1pin });
+    const v1 = voteOn(t1pin, 'pass', R1, { height: 191_612 });
+    const c2 = claimOn(rootPinId, 't2', S, { height: 191_613 });
+    const s2 = submitOn(rootPinId, 't2', c2.pinId, S, { height: 191_614, pinId: t2pin });
+    const v2 = voteOn(t2pin, 'pass', R2, { height: 191_615 });
+    const cr = claimOn(rootPinId, 'r1', S, { height: 191_620 });
+    const sr = ev(
+      'submission',
+      {
+        taskid: rootPinId,
+        node: 'r1',
+        claimid: cr.pinId,
+        result: { type: 'table', hash: '0'.repeat(64), rows: [], childids: [t2pin, t1pin] },
+        hash: '1'.repeat(64),
+        contentType: 'application/json;utf-8',
+        attachment: null,
+      },
+      { author: S, height: 191_621, pinId: 'aggrsubsetonly000000000000000000000i0' }
+    );
+    const vr = voteOn(sr.pinId, 'pass', R1, { height: 191_622 });
+    const projection = replayMetaTask([tree, task, c1, s1, v1, c2, s2, v2, cr, sr, vr], { rootPinId });
+    assert.equal(projection.nodeStates.r1.status, 'verified');
+  }
+});
+
 test('v1.2.1 amend: conflict on shared bases, stale on foreign bases', () => {
   const { tree, task, rootPinId, treePinId } = buildTask();
   const first = ev(
