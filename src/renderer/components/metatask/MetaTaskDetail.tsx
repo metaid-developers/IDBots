@@ -5,7 +5,10 @@ import { RootState } from '../../store';
 import { metaTaskService } from '../../services/metatask';
 import { i18nService } from '../../services/i18n';
 import MetaIdBadge from './MetaIdBadge';
+import MetaTaskCandidateDrawer from './MetaTaskCandidateDrawer';
 import MetaTaskChainView from './MetaTaskChainView';
+import MetaTaskDeliverables from './MetaTaskDeliverables';
+import MetaTaskNodeSections from './MetaTaskNodeSections';
 import MetaTaskTreeMap from './MetaTaskTreeMap';
 import {
   metaTaskChildrenOf,
@@ -106,6 +109,8 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
   const rosterIds = new Set(rosterMetaIds);
   const [expandedNode, setExpandedNode] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  /** Competitive v2: the candidate currently shown in the drawer (null = closed). */
+  const [selectedCand, setSelectedCand] = useState<{ nodeId: string; pinId: string } | null>(null);
   const groupsInitForRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -365,6 +370,10 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Deliverables (competitive v2): final artifact hero + per-node
+            artifact rows; renders nothing while there is no artifact yet */}
+        {isCompetitive && <MetaTaskDeliverables detail={detail} />}
+
         {/* How to join: open nodes as one-click participation candidates */}
         {!detail.taskComplete && openNodes.length > 0 && (
           <section className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-2.5">
@@ -435,6 +444,7 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
               const node = detail.nodeStates[nodeId];
               selectNodeFromMap(nodeId, node?.parent && groupIdSet.has(node.parent) ? node.parent : null);
             }}
+            onSelectCandidate={(nodeId, pinId) => setSelectedCand({ nodeId, pinId })}
           />
         ) : (
           <MetaTaskTreeMap
@@ -447,7 +457,15 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
           />
         )}
 
-        {/* Nodes: grouped by aggregate; each row expands to the branch content */}
+        {/* Nodes: competitive tasks get the v2 requirement+candidate sections
+            (rubric left, candidates right, rows open the drawer); tree tasks
+            keep the expandable row table */}
+        {isCompetitive ? (
+          <MetaTaskNodeSections
+            detail={detail}
+            onSelectCandidate={(nodeId, pinId) => setSelectedCand({ nodeId, pinId })}
+          />
+        ) : (
         <section>
           <h3 className="text-sm font-semibold dark:text-claude-darkText text-claude-text mb-2">
             {i18nService.t('metatask.nodes')}
@@ -471,6 +489,7 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
             {baseChildren.map((node) => renderTreeRow(node))}
           </div>
         </section>
+        )}
 
         {/* Roster */}
         <section>
@@ -607,6 +626,19 @@ const MetaTaskDetail: React.FC<{ rootPinId: string }> = ({ rootPinId }) => {
           )}
         </section>
       </div>
+
+      {/* Candidate drawer (competitive v2): opened from chain cards, node
+          sections and parentref chips; parentref navigation swaps the
+          selection in place */}
+      {selectedCand && (
+        <MetaTaskCandidateDrawer
+          detail={detail}
+          nodeId={selectedCand.nodeId}
+          pinId={selectedCand.pinId}
+          onClose={() => setSelectedCand(null)}
+          onNavigate={(nodeId, pinId) => setSelectedCand({ nodeId, pinId })}
+        />
+      )}
     </div>
   );
 };

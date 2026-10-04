@@ -392,6 +392,58 @@ test('competitive: a fail verdict kills only its target and cascades chain-inval
   assert.equal(unpaid[subR.pinId], 'losing_fork');
 });
 
+test('competitive: every candidate carries its own review timeline (submissions[].votes)', () => {
+  const { tree, task, rootPinId } = buildCompTask();
+  const subA1 = compSubmit(rootPinId, 'a', S1, { height: 191_600 });
+  const subA2 = compSubmit(rootPinId, 'a', S2, { height: 191_601 });
+  const kill = failVote(subA2.pinId, R3, { height: 191_613 });
+  const events = [
+    tree, task, subA1, subA2,
+    passVote(subA1.pinId, R1, { height: 191_610 }),
+    passVote(subA1.pinId, R2, { height: 191_611 }), // subA1 verified first → leads
+    passVote(subA2.pinId, R1, { height: 191_612 }),
+    kill, // subA2 killed by a counted fail
+    // The submitter's own pass stays visible on the timeline but never counts.
+    passVote(subA2.pinId, S2, { height: 191_614 }),
+  ];
+  const projection = replayMetaTask(events, { rootPinId });
+  const nodeA = projection.nodeStates.a;
+  assert.equal(nodeA.submission.pinId, subA1.pinId, 'subA1 leads');
+  // The node-level vote view still mirrors ONLY the leader…
+  assert.equal(nodeA.votes.length, 2);
+  assert.ok(nodeA.votes.every((v) => v.targetid === subA1.pinId));
+  // …while the killed fork keeps its own full review records.
+  const loser = candidateOf(projection, 'a', subA2.pinId);
+  assert.equal(loser.failed, true);
+  assert.equal(loser.votes.length, 3);
+  const failEntry = loser.votes.find((v) => v.pinId === kill.pinId);
+  assert.ok(failEntry, 'the fail vote lives on the loser candidate, not the node view');
+  assert.equal(failEntry.verdict, 'fail');
+  assert.equal(failEntry.targetid, subA2.pinId);
+  assert.equal(failEntry.counted, true);
+  assert.equal(failEntry.ignoreReason, null);
+  assert.equal(failEntry.failreason, true);
+  assert.equal(failEntry.failreasonText, 'counterexample found');
+  assert.equal(failEntry.semanticCheckText, 'statement mismatch');
+  assert.equal(failEntry.height, 191_613);
+  assert.equal(failEntry.timestampMs, 1_790_000_000_000);
+  // Same counted/ignoreReason rules as the node-level list: the self-vote shows
+  // up flagged, and the candidate counts match the summary-level verdicts.
+  const selfVote = loser.votes.find((v) => v.voter === S2);
+  assert.equal(selfVote.counted, false);
+  assert.equal(selfVote.ignoreReason, 'identity_conflict');
+  assert.equal(loser.passVotes, 1, 'pass count excludes the identity-conflicted self-vote');
+  assert.equal(loser.failVotes, 1);
+  // The leader's per-candidate timeline matches the node-level view.
+  const leader = candidateOf(projection, 'a', subA1.pinId);
+  assert.equal(leader.votes.length, 2);
+  assert.ok(leader.votes.every((v) => v.targetid === subA1.pinId));
+  assert.deepEqual(
+    leader.votes.map((v) => v.pinId),
+    nodeA.votes.map((v) => v.pinId)
+  );
+});
+
 // ── §3.4 supersede on a fork ─────────────────────────────────────────────────
 
 test('competitive: supersede replaces the author tip; descendants of a superseded parent stay invalid', () => {

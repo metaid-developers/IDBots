@@ -20,6 +20,22 @@ export interface MetaTaskVoteSummary {
   ignoreReason: string | null;
   semanticCheck: boolean;
   failreason: boolean;
+  /**
+   * The submission pin this vote targets (vote.body.targetid). The node-level
+   * `votes` list only carries the leading/effective submission's votes; the
+   * candidate drawer filters it by this field to rebuild ONE candidate's
+   * review timeline. Absent on projections cached before format v3 — the
+   * drawer falls back to the whole node list then.
+   */
+  targetid?: string;
+  /** Genesis block height of the vote pin (review-timeline anchor). */
+  height?: number;
+  /** Vote pin timestamp in ms (review-timeline display). */
+  timestampMs?: number;
+  /** Full failreason text when the verdict carries one (else null/absent). */
+  failreasonText?: string | null;
+  /** Full semantic_check text when the vote carries one (else null/absent). */
+  semanticCheckText?: string | null;
 }
 
 /**
@@ -55,6 +71,13 @@ export interface MetaTaskSubmissionCandidate {
   /** Order key of the counted pass vote that reached quorum; null while unverified. */
   verifiedHeight: number | null;
   verifiedTxIndex: number | null;
+  /**
+   * This candidate's own review timeline, built by the engine for every
+   * candidate (not just the leader the node-level `votes` list mirrors).
+   * Absent on projections cached before this field existed — the candidate
+   * drawer falls back to filtering the node-level list by `targetid` then.
+   */
+  votes?: MetaTaskVoteSummary[];
 }
 
 export interface MetaTaskNodeProjection {

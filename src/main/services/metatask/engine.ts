@@ -79,6 +79,8 @@ interface VoteRecord {
   pinId: string;
   body: Record<string, unknown>;
   height: number;
+  /** Vote pin timestamp (ms) — projected for the candidate review timeline. */
+  timestampMs: number;
 }
 
 /**
@@ -1117,16 +1119,42 @@ const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProje
     }
   }
 
+  // One vote → its display summary. Shared by the node-level leading-candidate
+  // view and every per-candidate review timeline so both apply the exact same
+  // counted/ignoreReason/verdict projection (identity filter = the voter is
+  // neither the submission's author nor the task root author).
+  const toVoteSummary = (vote: VoteRecord, subAuthor: string): MetaTaskVoteSummary => {
+    const identityOk = vote.bot !== subAuthor && vote.bot !== rootAuthor;
+    return {
+      voter: vote.bot,
+      verdict: asStr(vote.body.verdict, 'invalid'),
+      pinId: vote.pinId,
+      counted: identityOk,
+      ignoreReason: identityOk ? null : 'identity_conflict',
+      semanticCheck: truthyStr(vote.body.semantic_check),
+      failreason: truthyStr(vote.body.failreason),
+      // Candidate-drawer review timeline inputs: the drawer filters by
+      // `targetid` to rebuild one candidate's votes.
+      targetid: asStr(vote.body.targetid),
+      height: vote.height,
+      timestampMs: vote.timestampMs,
+      failreasonText: asStr(vote.body.failreason) || null,
+      semanticCheckText: asStr(vote.body.semantic_check) || null,
+    };
+  };
+
   const candidateEntry = (sub: CompSubmission): MetaTaskSubmissionCandidate => {
     const body = ctx.submissionBodyByPin.get(sub.pinId);
     const result = body?.result;
     let passVotes = 0;
     let failVotes = 0;
+    const votes: MetaTaskVoteSummary[] = [];
     for (const vote of ctx.votesByTarget.get(sub.pinId) ?? []) {
       // Same counting rule as the tree-mode node view: passes are
       // identity-filtered, fails are not (ruling three parity).
       if (vote.body.verdict === 'pass' && vote.bot !== sub.author && vote.bot !== rootAuthor) passVotes += 1;
       if (vote.body.verdict === 'fail') failVotes += 1;
+      votes.push(toVoteSummary(vote, sub.author));
     }
     return {
       pinId: sub.pinId,
@@ -1147,6 +1175,7 @@ const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProje
       failVotes,
       verifiedHeight: sub.verifiedVote ? sub.verifiedVote.height : null,
       verifiedTxIndex: sub.verifiedVote ? sub.verifiedVote.txIndex : null,
+      votes,
     };
   };
 
@@ -1163,7 +1192,7 @@ const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProje
     const status: MetaTaskNodeProjection['status'] = satisfied ? 'verified' : live ? 'claimed' : 'open';
     const disputed = disputedNodeIds.has(node);
     // The node-level vote view mirrors `submission`: the leading candidate's
-    // votes (the full per-candidate counts live in `submissions`).
+    // votes (the full per-candidate timelines live in `submissions[].votes`).
     const voteList: MetaTaskVoteSummary[] = [];
     let passVotes = 0;
     let failVotes = 0;
@@ -1172,15 +1201,7 @@ const replayCompetitiveTask = (ctx: CompetitiveReplayContext): MetaTaskTaskProje
         const identityOk = vote.bot !== leader.author && vote.bot !== rootAuthor;
         if (vote.body.verdict === 'pass' && identityOk) passVotes += 1;
         if (vote.body.verdict === 'fail') failVotes += 1;
-        voteList.push({
-          voter: vote.bot,
-          verdict: asStr(vote.body.verdict, 'invalid'),
-          pinId: vote.pinId,
-          counted: identityOk,
-          ignoreReason: identityOk ? null : 'identity_conflict',
-          semanticCheck: truthyStr(vote.body.semantic_check),
-          failreason: truthyStr(vote.body.failreason),
-        });
+        voteList.push(toVoteSummary(vote, leader.author));
       }
     }
     const leaderBody = leader ? ctx.submissionBodyByPin.get(leader.pinId) : undefined;
@@ -1559,7 +1580,7 @@ export function taskEventSet(
  * Equal keys ⇒ the same inputs produce the same projection, time-driven expiry
  * aside; that residual is covered by nextTimeDeadlineMs.
  */
-export const PROJECTION_FORMAT_VERSION = 2;
+export const PROJECTION_FORMAT_VERSION = 3;
 
 export const taskDirtyKey = (
   taskSet: MetaTaskTaskEventSet,
@@ -1673,6 +1694,7 @@ export function replayMetaTask(
       pinId: vote.pinId,
       body: vote.body,
       height: vote.height,
+      timestampMs: vote.timestampMs,
     });
   }
   const votesByTarget = new Map<string, VoteRecord[]>();
@@ -2150,6 +2172,13 @@ export function replayMetaTask(
           ignoreReason: identityOk ? null : 'identity_conflict',
           semanticCheck: truthyStr(v.body.semantic_check),
           failreason: truthyStr(v.body.failreason),
+          // Candidate-drawer review timeline inputs: the drawer filters this
+          // node-level list by `targetid` to rebuild one candidate's votes.
+          targetid: asStr(v.body.targetid),
+          height: v.height,
+          timestampMs: v.timestampMs,
+          failreasonText: asStr(v.body.failreason) || null,
+          semanticCheckText: asStr(v.body.semantic_check) || null,
         });
       }
     }
