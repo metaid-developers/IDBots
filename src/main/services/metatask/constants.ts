@@ -64,8 +64,12 @@ export const H_ACT2: number | null = 191_500;
  * it reads the announced height from `board.activation.hAct3` (this constant,
  * surfaced by the projection store) and compares it against the refresher's
  * refresh-state boundary block.
+ *
+ * Announced 2026-10-04 by the protocol owner (AI_Sunny) with the v1.3.0
+ * registration pin `fd33de09e0ff314016ff76e12d47c38bb0ee17fc7a9706bbfd3824ded0c0c947i0`
+ * (announced at chain height 192281, ~75h notice, procedure floor 72h).
  */
-export const H_ACT3: number | null = null;
+export const H_ACT3: number | null = 192_800;
 
 export const hAct2Or = (value: number | null | undefined): number =>
   typeof value === 'number' && value >= 0 ? value : Number.POSITIVE_INFINITY;

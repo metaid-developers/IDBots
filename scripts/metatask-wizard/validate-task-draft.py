@@ -74,7 +74,8 @@ SPLIT_FIELDS = {"submitterShareBP", "rosterid"}
 STAGING_KEYS = {"scriptFile", "script_file", "policyOverride", "claim_ttl_hours", "verify_window_hours",
                 "verify_quorum", "reward_sat", "challenge_ttl_days", "specId", "final_node"}
 VALIDATION_ITEMS = ("null_tolerance", "enumeration_closure", "proposition_fidelity")
-WORKSPACE_TYPES = ("git", "metafile", "inline", "pin")
+# v1.3.0 registration (2026-10-04) closed the enum including 'metaapp'.
+WORKSPACE_TYPES = ("git", "metafile", "inline", "pin", "metaapp")
 PIN_REF_RE = re.compile(r"^(pin://|metafile://)\S+$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 SPEC_PIN_PREFIX = "SPEC_PIN:"

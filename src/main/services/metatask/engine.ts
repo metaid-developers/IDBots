@@ -1961,10 +1961,11 @@ export function replayMetaTask(
   // effective VERIFIED submissions (pinId identity = "hash 与对应子件一致").
   // Enforced from H_ACT2, anchored on the parent's effective-submission
   // height; pre-H_ACT2 parents are grandfathered at their recorded vote level
-  // (pilot #01's root keeps its historical verified state). Two documented
-  // implementation readings flagged for v1.2.2: the amend fold gates parents
-  // on the vote-level set (conservative), and childids equality is set-based
-  // (order-insensitive).
+  // (pilot #01's root keeps its historical verified state). Registered
+  // readings (v1.2.2 rulings folded into v1.3.0): the amend fold gates parents
+  // on the vote-level set (conservative); the precondition childids comparison
+  // is set-equality, while the top-level↔result mirror comparison is
+  // positional (implemented below).
   const childrenOf = new Map<string, string[]>();
   for (const node of effectiveTree.values()) {
     if (node.parent !== null) {
@@ -1998,13 +1999,22 @@ export function replayMetaTask(
         });
         const body = submissionBodyByPin.get(cycle.effective.pinId);
         const resultObject = body?.result as Record<string, unknown> | undefined;
-        const canonical = Array.isArray(resultObject?.childids)
-          ? (resultObject.childids as unknown[])
-          : Array.isArray(body?.childids)
-            ? (body.childids as unknown[])
-            : [];
+        // v1.2.2 ruling item 2 (folded into the v1.3.0 registration): the
+        // precondition comparison itself is set-equality, but when BOTH a
+        // top-level childids and result.childids are present the MIRROR
+        // comparison between them is positional item-by-item — the two forms
+        // are not interchangeable. A mirror mismatch fails the precondition.
+        const topChildids = Array.isArray(body?.childids) ? (body.childids as unknown[]) : null;
+        const resultChildids = Array.isArray(resultObject?.childids) ? (resultObject.childids as unknown[]) : null;
+        const mirrorOk =
+          topChildids === null ||
+          resultChildids === null ||
+          (topChildids.length === resultChildids.length &&
+            topChildids.every((id, i) => id === resultChildids[i]));
+        const canonical = resultChildids ?? topChildids ?? [];
         const listed = new Set(canonical.filter((id): id is string => typeof id === 'string'));
         result =
+          mirrorOk &&
           allChildrenVerified &&
           listed.size === childPins.size &&
           Array.from(childPins).every((pin) => listed.has(pin));

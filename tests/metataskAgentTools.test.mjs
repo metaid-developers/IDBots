@@ -1238,7 +1238,8 @@ test('metatask_publish: competitive mode is H_ACT3-gated, with an explicit pre-a
     policy: { mode: 'competitive', finalnode: 'r', verifyQuorum: 2, ...policyExtra },
   });
 
-  // H_ACT3 not announced (constants.ts) and no board state: refused, no spend.
+  // H_ACT3 announced 2026-10-04 (registration pin fd33de09…c947i0); with no
+  // board state the boundary block is unknown: still refused, still no spend.
   {
     const { handlers, writes } = buildHarness([]);
     const refused = await handlers.metatask_publish(compArgs());
