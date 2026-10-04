@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<title>MetaTask decomposition preview — {{TASK_TITLE}}</title>
+<!--
+  MetaTask decomposition preview template (scripts/metatask-wizard/).
+  Fill by plain text replacement, then open in a browser for the owner:
+    {{TASK_TITLE}}  — task title (plain text)
+    {{TASK_BRIEF}}  — one-paragraph brief (plain text)
+    {{NODES_JSON}}  — the publish.nodes JSON array, verbatim from the draft
+    {{POLICY_JSON}} — the publish.policy JSON object, verbatim from the draft
+  Columns = dependency depth (entries left, terminal right). Cards = nodes
+  (title, weight share, first rubric entries). Edges = deps (arrow into the
+  node that consumes the dependency). Gold = weight annotation. Everything
+  else is neutral: this is a pre-publish structure review, not a race view.
+-->
+<style>
+  :root {
+    --bg: #17171a;
+    --surface: #1f1f23;
+    --card: #232327;
+    --border: #333338;
+    --text: #ececf1;
+    --text-2: #9c9ca8;
+    --text-3: #6d6d78;
+    --gold: #f5b83d;
+    --gold-dim: rgba(245, 184, 61, 0.35);
+    --red: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    padding: 28px 32px 48px;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .page { max-width: 1560px; margin: 0 auto; }
+
+  .task-eyebrow {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--gold); font-weight: 600; margin-bottom: 6px;
+  }
+  .task-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+  .task-brief { color: var(--text-2); font-size: 13px; margin-top: 4px; max-width: 780px; }
+
+  .explainer {
+    border: 1px solid var(--border); border-left: 3px solid var(--gold);
+    background: var(--surface); border-radius: 10px;
+    padding: 10px 14px; margin: 16px 0 20px;
+    font-size: 13px; color: var(--text-2);
+  }
+  .explainer strong { color: var(--text); }
+
+  .banner {
+    display: none; border: 1px solid var(--red); border-radius: 10px;
+    background: rgba(248, 113, 113, 0.08); color: var(--red);
+    padding: 10px 14px; margin: 0 0 16px; font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  h2 {
+    font-size: 13px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-2); margin: 28px 0 10px;
+  }
+
+  /* ── DAG canvas ──────────────────────────────── */
+  .dag-scroll { overflow-x: auto; padding-bottom: 12px; }
+  .dag {
+    position: relative; display: flex; gap: 72px;
+    padding: 8px 12px 16px; min-width: min-content;
+  }
+  .edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .depth-col { position: relative; z-index: 1; width: 252px; flex: none; display: flex; flex-direction: column; gap: 12px; }
+  .depth-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-3); padding: 2px 2px 0;
+  }
+  .node-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px 9px;
+  }
+  .node-card.terminal { border-color: var(--gold-dim); box-shadow: 0 0 0 1px var(--gold-dim); }
+  .node-top { display: flex; align-items: baseline; gap: 8px; }
+  .node-chip {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em;
+    color: var(--text-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 6px; text-transform: uppercase;
+    white-space: nowrap; flex: none;
+  }
+  .node-card.terminal .node-chip { color: var(--gold); border-color: var(--gold-dim); }
+  .node-title { font-size: 13px; font-weight: 600; }
+  .node-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 5px; }
+  .node-kind { font-size: 11px; color: var(--text-3); }
+  .node-weight { font-size: 11px; font-weight: 700; color: var(--gold); }
+  .node-rubric { margin-top: 7px; border-top: 1px solid var(--border); padding-top: 7px; }
+  .node-rubric div {
+    font-size: 11px; color: var(--text-2); line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .node-rubric div + div { margin-top: 4px; }
+  .node-rubric .more { color: var(--text-3); font-style: italic; }
+  .node-deps { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .dep-chip {
+    font-size: 10px; color: var(--text-3); border: 1px dashed var(--border);
+    border-radius: 4px; padding: 0 5px;
+  }
+
+  .edge { fill: none; stroke: var(--border); stroke-width: 1.5; marker-end: url(#arrow); }
+
+  /* ── tables ──────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); font-weight: 650; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .wbar { height: 6px; border-radius: 3px; background: var(--card); overflow: hidden; min-width: 120px; }
+  .wbar > span { display: block; height: 100%; background: var(--gold); opacity: 0.85; }
+  .gold { color: var(--gold); font-weight: 650; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .policy-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;
+  }
+  .policy-item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+  .policy-item .k { font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); font-weight: 650; }
+  .policy-item .v { font-size: 14px; font-weight: 600; margin-top: 3px; }
+  .policy-item .v.gold { color: var(--gold); }
+
+  .footer { margin-top: 32px; color: var(--text-3); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="task-eyebrow">MetaTask decomposition preview · pre-publish draft</div>
+  <div class="task-title" id="task-title">{{TASK_TITLE}}</div>
+  <div class="task-brief" id="task-brief">{{TASK_BRIEF}}</div>
+
+  <div class="explainer">
+    <strong>How to read this draft</strong> · Columns are dependency depth — entry nodes on the left, the terminal node (finish) on the right.
+    Each card is one node: its title, its <span style="color:var(--gold);font-weight:600">weight share</span> (gold), and the first rubric entries reviewers will judge by.
+    Arrows point from a dependency into the node that consumes it. Confirm structure, rubrics, and weights here — nothing is on-chain yet.
+  </div>
+
+  <div class="banner" id="banner"></div>
+
+  <h2>DAG — columns by dependency depth</h2>
+  <div class="dag-scroll">
+    <div class="dag" id="dag">
+      <svg class="edges" id="edges">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border)"></path>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+  </div>
+
+  <h2>Weights — Σ must equal 10000 BP</h2>
+  <table id="weights-table">
+    <thead><tr><th>Node</th><th>Title</th><th class="num">Weight (BP)</th><th class="num">Share</th><th style="width:28%">Proportion</th></tr></thead>
+    <tbody></tbody>
+    <tfoot></tfoot>
+  </table>
+
+  <h2>Rubric — every entry must be decidable</h2>
+  <table id="rubric-table">
+    <thead><tr><th style="width:90px">Node</th><th style="width:40px">#</th><th>Acceptance entry (reviewer checklist)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="grid-2" style="margin-top:28px">
+    <div>
+      <h2 style="margin-top:0">Dependencies</h2>
+      <table id="deps-table">
+        <thead><tr><th>Node</th><th>deps</th><th>Role</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div>
+      <h2 style="margin-top:0">Policy summary</h2>
+      <div class="policy-grid" id="policy-grid"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Draft preview generated by the metatask-wizard decomposition flow. Review with the owner; publish only after
+    <span class="mono">validate-task-draft.py</span> prints <span class="mono">TASK DRAFT READY</span> and the owner confirms this preview in prose.
+  </div>
+</div>
+
+<script type="application/json" id="nodes-data">{{NODES_JSON}}</script>
+<script type="application/json" id="policy-data">{{POLICY_JSON}}</script>
+<script>
+(function () {
+  var banner = document.getElementById('banner');
+  function showBanner(msg) { banner.textContent = msg; banner.className = 'banner show'; }
+
+  var nodes, policy;
+  try { nodes = JSON.parse(document.getElementById('nodes-data').textContent); } catch (e) { nodes = null; }
+  try { policy = JSON.parse(document.getElementById('policy-data').textContent); } catch (e) { policy = null; }
+  if (!Array.isArray(nodes) || !nodes.length || !policy) {
+    showBanner('Template not filled: substitute the NODES_JSON / POLICY_JSON placeholders with the draft\'s publish.nodes array and publish.policy object (plain text replacement).');
+    return;
+  }
+
+  var finalnode = policy.finalnode || policy.finalNode || null;
+  var byId = {};
+  nodes.forEach(function (n) { byId[n.id] = n; });
+
+  // depth = longest deps chain above an entry node (entries = 0)
+  var depthMemo = {};
+  function depth(id, stack) {
+    if (id in depthMemo) return depthMemo[id];
+    var n = byId[id];
+    if (!n || !Array.isArray(n.deps) || !n.deps.length) { depthMemo[id] = 0; return 0; }
+    if (stack.indexOf(id) !== -1) { depthMemo[id] = 0; return 0; } // cycle guard: banner reports below
+    var best = 0;
+    n.deps.forEach(function (d) { best = Math.max(best, depth(d, stack.concat([id])) + 1); });
+    depthMemo[id] = best;
+    return best;
+  }
+  nodes.forEach(function (n) { n._depth = depth(n.id, []); });
+
+  // sanity banner
+  var problems = [];
+  var total = nodes.reduce(function (s, n) { return s + (n.weight || 0); }, 0);
+  if (total !== 10000) problems.push('weights sum to ' + total + ' BP, not 10000');
+  var referenced = {};
+  nodes.forEach(function (n) { (n.deps || []).forEach(function (d) { referenced[d] = true; }); });
+  var sinks = nodes.filter(function (n) { return !referenced[n.id]; }).map(function (n) { return n.id; });
+  if (sinks.length !== 1 || (finalnode && sinks[0] !== finalnode)) problems.push('deps sinks are [' + sinks.join(', ') + '] but finalnode is ' + finalnode);
+  if (problems.length) showBanner('Draft sanity: ' + problems.join(' · ') + ' — run validate-task-draft.py before publishing.');
+
+  // ── DAG ──
+  var dag = document.getElementById('dag');
+  var maxDepth = Math.max.apply(null, nodes.map(function (n) { return n._depth; }));
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  for (var d = 0; d <= maxDepth; d++) {
+    var col = document.createElement('div');
+    col.className = 'depth-col';
+    var label = document.createElement('div');
+    label.className = 'depth-label';
+    label.textContent = d === 0 ? 'Entry · depth 0' : (d === maxDepth ? 'Depth ' + d + ' · terminal' : 'Depth ' + d);
+    col.appendChild(label);
+    nodes.filter(function (n) { return n._depth === d; }).forEach(function (n) {
+      var rubric = (n.params && Array.isArray(n.params.rubric)) ? n.params.rubric : [];
+      var card = document.createElement('div');
+      card.className = 'node-card' + (n.id === finalnode ? ' terminal' : '');
+      card.dataset.nid = n.id;
+      var rubricHtml = rubric.slice(0, 2).map(function (entry) { return '<div title="' + esc(entry) + '">• ' + esc(entry) + '</div>'; }).join('');
+      if (rubric.length > 2) rubricHtml += '<div class="more">+ ' + (rubric.length - 2) + ' more rubric entries (table below)</div>';
+      if (!rubric.length) rubricHtml = '<div class="more">NO RUBRIC — publish would be refused</div>';
+      var depsHtml = (n.deps || []).map(function (dep) { return '<span class="dep-chip">needs ' + esc(dep) + '</span>'; }).join('');
+      card.innerHTML =
+        '<div class="node-top"><span class="node-chip">' + (n.id === finalnode ? 'Finish · ' : '') + esc(n.id) + '</span>' +
+        '<span class="node-title">' + esc(n.title) + '</span></div>' +
+        '<div class="node-meta"><span class="node-kind">' + esc(n.kind || '') + '</span>' +
+        '<span class="node-weight mono">' + ((n.weight || 0) / 100).toFixed(n.weight % 100 ? 1 : 0) + '% · ' + (n.weight || 0) + 'BP</span></div>' +
+        '<div class="node-rubric">' + rubricHtml + '</div>' +
+        (depsHtml ? '<div class="node-deps">' + depsHtml + '</div>' : '');
+      col.appendChild(card);
+    });
+    dag.appendChild(col);
+  }
+
+  function drawEdges() {
+    var svg = document.getElementById('edges');
+    var box = dag.getBoundingClientRect();
+    svg.setAttribute('width', dag.scrollWidth);
+    svg.setAttribute('height', dag.scrollHeight);
+    svg.querySelectorAll('path.edge').forEach(function (p) { p.remove(); });
+    nodes.forEach(function (n) {
+      (n.deps || []).forEach(function (dep) {
+        var fromEl = dag.querySelector('[data-nid="' + dep + '"]');
+        var toEl = dag.querySelector('[data-nid="' + n.id + '"]');
+        if (!fromEl || !toEl) return;
+        var a = fromEl.getBoundingClientRect(), b = toEl.getBoundingClientRect();
+        var x1 = a.right - box.left, y1 = a.top + a.height / 2 - box.top;
+        var x2 = b.left - box.left, y2 = b.top + b.height / 2 - box.top;
+        var mx = (x1 + x2) / 2;
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M ' + x1 + ' ' + y1 + ' C ' + mx + ' ' + y1 + ', ' + mx + ' ' + y2 + ', ' + x2 + ' ' + y2);
+        path.setAttribute('class', 'edge');
+        svg.appendChild(path);
+      });
+    });
+  }
+  requestAnimationFrame(drawEdges);
+  addEventListener('resize', drawEdges);
+
+  // ── weights table ──
+  var wtbody = document.querySelector('#weights-table tbody');
+  nodes.slice().sort(function (a, b) { return (b.weight || 0) - (a.weight || 0); }).forEach(function (n) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="mono">' + esc(n.id) + '</td><td>' + esc(n.title) + '</td>' +
+      '<td class="num gold mono">' + (n.weight || 0) + '</td>' +
+      '<td class="num mono">' + ((n.weight || 0) / 100).toFixed(1) + '%</td>' +
+      '<td><div class="wbar"><span style="width:' + ((n.weight || 0) / 100) + '%"></span></div></td>';
+    wtbody.appendChild(tr);
+  });
+  var wtfoot = document.querySelector('#weights-table tfoot');
+  var ftr = document.createElement('tr');
+  ftr.innerHTML = '<td colspan="2"><strong>Σ total</strong></td><td class="num mono ' + (total === 10000 ? 'gold' : '') + '"><strong>' + total + '</strong></td><td colspan="2">' + (total === 10000 ? '✓ exactly 10000 BP' : 'must be exactly 10000 BP') + '</td>';
+  wtfoot.appendChild(ftr);
+
+  // ── rubric table ──
+  var rtbody = document.querySelector('#rubric-table tbody');
+  nodes.forEach(function (n) {
+    var rubric = (n.params && Array.isArray(n.params.rubric)) ? n.params.rubric : [];
+    if (!rubric.length) {
+      var tr0 = document.createElement('tr');
+      tr0.innerHTML = '<td class="mono">' + esc(n.id) + '</td><td>—</td><td style="color:var(--red)">NO RUBRIC — publish refused (draft §3.3)</td>';
+      rtbody.appendChild(tr0);
+      return;
+    }
+    rubric.forEach(function (entry, i) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = (i === 0 ? '<td class="mono" rowspan="' + rubric.length + '">' + esc(n.id) + '</td>' : '') +
+        '<td class="mono">' + (i + 1) + '</td><td>' + esc(entry) + '</td>';
+      rtbody.appendChild(tr);
+    });
+  });
+
+  // ── deps table ──
+  var dtbody = document.querySelector('#deps-table tbody');
+  nodes.slice().sort(function (a, b) { return a._depth - b._depth || String(a.id).localeCompare(String(b.id)); }).forEach(function (n) {
+    var role = [];
+    if (!(n.deps || []).length) role.push('entry');
+    if (n.id === finalnode) role.push('terminal (finalnode)');
+    if (!role.length) role.push('middle');
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="mono">' + esc(n.id) + '</td><td class="mono">' + ((n.deps || []).map(esc).join(', ') || '—') + '</td><td>' + role.join(' · ') + '</td>';
+    dtbody.appendChild(tr);
+  });
+
+  // ── policy summary ──
+  var pgrid = document.getElementById('policy-grid');
+  var items = [
+    ['mode', policy.mode],
+    ['finalnode', finalnode],
+    ['verifyQuorum', policy.verifyQuorum],
+    ['challengeTtlDays', policy.challengeTtlDays],
+    ['rewardSat', policy.rewardSat],
+    ['claimTtlHours', policy.claimTtlHours],
+    ['verifyWindowHours', policy.verifyWindowHours],
+    ['submitterShareBP', policy.submitterShareBP != null ? policy.submitterShareBP : (policy.split && policy.split.submitterShareBP)],
+  ];
+  items.forEach(function (pair) {
+    var div = document.createElement('div');
+    div.className = 'policy-item';
+    div.innerHTML = '<div class="k">' + esc(pair[0]) + '</div><div class="v' + (pair[0] === 'finalnode' ? ' gold' : '') + '">' + esc(pair[1] == null ? '—' : pair[1]) + '</div>';
+    pgrid.appendChild(div);
+  });
+})();
+</script>
+</body>
+</html>

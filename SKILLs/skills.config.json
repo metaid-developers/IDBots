@@ -51,6 +51,13 @@
       "installedAt": 1740969600000,
       "enabled": true
     },
+    "metatask-wizard": {
+      "order": 24,
+      "version": "1.0.0",
+      "creator-metaid": "",
+      "installedAt": 1791094384000,
+      "enabled": true
+    },
     "docx": {
       "order": 50,
       "version": "1.0.0",

@@ -32,7 +32,7 @@ routing question:
 | Short job needing several bots | Group task (metabot-group-task) |
 | Recurring / time-triggered | Scheduled task (scheduled-task) |
 | Days–weeks, blocking points, one owner (the user) | **Long-term task — this skill** |
-| On-chain decomposition claimed by many bots across the network | MetaTask tools (not this skill) |
+| On-chain multi-bot collaborative decomposition (competitive MetaTask) | MetaTask decomposition wizard (metatask-wizard skill) |
 
 If it's not a long-term task, say so and route — do not create one anyway.
 

@@ -1,0 +1,45 @@
+{
+  "campaign": "selftest fixture: two deps sinks (N3 and N4) — expect FAIL sink",
+  "specs": {
+    "root-spec": {
+      "name": "root-spec",
+      "lang": "python3",
+      "entry": "spec-root.py",
+      "script": "#!/usr/bin/env python3\nprint('fixture verifier')",
+      "input": { "env": { "METATASK_ARTIFACT_URI": "metafile://<artifact>", "METATASK_NODE": "N1", "METATASK_TASKID": "<task root pinId>" } },
+      "output": { "exitCode": "0 pass | 1 fail | 2 invalid" },
+      "validation": {
+        "null_tolerance": true,
+        "enumeration_closure": { "closure": "every fixture acceptance item is one numbered check", "selfcheck": { "expected_count": 1 } },
+        "proposition_fidelity": { "correspondence": "metafile://fixture-correspondence", "artifactPin": "metafile://fixture-correspondence" }
+      },
+      "workspace": { "type": "metafile" }
+    }
+  },
+  "tasks": [
+    {
+      "id": "fixture-multi-sink",
+      "rootSpec": "root-spec",
+      "publish": {
+        "title": "Fixture task with two sinks",
+        "brief": "Minimal invalid fixture: N4 is a second deps sink beside finalnode N3.",
+        "tags": ["metatask", "fixture"],
+        "policy": { "mode": "competitive", "finalnode": "N3", "verifyQuorum": 2, "challengeTtlDays": 14, "rewardSat": 0, "claimTtlHours": 0, "verifyWindowHours": 0, "submitterShareBP": 8000 },
+        "nodes": [
+          { "id": "N3", "parent": null, "title": "Terminal node", "kind": "publish", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": ["N2"], "weight": 2500 },
+          { "id": "N4", "parent": "N3", "title": "Accidental second sink", "kind": "implement", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": ["N1"], "weight": 2500 },
+          { "id": "N2", "parent": "N3", "title": "Middle node", "kind": "implement", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": ["N1"], "weight": 2500 },
+          { "id": "N1", "parent": "N3", "title": "Entry node", "kind": "formalize", "specid": null,
+            "params": { "rubric": ["All 4 sample vectors replay with exit 0 and byte-identical canonical digests (machine-checked).", "The output report cites every vector id exactly once in the summary table (reviewer judgment)."] },
+            "deps": [], "weight": 2500 }
+        ]
+      }
+    }
+  ]
+}
