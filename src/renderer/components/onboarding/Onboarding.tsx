@@ -417,11 +417,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, onClose }) => {
                         {i18nService.t('apiKey')}
                       </label>
                       <input
-                        type="password"
+                        type="text"
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
                         placeholder={i18nService.t('apiKeyPlaceholder')}
-                        className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:ring-2 focus:ring-claude-accent"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="w-full px-3 py-2 text-sm rounded-xl dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text border dark:border-claude-darkBorder border-claude-border focus:ring-2 focus:ring-claude-accent font-mono"
                       />
                     </div>
                     <div>

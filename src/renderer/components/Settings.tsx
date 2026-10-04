@@ -1335,6 +1335,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
           : {}),
       });
 
+      // Verify-what-was-persisted: re-read the store and adopt it as the
+      // in-memory config. The next Settings open initializes its fields from
+      // configService.getConfig(), so the key fields show the STORED value —
+      // a silent write failure or a migration reshaping a provider becomes
+      // visible in the (now plain-text) inputs instead of hiding behind dots.
+      await configService.reloadFromStore();
+
       // 应用主题
       themeService.setTheme(theme);
 
@@ -3026,11 +3033,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                     {i18nService.t('apiKey')}
                   </label>
                   <input
-                    type="password"
+                    type="text"
                     id={`${activeProvider}-apiKey`}
                     value={providers[activeProvider].apiKey}
                     onChange={(e) => handleProviderConfigChange(activeProvider, 'apiKey', e.target.value)}
-                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs font-mono"
                     placeholder={i18nService.t('apiKeyPlaceholder')}
                   />
                   {activeProvider === 'deepseek' && (
@@ -3712,7 +3721,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                       {i18nService.t('apiKey')}
                     </label>
                     <input
-                      type="password"
+                      type="text"
                       value={customProviderApiKey}
                       onChange={(e) => {
                         setCustomProviderApiKey(e.target.value);
@@ -3720,7 +3729,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, openNe
                           setCustomProviderError(null);
                         }
                       }}
-                      className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs font-mono"
                       placeholder={i18nService.t('apiKeyPlaceholder')}
                     />
                   </div>

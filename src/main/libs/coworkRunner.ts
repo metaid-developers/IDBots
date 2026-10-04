@@ -42,7 +42,7 @@ import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
-import { CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isBodyLimitDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, OVERFLOW_TURN_RESUME_PROMPT, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT } from './coworkAssistantReply';
+import { CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, OVERFLOW_TURN_RESUME_PROMPT, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -9274,7 +9274,20 @@ export class CoworkRunner extends EventEmitter {
               ` (The request body exceeded the provider's transport byte limit (413 request too large) and the turn was aborted. This is a session-history management anomaly rather than a model context-window problem: local history is preserved and no fallback model was switched to. Try the manual compact button in the header; if compaction still fails, start a fresh session and have the bot carry a summary of the key conclusions over; if this keeps recurring, please report it with cowork.log.)`
             )}`
           : '';
-        this.handleError(sessionId, `DSH turn failed: ${failureDetail}${quotaNotice}${bodyLimitNotice}${overflowNotice}`);
+        // Credential-identity death: the upstream error names only the key TAIL
+        // (e.g. "****9a6d is invalid"), and the settings inputs are masked, so
+        // the operator cannot tell whether the failing key is the one they just
+        // saved — or whether the turn resolved to a DIFFERENT provider entry
+        // that still holds an old key (2026-10-03 Windows report). Name the
+        // route and the key tail actually sent so the transcript alone answers
+        // "which key was used, and from where".
+        const authNotice = isAuthDshTurnError(outcome)
+          ? ` ${tApp(
+              `（认证失败的路由：供应商 ${lastAttemptRoute.provider}，模型 ${lastAttemptRoute.model}；本轮实际发送的 API key 尾号为 ****${String(lastAttemptRoute.apiKey ?? '').trim().slice(-4) || '????'}。请到 设置 > 模型 打开该供应商，明文对比保存的 key：尾号一致说明这把 key 本身已失效，请更换；尾号不一致说明本轮没有使用你刚保存的那把，请检查是否有其他启用的供应商提供同名模型。）`,
+              ` (The failing route: provider ${lastAttemptRoute.provider}, model ${lastAttemptRoute.model}; the API key actually sent ended with ****${String(lastAttemptRoute.apiKey ?? '').trim().slice(-4) || '????'}. Open that provider in Settings > Models and compare the key in plain text: a matching tail means this key itself is rejected — replace it; a different tail means the turn did not use the key you just saved — check whether another enabled provider serves the same model.)`
+            )}`
+          : '';
+        this.handleError(sessionId, `DSH turn failed: ${failureDetail}${quotaNotice}${bodyLimitNotice}${overflowNotice}${authNotice}`);
         this.clearPendingPermissions(sessionId);
         this.settleDshSteerSubmissions(activeSession, 'failed', `DSH turn failed: ${failureDetail}`);
         this.removeActiveSession(sessionId, activeSession);
