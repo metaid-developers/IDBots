@@ -47,7 +47,7 @@ import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
 } from './coworkSdkResultDiagnostics';
-import { isQuestionLikeMemoryText, type CoworkMemoryGuardLevel } from './coworkMemoryExtractor';
+import { questionLikeMemoryReason, type CoworkMemoryGuardLevel } from './coworkMemoryExtractor';
 import {
   formatChainHistoryRecallResults,
   resolveChainHistoryRecallQuery,
@@ -3385,8 +3385,9 @@ export class CoworkRunner extends EventEmitter {
     if (!text) {
       return { ok: false, text: '', reason: 'text is required' };
     }
-    if (isQuestionLikeMemoryText(text)) {
-      return { ok: false, text: '', reason: 'memory text looks like a question, not a durable fact' };
+    const questionReason = questionLikeMemoryReason(text);
+    if (questionReason) {
+      return { ok: false, text: '', reason: `memory text looks like a question, not a durable fact (${questionReason})` };
     }
     // When user explicitly asks to remember (e.g. "remember this error"), allow content that
     // mentions tools/commands as lessons; only reject literal command snippets when implicit.

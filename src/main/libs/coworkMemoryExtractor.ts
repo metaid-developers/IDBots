@@ -40,15 +40,36 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+export function questionLikeMemoryReason(text: string): string | null {
+  const trimmedOriginal = normalizeText(text);
+  if (!trimmedOriginal) return null;
+  // Terminal punctuation is the strongest declarative/question signal: the
+  // stripped copy below loses it, so capture the verdict first. A statement
+  // ending in 。/. stays declarative even when it contains A-not-A forms
+  // ("……判断文件有没有缺失。"), which are embedded indirect questions.
+  const declarativeTerminator = /[。.!！]\s*$/.test(trimmedOriginal);
+  const normalized = trimmedOriginal.replace(/[。！!]+$/g, '').trim();
+  if (!normalized) return null;
+  if (/[？?]\s*$/.test(normalized)) return 'ends with a question mark';
+  if (QUESTION_SUFFIX_RE.test(normalized)) return 'ends with an interrogative particle';
+  if (declarativeTerminator) return null;
+  // Interrogative *prefixes* (如何/为什么/which/...) only mark a question when the
+  // whole text is short. Long texts that merely open with an interrogative word
+  // are topic framings (e.g. "如何把多方输入收束成整体：……纪律"), not questions.
+  if (normalized.length <= 40) {
+    if (CHINESE_QUESTION_PREFIX_RE.test(normalized)) return 'starts with an interrogative phrase (short text)';
+    if (ENGLISH_QUESTION_PREFIX_RE.test(normalized)) return 'starts with an English interrogative (short text)';
+  }
+  // Mid-text A-not-A forms (是不是/有没有/…) frequently occur inside declarative
+  // statements ("追结论现在还成不成立", "检查有没有遗漏"). Without terminal
+  // punctuation, only an A-not-A form in the FINAL clause carries question force.
+  const finalClause = normalized.split(/[。，,；;！!？?\n]/).filter((part) => part.trim()).pop() ?? '';
+  if (QUESTION_INLINE_RE.test(finalClause)) return 'final clause contains an A-not-A question form';
+  return null;
+}
+
 export function isQuestionLikeMemoryText(text: string): boolean {
-  const normalized = normalizeText(text).replace(/[。！!]+$/g, '').trim();
-  if (!normalized) return false;
-  if (/[？?]\s*$/.test(normalized)) return true;
-  if (CHINESE_QUESTION_PREFIX_RE.test(normalized)) return true;
-  if (ENGLISH_QUESTION_PREFIX_RE.test(normalized)) return true;
-  if (QUESTION_INLINE_RE.test(normalized)) return true;
-  if (QUESTION_SUFFIX_RE.test(normalized)) return true;
-  return false;
+  return questionLikeMemoryReason(text) !== null;
 }
 
 /**
