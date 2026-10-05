@@ -3189,15 +3189,16 @@ export class CoworkStore implements MemoryBackend {
     effort: string | null = null,
     modelProvider: string | null = null,
     projectId: string | null = null,
-    goal: CoworkSessionGoal | null = null
+    goal: CoworkSessionGoal | null = null,
+    parentSessionId: string | null = null
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
 
     this.db.run(`
-      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, permission_mode, model, effort, model_provider, project_id, goal, created_at, updated_at)
-      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, title, cwd, systemPrompt, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, now, now]);
+      INSERT INTO cowork_sessions (id, title, claude_session_id, status, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id, pinned, session_type, peer_global_metaid, peer_name, peer_avatar, permission_mode, model, effort, model_provider, project_id, goal, parent_session_id, created_at, updated_at)
+      VALUES (?, ?, NULL, 'idle', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, title, cwd, systemPrompt, resolveCoworkExecutionMode(executionMode), JSON.stringify(activeSkillIds), metabotId, sessionType, peerGlobalMetaId, peerName, peerAvatar, permissionMode, model, effort, modelProvider, projectId, goal ? serializeSessionGoal(goal) : null, parentSessionId, now, now]);
 
     this.upsertConversationMapping({
       channel: 'cowork_ui',
@@ -3237,6 +3238,7 @@ export class CoworkStore implements MemoryBackend {
       modelProvider,
       projectId,
       goal,
+      parentSessionId: parentSessionId ?? undefined,
     };
   }
 
@@ -3492,10 +3494,6 @@ export class CoworkStore implements MemoryBackend {
     if (updates.permissionMode !== undefined) {
       setClauses.push('permission_mode = ?');
       values.push(updates.permissionMode);
-    }
-    if (updates.parentSessionId !== undefined) {
-      setClauses.push('parent_session_id = ?');
-      values.push(updates.parentSessionId);
     }
     if (updates.forkPointMessageId !== undefined) {
       setClauses.push('fork_point_message_id = ?');
@@ -5399,7 +5397,10 @@ export class CoworkStore implements MemoryBackend {
       source.permissionMode ?? 'default',
       source.model ?? null,
       source.effort ?? null,
-      source.modelProvider ?? null
+      source.modelProvider ?? null,
+      null,
+      null,
+      sourceSessionId
     );
 
     // Batch-copy messages with one flush. Timestamps are preserved; ids are
@@ -5439,9 +5440,9 @@ export class CoworkStore implements MemoryBackend {
     }
     this.db.run(`
       UPDATE cowork_sessions
-      SET parent_session_id = ?, fork_point_message_id = ?, updated_at = ?
+      SET fork_point_message_id = ?, updated_at = ?
       WHERE id = ?
-    `, [sourceSessionId, forkPointMessageId, Date.now(), forked.id]);
+    `, [forkPointMessageId, Date.now(), forked.id]);
     this.saveDb();
 
     return this.getSession(forked.id);

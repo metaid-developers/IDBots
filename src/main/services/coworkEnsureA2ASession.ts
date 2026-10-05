@@ -29,6 +29,8 @@ export interface EnsureCoworkA2ASessionParams {
   coworkStore: CoworkStore;
   getMetabotById: (metabotId: number) => Pick<Metabot, 'id' | 'name' | 'globalmetaid'> | null;
   input: CoworkA2ASessionInput;
+  /** Runtime-causal parent: the chat session that triggered this A2A session, when one exists. */
+  parentSessionId?: string | null;
 }
 
 export interface EnsureCoworkA2ASessionResult {
@@ -186,6 +188,13 @@ export function ensureCoworkA2ASession(
     normalized.peerGlobalMetaId,
     normalized.peerName,
     normalized.peerAvatar,
+    'default',
+    null,
+    null,
+    null,
+    null,
+    null,
+    params.parentSessionId ?? null,
   );
 
   params.coworkStore.upsertConversationMapping({
