@@ -89,6 +89,7 @@ import {
   buildExperiencePromptBlocksXml,
   RECENT_SUMMARIES_PROMPT_DAYS,
 } from '../libs/experiencePromptBlocks';
+import { truncateUtf16Units } from '../libs/llmSafeText';
 import { buildScopedMemoryPromptBlocks } from '../memory/memoryPromptBlocks';
 import type { MemoryUsageClass, MemoryVisibility } from '../memory/memoryScope';
 import {
@@ -1140,7 +1141,7 @@ const DELIVERABLE_ID_CANDIDATE = /\b(?:0[xX][0-9a-fA-F]{2,66}|[0-9a-fA-F]{16,66}
 const MAX_VERIFICATION_CANDIDATES = 3;
 
 /** Overall cap for the group-task experience block (section-trimmed, never tail-cut). */
-const GROUP_EXPERIENCE_BLOCK_MAX_CHARS = 4000;
+const EXPERIENCE_BLOCK_MAX_CHARS = 4000;
 /** Char budget for the owner scoped-memory block riding every plain group-task turn. */
 const GROUP_MEMORY_BLOCK_MAX_CHARS = 3000;
 /** Char budget for the authoritative constraints block rendered from the task's [POSITION] ledger. */
@@ -1154,8 +1155,9 @@ const GROUP_COGNITION_BLOCK_MAX_CHARS = 3000;
  * the assembled block exceeds the cap, sections shrink in load-bearing order:
  * daily summaries first, then proven techniques, then work reviews, and value
  * boundaries last (the hardest-won rules). When even the most-trimmed assembly
- * exceeds the cap it is returned whole — the identity instruction block's
- * integrity beats the budget.
+ * exceeds the cap it is hard-capped UTF-16-safely at EXPERIENCE_BLOCK_MAX_CHARS
+ * (llmSafeText sweep contract) — the identity block sits at the head and
+ * survives; only the tail sections give way.
  */
 export function buildGroupTaskExperienceBlock(input: {
   identityText?: string | null;
@@ -1165,7 +1167,7 @@ export function buildGroupTaskExperienceBlock(input: {
   summaries?: Array<{ summaryDate: string; summaryText: string }>;
   maxChars?: number;
 }): string {
-  const cap = Math.max(500, Math.floor(input.maxChars ?? GROUP_EXPERIENCE_BLOCK_MAX_CHARS));
+  const cap = Math.max(500, Math.floor(input.maxChars ?? EXPERIENCE_BLOCK_MAX_CHARS));
   const boundaries = input.valueBoundaries ?? [];
   const reviews = input.workReviews ?? [];
   const techniques = input.provenTechniques ?? [];
@@ -1198,7 +1200,11 @@ export function buildGroupTaskExperienceBlock(input: {
     lastBlock = block;
     if (block.length <= cap) return block;
   }
-  return lastBlock;
+  // llmSafeText sweep contract (round-4): the assembled block must never
+  // reach the prompt torn mid-surrogate — hard-cap it UTF-16-safely. The
+  // ladder above keeps this off the hot path; identity sits at the block
+  // head, so the tail (summaries/boundaries) is what gives way here.
+  return truncateUtf16Units(lastBlock, EXPERIENCE_BLOCK_MAX_CHARS);
 }
 
 /**
