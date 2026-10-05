@@ -265,7 +265,7 @@ test('tool-result fold preview: middle cut never strands surrogate halves (revie
 
 test('review round-4 sweep: every converted chokepoint routes through llmSafeText', () => {
   const anchors = [
-    ['src/main/services/groupTaskDaemon.ts', /truncateUtf16Units\(block, EXPERIENCE_BLOCK_MAX_CHARS\)/],
+    ['src/main/services/groupTaskDaemon.ts', /truncateUtf16Units\(lastBlock, EXPERIENCE_BLOCK_MAX_CHARS\)/],
     ['src/main/libs/dreamPrompt.ts', /truncateUtf16Units\(normalized, maxChars\)/],
     ['src/main/skillManager.ts', /const window = truncateUtf16Units\(text, maxChars\)/],
     ['src/main/libs/coworkToolResultFold.ts', /truncateUtf16UnitsFromEnd\(clean, Math\.floor\(maxChars \/ 2\)\)/],
