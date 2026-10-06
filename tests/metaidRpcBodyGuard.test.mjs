@@ -76,6 +76,11 @@ const EXPECTED_FIELD_CONTRACTS = {
 const EMPTY_BODY_MEANS_OBJECT_ROUTES = [
   '/api/idbots/bot-browser/open',
   '/api/idbots/bot-browser/tabs',
+  // Added 2026-10-03 (bot_browser_act), after the empty-body audit above was
+  // written: it feeds the same shared guard with `{ emptyBody: 'object' }`,
+  // so an empty body proceeds as {} and the "preview act is unavailable"
+  // error (no browser attached) is answered after body parsing, like tabs.
+  '/api/idbots/bot-browser/act',
   '/api/idbots/chat/group-history',
   '/api/idbots/chat/private-history',
   '/api/idbots/chat/private-send',
