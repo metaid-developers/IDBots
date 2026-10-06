@@ -64,7 +64,7 @@ overrides:
 # + apply the allow-forms edits + `pnpm patch-commit`, then rename the
 # generated file to the patches/<scope>+<name>+<version>.patch convention.
 patchedDependencies:
-  '@openagentinternet/agent-browser-ui@0.6.3': patches/@openagentinternet+agent-browser-ui+0.6.3.patch
+  '@openagentinternet/agent-browser-ui@0.7.0': patches/@openagentinternet+agent-browser-ui+0.7.0.patch
 
 # Dependencies whose install scripts are allowed to run (pnpm blocks them by
 # default): electron downloads its platform binary, esbuild installs its
@@ -82,8 +82,8 @@ allowBuilds:
   utf-8-validate: true
 
 minimumReleaseAgeExclude:
-  - '@openagentinternet/agent-browser-core@0.6.3'
-  - '@openagentinternet/agent-browser-host-contract@0.6.3'
-  - '@openagentinternet/agent-browser-name-resolvers@0.6.3'
-  - '@openagentinternet/agent-browser-renderers@0.6.3'
-  - '@openagentinternet/agent-browser-ui@0.6.3'
+  - '@openagentinternet/agent-browser-core@0.7.0'
+  - '@openagentinternet/agent-browser-host-contract@0.7.0'
+  - '@openagentinternet/agent-browser-name-resolvers@0.7.0'
+  - '@openagentinternet/agent-browser-renderers@0.7.0'
+  - '@openagentinternet/agent-browser-ui@0.7.0'

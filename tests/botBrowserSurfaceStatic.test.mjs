@@ -77,7 +77,7 @@ test('surface wires Bot Browser MetaApp cache IPC into the host adapter', () => 
 // allow-same-origin (the retired relaxMetaAppIframeSandbox) was therefore both
 // ineffective and contrary to the upstream opaque-frame contract. allow-forms
 // is added at the dependency source via
-// patches/@openagentinternet+agent-browser-ui+0.6.3.patch.
+// patches/@openagentinternet+agent-browser-ui+0.7.0.patch.
 const SANDBOX_RELAXATION_RE = /relaxMetaAppIframeSandbox/;
 
 test('surface renders the packaged Browser HTML without rewriting the iframe sandbox', () => {
