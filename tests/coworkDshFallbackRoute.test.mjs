@@ -102,8 +102,8 @@ function installApiConfig(claudeSettings, overrides = {}) {
         api: { key: 'sk-a', baseUrl: 'http://primary.example/v1' },
         model: {
           availableModels: [{ id: 'mock-a1', name: 'mock-a1' }, { id: 'mock-b1', name: 'mock-b1' }],
-          defaultModel: 'mock-a1',
-          defaultProvider: 'gw-a',
+          defaultModel: overrides.defaultModel ?? 'mock-a1',
+          defaultProvider: overrides.defaultProvider ?? 'gw-a',
         },
         providers: {
           'gw-a': {
@@ -440,3 +440,85 @@ test('persistent transient failure on both routes keeps the origin fallback budg
   assert.equal(result.runTurnCalls.length, 6, '1 initial + 3 primary resumes + 2 fallback resumes — quota fix must not change this')
   assert.equal(result.sessionRow?.status, 'error')
 })
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 stale-binding rescue: the bot brain (or session model) is pinned
+// to an exhausted provider and NO fallback brain is configured — Boss ruling:
+// a model call has NO stickiness; while the CURRENT default model is valid,
+// the call must work. The turn must rescue itself onto the freshly resolved
+// current default route instead of dying (and re-dying for every queued
+// message behind it — the 429 avalanche). Nothing is anchored: the failure
+// affects only that attempt; the next turn re-resolves from scratch.
+// ---------------------------------------------------------------------------
+
+const BOT_WITHOUT_FALLBACK = {
+  id: 2,
+  name: 'StaleBinding Bot',
+  llm_id: 'mock-a1',
+  llm_provider: 'gw-a',
+  fallback_llm_id: null,
+  fallback_llm_provider: null,
+}
+
+test('a quota death with NO fallback brain rescues the turn onto the CURRENT default route and completes', async () => {
+  const result = await driveTurn({
+    sessionId: 'stale-binding-quota-default-rescue',
+    metabot: BOT_WITHOUT_FALLBACK,
+    // Owner moved the default to gw-b/mock-b1 AFTER the session/bot binding
+    // to gw-a/mock-a1 was made; the stale binding dies on quota at call 1 and
+    // the current default carries call 2 to completion.
+    configOverrides: { defaultModel: 'mock-b1', defaultProvider: 'gw-b' },
+    script: (_input, callNo) => (callNo === 1 ? quotaError() : { kind: 'completed' }),
+  })
+
+  assert.equal(result.runTurnCalls.length, 2, '1 initial quota death + 1 single default-rescue attempt')
+  assert.equal(result.runTurnCalls[0].provider.key, 'gw-a', 'call 1 rides the stale bound route')
+  assert.equal(result.runTurnCalls[1].provider.key, 'gw-b', 'the exhausted turn degrades to the CURRENT default route')
+  assert.equal(result.runTurnCalls[1].provider.model, 'mock-b1')
+  assert.equal(result.sessionRow?.status, 'completed')
+  assert.equal(result.errors.length, 0)
+
+  const notice = result.store.messages.find(
+    (m) => m.type === 'system' && m.metadata?.dshRouteFallback === true,
+  )
+  assert.ok(notice, 'a dshRouteFallback system message lands in the transcript')
+  assert.match(notice.content, /mock-b1/)
+  assert.match(notice.content, /当前默认|current default/)
+  await result.completed
+})
+
+test('an exhausted RATE_LIMIT (transient) ladder with no fallback brain rescues onto the current default route', async () => {
+  const rateLimitError = () => ({ kind: 'error', error: { code: 'RATE_LIMIT', message: '429 too many requests' } })
+  const result = await driveTurn({
+    sessionId: 'stale-binding-ratelimit-default-rescue',
+    metabot: BOT_WITHOUT_FALLBACK,
+    configOverrides: { defaultModel: 'mock-b1', defaultProvider: 'gw-b' },
+    // 1 initial + 3 same-route transient resumes all rate-limited on the dead
+    // bound route; the default-rescue attempt (call 5) completes.
+    script: (_input, callNo) => (callNo <= 4 ? rateLimitError() : { kind: 'completed' }),
+  })
+
+  assert.equal(result.runTurnCalls.length, 5, '1 initial + 3 primary resumes + 1 default-rescue attempt')
+  for (const call of result.runTurnCalls.slice(0, 4)) {
+    assert.equal(call.provider.key, 'gw-a', 'the primary ladder stays on the bound route')
+  }
+  assert.equal(result.runTurnCalls[4].provider.key, 'gw-b')
+  assert.equal(result.sessionRow?.status, 'completed')
+  assert.equal(result.errors.length, 0)
+  await result.completed
+})
+
+test('when the current default IS the failed route there is no rescue loop and the turn settles as before', async () => {
+  const result = await driveTurn({
+    sessionId: 'stale-binding-no-op-rescue',
+    metabot: BOT_WITHOUT_FALLBACK,
+    // defaultModel stays mock-a1/gw-a — the same route that is quota-dead.
+    script: (_input, callNo) => (callNo === 1 ? quotaError() : { kind: 'completed' }),
+  })
+
+  assert.equal(result.runTurnCalls.length, 1, 'no rescue attempt when the default is the dead route itself')
+  assert.equal(result.sessionRow?.status, 'error')
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0].error, /GoUsageLimitError/)
+})
+

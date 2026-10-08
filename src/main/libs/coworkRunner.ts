@@ -7910,6 +7910,53 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Last-resort runtime rescue route (2026-10-08 stale-binding post-mortem):
+   * when the turn's bound route (session model pick, or a bot brain pinned to
+   * a now-exhausted provider) dies on QUOTA/RATE_LIMIT and NO fallback brain
+   * exists or resolves, re-resolve the CURRENT global default route from
+   * app_config and — when it maps to a DIFFERENT upstream — hand the turn to
+   * it. The owner's latest default is resolved live at this call (no session
+   * snapshot is consulted), so changing the default in Settings takes effect
+   * for the very next attempt of the same turn instead of failing the turn
+   * and re-failing every queued message behind it (the 429 avalanche).
+   *
+   * Deliberately bypasses the turn-start "refuse to bill the free-quota relay
+   * for a non-free bot brain" guard: that guard shapes normal routing, while
+   * here the alternative is a dead turn. A WARN log discloses the
+   * substitution each time it happens (the shared switch path also emits a
+   * dshRouteFallback transcript notice).
+   */
+  private resolveCurrentDefaultDshRoute(
+    sessionId: string,
+    failedRoute: DshProviderRouteInfo,
+  ): DshProviderRouteInfo | null {
+    let defaultRoute: ReturnType<typeof resolveDshProviderRoute> = null;
+    try {
+      defaultRoute = resolveDshProviderRoute();
+    } catch (error) {
+      coworkLog('WARN', 'resolveCurrentDefaultDshRoute', 'Default route re-resolution threw during quota rescue', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+    if (!defaultRoute?.baseUrl || !defaultRoute.apiKey) return null;
+    if (
+      defaultRoute.provider === failedRoute.provider
+      && defaultRoute.baseUrl === failedRoute.baseUrl
+      && defaultRoute.model === failedRoute.model
+    ) {
+      return null;
+    }
+    coworkLog('WARN', 'resolveCurrentDefaultDshRoute', 'Bound route died on quota/rate-limit with no fallback brain — rescuing the turn onto the current default route', {
+      sessionId,
+      fromRoute: { provider: failedRoute.provider, model: failedRoute.model, baseUrl: failedRoute.baseUrl },
+      toRoute: { provider: defaultRoute.provider, model: defaultRoute.model, baseUrl: defaultRoute.baseUrl },
+    });
+    return defaultRoute;
+  }
+
+  /**
    * Map a resolved provider row onto the hub's turn-route shape. Warmup and
    * the first real turn must produce the same composition fields (key, model
    * limits, vision flag) or the shared runtime restarts and the warmup is wasted.
@@ -9147,7 +9194,21 @@ export class CoworkRunner extends EventEmitter {
         && !activeSession.abortController.signal.aborted
         && (gateTransient || gateQuota || gateOverflow)
       ) {
-        const fallbackRoute = this.resolveSessionFallbackDshRoute(sessionId, route);
+        const gateSourceRoute = route;
+        // Brain fallback first (unchanged GT-02 behavior); when NO fallback
+        // brain exists/resolves to a different route, the 2026-10-08
+        // stale-binding post-mortem rescue kicks in: re-resolve the CURRENT
+        // default route so the owner's latest default carries the turn
+        // instead of the turn dying (and every queued message re-dying
+        // behind it). Both quota and exhausted-transient (incl. RATE_LIMIT)
+        // deaths take this; the failure only affects THIS attempt — nothing
+        // is anchored: the next turn re-resolves from scratch.
+        let fallbackRoute = this.resolveSessionFallbackDshRoute(sessionId, gateSourceRoute);
+        let fallbackIsCurrentDefault = false;
+        if (!fallbackRoute && (gateQuota || gateTransient)) {
+          fallbackRoute = this.resolveCurrentDefaultDshRoute(sessionId, gateSourceRoute);
+          fallbackIsCurrentDefault = fallbackRoute !== null;
+        }
         if (fallbackRoute) {
           coworkLog(
             'WARN',
@@ -9172,15 +9233,15 @@ export class CoworkRunner extends EventEmitter {
             sessionId,
             tApp(
               gateQuota
-                ? `主模型 ${route.model}（${route.provider}）额度不足，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
+                ? `主模型 ${route.model}（${route.provider}）额度不足，本轮已切换到${fallbackIsCurrentDefault ? '当前默认模型' : '该 Bot 的备用模型'} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
                 : gateOverflow
                   ? `主模型 ${route.model}（${route.provider}）上下文超限，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
-                  : `主模型路由持续不可用，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
+                  : `主模型路由持续不可用，本轮已切换到${fallbackIsCurrentDefault ? '当前默认模型' : '该 Bot 的备用模型'} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
               gateQuota
-                ? `The primary model ${route.model} (${route.provider}) ran out of credit; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                ? `The primary model ${route.model} (${route.provider}) ran out of credit; this turn switched to the ${fallbackIsCurrentDefault ? 'current default' : "bot's fallback"} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
                 : gateOverflow
                   ? `The primary model ${route.model} (${route.provider}) exceeded its context window; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
-                  : `The primary model route kept failing; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                  : `The primary model route kept failing; this turn switched to the ${fallbackIsCurrentDefault ? 'current default' : "bot's fallback"} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
             ),
             {
               dshRouteFallback: true,
