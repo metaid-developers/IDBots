@@ -7921,20 +7921,17 @@ export class CoworkRunner extends EventEmitter {
    * for the very next attempt of the same turn instead of failing the turn
    * and re-failing every queued message behind it (the 429 avalanche).
    *
-   * Guardrail (2026-10-08 orchestrator ruling, conservative reading): the
-   * rescue only ever hands the turn to the FREE-QUOTA relay default
-   * (isFreeQuotaProvider) — the one path that cannot incur cost. When the
-   * current default is a PAID provider, the rescue DECLINES (decline:
-   * 'paid-default-guard'): Boss never authorized auto-accepting a
-   * cost-incurring path, so the turn settles as an error with a notice
-   * naming the declined default instead of silently billing it. Relaxing
-   * this (rescue onto any enabled default) is a one-line change awaiting
-   * explicit authorization.
+   * 2026-10-08 Boss rework ruling: the earlier free-relay-only guardrail
+   * (declining a PAID default) is REMOVED — the owner already runs paid
+   * relays and official providers in daily operation, so "rescue may cost"
+   * is not a concern and an avoided cost is not worth a dead turn. The
+   * rescue now accepts ANY enabled default (free or paid) as long as it
+   * maps to a different upstream; per-call only, nothing is anchored.
    */
   private resolveCurrentDefaultDshRoute(
     sessionId: string,
     failedRoute: DshProviderRouteInfo,
-  ): { route: DshProviderRouteInfo | null; decline: 'none' | 'resolve-error' | 'no-default' | 'same-route' | 'paid-default-guard' } {
+  ): { route: DshProviderRouteInfo | null; decline: 'none' | 'resolve-error' | 'no-default' | 'same-route' } {
     let defaultRoute: ReturnType<typeof resolveDshProviderRoute> = null;
     try {
       defaultRoute = resolveDshProviderRoute();
@@ -7952,17 +7949,6 @@ export class CoworkRunner extends EventEmitter {
       && defaultRoute.model === failedRoute.model
     ) {
       return { route: null, decline: 'same-route' };
-    }
-    if (!isFreeQuotaProvider(defaultRoute.provider)) {
-      // Guardrail: a paid default is a cost-incurring rescue path — do not
-      // auto-accept it. Disclose loudly so the terminal notice can point the
-      // operator at it (authorize the rescue, top up, or switch manually).
-      coworkLog('WARN', 'resolveCurrentDefaultDshRoute', 'Bound route died on quota/rate-limit with no fallback brain, but the CURRENT default is a PAID provider — rescue declined by the free-relay-only guardrail (no unauthorized cost path)', {
-        sessionId,
-        fromRoute: { provider: failedRoute.provider, model: failedRoute.model, baseUrl: failedRoute.baseUrl },
-        declinedRoute: { provider: defaultRoute.provider, model: defaultRoute.model, baseUrl: defaultRoute.baseUrl },
-      });
-      return { route: null, decline: 'paid-default-guard' };
     }
     coworkLog('WARN', 'resolveCurrentDefaultDshRoute', 'Bound route died on quota/rate-limit with no fallback brain — rescuing the turn onto the current default route', {
       sessionId,
@@ -9207,13 +9193,11 @@ export class CoworkRunner extends EventEmitter {
       const gateConfigHard = !gateTransient && !gateQuota && !gateOverflow
         && (isAuthDshTurnError(outcome) || isConfigModelMissingDshTurnError(outcome));
       // Ring-4 terminal-semantics tracker (2026-10-08 Boss ruling): when the
-      // degrade ladder had NOWHERE to go (no fallback brain, and no
-      // free-relay default to rescue with), the settle error below must read
+      // degrade ladder had NOWHERE to go (no fallback brain, and no usable
+      // current default to rescue with), the settle error below must read
       // as the localized "no usable model configured" message ('未配置可用模型',
       // a configuration error), never the raw 429 body.
-      // 'paid-default-guard' keeps its own notice: a paid default EXISTS but
-      // the free-relay-only guardrail declined to auto-bill it.
-      let ladderNoTargetKind: 'no-alternative' | 'paid-default-guard' | null = null;
+      let ladderNoTargetKind: 'no-alternative' | null = null;
       // The HTTP 413 body-limit family (kernel REQUEST_TOO_LARGE /
       // "413 request too large") is deliberately NOT in this chain
       // (2026-10-04 metaid-free incident): 413 fires on the request's
@@ -9246,7 +9230,7 @@ export class CoworkRunner extends EventEmitter {
           fallbackRoute = rescue.route;
           fallbackIsCurrentDefault = fallbackRoute !== null;
           if (!fallbackRoute) {
-            ladderNoTargetKind = rescue.decline === 'paid-default-guard' ? 'paid-default-guard' : 'no-alternative';
+            ladderNoTargetKind = 'no-alternative';
           }
         }
         if (fallbackRoute) {
@@ -9361,12 +9345,6 @@ export class CoworkRunner extends EventEmitter {
               ` (No usable model configured: the session's bound model is unavailable and neither the bot fallback nor the current-default ladder has a valid target — this is a configuration error, not a transient rate limit. Configure a usable default model in Settings > Models, or top up the provider.)`
             )}`
           : '';
-        const guardDeclinedNotice = ladderNoTargetKind === 'paid-default-guard'
-          ? ` ${tApp(
-              `（当前默认模型可能产生费用，急救护栏仅允许免费中继、未自动切换；请为原供应商充值，或在设置中手动切换模型。）`,
-              ` (The current default model may incur cost and the rescue guardrail only auto-accepts the free relay; it was not switched to automatically. Top up the original provider or switch models manually in Settings.)`
-            )}`
-          : '';
         // Quota death is not retryable on the same route and the raw provider
         // body names no culprit: append an actionable notice naming the route
         // that ran out of credit, so "switch model and retry" is discoverable
@@ -9420,10 +9398,8 @@ export class CoworkRunner extends EventEmitter {
         // above); the notices carry the config semantics instead.
         const ladderSemantics = ladderNoTargetKind === 'no-alternative'
           ? `未配置可用模型（配置错误：绑定模型与备用/默认降级链均无效；最后错误码 ${outcome.error?.code ?? 'UNKNOWN'}）`
-          : ladderNoTargetKind === 'paid-default-guard'
-            ? `绑定模型 ${lastAttemptRoute.provider}/${lastAttemptRoute.model} 不可用且无免费默认可急救（最后错误码 ${outcome.error?.code ?? 'UNKNOWN'}）`
-            : failureDetail;
-        this.handleError(sessionId, `DSH turn failed: ${ladderSemantics}${quotaNotice}${noModelConfiguredNotice}${guardDeclinedNotice}${bodyLimitNotice}${overflowNotice}${authNotice}`);
+          : failureDetail;
+        this.handleError(sessionId, `DSH turn failed: ${ladderSemantics}${quotaNotice}${noModelConfiguredNotice}${bodyLimitNotice}${overflowNotice}${authNotice}`);
         this.clearPendingPermissions(sessionId);
         this.settleDshSteerSubmissions(activeSession, 'failed', `DSH turn failed: ${ladderSemantics}`);
         this.removeActiveSession(sessionId, activeSession);

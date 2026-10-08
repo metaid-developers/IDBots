@@ -501,9 +501,9 @@ const BOT_WITHOUT_FALLBACK = {
   fallback_llm_provider: null,
 }
 
-// Guardrail-compliant rescue target: the free-quota relay. 2026-10-08
-// conservative ruling: the rescue path only auto-accepts the free relay —
-// a PAID default would be a cost-incurring path Boss never authorized.
+// Free-relay rescue target (still valid after the 2026-10-08 rework ruling:
+// the free relay remains an acceptable rescue path, it is just no longer the
+// ONLY one — see the paid-default rescue test below).
 const FREE_RELAY_OVERRIDES = {
   defaultModel: 'free-m1',
   defaultProvider: 'metaid-free',
@@ -545,30 +545,40 @@ test('a quota death with NO fallback brain rescues the turn onto the free-relay 
   await result.completed
 })
 
-test('a PAID current default is NOT auto-accepted by the rescue guardrail — the turn settles disclosing the declined route', async () => {
-  // 2026-10-08 conservative guardrail ruling: the rescue only walks the free
-  // relay. gw-b is a paid provider — even though it is the current default
-  // and healthy, auto-billing it was never authorized.
+test('a PAID current default IS accepted by the rescue — the turn completes on it (guardrail removed)', async () => {
+  // 2026-10-08 Boss rework ruling: the free-relay-only guardrail is removed.
+  // gw-b is a PAID provider and the current default — the rescue must take
+  // it ("rescue may cost" is not a concern; a dead turn is). A non-free mock
+  // target proves the paid default is actually rescued onto, not declined.
   const result = await driveTurn({
-    sessionId: 'stale-binding-paid-default-guard',
+    sessionId: 'stale-binding-paid-default-rescue',
     metabot: BOT_WITHOUT_FALLBACK,
     configOverrides: { defaultModel: 'mock-b1', defaultProvider: 'gw-b' },
     script: (_input, callNo) => (callNo === 1 ? quotaError() : { kind: 'completed' }),
   })
 
-  assert.equal(result.runTurnCalls.length, 1, 'the paid default is declined: no rescue attempt, no extra billing')
-  assert.equal(result.runTurnCalls[0].provider.key, 'gw-a')
-  assert.equal(result.sessionRow?.status, 'error')
-  assert.ok(result.errors.length >= 1)
-  const errorText = result.errors.map((e) => String(e.error)).join('\n')
-  assert.match(errorText, /免费中继|free relay/, 'the terminal error discloses that a default exists but the free-relay-only guardrail declined it')
-  assert.doesNotMatch(errorText, /GoUsageLimitError/, 'the raw 429 provider body is not surfaced to the user')
+  assert.equal(result.runTurnCalls.length, 2, '1 initial quota death + 1 single paid-default rescue attempt')
+  assert.equal(result.runTurnCalls[0].provider.key, 'gw-a', 'call 1 rides the stale bound route')
+  assert.equal(result.runTurnCalls[1].provider.key, 'gw-b', 'the exhausted turn degrades onto the PAID current default')
+  assert.equal(result.runTurnCalls[1].provider.model, 'mock-b1')
+  assert.equal(result.sessionRow?.status, 'completed', 'the turn completes on the paid default — no dead turn')
+  assert.equal(result.errors.length, 0)
+  const notice = result.store.messages.find(
+    (m) => m.type === 'system' && m.metadata?.dshRouteFallback === true,
+  )
+  assert.ok(notice, 'a dshRouteFallback system message lands in the transcript')
+  assert.match(notice.content, /mock-b1/)
+  assert.match(notice.content, /当前默认|current default/)
 
   const logText = fs.readFileSync(coworkLogPath(), 'utf-8')
   assert.ok(
-    logText.includes('free-relay-only guardrail'),
-    'the guardrail-decline WARN names the declined paid route in cowork.log',
+    logText.includes('rescuing the turn onto the current default route'),
+    'the rescue WARN names the paid target route in cowork.log',
   )
+  // NOTE: cowork.log is append-only across runs, so a whole-file doesNotMatch
+  // against pre-rework guardrail strings would false-positive on historical
+  // entries; the positive rescue assertion above is the behavior check.
+  await result.completed
 })
 
 test('an exhausted RATE_LIMIT (transient) ladder with no fallback brain rescues onto the free-relay default route', async () => {
