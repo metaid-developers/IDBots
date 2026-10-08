@@ -337,6 +337,15 @@ export interface DshHubOptions {
   extraEntriesProvider?: () => Array<Record<string, unknown>>
   /** Idle-session events (native compact checkpoints) when no turn controller is live. */
   onIdleSessionMessage?: (coworkSessionId: string, message: { type: string; content: string; metadata?: Record<string, unknown> }) => string
+  /** Idle-session stream deltas (controller-less kernel turns): throttled
+   *  renderer-only updates; SQLite stays finalize-only, same as host turns. */
+  onIdleSessionMessageUpdate?: (coworkSessionId: string, messageId: string, content: string) => void
+  /** Idle-session stream finalizes (controller-less kernel turns): persist
+   *  the accumulated content and close the streaming placeholder. Without
+   *  this fallback a kernel-initiated turn's placeholders are created via
+   *  onIdleSessionMessage but never finalized — orphaned isStreaming rows the
+   *  transcript then misreads as an aborted turn. */
+  onIdleSessionMessageFinalize?: (coworkSessionId: string, messageId: string, content: string, metadata?: Record<string, unknown>) => void
   /** Whole-agent status transitions for OWNED sessions (strict mapping — a
    *  continuable child's lifecycle never maps to its parent). Fires for
    *  kernel-initiated turns too, so hosts can hold queue gates closed while
@@ -1545,10 +1554,32 @@ export class DshTurnHub {
         return `dsh-orphan-${sessionId}`
       },
       onMessageUpdate: (sessionId, messageId, content) => {
-        controllerOf(sessionId)?.cb.onMessageUpdate(messageId, content)
+        const controller = controllerOf(sessionId)
+        if (controller) {
+          controller.cb.onMessageUpdate(messageId, content)
+          return
+        }
+        // Kernel-initiated turns (subagent-finished wakes, scheduled nudges)
+        // have no controller; their placeholders were created through the
+        // onIdleSessionMessage fallback above, so their deltas must fall back
+        // too (throttled renderer updates only — persistence stays
+        // finalize-only, same contract as host turns).
+        const coworkId = this.ownedCoworkOfDsh(sessionId)
+        if (coworkId) this.opts.onIdleSessionMessageUpdate?.(coworkId, messageId, content)
       },
       onMessageFinalize: (sessionId, messageId, content, metadata) => {
-        controllerOf(sessionId)?.cb.onMessageFinalize(messageId, content, metadata)
+        const controller = controllerOf(sessionId)
+        if (controller) {
+          controller.cb.onMessageFinalize(messageId, content, metadata)
+          return
+        }
+        // Same idle fallback: dropping a controller-less turn's finalize left
+        // its placeholder rows stuck at isStreaming:true with empty content —
+        // the transcript then showed the "turn was interrupted when the app
+        // quit" diagnostic for a turn that actually finished (2026-10-09
+        // session 85e6885a: three subagent-finished wakes, six orphan rows).
+        const coworkId = this.ownedCoworkOfDsh(sessionId)
+        if (coworkId) this.opts.onIdleSessionMessageFinalize?.(coworkId, messageId, content, metadata)
       },
       onUsage: (sessionId, usage) => {
         controllerOf(sessionId)?.cb.onUsage(usage)
