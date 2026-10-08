@@ -248,17 +248,58 @@ test('without a fallback brain the turn fails after the primary resume budget (b
   )
 })
 
-test('a non-transient error never triggers the fallback chain', async () => {
+test('a config-class hard error (auth) degrades to the fallback brain with a single attempt and logs the config error', async () => {
+  // 2026-10-08 Boss ruling corollary 3 (error-type routing): a config-class
+  // hard error (auth) can never succeed on the same route, but the fallback
+  // brain may point at a route whose key IS valid — degrade + log, like
+  // quota, with a SINGLE attempt (a wrong key does not heal mid-turn).
   const result = await driveTurn({
-    sessionId: 'gt02-auth-failed',
+    sessionId: 'gt02-auth-degrade',
     metabot: BOT_WITH_FALLBACK,
-    script: () => ({ kind: 'error', error: { code: 'AUTH_FAILED', message: '401 invalid api key' } }),
+    script: (_input, callNo) => (callNo === 1
+      ? { kind: 'error', error: { code: 'AUTH_FAILED', message: '401 invalid api key' } }
+      : { kind: 'completed' }),
   })
 
-  assert.equal(result.runTurnCalls.length, 1, 'auth failure: no resume, no fallback attempt')
+  assert.equal(result.runTurnCalls.length, 2, '1 initial auth death + 1 single fallback attempt')
   assert.equal(result.runTurnCalls[0].provider.key, 'gw-a')
+  assert.equal(result.runTurnCalls[1].provider.key, 'gw-b', 'the auth death degrades to the fallback brain')
+  assert.equal(result.sessionRow?.status, 'completed')
+
+  const logText = fs.readFileSync(coworkLogPath(), 'utf-8')
+  assert.ok(
+    logText.includes('configuration-level hard error (auth / model not found)'),
+    'the config-error WARN is written to cowork.log, distinguishing it from a rate limit',
+  )
+  await result.completed
+})
+
+test('a model-id-not-served hard error (404 model not found) degrades to the fallback brain', async () => {
+  const result = await driveTurn({
+    sessionId: 'gt02-model-missing-degrade',
+    metabot: BOT_WITH_FALLBACK,
+    script: (_input, callNo) => (callNo === 1
+      ? { kind: 'error', error: { code: 'MODEL_NOT_FOUND', message: '404 {"error":"model mock-a1 does not exist"}' } }
+      : { kind: 'completed' }),
+  })
+
+  assert.equal(result.runTurnCalls.length, 2, '1 initial model-missing death + 1 single fallback attempt')
+  assert.equal(result.runTurnCalls[1].provider.key, 'gw-b')
+  assert.equal(result.runTurnCalls[1].provider.model, 'mock-b1')
+  assert.equal(result.sessionRow?.status, 'completed')
+  await result.completed
+})
+
+test('a transport-class hard error (413 body limit) still never triggers the fallback chain', async () => {
+  const result = await driveTurn({
+    sessionId: 'gt02-other-hard-error',
+    metabot: BOT_WITH_FALLBACK,
+    script: () => ({ kind: 'error', error: { code: 'REQUEST_TOO_LARGE', message: '413 request too large' } }),
+  })
+
+  assert.equal(result.runTurnCalls.length, 1, '413 body limit: no resume, no fallback attempt (transport cap, not model availability)')
   assert.equal(result.sessionRow?.status, 'error')
-  assert.ok(result.errors.some((entry) => String(entry.error).includes('401 invalid api key')))
+  assert.ok(result.errors.some((entry) => String(entry.error).includes('413 request too large')))
 })
 
 test('a fallback brain resolving to the SAME route as the failed primary is not retried', async () => {
@@ -460,21 +501,38 @@ const BOT_WITHOUT_FALLBACK = {
   fallback_llm_provider: null,
 }
 
-test('a quota death with NO fallback brain rescues the turn onto the CURRENT default route and completes', async () => {
+// Guardrail-compliant rescue target: the free-quota relay. 2026-10-08
+// conservative ruling: the rescue path only auto-accepts the free relay —
+// a PAID default would be a cost-incurring path Boss never authorized.
+const FREE_RELAY_OVERRIDES = {
+  defaultModel: 'free-m1',
+  defaultProvider: 'metaid-free',
+  providers: {
+    'metaid-free': {
+      enabled: true,
+      apiKey: 'sk-free',
+      baseUrl: 'http://free.example/v1',
+      apiFormat: 'openai',
+      models: [{ id: 'free-m1', name: 'free-m1', contextWindow: 32768, maxOutputTokens: 4096 }],
+    },
+  },
+}
+
+test('a quota death with NO fallback brain rescues the turn onto the free-relay CURRENT default and completes', async () => {
   const result = await driveTurn({
     sessionId: 'stale-binding-quota-default-rescue',
     metabot: BOT_WITHOUT_FALLBACK,
-    // Owner moved the default to gw-b/mock-b1 AFTER the session/bot binding
+    // Owner moved the default to the free relay AFTER the session/bot binding
     // to gw-a/mock-a1 was made; the stale binding dies on quota at call 1 and
-    // the current default carries call 2 to completion.
-    configOverrides: { defaultModel: 'mock-b1', defaultProvider: 'gw-b' },
+    // the free-relay default carries call 2 to completion.
+    configOverrides: FREE_RELAY_OVERRIDES,
     script: (_input, callNo) => (callNo === 1 ? quotaError() : { kind: 'completed' }),
   })
 
   assert.equal(result.runTurnCalls.length, 2, '1 initial quota death + 1 single default-rescue attempt')
   assert.equal(result.runTurnCalls[0].provider.key, 'gw-a', 'call 1 rides the stale bound route')
-  assert.equal(result.runTurnCalls[1].provider.key, 'gw-b', 'the exhausted turn degrades to the CURRENT default route')
-  assert.equal(result.runTurnCalls[1].provider.model, 'mock-b1')
+  assert.equal(result.runTurnCalls[1].provider.key, 'metaid-free', 'the exhausted turn degrades to the free-relay CURRENT default')
+  assert.equal(result.runTurnCalls[1].provider.model, 'free-m1')
   assert.equal(result.sessionRow?.status, 'completed')
   assert.equal(result.errors.length, 0)
 
@@ -482,17 +540,43 @@ test('a quota death with NO fallback brain rescues the turn onto the CURRENT def
     (m) => m.type === 'system' && m.metadata?.dshRouteFallback === true,
   )
   assert.ok(notice, 'a dshRouteFallback system message lands in the transcript')
-  assert.match(notice.content, /mock-b1/)
+  assert.match(notice.content, /free-m1/)
   assert.match(notice.content, /当前默认|current default/)
   await result.completed
 })
 
-test('an exhausted RATE_LIMIT (transient) ladder with no fallback brain rescues onto the current default route', async () => {
+test('a PAID current default is NOT auto-accepted by the rescue guardrail — the turn settles disclosing the declined route', async () => {
+  // 2026-10-08 conservative guardrail ruling: the rescue only walks the free
+  // relay. gw-b is a paid provider — even though it is the current default
+  // and healthy, auto-billing it was never authorized.
+  const result = await driveTurn({
+    sessionId: 'stale-binding-paid-default-guard',
+    metabot: BOT_WITHOUT_FALLBACK,
+    configOverrides: { defaultModel: 'mock-b1', defaultProvider: 'gw-b' },
+    script: (_input, callNo) => (callNo === 1 ? quotaError() : { kind: 'completed' }),
+  })
+
+  assert.equal(result.runTurnCalls.length, 1, 'the paid default is declined: no rescue attempt, no extra billing')
+  assert.equal(result.runTurnCalls[0].provider.key, 'gw-a')
+  assert.equal(result.sessionRow?.status, 'error')
+  assert.ok(result.errors.length >= 1)
+  const errorText = result.errors.map((e) => String(e.error)).join('\n')
+  assert.match(errorText, /免费中继|free relay/, 'the terminal error discloses that a default exists but the free-relay-only guardrail declined it')
+  assert.doesNotMatch(errorText, /GoUsageLimitError/, 'the raw 429 provider body is not surfaced to the user')
+
+  const logText = fs.readFileSync(coworkLogPath(), 'utf-8')
+  assert.ok(
+    logText.includes('free-relay-only guardrail'),
+    'the guardrail-decline WARN names the declined paid route in cowork.log',
+  )
+})
+
+test('an exhausted RATE_LIMIT (transient) ladder with no fallback brain rescues onto the free-relay default route', async () => {
   const rateLimitError = () => ({ kind: 'error', error: { code: 'RATE_LIMIT', message: '429 too many requests' } })
   const result = await driveTurn({
     sessionId: 'stale-binding-ratelimit-default-rescue',
     metabot: BOT_WITHOUT_FALLBACK,
-    configOverrides: { defaultModel: 'mock-b1', defaultProvider: 'gw-b' },
+    configOverrides: FREE_RELAY_OVERRIDES,
     // 1 initial + 3 same-route transient resumes all rate-limited on the dead
     // bound route; the default-rescue attempt (call 5) completes.
     script: (_input, callNo) => (callNo <= 4 ? rateLimitError() : { kind: 'completed' }),
@@ -502,13 +586,18 @@ test('an exhausted RATE_LIMIT (transient) ladder with no fallback brain rescues 
   for (const call of result.runTurnCalls.slice(0, 4)) {
     assert.equal(call.provider.key, 'gw-a', 'the primary ladder stays on the bound route')
   }
-  assert.equal(result.runTurnCalls[4].provider.key, 'gw-b')
+  assert.equal(result.runTurnCalls[4].provider.key, 'metaid-free')
   assert.equal(result.sessionRow?.status, 'completed')
   assert.equal(result.errors.length, 0)
   await result.completed
 })
 
-test('when the current default IS the failed route there is no rescue loop and the turn settles as before', async () => {
+test('when the degrade ladder has NO valid target the error reads 未配置可用模型 (config error), not the raw 429', async () => {
+  // Boss ruling ring ④: 全环查遍确无可用配置 → 报错语义 = 配置错误. The
+  // default IS the dead route itself (no rescue loop possible) and no
+  // fallback brain exists — the user-visible error must be the config
+  // semantics with the raw GoUsageLimitError body stripped (full raw outcome
+  // stays in the cowork.log ERROR line for diagnosis).
   const result = await driveTurn({
     sessionId: 'stale-binding-no-op-rescue',
     metabot: BOT_WITHOUT_FALLBACK,
@@ -519,6 +608,15 @@ test('when the current default IS the failed route there is no rescue loop and t
   assert.equal(result.runTurnCalls.length, 1, 'no rescue attempt when the default is the dead route itself')
   assert.equal(result.sessionRow?.status, 'error')
   assert.equal(result.errors.length, 1)
-  assert.match(result.errors[0].error, /GoUsageLimitError/)
+  const errorText = String(result.errors[0].error)
+  assert.match(errorText, /未配置可用模型/, 'the terminal error carries the no-usable-model-configured semantics')
+  assert.doesNotMatch(errorText, /GoUsageLimitError/, 'the native 429 body is not retained in the user-visible error')
+  assert.match(errorText, /QUOTA/, 'the normalized error code stays for diagnosis')
+
+  const logText = fs.readFileSync(coworkLogPath(), 'utf-8')
+  assert.ok(
+    logText.includes('GoUsageLimitError'),
+    'the full raw provider body is preserved in the cowork.log ERROR line',
+  )
 })
 
