@@ -90,7 +90,7 @@ test('computeDueDreamDates: completed/running dates are skipped and failed dates
   const runStates = new Map([
     ['2026-08-01', { status: 'completed', attemptCount: 1, startedAt: new Date(2026, 7, 2, 0, 30).getTime(), dreamVersion: 99 }],
     ['2026-07-31', { status: 'running', attemptCount: 1, startedAt: 0, dreamVersion: 0 }],
-    ['2026-07-30', { status: 'failed', attemptCount: 3, startedAt: new Date(2026, 7, 2, 2, 30).getTime(), dreamVersion: 0 }],
+    ['2026-07-30', { status: 'failed', attemptCount: 3, startedAt: new Date(2026, 7, 2, 2, 50).getTime(), dreamVersion: 0 }],
     // H-80: attempts at/above the retry cap degrade — the date stops
     // queueing instead of retrying forever at the 6h-capped backoff.
     ['2026-07-29', { status: 'failed', attemptCount: 99, startedAt: new Date(2026, 7, 1, 20, 0).getTime(), dreamVersion: 0 }],
@@ -98,16 +98,28 @@ test('computeDueDreamDates: completed/running dates are skipped and failed dates
   const { dueDates, repairDates } = computeDueDreamDates({ now, metabotId: 1, runStates });
   assert.equal(dueDates.includes('2026-08-01'), false);
   assert.equal(dueDates.includes('2026-07-31'), false);
+  // 2026-10-08 backoff-ladder fix: attempt 3 now waits 15 min (was 2 h under
+  // the old 30-min base), so the 10-min-old failure is still inside backoff.
   assert.equal(dueDates.includes('2026-07-30'), false, 'recent failure waits for its retry delay');
   assert.equal(dueDates.includes('2026-07-29'), false, 'a failed date at the attempt cap degrades instead of retrying forever');
   assert.deepEqual(repairDates, [], 'current-version completed runs are fully settled');
 });
 
-test('computeDreamRetryDelayMs grows exponentially and caps at six hours', () => {
-  assert.equal(computeDreamRetryDelayMs(1), DREAM_RETRY_BASE_DELAY_MS);
-  assert.equal(computeDreamRetryDelayMs(2), DREAM_RETRY_BASE_DELAY_MS * 2);
-  assert.equal(computeDreamRetryDelayMs(3), DREAM_RETRY_BASE_DELAY_MS * 4);
-  assert.equal(computeDreamRetryDelayMs(99), DREAM_RETRY_MAX_DELAY_MS);
+test('computeDreamRetryDelayMs rides the 2/5/15-minute exponential ladder (2026-10-08 fix)', () => {
+  const min = (n) => n * 60 * 1000;
+  assert.equal(computeDreamRetryDelayMs(1), min(2));
+  assert.equal(computeDreamRetryDelayMs(2), min(5));
+  assert.equal(computeDreamRetryDelayMs(3), min(15));
+  assert.equal(computeDreamRetryDelayMs(99), min(15), 'ladder caps at the 15-minute tier');
+  // Rate-limit / consecutive-timeout escalation: floored at ≥10 minutes.
+  assert.equal(computeDreamRetryDelayMs(1, 'LLM request failed: 429 rate limited, retry after 60s'), min(10));
+  assert.equal(computeDreamRetryDelayMs(3, 'The operation was aborted due to timeout'), min(15));
+  // Consecutive timeouts: the second timed-out attempt escalates to the
+  // ≥10-minute floor; a single timeout keeps the plain ladder.
+  assert.equal(computeDreamRetryDelayMs(2, 'The operation was aborted due to timeout'), min(10));
+  assert.equal(computeDreamRetryDelayMs(1, 'The operation was aborted due to timeout'), min(2));
+  // Non-escalating errors keep the plain ladder.
+  assert.equal(computeDreamRetryDelayMs(2, 'LLM request failed: 500 upstream hiccup'), min(5));
 });
 
 test('computeDueDreamDates: a completed run that started mid-day is not final and is due again', () => {

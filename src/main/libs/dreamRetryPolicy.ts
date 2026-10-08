@@ -129,3 +129,82 @@ export const isTransientDreamLlmError = (error: unknown): boolean => {
  * outages still escalate to the run-level backoff unchanged.
  */
 export const DREAM_TRANSIENT_LLM_RETRY_DELAYS_MS: readonly number[] = [10_000, 30_000];
+
+/**
+ * Per-attempt LLM timeout tiers for the full-JSON dream calls (synthesis,
+ * self-identity, deep consolidation). Fixed windows kept failing on burst
+ * days: the 2026-10-06/07 cycle lost 4/7 runs to `The operation was aborted
+ * due to timeout` while legitimate consolidation calls measured 8–38 minutes
+ * (30K+ token prompts at throttled flash-tier speed). Tiers escalate with the
+ * run's attempt count so a run that already timed out once gets a wider
+ * window on the next attempt instead of re-hitting the same wall inside a
+ * fresh run (failed-run duration rows all pinned at exactly the run budget).
+ * The 38-min top tier is sized from the worst measured legitimate call;
+ * anything beyond it is genuinely stalled and SHOULD abort to the fallback /
+ * next scheduled retry.
+ */
+export const DREAM_ATTEMPT_TIMEOUT_TIERS_MS = [600_000, 1_200_000, 2_280_000] as const;
+
+/** The run-level wall: total wall-clock a single dream run may spend before
+ * the remaining full-JSON LLM phases yield and hand the date back to the
+ * scheduler for a cross-window retry instead of burning timeout after
+ * timeout in place. */
+export const DREAM_RUN_BUDGET_MS = 30 * 60_000;
+
+/** Below this remaining budget a full-JSON call is no longer started: the
+ * window would be too tight to legitimately finish, so the run yields to the
+ * scheduler (retryable, never terminal). */
+export const DREAM_MIN_CALL_WINDOW_MS = 600_000;
+
+/** attemptCount 1 → 10 min, 2 → 20 min, ≥3 → 38 min. */
+export function resolveDreamAttemptTimeoutMs(attemptCount: number): number {
+  const normalized = Math.max(1, Math.floor(Number(attemptCount) || 1));
+  const tier = Math.min(normalized - 1, DREAM_ATTEMPT_TIMEOUT_TIERS_MS.length - 1);
+  return DREAM_ATTEMPT_TIMEOUT_TIERS_MS[tier];
+}
+
+/** Remaining wall-clock budget for a run that started at runStartedAtMs. */
+export function remainingRunBudgetMs(runStartedAtMs: number, nowMs: number = Date.now()): number {
+  return DREAM_RUN_BUDGET_MS - (nowMs - runStartedAtMs);
+}
+
+/** 429 / provider rate-limit signature, anchored to the same
+ * `LLM request failed: <status>` passthrough classifyDreamError scans. */
+export function isRateLimitError(error: unknown): boolean {
+  const text = toErrorText(error).toLowerCase();
+  if (/rate limit/.test(text)) return true;
+  const match = LLM_STATUS_PATTERN.exec(text);
+  return match !== null && Number(match[1]) === 429;
+}
+
+/** Timeout-class failures: the shared AbortSignal.timeout abort text and the
+ * DOMException name both land here, plus the run-level budget-exhausted
+ * sentinel thrown by dreamService. These stay retryable (with escalating
+ * backoff) — a timeout says "the window was too small", which a bigger
+ * window or another window of the night can fix, unlike a 4xx. */
+export function isTimeoutError(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'TimeoutError') return true;
+  const text = toErrorText(error).toLowerCase();
+  return text.includes('aborted due to timeout') || text.includes('dream run budget exhausted');
+}
+
+/**
+ * Exponential retry ladder (2/5/15 min). Rate-limit (429) hits and two or
+ * more consecutive timeouts stretch the wait to at least 10 minutes — the
+ * 2026-10-07 autopsy showed the failed runs re-colliding with the same
+ * saturated provider with no cooldown between in-window attempts.
+ */
+export const DREAM_RETRY_BACKOFF_LADDER_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000] as const;
+export const DREAM_BACKOFF_RATE_LIMIT_FLOOR_MS = 10 * 60_000;
+
+export function computeDreamBackoffDelayMs(input: {
+  attemptCount: number;
+  rateLimited?: boolean;
+  consecutiveTimeouts?: number;
+}): number {
+  const normalized = Math.max(1, Math.floor(Number(input.attemptCount) || 1));
+  const tier = Math.min(normalized - 1, DREAM_RETRY_BACKOFF_LADDER_MS.length - 1);
+  const base = DREAM_RETRY_BACKOFF_LADDER_MS[tier];
+  const stretched = Boolean(input.rateLimited) || Math.max(0, Math.floor(input.consecutiveTimeouts ?? 0)) >= 2;
+  return stretched ? Math.max(base, DREAM_BACKOFF_RATE_LIMIT_FLOOR_MS) : base;
+}
