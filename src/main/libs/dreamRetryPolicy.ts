@@ -48,6 +48,12 @@ const TERMINAL_ERROR_PATTERNS = [
   'insufficient_quota',
   '"code":"quota"',
   "'code':'quota'",
+  // 2026-10-08 stale-binding rung ④: the dream ladder's all-rungs-dead
+  // wrapper means "no usable model is configured" (override→primary→fallback
+  // all dead). A raw 429 embedded in the preserved original text must not
+  // reclassify this as retryable — retrying a configuration hole is the
+  // avalanche shape.
+  '未配置任何可用的模型',
 ];
 
 const boundaryCode = (status: number): RegExp => new RegExp(`(?:^|[^0-9])${status}(?:[^0-9]|$)`);

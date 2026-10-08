@@ -61,6 +61,21 @@ import {
 } from './metaidDreamImpressionService';
 
 /**
+ * 2026-10-08 stale-binding rung ④: fingerprints for the quota/config error
+ * family that means "every configured brain rung is unusable" when the dream
+ * ladder exhausts. ASCII upstream fingerprints only — the terminal error must
+ * read「未配置任何可用的模型」, not a raw 429 (the avalanche read like a
+ * provider blip when it was a stale binding). Parse/empty-content/auth errors
+ * keep their own semantics and are NOT rewritten.
+ */
+const DREAM_LADDER_QUOTA_ERROR_FINGERPRINT = /insufficient[ _-]?(credits?|quota|balance|funds)|quota[ _-]?exceeded|billing[ _-]?limit|usagelimit/i;
+const DREAM_LADDER_CONFIG_ERROR_FINGERPRINT = /llm config not available|llm base url not available|did not resolve to an enabled provider|provider selection is required|config resolution failure/i;
+const isDreamLadderExhaustedQuotaError = (error: unknown): boolean => {
+  const text = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+  return DREAM_LADDER_QUOTA_ERROR_FINGERPRINT.test(text) || DREAM_LADDER_CONFIG_ERROR_FINGERPRINT.test(text);
+};
+
+/**
  * Dream consolidation service — the nightly "做梦" pipeline.
  *
  * During the nightly window (00:00–06:00 local), each enabled MetaBot reviews
@@ -134,6 +149,14 @@ interface DreamBrainPair {
   llmProvider: string | null;
   fallbackLlmId: string | null;
   fallbackLlmProvider: string | null;
+  /**
+   * 2026-10-08 stale-binding ladder: when a dreamLlmId override is active,
+   * `llmId` above IS the override and the bot's OWN primary brain rides here
+   * as the intermediate rung (Boss's unified order: override → bot primary →
+   * bot fallback → "no usable model" error). Null/absent = no override; the
+   * pair above already IS the bot brain (rungs collapse to primary+fallback).
+   */
+  botPrimaryRung?: { llmId: string | null; llmProvider: string | null } | null;
 }
 
 export interface DreamMetabotStoreLike {
@@ -397,19 +420,34 @@ export class DreamService {
   }
 
   /**
-   * Resolve the brain pair for this run: global override via
-   * cowork_config.dreamLlmId → the bot's own brain pair (model + provider
-   * hint + fallback pair). The provider hint matters on cross-provider
-   * model-id collisions: a bare glm-* id can otherwise resolve onto the
-   * wrong provider's gateway. When the global override is in effect the
-   * bot's own fallback pair must not silently backstop the override.
+   * Resolve the brain rungs for this run, per call (NEVER cached — the 429
+   * stale-binding post-mortem: validity is judged by THIS run's failures, and
+   * no "failed before" memory may skip a rung). Boss's unified order:
+   * ① global dreamLlmId override → ② the bot's own primary brain → ③ the
+   * bot's fallback brain → ④ error (semantics: "no usable model configured",
+   * not a raw 429).
+   *
+   * The override branch previously DROPPED the fallback pair and the provider
+   * hint (2026-10-08 findings): an overridden dream had a single rung (one
+   * dead model = a dead run), and a bare glm-* override id could resolve onto
+   * the wrong provider's gateway. The override now carries an explicit
+   * `dreamLlmProvider` hint (read live from cowork_config) and keeps the
+   * bot's own pair as rungs ②+③.
    */
   private resolveDreamBrain(metabot: DreamMetabotLike): DreamBrainPair {
     const override = this.deps.dreamStore.getCoworkConfigValue('dreamLlmId')?.trim();
-    if (override) {
-      return { llmId: override, llmProvider: null, fallbackLlmId: null, fallbackLlmProvider: null };
-    }
     const brain = metabotBrainOptions(metabot);
+    if (override) {
+      const overrideProvider = this.deps.dreamStore.getCoworkConfigValue('dreamLlmProvider')?.trim() || null;
+      const botPrimaryDiffers = brain.llmId != null && brain.llmId !== override;
+      return {
+        llmId: override,
+        llmProvider: overrideProvider,
+        fallbackLlmId: brain.fallbackLlmId,
+        fallbackLlmProvider: brain.fallbackLlmProvider,
+        botPrimaryRung: botPrimaryDiffers ? { llmId: brain.llmId, llmProvider: brain.llmProvider } : null,
+      };
+    }
     return {
       llmId: brain.llmId,
       llmProvider: brain.llmProvider,
@@ -478,33 +516,82 @@ export class DreamService {
     // run-level backoff still owns genuine outages. The 2026-09-28 nightly run
     // died at its 54th fragment on one net::ERR_SSL_PROTOCOL_ERROR that this
     // loop now absorbs.
+    //
+    // 2026-10-08 stale-binding ladder (Boss's unified resolution order):
+    // ① dreamLlmId override (if set) → ② the bot's own primary brain →
+    // ③ the bot's fallback brain → ④ terminal "no usable model configured"
+    // error. Error-type dispatch: transient network failures NEVER degrade to
+    // the next rung (they retry in place via the loop below); quota/config
+    // failures degrade immediately to the next rung (a dead target will not
+    // heal mid-run, so no in-rung retries). Degradation is per-call state
+    // only — the next run re-resolves from rung ①, nothing is anchored.
     const delays = this.deps.transientRetryDelaysMs ?? DREAM_TRANSIENT_LLM_RETRY_DELAYS_MS;
+    const baseAttemptOptions = {
+      // Each attempt (primary, then fallback) gets its own fresh timeout
+      // window — a primary that burns the full budget must not leave the
+      // fallback retry a dead shared signal. Callers emitting the full dream
+      // JSON (synthesis, self-identity) pass the wider window; fragments and
+      // post-dream passes keep the lean default.
+      attemptTimeoutMs: attemptTimeoutMs ?? this.deps.llmTimeoutMs ?? DREAM_LLM_TIMEOUT_MS,
+      maxTokens: maxTokens ?? this.resolveDreamBudgets(brain).maxOutputTokens,
+      // DeepSeek automation models default to reasoning mode. Dream prompts
+      // need the output budget for the final JSON, not hidden reasoning.
+      thinking: 'disabled' as const,
+      // Dream prompts summarize the bot's own day — a stray built-in
+      // web search both wastes the fragment budget and drags outside
+      // noise into the diary JSON.
+      webSearch: false as const,
+      // Empty content must fail inside runWithLlmFallback so a configured
+      // secondary provider gets a chance before the dream attempt fails.
+      throwOnEmptyContent: true as const,
+    };
+    const driveLadder = async (): Promise<string> => {
+      const overrideRung = brain.botPrimaryRung?.llmId ? brain : null;
+      if (overrideRung) {
+        try {
+          // Rung ①: the override alone — the bot's primary brain is the NEXT
+          // rung, not an in-rung fallback.
+          return await this.performChat(systemPrompt, userMessage, overrideRung.llmId, {
+            ...baseAttemptOptions,
+            llmProvider: overrideRung.llmProvider,
+            fallbackLlmId: null,
+            fallbackLlmProvider: null,
+          });
+        } catch (overrideError) {
+          if (isTransientDreamLlmError(overrideError)) throw overrideError;
+          const message = overrideError instanceof Error ? overrideError.message : String(overrideError);
+          console.warn(
+            `[DreamService] dreamLlmId override '${overrideRung.llmId}' failed (${message}); `
+            + `degrading to the bot's own primary brain for this call.`,
+          );
+        }
+      }
+      // Rungs ②→③: the bot's own primary brain with its fallback pair —
+      // performChat embeds the primary→fallback retry (runWithLlmFallback).
+      const primaryLlmId = brain.botPrimaryRung?.llmId ?? brain.llmId;
+      const primaryProvider = brain.botPrimaryRung ? brain.botPrimaryRung.llmProvider : brain.llmProvider;
+      return await this.performChat(systemPrompt, userMessage, primaryLlmId, {
+        ...baseAttemptOptions,
+        llmProvider: primaryProvider,
+        fallbackLlmId: brain.fallbackLlmId,
+        fallbackLlmProvider: brain.fallbackLlmProvider,
+      });
+    };
     for (let round = 0; ; round += 1) {
       try {
-        return await this.performChat(systemPrompt, userMessage, brain.llmId, {
-          // Each attempt (primary, then fallback) gets its own fresh timeout
-          // window — a primary that burns the full budget must not leave the
-          // fallback retry a dead shared signal. Callers emitting the full dream
-          // JSON (synthesis, self-identity) pass the wider window; fragments and
-          // post-dream passes keep the lean default.
-          attemptTimeoutMs: attemptTimeoutMs ?? this.deps.llmTimeoutMs ?? DREAM_LLM_TIMEOUT_MS,
-          maxTokens: maxTokens ?? this.resolveDreamBudgets(brain).maxOutputTokens,
-          llmProvider: brain.llmProvider,
-          fallbackLlmId: brain.fallbackLlmId,
-          fallbackLlmProvider: brain.fallbackLlmProvider,
-          // DeepSeek automation models default to reasoning mode. Dream prompts
-          // need the output budget for the final JSON, not hidden reasoning.
-          thinking: 'disabled',
-          // Dream prompts summarize the bot's own day — a stray built-in
-          // web search both wastes the fragment budget and drags outside
-          // noise into the diary JSON.
-          webSearch: false,
-          // Empty content must fail inside runWithLlmFallback so a configured
-          // secondary provider gets a chance before the dream attempt fails.
-          throwOnEmptyContent: true,
-        });
+        return await driveLadder();
       } catch (error) {
         if (round >= delays.length || !isTransientDreamLlmError(error)) {
+          // Boss's rung ④: when every configured rung died on quota/config
+          // errors, the failure semantics are "no usable model is configured"
+          // — NOT a raw 429 (the 2026-10-08 avalanche read like a provider
+          // blip when it was a stale binding). Quota/parse/empty-content
+          // shapes keep their own meaning; only the all-rungs-dead quota/
+          // config family gets the explicit prefix, original text preserved.
+          if (isDreamLadderExhaustedQuotaError(error)) {
+            const original = error instanceof Error ? error.message : String(error);
+            throw new Error(`未配置任何可用的模型（dream 降级链 override→主脑→备用 全部无效）：${original}`);
+          }
           throw error;
         }
         const delayMs = delays[round];

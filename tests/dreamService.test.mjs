@@ -820,3 +820,126 @@ test('telemetry marks an implicit-signal-free day as no explicit feedback', asyn
     cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 2026-10-08 stale-binding ladder (Boss's unified resolution order):
+// ① dreamLlmId override → ② bot primary brain → ③ bot fallback brain →
+// ④ terminal「未配置任何可用的模型」error. Controlled-experiment shape: each
+// scenario points a rung at a KNOWN-dead target and asserts the run survives
+// on the next valid rung — with glm-5.3 healthy a green run proves nothing.
+// ---------------------------------------------------------------------------
+
+const quotaErr = () => new Error('429: {"type":"GoUsageLimitError","message":"Go usage limit exceeded"}')
+
+test('a quota-dead dreamLlmId override degrades to the bot primary brain and the run completes', async () => {
+  const calls = []
+  const ctx = await setup(async (system, user, llmId, options) => {
+    calls.push({ llmId, fallbackLlmId: options?.fallbackLlmId, llmProvider: options?.llmProvider })
+    if (llmId === 'dead-override-llm') throw quotaErr()
+    return makePayload()
+  })
+  try {
+    ctx.db.run(
+      `INSERT INTO cowork_config (key, value, updated_at) VALUES ('dreamLlmId', 'dead-override-llm', 1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    await ctx.service.runNow(5, DAY)
+    assert.equal(calls[0].llmId, 'dead-override-llm', 'rung ① rides the override first')
+    assert.equal(calls[0].fallbackLlmId, null, 'rung ① has NO in-rung fallback — the bot brain is the next RUNG')
+    assert.equal(calls[1].llmId, 'bot-own-llm', 'rung ② degrades to the bot primary brain')
+    assert.equal(calls[1].fallbackLlmId ?? null, null, 'the stub bot has no fallback brain configured')
+    const run = ctx.dreamStore.getRun(5, DAY)
+    assert.equal(run.status, 'completed', 'the quota-dead override does NOT kill the dream run')
+  } finally {
+    ctx.cleanup()
+  }
+})
+
+test('the override keeps the bot fallback pair AND a provider hint (no silent single-rung override)', async () => {
+  const calls = []
+  const ctx = await setup(async (system, user, llmId, options) => {
+    calls.push({ llmId, fallbackLlmId: options?.fallbackLlmId, fallbackLlmProvider: options?.fallbackLlmProvider, llmProvider: options?.llmProvider })
+    if (llmId === 'dead-override-llm') throw quotaErr()
+    if (llmId === 'dead-bot-primary') {
+      // The injectable performChat REPLACES performChatCompletionForOrchestrator,
+      // so it must emulate runWithLlmFallback's primary→fallback retry itself.
+      if (options?.fallbackLlmId === 'healthy-fallback') return makePayload()
+      throw quotaErr()
+    }
+    return makePayload()
+  })
+  try {
+    ctx.db.run(
+      `INSERT INTO cowork_config (key, value, updated_at) VALUES ('dreamLlmId', 'dead-override-llm', 1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    ctx.db.run(
+      `INSERT INTO cowork_config (key, value, updated_at) VALUES ('dreamLlmProvider', 'gw-override', 1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    // Give the stub bot its own primary+fallback pair for this scenario.
+    const bot = ctx.service
+    const originalList = bot.deps.metabotStore.listMetabots
+    bot.deps.metabotStore.listMetabots = () => [
+      { id: 5, name: '小火', llm_id: 'dead-bot-primary', llm_provider: 'gw-a', fallback_llm_id: 'healthy-fallback', fallback_llm_provider: 'gw-b', enabled: true },
+    ]
+    await ctx.service.runNow(5, DAY)
+    assert.equal(calls[0].llmId, 'dead-override-llm')
+    assert.equal(calls[0].llmProvider, 'gw-override', 'the override carries a provider hint (bare glm-* id gateway fix)')
+    assert.equal(calls[1].llmId, 'dead-bot-primary', 'rung ② is the bot primary brain')
+    assert.equal(calls[1].llmProvider, 'gw-a')
+    assert.equal(calls[1].fallbackLlmId, 'healthy-fallback', 'the bot fallback pair survives under an override (no silent drop)')
+    assert.equal(calls[1].fallbackLlmProvider, 'gw-b')
+    const run = ctx.dreamStore.getRun(5, DAY)
+    assert.equal(run.status, 'completed')
+  } finally {
+    ctx.cleanup()
+  }
+})
+
+test('all rungs quota-dead terminates with「未配置任何可用的模型」semantics, not a raw 429', async () => {
+  const ctx = await setup(async (system, user, llmId) => {
+    throw quotaErr()
+  })
+  try {
+    ctx.db.run(
+      `INSERT INTO cowork_config (key, value, updated_at) VALUES ('dreamLlmId', 'dead-override-llm', 1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    // runNow swallows the terminal error and records it on the run row
+    // (status terminal-failed) — assert the recorded semantics instead.
+    await ctx.service.runNow(5, DAY)
+    const run = ctx.dreamStore.getRun(5, DAY)
+    assert.match(String(run.status), /terminal-failed/, 'an all-rungs-dead quota failure is terminal, not retriable')
+    assert.match(String(run.error), /未配置任何可用的模型/, 'terminal semantics name the configuration, not the provider blip')
+    assert.match(String(run.error), /GoUsageLimitError/, 'the original provider error is preserved for diagnosis')
+  } finally {
+    ctx.cleanup()
+  }
+})
+
+test('a TRANSIENT override failure retries in place instead of degrading to the bot brain', async () => {
+  const calls = []
+  let overrideAttempts = 0
+  const ctx = await setup(async (system, user, llmId, options) => {
+    calls.push(llmId)
+    if (llmId === 'flaky-override-llm') {
+      overrideAttempts += 1
+      if (overrideAttempts <= 2) throw new Error('net::ERR_SSL_PROTOCOL_ERROR')
+      return makePayload()
+    }
+    return makePayload()
+  }, { transientRetryDelaysMs: [0, 0] })
+  try {
+    ctx.db.run(
+      `INSERT INTO cowork_config (key, value, updated_at) VALUES ('dreamLlmId', 'flaky-override-llm', 1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    await ctx.service.runNow(5, DAY)
+    assert.deepEqual(calls.slice(0, 3), ['flaky-override-llm', 'flaky-override-llm', 'flaky-override-llm'], 'transient failures re-drive rung ① in place — no premature degradation')
+    const run = ctx.dreamStore.getRun(5, DAY)
+    assert.equal(run.status, 'completed')
+  } finally {
+    ctx.cleanup()
+  }
+})
