@@ -77,9 +77,10 @@ async function provisionProviderConfig(result: LlmRelayBootstrapResult): Promise
     name: getFreeProviderModelDisplayName(model.id),
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
-    // Known relay ids (deepseek-chat) pin the server-enforced upstream
-    // limits (64K window / 4K output); unknown ids keep the relay-reported
-    // fields untouched.
+    // Known relay ids (deepseek-chat) pin the canonical limits: the 1M
+    // context window (upstream upgraded past the old 64K cap, owner-confirmed
+    // 2026-10-09) plus the 100K declared output ceiling; unknown ids keep
+    // the relay-reported fields untouched.
     ...getFreeProviderModelCanonical(model.id),
   }));
   await configService.updateConfig({

@@ -33,25 +33,72 @@ export function getFreeProviderModelDisplayName(modelId) {
 }
 
 /**
- * Canonical client-side limits/options for known free-relay model ids. The
- * relay upstream enforces the legacy DeepSeek V3 wire values for
- * `deepseek-chat` — context_window 64000 / max_output_tokens 4096
- * (server-confirmed 2026-10-04: requests beyond ~64K tokens are rejected by
- * the upstream with 400 "maximum context length" no matter what the client
- * believes), so the known id mirrors those exact values (the relay's
- * bootstrap/models payload reports the same numbers; the table pins them so
- * a future relay-side drift cannot silently re-wedge compaction).
+ * Canonical client-side limits/options for known free-relay model ids.
+ *
+ * The relay upstream previously enforced the legacy DeepSeek V3 wire values
+ * for `deepseek-chat` (context_window 64000 — server-confirmed 2026-10-04,
+ * requests beyond ~64K tokens died with 400 "maximum context length"). The
+ * owner confirmed on 2026-10-09 that the upstream has been upgraded past
+ * that limit, so the window now mirrors the DeepSeek V4 flash family's 1M
+ * (keep in sync with DEEPSEEK_V4_FLASH_CONTEXT_WINDOW in
+ * src/main/libs/coworkModelLimits.ts). Auto-compaction re-arms accordingly
+ * at min(0.8*1M, 1M-100K-40K) = 800K tokens.
+ *
+ * max_output_tokens is a DECLARED ceiling of 100K (owner decision
+ * 2026-10-09): thinking shares the output budget, and the previously pinned
+ * 4096 truncated effort-max turns after a couple of sentences. At the 1M
+ * window the resolution-time clamp (clampCoworkMaxOutputTokens: 32% tier)
+ * leaves the full 100K effective per turn. Billing is by actual tokens
+ * used, so a generous declared ceiling costs nothing for short replies.
+ *
  * supportsImage stays false because the relay's image support is unverified.
  * Ids absent from this table keep whatever the relay reported.
  */
 const FREE_PROVIDER_MODEL_CANONICAL = {
   'deepseek-chat': {
-    contextWindow: 64_000,
-    maxOutputTokens: 4_096,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 100_000,
     supportsImage: false,
     options: { reasoningEffort: 'max', thinking: { type: 'enabled' } },
   },
 };
+
+/**
+ * Machine-written legacy limit values on stored free-relay model rows, keyed
+ * by model id. Every value listed here was pinned by an earlier build's
+ * provisioning or load-time normalization — the Settings model editor has no
+ * output-ceiling field at all, and provisioning always writes canonical or
+ * relay-reported numbers — so an EXACT stored match identifies the era that
+ * wrote the row rather than a user choice:
+ * - maxOutputTokens 32_768: the pre-2026-10-04 canonical that mirrored the
+ *   deepseek-flash preset.
+ * - maxOutputTokens 4_096: the 2026-10-04 pin (also what the relay payload
+ *   reported); raised to the 2026-10-09 100K declared ceiling.
+ * - contextWindow 64_000: the 2026-10-04 server-enforced pin; superseded on
+ *   2026-10-09 when the owner confirmed the upstream upgrade past 64K, so
+ *   those rows bump to the canonical 1M window.
+ * Anything else a row stores (user-tuned values included) is kept untouched.
+ */
+const FREE_PROVIDER_MODEL_LEGACY_STORED_LIMITS = {
+  'deepseek-chat': {
+    contextWindow: new Set([64_000]),
+    maxOutputTokens: new Set([32_768, 4_096]),
+  },
+};
+
+/**
+ * Which of the given stored model row's limit fields hold a machine-pinned
+ * legacy value and must be rewritten to the current canonical value at load
+ * time. Flags only — the caller resolves the replacement from
+ * getFreeProviderModelCanonical so the two tables cannot drift apart.
+ */
+export function getFreeProviderModelLegacyLimitRewrites(model) {
+  const table = model ? FREE_PROVIDER_MODEL_LEGACY_STORED_LIMITS[model.id] : undefined;
+  return {
+    contextWindow: table ? table.contextWindow.has(model.contextWindow) : false,
+    maxOutputTokens: table ? table.maxOutputTokens.has(model.maxOutputTokens) : false,
+  };
+}
 
 /**
  * Canonical config overrides for a free-relay model id, or null when the id
