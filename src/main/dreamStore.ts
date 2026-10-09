@@ -1029,13 +1029,15 @@ export class DreamStore {
     this.saveDb();
   }
 
-  /** status + attempt_count + started_at + dream_version for the given dates, keyed by dream_date. */
-  getRunStates(metabotId: number, dreamDates: string[]): Map<string, { status: DreamRunStatus; attemptCount: number; startedAt: number; dreamVersion: number }> {
-    const states = new Map<string, { status: DreamRunStatus; attemptCount: number; startedAt: number; dreamVersion: number }>();
+  /** status + attempt_count + started_at + dream_version (+ last error text,
+   * which feeds the rate-limit / consecutive-timeout backoff escalation in
+   * computeDreamRetryDelayMs) for the given dates, keyed by dream_date. */
+  getRunStates(metabotId: number, dreamDates: string[]): Map<string, { status: DreamRunStatus; attemptCount: number; startedAt: number; dreamVersion: number; error: string | null }> {
+    const states = new Map<string, { status: DreamRunStatus; attemptCount: number; startedAt: number; dreamVersion: number; error: string | null }>();
     if (dreamDates.length === 0) return states;
     const placeholders = dreamDates.map(() => '?').join(', ');
-    const rows = this.getAll<{ dream_date: string; status: string; attempt_count: number | string; started_at: number | string; dream_version: number | string | null }>(
-      `SELECT dream_date, status, attempt_count, started_at, dream_version FROM metabot_dream_runs
+    const rows = this.getAll<{ dream_date: string; status: string; attempt_count: number | string; started_at: number | string; dream_version: number | string | null; error: string | null }>(
+      `SELECT dream_date, status, attempt_count, started_at, dream_version, error FROM metabot_dream_runs
        WHERE metabot_id = ? AND dream_date IN (${placeholders})`,
       [metabotId, ...dreamDates]
     );
@@ -1045,6 +1047,7 @@ export class DreamStore {
         attemptCount: parseIdNumber(row.attempt_count) ?? 1,
         startedAt: Number(row.started_at),
         dreamVersion: parseIdNumber(row.dream_version) ?? 0,
+        error: row.error ?? null,
       });
     }
     return states;

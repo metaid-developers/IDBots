@@ -13304,7 +13304,7 @@ if (!gotTheLock) {
         const runs = getDreamStore().listRecentRuns(metabotId, options?.limit).map((run) => ({
           ...run,
           nextRetryAt: run.status === 'failed' && run.attemptCount < DREAM_RETRY_MAX_ATTEMPTS
-            ? run.startedAt + computeDreamRetryDelayMs(run.attemptCount)
+            ? run.startedAt + computeDreamRetryDelayMs(run.attemptCount, run.error)
             : null,
         }));
         return { success: true, runs };

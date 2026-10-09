@@ -10,7 +10,12 @@ import { formatBotWorkspaceDate } from './botWorkspace';
 import { estimateCoworkTextTokens } from './coworkContextBudget';
 import { stripLoneSurrogates, truncateUtf16Units } from './llmSafeText';
 import type { DreamActivityChunk } from './dreamFragments';
-import { DREAM_RETRY_MAX_ATTEMPTS } from './dreamRetryPolicy';
+import {
+  computeDreamBackoffDelayMs,
+  DREAM_RETRY_MAX_ATTEMPTS,
+  isRateLimitError,
+  isTimeoutError,
+} from './dreamRetryPolicy';
 
 /**
  * Dream prompt building and output parsing — pure functions, no I/O.
@@ -175,6 +180,9 @@ export interface DreamRunStateLike {
   startedAt: number;
   /** Algorithm version the run was made with (0 = legacy, pre-versioning). */
   dreamVersion: number;
+  /** Last failure text (when the store provides it): feeds the rate-limit /
+   * consecutive-timeout escalation in computeDreamRetryDelayMs. */
+  error?: string | null;
 }
 
 export interface DreamDueResult {
@@ -200,10 +208,25 @@ export function validateSelfIdentity(text?: string | null): { valid: boolean; ch
   return { valid: charCount >= SELF_IDENTITY_MIN_CHARS, charCount };
 }
 
-export function computeDreamRetryDelayMs(attemptCount: number): number {
-  const normalizedAttempts = Math.max(1, Math.floor(Number(attemptCount) || 1));
-  const exponent = Math.min(4, normalizedAttempts - 1);
-  return Math.min(DREAM_RETRY_MAX_DELAY_MS, DREAM_RETRY_BASE_DELAY_MS * (2 ** exponent));
+/**
+ * Failed-run retry backoff (2026-10-08 dream-consolidation-timeout fix):
+ * exponential ladder 2/5/15 min via computeDreamBackoffDelayMs. When the last
+ * error text is a 429/rate-limit hit, or the failure chain shows consecutive
+ * timeouts (attempt ≥ 3 on timeout rows — each timed-out attempt is one more
+ * consecutive timeout), the wait stretches to at least 10 minutes so the
+ * retry stops re-colliding with the same saturated provider window.
+ *
+ * Backward-compatible signature: attemptCount-only callers keep the old
+ * behavior contract (a bounded, escalating delay); the optional lastError
+ * just tightens it where the evidence exists.
+ */
+export function computeDreamRetryDelayMs(attemptCount: number, lastError?: string | null): number {
+  const timeoutRuns = isTimeoutError(lastError);
+  return computeDreamBackoffDelayMs({
+    attemptCount,
+    rateLimited: isRateLimitError(lastError),
+    consecutiveTimeouts: timeoutRuns ? Math.max(0, attemptCount) : 0,
+  });
 }
 
 /**
@@ -250,7 +273,7 @@ export function computeDueDreamDates(input: {
       // Rows that burned the retry budget before terminal-failed existed
       // degrade here instead of retrying forever.
       if (state.attemptCount >= DREAM_RETRY_MAX_ATTEMPTS) continue;
-      const retryAt = state.startedAt + computeDreamRetryDelayMs(state.attemptCount);
+      const retryAt = state.startedAt + computeDreamRetryDelayMs(state.attemptCount, state.error);
       if (input.now.getTime() < retryAt) continue;
     }
     if (state?.status === 'completed') {

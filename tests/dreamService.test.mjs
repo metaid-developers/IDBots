@@ -33,6 +33,10 @@ function loadDreamServiceModule() {
 const { DreamService } = loadDreamServiceModule();
 const { DREAM_VERSION } = require('../dist-electron/main/libs/dreamPrompt.js');
 
+const {
+  DREAM_RETRY_MAX_ATTEMPTS,
+} = require('../dist-electron/main/libs/dreamRetryPolicy.js');
+
 const DAY = '2026-07-30';
 const DAY_START = new Date(2026, 6, 30).getTime();
 
@@ -816,6 +820,70 @@ test('telemetry marks an implicit-signal-free day as no explicit feedback', asyn
     const run = dreamStore.getRun(5, DAY);
     assert.equal(run.telemetry?.hasExplicitFeedback, false, 'no thumbs and no acceptance ratings');
     assert.equal(dreamStore.listDreamTelemetryDaily(5)[0].hasExplicitFeedback, false);
+  } finally {
+    cleanup();
+  }
+});
+
+// ---- 2026-10-08 dream-consolidation-timeout fix (fix/dream-consolidation-timeout) ----
+
+test('synthesis window adapts to the run attempt tier (600s → 1200s → 2280s)', async () => {
+  const calls = [];
+  const { cleanup, dreamStore, service } = await setup(async (system, user, llmId, options) => {
+    calls.push({ user, attemptTimeoutMs: options?.attemptTimeoutMs });
+    return makePayload();
+  });
+  try {
+    // Pre-burn one attempt so runNow becomes attempt 2 → 20-minute tier.
+    dreamStore.beginRun(5, DAY, 'bot-own-llm', DREAM_VERSION);
+    dreamStore.finishRun(5, DAY, 'failed', 'seed: prior timeout attempt');
+    await service.runNow(5, DAY);
+    const run = dreamStore.getRun(5, DAY);
+    assert.equal(run.status, 'completed');
+    // The first full-JSON call the pipeline emits carries the adaptive window;
+    // fragments (if any) would show the lean 5s llmTimeoutMs override.
+    const wideCall = calls.find((call) => call.attemptTimeoutMs !== 5000);
+    assert.ok(wideCall, 'a full-JSON dream call exists');
+    assert.equal(
+      wideCall.attemptTimeoutMs,
+      1_200_000,
+      'attempt 2 rides the 20-minute adaptive tier instead of the fixed 600s window',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('timeout-class errors never land in terminal-failed, even at the attempt cap', async () => {
+  const { cleanup, dreamStore, service } = await setup(async () => {
+    throw new Error('The operation was aborted due to timeout');
+  });
+  try {
+    // Burn the whole retry budget first so runNow starts at attempt 6 (≥ cap).
+    for (let i = 0; i < DREAM_RETRY_MAX_ATTEMPTS; i++) {
+      dreamStore.beginRun(5, DAY, 'bot-own-llm', DREAM_VERSION);
+      dreamStore.finishRun(5, DAY, 'failed', 'The operation was aborted due to timeout');
+    }
+    await service.runNow(5, DAY);
+    const run = dreamStore.getRun(5, DAY);
+    assert.equal(run.status, 'failed', 'a timeout stays retryable for a cross-window retry');
+    assert.notEqual(run.status, 'terminal-failed');
+  } finally {
+    cleanup();
+  }
+});
+
+test('deterministic 4xx errors still land in terminal-failed at the attempt cap (non-regression)', async () => {
+  const { cleanup, dreamStore, service } = await setup(async () => {
+    throw new Error('LLM request failed: 400 1210: 该模型始终思考，不支持关闭思考');
+  });
+  try {
+    for (let i = 0; i < DREAM_RETRY_MAX_ATTEMPTS; i++) {
+      dreamStore.beginRun(5, DAY, 'bot-own-llm', DREAM_VERSION);
+      dreamStore.finishRun(5, DAY, 'failed', 'LLM request failed: 400');
+    }
+    await service.runNow(5, DAY);
+    assert.equal(dreamStore.getRun(5, DAY).status, 'terminal-failed', 'H-80 terminal semantics intact');
   } finally {
     cleanup();
   }

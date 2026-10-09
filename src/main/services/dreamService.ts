@@ -54,7 +54,16 @@ import { resolveAutomationModelOverride, resolveCurrentModelLimits } from '../li
 import { budgetAssumesThinking } from '../libs/modelThinking';
 import { performChatCompletionForOrchestrator } from './cognitiveChatCompletion';
 import { metabotBrainOptions } from './llmFallback';
-import { classifyDreamError, DREAM_RETRY_MAX_ATTEMPTS, DREAM_TRANSIENT_LLM_RETRY_DELAYS_MS, isTransientDreamLlmError } from '../libs/dreamRetryPolicy';
+import {
+  classifyDreamError,
+  DREAM_RETRY_MAX_ATTEMPTS,
+  DREAM_MIN_CALL_WINDOW_MS,
+  DREAM_TRANSIENT_LLM_RETRY_DELAYS_MS,
+  isTimeoutError,
+  isTransientDreamLlmError,
+  remainingRunBudgetMs,
+  resolveDreamAttemptTimeoutMs,
+} from '../libs/dreamRetryPolicy';
 import {
   applyMetaIDDreamImpressionUpdates,
   buildMetaIDDreamImpressionContext,
@@ -91,7 +100,18 @@ const DREAM_LLM_TIMEOUT_MS = 180_000;
 // nightly cost is bounded arithmetic: ~20 bots × one synthesis each, worst
 // case 10 min per synthesis = 200 min, still inside the 6-hour nightly window
 // with fragments (≤80s each) and post-dream passes (4K ceilings) alongside.
+// Adaptive escalation (2026-10-08, dream-consolidation-timeout fix): the fixed
+// 10-min window was still too small on burst days — legitimate consolidation
+// calls measured 8-38 minutes and the 10-06/07 cycle lost 4/7 runs to
+// `aborted due to timeout` with every failed run pinned at exactly the 30-min
+// run budget. Synthesis/self-identity calls now take a tiered per-attempt
+// window from the run's attempt count (see resolveDreamAttemptTimeoutMs);
+// DREAM_SYNTHESIS_TIMEOUT_MS survives as the first-attempt tier so tests and
+// external wiring keep their anchor.
 const DREAM_SYNTHESIS_TIMEOUT_MS = 600_000;
+// Sentinel thrown when the run-level wall expires before a full-JSON call can
+// legitimately start: retryable by design, never terminal.
+const DREAM_RUN_BUDGET_EXHAUSTED = 'dream run budget exhausted before synthesis window';
 // The requested ceiling is clamped to the selected model's declared limit
 // (DeepSeek V4 declares 32K, unknown models now share that 32K default). The dream JSON is
 // far smaller in practice; the headroom only matters so a long day is never
@@ -679,6 +699,10 @@ export class DreamService {
     impressionSubjects: ReturnType<DreamService['buildDreamImpressionSubjects']>,
     existingKnowledge: DreamKnowledgeExisting[],
     surfReport?: string | null,
+    /** Per-attempt window for the full-JSON synthesis calls. Adaptive by the
+     * run's attempt count (resolveDreamAttemptTimeoutMs); the fixed constant
+     * remains the default anchor for tests/legacy callers. */
+    attemptTimeoutMs: number = DREAM_SYNTHESIS_TIMEOUT_MS,
   ): Promise<{
     prompt: { system: string; user: string };
     output: DreamOutput;
@@ -707,7 +731,7 @@ export class DreamService {
         prompt.user,
         brain,
         budgets.maxOutputTokens,
-        DREAM_SYNTHESIS_TIMEOUT_MS,
+        attemptTimeoutMs,
       );
       return { prompt, output, meta: { estimatedInputTokens: estimatedTokens, fragmentCount: 0 } };
     }
@@ -731,7 +755,7 @@ export class DreamService {
         prompt.user,
         brain,
         budgets.maxOutputTokens,
-        DREAM_SYNTHESIS_TIMEOUT_MS,
+        attemptTimeoutMs,
       );
       return { prompt, output, meta: { estimatedInputTokens: estimatedTokens, fragmentCount: 0 } };
     }
@@ -773,9 +797,29 @@ export class DreamService {
       prompt.user,
       brain,
       budgets.maxOutputTokens,
-      DREAM_SYNTHESIS_TIMEOUT_MS,
+      attemptTimeoutMs,
     );
     return { prompt, output, meta: { estimatedInputTokens: estimatedTokens, fragmentCount: chunks.length } };
+  }
+
+  /**
+   * Adaptive full-JSON call window for this run: the attempt tier
+   * (10/20/38 min by attempt count) clamped to the remaining run-level
+   * budget, floored at 60s so a near-exhausted run still gets a real
+   * (small) window instead of an instant abort. When the run wall has
+   * burned past the point where a legitimate synthesis could still START
+   * (< DREAM_MIN_CALL_WINDOW_MS left), throws the retryable budget
+   * sentinel: the date yields to the scheduler for a cross-window retry
+   * instead of queuing another doomed timeout inside this run.
+   */
+  private resolveSynthesisTimeoutMs(runStartedAtMs: number, attemptCount: number): number {
+    const remaining = remainingRunBudgetMs(runStartedAtMs);
+    if (remaining < DREAM_MIN_CALL_WINDOW_MS) {
+      throw new Error(
+        `${DREAM_RUN_BUDGET_EXHAUSTED} (remaining ${Math.max(0, Math.round(remaining / 1000))}s, attempt ${attemptCount})`,
+      );
+    }
+    return Math.max(60_000, Math.min(resolveDreamAttemptTimeoutMs(attemptCount), remaining));
   }
 
   private async runDream(metabotId: number, date: string, isRepair = false): Promise<void> {
@@ -856,6 +900,7 @@ export class DreamService {
         impressionSubjects,
         existingKnowledge,
         surfReport,
+        this.resolveSynthesisTimeoutMs(runStartedAtMs, currentRun.attemptCount),
       );
       let output = prepared.output;
       // Repair runs discard selfIdentity in writeDreamResults, so skip the
@@ -867,7 +912,7 @@ export class DreamService {
           prepared.prompt.user,
           brain,
           this.resolveDreamBudgets(brain).maxOutputTokens,
-          DREAM_SYNTHESIS_TIMEOUT_MS,
+          this.resolveSynthesisTimeoutMs(runStartedAtMs, currentRun.attemptCount),
         );
       }
       const writeResult = this.writeDreamResults(metabotId, date, output, activity, brain.llmId, isRepair, impressionSubjects, metabot.globalmetaid);
@@ -914,11 +959,15 @@ export class DreamService {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // H-80: deterministic provider rejections (HTTP 4xx passthrough, quota,
-      // auth) can never succeed on retry, and a retryable failure must not
-      // back off forever — both leave the auto-retry queue as terminal-failed;
-      // only transient errors below the attempt cap stay in the backoff class.
-      if (classifyDreamError(message) === 'terminal' || currentRun.attemptCount >= DREAM_RETRY_MAX_ATTEMPTS) {
+      // Timeout-class failures (attempt aborts, the run-budget sentinel) never
+      // become terminal no matter how many attempts a date has burned: a
+      // timeout says the window was too small, and the next scheduled window
+      // — with the wider adaptive tier and the ≥10-min consecutive-timeout
+      // backoff — can genuinely fix it. Only deterministic provider
+      // rejections (H-80) and the retry cap on OTHER retryable errors end in
+      // terminal-failed.
+      const timeoutClass = isTimeoutError(message);
+      if (!timeoutClass && (classifyDreamError(message) === 'terminal' || currentRun.attemptCount >= DREAM_RETRY_MAX_ATTEMPTS)) {
         console.warn(
           `[DreamService] Dream terminally failed for metabot ${metabotId} date ${date} `
           + `(attempt ${currentRun.attemptCount}, no further auto-retry):`,
