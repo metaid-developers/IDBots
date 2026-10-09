@@ -1,8 +1,8 @@
 diff --git a/dist/browser/app.js b/dist/browser/app.js
-index c718fdadb43b4ef668e690746d9397fba98c8ba0..4d5829514eaf99d34f3adc2b58b329c59ace9adb 100644
+index e37ec7335076ad9ddb181fece9b69daa44a31f35..62bf2f8e416ade6abc7b24ee8ea743f6ddb485d0
 --- a/dist/browser/app.js
 +++ b/dist/browser/app.js
-@@ -7675,12 +7675,12 @@ function htmlFrameSandbox(url) {
+@@ -8031,12 +8031,12 @@ function htmlFrameSandbox(url) {
    // safe only because it is NOT the Browser page origin, so the app can never
    // script the UI or call its same-origin API — plus downloads. Frames served
    // same-origin with the page stay fully opaque (no allow-same-origin).
@@ -18,7 +18,7 @@ index c718fdadb43b4ef668e690746d9397fba98c8ba0..4d5829514eaf99d34f3adc2b58b329c5
      return base;
    }
 diff --git a/dist/browserClientScript.js b/dist/browserClientScript.js
-index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b983f35e9b 100644
+index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b983f35e9b
 --- a/dist/browserClientScript.js
 +++ b/dist/browserClientScript.js
 @@ -83,12 +83,12 @@ export function buildBrowserClientScript(input) {
@@ -37,7 +37,7 @@ index a47038833ba822f62dd4871b5428d67d4da16a1f..69faaf5600a390a14303aeccf13df0b9
        return base;
      }
 diff --git a/dist/renderers.js b/dist/renderers.js
-index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b0cfe9e7d 100644
+index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b0cfe9e7d
 --- a/dist/renderers.js
 +++ b/dist/renderers.js
 @@ -93,8 +93,8 @@ export function renderBotPageHtml(resource) {
@@ -52,10 +52,10 @@ index 425639da3c5ef82b534e2dfee41d840016866bca..b231cfbbfdbdf99d9aa3e9024c0f9e1b
      const origin = text(pageOrigin);
      if (!origin)
 diff --git a/dist-cjs/browser/app.js b/dist-cjs/browser/app.js
-index a37c5a6643c6a5689b8f1620692c6dbd57df0a2a..6327e2ff4501f96173c864e88facfcddbdef2331 100644
+index 3948e2a2322b8d3df1571f409abfed1c938f1824..70a4c14adf7c78c047ac3174dab2ba2370778c48
 --- a/dist-cjs/browser/app.js
 +++ b/dist-cjs/browser/app.js
-@@ -7678,12 +7678,12 @@ function htmlFrameSandbox(url) {
+@@ -8034,12 +8034,12 @@ function htmlFrameSandbox(url) {
    // safe only because it is NOT the Browser page origin, so the app can never
    // script the UI or call its same-origin API — plus downloads. Frames served
    // same-origin with the page stay fully opaque (no allow-same-origin).
@@ -71,7 +71,7 @@ index a37c5a6643c6a5689b8f1620692c6dbd57df0a2a..6327e2ff4501f96173c864e88facfcdd
      return base;
    }
 diff --git a/dist-cjs/browserClientScript.js b/dist-cjs/browserClientScript.js
-index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e965fa33c09 100644
+index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e965fa33c09
 --- a/dist-cjs/browserClientScript.js
 +++ b/dist-cjs/browserClientScript.js
 @@ -86,12 +86,12 @@ function buildBrowserClientScript(input) {
@@ -90,7 +90,7 @@ index 8a43c7fc12ff45b60315c40bc57cd555b8c87c13..f7d2d1697123775ac5e1d25a0e478e96
        return base;
      }
 diff --git a/dist-cjs/renderers.js b/dist-cjs/renderers.js
-index c5d63259917a72c5e72c8644dff0a88dea1f808a..832520ea3c85e0f5c2c80b1c734d05f3dcf4e06e 100644
+index c5d63259917a72c5e72c8644dff0a88dea1f808a..832520ea3c85e0f5c2c80b1c734d05f3dcf4e06e
 --- a/dist-cjs/renderers.js
 +++ b/dist-cjs/renderers.js
 @@ -101,8 +101,8 @@ function renderBotPageHtml(resource) {

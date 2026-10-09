@@ -66,7 +66,7 @@ test('bridge refresh-runtime forceReload bypasses cached runtimeReadyPromise', (
 // never reach that attribute and re-adding allow-same-origin to a same-origin
 // frame reverses the upstream "same-origin frames stay opaque" contract. The
 // module must therefore not expose such a helper; allow-forms is added at the
-// source via patches/@openagentinternet+agent-browser-ui+0.6.3.patch.
+// source via patches/@openagentinternet+agent-browser-ui+0.7.0.patch.
 const SANDBOX_RELAXATION_EXPORT = 'relaxMetaAppIframeSandbox';
 
 function exposesSandboxRelaxation(module) {
