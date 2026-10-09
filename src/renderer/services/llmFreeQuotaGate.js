@@ -35,26 +35,28 @@ export function getFreeProviderModelDisplayName(modelId) {
 /**
  * Canonical client-side limits/options for known free-relay model ids.
  *
- * context_window stays at the server-enforced 64000 for `deepseek-chat`
- * (server-confirmed 2026-10-04: requests beyond ~64K tokens are rejected by
- * the upstream with 400 "maximum context length" no matter what the client
- * believes) — raising it would re-arm auto-compaction at an unreachable
- * trigger and re-create the 2026-10-04 413 wedge.
+ * The relay upstream previously enforced the legacy DeepSeek V3 wire values
+ * for `deepseek-chat` (context_window 64000 — server-confirmed 2026-10-04,
+ * requests beyond ~64K tokens died with 400 "maximum context length"). The
+ * owner confirmed on 2026-10-09 that the upstream has been upgraded past
+ * that limit, so the window now mirrors the DeepSeek V4 flash family's 1M
+ * (keep in sync with DEEPSEEK_V4_FLASH_CONTEXT_WINDOW in
+ * src/main/libs/coworkModelLimits.ts). Auto-compaction re-arms accordingly
+ * at min(0.8*1M, 1M-100K-40K) = 800K tokens.
  *
  * max_output_tokens is a DECLARED ceiling of 100K (owner decision
  * 2026-10-09): thinking shares the output budget, and the previously pinned
- * 4096 truncated effort-max turns after a couple of sentences. The resolved
- * per-turn budget is clamped against the window before it reaches the kernel
- * or the wire (clampCoworkMaxOutputTokens: 8192 at a 64K window), so
- * compaction stays armed and the request stays upstream-safe regardless of
- * this declared value. Billing is by actual tokens used.
+ * 4096 truncated effort-max turns after a couple of sentences. At the 1M
+ * window the resolution-time clamp (clampCoworkMaxOutputTokens: 32% tier)
+ * leaves the full 100K effective per turn. Billing is by actual tokens
+ * used, so a generous declared ceiling costs nothing for short replies.
  *
  * supportsImage stays false because the relay's image support is unverified.
  * Ids absent from this table keep whatever the relay reported.
  */
 const FREE_PROVIDER_MODEL_CANONICAL = {
   'deepseek-chat': {
-    contextWindow: 64_000,
+    contextWindow: 1_000_000,
     maxOutputTokens: 100_000,
     supportsImage: false,
     options: { reasoningEffort: 'max', thinking: { type: 'enabled' } },
@@ -68,16 +70,18 @@ const FREE_PROVIDER_MODEL_CANONICAL = {
  * output-ceiling field at all, and provisioning always writes canonical or
  * relay-reported numbers — so an EXACT stored match identifies the era that
  * wrote the row rather than a user choice:
- * - contextWindow 1_000_000 / maxOutputTokens 32_768: the pre-2026-10-04
- *   canonical that mirrored the deepseek-flash preset (the upstream rejects
- *   beyond ~64K context with 400 "maximum context length").
+ * - maxOutputTokens 32_768: the pre-2026-10-04 canonical that mirrored the
+ *   deepseek-flash preset.
  * - maxOutputTokens 4_096: the 2026-10-04 pin (also what the relay payload
- *   reports); raised to the 2026-10-09 100K declared ceiling.
+ *   reported); raised to the 2026-10-09 100K declared ceiling.
+ * - contextWindow 64_000: the 2026-10-04 server-enforced pin; superseded on
+ *   2026-10-09 when the owner confirmed the upstream upgrade past 64K, so
+ *   those rows bump to the canonical 1M window.
  * Anything else a row stores (user-tuned values included) is kept untouched.
  */
 const FREE_PROVIDER_MODEL_LEGACY_STORED_LIMITS = {
   'deepseek-chat': {
-    contextWindow: new Set([1_000_000]),
+    contextWindow: new Set([64_000]),
     maxOutputTokens: new Set([32_768, 4_096]),
   },
 };

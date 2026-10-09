@@ -202,12 +202,13 @@ test('mergeProvidersConfig rewrites free-provider model names to display names',
   assert.equal(deepseekModels[0].name, 'deepseek-chat');
 });
 
-test('mergeProvidersConfig bumps the machine-pinned free-model output ceiling but keeps user-tuned values', () => {
+test('mergeProvidersConfig bumps the machine-pinned free-model limits but keeps user-tuned values', () => {
   // Relay-reported rows store contextWindow 64000 / maxOutputTokens 4096
   // (both machine-written: the 2026-10-04 pin and the payload's report).
-  // Load-time normalization moves the output pin to the 100K declared
-  // ceiling (thinking shares the output budget — 4096 truncated effort-max
-  // turns after a couple of sentences) and keeps the server-enforced window.
+  // Load-time normalization moves them to the current canonical — the 1M
+  // window (upstream upgraded past the 64K cap, owner-confirmed 2026-10-09)
+  // and the 100K declared output ceiling (thinking shares the output budget
+  // — 4096 truncated effort-max turns after a couple of sentences).
   // User-tuned numbers are NOT canonical values, so they survive untouched —
   // normalization must never revert manual edits (the 2026-10-09 incident).
   const stored = makeConfig({
@@ -240,9 +241,9 @@ test('mergeProvidersConfig bumps the machine-pinned free-model output ceiling bu
 
   const merged = mergeProvidersConfig(undefined, stored.providers);
   const freeModels = merged!['metaid-free']!.models!;
-  // Machine-pinned era values: window stays server-enforced, output ceiling
-  // moves to the canonical 100K, canonical options fill the empty row.
-  assert.equal(freeModels[0].contextWindow, 64_000);
+  // Machine-pinned era values move to the canonical 1M window / 100K
+  // ceiling; canonical options fill the empty row.
+  assert.equal(freeModels[0].contextWindow, 1_000_000);
   assert.equal(freeModels[0].maxOutputTokens, 100_000);
   assert.equal(freeModels[0].supportsImage, false);
   assert.equal(freeModels[0].options?.reasoningEffort, 'max');

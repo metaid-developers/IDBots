@@ -23,20 +23,19 @@ test('getFreeProviderModelDisplayName maps relay wire ids to product names', () 
   assert.equal(getFreeProviderModelDisplayName(undefined), undefined);
 });
 
-test('getFreeProviderModelCanonical pins the server-enforced window and the 100K declared output ceiling', () => {
-  // context_window: server-confirmed 2026-10-04 — the metaid-free upstream
-  // rejects requests beyond ~64K tokens with 400 "maximum context length" no
-  // matter what the client believes, so the canonical must stay at 64000 or
-  // auto-compaction re-arms at an unreachable trigger (the 413 wedge).
+test('getFreeProviderModelCanonical pins the upgraded 1M window and the 100K declared output ceiling', () => {
+  // context_window: the upstream relay previously enforced 64K (server-
+  // confirmed 2026-10-04); the owner confirmed on 2026-10-09 that it has
+  // been upgraded past that limit, so the canonical mirrors the DeepSeek V4
+  // flash family's 1M and compaction re-arms at
+  // min(0.8*1M, 1M-100K-40K) = 800K tokens.
   // max_output_tokens: 100K declared ceiling (owner decision 2026-10-09) —
   // thinking shares the output budget and the old 4096 pin truncated
-  // effort-max turns after a couple of sentences. The resolved per-turn
-  // budget is window-clamped downstream (clampCoworkMaxOutputTokens → 8192
-  // at 64K), so compaction still triggers at
-  // min(0.9*64000, 64000-8192-2560) ≈ 53K tokens.
+  // effort-max turns after a couple of sentences. At the 1M window the
+  // resolution-time clamp (32% tier) leaves the full 100K effective.
   const canonical = getFreeProviderModelCanonical('deepseek-chat');
   assert.ok(canonical);
-  assert.equal(canonical.contextWindow, 64_000);
+  assert.equal(canonical.contextWindow, 1_000_000);
   assert.equal(canonical.maxOutputTokens, 100_000);
   assert.equal(canonical.supportsImage, false);
   assert.equal(canonical.options.reasoningEffort, 'max');
@@ -49,20 +48,20 @@ test('getFreeProviderModelCanonical pins the server-enforced window and the 100K
 test('getFreeProviderModelLegacyLimitRewrites flags only machine-pinned legacy stored values', () => {
   // Eras that wrote free-model rows machine-side: the pre-2026-10-04
   // deepseek-flash mirror (1M/32768) and the 2026-10-04 pin (64000/4096 —
-  // also what the relay payload reports). Those exact values are rewritten
-  // to the current canonical at load time; anything else on the row (user
-  // edits included) must survive untouched.
+  // also what the relay payload reported). The output pins move to the 100K
+  // declared ceiling and the 64K window pin bumps to the upgraded 1M;
+  // anything else on the row (user edits included) must survive untouched.
   assert.deepEqual(
     getFreeProviderModelLegacyLimitRewrites({
       id: 'deepseek-chat', contextWindow: 1_000_000, maxOutputTokens: 32_768,
     }),
-    { contextWindow: true, maxOutputTokens: true },
+    { contextWindow: false, maxOutputTokens: true },
   );
   assert.deepEqual(
     getFreeProviderModelLegacyLimitRewrites({
       id: 'deepseek-chat', contextWindow: 64_000, maxOutputTokens: 4_096,
     }),
-    { contextWindow: false, maxOutputTokens: true },
+    { contextWindow: true, maxOutputTokens: true },
   );
   // User-tuned values (manual 100K window edit, custom output ceiling) stay.
   assert.deepEqual(

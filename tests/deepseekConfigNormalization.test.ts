@@ -366,15 +366,13 @@ test('mergeProvidersConfig applies explicit provider credential updates', () => 
   assert.equal(merged?.deepseek.apiFormat, 'anthropic');
 });
 
-test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to the 64K window / 100K declared ceiling', () => {
+test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to the 1M window / 100K declared ceiling', () => {
   // The 2026-10-04 metaid-free 413 incident: installs provisioned while the
   // canonical table mirrored the deepseek-flash preset (1M window / 32K
-  // output) carry that wrong entry in their stored config. Both values were
-  // machine-written (that era's canonical pin), so load-time normalization
-  // rewrites the exact matches: the window to the server-enforced 64000
-  // (that is what moves the auto-compaction trigger from ~800K tokens —
-  // never reachable, the upstream 400s at ~64K — down to ~53K), the ceiling
-  // to the 2026-10-09 100K declared output.
+  // output) carry that wrong-for-the-time output pin in their stored config.
+  // The window value itself is again the canonical 1M (upstream upgraded
+  // past 64K, owner-confirmed 2026-10-09), so only the machine-written 32K
+  // output pin is rewritten — to the 2026-10-09 100K declared ceiling.
   const staleProvisioned = {
     'metaid-free': {
       enabled: true,
@@ -399,7 +397,7 @@ test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to th
 
   const model = merged?.['metaid-free']?.models?.find(({ id }) => id === 'deepseek-chat');
   assert.ok(model);
-  assert.equal(model.contextWindow, 64_000);
+  assert.equal(model.contextWindow, 1_000_000);
   assert.equal(model.maxOutputTokens, 100_000);
   // Everything the canonical table does not own stays untouched.
   assert.equal(model.name, 'deepseek-flash');
@@ -407,12 +405,13 @@ test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to th
   assert.equal(merged?.['metaid-free']?.apiKey, 'mrk_stale-install');
 });
 
-test('mergeProvidersConfig bumps the 2026-10-04 4096 output pin but keeps user-tuned free-model limits', () => {
+test('mergeProvidersConfig bumps the 2026-10-04 64000/4096 pin to 1M/100K but keeps user-tuned free-model limits', () => {
   // Rows written by the 2026-10-04 build store the machine-pinned 64000/4096
-  // (also what the relay payload reports); the output pin moves to the 100K
-  // declared ceiling while the window stays. A user-tuned row (manual
-  // Settings edits — the 2026-10-09 incident where normalization reverted
-  // every manual change on load) keeps its stored numbers.
+  // (also what the relay payload reported); both move to the current
+  // canonical — the 1M window (upstream upgraded past 64K) and the 100K
+  // declared output ceiling. A user-tuned row (manual Settings edits — the
+  // 2026-10-09 incident where normalization reverted every manual change on
+  // load) keeps its stored numbers.
   const stored = {
     'metaid-free': {
       enabled: true,
@@ -445,7 +444,7 @@ test('mergeProvidersConfig bumps the 2026-10-04 4096 output pin but keeps user-t
   const models = merged?.['metaid-free']?.models ?? [];
   const pinned = models.find(({ id }) => id === 'deepseek-chat');
   assert.ok(pinned);
-  assert.equal(pinned.contextWindow, 64_000);
+  assert.equal(pinned.contextWindow, 1_000_000);
   assert.equal(pinned.maxOutputTokens, 100_000);
   // Canonical options fill in only where the row stores none.
   assert.deepEqual(pinned.options, { reasoningEffort: 'max', thinking: { type: 'enabled' } });

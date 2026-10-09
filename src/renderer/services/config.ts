@@ -89,8 +89,9 @@ const buildProviderSignature = (
 // edit on load (the 2026-10-09 "manual 100K does not stick" incident). It
 // still: forces the canonical display name, fills canonical limits/options
 // only where the row stores none, and rewrites machine-pinned legacy values
-// (getFreeProviderModelLegacyLimitRewrites — eras that wrote 1M/32768 or
-// 64000/4096 rows; an exact match identifies the writer, never the user).
+// (getFreeProviderModelLegacyLimitRewrites — eras that wrote 32768/4096
+// output pins or the 64000 window pin; an exact match identifies the
+// writer, never the user).
 const normalizeFreeProviderModels = (
   models: NonNullable<NonNullable<AppConfig['providers']>[string]['models']> | undefined,
 ) => models?.map((model) => {
