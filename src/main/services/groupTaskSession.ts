@@ -90,6 +90,8 @@ export interface GroupTaskSessionOptions {
   externalConversationId?: string;
   metadata?: Record<string, unknown>;
   title?: string;
+  /** Runtime-causal parent: the chat session that initiated the group task. */
+  parentSessionId?: string | null;
 }
 
 /**
@@ -132,6 +134,13 @@ export function ensureGroupTaskSession(
     null,
     null,
     null,
+    'default',
+    null,
+    null,
+    null,
+    null,
+    null,
+    opts?.parentSessionId ?? null,
   );
   coworkStore.upsertConversationMapping({
     channel,
@@ -404,6 +413,16 @@ export function rebuildGroupTaskSession(input: {
     input.botId,
   );
   const workspaceRoot = resolveGroupTaskSessionWorkspace(botWorkspaceCwd, externalConversationId);
+  // Preserve the runtime-causal parent across rebuilds: the corrupt session's
+  // parent (if any) carries over, per the宁缺毋错 rule (no guessing).
+  const replacedMapping = input.coworkStore.getConversationMapping(
+    channel,
+    externalConversationId,
+    input.botId,
+  );
+  const replacedParent = replacedMapping
+    ? input.coworkStore.getSession(replacedMapping.coworkSessionId)?.parentSessionId ?? null
+    : null;
   const session = input.coworkStore.createSession(
     `Group Task #${input.task.id} (${input.botName}) [rebuilt]`,
     workspaceRoot,
@@ -415,6 +434,13 @@ export function rebuildGroupTaskSession(input: {
     null,
     null,
     null,
+    'default',
+    null,
+    null,
+    null,
+    null,
+    null,
+    replacedParent,
   );
   input.coworkStore.upsertConversationMapping({
     channel,

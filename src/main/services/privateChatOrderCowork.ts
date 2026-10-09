@@ -317,7 +317,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
       'a2a',
       request.peerGlobalMetaId ?? null,
       request.peerName ?? null,
-      request.peerAvatar ?? null
+      request.peerAvatar ?? null,
+      'default',
+      null,
+      null,
+      null,
+      null,
+      null,
+      request.displaySessionId ?? request.existingSessionId ?? null,
     );
     if (typeof this.coworkStore.setSessionHiddenFromList === 'function') {
       this.coworkStore.setSessionHiddenFromList(session.id, true);
@@ -359,7 +366,14 @@ export class PrivateChatOrderCowork extends EventEmitter {
       'a2a',
       request.peerGlobalMetaId ?? null,
       request.peerName ?? null,
-      request.peerAvatar ?? null
+      request.peerAvatar ?? null,
+      'default',
+      null,
+      null,
+      null,
+      null,
+      null,
+      request.displaySessionId ?? request.existingSessionId ?? null,
     );
 
     this.coworkStore.upsertConversationMapping({
