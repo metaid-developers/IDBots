@@ -27,6 +27,7 @@
     "test:dream-retry": "pnpm run compile:electron && node --test tests/dreamRetryPolicy.test.mjs tests/dreamPrompt.test.mjs",
     "test:wallet": "pnpm run compile:electron && node --test tests/metabotWalletService.test.mjs",
     "test:im-gateway": "pnpm run compile:electron && node --test tests/imGatewayConnectivity.test.mjs",
+    "test:rpc-body-guard": "pnpm run compile:electron && node --test tests/metaidRpcBodyGuard.test.mjs",
     "test:subsidy": "pnpm run compile:electron && node --test tests/mvcSubsidyService.test.mjs",
     "test:knowledge-base": "pnpm run compile:electron && node --test tests/knowledgeBaseText.test.mjs tests/knowledgeBasePresentation.test.mjs tests/domMatrixPolyfill.test.mjs tests/knowledgeBaseIndexStore.test.mjs tests/knowledgeBaseService.test.mjs tests/knowledgeBaseAgentTools.test.mjs",
     "test:metaweb": "pnpm run compile:electron && node --test tests/metawebUriLinks.test.mjs tests/postSimpleNoteAgentTools.test.mjs tests/postSimpleQaAgentTools.test.mjs tests/likePinAgentTools.test.mjs tests/qaBehaviorPrompt.test.mjs tests/qaRecallAgentTools.test.mjs tests/postBuzzAgentTools.test.mjs tests/omniCasterAgentTools.test.mjs tests/privateChatAgentTools.test.mjs tests/groupChatAgentTools.test.mjs tests/groupTaskDeliverableParser.test.mjs tests/socialRecallAgentTools.test.mjs tests/metaProtocolAgentTools.test.mjs && npx tsx --test tests/markdownContentBotBrowserUri.test.tsx",

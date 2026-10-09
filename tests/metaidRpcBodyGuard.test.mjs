@@ -76,6 +76,11 @@ const EXPECTED_FIELD_CONTRACTS = {
 const EMPTY_BODY_MEANS_OBJECT_ROUTES = [
   '/api/idbots/bot-browser/open',
   '/api/idbots/bot-browser/tabs',
+  // Added 2026-10-03 (bot_browser_act), after the empty-body audit above was
+  // written: it feeds the same shared guard with `{ emptyBody: 'object' }`,
+  // so an empty body proceeds as {} and the "preview act is unavailable"
+  // error (no browser attached) is answered after body parsing, like tabs.
+  '/api/idbots/bot-browser/act',
   '/api/idbots/chat/group-history',
   '/api/idbots/chat/private-history',
   '/api/idbots/chat/private-send',
@@ -310,6 +315,33 @@ async function postRaw(route, rawBody) {
   }
 }
 
+/**
+ * The rejection contract every guarded route must carry: the converged union
+ * shape `{ path, fields, body, schemaVersion: 1 }` — `fields` is always
+ * listed (`{}` when the route advertises none), the body requirement is
+ * stated, and `schemaVersion: 1` pins the shape for callers. Returns the list
+ * of shape failures, so the sweeps can collect them per route.
+ */
+function contractShapeFailures(route, contract, label) {
+  const failures = [];
+  if (contract?.path !== route) {
+    failures.push(`${label}: contract.path = ${JSON.stringify(contract?.path)}`);
+  }
+  const fields = contract?.fields;
+  if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
+    failures.push(`${label}: contract.fields = ${JSON.stringify(fields)} (must always be listed)`);
+  } else {
+    const expected = [...(EXPECTED_FIELD_CONTRACTS[route] ?? [])].sort();
+    const actual = Object.keys(fields).sort();
+    if (actual.length !== expected.length || actual.some((key, i) => key !== expected[i])) {
+      failures.push(`${label}: contract.fields keys = ${JSON.stringify(actual)} (expected ${JSON.stringify(expected)})`);
+    }
+  }
+  if (contract?.body !== 'JSON object') failures.push(`${label}: contract.body = ${JSON.stringify(contract?.body)}`);
+  if (contract?.schemaVersion !== 1) failures.push(`${label}: contract.schemaVersion = ${JSON.stringify(contract?.schemaVersion)}`);
+  return failures;
+}
+
 test('gateway exposes the expected POST routes', () => {
   assert.ok(POST_ROUTES.length >= 30, `expected a full route sweep, got ${POST_ROUTES.length}`);
   assert.deepEqual(
@@ -331,10 +363,10 @@ test('every POST route rejects a JSON null body with 400, a contract, and a resp
     if (!/expected a JSON object \(received null\)/.test(String(json?.error))) {
       failures.push(`${route}: error = ${JSON.stringify(json?.error)}`);
     }
-    if (json?.contract?.path !== route) {
-      failures.push(`${route}: contract.path = ${JSON.stringify(json?.contract?.path)}`);
+    if (json?.error_code !== 'BODY_NOT_OBJECT') {
+      failures.push(`${route}: error_code = ${JSON.stringify(json?.error_code)}`);
     }
-    if (json?.contract?.body !== 'JSON object') failures.push(`${route}: contract.body missing`);
+    failures.push(...contractShapeFailures(route, json?.contract, route));
   }
   assert.deepEqual(failures, [], `null-body sweep failures:\n${failures.join('\n')}`);
 });
@@ -357,9 +389,10 @@ test('every POST route rejects non-object JSON literals instead of guessing fiel
       if (!new RegExp(`expected a JSON object \\(received ${received}\\)`).test(String(json?.error))) {
         failures.push(`${route} + ${raw}: error = ${JSON.stringify(json?.error)}`);
       }
-      if (json?.contract?.path !== route) {
-        failures.push(`${route} + ${raw}: contract.path = ${JSON.stringify(json?.contract?.path)}`);
+      if (json?.error_code !== 'BODY_NOT_OBJECT') {
+        failures.push(`${route} + ${raw}: error_code = ${JSON.stringify(json?.error_code)}`);
       }
+      failures.push(...contractShapeFailures(route, json?.contract, `${route} + ${raw}`));
     }
   }
   assert.deepEqual(failures, [], `non-object sweep failures:\n${failures.join('\n')}`);
@@ -370,7 +403,8 @@ test('malformed JSON keeps the historical "Invalid JSON body" message', async ()
     const { status, json } = await postRaw(route, '{"metabot_id": ');
     assert.equal(status, 400, `${route} should reject malformed JSON`);
     assert.equal(json.error, 'Invalid JSON body');
-    assert.equal(json.contract.path, route);
+    assert.equal(json.error_code, 'BODY_NOT_JSON');
+    assert.deepEqual(contractShapeFailures(route, json.contract, route), [], `${route}: contract shape`);
   }
 });
 
@@ -388,10 +422,12 @@ test('an empty body keeps the meaning each route already gave it — and never s
   const strictResolve = await postRaw('/api/idbots/resolve-metabot-id', '');
   assert.equal(strictResolve.status, 400);
   assert.equal(strictResolve.json.error, 'Invalid JSON body');
+  assert.equal(strictResolve.json.error_code, 'BODY_NOT_JSON');
 
   const strictShow = await postRaw('/api/idbots/group-task/show', '');
   assert.equal(strictShow.status, 400);
   assert.equal(strictShow.json.error, 'Invalid JSON body');
+  assert.equal(strictShow.json.error_code, 'BODY_NOT_JSON');
 
   const stalled = [];
   const misclassified = [];
@@ -406,6 +442,9 @@ test('an empty body keeps the meaning each route already gave it — and never s
     if (invalidJsonBody === expectedTolerant) {
       misclassified.push(`${route}: ${expectedTolerant ? 'expected to accept an empty body' : 'expected 400 Invalid JSON body'} but got ${JSON.stringify(json?.error)}`);
     }
+    if (invalidJsonBody && json?.error_code !== 'BODY_NOT_JSON') {
+      misclassified.push(`${route}: Invalid JSON body answered with error_code ${JSON.stringify(json?.error_code)}`);
+    }
   }
   assert.deepEqual(stalled, [], `routes that returned no response for an empty body:\n${stalled.join('\n')}`);
   assert.deepEqual(misclassified, [], `empty-body policy drift:\n${misclassified.join('\n')}`);
@@ -416,11 +455,13 @@ test('the ledger-named routes advertise the fields their validation actually rea
     assert.ok(POST_ROUTES.includes(route), `${route} is not a POST route of the gateway`);
     const { status, json } = await postRaw(route, 'null');
     assert.equal(status, 400, `${route} should reject a null body`);
+    assert.ok(json.contract.fields, `${route}: contract.fields must always be listed`);
     assert.deepEqual(
-      Object.keys(json.contract.fields ?? {}).sort(),
+      Object.keys(json.contract.fields).sort(),
       [...expectedFields].sort(),
       `${route} field contract drifted`,
     );
+    assert.equal(json.contract.schemaVersion, 1, `${route}: contract schemaVersion drifted`);
   }
 });
 

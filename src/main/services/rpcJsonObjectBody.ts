@@ -22,12 +22,20 @@
  *     so existing callers that match on it keep working;
  *   - JSON that parses but is not an object is a 400 that names the received
  *     JSON type (`received null` / `received array` / ...);
+ *   - every 400 also carries a stable machine-readable `error_code` —
+ *     `BODY_NOT_JSON` when the body never parsed, `BODY_NOT_OBJECT` when it
+ *     parsed to a non-object literal — so callers branch on the code instead
+ *     of matching message text;
  *   - a valid object body is handed back verbatim, so the route's own
  *     `JSON.parse(body)` keeps behaving exactly as before.
  *
- * The 400 also carries a `contract` block naming the route and its accepted
- * fields, because the response body is the only place a local RPC caller can
- * learn the field names a route expects.
+ * The 400 also carries a `contract` block in the union shape agreed across
+ * the gateway's rejection bodies — `{ path, fields, body?, schemaVersion: 1 }`
+ * — because the response body is the only place a local RPC caller can learn
+ * the field names a route expects. `fields` is always listed (`{}` when the
+ * route advertises none); `body` is optional in the shape, because a contract
+ * that does not constrain the body type may omit it, though the guard's own
+ * rejections always state it.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 
@@ -36,6 +44,15 @@ export const INVALID_JSON_BODY_MESSAGE = 'Invalid JSON body';
 
 /** Message for valid JSON that is not an object (`null`, array, scalar). */
 export const JSON_OBJECT_BODY_REQUIRED_MESSAGE = 'Invalid JSON body: expected a JSON object';
+
+/**
+ * Stable machine-readable code for a rejected request body, carried as the
+ * top-level `error_code` field of the 400. Exactly two states: `BODY_NOT_JSON`
+ * (the body never parsed as JSON, an empty strict body included) and
+ * `BODY_NOT_OBJECT` (it parsed to a non-object literal). Message text stays
+ * free to change; this code is the contract callers branch on.
+ */
+export type RpcBodyErrorCode = 'BODY_NOT_JSON' | 'BODY_NOT_OBJECT';
 
 /**
  * What an empty request body means to a route, taken from how that route read
@@ -67,6 +84,8 @@ export type RpcJsonObjectBodyResult = {
   value: Record<string, unknown>;
   /** Fixed 400 message to answer with when `ok` is false; `''` otherwise. */
   error: string;
+  /** Machine-readable rejection code when `ok` is false; `''` otherwise. */
+  errorCode: RpcBodyErrorCode | '';
 };
 
 /**
@@ -75,8 +94,8 @@ export type RpcJsonObjectBodyResult = {
  * This is the shared home for the field contracts the routes advertise: a 400
  * whose body names the accepted field names and units saves the caller a blind
  * retry (the shape introduced for `/api/idbots/wallet/transfer` by the
- * wallet-transfer field-contract change). Routes without an entry still answer
- * with `{ path, body }`, so a rejected body is always self-describing.
+ * wallet-transfer field-contract change). Routes without an entry are listed
+ * with `fields: {}`, so a rejected body is always self-describing.
  */
 export const RPC_POST_BODY_CONTRACTS: Record<string, Record<string, string>> = {
   '/api/idbots/resolve-metabot-id': {
@@ -149,16 +168,16 @@ export function parseRpcJsonObjectBody(
 ): RpcJsonObjectBodyResult {
   if (rawBody.trim() === '') {
     if ((options.emptyBody ?? 'invalid') === 'object') {
-      return { ok: true, body: '{}', value: {}, error: '' };
+      return { ok: true, body: '{}', value: {}, error: '', errorCode: '' };
     }
-    return { ok: false, body: '', value: {}, error: INVALID_JSON_BODY_MESSAGE };
+    return { ok: false, body: '', value: {}, error: INVALID_JSON_BODY_MESSAGE, errorCode: 'BODY_NOT_JSON' };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody);
   } catch {
-    return { ok: false, body: '', value: {}, error: INVALID_JSON_BODY_MESSAGE };
+    return { ok: false, body: '', value: {}, error: INVALID_JSON_BODY_MESSAGE, errorCode: 'BODY_NOT_JSON' };
   }
 
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -167,25 +186,38 @@ export function parseRpcJsonObjectBody(
       body: '',
       value: {},
       error: `${JSON_OBJECT_BODY_REQUIRED_MESSAGE} (received ${describeJsonBodyType(rawBody, parsed)})`,
+      errorCode: 'BODY_NOT_OBJECT',
     };
   }
 
-  return { ok: true, body: rawBody, value: parsed as Record<string, unknown>, error: '' };
+  return { ok: true, body: rawBody, value: parsed as Record<string, unknown>, error: '', errorCode: '' };
 }
 
-/** Response body for a rejected request body: fixed error + route contract. */
+/**
+ * Response body for a rejected request body: fixed error + machine code +
+ * route contract.
+ *
+ * The contract carries the union shape agreed across the gateway's rejection
+ * bodies: `{ path, fields, body?, schemaVersion: 1 }`. `fields` is always
+ * listed; `schemaVersion: 1` pins the shape for callers; `body` is optional
+ * in the shape but the guard's rejections always state it, since they exist
+ * precisely because the body was not the required JSON object.
+ */
 export function buildRpcBodyRejection(
   pathname: string,
   error: string,
+  errorCode: RpcBodyErrorCode,
 ): Record<string, unknown> {
-  const fields = RPC_POST_BODY_CONTRACTS[pathname];
+  const fields = RPC_POST_BODY_CONTRACTS[pathname] ?? {};
   return {
     success: false,
     error,
+    error_code: errorCode,
     contract: {
       path: pathname,
+      fields,
       body: 'JSON object',
-      ...(fields ? { fields } : {}),
+      schemaVersion: 1,
     },
   };
 }
@@ -216,7 +248,11 @@ export async function readRpcJsonObjectBody(
   const result = parseRpcJsonObjectBody(rawBody, options);
   if (!result.ok) {
     res.writeHead(400);
-    res.end(JSON.stringify(buildRpcBodyRejection(pathname, result.error)));
+    // Every failure path above names its machine state; `''` only occurs on
+    // the success path, but the flat result type cannot prove that without
+    // strictNullChecks narrowing. The sweep tests pin both codes, so a future
+    // failure path that forgets the code turns red here instead of lying.
+    res.end(JSON.stringify(buildRpcBodyRejection(pathname, result.error, result.errorCode || 'BODY_NOT_JSON')));
     return null;
   }
   return result.body;

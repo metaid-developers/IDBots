@@ -228,6 +228,14 @@ jobs:
       - name: Run omni-read agent-tool and list-page contract tests
         run: pnpm run test:omni-read
 
+      # Behavioral regression for the gateway-wide JSON object body guard:
+      # every POST route must answer a bad body with 400 + contract +
+      # error_code instead of hanging the caller or leaking an internal
+      # TypeError. Starts the real compiled gateway on a random port; the
+      # script runs compile:electron first (project convention).
+      - name: Run MetaID RPC body-guard tests
+        run: pnpm run test:rpc-body-guard
+
       - name: Install web-search skill dependencies
         working-directory: SKILLs/web-search
         run: pnpm install --frozen-lockfile
