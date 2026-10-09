@@ -131,6 +131,28 @@ export function isAuthDshTurnError(outcome: { kind?: string; error?: { code?: st
 }
 
 /**
+ * Upstream "the requested model id does not exist on this provider" fingerprints
+ * (OpenAI-compat relays and aggregator gateways: `model not found`,
+ * `model does not exist`, `404 ... model`). ASCII upstream fingerprints only.
+ * Like an auth rejection, a missing model id is a CONFIGURATION hard error —
+ * retrying the same route can never succeed — but unlike an outage it is
+ * worth degrading to the next rung (fallback brain / current default), which
+ * may point at a model id that actually exists (2026-10-08 Boss ruling,
+ * error-type routing corollary: config-class hard errors degrade + log).
+ */
+const MODEL_MISSING_ERROR_MESSAGE_FINGERPRINT = /\bmodel[ _-]?not[ _-]?found\b|model[ _-]does[ _-]?not[ _-]exist|\b404\b[^\n]{0,48}\bmodel\b/i;
+
+/** True when a DSH turn outcome failed because the provider does not serve
+ *  the requested model id — a kernel-normalized model-missing code, or an
+ *  upstream model-not-found fingerprint in the raw message. */
+export function isConfigModelMissingDshTurnError(outcome: { kind?: string; error?: { code?: string; message?: string } }): boolean {
+  if (outcome?.kind !== 'error') return false;
+  const code = String(outcome.error?.code ?? '').toUpperCase();
+  if (code === 'MODEL_NOT_FOUND' || code === 'MODEL_DOES_NOT_EXIST') return true;
+  return MODEL_MISSING_ERROR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''));
+}
+
+/**
  * Upstream "request exceeds the model's context window" fingerprints mirrored
  * from provider error bodies (OpenAI-compat relays, DeepSeek, aggregator
  * gateways). ASCII upstream error fingerprints only — never natural-language

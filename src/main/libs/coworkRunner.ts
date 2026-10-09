@@ -42,7 +42,7 @@ import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
-import { CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, OVERFLOW_TURN_RESUME_PROMPT, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT } from './coworkAssistantReply';
+import { CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, OVERFLOW_TURN_RESUME_PROMPT, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
   isSdkInternalDiagnostic,
@@ -7911,6 +7911,55 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Last-resort runtime rescue route (2026-10-08 stale-binding post-mortem):
+   * when the turn's bound route (session model pick, or a bot brain pinned to
+   * a now-exhausted provider) dies on QUOTA/RATE_LIMIT or a config-level
+   * hard error (auth rejection / model id not served) and NO fallback brain
+   * exists or resolves, re-resolve the CURRENT global default route from
+   * app_config and — when it maps to a DIFFERENT upstream — hand the turn to
+   * it. The owner's latest default is resolved live at this call (no session
+   * snapshot is consulted), so changing the default in Settings takes effect
+   * for the very next attempt of the same turn instead of failing the turn
+   * and re-failing every queued message behind it (the 429 avalanche).
+   *
+   * 2026-10-08 Boss rework ruling: the earlier free-relay-only guardrail
+   * (declining a PAID default) is REMOVED — the owner already runs paid
+   * relays and official providers in daily operation, so "rescue may cost"
+   * is not a concern and an avoided cost is not worth a dead turn. The
+   * rescue now accepts ANY enabled default (free or paid) as long as it
+   * maps to a different upstream; per-call only, nothing is anchored.
+   */
+  private resolveCurrentDefaultDshRoute(
+    sessionId: string,
+    failedRoute: DshProviderRouteInfo,
+  ): { route: DshProviderRouteInfo | null; decline: 'none' | 'resolve-error' | 'no-default' | 'same-route' } {
+    let defaultRoute: ReturnType<typeof resolveDshProviderRoute> = null;
+    try {
+      defaultRoute = resolveDshProviderRoute();
+    } catch (error) {
+      coworkLog('WARN', 'resolveCurrentDefaultDshRoute', 'Default route re-resolution threw during quota rescue', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { route: null, decline: 'resolve-error' };
+    }
+    if (!defaultRoute?.baseUrl || !defaultRoute.apiKey) return { route: null, decline: 'no-default' };
+    if (
+      defaultRoute.provider === failedRoute.provider
+      && defaultRoute.baseUrl === failedRoute.baseUrl
+      && defaultRoute.model === failedRoute.model
+    ) {
+      return { route: null, decline: 'same-route' };
+    }
+    coworkLog('WARN', 'resolveCurrentDefaultDshRoute', 'Bound route died on quota/rate-limit with no fallback brain — rescuing the turn onto the current default route', {
+      sessionId,
+      fromRoute: { provider: failedRoute.provider, model: failedRoute.model, baseUrl: failedRoute.baseUrl },
+      toRoute: { provider: defaultRoute.provider, model: defaultRoute.model, baseUrl: defaultRoute.baseUrl },
+    });
+    return { route: defaultRoute, decline: 'none' };
+  }
+
+  /**
    * Map a resolved provider row onto the hub's turn-route shape. Warmup and
    * the first real turn must produce the same composition fields (key, model
    * limits, vision flag) or the shared runtime restarts and the warmup is wasted.
@@ -9133,6 +9182,23 @@ export class CoworkRunner extends EventEmitter {
       // operator what actually fixes it (compact / fresh session), ending the
       // retry-the-same-400 dead loop.
       const gateOverflow = isOverflowDshTurnError(outcome, { compactionFailedThisTurn });
+      // Config-level hard errors join the DEGRADE (2026-10-08 Boss ruling
+      // corollary 3, error-type routing: "config-class hard error -> degrade
+      // + log"): an auth rejection
+      // (401/invalid key) or a model id the provider does not serve can never
+      // succeed on the same route, but the fallback brain / current default
+      // may point at a route whose key is valid / whose model id exists.
+      // Like quota these take a SINGLE attempt on the target (a wrong key or
+      // a missing model id does not heal mid-turn) and the switch WARN names
+      // the config error so the log distinguishes it from a rate limit.
+      const gateConfigHard = !gateTransient && !gateQuota && !gateOverflow
+        && (isAuthDshTurnError(outcome) || isConfigModelMissingDshTurnError(outcome));
+      // Ring-4 terminal-semantics tracker (2026-10-08 Boss ruling): when the
+      // degrade ladder had NOWHERE to go (no fallback brain, and no usable
+      // current default to rescue with), the settle error below must read
+      // as the localized "no usable model configured" message ('未配置可用模型',
+      // a configuration error), never the raw 429 body.
+      let ladderNoTargetKind: 'no-alternative' | null = null;
       // The HTTP 413 body-limit family (kernel REQUEST_TOO_LARGE /
       // "413 request too large") is deliberately NOT in this chain
       // (2026-10-04 metaid-free incident): 413 fires on the request's
@@ -9146,9 +9212,28 @@ export class CoworkRunner extends EventEmitter {
       if (
         outcome.kind === 'error'
         && !activeSession.abortController.signal.aborted
-        && (gateTransient || gateQuota || gateOverflow)
+        && (gateTransient || gateQuota || gateOverflow || gateConfigHard)
       ) {
-        const fallbackRoute = this.resolveSessionFallbackDshRoute(sessionId, route);
+        const gateSourceRoute = route;
+        // Brain fallback first (unchanged GT-02 behavior); when NO fallback
+        // brain exists/resolves to a different route, the 2026-10-08
+        // stale-binding post-mortem rescue kicks in: re-resolve the CURRENT
+        // default route so the owner's latest default carries the turn
+        // instead of the turn dying (and every queued message re-dying
+        // behind it). Quota, exhausted-transient (incl. RATE_LIMIT) and
+        // config-hard deaths all take this; the failure only affects THIS
+        // attempt — nothing is anchored: the next turn re-resolves from
+        // scratch.
+        let fallbackRoute = this.resolveSessionFallbackDshRoute(sessionId, gateSourceRoute);
+        let fallbackIsCurrentDefault = false;
+        if (!fallbackRoute && (gateQuota || gateTransient || gateConfigHard)) {
+          const rescue = this.resolveCurrentDefaultDshRoute(sessionId, gateSourceRoute);
+          fallbackRoute = rescue.route;
+          fallbackIsCurrentDefault = fallbackRoute !== null;
+          if (!fallbackRoute) {
+            ladderNoTargetKind = 'no-alternative';
+          }
+        }
         if (fallbackRoute) {
           coworkLog(
             'WARN',
@@ -9157,6 +9242,8 @@ export class CoworkRunner extends EventEmitter {
               ? 'Primary provider route is out of credit — switching to the bot fallback brain route'
               : gateOverflow
                 ? 'Primary provider route is out of context window — switching to the bot fallback brain route'
+                : gateConfigHard
+                  ? 'Primary provider route failed with a configuration-level hard error (auth / model not found) — degrading to the bot fallback brain route'
               : 'Primary provider route still failing transiently after the resume budget — switching to the bot fallback brain route',
             {
               sessionId,
@@ -9173,15 +9260,19 @@ export class CoworkRunner extends EventEmitter {
             sessionId,
             tApp(
               gateQuota
-                ? `主模型 ${route.model}（${route.provider}）额度不足，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
+                ? `主模型 ${route.model}（${route.provider}）额度不足，本轮已切换到${fallbackIsCurrentDefault ? '当前默认模型' : '该 Bot 的备用模型'} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
                 : gateOverflow
                   ? `主模型 ${route.model}（${route.provider}）上下文超限，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`
-                  : `主模型路由持续不可用，本轮已切换到该 Bot 的备用模型 ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
+                : gateConfigHard
+                  ? `主模型 ${route.model}（${route.provider}）配置类错误（鉴权被拒或模型不存在），本轮已降级到${fallbackIsCurrentDefault ? '当前默认模型' : '该 Bot 的备用模型'} ${fallbackRoute.model}（${fallbackRoute.provider}）继续；请检查原供应商的 API key 或模型配置。`
+                  : `主模型路由持续不可用，本轮已切换到${fallbackIsCurrentDefault ? '当前默认模型' : '该 Bot 的备用模型'} ${fallbackRoute.model}（${fallbackRoute.provider}）继续。`,
               gateQuota
-                ? `The primary model ${route.model} (${route.provider}) ran out of credit; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                ? `The primary model ${route.model} (${route.provider}) ran out of credit; this turn switched to the ${fallbackIsCurrentDefault ? 'current default' : "bot's fallback"} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
                 : gateOverflow
                   ? `The primary model ${route.model} (${route.provider}) exceeded its context window; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
-                  : `The primary model route kept failing; this turn switched to the bot's fallback model ${fallbackRoute.model} (${fallbackRoute.provider}).`
+                : gateConfigHard
+                  ? `The primary model ${route.model} (${route.provider}) failed with a configuration-level error (auth rejected or model not found); this turn degraded to the ${fallbackIsCurrentDefault ? 'current default' : "bot's fallback"} model ${fallbackRoute.model} (${fallbackRoute.provider}). Check the original provider's API key or model configuration.`
+                  : `The primary model route kept failing; this turn switched to the ${fallbackIsCurrentDefault ? 'current default' : "bot's fallback"} model ${fallbackRoute.model} (${fallbackRoute.provider}).`
             ),
             {
               dshRouteFallback: true,
@@ -9191,17 +9282,17 @@ export class CoworkRunner extends EventEmitter {
               toModel: fallbackRoute.model,
             }
           );
-          // Quota/overflow unconditional first attempt: these entries skip the
-          // same-route ladder above by construction (retrying an out-of-credit
-          // or over-context route cannot succeed), so without this the
-          // fallback route would never be tried at all. The TRANSIENT path
-          // must NOT take this — its first fallback attempt comes from the
-          // loop below, so the fallback resume budget stays exactly
-          // `DSH_FALLBACK_TURN_MAX_RESUMES` as on origin/main (independent
-          // verification 2026-09-28 caught a first draft where the
-          // unconditional attempt also applied to the transient path,
-          // silently raising the fallback cap 2→3).
-          if (gateQuota || gateOverflow) {
+          // Quota/overflow/config-hard unconditional first attempt: these
+          // entries skip the same-route ladder above by construction (retrying
+          // an out-of-credit, over-context, wrong-key or missing-model route
+          // cannot succeed), so without this the fallback route would never be
+          // tried at all. The TRANSIENT path must NOT take this — its first
+          // fallback attempt comes from the loop below, so the fallback resume
+          // budget stays exactly `DSH_FALLBACK_TURN_MAX_RESUMES` as on
+          // origin/main (independent verification 2026-09-28 caught a first
+          // draft where the unconditional attempt also applied to the
+          // transient path, silently raising the fallback cap 2→3).
+          if (gateQuota || gateOverflow || gateConfigHard) {
             lastAttemptRoute = fallbackRoute;
             outcome = await runGuardedTurn(
               gateOverflow ? OVERFLOW_TURN_RESUME_PROMPT : TRANSIENT_TURN_RESUME_PROMPT,
@@ -9240,11 +9331,26 @@ export class CoworkRunner extends EventEmitter {
           ?? outcome.reason
           ?? JSON.stringify(outcome).slice(0, 300);
         coworkLog('ERROR', 'runDshSessionLocal', 'DSH turn failed', { outcome });
+        // Ring-④ terminal semantics (2026-10-08 Boss ruling): when the degrade
+        // ladder had NO valid target anywhere (no fallback brain, no
+        // free-relay default), the failure is a CONFIGURATION error, not a
+        // rate limit — the user-visible message must read "未配置可用模型"
+        // and must NOT carry the native 429/limit body (the full raw outcome
+        // stays in the ERROR log line above for diagnosis). Conversely, when
+        // the ladder DID have a target and that target also died, the
+        // route-naming quota notice below stays: a configured-but-exhausted
+        // route is a "top up" problem, not a "nothing configured" problem.
+        const noModelConfiguredNotice = ladderNoTargetKind === 'no-alternative'
+          ? ` ${tApp(
+              `（未配置可用模型：会话绑定的模型已不可用，备用模型与当前默认降级链上没有任何有效目标——这是配置错误而非临时限流。请到 设置 > 模型 配置一个可用的默认模型，或为现有供应商充值。）`,
+              ` (No usable model configured: the session's bound model is unavailable and neither the bot fallback nor the current-default ladder has a valid target — this is a configuration error, not a transient rate limit. Configure a usable default model in Settings > Models, or top up the provider.)`
+            )}`
+          : '';
         // Quota death is not retryable on the same route and the raw provider
         // body names no culprit: append an actionable notice naming the route
         // that ran out of credit, so "switch model and retry" is discoverable
         // from the transcript alone (2026-09-14 A2A stall post-mortem).
-        const quotaNotice = isQuotaDshTurnError(outcome)
+        const quotaNotice = (isQuotaDshTurnError(outcome) && ladderNoTargetKind === null)
           ? ` ${tApp(
               `（模型供应商 ${lastAttemptRoute.provider} 的 ${lastAttemptRoute.model} 额度不足，本轮已终止：请为该供应商充值，或更换模型后重发。）`,
               ` (Provider ${lastAttemptRoute.provider} model ${lastAttemptRoute.model} is out of credits and the turn was aborted: top up that provider or switch models, then resend.)`
@@ -9288,9 +9394,15 @@ export class CoworkRunner extends EventEmitter {
               ` (The failing route: provider ${lastAttemptRoute.provider}, model ${lastAttemptRoute.model}; the API key actually sent ended with ****${String(lastAttemptRoute.apiKey ?? '').trim().slice(-4) || '????'}. Open that provider in Settings > Models and compare the key in plain text: a matching tail means this key itself is rejected — replace it; a different tail means the turn did not use the key you just saved — check whether another enabled provider serves the same model.)`
             )}`
           : '';
-        this.handleError(sessionId, `DSH turn failed: ${failureDetail}${quotaNotice}${bodyLimitNotice}${overflowNotice}${authNotice}`);
+        // Ring-④ rewrites strip the native 429/limit body from the
+        // user-visible detail (the raw outcome stays in the ERROR log line
+        // above); the notices carry the config semantics instead.
+        const ladderSemantics = ladderNoTargetKind === 'no-alternative'
+          ? `未配置可用模型（配置错误：绑定模型与备用/默认降级链均无效；最后错误码 ${outcome.error?.code ?? 'UNKNOWN'}）`
+          : failureDetail;
+        this.handleError(sessionId, `DSH turn failed: ${ladderSemantics}${quotaNotice}${noModelConfiguredNotice}${bodyLimitNotice}${overflowNotice}${authNotice}`);
         this.clearPendingPermissions(sessionId);
-        this.settleDshSteerSubmissions(activeSession, 'failed', `DSH turn failed: ${failureDetail}`);
+        this.settleDshSteerSubmissions(activeSession, 'failed', `DSH turn failed: ${ladderSemantics}`);
         this.removeActiveSession(sessionId, activeSession);
         this.dshActiveTurns.delete(sessionId);
         return;
