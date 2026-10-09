@@ -91,6 +91,7 @@ const runJsonSafeSuite = async () => {
   })
   check('root object: marker names the trimmed path and its units', () => {
     const marker = objectJson[MARKER_KEY]
+    assert.equal(marker.mode, 'trimmed')
     assert.equal(marker.kind, 'string')
     assert.equal(marker.path, '$.blob')
     assert.equal(marker.total, 60000)
@@ -111,6 +112,7 @@ const runJsonSafeSuite = async () => {
   const keptElements = listJson[ENVELOPE_KEY]
   check('root array: payload rides the envelope and the marker is its sibling', () => {
     assert.ok(Array.isArray(keptElements), `${typeof keptElements}`)
+    assert.equal(listJson[MARKER_KEY].mode, 'envelope')
     assert.equal(listJson[MARKER_KEY].kind, 'array')
     assert.equal(listJson[MARKER_KEY].path, '$')
     assert.equal(listJson[MARKER_KEY].total, 200)
@@ -281,11 +283,26 @@ const runJsonSafeSuite = async () => {
   }
   check('found a pretty-printed document that only overflows on whitespace', () => assert.ok(prettyDoc, 'fixture not found'))
   const shapedPretty = await tight.run([{ type: 'text', text: prettyDoc }])
-  check('whitespace-only overflow: compacted, nothing lost, no marker', () => {
+  check('whitespace-only overflow: compacted, nothing lost, marker discloses re-serialization', () => {
     const out = textOf(shapedPretty)
+    const outJson = JSON.parse(out)
     assert.ok(out.length <= 800, `${out.length} chars`)
-    assert.deepEqual(JSON.parse(out), JSON.parse(prettyDoc))
-    assert.equal(Object.keys(JSON.parse(out)).includes(MARKER_KEY), false)
+    assert.deepEqual(outJson.items, JSON.parse(prettyDoc).items)
+    // H-81 ②③: the compact path is no longer silent — the marker rides
+    // alongside with mode='compact' and a note that says re-serialized.
+    const marker = outJson[MARKER_KEY]
+    assert.ok(marker, 'compact marker present')
+    assert.equal(marker.mode, 'compact')
+    assert.equal(marker.truncated, false)
+    assert.equal(marker.trimCount, 0)
+    assert.deepEqual(marker.trims, [])
+    assert.equal(marker.note.includes('re-serialized'), true, `note: ${marker.note}`)
+    assert.equal(marker.note.includes('value unchanged, bytes changed'), true, `note: ${marker.note}`)
+    assert.equal(marker.originalChars, prettyDoc.length)
+    // shapedChars is the compact document BEFORE the marker bytes are added;
+    // the final inline is that document plus the marker's own footprint.
+    assert.ok(marker.shapedChars > 0 && marker.shapedChars < prettyDoc.length, `shapedChars ${marker.shapedChars}`)
+    assert.equal(out.length > marker.shapedChars, true, 'marker adds its own bytes on top of the compact document')
   })
 
   const tightPayload = JSON.stringify({ items: workers(50) })
@@ -305,6 +322,24 @@ const runJsonSafeSuite = async () => {
     assert.equal(sourceContent.length, 1)
     assert.equal(sourceContent[0].type, 'text')
     assert.equal(sourceContent[0].text, objectPayload)
+  })
+
+  // ---- H-81 three-state summary: every emitter carries mode ---------------
+  check('H-81: trimmed marker keeps the original note text and mode=trimmed', () => {
+    const marker = objectJson[MARKER_KEY]
+    assert.equal(marker.mode, 'trimmed')
+    assert.equal(marker.note.includes(MARKER_TEXT), true, `note: ${marker.note}`)
+    assert.equal(marker.note.includes('budget 20000 chars'), true, `note: ${marker.note}`)
+  })
+  check('H-81: envelope marker carries mode=envelope', () => {
+    assert.equal(numbersJson[MARKER_KEY].mode, 'envelope')
+    assert.equal(numbersJson[MARKER_KEY].truncated, true)
+  })
+  check('H-81: compact marker re-serializes without loss (value unchanged, bytes changed)', () => {
+    const out = textOf(shapedPretty)
+    assert.equal(JSON.parse(out)[MARKER_KEY].mode, 'compact')
+    assert.deepEqual(JSON.parse(out).items, JSON.parse(prettyDoc).items, 'value unchanged')
+    assert.equal(out.length !== prettyDoc.length, true, 'byte footprint changed vs source')
   })
 
   const failed = results.filter((r) => !r.pass).length

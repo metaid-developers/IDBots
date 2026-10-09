@@ -60,8 +60,11 @@
 //       __idbots_tool_result_shaping__: { ...marker } }
 //   root scalar -> the same envelope (a JSON string document has nowhere else
 //     to carry the marker)
-//   marker = { truncated: true, kind, path, returned, total, originalChars,
+//   marker = { truncated, mode, kind, path, returned, total, originalChars,
 //              note, trimCount, trims: [{ path, kind, returned, total }, ...] }
+//     mode     'compact' | 'trimmed' | 'envelope' — which path emitted the
+//              marker; the compact path (re-serialization that fits the budget)
+//              emits truncated=false and no kind/path/returned/total
 //     trimCount  how many nodes the plan actually trimmed
 //     trims      the first MARKER_MAX_TRIMS of them, biggest first (bounded so
 //                the marker cannot outgrow the budget it enforces)
@@ -69,7 +72,9 @@
 //     path     JSON path of the primary trim, dot/bracket form ($, $[0], $.a.b)
 //     returned kept units of the primary trim (whole elements / chars)
 //     total    original units of the primary trim (elements / chars)
-//     note     always contains the literal 'tool result trimmed'
+//     note     trimmed paths always contain the literal 'tool result trimmed';
+//              the compact path's note says 'JSON re-serialized (value
+//              unchanged, bytes changed)' (H-81 ③)
 //   Only stringified JSON is re-serialized, so unchanged members keep their
 //   meaning (number spelling may normalize, e.g. 1.0 -> 1, and duplicate source
 //   keys collapse to the last one — JSON.parse semantics).
@@ -223,18 +228,58 @@ const JSON_NOTE = (originalChars, maxChars, ref) =>
   `tool result trimmed: JSON kept parseable — arrays lose whole elements only; original ${originalChars} chars, budget ${maxChars} chars` +
   (ref ? `; full original stored at: ${ref.locator}. ${ref.retrievalHint}` : '')
 
+// H-81 ③: the compact path re-serializes the document (value unchanged, bytes
+// changed), so the note must say so explicitly — a consumer hashing the text
+// must be able to tell a re-ordering from corruption.
+const COMPACT_NOTE = (originalChars, shapedChars, maxChars, ref) =>
+  `tool result compacted: JSON re-serialized (value unchanged, bytes changed) — original ${originalChars} chars, compact ${shapedChars} chars, budget ${maxChars} chars` +
+  (ref ? `; full original stored at: ${ref.locator}. ${ref.retrievalHint}` : '')
+
+// H-81 ②: the marker contract gains a `mode` field — 'compact' | 'trimmed' |
+// 'envelope' — and the compact path now emits the marker too. The namespaced
+// keys still can never overwrite a key the tool wrote itself.
+const withMarkerSibling = (payload, marker) => {
+  if (isPlainObject(payload)) {
+    const out = {}
+    for (const key of Object.keys(payload)) setOwn(out, key, payload[key])
+    setOwn(out, MARKER_KEY, marker)
+    return JSON.stringify(out)
+  }
+  const envelope = {}
+  setOwn(envelope, ENVELOPE_KEY, payload)
+  setOwn(envelope, MARKER_KEY, marker)
+  return JSON.stringify(envelope)
+}
+
 // JSON-safe shaping of one text block. Returns the shaped text, or null to let
 // the caller fall back to the legacy head+tail path (non-JSON document, a
 // namespaced-key collision, or a document no trim plan can bring inside budget).
 const shapeJsonText = (text, maxChars, ref) => {
   let parsed
   try { parsed = JSON.parse(text) } catch { return null }
+  // The namespaced-key collision check runs on the PARSED document, before any
+  // path emits it: a root object already carrying either namespaced key is left
+  // to the head+tail path instead of being overwritten.
+  const isRootObject = isPlainObject(parsed)
+  if (isRootObject && Object.keys(parsed).some((key) => key === MARKER_KEY || key === ENVELOPE_KEY)) return null
   // A pretty-printed document can be over budget purely on whitespace: emitting
-  // the compact re-serialization loses no content and fits, so nothing is
-  // truncated and there is no truncation to mark.
+  // the compact re-serialization loses no content and fits. H-81 ②: this still
+  // re-serializes the text (value unchanged, bytes changed), so it is no longer
+  // silent — the marker rides alongside with mode='compact' and a note that
+  // says re-serialized.
   const compact = JSON.stringify(parsed)
-  if (compact.length <= maxChars) return compact
-  if (isPlainObject(parsed) && Object.keys(parsed).some((key) => key === MARKER_KEY || key === ENVELOPE_KEY)) return null
+  if (compact.length <= maxChars) {
+    const marker = {
+      truncated: false,
+      mode: 'compact',
+      originalChars: text.length,
+      shapedChars: compact.length,
+      note: COMPACT_NOTE(text.length, compact.length, maxChars, ref),
+      trimCount: 0,
+      trims: [],
+    }
+    return withMarkerSibling(parsed, marker)
+  }
 
   const originalChars = text.length
   const { arrays, strings } = collectTrimTargets(parsed)
@@ -270,6 +315,9 @@ const shapeJsonText = (text, maxChars, ref) => {
     const whole = rebuildDocument(parsed, '$', trims)
     const marker = {
       truncated: true,
+      // H-81 ②: mode distinguishes a root-object trim ('trimmed') from the
+      // envelope path for root arrays / scalars ('envelope').
+      mode: isPlainObject(whole) ? 'trimmed' : 'envelope',
       kind: list[0].kind,
       path: list[0].path,
       returned: list[0].returned,
@@ -458,7 +506,7 @@ export function apply(ctx, config = {}) {
           content: result.content.filter((block) => block.type === 'text').map((block) => block.text).join(''),
         })
       } catch (error) {
-        console.error(`[idbots-tool-result-shaping] ${exec.name}: spill save failed (${String(error)}); trimming without a recovery path`)
+        console.error(`[idbots-tool-result-shaping] ${new Date().toISOString()} ${exec.name}: spill save failed (${String(error)}); trimming without a recovery path`)
       }
     }
 
@@ -486,7 +534,7 @@ export function apply(ctx, config = {}) {
       }
     }
     if (jsonText !== null) {
-      console.error(`[idbots-tool-result-shaping] ${exec.name}: ${textLength(result.content)} chars -> ${jsonText.length} chars (json-safe)${ref ? ` (full original: ${ref.locator})` : ''}`)
+      console.error(`[idbots-tool-result-shaping] ${new Date().toISOString()} ${exec.name}: ${textLength(result.content)} chars -> ${jsonText.length} chars (json-safe)${ref ? ` (full original: ${ref.locator})` : ''}`)
       return {
         kind: 'accept',
         content: [{ type: 'text', text: jsonText }],
@@ -510,7 +558,7 @@ export function apply(ctx, config = {}) {
         shaped = renderShaped(result.content, markerFor, totalChars, Math.min(tailChars, Math.floor(totalChars / 4)))
       }
     }
-    console.error(`[idbots-tool-result-shaping] ${exec.name}: ${textLength(result.content)} chars -> ${textLength(shaped)}${ref ? ` (full original: ${ref.locator})` : ''}`)
+    console.error(`[idbots-tool-result-shaping] ${new Date().toISOString()} ${exec.name}: ${textLength(result.content)} chars -> ${textLength(shaped)}${ref ? ` (full original: ${ref.locator})` : ''}`)
     return {
       kind: 'accept',
       content: shaped,
