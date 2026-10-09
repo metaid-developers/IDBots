@@ -126,6 +126,7 @@ tests/*
 !tests/userMessageOrigin.test.ts
 !tests/coworkDshSessionTypes.test.mjs
 !tests/coworkDshStallWatchdog.test.mjs
+!tests/coworkDshIdleStreamFallback.test.mjs
 !tests/coworkDshDeletePolicy.test.mjs
 !tests/coworkDshWebSearch.test.mjs
 !tests/coworkDshModelSwitch.test.mjs

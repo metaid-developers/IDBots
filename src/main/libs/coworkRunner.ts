@@ -8157,6 +8157,17 @@ export class CoworkRunner extends EventEmitter {
           this.emit('message', coworkSessionId, stored);
           return stored.id;
         },
+        // Kernel-initiated turns (subagent-finished wakes, scheduled nudges)
+        // stream through these instead of a turn controller's callbacks. Same
+        // gate as host turns: throttled renderer updates, SQLite writes only
+        // on finalize — without it the placeholder rows stayed isStreaming:true
+        // and empty, which the transcript rendered as an app-quit interruption.
+        onIdleSessionMessageUpdate: (coworkSessionId, messageId, content) => {
+          this.dshStreamUi.onUpdate(coworkSessionId, messageId, content);
+        },
+        onIdleSessionMessageFinalize: (coworkSessionId, messageId, content, metadata) => {
+          this.dshStreamUi.onFinalize(coworkSessionId, messageId, content, metadata);
+        },
         onSessionTitle: (coworkSessionId, title, kind) => this.applyDshSessionTitle(coworkSessionId, title, kind),
         onSessionStatusChange: (coworkSessionId, status) => {
           // A kernel-initiated turn settling releases queued cross-session
