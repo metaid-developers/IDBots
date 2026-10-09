@@ -202,13 +202,14 @@ test('mergeProvidersConfig rewrites free-provider model names to display names',
   assert.equal(deepseekModels[0].name, 'deepseek-chat');
 });
 
-test('mergeProvidersConfig rewrites known free-provider models to the canonical deepseek-flash preset', () => {
-  // Installs provisioned while the relay reported the legacy DeepSeek V3 wire
-  // values store contextWindow 64000 / maxOutputTokens 4096; normalization
-  // must rewrite the known id to the canonical deepseek-flash preset (1M
-  // context, 32K output, thinking on at max effort) so the cowork context
-  // ring and effort selector behave exactly like the deepseek provider's
-  // deepseek-flash.
+test('mergeProvidersConfig bumps the machine-pinned free-model output ceiling but keeps user-tuned values', () => {
+  // Relay-reported rows store contextWindow 64000 / maxOutputTokens 4096
+  // (both machine-written: the 2026-10-04 pin and the payload's report).
+  // Load-time normalization moves the output pin to the 100K declared
+  // ceiling (thinking shares the output budget — 4096 truncated effort-max
+  // turns after a couple of sentences) and keeps the server-enforced window.
+  // User-tuned numbers are NOT canonical values, so they survive untouched —
+  // normalization must never revert manual edits (the 2026-10-09 incident).
   const stored = makeConfig({
     'metaid-free': {
       enabled: true,
@@ -217,6 +218,14 @@ test('mergeProvidersConfig rewrites known free-provider models to the canonical 
       apiFormat: 'openai',
       models: [
         { id: 'deepseek-chat', name: 'deepseek-chat', contextWindow: 64_000, maxOutputTokens: 4_096, supportsImage: false },
+        {
+          id: 'deepseek-chat',
+          name: 'deepseek-chat',
+          contextWindow: 100_000,
+          maxOutputTokens: 50_000,
+          supportsImage: false,
+          options: { reasoningEffort: 'low', thinking: { type: 'disabled' } },
+        },
         { id: 'future-relay-model', name: 'future-relay-model', contextWindow: 64_000, maxOutputTokens: 4_096 },
       ],
     },
@@ -231,15 +240,22 @@ test('mergeProvidersConfig rewrites known free-provider models to the canonical 
 
   const merged = mergeProvidersConfig(undefined, stored.providers);
   const freeModels = merged!['metaid-free']!.models!;
-  assert.equal(freeModels[0].contextWindow, 1_000_000);
-  assert.equal(freeModels[0].maxOutputTokens, 32_768);
+  // Machine-pinned era values: window stays server-enforced, output ceiling
+  // moves to the canonical 100K, canonical options fill the empty row.
+  assert.equal(freeModels[0].contextWindow, 64_000);
+  assert.equal(freeModels[0].maxOutputTokens, 100_000);
   assert.equal(freeModels[0].supportsImage, false);
   assert.equal(freeModels[0].options?.reasoningEffort, 'max');
   assert.deepEqual(freeModels[0].options?.thinking, { type: 'enabled' });
+  // Non-legacy stored values (a manual 100K window edit + custom ceiling and
+  // effort) stay exactly as stored — stored options win over canonical ones.
+  assert.equal(freeModels[1].contextWindow, 100_000);
+  assert.equal(freeModels[1].maxOutputTokens, 50_000);
+  assert.deepEqual(freeModels[1].options, { reasoningEffort: 'low', thinking: { type: 'disabled' } });
   // Unknown relay ids keep the relay-reported values untouched.
-  assert.equal(freeModels[1].contextWindow, 64_000);
-  assert.equal(freeModels[1].maxOutputTokens, 4_096);
-  assert.equal(freeModels[1].options, undefined);
+  assert.equal(freeModels[2].contextWindow, 64_000);
+  assert.equal(freeModels[2].maxOutputTokens, 4_096);
+  assert.equal(freeModels[2].options, undefined);
   // A user-configured provider with the same model id keeps its stored values.
   const deepseekModels = merged!.deepseek!.models!;
   assert.equal(deepseekModels[0].contextWindow, 64_000);

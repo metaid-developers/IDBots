@@ -1,6 +1,6 @@
 import { AppConfig, CONFIG_KEYS, defaultConfig, normalizeDeepSeekAppConfig } from '../config';
 import { localStore } from './store';
-import { getFreeProviderModelCanonical, getFreeProviderModelDisplayName, FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './llmFreeQuotaGate.js';
+import { getFreeProviderModelCanonical, getFreeProviderModelDisplayName, getFreeProviderModelLegacyLimitRewrites, FREE_PROVIDER_DISPLAY_NAME, LLM_FREE_PROVIDER_KEY } from './llmFreeQuotaGate.js';
 
 const getFixedProviderApiFormat = (providerKey: string): 'anthropic' | 'openai' | null => {
   if (providerKey === 'openai' || providerKey === 'gemini') {
@@ -82,20 +82,46 @@ const buildProviderSignature = (
   })),
 );
 
-// The built-in free-quota provider is managed end to end (relay-provisioned
-// credentials, hidden in the UI), so its models always normalize to the
-// canonical product config: display names instead of the relay's internal
-// wire ids, and — for known ids — the canonical limits/options. Installs
-// provisioned while the incorrect 1M-context override shipped get their
-// stored deepseek-chat entry rewritten back to the server-enforced 64K/4K
-// values on load (ConfigService.init persists the corrected config back).
+// The built-in free-quota provider is relay-provisioned (credentials hidden
+// in the UI), but its model rows ARE user-editable (Settings model editor),
+// so normalization must respect what a row stores instead of re-pinning the
+// canonical table over it — the unconditional rewrite reverted every manual
+// edit on load (the 2026-10-09 "manual 100K does not stick" incident). It
+// still: forces the canonical display name, fills canonical limits/options
+// only where the row stores none, and rewrites machine-pinned legacy values
+// (getFreeProviderModelLegacyLimitRewrites — eras that wrote 1M/32768 or
+// 64000/4096 rows; an exact match identifies the writer, never the user).
 const normalizeFreeProviderModels = (
   models: NonNullable<NonNullable<AppConfig['providers']>[string]['models']> | undefined,
-) => models?.map((model) => ({
-  ...model,
-  ...getFreeProviderModelCanonical(model.id),
-  name: getFreeProviderModelDisplayName(model.id),
-}));
+) => models?.map((model) => {
+  const canonical = getFreeProviderModelCanonical(model.id);
+  if (!canonical) {
+    return { ...model, name: getFreeProviderModelDisplayName(model.id) };
+  }
+  const legacy = getFreeProviderModelLegacyLimitRewrites(model);
+  return {
+    ...model,
+    name: getFreeProviderModelDisplayName(model.id),
+    contextWindow: legacy.contextWindow || model.contextWindow === undefined
+      ? canonical.contextWindow
+      : model.contextWindow,
+    maxOutputTokens: legacy.maxOutputTokens || model.maxOutputTokens === undefined
+      ? canonical.maxOutputTokens
+      : model.maxOutputTokens,
+    supportsImage: model.supportsImage ?? canonical.supportsImage,
+    options: model.options
+      ? {
+          ...model.options,
+          thinking: model.options.thinking ? { ...model.options.thinking } : undefined,
+        }
+      : canonical.options
+        ? {
+            ...canonical.options,
+            thinking: canonical.options.thinking ? { ...canonical.options.thinking } : undefined,
+          }
+        : undefined,
+  };
+});
 
 const normalizeSingleProviderConfig = (
   providerKey: string,

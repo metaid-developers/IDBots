@@ -366,13 +366,15 @@ test('mergeProvidersConfig applies explicit provider credential updates', () => 
   assert.equal(merged?.deepseek.apiFormat, 'anthropic');
 });
 
-test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to the server-enforced 64K/4K values', () => {
+test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to the 64K window / 100K declared ceiling', () => {
   // The 2026-10-04 metaid-free 413 incident: installs provisioned while the
   // canonical table mirrored the deepseek-flash preset (1M window / 32K
-  // output) carry that wrong entry in their stored config. The upstream
-  // enforces 64000/4096, so load-time normalization must rewrite it back —
-  // that is what moves the auto-compaction trigger from ~800K tokens (never
-  // reachable: the upstream 400s at ~64K) down to ~57K.
+  // output) carry that wrong entry in their stored config. Both values were
+  // machine-written (that era's canonical pin), so load-time normalization
+  // rewrites the exact matches: the window to the server-enforced 64000
+  // (that is what moves the auto-compaction trigger from ~800K tokens —
+  // never reachable, the upstream 400s at ~64K — down to ~53K), the ceiling
+  // to the 2026-10-09 100K declared output.
   const staleProvisioned = {
     'metaid-free': {
       enabled: true,
@@ -398,10 +400,96 @@ test('mergeProvidersConfig rewrites the stale metaid-free 1M-context entry to th
   const model = merged?.['metaid-free']?.models?.find(({ id }) => id === 'deepseek-chat');
   assert.ok(model);
   assert.equal(model.contextWindow, 64_000);
-  assert.equal(model.maxOutputTokens, 4_096);
+  assert.equal(model.maxOutputTokens, 100_000);
   // Everything the canonical table does not own stays untouched.
   assert.equal(model.name, 'deepseek-flash');
   assert.deepEqual(model.options, { reasoningEffort: 'max', thinking: { type: 'enabled' } });
   assert.equal(merged?.['metaid-free']?.apiKey, 'mrk_stale-install');
+});
+
+test('mergeProvidersConfig bumps the 2026-10-04 4096 output pin but keeps user-tuned free-model limits', () => {
+  // Rows written by the 2026-10-04 build store the machine-pinned 64000/4096
+  // (also what the relay payload reports); the output pin moves to the 100K
+  // declared ceiling while the window stays. A user-tuned row (manual
+  // Settings edits — the 2026-10-09 incident where normalization reverted
+  // every manual change on load) keeps its stored numbers.
+  const stored = {
+    'metaid-free': {
+      enabled: true,
+      apiKey: 'mrk_x',
+      baseUrl: 'https://relay.example',
+      apiFormat: 'openai' as const,
+      name: 'IDBots-Free',
+      models: [
+        {
+          id: 'deepseek-chat',
+          name: 'deepseek-flash',
+          contextWindow: 64_000,
+          maxOutputTokens: 4_096,
+          supportsImage: false,
+        },
+        {
+          id: 'deepseek-chat-user-tuned',
+          name: 'deepseek-flash',
+          contextWindow: 100_000,
+          maxOutputTokens: 20_000,
+          supportsImage: false,
+          options: { reasoningEffort: 'high', thinking: { type: 'disabled' } },
+        },
+      ],
+    },
+  };
+
+  const merged = mergeProvidersConfig(undefined, stored);
+
+  const models = merged?.['metaid-free']?.models ?? [];
+  const pinned = models.find(({ id }) => id === 'deepseek-chat');
+  assert.ok(pinned);
+  assert.equal(pinned.contextWindow, 64_000);
+  assert.equal(pinned.maxOutputTokens, 100_000);
+  // Canonical options fill in only where the row stores none.
+  assert.deepEqual(pinned.options, { reasoningEffort: 'max', thinking: { type: 'enabled' } });
+
+  // A differently-named row never matches the known-id table, and even the
+  // known id keeps values that are not machine-pinned legacy numbers.
+  const unknown = models.find(({ id }) => id === 'deepseek-chat-user-tuned');
+  assert.ok(unknown);
+  assert.equal(unknown.contextWindow, 100_000);
+  assert.equal(unknown.maxOutputTokens, 20_000);
+  assert.deepEqual(unknown.options, { reasoningEffort: 'high', thinking: { type: 'disabled' } });
+});
+
+test('mergeProvidersConfig keeps user-tuned limits on the known free-relay id untouched', () => {
+  // The known id with NON-legacy stored values: normalization fills nothing
+  // and rewrites nothing — manual edits must survive load/save cycles (the
+  // 2026-10-09 regression where the canonical spread reverted them).
+  const stored = {
+    'metaid-free': {
+      enabled: true,
+      apiKey: 'mrk_x',
+      baseUrl: 'https://relay.example',
+      apiFormat: 'openai' as const,
+      name: 'IDBots-Free',
+      models: [
+        {
+          id: 'deepseek-chat',
+          name: 'deepseek-flash',
+          contextWindow: 100_000,
+          maxOutputTokens: 50_000,
+          supportsImage: true,
+          options: { reasoningEffort: 'low', thinking: { type: 'disabled' } },
+        },
+      ],
+    },
+  };
+
+  const merged = mergeProvidersConfig(undefined, stored);
+
+  const model = merged?.['metaid-free']?.models?.find(({ id }) => id === 'deepseek-chat');
+  assert.ok(model);
+  assert.equal(model.contextWindow, 100_000);
+  assert.equal(model.maxOutputTokens, 50_000);
+  assert.equal(model.supportsImage, true);
+  assert.deepEqual(model.options, { reasoningEffort: 'low', thinking: { type: 'disabled' } });
 });
 
