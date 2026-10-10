@@ -8,6 +8,7 @@ const {
   getSocialPost,
   getSocialPostComments,
   SocialRecallNotFoundError,
+  SOCIAL_COUNTS_CALIBER,
 } = require('../dist-electron/main/services/socialRecallService.js');
 
 const SAMPLE_POST = {
@@ -140,6 +141,24 @@ test('getSocialFeed maps sort=hot and a raw-string payload', async () => {
   assert.equal(page.items[0].payload.contentType, 'text/plain;utf-8');
   assert.equal(page.items[0].hotScore, 7);
   assert.equal(page.nextCursor, null);
+});
+
+test('normalized items carry countsCaliber naming the counts read surface', async () => {
+  const capture = {};
+  const page = await getSocialFeed(
+    { size: 10 },
+    { fetchImpl: stubFetch({ code: 0, message: 'ok', data: { items: [SAMPLE_POST], nextCursor: '', hasMore: false } }, capture) },
+  );
+  assert.equal(page.items[0].countsCaliber, SOCIAL_COUNTS_CALIBER);
+  assert.equal(SOCIAL_COUNTS_CALIBER, 'metaso-p2p:/api/social');
+
+  // A pin the buzz-only index cannot read still names the surface that
+  // answered — the caliber describes the read surface, not the counts.
+  const detail = await getSocialPost('metaapp-pin-1', {
+    fetchImpl: stubFetch({ code: 0, message: 'ok', data: { pinId: 'metaapp-pin-1' } }, capture),
+  });
+  assert.equal(detail.countsCaliber, SOCIAL_COUNTS_CALIBER);
+  assert.equal(detail.likeCount, null);
 });
 
 test('getSocialPost hits the detail endpoint and throws SocialRecallNotFoundError on 40400', async () => {
