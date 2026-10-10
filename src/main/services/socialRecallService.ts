@@ -51,6 +51,15 @@ export type SocialPostItem = {
   commentCount: number | null;
   donateCount: number | null;
   quoteCount: number | null;
+  /**
+   * Which read surface produced the counts above. Today a single surface feeds
+   * this type — the metaso-p2p Social Recall API — so every item carries
+   * `SOCIAL_COUNTS_CALIBER`; consumers must compare counts only within one
+   * caliber. When additional surfaces feed `SocialPostItem` (the remaining
+   * scope of issue #58: metaTask roots, metaapp pins, witness submissions),
+   * each item names its own surface here.
+   */
+  countsCaliber: string;
   /** Present only for sort=hot; raw engagement total. */
   hotScore?: number;
 };
@@ -118,6 +127,13 @@ function textList(value: unknown): string[] {
 }
 
 /**
+ * Reading caliber (口径) for social engagement counts: names the read surface
+ * that produced them. A constant on purpose — every item from this surface
+ * must carry the identical value, so cross-channel comparisons can key off it.
+ */
+export const SOCIAL_COUNTS_CALIBER = 'metaso-p2p:/api/social';
+
+/**
  * Engagement count from a Social Recall payload, or `null` when the source
  * offered nothing. A present finite number — including an explicit 0 — is a
  * real count; an absent/null/empty/non-numeric field is unreadable and stays
@@ -177,6 +193,7 @@ function normalizePost(raw: unknown): SocialPostItem {
     commentCount: countOrNull(record.commentCount),
     donateCount: countOrNull(record.donateCount),
     quoteCount: countOrNull(record.quoteCount),
+    countsCaliber: SOCIAL_COUNTS_CALIBER,
     hotScore: typeof record.hotScore === 'number' ? record.hotScore : undefined,
   };
 }
