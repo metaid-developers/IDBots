@@ -14,6 +14,7 @@ import { RootState } from '../../store';
 import { clearActiveSkills } from '../../store/slices/skillSlice';
 import { browserCoworkService } from '../../services/browserCowork';
 import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
+import { isAssistantModeOwnerChatSession } from '../../components/cowork/assistantModeSessionGate';
 import { AssistantActivityIndicator } from '../../components/cowork/AssistantActivityIndicator';
 import { projectsService } from '../../services/projects';
 import { i18nService } from '../../services/i18n';
@@ -225,12 +226,17 @@ const BotBrowserCoworkPanel: React.FC<BotBrowserCoworkPanelProps> = ({ onShowSki
   // whole state being null = follow the selected bot's brain (its model and
   // effort); inside a pick, effort null is an EXPLICIT "Default" choice.
   const [pendingModelEffort, setPendingModelEffort] = useState<ComposerModelEffortPick | null>(null);
-  // Chat experience mode (Settings > General). Assistant mode defaults
-  // reasoning effort to off, so the panel's effort chip displays 'off' when no
-  // explicit pick exists, and assistant mode also restyles the panel's bot
-  // answers and streaming indicator (see useChatExperienceMode for the
-  // cross-window reactivity contract).
-  const isAssistantMode = useChatExperienceMode() === 'assistant';
+  // Chat experience mode (Settings > General), scoped per session through the
+  // shared gate (isAssistantModeOwnerChatSession — mirrors the backend rule in
+  // src/main/libs/coworkRunner.ts). Browser cowork sessions are non-standard,
+  // so the backend runs them with the professional prompt and the professional
+  // effort chain; the panel follows (professional effort-chip display, plain
+  // message text rather than assistant bubbles). In the draft state (no
+  // session yet) the verdict is likewise professional — the session about to
+  // start from this panel is a browser session. See useChatExperienceMode for
+  // the cross-window reactivity contract.
+  const chatExperienceMode = useChatExperienceMode();
+  const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);
 
   // Slash commands for the '+' menu: browser sessions are regular cowork
   // sessions, so once one is live the full session command set applies; in

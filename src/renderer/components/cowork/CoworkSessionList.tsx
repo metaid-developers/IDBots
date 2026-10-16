@@ -10,6 +10,7 @@ import MetaBotSelector, {
 import { i18nService } from '../../services/i18n';
 import { useStableCallback } from '../../utils/useStableCallback';
 import { useChatExperienceMode } from '../../hooks/useChatExperienceMode';
+import { isAssistantModeOwnerChatSession } from './assistantModeSessionGate';
 import { useProgressiveRowReveal } from './sessionListRevealBudget';
 import {
   buildBotSessionCounts,
@@ -408,9 +409,13 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
   // budget cannot leave a header with no rows under it.
   let remainingRows = revealedRows;
   const revealBudgetLeft = () => remainingRows > 0;
-  // One mode subscription for the whole list (rows stay memoized; a plain
-  // boolean prop keeps referential equality across renders).
-  const isAssistantMode = useChatExperienceMode() === 'assistant';
+  // One mode subscription for the whole list; each row's assistant-mode
+  // verdict is then resolved per session through the shared gate
+  // (isAssistantModeOwnerChatSession — mirrors the backend rule in
+  // src/main/libs/coworkRunner.ts), so auto-created and non-standard sessions
+  // keep the professional title treatment. Rows stay memoized: the passed
+  // boolean stays referentially stable while (mode, session) are unchanged.
+  const chatExperienceMode = useChatExperienceMode();
   const renderItem = (session: CoworkSessionSummary) => {
     if (remainingRows <= 0) return null;
     remainingRows -= 1;
@@ -424,7 +429,7 @@ const CoworkSessionListRow: React.FC<CoworkSessionListProps> = ({
         isSelected={selectedSessionIdSet.has(session.id)}
         nowMs={nowMs}
         language={language}
-        assistantMode={isAssistantMode}
+        assistantMode={isAssistantModeOwnerChatSession(chatExperienceMode, session)}
         onSelect={selectSession}
         onDelete={deleteSession}
         onTogglePin={togglePin}

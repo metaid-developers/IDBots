@@ -83,6 +83,7 @@ import {
   shouldShowA2AServiceSessionId,
 } from './coworkSessionPresentation.js';
 import { isAssistantTurnComplete, findDeliveryAssistantIndex } from './assistantTurnPresentation.js';
+import { isAssistantModeOwnerChatSession } from './assistantModeSessionGate';
 import { reuseStableTurns } from './conversationTurnReuse.js';
 import {
   buildRefundStatusDismissKey,
@@ -2671,12 +2672,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const success = await coworkService.respondToPermission(pendingPermission.requestId, result);
     if (!success) setIsRespondingToPermission(false);
   }, [pendingPermission, isRespondingToPermission]);
-  // Chat experience mode (Settings > General). 'assistant' hides raw thinking
-  // and tool-call chrome (the model's narration arrives as ordinary chat
-  // bubbles); 'professional' keeps the full transcript chrome. See
+  // Chat experience mode (Settings > General), scoped per session: the
+  // assistant form ('assistant' hides raw thinking and tool-call chrome; the
+  // model's narration arrives as ordinary chat bubbles) applies only while
+  // THIS session is a regular interactive owner chat — the same
+  // isAssistantModeOwnerChatSession rule the backend enforces
+  // (src/main/libs/coworkRunner.ts), so the transcript can never render
+  // assistant chrome while the session's turns run the professional prompt.
+  // Auto-created runs (orchestration/long-term/schedule) and non-standard
+  // sessions (A2A/browser/group) keep the professional chrome. See
   // useChatExperienceMode for the cross-window reactivity contract.
   const chatExperienceMode = useChatExperienceMode();
-  const isAssistantMode = chatExperienceMode === 'assistant';
+  const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);
   const isA2ASession = currentSession?.sessionType === 'a2a';
   const isPrivateA2ASession = useMemo(() => (
     currentSession?.sessionType === 'a2a'
