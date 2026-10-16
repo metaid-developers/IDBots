@@ -14,11 +14,17 @@ const viewSource = readSource('src', 'renderer', 'components', 'cowork', 'Cowork
 const detailSource = readSource('src', 'renderer', 'components', 'cowork', 'CoworkSessionDetail.tsx');
 const i18nSource = readSource('src', 'renderer', 'services', 'i18n.ts');
 
-test('streaming composer derives the stop/send-steer truth table from text', async (t) => {
+test('streaming composer derives the stop/send-steer truth table from text OR attachments', async (t) => {
   assert.doesNotMatch(inputSource, /\|\| isStreaming \|\| disabled\) return/);
   assert.match(inputSource, /const hasTextInput = Boolean\(value\.trim\(\)\)/);
-  assert.match(inputSource, /isStreaming && \(!hasTextInput \|\| steerDisabled\)/);
-  assert.match(inputSource, /isStreaming && hasTextInput && !steerDisabled/);
+  // Both branches share ONE content verdict — text OR attachments. The idle
+  // branch already counted attachments; the streaming branch used to key off
+  // text alone, which meant a running turn with a pasted picture had no submit
+  // content and the button rendered as Stop. Asserted here so a return to a
+  // text-only fork on either branch fails loudly.
+  assert.match(inputSource, /const hasSubmitContent = hasTextInput \|\| attachmentCount > 0;/);
+  assert.match(inputSource, /isStreaming && \(!hasSubmitContent \|\| steerDisabled\)/);
+  assert.match(inputSource, /isStreaming && hasSubmitContent && !steerDisabled/);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-steer-ui-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
@@ -39,33 +45,87 @@ test('streaming composer derives the stop/send-steer truth table from text', asy
   });
   const { deriveCoworkPromptInputState } = await import(`${pathToFileURL(outputFile).href}?test=${Date.now()}`);
 
-  assert.deepEqual(
-    deriveCoworkPromptInputState({ value: '', isStreaming: true, disabled: false, steerDisabled: false, attachmentCount: 0 }),
-    { hasTextInput: false, isSteerSubmit: false, showStopButton: true, canSubmit: false },
-  );
-  assert.deepEqual(
-    deriveCoworkPromptInputState({ value: '  adjust direction  ', isStreaming: true, disabled: false, steerDisabled: false, attachmentCount: 3 }),
-    { hasTextInput: true, isSteerSubmit: true, showStopButton: false, canSubmit: true },
-  );
-  assert.deepEqual(
-    deriveCoworkPromptInputState({ value: '', isStreaming: false, disabled: false, steerDisabled: true, attachmentCount: 1 }),
-    { hasTextInput: false, isSteerSubmit: false, showStopButton: false, canSubmit: true },
-  );
+  // The full grid: idle/streaming × {none, text, attachment, text+attachment}
+  // × steerDisabled. Every expected value is written out as a literal per cell
+  // (never recomputed by a second copy of the rule here), so a drifted formula
+  // fails the exact cell that drifted.
+  const TEXT = '  adjust direction  ';
+  const CONTENT = {
+    none: { value: '', attachmentCount: 0 },
+    text: { value: TEXT, attachmentCount: 0 },
+    attachment: { value: '', attachmentCount: 2 },
+    'text + attachment': { value: TEXT, attachmentCount: 2 },
+  };
+  const expectedCells = [
+    // [isStreaming, steerDisabled, content, { showStopButton, canSubmit, isSteerSubmit }]
+    [false, false, 'none', { showStopButton: false, canSubmit: false, isSteerSubmit: false }],
+    [false, false, 'text', { showStopButton: false, canSubmit: true, isSteerSubmit: false }],
+    [false, false, 'attachment', { showStopButton: false, canSubmit: true, isSteerSubmit: false }],
+    [false, false, 'text + attachment', { showStopButton: false, canSubmit: true, isSteerSubmit: false }],
+    [false, true, 'none', { showStopButton: false, canSubmit: false, isSteerSubmit: false }],
+    [false, true, 'text', { showStopButton: false, canSubmit: true, isSteerSubmit: false }],
+    [false, true, 'attachment', { showStopButton: false, canSubmit: true, isSteerSubmit: false }],
+    [false, true, 'text + attachment', { showStopButton: false, canSubmit: true, isSteerSubmit: false }],
+    [true, false, 'none', { showStopButton: true, canSubmit: false, isSteerSubmit: false }],
+    [true, false, 'text', { showStopButton: false, canSubmit: true, isSteerSubmit: true }],
+    [true, false, 'attachment', { showStopButton: false, canSubmit: true, isSteerSubmit: true }],
+    [true, false, 'text + attachment', { showStopButton: false, canSubmit: true, isSteerSubmit: true }],
+    [true, true, 'none', { showStopButton: true, canSubmit: false, isSteerSubmit: false }],
+    [true, true, 'text', { showStopButton: true, canSubmit: false, isSteerSubmit: false }],
+    [true, true, 'attachment', { showStopButton: true, canSubmit: false, isSteerSubmit: false }],
+    [true, true, 'text + attachment', { showStopButton: true, canSubmit: false, isSteerSubmit: false }],
+  ];
+  assert.equal(expectedCells.length, 16, 'the truth table is the whole 2 × 4 × 2 grid');
+
+  for (const [isStreaming, steerDisabled, contentName, expected] of expectedCells) {
+    const { value, attachmentCount } = CONTENT[contentName];
+    const cell = `${isStreaming ? 'streaming' : 'idle'} / ${contentName} / steerDisabled=${steerDisabled}`;
+    const actual = deriveCoworkPromptInputState({
+      value,
+      isStreaming,
+      disabled: false,
+      steerDisabled,
+      attachmentCount,
+    });
+    assert.equal(actual.showStopButton, expected.showStopButton, `${cell}: showStopButton`);
+    assert.equal(actual.canSubmit, expected.canSubmit, `${cell}: canSubmit`);
+    assert.equal(actual.isSteerSubmit, expected.isSteerSubmit, `${cell}: isSteerSubmit`);
+    assert.equal(actual.hasTextInput, value.trim().length > 0, `${cell}: hasTextInput`);
+  }
+
+  // `disabled` is an orthogonal axis: a disabled composer never submits, on any
+  // other cell of the grid.
   assert.equal(
     deriveCoworkPromptInputState({ value: 'ignored', isStreaming: true, disabled: true, steerDisabled: false, attachmentCount: 0 }).canSubmit,
     false,
-  );
-  assert.deepEqual(
-    deriveCoworkPromptInputState({ value: 'cannot steer', isStreaming: true, disabled: false, steerDisabled: true, attachmentCount: 0 }),
-    { hasTextInput: true, isSteerSubmit: false, showStopButton: true, canSubmit: false },
+    'a disabled composer never submits, streaming or not',
   );
 });
 
-test('running composer keeps dynamic configuration disabled and sends trimmed text only', () => {
+test('running composer keeps dynamic configuration disabled and sends the trimmed draft', () => {
+  // Session configuration (folder, permission mode, model/skill chips) stays
+  // frozen while a turn streams…
   assert.match(inputSource, /disabled=\{disabled \|\| isStreaming\}/);
   assert.match(inputSource, /coworkSteerPlaceholder/);
-  assert.match(inputSource, /isStreaming\s*\?\s*trimmedValue/);
-  assert.match(inputSource, /if \(isStreaming && !trimmedValue\) return/);
+  // The streaming guard is the SAME rule as the idle one further down: text OR
+  // attachments make a submission. It used to demand text alone
+  // (`!trimmedValue`), which refused an image-only steer even after the
+  // attachment doors had opened — the chip got in and send silently did
+  // nothing. Product call: steering a running turn with a picture is ordinary
+  // in grokbot / codex / dsh, and an attachment already rides the same submit
+  // and the same snapshot as text (see composeCoworkSubmitPrompt).
+  assert.doesNotMatch(inputSource, /if \(isStreaming && !trimmedValue\) return/);
+  assert.match(inputSource, /if \(isStreaming && !trimmedValue && submittedAttachments\.length === 0\) return/);
+  // …the idle branch keeps its own (already correct) guard, unchanged.
+  assert.match(inputSource, /if \(!isStreaming && !trimmedValue && submittedAttachments\.length === 0\) return/);
+  // …while the submitted prompt is composed by ONE rule on both branches. The
+  // old `isStreaming ? trimmedValue` fork is gone on purpose: it composed the
+  // steering prompt from the text alone, so an attachment inserted mid-run was
+  // dropped on send. Attachments now ride the same manifest as an idle send,
+  // gated by `steerDisabled` (coworkComposerAttachments.ts) rather than by
+  // `isStreaming`.
+  assert.match(inputSource, /const \{ trimmedValue, finalPrompt \} = composeCoworkSubmitPrompt\(\{/);
+  assert.doesNotMatch(inputSource, /isStreaming\s*\?\s*trimmedValue/);
   assert.match(inputSource, /event\.key === 'Enter'[\s\S]*?handleSubmit\(\)/);
 });
 

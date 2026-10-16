@@ -76,6 +76,11 @@ import { getCompactFolderName } from '../../utils/path';
 import { buildCompactedNoticeText, extractCompactedCounts, formatCompactTokens } from './compactedNotice';
 import { isRenderableAvatarSource as isSharedRenderableAvatarSource } from '../../utils/avatarSource';
 import { isRenderableAssistantOrSystemMessage } from '../../utils/coworkMessageVisibility';
+import {
+  hasSupportedImageExtension,
+  LOCAL_IMAGE_PREVIEW_MAX_BYTES,
+  stripHashAndQuery,
+} from '../../utils/localImage';
 import { scrollEventMovesAnchor } from '../../utils/anchoredPopover';
 import {
   buildPrivateA2ASessionDisplayId,
@@ -545,8 +550,6 @@ const safeDecodeURIComponent = (value: string): string => {
   }
 };
 
-const stripHashAndQuery = (value: string): string => value.split('#')[0].split('?')[0];
-
 const stripFileProtocol = (value: string): string => {
   let cleaned = value.replace(/^file:\/\//i, '');
   if (/^\/[A-Za-z]:/.test(cleaned)) {
@@ -673,8 +676,6 @@ const toAbsolutePathFromCwd = (filePath: string, cwd: string): string => {
   return `${cwd.replace(/\/$/, '')}/${filePath.replace(/^\.\//, '')}`;
 };
 
-const LOCAL_IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
-const LOCAL_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
 const IMAGE_LINK_DESTINATION_PATTERN = /\[[^\]]*]\(([^)\r\n]+)\)/g;
 const IMAGE_CANDIDATE_PATTERN = /(?:^|[\s"'`([{<:：])((?:file:\/\/[^\s"'`)\]}>]+|[A-Za-z]:\\[^\s"'`<>|]+|\/[^\s"'`<>|]+|\.{1,2}[\\/][^\s"'`<>|]+|[^\s"'`<>|]+)\.(?:png|jpe?g|gif|webp|bmp))(?=$|[\s"'`)\]}>，。,；;:：!?])/gi;
 
@@ -695,13 +696,6 @@ const trimImageCandidateToken = (value: string): string => {
   token = token.replace(/^[\s"'`([{<]+/, '');
   token = token.replace(/[\s"'`)\]}>，。,；;:：!?]+$/, '');
   return token.trim();
-};
-
-const hasSupportedImageExtension = (value: string): boolean => {
-  const base = stripHashAndQuery(value.trim());
-  const match = /\.([A-Za-z0-9]+)$/.exec(base);
-  if (!match) return false;
-  return LOCAL_IMAGE_EXTENSIONS.has(match[1].toLowerCase());
 };
 
 const isLocalImagePathCandidate = (value: string): boolean => {
