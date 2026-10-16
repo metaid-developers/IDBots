@@ -981,3 +981,50 @@ export interface CoworkStreamEvent {
     claudeSessionId?: string;
   };
 }
+
+/**
+ * Which side of the conversation a quoted excerpt came from. Resolved from
+ * the transcript block that contained the selection ('user-message' /
+ * 'assistant-block' export roles), so the quote can name its own source in
+ * both the composer tile and the submitted prompt body.
+ */
+export type CoworkQuotedSelectionRole = 'user' | 'assistant' | 'other';
+
+/**
+ * Provenance of a fragment that quotes one whole transcript message (the
+ * per-message reply entry, as opposed to a hand-picked passage): where the
+ * message sat in the transcript and whether it was still generating when it
+ * was captured. Both facts freeze at click time together with the excerpt —
+ * the quoted text never changes afterwards.
+ */
+export interface CoworkQuotedMessageRef {
+  /** 1-based position among the transcript's rendered messages. */
+  ordinal: number;
+  /** Whether the message was still being generated at capture time. */
+  streaming: boolean;
+}
+
+/**
+ * One excerpt the owner selected inside the transcript (or, for the reply
+ * entry, one whole message) and attached to the next message ("reply to this
+ * specific part"). Deliberately separate from CoworkAttachment: a file
+ * attachment is a host path the runtime opens, a quoted excerpt is
+ * conversation text that must be written into the prompt body — the model
+ * reads the transcript as plain text, so visual highlighting alone would
+ * reach nothing.
+ */
+export interface CoworkQuotedSelection {
+  /** Stable id so one fragment can be removed without touching its siblings. */
+  id: string;
+  role: CoworkQuotedSelectionRole;
+  /** The excerpt text, newline-normalized and trimmed (never empty). */
+  text: string;
+  /** True when the excerpt had to be cut down to the per-fragment cap. */
+  truncated: boolean;
+  /**
+   * Present when the fragment quotes one whole message (the reply entry):
+   * `text` is the message body as it read at capture time and `messageRef`
+   * records its provenance. Absent for hand-picked passages.
+   */
+  messageRef?: CoworkQuotedMessageRef;
+}

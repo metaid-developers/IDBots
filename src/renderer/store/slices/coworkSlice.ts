@@ -8,6 +8,7 @@ import type {
   CoworkConfig,
   CoworkPermissionRequest,
   CoworkPermissionMode,
+  CoworkQuotedSelection,
   CoworkSessionFoldOverride,
   CoworkSessionGoal,
   CoworkSessionStatus,
@@ -16,6 +17,18 @@ import type {
   SubagentTaskState,
   SubagentTaskStatus,
 } from '../../types/cowork';
+
+/**
+ * Composer draft of one session. `quotedSelections` is optional and stays
+ * absent unless the draft actually carries quoted excerpts, so drafts that
+ * never quoted a passage keep their previous shape.
+ */
+export interface CoworkSessionDraft {
+  value: string;
+  attachments: Array<{ path: string; name: string }>;
+  /** Quoted transcript excerpts attached to the next message. */
+  quotedSelections?: CoworkQuotedSelection[];
+}
 
 interface CoworkState {
   sessions: CoworkSessionSummary[];
@@ -31,7 +44,7 @@ interface CoworkState {
    * detail view). Kept in the store so switching sessions restores the text
    * the user typed in every session's input instead of wiping it.
    */
-  sessionDrafts: Record<string, { value: string; attachments: Array<{ path: string; name: string }> }>;
+  sessionDrafts: Record<string, CoworkSessionDraft>;
   unreadSessionIds: string[];
   /**
    * Session currently open in the Bot Browser co-work panel (mirror of
@@ -227,17 +240,22 @@ const coworkSlice = createSlice({
     },
 
     /**
-     * Persist one session's composer draft (text + attachments). Empty drafts
-     * are dropped so idle sessions do not accumulate entries.
+     * Persist one session's composer draft (text + attachments + quoted
+     * transcript excerpts). Empty drafts are dropped so idle sessions do not
+     * accumulate entries; `quotedSelections` is written only when non-empty so
+     * drafts without quotes keep their previous shape.
      */
-    setSessionDraft(state, action: PayloadAction<{ sessionId: string; value: string; attachments: Array<{ path: string; name: string }> }>) {
-      const { sessionId, value, attachments } = action.payload;
+    setSessionDraft(state, action: PayloadAction<{ sessionId: string; value: string; attachments: Array<{ path: string; name: string }>; quotedSelections?: CoworkQuotedSelection[] }>) {
+      const { sessionId, value, attachments, quotedSelections } = action.payload;
       if (!sessionId) return;
-      if (!value && attachments.length === 0) {
+      const quotes = quotedSelections ?? [];
+      if (!value && attachments.length === 0 && quotes.length === 0) {
         delete state.sessionDrafts[sessionId];
         return;
       }
-      state.sessionDrafts[sessionId] = { value, attachments };
+      state.sessionDrafts[sessionId] = quotes.length > 0
+        ? { value, attachments, quotedSelections: quotes }
+        : { value, attachments };
     },
 
     setNewTaskMetabotId(state, action: PayloadAction<number | null>) {

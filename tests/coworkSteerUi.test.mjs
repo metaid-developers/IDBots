@@ -14,11 +14,14 @@ const viewSource = readSource('src', 'renderer', 'components', 'cowork', 'Cowork
 const detailSource = readSource('src', 'renderer', 'components', 'cowork', 'CoworkSessionDetail.tsx');
 const i18nSource = readSource('src', 'renderer', 'services', 'i18n.ts');
 
-test('streaming composer derives the stop/send-steer truth table from text', async (t) => {
+test('streaming composer derives the stop/send-steer truth table from text or quoted excerpts', async (t) => {
   assert.doesNotMatch(inputSource, /\|\| isStreaming \|\| disabled\) return/);
   assert.match(inputSource, /const hasTextInput = Boolean\(value\.trim\(\)\)/);
-  assert.match(inputSource, /isStreaming && \(!hasTextInput \|\| steerDisabled\)/);
-  assert.match(inputSource, /isStreaming && hasTextInput && !steerDisabled/);
+  // Contract change (quoted-selection reply slice): quoted transcript excerpts
+  // now count as steer content, so the truth table keys off text-or-excerpts.
+  assert.match(inputSource, /const hasSteerContent = hasTextInput \|\| quotedSelectionCount > 0/);
+  assert.match(inputSource, /isStreaming && \(!hasSteerContent \|\| steerDisabled\)/);
+  assert.match(inputSource, /isStreaming && hasSteerContent && !steerDisabled/);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-steer-ui-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
@@ -61,11 +64,17 @@ test('streaming composer derives the stop/send-steer truth table from text', asy
   );
 });
 
-test('running composer keeps dynamic configuration disabled and sends trimmed text only', () => {
+test('running composer keeps dynamic configuration disabled and composes steers through the shared quoted-prompt path', () => {
   assert.match(inputSource, /disabled=\{disabled \|\| isStreaming\}/);
   assert.match(inputSource, /coworkSteerPlaceholder/);
-  assert.match(inputSource, /isStreaming\s*\?\s*trimmedValue/);
-  assert.match(inputSource, /if \(isStreaming && !trimmedValue\) return/);
+  // Contract change (quoted-selection reply slice): a steer no longer submits
+  // `trimmedValue` alone — it composes through composeSubmittedCoworkPrompt so
+  // quoted excerpts ride into the prompt body. The previous assertion here
+  // pinned the plain-text branch and was updated deliberately.
+  assert.doesNotMatch(inputSource, /isStreaming\s*\?\s*trimmedValue/);
+  assert.match(inputSource, /const finalPrompt = composeSubmittedCoworkPrompt\(\{/);
+  // A steer needs text or excerpts before anything is composed or consumed.
+  assert.match(inputSource, /if \(isStreaming && !trimmedValue && submittedQuotedSelections\.length === 0\) return/);
   assert.match(inputSource, /event\.key === 'Enter'[\s\S]*?handleSubmit\(\)/);
 });
 
