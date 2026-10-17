@@ -3,11 +3,12 @@
 // Main stamps `auto_origin` on sessions the app created on its own (long-term
 // task runs, orchestration/delegation runs, scheduled-task runs); the summary
 // carries it as `autoOrigin`. The sidebar splits the local list into the main
-// list and the folded rows per the fold policy — long-term and orchestration
-// runs fold, scheduled-task runs stay in the main list — which is what this
-// suite pins: the pure split, the persisted fold preference, and the wiring
-// invariants that keep a folded row out of the main list while keeping it
-// searchable.
+// list and the folded rows per the fold policy — all three machine origins fold
+// (policy change: scheduled-task runs used to stay in the main list; they now
+// fold with the rest so the main list stays the user's own conversations).
+// What this suite pins: the pure split, the persisted fold preference, and the
+// wiring invariants that keep a folded row out of the main list while keeping
+// it searchable.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,16 +50,18 @@ test('a manual fold placement wins over the auto-origin policy in both direction
   assert.equal(isInAutonomousFold(mkSession('human')), false);
   assert.equal(isInAutonomousFold(mkSession('lt', 'longterm')), true);
   assert.equal(isInAutonomousFold(mkSession('orch', 'orchestration')), true);
-  assert.equal(isInAutonomousFold(mkSession('sched', 'schedule')), false);
+  assert.equal(isInAutonomousFold(mkSession('sched', 'schedule')), true);
   assert.equal(isInAutonomousFold(mkSession('human-null', null, null)), false, 'null override = policy');
 
-  // 'in' parks a human row in the fold — even a scheduled run nobody wanted folded.
+  // 'in' parks a human row in the fold.
   assert.equal(isInAutonomousFold(mkSession('human-in', undefined, 'in')), true);
   assert.equal(isInAutonomousFold(mkSession('sched-in', 'schedule', 'in')), true);
 
-  // 'out' pulls an autonomous run back into the main list without touching its origin.
+  // 'out' pulls an autonomous run back into the main list without touching its
+  // origin — scheduled runs included, now that they fold by policy.
   assert.equal(isInAutonomousFold(mkSession('lt-out', 'longterm', 'out')), false);
   assert.equal(isInAutonomousFold(mkSession('orch-out', 'orchestration', 'out')), false);
+  assert.equal(isInAutonomousFold(mkSession('sched-out', 'schedule', 'out')), false);
   assert.equal(mkSession('lt-out', 'longterm', 'out').autoOrigin, 'longterm',
     'the creation fact survives the move');
 });
@@ -103,7 +106,7 @@ test('the split honours overrides: moved rows land on the other side, in order',
   assert.deepEqual(autoSessions.map((session) => session.id), ['pushed-in', 'auto-1']);
 });
 
-test('a session is auto-created when it carries a real origin marker, but only long-term and orchestration runs fold', () => {
+test('a session is auto-created when it carries a real origin marker, and long-term, orchestration and scheduled runs all fold', () => {
   assert.equal(isAutoCreatedSession(mkSession('human')), false, 'legacy rows (undefined) are human');
   assert.equal(isAutoCreatedSession(mkSession('human-null', null)), false);
   assert.equal(isAutoCreatedSession(mkSession('longterm', 'longterm')), true);
@@ -113,8 +116,8 @@ test('a session is auto-created when it carries a real origin marker, but only l
   assert.equal(shouldFoldIntoAutonomousTasks(mkSession('human')), false);
   assert.equal(shouldFoldIntoAutonomousTasks(mkSession('longterm', 'longterm')), true);
   assert.equal(shouldFoldIntoAutonomousTasks(mkSession('orchestration', 'orchestration')), true);
-  assert.equal(shouldFoldIntoAutonomousTasks(mkSession('schedule', 'schedule')), false,
-    'scheduled-task runs stay in the main list — they are the user\'s own automations');
+  assert.equal(shouldFoldIntoAutonomousTasks(mkSession('schedule', 'schedule')), true,
+    'scheduled-task runs fold too — every fire is a machine-started run');
 });
 
 test('split keeps main-list and folded halves in input order', () => {
@@ -122,16 +125,16 @@ test('split keeps main-list and folded halves in input order', () => {
     mkSession('human-1'),
     mkSession('auto-1', 'longterm'),
     mkSession('human-2', null),
-    mkSession('human-3', 'schedule'),
+    mkSession('sched-1', 'schedule'),
     mkSession('auto-2', 'orchestration'),
   ];
   const snapshot = sessions.map((session) => session.id);
 
   const { humanSessions, autoSessions } = splitSessionsByAutonomousFold(sessions);
 
-  assert.deepEqual(humanSessions.map((session) => session.id), ['human-1', 'human-2', 'human-3'],
-    'scheduled runs ride the main list, in place');
-  assert.deepEqual(autoSessions.map((session) => session.id), ['auto-1', 'auto-2']);
+  assert.deepEqual(humanSessions.map((session) => session.id), ['human-1', 'human-2']);
+  assert.deepEqual(autoSessions.map((session) => session.id), ['auto-1', 'sched-1', 'auto-2'],
+    'scheduled runs fold alongside the other machine rows, in place');
   assert.deepEqual(sessions.map((session) => session.id), snapshot, 'the input array is not reordered');
 });
 

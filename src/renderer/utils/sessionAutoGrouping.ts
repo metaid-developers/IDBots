@@ -4,11 +4,12 @@
  * The app creates sessions on its own — [长期] long-term task runs,
  * [编排任务] / [Orchestration Task] delegation runs, [定时] scheduled-task runs.
  * Main stamps `auto_origin` on those rows (CoworkStore.setSessionAutoOrigin) and
- * the summary carries it as `autoOrigin`. The sidebar folds SOME of them into a
+ * the summary carries it as `autoOrigin`. The sidebar folds them all into a
  * collapsed "Autonomous Tasks" (自主任务) section per the policy below;
- * scheduled-task runs are deliberately NOT folded — they are usually the user's
- * own automations, and their one-session-per-fire cadence belongs in the main
- * list the user watches.
+ * scheduled-task runs fold with the rest — every fire is a machine-started run,
+ * and one row per fire would otherwise crowd the main list, which is meant to
+ * stay the user's own conversations. (This reverses the earlier carve-out that
+ * kept scheduled runs visible.)
  *
  * The folder is named for HOW those rows run — the Twin Bot drives them
  * autonomously, without the owner in the loop — while the `autoOrigin` field
@@ -22,7 +23,7 @@ import type { CoworkSessionSummary } from '../types/cowork';
 
 /** The two halves of a local-chats list after folding. */
 export interface SessionsByAutonomousFold {
-  /** Human-initiated sessions (plus scheduled-task runs) — the visible main list. */
+  /** Human-initiated sessions — the visible main list. */
   humanSessions: CoworkSessionSummary[];
   /** Folded autonomous sessions — the collapsed "Autonomous Tasks" fold. */
   autoSessions: CoworkSessionSummary[];
@@ -38,14 +39,16 @@ export const isAutoCreatedSession = (
   session: Pick<CoworkSessionSummary, 'autoOrigin'>,
 ): boolean => session.autoOrigin != null;
 
-/** Origins that collapse into the Autonomous Tasks fold. Everything else — human
- * rows and 'schedule' runs alike — stays in the main list. */
+/** Origins that collapse into the Autonomous Tasks fold — every machine-started
+ * run kind. Human rows (no marker) are everything else and stay in the main
+ * list. */
 const FOLDED_AUTO_ORIGINS: ReadonlySet<NonNullable<CoworkSessionSummary['autoOrigin']>> = new Set([
   'longterm',
   'orchestration',
+  'schedule',
 ]);
 
-/** Fold policy: only long-term task runs and orchestration delegations fold. */
+/** Fold policy: every machine-started run (long-term, orchestration, scheduled) folds. */
 export const shouldFoldIntoAutonomousTasks = (
   session: Pick<CoworkSessionSummary, 'autoOrigin'>,
 ): boolean => session.autoOrigin != null && FOLDED_AUTO_ORIGINS.has(session.autoOrigin);

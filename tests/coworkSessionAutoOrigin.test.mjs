@@ -1,6 +1,10 @@
 // cowork_sessions.auto_origin — the origin marker that lets the sidebar fold
 // auto-created sessions ([长期] long-term runs, [编排任务] orchestration runs,
-// [定时] scheduled runs) into a collapsed "Autonomous Tasks" section.
+// [定时] scheduled runs) into a collapsed "Autonomous Tasks" section. All three
+// machine origins fold, scheduled runs included (policy change — see
+// sessionAutoGrouping.ts FOLDED_AUTO_ORIGINS); this file validates the marker
+// itself — the creation fact and its backfill classification — which the
+// fold-policy move does not change.
 //
 // Contract under test:
 //   a. a fresh database gets the column, and createSession still yields a
