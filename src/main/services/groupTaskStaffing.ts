@@ -58,6 +58,13 @@ export interface GroupTaskStaffingSeat {
   role: GroupTaskSeatRole;
   /** Required when role is `domain` (e.g. "legal"). */
   domainLabel?: string;
+  /**
+   * Optional instance discriminator for domain seats: lets two independent
+   * perspectives share ONE specialty ("formal-methods" · 甲 / 乙) for
+   * roundtable / adversarial-review tasks. Included in the seat dedupe key;
+   * absent or empty keeps the pre-instance key byte-identical.
+   */
+  seatInstance?: string;
   candidateName: string;
   candidateGlobalMetaId?: string;
   metabotId?: number;
@@ -249,6 +256,7 @@ export function normalizeStaffingPlan(raw: unknown): GroupTaskStaffingPlan {
     return {
       role: isSeatRole(row.role) ? row.role : 'content',
       domainLabel: trimText(row.domainLabel) || undefined,
+      seatInstance: trimText(row.seatInstance) || undefined,
       candidateName: trimText(row.candidateName) || trimText(row.name),
       candidateGlobalMetaId,
       metabotId: Number.isInteger(metabotId) && metabotId > 0 ? metabotId : undefined,
@@ -262,7 +270,12 @@ export function normalizeStaffingPlan(raw: unknown): GroupTaskStaffingPlan {
 
 function seatKey(seat: GroupTaskStaffingSeat): string {
   if (seat.role === 'domain') {
-    return `domain:${(seat.domainLabel || 'unspecified').trim().toLowerCase()}`;
+    const label = `domain:${(seat.domainLabel || 'unspecified').trim().toLowerCase()}`;
+    // H-1 fix: the instance discriminator separates two independent seats in
+    // the SAME specialty. No instance → the exact pre-instance key, so every
+    // payload that predates the field dedupes byte-identically to before.
+    const instance = (seat.seatInstance || '').trim().toLowerCase();
+    return instance ? `${label}#${instance}` : label;
   }
   return seat.role;
 }
@@ -484,7 +497,14 @@ export function buildStaffingSlateText(input: {
   const language = input.language ?? groupTaskLanguage();
   const zh = language !== 'en';
   const roleLabel = (seat: GroupTaskStaffingSeat): string => {
-    if (seat.role === 'domain') return zh ? `领域（${seat.domainLabel || '未标注'}）` : `domain (${seat.domainLabel || 'unspecified'})`;
+    if (seat.role === 'domain') {
+      // Seat instances must stay distinguishable in the slate text — the
+      // owner reading the roster has to tell 甲 from 乙 at a glance.
+      const instance = seat.seatInstance ? ` · ${seat.seatInstance}` : '';
+      return zh
+        ? `领域（${seat.domainLabel || '未标注'}${instance}）`
+        : `domain (${seat.domainLabel || 'unspecified'}${instance})`;
+    }
     const labels: Record<Exclude<GroupTaskSeatRole, 'domain'>, [string, string]> = {
       content: ['内容', 'content'],
       design: ['设计', 'design'],
