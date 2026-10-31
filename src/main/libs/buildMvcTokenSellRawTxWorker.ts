@@ -1,13 +1,14 @@
 /**
- * MVC FT TokenSell worker (sell=LIST / take=op=2 UNLOCK / cancel=self-take):
- * runs in a subprocess via ELECTRON_RUN_AS_NODE (same pattern as
- * buildMvcNftTradeRawTxWorker) so the meta-contract scrypt engine never meets
- * the Electron main process.
+ * MVC FT TokenSell worker (sell=LIST / take=op=2 UNLOCK / cancel=self-take /
+ * transfer=op=1 non-trade full-utxo move): runs in a subprocess via
+ * ELECTRON_RUN_AS_NODE (same pattern as buildMvcNftTradeRawTxWorker) so the
+ * meta-contract scrypt engine never meets the Electron main process.
  *
  * The worker NEVER broadcasts. It returns the fully-signed raw txs in
  * broadcast order so the parent service can stage them (NFT-trade posture):
  *   sell: [TxC checker mint (when auto-minted), TxA seed, TxB listing]
  *   take: [TxC checker mint (when auto-minted), TxB taker tx]
+ *   transfer: [TxC checker mint (auto-minted), TxB transfer tx]
  *
  * Signing layers are the live-fire-validated ones ported into
  * mvcTokenSellAssembly (see docs/token-sell-protocol.md for the tx anchors):
@@ -18,10 +19,12 @@
  *   - v10 consensus txid (scriptSig-committed) — mvc-lib Transaction.id.
  *
  * Hard gates enforced before any assembly (mvcTokenSellCore):
- *   - price in integer sats (1 SPACE = 1e8 sats), ≥ dust floor;
- *   - full-utxo listing only — partial-quantity listings are rejected
+ *   - sell: price in integer sats (1 SPACE = 1e8 sats), ≥ dust floor;
+ *     full-utxo listing only — partial-quantity listings are rejected
  *     (they break the checker conservation invariant);
- *   - seed / checker denominations ≥ dust.
+ *     seed / checker denominations ≥ dust.
+ *   - transfer: full-utxo move only (checker conservation), checker ≥ dust;
+ *     receiver must be a raw MVC address — no price, no seed, no listing.
  *
  * Keys: the mnemonic arrives via env (IDBOTS_METABOT_MNEMONIC /
  * IDBOTS_METABOT_PATH), is used in-process only, and is never echoed into
@@ -32,6 +35,7 @@ import { readFileSync } from 'fs';
 import { getMvcWallet, parseAddressIndexFromPath } from '../services/metabotWalletService';
 import {
   assertTokenSellAmountGates,
+  assertTokenTransferAmountGates,
   buildTokenSellSeedLock,
   decodeTokenSellSeedLock,
   DEFAULT_SEED_SATS,
@@ -43,6 +47,7 @@ import {
   buildSeedTx,
   buildTakeTx,
   buildTransferCheckLock,
+  buildTransferTxB,
   buildUnlockCheckLock,
   CheckerCast,
   getOptimumCheckerType,
@@ -170,13 +175,14 @@ async function main(): Promise<void> {
     chunks.push(Buffer.from(chunk));
   }
   const payload = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as {
-    action: 'sell' | 'take' | 'cancel';
-    // sell
+    action: 'sell' | 'take' | 'cancel' | 'transfer';
+    // sell / transfer
     genesis?: string;
     codehash?: string;
     tokenTxid?: string;
     tokenVout?: number;
     tokenAmount?: string;
+    // sell
     sellPriceSats?: number;
     seedSats?: number;
     checkerSats?: number;
@@ -192,6 +198,7 @@ async function main(): Promise<void> {
       token_vout?: number;
       prev_token_txid?: string;
     };
+    // take / transfer
     receiverAddress?: string;
     prevTokenInputIndex?: number;
     excludeOutpoints?: string[];
@@ -199,8 +206,8 @@ async function main(): Promise<void> {
   };
 
   const action = String(payload.action || '').trim();
-  if (action !== 'sell' && action !== 'take' && action !== 'cancel') {
-    fail('action must be sell, take, or cancel (cancel = self-take of your own listing)');
+  if (action !== 'sell' && action !== 'take' && action !== 'cancel' && action !== 'transfer') {
+    fail('action must be sell, take, cancel (cancel = self-take of your own listing), or transfer (op=1 non-trade full-utxo move)');
   }
   const excludeOutpoints = new Set(
     (Array.isArray(payload.excludeOutpoints) ? payload.excludeOutpoints : [])
@@ -398,6 +405,176 @@ async function main(): Promise<void> {
       }),
     );
     logStep('Built TokenSell LIST raw txs locally', { mint: mint.txid, seed: txa.txid, list: list.txid });
+    return;
+  }
+
+  // ------------------------------------------------ transfer (op=1, non-trade full-utxo move)
+  if (action === 'transfer') {
+    const genesis = String(payload.genesis || '').trim();
+    const codehash = String(payload.codehash || '').trim();
+    if (!/^[0-9a-f]{64}$/i.test(genesis) || !/^[0-9a-f]{40}$/i.test(codehash)) {
+      fail('transfer requires genesis (64 hex) and codehash (40 hex)');
+    }
+    const receiverAddress = String(payload.receiverAddress || '').trim();
+    if (!receiverAddress) fail('receiverAddress required for transfer (raw MVC address receiving the tokens)');
+    let receiverH160: string;
+    try {
+      receiverH160 = mvc.crypto.Hash.sha256ripemd160(
+        Buffer.from(mvc.Address.fromString(receiverAddress, 'livenet').hashBuffer),
+      ).toString('hex');
+    } catch (err) {
+      fail(`receiverAddress is not a valid MVC address: ${getMessage(err)}`);
+    }
+    const checkerSats = payload.checkerSats !== undefined ? BigInt(payload.checkerSats) : DEFAULT_CHECKER_SATS;
+
+    // -- token utxo discovery / verification (same posture as sell)
+    let tokenTxid = String(payload.tokenTxid || '').trim().toLowerCase();
+    let tokenVout = Number(payload.tokenVout);
+    const ftRows = await fetchFtUtxos(sellerAddress, codehash, genesis);
+    if (!ftRows.length) fail(`no FT utxos for genesis ${genesis} at ${sellerAddress}`);
+    const rows = ftRows
+      .map((r) => ({ txid: String(r.txid || '').toLowerCase(), vout: Number(r.txIndex), amount: BigInt(String(r.valueString || '0')) }))
+      .filter((r) => /^[0-9a-f]{64}$/.test(r.txid) && Number.isInteger(r.vout) && r.vout >= 0 && r.amount > 0n);
+    if (!rows.length) fail('FT utxo rows unparsable');
+    let row: { txid: string; vout: number; amount: bigint };
+    if (tokenTxid) {
+      const hit = rows.find((r) => r.txid === tokenTxid && (Number.isInteger(tokenVout) && tokenVout >= 0 ? r.vout === tokenVout : true));
+      if (!hit) fail(`token utxo ${tokenTxid}${Number.isInteger(tokenVout) ? ':' + tokenVout : ''} not held by ${sellerAddress}`);
+      row = hit;
+      tokenVout = hit.vout;
+    } else {
+      if (rows.length !== 1) {
+        fail(`address holds ${rows.length} FT utxos for this genesis — pass token_txid (and token_vout) to pick one`);
+      }
+      row = rows[0];
+      tokenTxid = row.txid;
+      tokenVout = row.vout;
+    }
+
+    const tokenTxHex = await fetchRawTx(tokenTxid);
+    const tokenTx = new mvc.Transaction(tokenTxHex);
+    if (tokenTx.id !== tokenTxid) fail(`token raw consensus id ${tokenTx.id} != ${tokenTxid}`);
+    const tokenScriptBuf = tokenTx.outputs[tokenVout].script.toBuffer();
+    const dp = parseTokenDataPart(tokenScriptBuf);
+    const ownerHex = Buffer.from(String(dp.tokenAddress || ''), 'hex').toString('hex');
+    const senderH160Hex = mvc.crypto.Hash.sha256ripemd160(Buffer.from(signer.pubHex, 'hex')).toString('hex');
+    if (ownerHex !== senderH160Hex) {
+      fail(`token utxo owner ${ownerHex} != session wallet ${senderH160Hex} (token not in this wallet)`);
+    }
+    const utxoAmount = BigInt(String(dp.tokenAmount));
+
+    // -- HARD AMOUNT GATES (full-utxo move; checker conservation)
+    if (payload.tokenAmount !== undefined && BigInt(String(payload.tokenAmount)) !== utxoAmount) {
+      fail(`partial transfer rejected: requested ${payload.tokenAmount} != utxo ${utxoAmount} (op=1 TRANSFER moves the token utxo in full)`);
+    }
+    try {
+      assertTokenTransferAmountGates({
+        transferTokenAmount: utxoAmount,
+        utxoTokenAmount: utxoAmount,
+        checkerSats,
+      });
+    } catch (err) {
+      fail(getMessage(err));
+    }
+
+    // -- lineage: direct parent of the token leg (default slot 0)
+    const prevTokenInputIndex = Number(payload.prevTokenInputIndex) >= 0 ? Number(payload.prevTokenInputIndex) : 0;
+    const parentBuf = Buffer.from(tokenTx.inputs[prevTokenInputIndex].prevTxId);
+    const candA = parentBuf.toString('hex');
+    const candB = Buffer.from(parentBuf).reverse().toString('hex');
+    let prevTokenTxHex: string | null = null;
+    for (const cand of [candA, candB]) {
+      try {
+        const raw = await fetchRawTx(cand);
+        if (new mvc.Transaction(raw).id === cand) {
+          prevTokenTxHex = raw;
+          break;
+        }
+      } catch {
+        // try the other byte order
+      }
+    }
+    if (!prevTokenTxHex) fail(`cannot resolve prev token tx raw (tried ${candA} / ${candB})`);
+
+    // -- funding: distinct P2PKH utxos for checker mint and the transfer tx
+    const fundingPool = (await fetchP2pkhUtxos(sellerAddress))
+      .filter((u) => !excludeOutpoints.has(`${u.txid}:${u.vout}`))
+      .sort((a, b) => (a.sats > b.sats ? -1 : a.sats < b.sats ? 1 : 0));
+    const taken = new Set<string>();
+    const takeUtxo = (minSats: bigint, purpose: string): WorkerFundingUtxo => {
+      const hit = fundingPool.find((u) => u.sats >= minSats && !taken.has(`${u.txid}:${u.vout}`));
+      if (!hit) fail(`no P2PKH utxo >= ${minSats} sats left for ${purpose}`);
+      taken.add(`${hit.txid}:${hit.vout}`);
+      return hit;
+    };
+
+    // -- checker cast (op=1 family; receiver = RAW receiver hash160, amount = full utxo)
+    const tokenCodeHashHex = getTokenCodeHashHex(tokenScriptBuf);
+    const tokenIdHex = getTokenIdHex(tokenScriptBuf);
+    const checkerType = getOptimumCheckerType(1, 3);
+    const checkerLock = buildTransferCheckLock({
+      type: checkerType,
+      tokenCodeHashHex,
+      tokenIdHex,
+      receiverHash160Buf: Buffer.from(receiverH160, 'hex'),
+      tokenAmount: utxoAmount,
+    });
+    const mintFunding = takeUtxo(checkerSats + DUST_SATS + 250n, 'checker mint');
+    const mint = buildCheckerMintTx({ checkerLock, checkerSats, funding: mintFunding, signer });
+    const checker: CheckerCast = {
+      scriptBuf: checkerLock,
+      sats: checkerSats,
+      type: checkerType,
+      txid: mint.txid,
+      vout: mint.outIdx,
+      txHex: mint.txHex,
+    };
+
+    // -- TxB transfer (fee budget only — no seed leg in a non-trade move)
+    const txFunding = takeUtxo(MIN_TXB_FEE_BUDGET + DUST_SATS, 'transfer tx (fee budget + dust change)');
+    const transfer = buildTransferTxB({
+      tokenTxHex,
+      tokenVout,
+      tokenTxid,
+      prevTokenTxHex,
+      prevTokenInputIndex,
+      tokenAmount: utxoAmount,
+      receiverH160Buf: Buffer.from(receiverH160, 'hex'),
+      checker,
+      funding: txFunding,
+      signer,
+      feeRate,
+    });
+
+    if (transfer.verdicts.token.cls !== 'PASS' || transfer.verdicts.checker.cls !== 'PASS') {
+      fail(
+        `TRANSFER local verify not fully PASS (token=${transfer.verdicts.token.cls}:${transfer.verdicts.token.detail.slice(0, 120)}; ` +
+          `checker=${transfer.verdicts.checker.cls}:${transfer.verdicts.checker.detail.slice(0, 120)}) — refusing to hand out txs`,
+      );
+    }
+
+    const spent = Array.from(
+      new Set([
+        ...spentOutpointsOfTxHex(mint.txHex, mvc),
+        ...spentOutpointsOfTxHex(transfer.txHex, mvc),
+      ]),
+    );
+    console.log(
+      JSON.stringify({
+        success: true,
+        action,
+        // broadcast order: checker mint → transfer
+        fundingTxs: [{ name: 'checkerMint', txid: mint.txid, txHex: mint.txHex }],
+        txHex: transfer.txHex,
+        txid: transfer.txid,
+        tokenAmount: utxoAmount.toString(),
+        receiverAddress,
+        fee: Number(transfer.fee),
+        size: transfer.size,
+        spentOutpoints: spent,
+      }),
+    );
+    logStep('Built TokenTransfer raw txs locally', { mint: mint.txid, transfer: transfer.txid });
     return;
   }
 

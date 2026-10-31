@@ -7537,6 +7537,14 @@ const getCoworkRunner = () => {
       },
       // read-only: no chain-write budget for listing verification.
       verifyMvcTokenSellListing: (listing) => verifyMvcTokenSellListing(listing),
+      transferToken: (params) => withChainWriteBudget(
+        'wallet_token_transfer',
+        () => executeMvcTokenSellTrade(getMetabotStore(), {
+          ...params,
+          action: 'transfer',
+          feeRate: getGlobalFeeRate('mvc'),
+        }),
+      ),
       sellToken: (params) => withChainWriteBudget(
         'wallet_token_sell',
         () => executeMvcTokenSellTrade(getMetabotStore(), {

@@ -123,8 +123,35 @@ therefore VERIFIES a tuple against the chain (raw LIST tx, v10 txid
 recomputation, seed-lock decode → seller/price cross-check, dataPart amount)
 instead of listing orders; misquotes and non-TokenSell outputs fail closed.
 
+## Non-trade op=1 TRANSFER (wallet_token_transfer)
+
+Verb-aligned with `wallet_nft_transfer`. Moves ONE FT token utxo **in full**
+from the session wallet to a raw MVC receiver address — no seed lock, no
+price output, no listing tuple. Construction = the LIST shape trimmed of its
+trade coupling (`mvcTokenSellAssembly.buildTransferTxB`):
+
+- in0 token utxo — op=1 TRANSFER 18-param unlock, verbatim SDK input0 proof
+  + backtrace lineage (identical to LIST);
+- in1 checker — auto-minted TransferCheck (op=1 family) whose receiver is the
+  **raw receiver hash160** and whose amount is the full utxo amount
+  (conservation pairs it with the token output);
+- in2 funding P2PKH — fees + change;
+- out0 token locked to the receiver (`getNewTokenScript` — the taker.mjs
+  out0 shape: the receiver gets a standard, re-transferable/listable token
+  utxo), out1 change.
+
+Gates: `checkTokenTransferAmountGates/assertTokenTransferAmountGates` in
+`mvcTokenSellCore` — full-utxo only (partial moves rejected; splitting needs
+the listing/precise-split path), checker denomination ≥ dust. There is no
+price in a transfer. The worker action is `transfer` (never broadcasts);
+broadcast order is `checker mint → transfer`, staged by the service exactly
+like sell/take. Token-utxo discovery mirrors sell: unique utxo of the genesis
+or explicit `token_txid`/`token_vout` when several are held.
+
 ## Test vectors
 
 `tests/fixtures/tokenSell/` — public chain data only, zero key material:
 `f518099d` raw + 112B header, prev-token raw, live checker cast, live seed
-TxA, live LIST TxB, and the anchor constants in `meta.json`.
+TxA, live LIST TxB, and the anchor constants in `meta.json`. The TRANSFER
+tests reuse these fixtures with a deterministic dry signer, a dry receiver
+and an offline-minted checker cast (no new fixtures).

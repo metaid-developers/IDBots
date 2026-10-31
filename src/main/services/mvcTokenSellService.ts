@@ -245,16 +245,17 @@ export async function verifyMvcTokenSellListing(
 }
 
 /**
- * Execute a TokenSell trade (sell / take / cancel=self-take): build via the
- * subprocess worker (never broadcasts), then broadcast funding txs in order
- * and the final tx — the NFT-trade two-stage posture generalized to N txs.
- * Retryable broadcast failures rebuild with the spent outpoints excluded.
+ * Execute a TokenSell trade (sell / take / cancel=self-take) or a non-trade
+ * op=1 TRANSFER: build via the subprocess worker (never broadcasts), then
+ * broadcast funding txs in order and the final tx — the NFT-trade two-stage
+ * posture generalized to N txs. Retryable broadcast failures rebuild with
+ * the spent outpoints excluded.
  */
 export async function executeMvcTokenSellTrade(
   store: MetabotStore,
   input: {
     metabotId: number;
-    action: 'sell' | 'take' | 'cancel';
+    action: 'sell' | 'take' | 'cancel' | 'transfer';
     genesis?: string;
     codehash?: string;
     tokenTxid?: string;

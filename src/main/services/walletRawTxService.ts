@@ -158,10 +158,10 @@ export interface MvcTokenSellListingRef {
 
 export interface BuildMvcTokenSellTradeParams {
   metabotId: number;
-  action: 'sell' | 'take' | 'cancel';
+  action: 'sell' | 'take' | 'cancel' | 'transfer';
   feeRate: number;
   excludeOutpoints?: string[];
-  /** sell only */
+  /** sell / transfer */
   genesis?: string;
   codehash?: string;
   tokenTxid?: string;
@@ -173,6 +173,7 @@ export interface BuildMvcTokenSellTradeParams {
   checkerSats?: number;
   /** take / cancel only */
   listing?: MvcTokenSellListingRef;
+  /** take / transfer only */
   receiverAddress?: string;
   prevTokenInputIndex?: number;
 }
@@ -1011,8 +1012,14 @@ export async function buildMvcTokenSellRawTx(
     if (params.action === 'take' && !String(params.receiverAddress || '').trim()) {
       throw new Error('receiverAddress is required for take');
     }
+  } else if (params.action === 'transfer') {
+    if (!/^[0-9a-fA-F]{64}$/.test(String(params.genesis || '').trim())) throw new Error('genesis (64 hex) is required for transfer');
+    if (!/^[0-9a-fA-F]{40}$/.test(String(params.codehash || '').trim())) throw new Error('codehash (40 hex) is required for transfer');
+    if (!String(params.receiverAddress || '').trim()) {
+      throw new Error('receiverAddress is required for transfer (raw MVC address)');
+    }
   } else {
-    throw new Error('action must be sell, take, or cancel');
+    throw new Error('action must be sell, take, cancel, or transfer');
   }
 
   const wallet = store.getMetabotWalletByMetabotId(params.metabotId);

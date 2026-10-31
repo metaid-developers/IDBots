@@ -356,3 +356,43 @@ export function assertTokenSellAmountGates(input: TokenSellAmountGatesInput): vo
   const result = checkTokenSellAmountGates(input);
   if (!result.ok) throw new Error(`TokenSell amount gates: ${result.violations.join('; ')}`);
 }
+
+// ---------- transfer (op=1 TRANSFER, non-trade) amount gates ----------
+
+export interface TokenTransferAmountGatesInput {
+  /** Token amount being transferred, base units (integer). */
+  transferTokenAmount: bigint;
+  /** The token utxo's dataPart amount — a TRANSFER moves it IN FULL. */
+  utxoTokenAmount: bigint;
+  /** Checker utxo denomination in sats (auto-minted TransferCheck cast). */
+  checkerSats?: number | bigint;
+}
+
+/**
+ * Hard gates for the non-trade op=1 TRANSFER path (wallet_token_transfer):
+ *  - no partial moves: the token utxo is transferred IN FULL (the checker
+ *    conservation pairs the TransferCheck receiver amount with the token
+ *    output amount; splitting needs the listing/precise-split path);
+ *  - checker denomination (when given) ≥ dust, in SATS units.
+ *    There is no price in a transfer — price gates belong to TokenSell.
+ */
+export function checkTokenTransferAmountGates(input: TokenTransferAmountGatesInput): TokenSellAmountGatesResult {
+  const violations: string[] = [];
+  if (input.transferTokenAmount <= 0n) violations.push('transfer token amount must be positive');
+  if (input.utxoTokenAmount <= 0n) violations.push('token utxo amount must be positive');
+  if (input.transferTokenAmount !== input.utxoTokenAmount) {
+    violations.push(
+      `partial transfer rejected: transfer ${input.transferTokenAmount} != utxo ${input.utxoTokenAmount} ` +
+        '(op=1 TRANSFER moves the token utxo in full; split the token first if you need a smaller amount)',
+    );
+  }
+  if (input.checkerSats !== undefined && BigInt(input.checkerSats) < DUST_SATS) {
+    violations.push(`checker_sats ${input.checkerSats} below dust ${DUST_SATS}`);
+  }
+  return { ok: violations.length === 0, violations };
+}
+
+export function assertTokenTransferAmountGates(input: TokenTransferAmountGatesInput): void {
+  const result = checkTokenTransferAmountGates(input);
+  if (!result.ok) throw new Error(`TokenTransfer amount gates: ${result.violations.join('; ')}`);
+}
