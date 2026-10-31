@@ -542,7 +542,10 @@ test('daemon absorbs a verbatim retransmission of the previous inbound message w
   );
 
   try {
-    await waitFor(() => logs.some((message) => message.includes('identical to the previous inbound message')));
+    // Wait for the deterministic end state (the row is processed) instead of
+    // the absorption log: the log fires just before the copy is appended, so
+    // waiting on it raced the render step (visibility-first 2026-10-31).
+    await waitFor(() => row.is_processed === 1);
   } finally {
     await stopPrivateChatDaemon({ waitForTick: true });
   }
@@ -550,8 +553,14 @@ test('daemon absorbs a verbatim retransmission of the previous inbound message w
   assert.equal(row.is_processed, 1);
   assert.equal(createPinCount, 0);
   assert.equal(turnAttempts, 0);
-  // The retransmission is not appended to the session context either.
-  assert.equal(session.messages.filter((message) => message.type === 'user').length, 1);
+  // Visibility-first (2026-10-31): the absorbed copy IS stored next to the
+  // first one — the peer's own window shows its outgoing copy — but it drove
+  // no reply turn (the loop protection the 2026-09-17 fix introduced).
+  const inboundCopies = session.messages.filter(
+    (message) => message.type === 'user' && message.content === '（静默。）'
+  );
+  assert.equal(inboundCopies.length, 2);
+  assert.equal(inboundCopies[inboundCopies.length - 1].metadata?.privateChatRepeatAbsorbed, true);
 });
 
 test('daemon escalates the third consecutive identical copy into a real reply turn (insistent re-ask)', async () => {
@@ -605,8 +614,11 @@ test('daemon escalates the third consecutive identical copy into a real reply tu
   );
 
   try {
-    // Copy #2 is absorbed exactly as before (loop protection intact).
-    await waitFor(() => logs.some((message) => message.includes('identical to the previous inbound message')));
+    // Copy #2 is absorbed exactly as before (loop protection intact). Wait
+    // for the row to be fully processed, not for the absorption log: the log
+    // fires just before the copy is appended (visibility-first 2026-10-31),
+    // and flipping the row below mid-processing would corrupt its bookkeeping.
+    await waitFor(() => row.is_processed === 1);
     // Copy #3 — a NEW chain row with the identical wording — must escalate.
     row.id = 2;
     row.pin_id = 'incoming-pin-2';

@@ -603,6 +603,7 @@ man_base_data_pebble/
 !tests/privateChatEmptyReplyRetry.test.mjs
 !tests/privateChatNoReplyWake.test.mjs
 !tests/privateChatInboundVisibility.test.mjs
+!tests/privateChatInboundNoReplyTextVisibility.test.mjs
 !tests/privateChatSendGate.test.mjs
 !tests/privateChatRowScheduler.test.mjs
 !tests/a2aEpisodeRollover.test.mjs
