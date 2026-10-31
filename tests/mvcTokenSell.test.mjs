@@ -334,7 +334,8 @@ test('wallet_token_* tools registered in the same factory as wallet_nft_*', asyn
     'wallet_token_balance',
     'wallet_token_sell_orders',
     'wallet_token_sell',
-    'wallet_token_take',
+    'wallet_token_buy',
+    'wallet_token_take', // deprecated alias of wallet_token_buy (same schema object + handler)
     'wallet_token_cancel_sell',
   ];
   for (const name of expected) {
@@ -347,8 +348,14 @@ test('wallet_token_* tools registered in the same factory as wallet_nft_*', asyn
   // schema sanity: sell requires genesis+codehash+price; take requires the listing tuple
   const sell = calls.find((c) => c.name === 'wallet_token_sell');
   assert.ok(sell.schema.genesis && sell.schema.codehash);
-  const take = calls.find((c) => c.name === 'wallet_token_take');
+  const take = calls.find((c) => c.name === 'wallet_token_buy');
   assert.ok(take.schema.sell_txid && take.schema.sell_output_index && take.schema.sell_price_sats && take.schema.seller_address);
+
+  // alias contract: wallet_token_take is an EXACT alias — same schema object, same handler function
+  const alias = calls.find((c) => c.name === 'wallet_token_take');
+  assert.ok(alias, 'wallet_token_take alias not registered');
+  assert.equal(alias.schema, take.schema, 'alias schema must be the same object as wallet_token_buy');
+  assert.equal(alias.handler, take.handler, 'alias handler must be the same function as wallet_token_buy');
 
   // handler behavior: session-less sell fails closed with the own-wallet message
   const sellNoSession = await sell.handler({ genesis: 'ab'.repeat(32), codehash: 'cd'.repeat(20), price_sats: 1000 });

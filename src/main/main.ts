@@ -7546,7 +7546,7 @@ const getCoworkRunner = () => {
         }),
       ),
       takeToken: (params) => withChainWriteBudget(
-        'wallet_token_take',
+        'wallet_token_buy',
         () => executeMvcTokenSellTrade(getMetabotStore(), {
           ...params,
           action: 'take',
