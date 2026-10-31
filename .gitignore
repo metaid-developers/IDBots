@@ -813,3 +813,8 @@ blob-report/
 # F-17: mobile permission payload rendering + uncertain-outcome reconcile
 !tests/ipcSanitizeDepth.test.ts
 !tests/coworkPermissionPanelFallback.test.tsx
+!tests/mobileVoicePcm.test.ts
+!tests/mobileVoiceButtonState.test.ts
+!tests/mobileVoiceBackfill.test.ts
+!tests/mobileVoiceProtocol.test.ts
+!tests/mobileVoiceWireup.test.tsx
