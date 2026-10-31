@@ -19,6 +19,8 @@ import { BottomSheet } from '../components/BottomSheet';
 import { BotAvatar } from '../components/BotAvatar';
 import { groupSessionsByDay, resolveSessionBot } from '../sessionList';
 import { sortBotsForList } from '../botList';
+import { useVoiceInput } from '../voice/useVoiceInput';
+import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
 
 type Chat = ReturnType<typeof useChat>;
 
@@ -313,6 +315,25 @@ export default function ChatScreen(props: {
     steerDisabled: chat.pendingPermissionCount > 0 || turnPhase === 'stopping',
   }) && !chat.isUploading;
 
+  // Voice input (voice P0, subtask #10): tap-to-toggle mic button beside the
+  // composer; streaming partials backfill the draft at the caret and finals
+  // replace the trailing partial (Doubao-style). The hook owns capture +
+  // socket + state machine; this screen only supplies the draft seam.
+  const voice = useVoiceInput({
+    getDraftAndCaret: () => {
+      const textarea = textareaRef.current;
+      const caret =
+        textarea && typeof textarea.selectionStart === 'number' && document.activeElement === textarea
+          ? textarea.selectionStart
+          : pendingCaretRef.current;
+      return { draft: chat.draft ?? '', caret };
+    },
+    onDraftReplace: (text, caret) => {
+      pendingCaretRef.current = caret;
+      chat.setDraft(text);
+    },
+  });
+
   useEffect(() => {
     const list = listRef.current;
     if (list) list.scrollTop = list.scrollHeight;
@@ -442,6 +463,7 @@ export default function ChatScreen(props: {
           <EmojiPickerPanel onSelect={insertEmoji} onClose={() => setEmojiPanelOpen(false)} />
         ) : null}
         <ChatComposerAttachments chat={chat} />
+        <VoiceErrorBanner state={voice.state} onDismiss={voice.dismissError} />
         <div className="flex items-end gap-2">
           <button
             type="button"
@@ -463,6 +485,7 @@ export default function ChatScreen(props: {
           >
             <PaperClipIcon className="h-5 w-5" aria-hidden />
           </button>
+          <VoiceButton state={voice.state} elapsedSec={voice.elapsedSec} onStart={voice.start} onStop={voice.stop} />
           <textarea
             ref={textareaRef}
             value={draft}
