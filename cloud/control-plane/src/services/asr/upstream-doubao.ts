@@ -35,9 +35,21 @@ import type { AsrUpstreamEvent, AsrUpstreamProvider, AsrUpstreamSession } from '
  * Credentials arrive ONLY through AsrDoubaoCredentials (backed by env vars,
  * see config.ts) and are never logged. Without credentials the config layer
  * refuses CP_ASR_UPSTREAM=doubao at startup, so this class can assume one
- * auth form is present. NOTE: the legacy `Authorization: Bearer; <token>`
- * separator follows the v3 doc but has not been confirmed against the live
- * service (no credentials yet) — confirm once on first real connection.
+ * auth form is present.
+ *
+ * Live-service facts (validated against the real endpoint on 2026-10-31,
+ * evidence in asr-gateway/doubao-live/probe-run2.json):
+ * - Request headers X-Api-Request-Id (task id, required) and X-Api-Connect-Id
+ *   (trace id) are both sent with one UUID; X-Api-Sequence is the doc-fixed -1.
+ * - Response frames MIX layouts: the config ack arrives with flags 0b0000
+ *   (no sequence; payload size at offset 4, payload at 8), while recognition
+ *   results arrive sequenced (flags 0b0001/0b0011; size at 8, payload at 12).
+ *   The parser branches on the flags nibble — a fixed sequenced offset
+ *   misreads the first real response as a protocol error.
+ * - An empty-payload EOS packet (flags 0b0010) is accepted.
+ * - With enable_nonstream the definite utterance comes from "two_pass"
+ *   (re-recognition after VAD silence detection), replacing the streamed
+ *   partial — both map cleanly onto final/partial events.
  */
 
 const MSG_FULL_CLIENT_REQUEST = 0b0001;
@@ -52,6 +64,9 @@ const SER_RAW = 0b0000;
 const SER_JSON = 0b0001;
 
 const COMP_GZIP = 0b0001;
+
+/** 200 ms of s16le 16 kHz mono — the doc's optimal packet size for bigmodel_async. */
+const MAX_AUDIO_CHUNK_BYTES = 6400;
 
 export interface AsrDoubaoCredentials {
   endpoint: string;
@@ -101,13 +116,17 @@ export class DoubaoUpstream implements AsrUpstreamProvider {
     const connectId = randomUUID();
     const headers: Record<string, string> = {
       'X-Api-Resource-Id': this.creds.resourceId,
+      // Task id (required by the v3 doc) and trace id share one UUID; the
+      // handshake echoes X-Api-Connect-Id back as the response header.
+      'X-Api-Request-Id': connectId,
       'X-Api-Connect-Id': connectId,
+      'X-Api-Sequence': '-1',
     };
     if (this.creds.apiKey) {
       headers['X-Api-Key'] = this.creds.apiKey;
     } else if (this.creds.appId && this.creds.accessToken) {
-      headers['X-App-ID'] = this.creds.appId;
-      headers.Authorization = `Bearer; ${this.creds.accessToken}`;
+      headers['X-Api-App-Key'] = this.creds.appId;
+      headers['X-Api-Access-Key'] = this.creds.accessToken;
     }
 
     // Do not leak credentials through the ws error path: only the message.
@@ -154,13 +173,22 @@ export class DoubaoUpstream implements AsrUpstreamProvider {
             audio: { format: 'pcm', rate: 16000, bits: 16, channel: 1 },
             request: {
               model_name: 'bigmodel',
+              // Incremental results: result.text covers only the current
+              // utterance, which is exactly our `partial` semantics.
               result_type: 'single',
-              enable_punc: true,
               enable_itn: true,
+              enable_punc: true,
+              // Semantic smoothing (disfluency removal) — per the delegation
+              // spec and the official example payload.
+              enable_ddc: true,
+              // Two-pass recognition: after VAD silence detection the
+              // utterance is re-recognized and the refined definite result
+              // replaces the streamed partial (source: "two_pass").
+              enable_nonstream: true,
               show_utterances: true,
               // Forced endpointing so short push-to-talk utterances finalize
-              // quickly (doc: end_window_size >= 200; force_to_speech_time
-              // recommended 1000).
+              // quickly (doc: end_window_size range [300,5000], default 800;
+              // force_to_speech_time recommended 1000).
               end_window_size: 800,
               force_to_speech_time: 1000,
             },
@@ -193,11 +221,21 @@ export class DoubaoUpstream implements AsrUpstreamProvider {
         return;
       }
 
-      if (msgType !== MSG_FULL_SERVER_RESPONSE || data.length < 12) {
+      if (msgType !== MSG_FULL_SERVER_RESPONSE) {
         return;
       }
-      const payloadSize = data.readUInt32BE(8);
-      let payload = data.subarray(12, 12 + payloadSize);
+      // Live fact (2026-10-31 probe): the service MIXES response layouts.
+      // The config ack arrives unsequenced (flags 0b0000 — size at 4, payload
+      // at 8); recognition results arrive sequenced (flags 0b0001/0b0011 —
+      // size at 8, payload at 12). Branch on the flags nibble.
+      const hasSequence = flags === 0b0001 || flags === 0b0011;
+      const sizeOffset = hasSequence ? 8 : 4;
+      const payloadOffset = hasSequence ? 12 : 8;
+      if (data.length < payloadOffset) {
+        return;
+      }
+      const payloadSize = data.readUInt32BE(sizeOffset);
+      let payload = data.subarray(payloadOffset, payloadOffset + payloadSize);
       const compression = data[2] & 0x0f;
       if (compression === COMP_GZIP) {
         try {
@@ -264,9 +302,14 @@ export class DoubaoUpstream implements AsrUpstreamProvider {
         if (dead || done || finished || chunk.length === 0) {
           return;
         }
-        sendFrame(
-          frameWithPayload(MSG_AUDIO_ONLY_REQUEST, FLAG_NONE, SER_RAW, COMP_GZIP, gzipSync(chunk)),
-        );
+        // The channel doc has the client batch 100–200 ms per frame; this
+        // ceiling guarantees the doc's optimal ≤200 ms packets toward
+        // bigmodel_async even if a client misbehaves. Smaller chunks pass
+        // through untouched (splitting would only add latency).
+        for (let offset = 0; offset < chunk.length; offset += MAX_AUDIO_CHUNK_BYTES) {
+          const slice = chunk.subarray(offset, Math.min(offset + MAX_AUDIO_CHUNK_BYTES, chunk.length));
+          sendFrame(frameWithPayload(MSG_AUDIO_ONLY_REQUEST, FLAG_NONE, SER_RAW, COMP_GZIP, gzipSync(slice)));
+        }
       },
       finish(): void {
         if (dead || done || finished) {

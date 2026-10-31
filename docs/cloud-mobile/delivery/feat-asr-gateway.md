@@ -74,12 +74,45 @@ Code map (all under `cloud/control-plane/`):
   auto-reopen → second `asr.open` → partial/final/done → close 1000, all on
   the same client socket.
 
+## Live-upstream validation (2026-10-31, follow-up commit)
+
+With the real API key in place, one probe + two full gateway e2e runs were
+executed against `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`
+(evidence: `asr-gateway/doubao-live/` outside the repo). Findings folded back
+into `upstream-doubao.ts`:
+
+- **Response layouts are mixed** — the config ack arrives with flags 0b0000
+  (no sequence; size at offset 4, payload at 8), recognition results with
+  0b0001/0b0011 (sequenced; size at 8, payload at 12). The parser now
+  branches on the flags nibble; the previous fixed sequenced offset would
+  have failed on the first real frame. Locked by `test/asr-doubao-live.test.ts`
+  (new file; pre-existing tests untouched).
+- **Request headers** now carry `X-Api-Request-Id` (doc-required task id)
+  alongside the trace `X-Api-Connect-Id` (one UUID), plus the doc-fixed
+  `X-Api-Sequence: -1`. Legacy auth headers corrected to the documented
+  `X-Api-App-Key` / `X-Api-Access-Key` pair.
+- **Request body** adds `enable_nonstream` (two-pass recognition — the
+  definite utterance arrives as `source: "two_pass"` with punctuation, e.g.
+  「今天天气怎么样？」) and `enable_ddc` (semantic smoothing), per the
+  official example payload.
+- **Audio packets are capped at 200 ms** (6400 B): oversized client chunks
+  split, ≤200 ms chunks pass through untouched (no added latency; the
+  channel doc already binds clients to 100–200 ms frames).
+- **An empty-payload EOS packet is accepted** by the live service.
+
+Live numbers (TTS sample 「今天天气怎么样？」, 1.73 s, 200 ms packets,
+two runs): `asr.open` 262–568 ms after connect; first partial 808–1055 ms
+after first audio; finish→final 250–369 ms; `audio_info.duration` 1726 ms
+matches the sample length exactly. Wrong-key attempts are rejected at the
+HTTP handshake (close 1006). Full logs: `doubao-live/probe-run2.json`,
+`doubao-live/e2e-live-clean.json`.
+
+After the fold-back: full suite **188/188 pass** (185 + 3 new live-fact
+regression gates), `tsc` and `eslint` clean.
+
 ## Not done / follow-ups
 
 - No production deployment (per slice discipline).
-- Doubao live smoke test once Volcano credentials arrive (set env vars,
-  flip `CP_ASR_UPSTREAM`; also confirm the legacy `Authorization: Bearer; <t>`
-  separator on first connect).
 - FunASR implementation fills `upstream-funasr.ts` when that switch is due.
 - AGENTS.md asks for an on-chain development-journal buzz per commit; this
   delegated slice posts nothing on chain — left to the orchestrating side.
