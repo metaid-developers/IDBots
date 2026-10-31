@@ -17,7 +17,7 @@
  * draft-v0 client, the stub gateway round-trip, the button state machine and
  * the streaming draft backfill. What is FAKE: only the OS microphone (a
  * deterministic 220 Hz sine instead of a human voice). Real-mic verification
- * is manual (see 交付说明) and honestly marked NOT RUN in CI.
+ * is manual (see the delivery notes) and honestly marked NOT RUN in CI.
  */
 
 import type { VoiceCaptureDeps, VoiceAudioContextLike } from './capture';

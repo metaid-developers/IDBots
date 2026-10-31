@@ -3,7 +3,7 @@
  *
  * STATUS: DRAFT v0 — the authoritative protocol document (message format /
  * event sequence / error codes) is produced in parallel by the gateway side
- * (Builder阿码). Until that document lands, this module is THE single
+ * (the gateway-side engineer, Builder Ama). Until that document lands, this module is THE single
  * alignment point: everything the frontend knows about the wire format lives
  * here and nowhere else, so aligning after the doc arrives is a one-file
  * change. Every encode/decode site in the frontend imports from this module.

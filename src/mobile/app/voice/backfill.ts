@@ -1,7 +1,7 @@
 /**
  * Streaming text backfill for the mobile voice input (voice P0, subtask #10).
  *
- * 豆包式 experience: while the user speaks, hypothesis (`partial`) text fills
+ * Doubao-style experience: while the user speaks, hypothesis (`partial`) text fills
  * the chat input live; when the gateway settles an utterance (`final`), the
  * trailing partial is replaced by the settled text. Nothing here touches the
  * network or React — pure string/caret math so the merge rules (CJK vs latin
