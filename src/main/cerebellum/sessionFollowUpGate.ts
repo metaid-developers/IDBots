@@ -46,13 +46,14 @@ export const CEREBELLUM_SESSION_FOLLOW_UP_TIMEOUT_MS = 1500;
 
 /**
  * Noul probability at or above which the completed turn counts as waiting on
- * the owner. Recall-biased by owner decision (2026-10-23): for follow-up
- * triage a false positive costs the user one glance, a false negative costs a
- * missed incident — so the bar sits at P >= 0.35 instead of the cookbook 0.5,
- * and obvious high-severity reports never even reach the Noul (see
- * hasForceFollowUpSignal below).
+ * the owner. Precision-biased by owner decision (2026-10-31, revisiting the
+ * 2026-10-23 recall bias at 0.35): the pending bucket was 74% scheduled runs
+ * whose bots had already written "no action needed" — those runs now carry
+ * the end-of-run follow-up contract (an explicit [FOLLOW_UP: owner|none] tag
+ * the gate consumes before this Noul ever runs), so the cookbook 0.5 bar
+ * returns and the force patterns below stay as the recall net.
  */
-export const CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD = 0.35;
+export const CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD = 0.5;
 
 /**
  * High-precision severity markers that force a follow-up verdict WITHOUT
@@ -138,20 +139,23 @@ export const CEREBELLUM_SESSION_FOLLOW_UP_QUESTION_ID = 'needs_human_followup';
  */
 export const CEREBELLUM_SESSION_FOLLOW_UP_INSTRUCTIONS =
   'Does the assistant reply at `last_assistant_message` — the final message of a turn in the session at ' +
-  '`session_title` — end by asking the human owner to decide, approve, choose, or reply? ' +
-  'Count it as needing follow-up when the reply ends with a question directed at the user, a request for ' +
-  'approval or a decision, or warnings/recommendations that require the owner\'s decision before proceeding. ' +
-  'A monitoring, inspection, patrol, or health-check report that lists UNRESOLVED failures, outages, ' +
-  'severity-marked items (CRITICAL/WARN), or recommends manual operations (investigate, restart, clean up, ' +
-  'expand capacity, approve) ALWAYS counts as needing follow-up — the owner must triage it even when the ' +
-  'reply does not end with a literal question. ' +
-  'Do NOT count a final report where every finding is resolved or explicitly informational, a clean ' +
-  'all-clear summary, or a bot-to-bot handoff that completes the task with no human action needed. ' +
-  'The text may be in ANY language; judge the intent, not keywords. When in doubt, prefer follow-up.';
+  '`session_title` — leave the human OWNER needing to decide, approve, choose, provide, or reply? ' +
+  'Count it as needing follow-up when the reply ends with a question directed at the user, or requests the ' +
+  'owner\'s approval or decision before work can proceed. ' +
+  'A monitoring, inspection, patrol, or health-check report counts ONLY when it lists unresolved failures ' +
+  'or severity-marked items (CRITICAL/WARN) that the OWNER must act on or triage — not items another bot, ' +
+  'person, or party already owns or is handling. ' +
+  'Do NOT count: a final report where every finding is resolved or explicitly informational; a clean ' +
+  'all-clear summary; a bot-to-bot handoff that completes the task; a wait on a THIRD PARTY (another bot, ' +
+  'another person, a group — their follow-up, not the owner\'s); a conditional or optional offer ("I can ' +
+  'also … if you want"); or a reply that explicitly states no human follow-up is needed (in any language) ' +
+  'unless concrete items still block on the owner personally. ' +
+  'The text may be in ANY language; judge the intent, not keywords. Judge whether the OWNER is asked to ' +
+  'act — not whether anything anywhere is unresolved.';
 
 export const CEREBELLUM_SESSION_FOLLOW_UP_CRITERIA = {
-  true: 'The turn ends asking the human to decide, approve, choose, or reply — e.g. it ends with a question to the user, a request for approval, warnings/recommendations that require the owner\'s decision, or a monitoring/inspection report with unresolved failures or manual-operation suggestions.',
-  false: 'The turn is a final report or bot-to-bot handoff where the task is complete: every finding is resolved or informational, and no human action is needed.',
+  true: 'The turn leaves the human owner needing to decide, approve, choose, provide, or reply — e.g. it ends with a question to the user, requests the owner\'s approval or decision, or reports unresolved owner-actionable failures.',
+  false: 'The turn is a final report or bot-to-bot handoff that completes the task: every finding is resolved or informational, waits belong to other bots or third parties, and no OWNER action is needed.',
 } as const;
 
 export interface CerebellumSessionFollowUpRequest {

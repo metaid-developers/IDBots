@@ -97,12 +97,14 @@ test('buildSessionFollowUpRequest: state carries title + final reply, one noul q
   assert.deepEqual(Object.keys(request.questions), [CEREBELLUM_SESSION_FOLLOW_UP_QUESTION_ID]);
   const question = request.questions[CEREBELLUM_SESSION_FOLLOW_UP_QUESTION_ID];
   assert.equal(question.type, 'noul');
-  assert.match(question.instructions, /decide, approve, choose, or reply/);
+  assert.match(question.instructions, /decide, approve, choose, provide, or reply/);
   assert.match(question.instructions, /ANY language/);
+  assert.match(question.instructions, /THIRD PARTY/, 'waits owned by others are not the owner follow-up');
+  assert.match(question.instructions, /not whether anything anywhere is unresolved/);
   assert.match(question.criteria.true, /question to the user/);
-  assert.match(question.criteria.true, /owner's decision/);
+  assert.match(question.criteria.true, /owner-actionable failures/);
   assert.match(question.criteria.false, /final report or bot-to-bot handoff/);
-  assert.match(question.criteria.false, /no human action is needed/);
+  assert.match(question.criteria.false, /no OWNER action is needed/);
 });
 
 test('buildSessionFollowUpRequest: omits task_name for non-scheduled turns and blank names', () => {
@@ -158,12 +160,12 @@ test('parseSessionFollowUpAnswer: happy path, clamping, and unusable shapes', ()
   assert.equal(parseSessionFollowUpAnswer('junk'), null);
 });
 
-test('sessionFollowUpFromNoul: recall-biased threshold is inclusive at 0.35', () => {
-  assert.equal(sessionFollowUpFromNoul(0.35), true);
-  assert.equal(sessionFollowUpFromNoul(0.34), false);
+test('sessionFollowUpFromNoul: precision-biased threshold is inclusive at 0.5', () => {
+  assert.equal(sessionFollowUpFromNoul(0.5), true);
+  assert.equal(sessionFollowUpFromNoul(0.49), false);
   assert.equal(sessionFollowUpFromNoul(0), false);
   assert.equal(sessionFollowUpFromNoul(1), true);
-  assert.equal(CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD, 0.35);
+  assert.equal(CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD, 0.5);
 });
 
 // ---------------------------------------------------------------------------
@@ -181,11 +183,16 @@ test('classify: noul at/above threshold → true, below → false', async () => 
       fetchImpl: okFetch(classifyPayload(CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD)),
     }),
     true,
-    'threshold is inclusive (P >= 0.35 → follow-up)',
+    'threshold is inclusive (P >= 0.5 → follow-up)',
   );
   assert.equal(
     await classifySessionFollowUpWithCerebellum({ ...GATE_INPUT, fetchImpl: okFetch(classifyPayload(0.34)) }),
     false,
+  );
+  assert.equal(
+    await classifySessionFollowUpWithCerebellum({ ...GATE_INPUT, fetchImpl: okFetch(classifyPayload(0.49)) }),
+    false,
+    'the old recall-biased band 0.35–0.49 no longer parks the session',
   );
 });
 
@@ -316,8 +323,8 @@ test('classify: a hanging endpoint is aborted at the deadline', async () => {
 });
 
 // ── Dream review P2-3: the missing offline eval script ─────────────────────
-// (handoff doc #19 / §2.20 — the recall-biased 0.35 threshold is exercised by
-// this script's sweep, which is how it gets measured.)
+// (handoff doc #19 / §2.20 — the production threshold is exercised by this
+// script's sweep, which is how it gets measured.)
 
 test('eval script builds the request through the module', () => {
   const source = readFileSync(new URL('../scripts/cerebellum-session-follow-up-eval.mjs', import.meta.url), 'utf8');

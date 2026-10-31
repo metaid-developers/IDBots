@@ -79,7 +79,7 @@ class SchedulerStoppedError extends Error {
  * an explicit follow-up declaration tag; the Follow-Up Tasks gate consumes it
  * deterministically (see parseFollowUpDeclaration in
  * cerebellum/sessionFollowUpGate.ts) instead of leaving the decision to the
- * recall-biased classifier alone. The host defines the contract; the bot owns
+ * classifier's prose reading alone. The host defines the contract; the bot owns
  * the verdict (protocol-standard over host heuristics).
  *
  * Exported for tests.
