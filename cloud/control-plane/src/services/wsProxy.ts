@@ -57,8 +57,9 @@ export function attachWsProxy(
   server.on('upgrade', (req, socket: Duplex, head: Buffer) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname !== '/ws') {
-      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-      socket.destroy();
+      // Not ours: the ASR gateway (attached to the same server) owns every
+      // other upgrade path and 404s the ones nobody claims. Do not destroy
+      // here — both listeners see every 'upgrade' event.
       return;
     }
     handleUpgrade(app, wss, stats, req, socket, head, { pingIntervalMs, pongTimeoutMs }).catch(

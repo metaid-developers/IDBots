@@ -4,12 +4,14 @@ import type { AppContext } from './context.js';
 import { HttpError, writeError, writeJson, type RequestCtx, type Route } from './http.js';
 import { isOriginAllowed } from './origin.js';
 import { accountRoutes } from './routes/account.js';
+import { asrRoutes } from './routes/asr.js';
 import { authRoutes } from './routes/auth.js';
 import { sensitiveRoutes } from './routes/sensitive.js';
 import { requireUser } from './routes/auth.js';
 import { maskPhone } from './crypto.js';
 import { proxyRoutes } from './services/httpProxy.js';
 import { loginRoutes } from './services/loginBundle.js';
+import { attachAsrGateway, type AsrGatewayOptions } from './services/asr/gateway.js';
 import { attachWsProxy, type WsProxyOptions } from './services/wsProxy.js';
 
 /**
@@ -213,6 +215,7 @@ const routes: Route[] = [
   ...authRoutes,
   ...sensitiveRoutes,
   ...accountRoutes,
+  ...asrRoutes,
   ...proxyRoutes,
   ...loginRoutes,
 ];
@@ -231,12 +234,18 @@ const routes: Route[] = [
 export interface PublicServerOptions {
   /** Overrides for the /ws proxy keepalive (tests inject short intervals). */
   wsProxy?: WsProxyOptions;
+  /** Overrides for the ASR voice gateway (tests inject the stub upstream). */
+  asr?: AsrGatewayOptions;
 }
 
 export function createPublicServer(app: AppContext, opts: PublicServerOptions = {}): http.Server {
   const server = http.createServer(createRequestHandler(app));
   const stats = attachWsProxy(app, server, opts.wsProxy);
   app.metrics.gaugeFn('cp_open_sockets', () => stats.openSockets);
+  // Attached after the chat proxy: the ASR gateway owns the 404 for upgrade
+  // paths nobody claims (voice channel — new capability).
+  const asrStats = attachAsrGateway(app, server, opts.asr);
+  app.metrics.gaugeFn('cp_asr_open_sockets', () => asrStats.openSockets);
   return server;
 }
 

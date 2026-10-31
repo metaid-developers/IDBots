@@ -19,6 +19,35 @@ export class ConfigError extends Error {
 
 export type SmsMode = 'aliyun' | 'fake';
 
+/** Upstream selection for the ASR voice gateway (voice channel doc). */
+export type AsrUpstreamKind = 'stub' | 'doubao' | 'funasr';
+
+export interface AsrConfig {
+  upstream: AsrUpstreamKind;
+  /** Per-user per-day free allowance, minutes (CP_ASR_DAILY_LIMIT_MINUTES). */
+  dailyLimitMinutes: number;
+  /** Hard cap on one streaming connection, seconds (CP_ASR_MAX_SESSION_SECONDS). */
+  maxSessionSeconds: number;
+  doubao: {
+    endpoint: string;
+    resourceId: string;
+    /** API-key auth (current Volcengine mode). Secret: env only, never logged. */
+    apiKey: string | null;
+    /** Legacy app-id + access-token pair. Secret: env only, never logged. */
+    appId: string | null;
+    accessToken: string | null;
+  };
+  /** Reserved: FunASR self-deployed endpoint (CP_ASR_FUNASR_ENDPOINT). */
+  funasrEndpoint: string | null;
+  /** Stub fault-injection knobs for joint debugging (seconds/milliseconds). */
+  stub: {
+    delayMs: number;
+    disconnectAfterMs: number;
+    slowFinalMs: number;
+  };
+}
+
+
 export interface ControlPlaneConfig {
   publicOrigin: string;
   publicOriginUrl: URL;
@@ -50,6 +79,8 @@ export interface ControlPlaneConfig {
    * built-in placeholder under `static-login/`.
    */
   loginBundleDir: string;
+  /** ASR voice gateway (new capability; see docs/cloud-mobile/voice/asr-channel.md). */
+  asr: AsrConfig;
 }
 
 const FAKE_SMS_ALLOWED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -161,6 +192,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     throw new ConfigError('CP_SMS_MODE=fake but CP_FAKE_SMS_NUMBERS is empty');
   }
 
+  const asr = parseAsrConfig(env);
+
   return {
     publicOrigin,
     publicOriginUrl,
@@ -185,5 +218,72 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
     fakeSmsNumbers,
     alertWebhook: env.CP_ALERT_WEBHOOK ?? null,
     loginBundleDir: env.CP_LOGIN_BUNDLE_DIR ?? defaultLoginBundleDir(),
+    asr,
+  };
+}
+
+const DEFAULT_DOUBAO_ENDPOINT = 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async';
+const DEFAULT_DOUBAO_RESOURCE_ID = 'volc.seedasr.sauc.duration';
+
+function parseNonNegativeInt(env: NodeJS.ProcessEnv, name: string, defaultValue: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === '') {
+    return defaultValue;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ConfigError(`${name} must be a non-negative integer, got "${raw}"`);
+  }
+  return value;
+}
+
+/**
+ * ASR voice-gateway configuration (voice channel doc). Volcano credentials
+ * arrive ONLY through the environment and must never be logged or committed;
+ * selecting `doubao` without either credential form is a startup error.
+ */
+function parseAsrConfig(env: NodeJS.ProcessEnv): AsrConfig {
+  const rawUpstream = env.CP_ASR_UPSTREAM ?? 'stub';
+  if (rawUpstream !== 'stub' && rawUpstream !== 'doubao' && rawUpstream !== 'funasr') {
+    throw new ConfigError(`CP_ASR_UPSTREAM must be "stub", "doubao", or "funasr", got "${rawUpstream}"`);
+  }
+  const upstream = rawUpstream as AsrUpstreamKind;
+
+  const doubao = {
+    endpoint: env.CP_ASR_DOUBAO_ENDPOINT ?? DEFAULT_DOUBAO_ENDPOINT,
+    resourceId: env.CP_ASR_DOUBAO_RESOURCE_ID ?? DEFAULT_DOUBAO_RESOURCE_ID,
+    apiKey: env.CP_ASR_DOUBAO_API_KEY ?? null,
+    appId: env.CP_ASR_DOUBAO_APP_ID ?? null,
+    accessToken: env.CP_ASR_DOUBAO_ACCESS_TOKEN ?? null,
+  };
+  const funasrEndpoint = env.CP_ASR_FUNASR_ENDPOINT ?? null;
+
+  if (upstream === 'doubao') {
+    const hasApiKey = doubao.apiKey !== null && doubao.apiKey !== '';
+    const hasLegacyPair =
+      (doubao.appId !== null && doubao.appId !== '') &&
+      (doubao.accessToken !== null && doubao.accessToken !== '');
+    if (!hasApiKey && !hasLegacyPair) {
+      throw new ConfigError(
+        'CP_ASR_UPSTREAM=doubao requires CP_ASR_DOUBAO_API_KEY (or the legacy ' +
+          'CP_ASR_DOUBAO_APP_ID + CP_ASR_DOUBAO_ACCESS_TOKEN pair); credentials are env-only',
+      );
+    }
+  }
+  if (upstream === 'funasr' && (funasrEndpoint === null || funasrEndpoint === '')) {
+    throw new ConfigError('CP_ASR_UPSTREAM=funasr requires CP_ASR_FUNASR_ENDPOINT (reserved, not yet implemented)');
+  }
+
+  return {
+    upstream,
+    dailyLimitMinutes: parsePositiveInt(env, 'CP_ASR_DAILY_LIMIT_MINUTES', 60),
+    maxSessionSeconds: parsePositiveInt(env, 'CP_ASR_MAX_SESSION_SECONDS', 600),
+    doubao,
+    funasrEndpoint,
+    stub: {
+      delayMs: parseNonNegativeInt(env, 'CP_ASR_STUB_DELAY_MS', 0),
+      disconnectAfterMs: parseNonNegativeInt(env, 'CP_ASR_STUB_DISCONNECT_AFTER_MS', 0),
+      slowFinalMs: parseNonNegativeInt(env, 'CP_ASR_STUB_SLOW_FINAL_MS', 0),
+    },
   };
 }

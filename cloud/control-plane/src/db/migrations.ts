@@ -128,6 +128,32 @@ function migration1(db: Database.Database): void {
   `);
 }
 
+/**
+ * Migration 2 (voice channel, NEW capability — no C2/C3 contract change):
+ * per-session ASR usage rows. One row per gateway connection, inserted at
+ * open (ended_at NULL, seconds 0) and finalized at close. The daily quota is
+ * a SUM over these rows; rows are never dropped. Crash leftovers (ended_at
+ * NULL) are capped at maxSessionSeconds by the quota query, so they
+ * self-heal instead of permanently eating the user's budget.
+ */
+function migration2(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE asr_usage (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT NOT NULL REFERENCES users(id),
+      upstream    TEXT NOT NULL,
+      started_at  INTEGER NOT NULL,
+      ended_at    INTEGER,
+      seconds     REAL NOT NULL DEFAULT 0,
+      audio_bytes INTEGER NOT NULL DEFAULT 0,
+      finished    INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1)),
+      close_code  INTEGER
+    );
+    CREATE INDEX idx_asr_usage_user_started ON asr_usage(user_id, started_at);
+  `);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'initial-schema', up: migration1 },
+  { version: 2, name: 'asr-usage', up: migration2 },
 ];

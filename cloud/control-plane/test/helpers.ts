@@ -55,6 +55,8 @@ export async function startTestApp(options: {
   tenantEnv?: Record<string, string>;
   /** Overrides for the /ws proxy keepalive (tests inject short intervals). */
   wsProxy?: import('../src/server.js').PublicServerOptions['wsProxy'];
+  /** Overrides for the ASR voice gateway (upstream/quota injection). */
+  asr?: import('../src/server.js').PublicServerOptions['asr'];
   /** CP_LOGIN_BUNDLE_DIR override. */
   loginBundleDir?: string;
 }): Promise<TestApp> {
@@ -86,7 +88,10 @@ export async function startTestApp(options: {
     poller: null,
     metrics: new MetricsRegistry(),
   };
-  const server = createPublicServer(app, options.wsProxy ? { wsProxy: options.wsProxy } : {});
+  const server = createPublicServer(app, {
+    ...(options.wsProxy ? { wsProxy: options.wsProxy } : {}),
+    ...(options.asr ? { asr: options.asr } : {}),
+  });
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
   const metricsServer = createMetricsServer(app);
   await new Promise<void>((resolve) => metricsServer.listen(metricsPort, '127.0.0.1', resolve));
