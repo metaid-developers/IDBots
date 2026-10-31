@@ -48,7 +48,11 @@ import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
 import { extractTurnEndFollowUpInput } from './followUpTurnEndExtract';
-import { hasForceFollowUpSignal } from '../cerebellum/sessionFollowUpGate';
+import {
+  hasForceFollowUpSignal,
+  parseFollowUpDeclaration,
+  resolveFollowUpAction,
+} from '../cerebellum/sessionFollowUpGate';
 import { CONFIG_HARD_FALLBACK_RESUME_PROMPT, CONTINUE_TURN_REASONING_EFFORT, DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER, EMPTY_TERMINAL_TURN_CONTINUE_PROMPT, isEmptyTerminalSdkResult, isAuthDshTurnError, isBodyLimitDshTurnError, isConfigModelMissingDshTurnError, isMalformedToolCallDshTurnError, isOverflowDshTurnError, isQuotaDshTurnError, isTransientDshTurnError, isWontHealDshTurnError, MALFORMED_TOOL_CALL_TURN_CONTINUE_PROMPT, OVERFLOW_TURN_RESUME_PROMPT, relayQuotaErrorMetadata, extractRelayQuotaExhaustedCode, TRANSIENT_TURN_RESUME_PROMPT, TRUNCATED_TURN_CONTINUE_PROMPT, buildFreeRelayQuotaNotice } from './coworkAssistantReply';
 import {
   filterSdkInternalDiagnostics,
@@ -3864,14 +3868,23 @@ export class CoworkRunner extends EventEmitter {
         const page = this.store.getSessionMessagesPage(sessionId, { limit: 20 });
         const input = extractTurnEndFollowUpInput(page.messages);
         if (!input) return;
-        // Deterministic recall net first: an unambiguous high-severity marker
-        // in the turn's final message parks the session in Follow-Up without
-        // waiting on (or depending on) the cerebellum relay — a 429/quota or
-        // disabled cerebellum must never swallow a CRITICAL report. The
-        // 'cerebellum' source keeps the same lifecycle (cleared on owner
-        // reply, re-judged at the next turn end).
-        if (hasForceFollowUpSignal(input.lastAssistantText)) {
+        // Bot-declared end-of-run contract first (scheduled runs write a
+        // `[FOLLOW_UP: …]` tag under the injected contract): the firing bot
+        // knows who actually owns the open ends of its run, so its explicit
+        // declaration beats the Noul. 'owner' parks directly; 'none' settles
+        // back and skips the LLM entirely — unless the deterministic severity
+        // net still fires (a CRITICAL report is owed the owner even if the
+        // bot mis-tagged it). Precedence lives in resolveFollowUpAction.
+        const action = resolveFollowUpAction({
+          declaration: parseFollowUpDeclaration(input.lastAssistantText),
+          forceSignal: hasForceFollowUpSignal(input.lastAssistantText),
+        });
+        if (action === 'park') {
           this.store.setSessionFollowUp(sessionId, 'cerebellum');
+          return;
+        }
+        if (action === 'clear') {
+          this.store.clearSessionFollowUp(sessionId, { onlySources: ['cerebellum'] });
           return;
         }
         const verdict = await gate({

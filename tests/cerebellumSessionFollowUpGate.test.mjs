@@ -12,9 +12,11 @@
 //   a. request shape — one noul question, English instructions, hard caps on
 //      every caller-authored state field, task_name only for scheduled runs;
 //   b. answer parsing — clamps into 0..1, unusable shapes → null;
-//   c. verdict semantics — noul >= 0.35 → true, below → false (recall-biased:
-//      over-flagging beats missing); high-severity keyword markers short-
-//      circuit to true without a JEV call;
+//   c. verdict semantics — noul >= threshold → true, below → false;
+//      high-severity keyword markers short-circuit to true without a JEV call;
+//   f. the bot-written `[FOLLOW_UP: owner|none]` end-of-run tag parses and
+//      outranks the Noul (owner parks, none clears unless the severity net
+//      fires) — see resolveFollowUpAction;
 //   d. every failure mode returns null without throwing (fail-open);
 //   e. a hanging endpoint is aborted at the deadline.
 //
@@ -39,6 +41,8 @@ import {
   parseSessionFollowUpAnswer,
   sessionFollowUpFromNoul,
   hasForceFollowUpSignal,
+  parseFollowUpDeclaration,
+  resolveFollowUpAction,
   classifySessionFollowUpWithCerebellum,
 } from '../src/main/cerebellum/sessionFollowUpGate.ts';
 
@@ -211,6 +215,43 @@ test('hasForceFollowUpSignal: severity markers hit, negations and benign prose d
   assert.equal(hasForceFollowUpSignal('这个方案无需拍板，继续推进即可。'), false);
   assert.equal(hasForceFollowUpSignal('We discussed critical thinking in the design doc.'), false);
   assert.equal(hasForceFollowUpSignal('已自动恢复，无一条需要跟进。'), false);
+});
+
+// ---------------------------------------------------------------------------
+// End-of-run follow-up declaration tag (scheduled-task contract)
+// ---------------------------------------------------------------------------
+
+test('parseFollowUpDeclaration: reads the tag kind, last occurrence wins', () => {
+  assert.equal(parseFollowUpDeclaration('[FOLLOW_UP: none]'), 'none');
+  assert.equal(parseFollowUpDeclaration('[follow_up: none]'), 'none', 'case-insensitive');
+  assert.equal(parseFollowUpDeclaration('[FOLLOW_UP: owner — 需要主人审批预算]'), 'owner');
+  assert.equal(
+    parseFollowUpDeclaration('前期结论 [FOLLOW_UP: owner — 等主人选方案]，随后自行闭环\n[FOLLOW_UP: none]'),
+    'none',
+    'the LAST tag wins',
+  );
+  assert.equal(
+    parseFollowUpDeclaration('起草时先标了 none，最终还是要主人拍板 [FOLLOW_UP: owner — 选 A 还是 B]'),
+    'owner',
+  );
+});
+
+test('parseFollowUpDeclaration: no tag, non-tag brackets, or malformed tags → null', () => {
+  assert.equal(parseFollowUpDeclaration('任务已闭环，无需任何操作。'), null);
+  assert.equal(parseFollowUpDeclaration(''), null);
+  assert.equal(parseFollowUpDeclaration('[FOLLOW_UP: later]'), null, 'only owner|none are tags');
+  assert.equal(parseFollowUpDeclaration('[FOLLOW_UP:]'), null);
+  assert.equal(parseFollowUpDeclaration('[FOLLOW_UP: owners should know]'), null, 'word boundary: "owners" is not the owner tag');
+  assert.equal(parseFollowUpDeclaration('参考 [DELIVERABLE] 与 [NO_REPLY] 的写法'), null, 'sibling protocol tags do not collide');
+});
+
+test('resolveFollowUpAction: owner tag parks, force net outranks none, none clears, else ask the Noul', () => {
+  assert.equal(resolveFollowUpAction({ declaration: 'owner', forceSignal: false }), 'park');
+  assert.equal(resolveFollowUpAction({ declaration: 'owner', forceSignal: true }), 'park');
+  assert.equal(resolveFollowUpAction({ declaration: 'none', forceSignal: true }), 'park', 'severity net wins over a none tag');
+  assert.equal(resolveFollowUpAction({ declaration: 'none', forceSignal: false }), 'clear');
+  assert.equal(resolveFollowUpAction({ declaration: null, forceSignal: true }), 'park');
+  assert.equal(resolveFollowUpAction({ declaration: null, forceSignal: false }), 'noul');
 });
 
 test('classify: request hits /v1/systemone with bearer auth and the session state', async () => {

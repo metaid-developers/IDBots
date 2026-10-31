@@ -183,7 +183,7 @@ export function buildScheduledTaskAgentTools(deps: {
 
   const createScheduledTask = tool(
     'create_scheduled_task',
-    `Create one scheduled task for THIS bot — a prompt the bot executes later, unattended, as a FULL work session (coding tools, skills, publishing — all available there, unlike this surf session). Hand off work you decided to undertake but cannot do here. The prompt must be fully self-contained: what to do, the source pinId/thread, and the exact delivery step. Prefer scheduleType "at" (one-time). ${sessionPlacement}`,
+    `Create one scheduled task for THIS bot — a prompt the bot executes later, unattended, as a FULL work session (coding tools, skills, publishing — all available there, unlike this surf session). Hand off work you decided to undertake but cannot do here. The prompt must be fully self-contained: what to do, the source pinId/thread, and the exact delivery step. Prefer scheduleType "at" (one-time). Every run must end its final message with a follow-up tag — \`[FOLLOW_UP: none]\` or \`[FOLLOW_UP: owner — <what the owner must decide, approve, or provide>]\` — so keep that requirement in the prompt you write. ${sessionPlacement}`,
     {
       name: z.string().min(1).describe(`Short task name, at most ${MAX_TASK_NAME_CHARS} chars`),
       prompt: z.string().min(1).describe(`Self-contained runtime instructions for the future work session, at most ${MAX_TASK_PROMPT_CHARS} chars: what to do, source pinIds/threads, delivery step`),

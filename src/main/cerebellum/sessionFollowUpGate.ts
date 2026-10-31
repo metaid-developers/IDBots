@@ -74,6 +74,54 @@ export function hasForceFollowUpSignal(text: string): boolean {
   return CEREBELLUM_SESSION_FOLLOW_UP_FORCE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+/**
+ * End-of-run follow-up declaration tag, written by the bot under the
+ * scheduled-task contract (scheduler.buildScheduledTaskFollowUpContract).
+ * The firing bot knows who actually owns the open ends of its run, so its
+ * explicit declaration beats the Noul on the exact runs where the classifier
+ * misfires most (owner-directed prose vs third-party-owned tails). Parsed
+ * from the turn's final assistant message; the LAST occurrence wins.
+ */
+export const CEREBELLUM_SESSION_FOLLOW_UP_TAG_PATTERN =
+  /\[FOLLOW_UP:\s*(owner|none)\b([^\]]*)\]/gi;
+
+export type SessionFollowUpDeclaration = 'owner' | 'none';
+
+/**
+ * Extract the bot's follow-up declaration from the final assistant message.
+ * Returns 'owner' / 'none', or null when the message carries no tag (falls
+ * back to the deterministic severity net + Noul as before).
+ */
+export function parseFollowUpDeclaration(text: string): SessionFollowUpDeclaration | null {
+  if (!text) return null;
+  let verdict: SessionFollowUpDeclaration | null = null;
+  for (const match of text.matchAll(CEREBELLUM_SESSION_FOLLOW_UP_TAG_PATTERN)) {
+    verdict = match[1].toLowerCase() === 'owner' ? 'owner' : 'none';
+  }
+  return verdict;
+}
+
+/** What the turn-end gate should do with a completed auto-origin turn. */
+export type SessionFollowUpAction = 'park' | 'clear' | 'noul';
+
+/**
+ * Deterministic precedence for the turn-end gate:
+ *   1. 'owner' declaration → park (the bot says the owner is owed follow-up);
+ *   2. severity force signal → park (the recall net outranks a 'none' tag —
+ *      a CRITICAL report is owed the owner even if the bot mis-tagged it);
+ *   3. 'none' declaration → clear (skip the Noul entirely);
+ *   4. otherwise → ask the Noul.
+ */
+export function resolveFollowUpAction(input: {
+  declaration: SessionFollowUpDeclaration | null;
+  forceSignal: boolean;
+}): SessionFollowUpAction {
+  if (input.declaration === 'owner') return 'park';
+  if (input.forceSignal) return 'park';
+  if (input.declaration === 'none') return 'clear';
+  return 'noul';
+}
+
 /** Caller-authored dimensions, hard-capped like every cerebellum state field. */
 export const CEREBELLUM_SESSION_FOLLOW_UP_TITLE_MAX_CHARS = 200;
 export const CEREBELLUM_SESSION_FOLLOW_UP_MESSAGE_MAX_CHARS = 1500;

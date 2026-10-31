@@ -94,3 +94,26 @@ test('preamble tolerates tasks without lifecycle fields (legacy rows)', () => {
   assert.ok(preamble.includes('fire #1'));
   assert.ok(preamble.includes('No exit condition was declared'));
 });
+
+// ---------------------------------------------------------------------------
+// End-of-run follow-up contract (every scheduled run, one-shot included)
+// ---------------------------------------------------------------------------
+
+test('follow-up contract states both tags, the never-omit rule, and the third-party carve-out', () => {
+  const { buildScheduledTaskFollowUpContract } = loadSchedulerModule();
+  const contract = buildScheduledTaskFollowUpContract();
+
+  assert.ok(contract.includes('[End-of-run follow-up contract]'));
+  assert.ok(contract.includes('[FOLLOW_UP: none]'), 'the none tag is spelled out');
+  assert.ok(contract.includes('[FOLLOW_UP: owner —'), 'the owner tag (with payload) is spelled out');
+  assert.ok(contract.includes('Never omit the tag'));
+  assert.ok(contract.includes('third parties'), 'waiting on another bot/person/group is not the owner follow-up');
+});
+
+test('follow-up contract is task-independent and non-empty for one-shot runs', () => {
+  const { buildScheduledTaskFollowUpContract } = loadSchedulerModule();
+  const once = buildScheduledTaskFollowUpContract();
+  const again = buildScheduledTaskFollowUpContract();
+  assert.equal(once, again, 'static contract text');
+  assert.ok(once.length > 0, 'one-shot "at" tasks get the contract even though they get no lifecycle preamble');
+});
