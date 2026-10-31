@@ -8048,6 +8048,21 @@ const getCoworkRunner = () => {
         emitDelegationStateChange({ sessionId, blocking: false, message: 'Pipeline error' });
       });
     });
+
+    // Startup re-judge sweep for the Follow-Up Tasks (待跟进任务) bucket:
+    // pending 'cerebellum' verdicts written by an older gate revision (lower
+    // threshold, different instructions, no end-of-run follow-up tag) would
+    // otherwise park in Follow-Up until their session happens to turn again —
+    // a weekly scheduled task could strand one for weeks. Re-judged under the
+    // current gate sequentially in the background; never throws, and the
+    // method logs its own count.
+    const followUpSweepDelayMs = 15_000;
+    const followUpSweepTimer = setTimeout(() => {
+      coworkRunner
+        .rejudgePendingCerebellumFollowUps()
+        .catch((error) => console.warn('[Main] Pending follow-up re-judge sweep failed:', error));
+    }, followUpSweepDelayMs);
+    followUpSweepTimer.unref?.();
   }
   return coworkRunner;
 };

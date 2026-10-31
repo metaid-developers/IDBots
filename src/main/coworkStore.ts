@@ -4223,6 +4223,28 @@ export class CoworkStore implements MemoryBackend {
     return cleared;
   }
 
+  /**
+   * Session ids currently parked in Follow-Up by one classifier lane, oldest
+   * verdict first. The startup re-judge sweep consumes this: each row's last
+   * turn gets re-classified under the CURRENT gate (threshold, instructions,
+   * and the end-of-run follow-up tag) so verdicts written by an older gate
+   * revision do not park in Follow-Up forever when their session never turns
+   * again. 'manual' pins and 'ask_user' markers are never listed — they are
+   * not the classifier's lane to re-judge.
+   */
+  listPendingFollowUpSessionIds(source: 'cerebellum', limit: number): string[] {
+    if (!this.tableExists('cowork_sessions') || limit <= 0) {
+      return [];
+    }
+    return this.getAll<{ id: string }>(
+      `SELECT id FROM cowork_sessions
+       WHERE follow_up_state = 'pending' AND follow_up_source = ?
+       ORDER BY follow_up_at ASC
+       LIMIT ?`,
+      [source, limit],
+    ).map((row) => row.id);
+  }
+
 
   listSessions(options?: { metabotId?: number | null }): CoworkSessionSummary[] {
     interface SessionSummaryRow {

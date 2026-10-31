@@ -3850,61 +3850,99 @@ export class CoworkRunner extends EventEmitter {
    * Turn-end half of the Follow-Up Tasks lifecycle, fire-and-forget by
    * contract: after a turn completes on an auto-origin session, the injected
    * cerebellum classifier re-judges whether the session now waits on the
-   * owner. true → pending / 'cerebellum'; false → clear a previous
-   * cerebellum verdict only; null → no change (fail-open). Runs detached so
-   * it never blocks turn completion; every failure is swallowed.
+   * owner. Runs detached so it never blocks turn completion.
    */
   private classifySessionFollowUpAfterTurn(sessionId: string): void {
     const gate = this.cerebellumSessionFollowUpGate;
     if (!gate) return;
-    void (async () => {
-      try {
-        const session = this.store.getSessionWithoutMessages(sessionId);
-        if (!session?.autoOrigin) return;
-        // Orchestration tasks are ALWAYS Twin-Bot-driven delegation and should
-        // stay in the "Autonomous Tasks" fold, not surface in "Follow-Up Tasks".
-        // Only 'longterm' and 'schedule' auto-origins may need human follow-up.
-        if (session.autoOrigin === 'orchestration') return;
-        const page = this.store.getSessionMessagesPage(sessionId, { limit: 20 });
-        const input = extractTurnEndFollowUpInput(page.messages);
-        if (!input) return;
-        // Bot-declared end-of-run contract first (scheduled runs write a
-        // `[FOLLOW_UP: …]` tag under the injected contract): the firing bot
-        // knows who actually owns the open ends of its run, so its explicit
-        // declaration beats the Noul. 'owner' parks directly; 'none' settles
-        // back and skips the LLM entirely — unless the deterministic severity
-        // net still fires (a CRITICAL report is owed the owner even if the
-        // bot mis-tagged it). Precedence lives in resolveFollowUpAction.
-        const action = resolveFollowUpAction({
-          declaration: parseFollowUpDeclaration(input.lastAssistantText),
-          forceSignal: hasForceFollowUpSignal(input.lastAssistantText),
-        });
-        if (action === 'park') {
-          this.store.setSessionFollowUp(sessionId, 'cerebellum');
-          return;
-        }
-        if (action === 'clear') {
-          this.store.clearSessionFollowUp(sessionId, { onlySources: ['cerebellum'] });
-          return;
-        }
-        const verdict = await gate({
-          sessionId,
-          sessionTitle: session.title,
-          lastAssistantText: input.lastAssistantText,
-          ...(input.taskName ? { taskName: input.taskName } : {}),
-        });
-        if (verdict === true) {
-          this.store.setSessionFollowUp(sessionId, 'cerebellum');
-        } else if (verdict === false) {
-          this.store.clearSessionFollowUp(sessionId, { onlySources: ['cerebellum'] });
-        }
-      } catch (error) {
-        coworkLog('WARN', 'followUp:turnEnd', 'follow-up classification failed', {
-          sessionId,
-          error: String(error),
+    void this.judgeSessionFollowUp(sessionId);
+  }
+
+  /**
+   * The judgment body shared by the turn-end hook and the startup re-judge
+   * sweep. true → pending / 'cerebellum'; false → clear a previous
+   * cerebellum verdict only; null → no change (fail-open). Never throws;
+   * every failure is swallowed and logged.
+   */
+  private async judgeSessionFollowUp(sessionId: string): Promise<void> {
+    const gate = this.cerebellumSessionFollowUpGate;
+    if (!gate) return;
+    try {
+      const session = this.store.getSessionWithoutMessages(sessionId);
+      if (!session?.autoOrigin) return;
+      // Orchestration tasks are ALWAYS Twin-Bot-driven delegation and should
+      // stay in the "Autonomous Tasks" fold, not surface in "Follow-Up Tasks".
+      // Only 'longterm' and 'schedule' auto-origins may need human follow-up.
+      if (session.autoOrigin === 'orchestration') return;
+      const page = this.store.getSessionMessagesPage(sessionId, { limit: 20 });
+      const input = extractTurnEndFollowUpInput(page.messages);
+      if (!input) return;
+      // Bot-declared end-of-run contract first (scheduled runs write a
+      // `[FOLLOW_UP: …]` tag under the injected contract): the firing bot
+      // knows who actually owns the open ends of its run, so its explicit
+      // declaration beats the Noul. 'owner' parks directly; 'none' settles
+      // back and skips the LLM entirely — unless the deterministic severity
+      // net still fires (a CRITICAL report is owed the owner even if the
+      // bot mis-tagged it). Precedence lives in resolveFollowUpAction.
+      const action = resolveFollowUpAction({
+        declaration: parseFollowUpDeclaration(input.lastAssistantText),
+        forceSignal: hasForceFollowUpSignal(input.lastAssistantText),
+      });
+      if (action === 'park') {
+        this.store.setSessionFollowUp(sessionId, 'cerebellum');
+        return;
+      }
+      if (action === 'clear') {
+        this.store.clearSessionFollowUp(sessionId, { onlySources: ['cerebellum'] });
+        return;
+      }
+      const verdict = await gate({
+        sessionId,
+        sessionTitle: session.title,
+        lastAssistantText: input.lastAssistantText,
+        ...(input.taskName ? { taskName: input.taskName } : {}),
+      });
+      if (verdict === true) {
+        this.store.setSessionFollowUp(sessionId, 'cerebellum');
+      } else if (verdict === false) {
+        this.store.clearSessionFollowUp(sessionId, { onlySources: ['cerebellum'] });
+      }
+    } catch (error) {
+      coworkLog('WARN', 'followUp:turnEnd', 'follow-up classification failed', {
+        sessionId,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Startup re-judge sweep for the Follow-Up Tasks bucket: re-classify every
+   * pending 'cerebellum' row under the CURRENT gate — threshold, instructions,
+   * and the end-of-run follow-up tag all evolve, and a verdict written by an
+   * older gate revision otherwise parks in Follow-Up forever when its session
+   * never turns again (weekly scheduled tasks could strand a stale pending for
+   * weeks). Runs sequentially (one JEV call at a time), fire-and-forget from
+   * the caller's perspective, never throws. Manual pins and ask_user markers
+   * are other lanes and stay untouched.
+   */
+  async rejudgePendingCerebellumFollowUps(limit = 100): Promise<number> {
+    try {
+      const sessionIds = this.store.listPendingFollowUpSessionIds('cerebellum', limit);
+      for (const sessionId of sessionIds) {
+        await this.judgeSessionFollowUp(sessionId);
+      }
+      if (sessionIds.length > 0) {
+        coworkLog('INFO', 'followUp:startupSweep', 're-judged pending cerebellum follow-ups at startup', {
+          count: sessionIds.length,
         });
       }
-    })();
+      return sessionIds.length;
+    } catch (error) {
+      coworkLog('WARN', 'followUp:startupSweep', 'pending follow-up re-judge sweep failed', {
+        error: String(error),
+      });
+      return 0;
+    }
   }
 
   /**
