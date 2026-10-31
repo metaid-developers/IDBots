@@ -1689,6 +1689,15 @@ export function buildPrivateChatEmptyReplyRetryNotice(attempt: number): string {
   ].join('\n');
 }
 
+/**
+ * True for inbound texts that must never drive a reply turn: a conversation
+ * ending "bye", placeholder/status noise ("thinking…", dots), a blank row, or
+ * a peer host's verbatim [NO_REPLY] sentinel (old-host echo of a silence
+ * marker). Visibility note (2026-10-31): this only gates the REPLY — the
+ * message itself is still rendered by the shared inbound append, so the
+ * transcript keeps matching the peer's own window. Only truly blank rows
+ * (nothing renderable) are dropped outright by the caller.
+ */
 export function shouldSkipPrivateChatAutoReplyText(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return true;
@@ -4587,11 +4596,14 @@ async function processOne(
       return;
     }
 
-    if (isByeMessage(plaintext)) {
-      emitLog(`[PrivateChat] Received "bye" from ${fromGlobalMetaId.slice(0, 12)}…, ending conversation.`);
-      markProcessed(db, row.id, saveDb);
-      return;
-    }
+    // NOTE: a peer's "bye" used to be swallowed here as a conversation-end
+    // signal (markProcessed without rendering). That was the third hole in
+    // the 2026-10-31 瑞幸店员 incident — the peer's own window kept showing
+    // its goodbye while the transcript silently dropped it. A "bye" is a
+    // real conversation message: it now flows through the regular inbound
+    // path below, where it is rendered and only the reply turn is skipped
+    // (shouldSkipPrivateChatAutoReplyText). Ping/pong above stay protocol
+    // exits — they carry no conversation content to render.
 
     // Handle incoming orders FIRST — before any buyer-reply routing.
     // An [ORDER] message is always a new task request, never a reply to our own order.
@@ -5484,11 +5496,20 @@ async function processOne(
 
     const externalConversationId = buildPrivateConversationExternalConversationId(row);
 
-    if (shouldSkipPrivateChatAutoReplyText(plaintext)) {
-      emitLog(`[PrivateChat] Skip no-op private chat message from ${fromGlobalMetaId.slice(0, 12)}…`);
+    // Truly blank rows have nothing to render — the only shape allowed to
+    // exit before the inbound append. Every other no-op text (bye /
+    // thinking… / ellipsis-only / a peer's verbatim [NO_REPLY] echo) is a
+    // real message the peer sent: the 2026-10-31 瑞幸店员 incident showed the
+    // old pre-append exit erased it from the transcript while the peer's own
+    // window kept showing it (three "bye" messages vanished across both
+    // directions of one conversation). Remember the flag; the bubble is
+    // rendered by the shared append below and only the reply turn is skipped.
+    if (!plaintext.trim()) {
+      emitLog(`[PrivateChat] Skipping blank private chat message from ${fromGlobalMetaId.slice(0, 12)}…`);
       markProcessed(db, row.id, saveDb);
       return;
     }
+    const noReplyText = shouldSkipPrivateChatAutoReplyText(plaintext);
 
     // Human-ended conversations stay closed. Auto-bye conversations can restart after the cooldown.
     const existingMapping = coworkStore.getConversationMapping('metaweb_private', externalConversationId, metabot.id);
@@ -5515,6 +5536,11 @@ async function processOne(
     // (audit P2: "permanently ignored"). The third copy escalates into a real
     // reply turn; the outbound echo guard independently prevents an identical
     // reply from being delivered twice in a row, so the loop protection holds.
+    // Visibility-first (2026-10-31): the absorbed second copy is still
+    // rendered (the peer's own window shows its outgoing copy) — absorption
+    // now only skips the reply, it no longer erases the bubble. No-op texts
+    // never reach this check: they skip the reply by themselves and must not
+    // consume the escalation counter.
     const inboundRepeatKey = `${metabot.id}:${externalConversationId}`;
     const trackedRepeat = inboundRepeatEscalation.get(inboundRepeatKey);
     if (
@@ -5524,7 +5550,8 @@ async function processOne(
     ) {
       inboundRepeatEscalation.delete(inboundRepeatKey);
     }
-    if (mappedSessionId && isRepeatPrivateChatInboundMessage({
+    let absorbedRepeat = false;
+    if (!noReplyText && mappedSessionId && isRepeatPrivateChatInboundMessage({
       messages: coworkStore.getRecentPrivateA2AMessages(mappedSessionId, 20),
       plaintext,
       excludeChainRow: row,
@@ -5540,15 +5567,15 @@ async function processOne(
           firstAt: priorRepeats?.firstAt ?? Date.now(),
         });
         emitLog(
-          `[PrivateChat] Skip message ${row.id}: identical to the previous inbound message from ${fromGlobalMetaId.slice(0, 12)}… in this conversation segment; the earlier copy already drove a reply turn.`
+          `[PrivateChat] Message ${row.id}: identical to the previous inbound message from ${fromGlobalMetaId.slice(0, 12)}… in this conversation segment; storing the copy without a reply — the earlier copy already drove a reply turn.`
         );
-        markProcessed(db, row.id, saveDb);
-        return;
+        absorbedRepeat = true;
+      } else {
+        inboundRepeatEscalation.delete(inboundRepeatKey);
+        emitLog(
+          `[PrivateChat] Message ${row.id}: third consecutive identical copy from ${fromGlobalMetaId.slice(0, 12)}… — treating it as an insistent re-ask, not a retransmission; running a reply turn.`
+        );
       }
-      inboundRepeatEscalation.delete(inboundRepeatKey);
-      emitLog(
-        `[PrivateChat] Message ${row.id}: third consecutive identical copy from ${fromGlobalMetaId.slice(0, 12)}… — treating it as an insistent re-ask, not a retransmission; running a reply turn.`
-      );
     }
     let currentExperienceEvidenceId: string | null = null;
     try {
@@ -5758,6 +5785,14 @@ async function processOne(
             autoReplySuppressed: true,
             autoReplySuppressedReason: autoReplyPolicy.reason,
           }),
+        // Renderer-facing no-reply evidence (2026-10-31): the bubble was
+        // stored but will not drive a reply turn because of its TEXT shape
+        // (bye / placeholder / peer sentinel echo) or because it is an
+        // absorbed verbatim repeat — neither is an auto-reply policy state,
+        // so both carry their own neutral marker instead of the suppression
+        // banner markers above.
+        ...(noReplyText ? { privateChatNoReplyText: true } : {}),
+        ...(absorbedRepeat ? { privateChatRepeatAbsorbed: true } : {}),
         ...(episodeStarted ? {
           refreshSessionSummary: true,
           a2aEpisodeStarted: true,
@@ -5766,6 +5801,27 @@ async function processOne(
       },
       emitToRenderer,
     });
+
+    // No-op-text exit, AFTER the render: the peer's message above is durable
+    // in the session; only the reply turn is skipped. Bye / placeholder /
+    // sentinel-echo texts never drove a reply by design — but the old
+    // pre-append exit also erased the bubble, so the transcript permanently
+    // disagreed with the peer's own window (2026-10-31 瑞幸店员 incident).
+    if (noReplyText) {
+      emitLog(`[PrivateChat] Stored no-reply text ${row.id} without a reply turn (bye / placeholder / sentinel echo).`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
+    // Repeat-absorption exit, AFTER the render: the stored copy keeps the
+    // transcript in sync with what the peer actually sent; the reply is
+    // skipped because the first copy already drove (or is driving) a reply
+    // turn. The escalation counter still stands, so a third consecutive
+    // identical copy escalates into a real reply turn as before.
+    if (absorbedRepeat) {
+      emitLog(`[PrivateChat] Stored repeat copy ${row.id} without a reply; the earlier identical copy already drove the conversation.`);
+      markProcessed(db, row.id, saveDb);
+      return;
+    }
 
     // No-reply exit, AFTER the render: the peer's message above is durable in
     // the session; only the reply turn is skipped. A one-per-conversation
