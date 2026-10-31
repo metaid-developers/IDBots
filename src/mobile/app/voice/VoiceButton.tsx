@@ -13,7 +13,7 @@
 
 import { MicrophoneIcon, StopIcon, XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { t } from '../../i18n';
-import { mapServerErrorToCopyKey, type VoiceServerErrorCode } from './protocol';
+import { errorClassToCopyCode, type VoiceServerErrorClass } from './protocol';
 import { voicePhaseTestid, type VoiceUiState, type VoiceClientErrorCode } from './voiceButtonState';
 
 export interface VoiceButtonProps {
@@ -78,8 +78,8 @@ function formatElapsed(sec: number): string {
 /** Maps a machine error code to its i18n key (server codes via protocol.ts). */
 export function voiceErrorCopyKey(code: VoiceClientErrorCode): string {
   if (code.startsWith('server:')) {
-    const serverCode = code.slice('server:'.length) as VoiceServerErrorCode | 'unknown';
-    return `mobile.chat.voice.errorServer.${mapServerErrorToCopyKey(serverCode)}`;
+    const errorClass = code.slice('server:'.length) as VoiceServerErrorClass;
+    return `mobile.chat.voice.errorServer.${errorClassToCopyCode(errorClass)}`;
   }
   return `mobile.chat.voice.error.${code}`;
 }

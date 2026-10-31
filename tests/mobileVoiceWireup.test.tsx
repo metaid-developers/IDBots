@@ -79,9 +79,12 @@ test('VoiceErrorBanner SSR: renders nothing outside the error phase', () => {
   assert.equal(html, '');
 });
 
-test('voiceErrorCopyKey: server codes route through the protocol mapping', () => {
-  assert.equal(voiceErrorCopyKey('server:quota_exceeded'), 'mobile.chat.voice.errorServer.quota');
-  assert.equal(voiceErrorCopyKey('server:rate_limited'), 'mobile.chat.voice.errorServer.busy');
+test('voiceErrorCopyKey: error classes route through the protocol mapping', () => {
+  // v1: the UI carries the behaviour CLASS, not the raw gateway code.
+  assert.equal(voiceErrorCopyKey('server:quota'), 'mobile.chat.voice.errorServer.quota');
+  assert.equal(voiceErrorCopyKey('server:session_cap'), 'mobile.chat.voice.errorServer.sessionCap');
+  assert.equal(voiceErrorCopyKey('server:unauthorized'), 'mobile.chat.voice.errorServer.unauthorized');
+  assert.equal(voiceErrorCopyKey('server:provider'), 'mobile.chat.voice.errorServer.upstream');
   assert.equal(voiceErrorCopyKey('server:warp_core_breach'), 'mobile.chat.voice.errorServer.generic');
   assert.equal(voiceErrorCopyKey('mic_denied'), 'mobile.chat.voice.error.mic_denied');
 });
@@ -104,9 +107,8 @@ const VOICE_I18N_KEYS = [
   'mobile.chat.voice.error.interrupted',
   'mobile.chat.voice.errorServer.unauthorized',
   'mobile.chat.voice.errorServer.quota',
-  'mobile.chat.voice.errorServer.busy',
+  'mobile.chat.voice.errorServer.sessionCap',
   'mobile.chat.voice.errorServer.upstream',
-  'mobile.chat.voice.errorServer.timeout',
   'mobile.chat.voice.errorServer.generic',
 ];
 

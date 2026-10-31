@@ -8,18 +8,22 @@
  * draft setter (reusing the existing caret-restore plumbing).
  *
  * Lifecycle decisions (documented in the delivery notes):
- *  - Max duration 120 s: auto-finalize, text kept (quota is server-side).
- *  - Ready timeout 8 s: gateway did not ack `start` → connect_timeout.
+ *  - Max duration 120 s, further clamped by the `asr.open` remainingMs budget:
+ *    auto-finalize, text kept (the daily quota is metered server-side).
+ *  - Ready timeout 8 s: no `asr.open` after the socket opened → connect_timeout.
  *  - Mic permission dialog is NOT timed (killing a session under an
  *    unanswered system dialog is worse than waiting).
  *  - Interruption / socket loss / server error: graceful finalize, KEEP the
  *    recognized text in the draft — never punish the user by dropping words.
+ *  - `upstream_lost` is NOT an error: the gateway reopens the upstream and
+ *    re-emits `asr.open` on the same socket, so the session keeps running.
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createBackfill, splitDraftAtCaret, composeDraft, voiceTextCaret } from './backfill';
 import { VoiceCapture } from './capture';
 import { buildMockMicDeps, shouldUseMockMic } from './mockMic';
+import { classifyVoiceClose, type VoiceServerErrorClass } from './protocol';
 import {
   reduceVoiceUi,
   VOICE_UI_INITIAL,
@@ -31,7 +35,9 @@ import { VoiceSocketClient } from './voiceSocket';
 
 const MAX_SESSION_MS = 120_000;
 const READY_TIMEOUT_MS = 8_000;
-const STOP_GRACE_MS = 600;
+// Safety net only: `asr.done` closes the interaction, this covers a silent
+// gateway (two-pass finals can be slow, so do not cut them at 600 ms).
+const STOP_GRACE_MAX_MS = 3_000;
 
 export interface UseVoiceInputOptions {
   /** Replaces the composer draft (ChatScreen wires chat.setDraft + caret). */
@@ -39,7 +45,6 @@ export interface UseVoiceInputOptions {
   /** Reads the draft + caret at session start (textareaRef access). */
   getDraftAndCaret: () => { draft: string; caret: number | null } | null;
   urlOverride?: string;
-  token?: string;
 }
 
 export interface UseVoiceInputResult {
@@ -63,9 +68,13 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const baseRef = useRef<{ before: string; after: string }>({ before: '', after: '' });
   const keptTextRef = useRef(false);
   const finalizingRef = useRef(false);
+  // Last `asr.error` class — disambiguates close 4104 (quota vs session cap).
+  const lastErrorClassRef = useRef<VoiceServerErrorClass | undefined>(undefined);
   const readyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopGraceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Set while a finalize is waiting for `asr.done` (or the safety net). */
+  const settleRef = useRef<((shouldDispatch: boolean) => void) | null>(null);
   const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clearTimers = useCallback(() => {
@@ -93,14 +102,16 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     socketRef.current = null;
     clearTimers();
     finalizingRef.current = false;
+    settleRef.current = null;
   }, [clearTimers]);
 
   /**
-   * Graceful finalize: flush tail PCM, send `stop`, then KEEP the socket
-   * open for a short grace so the server's `final`/`end` can land (the final
-   * text must replace the trailing partial in the draft). Only after the
-   * grace do we close and declare done. `keepText` is true for every
-   * non-cancel path — words are never dropped.
+   * Graceful finalize: flush tail PCM, send `finish`, then KEEP the socket
+   * open until the gateway says the interaction is over. v1 makes that an
+   * explicit signal — `asr.done` — so the timer below is only a SAFETY NET
+   * for a gateway that never answers; a slow two-pass final must not be cut
+   * off mid-utterance. `keepText` is true for every non-cancel path — words
+   * are never dropped.
    */
   const finalize = useCallback(
     (dispatchDone: boolean) => {
@@ -112,18 +123,26 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         captureRef.current = null;
         const socket = socketRef.current;
         if (tail && socket?.isOpen) socket.sendPcm(tail);
-        socket?.sendStop();
+        socket?.sendFinish();
       }
       clearTimers();
-      keptTextRef.current = backfillRef.current.hasText;
-      const done = () => {
+      const settle = (shouldDispatch: boolean) => {
+        if (!finalizingRef.current) return;
+        if (stopGraceRef.current !== null) {
+          clearTimeout(stopGraceRef.current);
+          stopGraceRef.current = null;
+        }
+        // Read the merge state LAST: a final that landed during the wait
+        // must still count as kept text.
+        keptTextRef.current = backfillRef.current.hasText;
         socketRef.current?.close();
         socketRef.current = null;
         finalizingRef.current = false;
-        if (dispatchDone) dispatch({ type: 'sessionDone', keptText: keptTextRef.current });
+        settleRef.current = null;
+        if (shouldDispatch) dispatch({ type: 'sessionDone', keptText: keptTextRef.current });
       };
-      // Grace window: final/end frames still arrive through the live socket.
-      stopGraceRef.current = setTimeout(done, STOP_GRACE_MS);
+      settleRef.current = settle;
+      stopGraceRef.current = setTimeout(() => settle(dispatchDone), STOP_GRACE_MAX_MS);
     },
     [clearTimers],
   );
@@ -136,6 +155,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     }
     backfillRef.current = createBackfill();
     keptTextRef.current = false;
+    lastErrorClassRef.current = undefined;
     const snapshot = optionsRef.current.getDraftAndCaret();
     baseRef.current = splitDraftAtCaret(snapshot?.draft ?? '', snapshot?.caret ?? null);
 
@@ -143,21 +163,29 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
     const socket = new VoiceSocketClient({
       // Precedence: programmatic option > VITE_VOICE_WS_URL (dev/e2e stub
-      // gateway) > same-origin /ws/voice default (protocol.ts).
+      // gateway) > same-origin /asr/v1/ws default (protocol.ts).
       urlOverride:
         optionsRef.current.urlOverride ??
         (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_VOICE_WS_URL,
-      token: optionsRef.current.token,
       onOpen: () => dispatch({ type: 'micGranted' }),
       onEvent: (event) => {
         switch (event.kind) {
-          case 'ready': {
+          case 'open': {
             if (readyTimerRef.current !== null) {
               clearTimeout(readyTimerRef.current);
               readyTimerRef.current = null;
             }
             dispatch({ type: 'socketReady' });
-            maxTimerRef.current = setTimeout(() => finalize(true), MAX_SESSION_MS);
+            // remainingMs is THIS connection's wall-clock budget (doc section
+            // 6), so the local auto-finalize must never outlive it. A second
+            // asr.open (after UPSTREAM_LOST recovery) simply re-arms.
+            const budgetMs =
+              typeof event.remainingMs === 'number' && event.remainingMs > 0
+                ? Math.min(MAX_SESSION_MS, event.remainingMs)
+                : MAX_SESSION_MS;
+            if (maxTimerRef.current !== null) clearTimeout(maxTimerRef.current);
+            maxTimerRef.current = setTimeout(() => finalize(true), budgetMs);
+            if (tickerRef.current !== null) clearInterval(tickerRef.current);
             tickerRef.current = setInterval(() => setElapsedSec((s) => s + 1), 1000);
             return;
           }
@@ -171,27 +199,49 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
             pushDraft();
             return;
           }
-          case 'error': {
-            // Server-side rejection: keep whatever text already landed.
-            finalize(true);
-            dispatch({ type: 'socketError', code: `server:${event.code}` as VoiceClientErrorCode });
+          case 'upstream_lost': {
+            // Self-healing inside the gateway (upstream reopen + fresh
+            // asr.open on this socket): keep the last partial, keep
+            // streaming, never finalize.
             return;
           }
-          case 'end': {
+          case 'error': {
+            // Server-side rejection: keep whatever text already landed.
+            lastErrorClassRef.current = event.class;
             finalize(true);
+            dispatch({ type: 'socketError', code: `server:${event.class}` as VoiceClientErrorCode });
+            return;
+          }
+          case 'done': {
+            // Authoritative end of the interaction: settle now instead of
+            // waiting out the safety net. Unknown when we never finalized
+            // (e.g. the gateway finalized on its own) -> normal finalize.
+            if (settleRef.current) settleRef.current(true);
+            else finalize(true);
             return;
           }
         }
       },
-      onClose: ({ wasOpen }) => {
+      onClose: ({ code, wasOpen }) => {
         // We closed it ourselves → finalize() already owns the flow.
         if (finalizingRef.current) return;
-        if (wasOpen) {
-          finalize(true);
-          dispatch({ type: 'socketError', code: 'connection_lost' });
-        } else {
+        if (!wasOpen) {
           dispatch({ type: 'socketError', code: 'connect_timeout' });
+          return;
         }
+        const close = classifyVoiceClose(code, lastErrorClassRef.current);
+        finalize(true);
+        if (close.action === 'reconnect') {
+          // Transient (gateway fault / keepalive loss). P0 surfaces it rather
+          // than silently re-dialing: a fresh socket carries no audio of its
+          // own, so the honest recovery is "words kept, tap to retry".
+          dispatch({ type: 'socketError', code: 'connection_lost' });
+          return;
+        }
+        if (close.action === 'fail' && close.class) {
+          dispatch({ type: 'socketError', code: `server:${close.class}` as VoiceClientErrorCode });
+        }
+        // action 'none' (clean 1000 without asr.done): silent graceful end.
       },
     });
     socketRef.current = socket;
@@ -224,7 +274,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       .start()
       .then(() => {
         dispatch({ type: 'micGranted' });
-        socket.dialStart();
+        socket.dial();
         readyTimerRef.current = setTimeout(() => {
           finalize(true);
           dispatch({ type: 'socketError', code: 'connect_timeout' });

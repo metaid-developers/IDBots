@@ -5,8 +5,9 @@ import { test, expect, attachScreen, expectAppShell, startNewChatViaPicker } fro
  *
  * Proves the FULL frontend pipeline with the stub gateway
  * (scripts/voice-stub-gateway.mjs, started by run-mobile-e2e-voice.mjs):
- *   tap mic → capture start → PCM frames → WebSocket draft-v0 → streaming
- *   partials → LIVE draft backfill → tap stop → final replaces the partial.
+ *   tap mic → capture start → PCM frames → WebSocket asr-channel/v1 → asr.open
+ *   → streaming partials → LIVE draft backfill → tap stop → asr.final replaces
+ *   the partial → asr.done.
  *
  * Mic seam (honest scope note): the sandbox cannot grant a real microphone
  * (Chromium fake-media flags hang on this host — probe matrix in the
@@ -59,14 +60,14 @@ test.describe('voice input @voice', () => {
     // Streaming partials backfill the composer LIVE (豆包式): the value grows
     // while "speech" (mock sine frames) flows to the stub gateway.
     await expect(textarea).toHaveValue(/今天/, { timeout: 10_000 });
-    await expect(textarea).toHaveValue(/今天天气不错，适合/, { timeout: 10_000 });
+    await expect(textarea).toHaveValue(/今天天气怎么样/, { timeout: 10_000 });
     await attachScreen(testInfo, page, 'voice-recording-partial-backfill');
     await page.screenshot({ path: shot('voice-recording-partial-backfill.png'), fullPage: false });
 
     // Tap again to stop — final replaces the trailing partial in the draft.
     await recording.click();
     await expect(page.getByTestId('voice-btn-idle')).toBeVisible({ timeout: 15_000 });
-    await expect(textarea).toHaveValue('今天天气不错，适合出门走走。', { timeout: 15_000 });
+    await expect(textarea).toHaveValue('今天天气怎么样？', { timeout: 15_000 });
     await attachScreen(testInfo, page, 'voice-final-in-composer');
     await page.screenshot({ path: shot('voice-final-in-composer.png'), fullPage: false });
 
@@ -91,13 +92,13 @@ test.describe('voice input @voice', () => {
     await expect(recording).toBeVisible({ timeout: 20_000 });
 
     // Partials land mid-draft, then tap stop for the final swap.
-    await expect(textarea).toHaveValue(/帮我记录：今天天气不错，适合/, { timeout: 20_000 });
+    await expect(textarea).toHaveValue(/帮我记录：今天天气怎么样/, { timeout: 20_000 });
     await recording.click();
     await expect(page.getByTestId('voice-btn-idle')).toBeVisible({ timeout: 15_000 });
 
     // Voice text joins the CJK base with NO space (glue rule) and the final
     // lands after the existing draft.
-    await expect(textarea).toHaveValue(/帮我记录：今天天气不错，适合出门走走。/, { timeout: 20_000 });
+    await expect(textarea).toHaveValue(/帮我记录：今天天气怎么样？/, { timeout: 20_000 });
     await expect(page.getByTestId('voice-error')).toHaveCount(0);
   });
 });

@@ -14,7 +14,7 @@
  *
  * What stays REAL in the e2e: the worklet frame shape (Float32 128-sample
  * frames), the PcmChunker → 16 kHz Int16LE wire encoding, the WebSocket
- * draft-v0 client, the stub gateway round-trip, the button state machine and
+ * asr-channel/v1 client, the stub gateway round-trip, the button state machine and
  * the streaming draft backfill. What is FAKE: only the OS microphone (a
  * deterministic 220 Hz sine instead of a human voice). Real-mic verification
  * is manual (see the delivery notes) and honestly marked NOT RUN in CI.

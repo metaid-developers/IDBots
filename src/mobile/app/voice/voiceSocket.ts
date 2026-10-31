@@ -1,17 +1,23 @@
 /**
- * Voice gateway WebSocket client (voice P0, subtask #10).
+ * Voice gateway WebSocket client (voice P0, subtask #10) — ASR channel v1.
  *
  * Thin, dependency-free client in the same spirit as the mobile C2
- * gatewayClient (Transport abstraction → fake-able in unit tests): it sends
- * the `start` frame, streams binary PCM, and translates server frames into
- * typed events via protocol.ts. Lifecycle timers live in the session layer
- * (useVoiceInput), NOT here — this class only owns the socket.
+ * gatewayClient (Transport abstraction → fake-able in unit tests). It owns
+ * ONLY the socket: no lifecycle timers (those live in useVoiceInput) and no
+ * wire knowledge (that lives in protocol.ts).
+ *
+ * v1 shape: there is no client `start` frame — the handshake carries the
+ * same-origin `idb_session` cookie, so the socket simply opens and audio may
+ * flow immediately (the gateway buffers up to 64 chunks until `asr.open`).
+ * The client only ever sends binary PCM plus the two control frames
+ * `finish` / `abort`.
  */
 
 import {
   buildVoiceSocketUrl,
   decodeServerEvent,
-  encodeStartMessage,
+  encodeAbortFrame,
+  encodeFinishFrame,
   VOICE_PCM_FORMAT,
   type VoiceServerEvent,
 } from './protocol';
@@ -33,10 +39,8 @@ export const VOICE_WS_CONNECTING = 0;
 export const VOICE_WS_OPEN = 1;
 
 export interface VoiceSocketOptions {
-  /** Endpoint override (dev/e2e stub); default same-origin /ws/voice. */
+  /** Endpoint override (dev/e2e stub only); default same-origin /asr/v1/ws. */
   urlOverride?: string;
-  /** Optional auth token appended as ?token= (headers are impossible in browser WS). */
-  token?: string;
   WebSocketImpl?: VoiceWebSocketConstructor;
   onEvent: (event: VoiceServerEvent) => void;
   onOpen: () => void;
@@ -58,29 +62,24 @@ export class VoiceSocketClient {
     // DOM lib's WebSocket handler signatures don't structurally unify with the
     // narrow WebSocketLike — same sanctioned unknown-cast seam as gatewayClient.
     this.WS = opts.WebSocketImpl ?? (globalThis.WebSocket as unknown as VoiceWebSocketConstructor);
-    this.url = appendToken(buildVoiceSocketUrl(opts.urlOverride), opts.token);
+    this.url = buildVoiceSocketUrl(opts.urlOverride);
   }
 
   /**
-   * Dials and sends the `start` frame as soon as the socket opens. The caller
-   * is expected to arm a ready-timeout (no server ack → connect_timeout).
+   * Dials the channel. The caller arms its own ready-timeout: the first
+   * meaningful server frame is `asr.open` (there is no client handshake).
    */
-  dialStart(): void {
+  dial(): void {
     if (this.ws) return;
     this.everOpened = false;
     const ws = new this.WS(this.url);
     this.ws = ws;
     ws.onopen = () => {
       this.everOpened = true;
-      try {
-        ws.send(encodeStartMessage(navigatorLocaleOrUndefined()));
-        this.opts.onOpen();
-      } catch {
-        this.opts.onEvent({ kind: 'error', code: 'internal', message: 'start frame send failed' });
-      }
+      this.opts.onOpen();
     };
     ws.onmessage = (event) => {
-      if (typeof event.data !== 'string') return; // server never sends binary in v0
+      if (typeof event.data !== 'string') return; // gateway never sends binary
       const decoded = decodeServerEvent(event.data);
       if (!decoded) {
         this.opts.onDroppedFrame?.(event.data);
@@ -105,15 +104,24 @@ export class VoiceSocketClient {
   sendPcm(bytes: Uint8Array): boolean {
     const ws = this.ws;
     if (!ws || ws.readyState !== VOICE_WS_OPEN) return false;
+    // The gateway ignores empty chunks; skipping them keeps frame counts honest.
+    if (bytes.length === 0) return false;
     ws.send(bytes);
     return true;
   }
 
-  /** Tells the server this utterance is over (PCM flush already sent). */
-  sendStop(): void {
+  /** End of utterance: triggers asr.final + asr.done + close 1000. */
+  sendFinish(): void {
     const ws = this.ws;
     if (!ws || ws.readyState !== VOICE_WS_OPEN) return;
-    ws.send(JSON.stringify({ type: 'stop' }));
+    ws.send(encodeFinishFrame());
+  }
+
+  /** Cancel now: the gateway closes 1000 and still records the usage. */
+  sendAbort(): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== VOICE_WS_OPEN) return;
+    ws.send(encodeAbortFrame());
   }
 
   /** Full teardown from OUR side (close code 1000, not an error). */
@@ -140,18 +148,7 @@ export class VoiceSocketClient {
   }
 }
 
-function appendToken(url: string, token: string | undefined): string {
-  if (!token) return url;
-  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
-}
-
-function navigatorLocaleOrUndefined(): string | undefined {
-  if (typeof navigator === 'undefined') return undefined;
-  const lang = navigator.language;
-  return lang ? lang.slice(0, 8) : undefined;
-}
-
-/** Capability probe for the iOS Safari compatibility path (DRAFT: UI gate). */
+/** Capability probe for the iOS Safari compatibility path (UI gate). */
 export function isVoiceCaptureSupported(): boolean {
   const media = (navigator as { mediaDevices?: { getUserMedia?: unknown } }).mediaDevices;
   return typeof AudioWorklet !== 'undefined' && typeof media?.getUserMedia === 'function';
