@@ -74,11 +74,32 @@ class SchedulerStoppedError extends Error {
 }
 
 /**
+ * End-of-run follow-up contract, prepended to EVERY scheduled run's prompt
+ * (one-shot and recurring alike). The firing bot ends its final message with
+ * an explicit follow-up declaration tag; the Follow-Up Tasks gate consumes it
+ * deterministically (see parseFollowUpDeclaration in
+ * cerebellum/sessionFollowUpGate.ts) instead of leaving the decision to the
+ * classifier's prose reading alone. The host defines the contract; the bot owns
+ * the verdict (protocol-standard over host heuristics).
+ *
+ * Exported for tests.
+ */
+export function buildScheduledTaskFollowUpContract(): string {
+  return [
+    '[End-of-run follow-up contract] End this run\'s final message with exactly ONE tag on its own line:',
+    '- `[FOLLOW_UP: none]` — nothing in this run needs the owner\'s decision, approval, funds, or reply: the work is complete, the next step is yours, or the wait is on another bot, person, or group (their follow-up, not the owner\'s).',
+    '- `[FOLLOW_UP: owner — <one short phrase naming what the owner must decide, approve, or provide>]` — ONLY when the owner personally must act before this work can proceed.',
+    'Never omit the tag. Never tag `owner` for risks owned by other bots or third parties, conditional offers ("I can also … if you want"), or purely informational notes — tag `none` and keep handling those yourself. The tag routes this session between the owner\'s Follow-Up list and the autonomous fold; a missing or wrong tag costs the owner attention they did not owe.',
+  ].join('\n');
+}
+
+/**
  * Lifecycle preamble prepended to a recurring task's prompt at fire time.
  * The host only states FACTS (fire number, budget, declared exit condition,
  * origin pointer); deciding whether the condition is met stays with the bot
  * (protocol-standard over host heuristics). One-shot 'at' tasks get no
- * preamble — the host already disables them after execution.
+ * lifecycle preamble — the host already disables them after execution (they
+ * still get the follow-up contract via buildScheduledTaskFollowUpContract).
  *
  * Exported for tests.
  */
@@ -491,11 +512,15 @@ export class Scheduler {
   private async startCoworkSession(task: ScheduledTask, executionGeneration: number): Promise<string> {
     this.assertExecutionCurrent(executionGeneration);
 
-    // The lifecycle preamble (fire number, budget, exit clause) rides in front
-    // of the prompt on EVERY delivery path so the firing bot can judge — and
-    // execute — the task's retirement in the same run.
+    // The lifecycle preamble (fire number, budget, exit clause) and the
+    // end-of-run follow-up contract ride in front of the prompt on EVERY
+    // delivery path so the firing bot can judge — and execute — the task's
+    // retirement in the same run, and declare whether the owner is owed
+    // follow-up. The lifecycle half is recurring-only; the contract is not.
     const preamble = buildScheduledTaskLifecyclePreamble(task);
-    const fullPrompt = preamble ? `${preamble}\n\n${task.prompt}` : task.prompt;
+    const contract = buildScheduledTaskFollowUpContract();
+    const frontMatter = [preamble, contract].filter(Boolean).join('\n\n');
+    const fullPrompt = frontMatter ? `${frontMatter}\n\n${task.prompt}` : task.prompt;
 
     // A task bound to an existing session posts its prompt there instead of
     // opening a fresh one. An invalid binding (deleted/archived/A2A/sandbox

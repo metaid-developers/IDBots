@@ -13,10 +13,11 @@
  * the collapsed Autonomous fold; extra follow-ups only surface a section.
  *
  * The request body is buildSessionFollowUpRequest, so the wording cannot
- * drift. The 0.35 production threshold (CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD)
- * is recall-biased below the cookbook 0.5 by owner decision (2026-10-23) —
- * this script is how it gets measured; see
- * docs/design/2026-10-13-cerebellum-system-handoff.md §2.20.
+ * drift. The production threshold (CEREBELLUM_SESSION_FOLLOW_UP_THRESHOLD) is
+ * 0.5 — precision-biased by owner decision (2026-10-31, revisiting the
+ * 2026-10-23 recall bias at 0.35; scheduled runs now carry the explicit
+ * [FOLLOW_UP: owner|none] tag the gate consumes first) — this script is how it
+ * gets measured; see docs/design/2026-10-13-cerebellum-system-handoff.md §2.20.
  *
  * Usage:
  *   node scripts/cerebellum-session-follow-up-eval.mjs eval --dry-run
