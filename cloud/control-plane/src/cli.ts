@@ -80,6 +80,15 @@ function loadCliContext(env: NodeJS.ProcessEnv): AppContext {
     alertWebhook: env.CP_ALERT_WEBHOOK ?? null,
     // The CLI never serves HTTP; this is an inert default.
     loginBundleDir: '',
+    // The CLI never serves the voice gateway either; inert stub defaults.
+    asr: {
+      upstream: 'stub',
+      dailyLimitMinutes: 60,
+      maxSessionSeconds: 600,
+      doubao: { endpoint: '', resourceId: '', apiKey: null, appId: null, accessToken: null },
+      funasrEndpoint: null,
+      stub: { delayMs: 0, disconnectAfterMs: 0, slowFinalMs: 0 },
+    },
   } as ControlPlaneConfig;
   const docker = new DockerClient(config.dockerUrl);
   return {
