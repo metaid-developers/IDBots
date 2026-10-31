@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createBackfill, splitDraftAtCaret, composeDraft, voiceTextCaret } from './backfill';
 import { VoiceCapture } from './capture';
+import { buildMockMicDeps, shouldUseMockMic } from './mockMic';
 import {
   reduceVoiceUi,
   VOICE_UI_INITIAL,
@@ -95,9 +96,11 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   }, [clearTimers]);
 
   /**
-   * Graceful finalize: flush tail PCM, send `stop`, close socket after a
-   * short grace (server `final`/`end` still arrives), then declare done.
-   * `keepText` is true for every non-cancel path — words are never dropped.
+   * Graceful finalize: flush tail PCM, send `stop`, then KEEP the socket
+   * open for a short grace so the server's `final`/`end` can land (the final
+   * text must replace the trailing partial in the draft). Only after the
+   * grace do we close and declare done. `keepText` is true for every
+   * non-cancel path — words are never dropped.
    */
   const finalize = useCallback(
     (dispatchDone: boolean) => {
@@ -111,15 +114,15 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         if (tail && socket?.isOpen) socket.sendPcm(tail);
         socket?.sendStop();
       }
-      socketRef.current?.close();
-      socketRef.current = null;
       clearTimers();
       keptTextRef.current = backfillRef.current.hasText;
       const done = () => {
+        socketRef.current?.close();
+        socketRef.current = null;
         finalizingRef.current = false;
         if (dispatchDone) dispatch({ type: 'sessionDone', keptText: keptTextRef.current });
       };
-      // Give the server's final/end a beat to land before the socket dies.
+      // Grace window: final/end frames still arrive through the live socket.
       stopGraceRef.current = setTimeout(done, STOP_GRACE_MS);
     },
     [clearTimers],
@@ -139,7 +142,11 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     dispatch({ type: 'tapStart' });
 
     const socket = new VoiceSocketClient({
-      urlOverride: optionsRef.current.urlOverride,
+      // Precedence: programmatic option > VITE_VOICE_WS_URL (dev/e2e stub
+      // gateway) > same-origin /ws/voice default (protocol.ts).
+      urlOverride:
+        optionsRef.current.urlOverride ??
+        (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_VOICE_WS_URL,
       token: optionsRef.current.token,
       onOpen: () => dispatch({ type: 'micGranted' }),
       onEvent: (event) => {
@@ -189,20 +196,28 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     });
     socketRef.current = socket;
 
-    const capture = new VoiceCapture({
-      onWireChunk: (bytes) => {
-        socketRef.current?.sendPcm(bytes);
+    // E2E-only mock mic (mock builds + ?voiceMockMic=1): synthetic sine
+    // frames feed the REAL chunker/socket/backfill pipeline. Vite folds
+    // the mock branch out of production builds (VITE_MOBILE_MOCK gate in
+    // shouldUseMockMic), so the dependency is never even evaluated there.
+    const useMockMic = shouldUseMockMic();
+    const capture = new VoiceCapture(
+      {
+        onWireChunk: (bytes) => {
+          socketRef.current?.sendPcm(bytes);
+        },
+        onInterrupted: () => {
+          // Lock screen / call / app switch: finalize, keep the words.
+          finalize(true);
+        },
+        onError: (code) => {
+          teardownMedia();
+          if (code === 'mic_denied') dispatch({ type: 'micDenied' });
+          else dispatch({ type: 'socketError', code: 'mic_unavailable' as VoiceClientErrorCode });
+        },
       },
-      onInterrupted: () => {
-        // Lock screen / call / app switch: finalize, keep the words.
-        finalize(true);
-      },
-      onError: (code) => {
-        teardownMedia();
-        if (code === 'mic_denied') dispatch({ type: 'micDenied' });
-        else dispatch({ type: 'socketError', code: 'mic_unavailable' as VoiceClientErrorCode });
-      },
-    });
+      useMockMic ? buildMockMicDeps() : undefined,
+    );
     captureRef.current = capture;
 
     capture

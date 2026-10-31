@@ -52,6 +52,11 @@ export interface VoiceCaptureDeps {
   AudioContextCtor: VoiceAudioContextConstructor;
   /** Worklet module URL; defaults to the sibling processor file (vite asset). */
   workletUrl?: string;
+  /**
+   * Worklet node factory (test seam — the voice e2e mock mic replaces this;
+   * the default builds a real AudioWorkletNode).
+   */
+  createWorkletNode?: (context: VoiceAudioContextLike) => ActiveSession['workletNode'];
 }
 
 interface ActiveSession {
@@ -80,6 +85,7 @@ export class VoiceCapture {
       AudioContextCtor:
         deps?.AudioContextCtor ?? (globalThis.AudioContext as unknown as VoiceAudioContextConstructor),
       workletUrl: deps?.workletUrl ?? DEFAULT_WORKLET_URL,
+      createWorkletNode: deps?.createWorkletNode ?? ((context) => this.createRealWorkletNode(context)),
     };
   }
 
@@ -131,7 +137,7 @@ export class VoiceCapture {
 
     const chunker = new PcmChunker(context.sampleRate);
     const source = context.createMediaStreamSource(stream);
-    const workletNode = this.createWorkletNode(context);
+    const workletNode = this.deps.createWorkletNode!(context);
     workletNode.port.onmessage = (event) => {
       const frame = event.data;
       for (const bytes of chunker.push(frame)) this.events.onWireChunk(bytes);
@@ -172,7 +178,7 @@ export class VoiceCapture {
     return tail;
   }
 
-  private createWorkletNode(context: VoiceAudioContextLike): ActiveSession['workletNode'] {
+  private createRealWorkletNode(context: VoiceAudioContextLike): ActiveSession['workletNode'] {
     // Minimal structural wrapper around AudioWorkletNode: we only rely on
     // port.onmessage + disconnect, so the fake contexts in tests work too.
     const node = new (globalThis as unknown as {
