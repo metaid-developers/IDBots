@@ -18199,6 +18199,42 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
+  // Weixin QR authorization (the only supported login path for this channel).
+  registerIpcHandler('im:weixin:login:start', async () => {
+    try {
+      const result = await getIMGatewayManager().startWeixinLogin();
+      return { success: true, qrcode: result.qrcode, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to start Weixin QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:weixin:login:cancel', async () => {
+    try {
+      await getIMGatewayManager().cancelWeixinLogin();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cancel Weixin QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:weixin:credentials:check', async () => {
+    try {
+      return { success: true, hasCredentials: getIMGatewayManager().hasWeixinCredentials() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read Weixin credential state',
+      };
+    }
+  });
+
   registerIpcHandler('im:status:get', async () => {
     try {
       const status = getIMGatewayManager().getStatus();

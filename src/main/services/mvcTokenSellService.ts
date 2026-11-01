@@ -118,7 +118,6 @@ const defaultDeps: MvcTokenSellServiceDeps = {
   },
 };
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const tokenSellDesc = require('meta-contract/dist/mcp02/contract-desc/tokenSell_desc.json');
 
 /** FT holdings for one address (open-api-mvc; base-unit string balances). */
@@ -219,7 +218,6 @@ export async function verifyMvcTokenSellListing(
   // meta-contract is available; otherwise report the sats only).
   let tokenAmount = '';
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const ftProto = require('meta-contract/dist/mcp02/contract-proto/token.proto.js');
     const dp = ftProto.parseDataPart(parsed.outputs[outIndex].scriptPubKey);
     tokenAmount = String(dp.tokenAmount);

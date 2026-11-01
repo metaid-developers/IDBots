@@ -61,6 +61,10 @@ docs/*
 !docs/analysis/**
 !docs/tickets/
 !docs/tickets/**
+!docs/weixin-channel.md
+!docs/assets/
+!docs/assets/**
+!docs/weixin-channel-verification.md
 tests/*
 !tests/dataGuard.test.mjs
 !tests/friendAgentTools.test.mjs
@@ -834,3 +838,8 @@ blob-report/
 !tests/mobileVoiceWireup.test.tsx
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
+!tests/weixinGateway.test.ts
+!tests/weixinMedia.test.ts
+!docs/weixin-media.md
+!docs/weixin-media-delegated-verification.md
+!docs/weixin-media-verification.md

@@ -146,6 +146,7 @@ after that date so it gets a tier here.
 | `knowledgeBase:importFiles` | P2-R | R-upload. |
 | `knowledgeBase:openDir` | N | Opens a desktop folder. |
 | `im:config:get`, `im:config:set`, `im:status:get`, `im:gateway:start`, `im:gateway:stop`, `im:gateway:test` | P2 | Lets the user answer permission requests through Feishu or DingTalk while the phone is closed. |
+| `im:weixin:login:start`, `im:weixin:login:cancel`, `im:weixin:credentials:check` | P2 | Starts/cancels the Weixin QR authorization and reports whether a token is stored. P2 because the channel exists for the same "answer while the phone is closed" flow; the QR payload itself carries no credential. |
 | `chainBackup:getState`, `chainBackup:backup` | P2 | `backup` timeout 900 s. |
 | `chainBackup:restore` | N | Needs mnemonic import; later release. |
 

@@ -1661,12 +1661,16 @@ interface IElectronAPI {
   im: {
     getConfig: () => Promise<{ success: boolean; config?: IMGatewayConfig; error?: string }>;
     setConfig: (config: Partial<IMGatewayConfig>) => Promise<{ success: boolean; error?: string }>;
-    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => Promise<{ success: boolean; error?: string }>;
-    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord') => Promise<{ success: boolean; error?: string }>;
+    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin') => Promise<{ success: boolean; error?: string }>;
+    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin') => Promise<{ success: boolean; error?: string }>;
     testGateway: (
-      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord',
+      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin',
       configOverride?: Partial<IMGatewayConfig>
     ) => Promise<{ success: boolean; result?: IMConnectivityTestResult; error?: string }>;
+    /** Weixin QR authorization: returns the QR payload to render for scanning. */
+    weixinLoginStart: () => Promise<{ success: boolean; qrcode?: string; content?: string; error?: string }>;
+    weixinLoginCancel: () => Promise<{ success: boolean; error?: string }>;
+    weixinCheckCredentials: () => Promise<{ success: boolean; hasCredentials?: boolean; error?: string }>;
     getStatus: () => Promise<{ success: boolean; status?: IMGatewayStatus; error?: string }>;
     onStatusChange: (callback: (status: IMGatewayStatus) => void) => () => void;
     onMessageReceived: (callback: (message: IMMessage) => void) => () => void;
@@ -2322,11 +2326,34 @@ interface IElectronAPI {
 }
 
 // IM Gateway types
+interface WeixinConfig {
+  enabled: boolean;
+  accountId: string;
+  /** Bot token from QR authorization; kept in the main-process credential file. */
+  token?: string;
+  baseUrl?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+interface WeixinGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  accountId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
+  weixin: WeixinConfig;
   settings: IMSettings;
 }
 
@@ -2454,6 +2481,7 @@ interface IMGatewayStatus {
   feishu: FeishuGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
+  weixin: WeixinGatewayStatus;
 }
 
 type IMConnectivityVerdict = 'pass' | 'warn' | 'fail';
@@ -2481,7 +2509,7 @@ interface IMConnectivityCheck {
 }
 
 interface IMConnectivityTestResult {
-  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord';
+  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
   testedAt: number;
   verdict: IMConnectivityVerdict;
   checks: IMConnectivityCheck[];
@@ -2524,7 +2552,7 @@ interface DiscordGatewayStatus {
 }
 
 interface IMMessage {
-  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord';
+  platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
   messageId: string;
   conversationId: string;
   senderId: string;

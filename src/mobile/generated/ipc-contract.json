@@ -1847,6 +1847,24 @@
       ]
     },
     {
+      "path": "im.weixinCheckCredentials",
+      "kind": "invoke",
+      "channel": "im:weixin:credentials:check",
+      "args": []
+    },
+    {
+      "path": "im.weixinLoginCancel",
+      "kind": "invoke",
+      "channel": "im:weixin:login:cancel",
+      "args": []
+    },
+    {
+      "path": "im.weixinLoginStart",
+      "kind": "invoke",
+      "channel": "im:weixin:login:start",
+      "args": []
+    },
+    {
       "path": "jevRelay.resolveCredentials",
       "kind": "invoke",
       "channel": "jevRelay:resolveCredentials",

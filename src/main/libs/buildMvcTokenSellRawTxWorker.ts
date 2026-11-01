@@ -160,9 +160,7 @@ function spentOutpointsOfTxHex(txHex: string, mvc: typeof import('meta-contract'
   return tx.inputs.map((input: any) => `${input.prevTxId.toString('hex')}:${Number(input.outputIndex)}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { mvc } = require('meta-contract');
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const tokenSellDesc = require('meta-contract/dist/mcp02/contract-desc/tokenSell_desc.json');
 
 async function main(): Promise<void> {

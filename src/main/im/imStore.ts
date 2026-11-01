@@ -10,6 +10,7 @@ import {
   FeishuConfig,
   TelegramConfig,
   DiscordConfig,
+  WeixinConfig,
   IMSettings,
   IMPlatform,
   IMSessionMapping,
@@ -17,6 +18,7 @@ import {
   DEFAULT_FEISHU_CONFIG,
   DEFAULT_TELEGRAM_CONFIG,
   DEFAULT_DISCORD_CONFIG,
+  DEFAULT_WEIXIN_CONFIG,
   DEFAULT_IM_SETTINGS,
 } from './types';
 
@@ -82,7 +84,7 @@ export class IMStore {
    * Migrate existing IM configs to ensure stable defaults.
    */
   private migrateDefaults(): void {
-    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord'] as const;
+    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin'] as const;
     let changed = false;
 
     for (const platform of platforms) {
@@ -163,6 +165,7 @@ export class IMStore {
     const feishu = this.getConfigValue<FeishuConfig>('feishu') ?? DEFAULT_FEISHU_CONFIG;
     const telegram = this.getConfigValue<TelegramConfig>('telegram') ?? DEFAULT_TELEGRAM_CONFIG;
     const discord = this.getConfigValue<DiscordConfig>('discord') ?? DEFAULT_DISCORD_CONFIG;
+    const weixin = this.getConfigValue<WeixinConfig>('weixin') ?? DEFAULT_WEIXIN_CONFIG;
     const settings = this.getConfigValue<IMSettings>('settings') ?? DEFAULT_IM_SETTINGS;
 
     // Resolve enabled field: default to false for safety
@@ -181,6 +184,7 @@ export class IMStore {
       feishu: resolveEnabled(feishu, DEFAULT_FEISHU_CONFIG),
       telegram: resolveEnabled(telegram, DEFAULT_TELEGRAM_CONFIG),
       discord: resolveEnabled(discord, DEFAULT_DISCORD_CONFIG),
+      weixin: resolveEnabled(weixin, DEFAULT_WEIXIN_CONFIG),
       settings: { ...DEFAULT_IM_SETTINGS, ...settings },
     };
   }
@@ -197,6 +201,9 @@ export class IMStore {
     }
     if (config.discord) {
       this.setDiscordConfig(config.discord);
+    }
+    if (config.weixin) {
+      this.setWeixinConfig(config.weixin);
     }
     if (config.settings) {
       this.setIMSettings(config.settings);
@@ -251,6 +258,18 @@ export class IMStore {
     this.setConfigValue('discord', { ...current, ...config });
   }
 
+  // ==================== Weixin Config ====================
+
+  getWeixinConfig(): WeixinConfig {
+    const stored = this.getConfigValue<WeixinConfig>('weixin');
+    return { ...DEFAULT_WEIXIN_CONFIG, ...stored };
+  }
+
+  setWeixinConfig(config: Partial<WeixinConfig>): void {
+    const current = this.getWeixinConfig();
+    this.setConfigValue('weixin', { ...current, ...config });
+  }
+
   // ==================== IM Settings ====================
 
   getIMSettings(): IMSettings {
@@ -282,7 +301,8 @@ export class IMStore {
     const hasFeishu = !!(config.feishu.appId && config.feishu.appSecret);
     const hasTelegram = !!config.telegram.botToken;
     const hasDiscord = !!config.discord.botToken;
-    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord;
+    const hasWeixin = !!(config.weixin.token || '').trim();
+    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasWeixin;
   }
 
   /**

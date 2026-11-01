@@ -542,7 +542,6 @@ export function buildListTxB(S: ListTxBStaticInputs): ListTxBResult {
   // self-anchored rewrite breaks the deployment-generation consistency).
   const inputRes = TokenUtil.getTxInputProof(tokenTx, S.prevTokenInputIndex);
   const ProofClasses = scryptlib.buildTypeClasses(
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     require('meta-contract/dist/mcp02/contract-desc/txUtil_desc.json'),
   );
   const tokenTxInputProof = rebuildTxInputProof(ProofClasses, inputRes[0]);
@@ -1018,7 +1017,6 @@ export function buildTakeTx(P: TakeTxStaticInputs): TakeTxResult {
     // placeholder — this branch has no sender checkSig)
     const inputRes = TokenUtil.getTxInputProof(listTx, P.prevTokenInputIndex);
     const ProofClasses = scryptlib.buildTypeClasses(
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       require('meta-contract/dist/mcp02/contract-desc/txUtil_desc.json'),
     );
     const tokenTxInputProof = rebuildTxInputProof(ProofClasses, inputRes[0]);
@@ -1098,7 +1096,6 @@ export function buildTakeTx(P: TakeTxStaticInputs): TakeTxResult {
     }
 
     // seed leg: TokenSell.unlock(preimage @ SIGHASH_SINGLE|FORKID) binds out1 = price
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const seedDesc = require('meta-contract/dist/mcp02/contract-desc/tokenSell_desc.json');
     const SeedC = scryptlib.buildContractClass(seedDesc) as any;
     const seedContract = new SeedC(new scryptlib.Ripemd160(P.sellerH160Buf.toString('hex')), Number(P.sellPriceSats));

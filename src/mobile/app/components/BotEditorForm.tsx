@@ -420,7 +420,6 @@ export function BotEditorForm(props: {
   useEffect(() => {
     props.onDirtyChange?.(dirty);
     // The callback is a stable ref-setter on the Me screen; dirty is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty]);
   useEffect(() => () => props.onDirtyChange?.(false), []);
 
