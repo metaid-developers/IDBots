@@ -88,15 +88,40 @@ export interface DiscordGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== Weixin Types ====================
+
+export interface WeixinConfig {
+  enabled: boolean;
+  accountId: string;
+  /** Bot token from QR authorization; kept in the main-process credential file. */
+  token?: string;
+  baseUrl?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+export interface WeixinGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  accountId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
+  weixin: WeixinConfig;
   settings: IMSettings;
 }
 
@@ -110,6 +135,7 @@ export interface IMGatewayStatus {
   feishu: FeishuGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
+  weixin: WeixinGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -239,11 +265,21 @@ export const DEFAULT_IM_SETTINGS: IMSettings = {
   skillsEnabled: true,
 };
 
+export const DEFAULT_WEIXIN_CONFIG: WeixinConfig = {
+  enabled: false,
+  accountId: 'default',
+  token: '',
+  baseUrl: 'https://ilinkai.weixin.qq.com',
+  metabotId: null,
+  debug: true,
+};
+
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_CONFIG,
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
+  weixin: DEFAULT_WEIXIN_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -277,6 +313,17 @@ export const DEFAULT_IM_STATUS: IMGatewayStatus = {
     startedAt: null,
     lastError: null,
     botUsername: null,
+    lastInboundAt: null,
+    lastOutboundAt: null,
+  },
+  weixin: {
+    connected: false,
+    startedAt: null,
+    lastError: null,
+    accountId: null,
+    loginPending: false,
+    loginState: 'idle',
+    qrContent: null,
     lastInboundAt: null,
     lastOutboundAt: null,
   },

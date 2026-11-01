@@ -41,7 +41,6 @@ export function ProfilePage(props: {
   useEffect(() => {
     props.onDirtyChange?.(dirty);
     return () => props.onDirtyChange?.(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty]);
 
   useEffect(() => () => {

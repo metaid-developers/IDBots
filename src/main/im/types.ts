@@ -160,15 +160,53 @@ export interface XiaomifengGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== Weixin (WeChat) Types ====================
+
+/**
+ * Weixin personal-account bot channel.
+ *
+ * The token is obtained exclusively through QR authorization (`get_bot_qrcode` ->
+ * `get_qrcode_status` -> `confirmed`). There is no account/password login here by
+ * design: see the compliance note in weixinProtocol.ts.
+ */
+export interface WeixinConfig {
+  enabled: boolean;
+  /** Local account slot; also the credential file name under weixin/accounts. */
+  accountId: string;
+  /** Bot token from the QR authorization. Sensitive: never logged. */
+  token?: string;
+  /** Business API base returned by the login; falls back to the official host. */
+  baseUrl?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+export interface WeixinGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  /** Account slot currently bound (never the token). */
+  accountId: string | null;
+  /** True while a QR login is being polled. */
+  loginPending: boolean;
+  /** Coarse QR login progress for the settings UI. */
+  loginState: 'idle' | 'wait' | 'scanned';
+  /** QR payload (usually a URL) to render for scanning; null when no login is pending. */
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
+  weixin: WeixinConfig;
   settings: IMSettings;
 }
 
@@ -182,6 +220,7 @@ export interface IMGatewayStatus {
   feishu: FeishuGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
+  weixin: WeixinGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -330,6 +369,15 @@ export const DEFAULT_DISCORD_CONFIG: DiscordConfig = {
   debug: true,
 };
 
+export const DEFAULT_WEIXIN_CONFIG: WeixinConfig = {
+  enabled: false,
+  accountId: 'default',
+  token: '',
+  baseUrl: 'https://ilinkai.weixin.qq.com',
+  metabotId: null,
+  debug: true,
+};
+
 export const DEFAULT_IM_SETTINGS: IMSettings = {
   systemPrompt: '',
   skillsEnabled: true,
@@ -340,6 +388,7 @@ export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
+  weixin: DEFAULT_WEIXIN_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -397,11 +446,24 @@ export const DEFAULT_XIAOMIFENG_STATUS: XiaomifengGatewayStatus = {
   lastOutboundAt: null,
 };
 
+export const DEFAULT_WEIXIN_STATUS: WeixinGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  accountId: null,
+  loginPending: false,
+  loginState: 'idle',
+  qrContent: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
 export const DEFAULT_IM_STATUS: IMGatewayStatus = {
   dingtalk: DEFAULT_DINGTALK_STATUS,
   feishu: DEFAULT_FEISHU_STATUS,
   telegram: DEFAULT_TELEGRAM_STATUS,
   discord: DEFAULT_DISCORD_STATUS,
+  weixin: DEFAULT_WEIXIN_STATUS,
 };
 
 // ==================== DingTalk Media Types ====================

@@ -60,6 +60,10 @@ docs/*
 !docs/analysis/**
 !docs/tickets/
 !docs/tickets/**
+!docs/weixin-channel.md
+!docs/assets/
+!docs/assets/**
+!docs/weixin-channel-verification.md
 tests/*
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
@@ -820,3 +824,4 @@ blob-report/
 !tests/mobileVoiceBackfill.test.ts
 !tests/mobileVoiceProtocol.test.ts
 !tests/mobileVoiceWireup.test.tsx
+!tests/weixinGateway.test.ts
