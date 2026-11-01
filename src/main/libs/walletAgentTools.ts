@@ -11,6 +11,7 @@ import type {
   WalletQueryChain,
 } from '../services/walletQueryService';
 import type { MvcNftBalance, MvcNftSellOrders, MvcNftSellOrder } from '../services/mvcNftService';
+import { appendNftCardBlock, findNftCardDetail, type NftCardEmitFields } from './nftCardMarkdown';
 
 /**
  * Host control surface for the wallet tools, wired in main.ts: UTXO-sum
@@ -187,6 +188,29 @@ function formatMvcNftBalance(balance: MvcNftBalance): string {
   }
   return lines.join('\n');
 }
+
+/**
+ * S3 chat NFT cards: best-effort artwork/series facts for one token from a
+ * wallet-api balance snapshot of `address`. Called by the NFT action tools
+ * to enrich the nft-card fence they append to success results; never throws
+ * — on any failure the card emits with identity fields only (the renderer
+ * shows the placeholder artwork).
+ */
+const fetchNftCardFacts = async (
+  control: WalletToolsControl,
+  address: string | null,
+  genesis: string,
+  tokenIndex: string,
+): Promise<Partial<NftCardEmitFields>> => {
+  if (!address) return {};
+  try {
+    const entries = await control.listMvcNfts({ address });
+    const entry = entries.find((candidate) => candidate.address === address && candidate.balance);
+    return { ...(findNftCardDetail(entry?.balance, genesis, tokenIndex) ?? {}) };
+  } catch {
+    return {};
+  }
+};
 
 /**
  * wallet_balance (R1) and wallet_transfer (R2) inline MCP tools for every
@@ -534,6 +558,11 @@ export function buildWalletAgentTools(deps: {
       }
 
       try {
+        // Pre-action snapshot: the token sits in the session bot's wallet
+        // right now, so its artwork facts are guaranteed present; the card
+        // then records the RECIPIENT as the post-transfer owner.
+        const senderAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, senderAddress, genesis, tokenIndex);
         const result = await control.transferNft({
           metabotId,
           genesis,
@@ -548,7 +577,14 @@ export function buildWalletAgentTools(deps: {
           `- to: ${toAddress}${toMetabotId != null ? ` (metabot_id ${toMetabotId})` : ''}`,
           '- Verify with wallet_nft_balance after the tx confirms.',
         ];
-        return textResult(lines.join('\n'));
+        return textResult(appendNftCardBlock(lines.join('\n'), {
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: toAddress || undefined,
+          action: 'transferred',
+        }));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_transfer failed: ${msg}`, true);
@@ -666,6 +702,11 @@ export function buildWalletAgentTools(deps: {
         return textResult('wallet_nft_sell: price_sats must be at least 22000 (the NftManager sell floor; 0.001 SPACE = 100000).', true);
       }
       try {
+        // Pre-action snapshot: the token still sits in the bot's wallet, so
+        // the artwork facts are guaranteed present even if the indexer lags
+        // behind the just-broadcast listing.
+        const sellerAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, sellerAddress, genesis, tokenIndex);
         const result = await control.sellNft({ metabotId, genesis, codehash, tokenIndex, priceSats });
         const lines = [
           'NFT listed for sale on-chain.',
@@ -675,7 +716,15 @@ export function buildWalletAgentTools(deps: {
           `- ask price: ${priceSats} sats (${(priceSats / 100000000).toFixed(8)} SPACE)`,
           '- Verify with wallet_nft_sell_orders; cancel with wallet_nft_cancel_sell.',
         ];
-        return textResult(lines.join('\n'));
+        return textResult(appendNftCardBlock(lines.join('\n'), {
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: sellerAddress ?? undefined,
+          priceSats,
+          action: 'listed',
+        }));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_sell failed: ${msg}`, true);
@@ -747,6 +796,8 @@ export function buildWalletAgentTools(deps: {
       }
       try {
         const result = await control.cancelNftSell({ metabotId, genesis, codehash, tokenIndex, sellUtxo });
+        const ownerAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, ownerAddress, genesis, tokenIndex);
         const lines = [
           'NFT sell order cancelled on-chain.',
           `- cancel txid: ${result.txId}`,
@@ -754,7 +805,14 @@ export function buildWalletAgentTools(deps: {
           `- token: #${tokenIndex} (genesis ${genesis})`,
           '- Verify the order is gone with wallet_nft_sell_orders.',
         ];
-        return textResult(lines.join('\n'));
+        return textResult(appendNftCardBlock(lines.join('\n'), {
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: ownerAddress ?? undefined,
+          action: 'delisted',
+        }));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_cancel_sell failed: ${msg}`, true);
@@ -807,6 +865,10 @@ export function buildWalletAgentTools(deps: {
       }
       try {
         const result = await control.buyNft({ metabotId, genesis, codehash, tokenIndex, sellUtxo });
+        // Post-action snapshot from the buyer's own wallet doubles as the
+        // ownership-change check; indexer lag degrades to identity-only.
+        const buyerAddress = control.getMetabotMvcAddress(metabotId);
+        const facts = await fetchNftCardFacts(control, buyerAddress, genesis, tokenIndex);
         const lines = [
           'NFT purchase broadcast on-chain.',
           `- purchase txid: ${result.txId}`,
@@ -814,7 +876,15 @@ export function buildWalletAgentTools(deps: {
           `- token: #${tokenIndex} (genesis ${genesis})`,
           '- Verify ownership with wallet_nft_balance and the order closure with wallet_nft_sell_orders after the txs confirm.',
         ];
-        return textResult(lines.join('\n'));
+        return textResult(appendNftCardBlock(lines.join('\n'), {
+          genesis,
+          codehash,
+          tokenIndex,
+          ...facts,
+          owner: buyerAddress ?? undefined,
+          priceSats: sellUtxo?.price,
+          action: 'bought',
+        }));
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return textResult(`wallet_nft_buy failed: ${msg}`, true);
