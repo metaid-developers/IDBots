@@ -60,6 +60,7 @@ export type BotBrowserBridgeErrorCode =
   | 'consent_denied'
   | 'upload_failed'
   | 'pin_write_failed'
+  | 'nft_buy_failed'
   | 'llm_unavailable'
   | 'llm_timeout'
   | 'empty_content'
@@ -170,6 +171,39 @@ export interface BotBrowserPermissionsInput {
   payload?: unknown;
 }
 
+/**
+ * Validated browser.nft.buy purchase intent. The four-tuple mirrors the
+ * wallet_nft_buy agent tool's required arguments; display fields ride along
+ * for the ABC purchase confirmation card and are covered by the confirmation
+ * request hash so a card approved for one NFT can never authorize another.
+ */
+export interface BotBrowserNftBuyPayload {
+  genesis: string;
+  codehash: string;
+  tokenIndex: string;
+  priceSats: number;
+  sellTxid?: string;
+  sellOutputIndex?: number;
+  sellerAddress?: string;
+  collectionName?: string;
+  name?: string;
+  imgUrl?: string;
+}
+
+export interface BotBrowserNftBuyResult {
+  txid: string;
+  fundingTxid: string;
+  tokenIndex: string;
+  genesis: string;
+}
+
+export interface BotBrowserNftBuyInput {
+  actorId?: string;
+  resourceUri?: string;
+  sessionId?: string;
+  payload?: unknown;
+}
+
 export interface BotBrowserHostPickedFile {
   filePath: string;
   name?: string;
@@ -231,6 +265,19 @@ export interface BotBrowserBridgeServiceDeps {
   resolvePinPath?: (pinId: string, rateLimitKey?: string) => Promise<PinPathResolution>;
   uploadMetaFile?: UploadMetaFileFn;
   completeLlm?: CompleteLlmFn;
+  /**
+   * NFT purchase backend (the wallet_nft_buy signer path). Runs ONLY after a
+   * user-approved two-phase confirmation (manual_action_required → exact
+   * confirmRequest); keys never leave the host and the page holds no signing
+   * capability. Returns the purchase + funding txids.
+   */
+  buyNft?: (params: {
+    metabotId: number;
+    genesis: string;
+    codehash: string;
+    tokenIndex: string;
+    sellUtxo?: { txId: string; outputIndex: number; sellerAddress?: string; price?: number };
+  }) => Promise<{ txId: string; fundingTxId: string }>;
   pickFiles?: (input: {
     multiple: boolean;
     accept: string[];
@@ -250,7 +297,7 @@ export interface BotBrowserBridgeServiceDeps {
  * electron-log file transport captures them) for later review.
  */
 export interface BotBrowserBridgeAuditEvent {
-  type: 'permission-granted' | 'permission-revoked' | 'granted-write' | 'pin-write';
+  type: 'permission-granted' | 'permission-revoked' | 'granted-write' | 'pin-write' | 'nft-buy';
   at: number;
   /** Local MetaBot id for Bot actors; the host Actor id for the human account. */
   actorId: number | string;
@@ -266,6 +313,7 @@ export interface BotBrowserBridgeAuditEvent {
 
 export interface BotBrowserBridgeService {
   writeMetaIdPin(input: BotBrowserPinWriteInput): Promise<BrowserCommandResult<BotBrowserPinWriteResult>>;
+  buyNft(input: BotBrowserNftBuyInput): Promise<BrowserCommandResult<BotBrowserNftBuyResult>>;
   uploadMetaFile(input: BotBrowserMetaFileUploadInput): Promise<BrowserCommandResult<BotBrowserMetaFileUploadResult>>;
   completeLlm(input: BotBrowserLlmCompleteInput): Promise<BrowserCommandResult<BrowserLlmCompleteResult>>;
   requestPermissions(input: BotBrowserPermissionsInput): Promise<BrowserCommandResult<BrowserPermissionsResult>>;
@@ -659,6 +707,15 @@ interface PendingPermissionAuthorization {
   expiresAt: number;
 }
 
+interface PendingNftBuyAuthorization {
+  actorKey: string;
+  actorGlobalMetaId: string;
+  resourceUri: string;
+  requestHash: string;
+  tokenHash: Buffer;
+  expiresAt: number;
+}
+
 interface ActivePermissionContext {
   actorKey: string;
   actorGlobalMetaId: string;
@@ -820,6 +877,77 @@ function validatePermissionsRequest(payload: unknown):
   };
 }
 
+const NFT_BUY_GENESIS_RE = /^[0-9a-fA-F]{64}$/;
+const NFT_BUY_CODEHASH_RE = /^[0-9a-fA-F]{40}$/;
+const NFT_BUY_TOKEN_INDEX_RE = /^[0-9]{1,18}$/;
+const NFT_BUY_IMG_URL_RE = /^(https?:\/\/|metafile:\/\/)/i;
+
+function validateNftBuyPayload(payload: unknown):
+  | BotBrowserNftBuyPayload
+  | BrowserCommandResult<never> {
+  const body = objectRecord(payload);
+  if (!body) {
+    return failure('invalid_params', 'NFT buy requires a purchase payload.');
+  }
+  const genesis = text(body.genesis).toLowerCase();
+  const codehash = text(body.codehash).toLowerCase();
+  const tokenIndex = text(body.tokenIndex);
+  if (!NFT_BUY_GENESIS_RE.test(genesis)) {
+    return failure('invalid_params', 'NFT buy requires genesis (64 hex).');
+  }
+  if (!NFT_BUY_CODEHASH_RE.test(codehash)) {
+    return failure('invalid_params', 'NFT buy requires codehash (40 hex).');
+  }
+  if (!NFT_BUY_TOKEN_INDEX_RE.test(tokenIndex)) {
+    return failure('invalid_params', 'NFT buy requires tokenIndex (digits).');
+  }
+  const priceSats = body.priceSats;
+  if (typeof priceSats !== 'number' || !Number.isSafeInteger(priceSats) || priceSats <= 0) {
+    return failure('invalid_params', 'NFT buy requires priceSats (positive integer sats).');
+  }
+
+  const normalized: BotBrowserNftBuyPayload = { genesis, codehash, tokenIndex, priceSats };
+
+  const rawSellTxid = text(body.sellTxid).toLowerCase();
+  const rawSellOutputIndex = body.sellOutputIndex;
+  if (rawSellTxid !== '' || rawSellOutputIndex !== undefined) {
+    if (!NFT_BUY_GENESIS_RE.test(rawSellTxid)) {
+      return failure('invalid_params', 'NFT buy sellTxid must be 64 hex when the sell outpoint is supplied.');
+    }
+    if (typeof rawSellOutputIndex !== 'number' || !Number.isSafeInteger(rawSellOutputIndex) || rawSellOutputIndex < 0) {
+      return failure('invalid_params', 'NFT buy sellOutputIndex must be a non-negative integer.');
+    }
+    normalized.sellTxid = rawSellTxid;
+    normalized.sellOutputIndex = rawSellOutputIndex;
+  }
+
+  const sellerAddress = text(body.sellerAddress);
+  if (sellerAddress) {
+    if (sellerAddress.length > 128 || /[\r\n]/u.test(sellerAddress)) {
+      return failure('invalid_params', 'NFT buy sellerAddress is invalid.');
+    }
+    normalized.sellerAddress = sellerAddress;
+  }
+
+  const optionalTexts: Array<[keyof BotBrowserNftBuyPayload, number]> = [
+    ['collectionName', 120],
+    ['name', 120],
+    ['imgUrl', 2048],
+  ];
+  for (const [key, limit] of optionalTexts) {
+    const raw = text(body[key]);
+    if (!raw) continue;
+    if (raw.length > limit || /[\r\n]/u.test(raw)) {
+      return failure('invalid_params', `NFT buy ${key} is invalid.`);
+    }
+    normalized[key] = raw as never;
+  }
+  if (normalized.imgUrl && !NFT_BUY_IMG_URL_RE.test(normalized.imgUrl)) {
+    return failure('invalid_params', 'NFT buy imgUrl must be an https:// or metafile:// reference.');
+  }
+  return normalized;
+}
+
 function requestHash(payload: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
@@ -941,6 +1069,7 @@ export function createBotBrowserBridgeService(
 ): BotBrowserBridgeService {
   const pendingPinWrites = new Map<string, PendingPinWriteAuthorization>();
   const pendingPermissions = new Map<string, PendingPermissionAuthorization>();
+  const pendingNftBuys = new Map<string, PendingNftBuyAuthorization>();
   const activePermissions = new Map<string, ActivePermissionContext>();
   // Per-resource sliding windows for host-owned v1.1 quotas.
   const llmTimestamps = new Map<string, number[]>();
@@ -974,6 +1103,11 @@ export function createBotBrowserBridgeService(
     for (const [confirmationId, authorization] of pendingPermissions) {
       if (authorization.expiresAt <= currentTime) {
         pendingPermissions.delete(confirmationId);
+      }
+    }
+    for (const [confirmationId, authorization] of pendingNftBuys) {
+      if (authorization.expiresAt <= currentTime) {
+        pendingNftBuys.delete(confirmationId);
       }
     }
   };
@@ -1122,7 +1256,188 @@ export function createBotBrowserBridgeService(
     ) as BrowserCommandResult<BrowserPermissionsResult>;
   };
 
+  const issueNftBuyConfirmation = (
+    actorResult: Extract<ResolvedBridgeActor, { kind: 'bot' }>,
+    resourceUri: string,
+    validation: BotBrowserNftBuyPayload,
+  ): BrowserCommandResult<BotBrowserNftBuyResult> => {
+    const issuedAt = now();
+    removeExpiredPinWrites(issuedAt);
+    if (pendingNftBuys.size >= MAX_PENDING_PIN_WRITE_CONFIRMATIONS) {
+      const oldestConfirmationId = pendingNftBuys.keys().next().value;
+      if (typeof oldestConfirmationId === 'string') {
+        pendingNftBuys.delete(oldestConfirmationId);
+      }
+    }
+
+    const confirmationId = createConfirmationId();
+    const opaqueToken = createConfirmationToken();
+    const expiresAt = issuedAt + confirmationTtlMs;
+    pendingNftBuys.set(confirmationId, {
+      actorKey: actorResult.actorId,
+      actorGlobalMetaId: actorResult.actor.globalMetaId,
+      resourceUri,
+      requestHash: requestHash(validation as unknown as Record<string, unknown>),
+      tokenHash: tokenHash(opaqueToken),
+      expiresAt,
+    });
+
+    const sellUtxo = validation.sellTxid !== undefined
+      ? {
+        txId: validation.sellTxid,
+        outputIndex: validation.sellOutputIndex ?? 0,
+        ...(validation.sellerAddress ? { sellerAddress: validation.sellerAddress } : {}),
+        price: validation.priceSats,
+      }
+      : undefined;
+
+    return browserManualActionRequired(
+      'manual_action_required',
+      'Confirm this NFT purchase before the host pays the seller.',
+      {
+        data: {
+          confirmation: {
+            actor: actorResult.actor,
+            tokenIndex: validation.tokenIndex,
+            genesis: validation.genesis,
+            codehash: validation.codehash,
+            priceSats: validation.priceSats,
+            ...(sellUtxo ? { sellUtxo } : {}),
+            display: {
+              ...(validation.name ? { name: validation.name } : {}),
+              ...(validation.collectionName ? { collectionName: validation.collectionName } : {}),
+              ...(validation.imgUrl ? { imgUrl: validation.imgUrl } : {}),
+              ...(validation.sellerAddress ? { sellerAddress: validation.sellerAddress } : {}),
+            },
+            confirmationId,
+            expiresAt,
+          },
+          confirmRequest: {
+            resourceUri,
+            kind: 'nft-buy',
+            payload: {
+              ...validation,
+              confirmed: true,
+              hostConfirmation: {
+                id: confirmationId,
+                token: opaqueToken,
+              },
+            },
+          },
+        },
+      },
+    );
+  };
+
   return {
+    async buyNft(input: BotBrowserNftBuyInput): Promise<BrowserCommandResult<BotBrowserNftBuyResult>> {
+      // Payment gate: there is NO auto-buy path. Every first request resolves
+      // to a confirmation card; the signer only ever runs for an exact,
+      // still-pending host confirmation that matches the actor, resource, and
+      // the full validated purchase payload — and the authorization is
+      // consumed BEFORE the signer starts so a replayed or raced confirm can
+      // never spend twice.
+      const actorResult = resolveActor(deps, input.actorId);
+      if (isCommandFailure(actorResult)) {
+        const confirmationAttempt = parseHostConfirmationAttempt(input.payload);
+        if (!isCommandFailure(confirmationAttempt) && confirmationAttempt) {
+          const authorization = pendingNftBuys.get(confirmationAttempt.id);
+          if (authorization && tokenMatches(confirmationAttempt.token, authorization.tokenHash)) {
+            pendingNftBuys.delete(confirmationAttempt.id);
+          }
+        }
+        return actorResult;
+      }
+      if (actorResult.kind !== 'bot') {
+        return failure(
+          'unsupported_actor',
+          'NFT purchases spend a local Bot wallet; the account Actor cannot buy.',
+        );
+      }
+      const resourceUri = normalizedResourceUri(input.resourceUri);
+      if (!resourceUri) {
+        return failure('invalid_request', 'NFT buy resourceUri is required.');
+      }
+      if (!deps.buyNft) {
+        return failure('unsupported_method', 'NFT purchase is not supported in this IDBots build.');
+      }
+
+      const validation = validateNftBuyPayload(input.payload);
+      if (isCommandFailure(validation)) return validation;
+
+      const confirmationAttempt = parseHostConfirmationAttempt(input.payload);
+      if (isCommandFailure(confirmationAttempt)) return confirmationAttempt;
+
+      if (!confirmationAttempt) {
+        return issueNftBuyConfirmation(actorResult, resourceUri, validation);
+      }
+
+      const authorization = pendingNftBuys.get(confirmationAttempt.id);
+      if (!authorization || !tokenMatches(confirmationAttempt.token, authorization.tokenHash)) {
+        return invalidConfirmation();
+      }
+      const currentTime = now();
+      if (authorization.expiresAt <= currentTime) {
+        pendingNftBuys.delete(confirmationAttempt.id);
+        return issueNftBuyConfirmation(actorResult, resourceUri, validation);
+      }
+      if (
+        authorization.actorKey !== actorResult.actorId
+        || authorization.actorGlobalMetaId !== actorResult.actor.globalMetaId
+        || authorization.resourceUri !== resourceUri
+        || authorization.requestHash !== requestHash(validation as unknown as Record<string, unknown>)
+      ) {
+        pendingNftBuys.delete(confirmationAttempt.id);
+        return invalidConfirmation();
+      }
+
+      // Consume before signing: a retried confirmRequest can never re-buy.
+      pendingNftBuys.delete(confirmationAttempt.id);
+
+      const sellUtxo = validation.sellTxid !== undefined
+        ? {
+          txId: validation.sellTxid,
+          outputIndex: validation.sellOutputIndex ?? 0,
+          ...(validation.sellerAddress ? { sellerAddress: validation.sellerAddress } : {}),
+          price: validation.priceSats,
+        }
+        : undefined;
+
+      try {
+        const result = await deps.buyNft({
+          metabotId: actorResult.metabotId,
+          genesis: validation.genesis,
+          codehash: validation.codehash,
+          tokenIndex: validation.tokenIndex,
+          ...(sellUtxo ? { sellUtxo } : {}),
+        });
+        const txid = text(result?.txId);
+        const fundingTxid = text(result?.fundingTxId);
+        if (!txid || !fundingTxid) {
+          return failure('nft_buy_failed', 'NFT purchase failed.');
+        }
+        recordAudit({
+          type: 'nft-buy',
+          at: now(),
+          actorId: actorResult.metabotId,
+          actorGlobalMetaId: actorResult.actor.globalMetaId,
+          resourceUri,
+          sessionId: normalizedSessionId(input.sessionId),
+          txid,
+        });
+        // Raw payload: the renderer adapter wraps it as
+        // {kind:'nft-buy', handled:true, data:<this>} for the Browser.
+        return browserSuccess({
+          txid,
+          fundingTxid,
+          tokenIndex: validation.tokenIndex,
+          genesis: validation.genesis,
+        });
+      } catch (error) {
+        return failure('nft_buy_failed', (error instanceof Error ? error.message : String(error)) || 'NFT purchase failed.');
+      }
+    },
+
     async writeMetaIdPin(input: BotBrowserPinWriteInput): Promise<BrowserCommandResult<BotBrowserPinWriteResult>> {
       const actorResult = resolveActor(deps, input.actorId);
       if (isCommandFailure(actorResult)) {
