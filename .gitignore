@@ -825,3 +825,5 @@ blob-report/
 !tests/mobileVoiceProtocol.test.ts
 !tests/mobileVoiceWireup.test.tsx
 !tests/weixinGateway.test.ts
+!tests/weixinMedia.test.ts
+!docs/weixin-media.md

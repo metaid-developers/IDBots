@@ -40,7 +40,7 @@
     "test:rrsi": "pnpm run compile:electron && node --test tests/capabilityGateRegularizers.test.mjs tests/capabilityFalsifiedLedger.test.mjs tests/capabilityProspectiveGate.test.mjs tests/rrsiEvolutionReport.test.mjs tests/capabilityValidation.test.mjs tests/capabilityReconciliation.test.mjs tests/chainEvidenceValidation.test.mjs tests/promptLayerRollback.test.mjs tests/dreamCapabilityLearnings.test.mjs tests/dreamPrompt.test.mjs tests/memoryHygieneService.test.mjs tests/promotionBudget.test.mjs tests/procedureProbation.test.mjs tests/metaidKnowledgeStore.test.mjs tests/procedureRecall.test.mjs tests/hotLayerExposure.test.mjs tests/experiencePromptInjection.test.mjs tests/hotLayerUsageAudit.test.mjs tests/hotLayerPruning.test.mjs tests/evolutionExploration.test.mjs tests/capabilitySpecificity.test.mjs tests/predictionOodSplit.test.mjs",
     "test:wallet": "pnpm run compile:electron && node --test tests/metabotWalletService.test.mjs",
     "test:im-gateway": "pnpm run compile:electron && node --test tests/imGatewayConnectivity.test.mjs",
-    "test:weixin": "npx tsx --test tests/weixinGateway.test.ts",
+    "test:weixin": "npx tsx --test tests/weixinGateway.test.ts tests/weixinMedia.test.ts",
     "test:friend-wiring": "pnpm run compile:electron && node --test tests/friendRelationshipService.test.mjs tests/friendAgentTools.test.mjs tests/socialTrustPrompt.test.mjs tests/metaidRelationshipResolver.test.mjs tests/metaidCognitionContext.test.mjs tests/friendWiringIntegration.test.mjs",
     "test:friend-invite": "pnpm run compile:electron && node --test tests/friendInviteFlow.test.mjs && npx tsx --test tests/a2aMessageItem.test.tsx",
     "test:rpc-body-guard": "pnpm run compile:electron && node --test tests/metaidRpcBodyGuard.test.mjs",
