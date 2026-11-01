@@ -60,6 +60,7 @@ docs/*
 !docs/analysis/**
 !docs/tickets/
 !docs/tickets/**
+!docs/weixin-channel.md
 tests/*
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
