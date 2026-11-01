@@ -241,8 +241,11 @@ export class MetabotStore {
   /**
    * Demote every Twin except `exceptId` to Worker, preserving the machine-wide
    * "at most one Twin" invariant. The caller is responsible for saveDb().
+   * Public so the cross-device chain restore can hand the Twin role to the
+   * restored Bot (its Twin carries the user's real persona and memories; the
+   * local placeholder Twin the welcome flow created loses the role).
    */
-  private demoteOtherTwins(exceptId: number): void {
+  demoteOtherTwins(exceptId: number): void {
     this.db.run(
       "UPDATE metabots SET metabot_type = 'worker', updated_at = ? WHERE metabot_type = 'twin' AND id != ?",
       [Date.now(), exceptId]

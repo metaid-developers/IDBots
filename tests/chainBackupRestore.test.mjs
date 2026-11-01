@@ -802,3 +802,64 @@ test('a bot without a backup manifest fails the overall restore', async () => {
     stub.restore();
   }
 });
+
+test('restore onto a device that already ran the welcome flow: the backup Twin wins and name collisions rename the local placeholder', async () => {
+  const source = await openStore('idbots-twin-src-');
+  const sourceUser = insertUserIdentity(source.db, source.sqliteStore.getSaveFunction());
+
+  // Two backup bots: a Twin whose name collides with the fresh device's
+  // welcome-flow placeholder, and an ordinary worker.
+  const twinWallet = await createMetaBotWallet({ path: "m/44'/10001'/0'/0/21" });
+  const workerWallet = await createMetaBotWallet({ path: "m/44'/10001'/0'/0/22" });
+  const twinSeed = await seedSourceBot(source, twinWallet.globalmetaid, 'Pixel', "m/44'/10001'/0'/0/21", {}, twinWallet.mnemonic);
+  await seedSourceBot(source, workerWallet.globalmetaid, 'worker-a', "m/44'/10001'/0'/0/22", {}, workerWallet.mnemonic);
+  source.metabotStore.updateMetabot(twinSeed.bot.id, { metabot_type: 'twin' });
+
+  const harness = createBackupHarness();
+  const backup = await harness.runBackup(source.metabotStore, sourceUser, source.sqliteStore);
+  assert.equal(backup.success, true, JSON.stringify(backup));
+
+  const stub = stubIndexer(harness.pins, harness.scopedListings);
+  try {
+    const target = await openStore('idbots-twin-target-');
+    const targetUser = insertUserIdentity(target.db, target.sqliteStore.getSaveFunction());
+    // The welcome flow always leaves a Twin (random pool name) before the user
+    // can import a mnemonic. Here it happens to draw the same name as the
+    // backup's Twin.
+    const placeholder = await createBot(
+      target.metabotStore,
+      'Pixel',
+      'gid-local-placeholder',
+      (await createMetaBotWallet({ path: "m/44'/10001'/0'/0/23" })).mnemonic,
+      "m/44'/10001'/0'/0/23",
+    );
+    target.metabotStore.updateMetabot(placeholder.id, { metabot_type: 'twin' });
+
+    const restored = await runChainBackupRestore({
+      db: target.db,
+      metabotStore: target.metabotStore,
+      userStore: targetUser,
+      saveDb: target.sqliteStore.getSaveFunction(),
+      baseUrl: 'http://stub.test',
+    });
+    assert.equal(restored.success, true, JSON.stringify(restored));
+
+    const targetBots = target.metabotStore.listMetabots();
+    assert.equal(targetBots.length, 3, 'placeholder + two restored bots');
+    const twins = targetBots.filter((bot) => bot.metabot_type === 'twin');
+    assert.equal(twins.length, 1, 'exactly one Twin after restore');
+    assert.equal(twins[0].globalmetaid, twinWallet.globalmetaid, 'the backup Twin holds the role');
+    assert.equal(twins[0].name, 'Pixel', 'the backup Twin keeps its name');
+
+    const localPlaceholder = targetBots.find((bot) => bot.globalmetaid === 'gid-local-placeholder');
+    assert.ok(localPlaceholder, 'placeholder bot survives');
+    assert.equal(localPlaceholder.metabot_type, 'worker', 'local placeholder Twin is demoted, not deleted');
+    assert.equal(localPlaceholder.name, 'Pixel (local)', 'the local placeholder is renamed out of the way');
+
+    // The Twin's soul data was imported onto the restored Twin row.
+    const twinMemories = scalar(target.db, `SELECT COUNT(*) FROM user_memories WHERE metabot_id = ${twins[0].id}`);
+    assert.equal(twinMemories, 1, 'backup Twin memories land on the promoted Twin');
+  } finally {
+    stub.restore();
+  }
+});
