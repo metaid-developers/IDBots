@@ -197,9 +197,53 @@ export interface WeixinGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== QQ (QQ Open Platform) Types ====================
+
+/**
+ * QQ official-bot channel (QQ Open Platform, official `@tencent-connect/qqbot-nodejs`).
+ *
+ * Credential split, on purpose:
+ *   - `appId` / `botId` / `ownerUserOpenid` are identifiers and may live in the
+ *     renderer-visible config;
+ *   - `appSecret` is a bearer credential. It is persisted by `qqStore.ts` in a
+ *     0600 file under `<userData>/qq/accounts` and is NEVER written to the
+ *     config table, a log line, a buzz, or a status object. The `appSecret`
+ *     field exists only so the settings page can hand a value to the dedicated
+ *     `im:qq:credentials:set` IPC; `imStore.getConfig()` strips it.
+ */
+export interface QQConfig {
+  enabled: boolean;
+  /** QQ Open Platform AppID (public identifier). */
+  appId: string;
+  /** Bot id / robot account label, when the platform returns one. */
+  botId?: string | null;
+  /** OpenID of the user who scanned the QR code (binding owner). */
+  ownerUserOpenid?: string | null;
+  /** Write-only field: accepted by setConfig, never read back. */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+export interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  /** AppID currently bound (an identifier, not a secret). */
+  appId: string | null;
+  /** True while a QR login is being polled. */
+  loginPending: boolean;
+  /** Coarse QR login progress for the settings UI. */
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  /** QR payload (a URL) to render for scanning; null when no login is pending. */
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin' | 'qq';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
@@ -207,6 +251,7 @@ export interface IMGatewayConfig {
   telegram: TelegramConfig;
   discord: DiscordConfig;
   weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
 
@@ -221,6 +266,7 @@ export interface IMGatewayStatus {
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
   weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -383,12 +429,22 @@ export const DEFAULT_IM_SETTINGS: IMSettings = {
   skillsEnabled: true,
 };
 
+export const DEFAULT_QQ_CONFIG: QQConfig = {
+  enabled: false,
+  appId: '',
+  botId: null,
+  ownerUserOpenid: null,
+  metabotId: null,
+  debug: true,
+};
+
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_CONFIG,
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
   weixin: DEFAULT_WEIXIN_CONFIG,
+  qq: DEFAULT_QQ_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -458,12 +514,25 @@ export const DEFAULT_WEIXIN_STATUS: WeixinGatewayStatus = {
   lastOutboundAt: null,
 };
 
+export const DEFAULT_QQ_STATUS: QQGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  appId: null,
+  loginPending: false,
+  loginState: 'idle',
+  qrContent: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
 export const DEFAULT_IM_STATUS: IMGatewayStatus = {
   dingtalk: DEFAULT_DINGTALK_STATUS,
   feishu: DEFAULT_FEISHU_STATUS,
   telegram: DEFAULT_TELEGRAM_STATUS,
   discord: DEFAULT_DISCORD_STATUS,
   weixin: DEFAULT_WEIXIN_STATUS,
+  qq: DEFAULT_QQ_STATUS,
 };
 
 // ==================== DingTalk Media Types ====================
