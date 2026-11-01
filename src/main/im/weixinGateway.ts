@@ -12,33 +12,46 @@
  *      weixin/accounts/{accountId}.sync.json.
  *   3. `sendmessage` in <= 1800 character chunks, echoing the inbound
  *      `context_token`; `sendtyping` for the typing indicator.
+ *   4. Media (v2): inbound image/file/video items are downloaded from the CDN,
+ *      AES-128-ECB decrypted and persisted under <userData>/weixin-inbound;
+ *      outbound media goes getuploadurl → AES encrypt → CDN POST → sendmessage.
  *
- * SCOPE (v1): text only, direct chats only. Media items are surfaced as a short
- * `[unsupported ...]` placeholder so the agent can answer instead of going silent.
- * No group chats, no media upload/download, no tool-confirmation prompt in WeChat.
+ * SCOPE (v2): text + image/file in direct chats. Voice audio and group chats stay
+ * out (the platform disables group messaging for these accounts). Video is
+ * uploaded only when a reply explicitly references a video path; inbound video is
+ * stored like a file.
  *
  * RISK: `ilinkai.weixin.qq.com` is a NON-PUBLIC interface. It can change or shut
  * down without notice; treat every failure as possible protocol drift.
  *
  * SECRET HANDLING: the bot token lives only in memory/credential files. It is
- * never logged and never placed in a status object or error message.
+ * never logged and never placed in a status object or error message. Media
+ * credentials (aes_key / encrypt_query_param / upload_param) are never logged;
+ * media error strings pass through `redactMediaSecrets` first.
  */
 
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
 import {
   DEFAULT_WEIXIN_STATUS,
+  type IMMediaAttachment,
   type IMMessage,
   type WeixinConfig,
   type WeixinGatewayStatus,
 } from './types';
 import {
   buildBaseInfo,
+  buildSendItemsPayload,
   buildSendMessagePayload,
   createWeixinClientId,
   parseQrCodeResponse,
   parseQrStatusResponse,
   parseTypingTicket,
   parseUpdatesResponse,
+  parseUploadUrlResponse,
   splitWeixinText,
   toIMMessage,
   WeixinSessionExpiredError,
@@ -46,10 +59,31 @@ import {
   WEIXIN_LONG_POLL_TIMEOUT_MS,
   WEIXIN_QR_POLL_TIMEOUT_MS,
   WEIXIN_BOT_TYPE,
+  WEIXIN_MESSAGE_TYPE_BOT,
   type WeixinInboundMessage,
   type WeixinQrCode,
   type WeixinQrStatus,
 } from './weixinProtocol';
+import {
+  assertWeixinCdnUrl,
+  buildWeixinCdnUploadUrl,
+  buildWeixinMediaItem,
+  defaultWeixinMediaNetwork,
+  downloadWeixinMedia,
+  prepareWeixinUpload,
+  readWeixinMediaRefs,
+  redactMediaSecrets,
+  sanitizeWeixinFileName,
+  uploadKindForFile,
+  WeixinMediaError,
+  WEIXIN_CDN_BASE_URL,
+  WEIXIN_INBOUND_MAX_ATTACHMENTS,
+  WEIXIN_OUTBOUND_MAX_BYTES,
+  type WeixinMediaNetwork,
+  type WeixinMediaRef,
+} from './weixinMedia';
+import { compressWeixinImage, type CompressedWeixinImage } from './weixinImage';
+import { parseMediaMarkers, stripMediaMarkers } from './dingtalkMediaParser';
 import { defaultWeixinTransport, WeixinRequestTimeoutError, type WeixinTransport } from './weixinTransport';
 import { normalizeWeixinAccountId, WeixinStore, type WeixinStoredCredentials } from './weixinStore';
 
@@ -60,6 +94,23 @@ const DEDUPE_TTL_MS = 5 * 60 * 1000;
 const DEDUPE_MAX_ENTRIES = 500;
 /** Delay between two QR status polls when the server answers immediately. */
 const QR_POLL_GAP_MS = 300;
+
+/**
+ * Resolve the default inbound-media directory lazily, so this module stays
+ * importable outside Electron (unit tests pass an explicit directory instead).
+ */
+export function resolveDefaultWeixinMediaDir(): string {
+  try {
+    const electron = require('electron');
+    const userData = electron?.app?.getPath?.('userData');
+    if (typeof userData === 'string' && userData) {
+      return path.join(userData, 'weixin-inbound');
+    }
+  } catch {
+    // Electron not available (unit tests / plain node).
+  }
+  return path.join(os.tmpdir(), 'idbots-weixin-inbound');
+}
 
 export interface WeixinGatewayOptions {
   /** Credential/cursor store; defaults to <userData>/weixin. */
@@ -72,6 +123,14 @@ export interface WeixinGatewayOptions {
   pollBackoffMs?: number[];
   pollTimeoutMs?: number;
   qrPollTimeoutMs?: number;
+  /** Where inbound media is written; defaults to <userData>/weixin-inbound. */
+  mediaRootDir?: string;
+  /** CDN network surface; defaults to the real fetch implementation. */
+  mediaNetwork?: WeixinMediaNetwork;
+  /** CDN base URL for uploads/downloads; defaults to the documented novac2c host. */
+  cdnBaseUrl?: string;
+  /** Image re-encoder; defaults to Electron nativeImage (absent outside Electron). */
+  imageCompressor?: (filePath: string) => CompressedWeixinImage | null;
 }
 
 export class WeixinGateway extends EventEmitter {
@@ -82,6 +141,10 @@ export class WeixinGateway extends EventEmitter {
   private readonly pollBackoffMs: number[];
   private readonly pollTimeoutMs: number;
   private readonly qrPollTimeoutMs: number;
+  private readonly mediaRootDir: string;
+  private readonly mediaNetwork: WeixinMediaNetwork;
+  private readonly cdnBaseUrl: string;
+  private readonly imageCompressor: (filePath: string) => CompressedWeixinImage | null;
 
   private config: WeixinConfig | null = null;
   private status: WeixinGatewayStatus = { ...DEFAULT_WEIXIN_STATUS };
@@ -117,6 +180,17 @@ export class WeixinGateway extends EventEmitter {
       : DEFAULT_POLL_BACKOFF_MS;
     this.pollTimeoutMs = options.pollTimeoutMs ?? WEIXIN_LONG_POLL_TIMEOUT_MS;
     this.qrPollTimeoutMs = options.qrPollTimeoutMs ?? WEIXIN_QR_POLL_TIMEOUT_MS;
+    this.mediaRootDir = options.mediaRootDir && options.mediaRootDir.trim()
+      ? options.mediaRootDir
+      : resolveDefaultWeixinMediaDir();
+    this.mediaNetwork = options.mediaNetwork ?? defaultWeixinMediaNetwork;
+    this.cdnBaseUrl = (options.cdnBaseUrl || WEIXIN_CDN_BASE_URL).replace(/\/+$/, '');
+    this.imageCompressor = options.imageCompressor ?? ((filePath) => compressWeixinImage(filePath));
+  }
+
+  /** Directory inbound media is written to (exposed for diagnostics/tests). */
+  getMediaRootDir(): string {
+    return this.mediaRootDir;
   }
 
   // ==================== Lifecycle ====================
@@ -478,12 +552,19 @@ export class WeixinGateway extends EventEmitter {
   }
 
   private async handleInbound(raw: WeixinInboundMessage): Promise<void> {
+    // Our own outbound echo: never download its media or answer it.
+    if (raw?.message_type === WEIXIN_MESSAGE_TYPE_BOT) return;
+
     const rawId = raw && raw.message_id != null ? String(raw.message_id) : null;
     if (rawId && this.isDuplicate(rawId)) return;
     if (rawId) this.markProcessed(rawId);
 
     const contextToken = typeof raw?.context_token === 'string' ? raw.context_token : '';
-    const message = toIMMessage(raw, this.now());
+    const media = await this.collectInboundMedia(raw);
+    const message = toIMMessage(raw, this.now(), {
+      attachments: media.attachments,
+      failed: media.failed,
+    });
     if (!message) return;
 
     if (contextToken) {
@@ -498,7 +579,7 @@ export class WeixinGateway extends EventEmitter {
     if (!this.onMessageCallback) return;
 
     const replyFn = async (text: string): Promise<void> => {
-      await this.sendText(message.conversationId, text);
+      await this.sendReplyWithMedia(message.conversationId, text);
     };
 
     await this.sendTyping(message.conversationId, true);
@@ -511,6 +592,71 @@ export class WeixinGateway extends EventEmitter {
     } finally {
       await this.sendTyping(message.conversationId, false);
     }
+  }
+
+  /**
+   * Download every inbound media item worth keeping.
+   *
+   * Failures are counted, never thrown: one broken attachment must not cost the
+   * whole message. The count is surfaced in the message body ("附件下载失败") by
+   * `toIMMessage`.
+   */
+  private async collectInboundMedia(
+    raw: WeixinInboundMessage
+  ): Promise<{ attachments: IMMediaAttachment[]; failed: number }> {
+    const { refs, droppedKinds, unusable } = readWeixinMediaRefs(raw?.item_list);
+    if (droppedKinds.length > 0) {
+      console.warn(
+        '[Weixin Gateway] inbound media priority (image > video > file): dropped',
+        droppedKinds.join(', ')
+      );
+    }
+    if (unusable > 0) {
+      console.warn('[Weixin Gateway] inbound media items without usable CDN credentials:', unusable);
+    }
+    if (refs.length === 0) {
+      return { attachments: [], failed: 0 };
+    }
+
+    const kept: WeixinMediaRef[] = refs.slice(0, WEIXIN_INBOUND_MAX_ATTACHMENTS);
+    const overflow = refs.length - kept.length;
+    if (overflow > 0) {
+      console.warn(
+        `[Weixin Gateway] inbound media capped at ${WEIXIN_INBOUND_MAX_ATTACHMENTS} attachments; dropped ${overflow}`
+      );
+    }
+
+    const attachments: IMMediaAttachment[] = [];
+    let failed = overflow;
+
+    for (const ref of kept) {
+      try {
+        const attachment = await downloadWeixinMedia(ref, {
+          dir: this.mediaRootDir,
+          network: this.mediaNetwork,
+          now: this.now,
+        });
+        attachments.push(attachment);
+        if (this.config?.debug) {
+          console.log('[Weixin Gateway] inbound media saved', {
+            kind: ref.kind,
+            mimeType: attachment.mimeType,
+            fileSize: attachment.fileSize,
+            fileName: attachment.fileName,
+            localPath: attachment.localPath,
+          });
+        }
+      } catch (error) {
+        failed += 1;
+        console.warn(
+          '[Weixin Gateway] inbound media failed:',
+          ref.kind,
+          redactMediaSecrets(this.describeError(error))
+        );
+      }
+    }
+
+    return { attachments, failed };
   }
 
   private isDuplicate(messageId: string): boolean {
@@ -558,6 +704,208 @@ export class WeixinGateway extends EventEmitter {
     this.lastConversationId = conversationId;
     this.status = { ...this.status, lastOutboundAt: this.now(), lastError: null };
     this.emitStatus();
+  }
+
+  /**
+   * Send one local file as a Weixin media message.
+   *
+   * Flow (protocol verified against the official plugin):
+   *   getuploadurl(rawsize, padded filesize, md5, filekey, aeskey hex)
+   *   → AES-128-ECB encrypt → POST ciphertext to the CDN
+   *   → `x-encrypted-param` becomes media.encrypt_query_param
+   *   → sendmessage with one image/file/video item.
+   *
+   * Images above our own size/pixel guard are re-encoded first; when no encoder is
+   * available (plain node) the original is sent unchanged.
+   *
+   * `opts.text` is delivered as a separate text message BEFORE the media, matching
+   * the official plugin's one-item-per-message behaviour.
+   */
+  async sendMedia(
+    conversationId: string,
+    filePath: string,
+    opts: { text?: string; fileName?: string } = {}
+  ): Promise<void> {
+    if (!this.token) {
+      throw new Error('Weixin gateway is not authorized');
+    }
+    if (!filePath || typeof filePath !== 'string') {
+      throw new WeixinMediaError('media path is required');
+    }
+
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(filePath);
+    } catch {
+      throw new WeixinMediaError(`media file not found: ${filePath}`);
+    }
+    if (!stats.isFile()) {
+      throw new WeixinMediaError(`media path is not a regular file: ${filePath}`);
+    }
+    if (stats.size === 0) {
+      throw new WeixinMediaError(`refusing to send an empty file: ${filePath}`);
+    }
+    if (stats.size > WEIXIN_OUTBOUND_MAX_BYTES) {
+      throw new WeixinMediaError(
+        `media file is ${stats.size} bytes, above the ${WEIXIN_OUTBOUND_MAX_BYTES} byte client ceiling`
+      );
+    }
+
+    const displayName = sanitizeWeixinFileName(opts.fileName || path.basename(filePath));
+    const { kind, mediaType } = uploadKindForFile(displayName || filePath);
+
+    let sendPath = filePath;
+    let temporaryPath: string | null = null;
+    if (kind === 'image') {
+      let compressed: CompressedWeixinImage | null = null;
+      try {
+        compressed = this.imageCompressor(filePath);
+      } catch (error) {
+        console.warn('[Weixin Gateway] image re-encode skipped:', this.describeError(error));
+      }
+      if (compressed && compressed.bytes > 0) {
+        sendPath = compressed.path;
+        if (compressed.temporary) temporaryPath = compressed.path;
+        console.log('[Weixin Gateway] image re-encoded before upload', {
+          bytesBefore: stats.size,
+          bytesAfter: compressed.bytes,
+          width: compressed.width,
+          height: compressed.height,
+        });
+      }
+    }
+
+    try {
+      const plaintext = fs.readFileSync(sendPath);
+      const prepared = prepareWeixinUpload(plaintext);
+      const uploadUrl = await this.requestMediaUploadUrl(conversationId, mediaType, prepared);
+      const uploaded = await this.mediaNetwork.postBytes(uploadUrl, prepared.ciphertext, {
+        timeoutMs: 120_000,
+      });
+      if (!uploaded.encryptedParam) {
+        const detail = uploaded.errorText ? `: ${uploaded.errorText}` : '';
+        throw new WeixinMediaError(`CDN upload failed (HTTP ${uploaded.status})${detail}`);
+      }
+
+      if (opts.text && opts.text.trim()) {
+        await this.sendText(conversationId, opts.text);
+      }
+
+      const item = buildWeixinMediaItem({
+        kind,
+        downloadEncryptedQueryParam: uploaded.encryptedParam,
+        prepared,
+        fileName: displayName,
+      });
+      await this.post('ilink/bot/sendmessage', buildSendItemsPayload({
+        toUserId: conversationId,
+        items: [item],
+        contextToken: this.contextTokens.get(conversationId) || null,
+        clientId: createWeixinClientId(this.now()),
+      }));
+
+      this.lastConversationId = conversationId;
+      this.status = { ...this.status, lastOutboundAt: this.now(), lastError: null };
+      this.emitStatus();
+      console.log('[Weixin Gateway] media sent', { kind, bytes: prepared.rawsize, fileName: displayName });
+    } finally {
+      if (temporaryPath) {
+        try {
+          fs.unlinkSync(temporaryPath);
+        } catch {
+          // Temp cleanup is best effort.
+        }
+      }
+    }
+  }
+
+  /** Ask the server for a pre-signed upload URL and return the CDN URL to POST to. */
+  private async requestMediaUploadUrl(
+    conversationId: string,
+    mediaType: number,
+    prepared: ReturnType<typeof prepareWeixinUpload>
+  ): Promise<string> {
+    const response = await this.transport.request({
+      method: 'POST',
+      baseUrl: this.baseUrl,
+      path: 'ilink/bot/getuploadurl',
+      body: {
+        filekey: prepared.filekey,
+        media_type: mediaType,
+        to_user_id: conversationId,
+        rawsize: prepared.rawsize,
+        rawfilemd5: prepared.rawfilemd5,
+        filesize: prepared.filesize,
+        no_need_thumb: true,
+        aeskey: prepared.aesKeyHex,
+      },
+      token: this.token,
+      timeoutMs: 20_000,
+    });
+
+    const parsed = parseUploadUrlResponse(response.data);
+    if (parsed.uploadFullUrl) {
+      return assertWeixinCdnUrl(parsed.uploadFullUrl).toString();
+    }
+    if (parsed.uploadParam) {
+      return buildWeixinCdnUploadUrl({
+        uploadParam: parsed.uploadParam,
+        filekey: prepared.filekey,
+        cdnBaseUrl: this.cdnBaseUrl,
+      });
+    }
+    throw new WeixinMediaError('getuploadurl returned neither upload_full_url nor upload_param');
+  }
+
+  /**
+   * Reply path: text plus any media markers the agent embedded
+   * (`![alt](/abs/path.png)`, `[name](/abs/file.pdf)`, or a bare absolute path).
+   * Text is sent first, then each existing file; a missing/failing file becomes a
+   * short text notice so the user is never left wondering.
+   */
+  private async sendReplyWithMedia(conversationId: string, text: string): Promise<void> {
+    const markers = parseMediaMarkers(text || '');
+    if (markers.length === 0) {
+      await this.sendText(conversationId, text);
+      return;
+    }
+
+    const stripped = stripMediaMarkers(text, markers);
+    if (stripped.trim()) {
+      await this.sendText(conversationId, stripped);
+    }
+
+    for (const marker of markers) {
+      const rawPath = marker.path || '';
+      const filePath = rawPath.startsWith('~/')
+        ? path.join(process.env.HOME || '', rawPath.slice(2))
+        : rawPath;
+      try {
+        if (!filePath || !fs.existsSync(filePath)) {
+          console.warn('[Weixin Gateway] reply media missing:', path.basename(filePath || '(empty)'));
+          await this.notifyReplyFailure(conversationId, `（附件未找到：${path.basename(filePath || '?')}）`);
+          continue;
+        }
+        // `marker.name` is the alt text / link label, not a filename: using it
+        // would hide the real extension (and could turn an image into a file).
+        await this.sendMedia(conversationId, filePath);
+      } catch (error) {
+        console.warn('[Weixin Gateway] reply media failed:', redactMediaSecrets(this.describeError(error)));
+        await this.notifyReplyFailure(
+          conversationId,
+          `（附件发送失败：${sanitizeWeixinFileName(path.basename(filePath || '?'))}）`
+        );
+      }
+    }
+  }
+
+  /** Best-effort user-facing notice; never throws. */
+  private async notifyReplyFailure(conversationId: string, notice: string): Promise<void> {
+    try {
+      await this.sendText(conversationId, notice);
+    } catch (error) {
+      console.warn('[Weixin Gateway] failure notice could not be sent:', this.describeError(error));
+    }
   }
 
   /** Show or clear the typing indicator. Best effort: never throws. */
