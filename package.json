@@ -41,7 +41,7 @@
     "test:wallet": "pnpm run compile:electron && node --test tests/metabotWalletService.test.mjs",
     "test:im-gateway": "pnpm run compile:electron && node --test tests/imGatewayConnectivity.test.mjs",
     "test:friend-wiring": "pnpm run compile:electron && node --test tests/friendRelationshipService.test.mjs tests/friendAgentTools.test.mjs tests/socialTrustPrompt.test.mjs tests/metaidRelationshipResolver.test.mjs tests/metaidCognitionContext.test.mjs tests/friendWiringIntegration.test.mjs",
-    "test:friend-invite": "pnpm run compile:electron && node --test tests/friendInviteFlow.test.mjs && npx tsx --test tests/a2aMessageItem.test.tsx",
+    "test:friend-invite": "pnpm run compile:electron && node --test tests/friendInviteFlow.test.mjs tests/friendGuidanceTrigger.test.mjs tests/friendGuidanceOverlayChain.test.mjs && npx tsx --test tests/friendGuidanceIntent.test.ts tests/a2aMessageItem.test.tsx",
     "test:rpc-body-guard": "pnpm run compile:electron && node --test tests/metaidRpcBodyGuard.test.mjs",
     "test:subsidy": "pnpm run compile:electron && node --test tests/mvcSubsidyService.test.mjs",
     "test:knowledge-base": "pnpm run compile:electron && node --test tests/knowledgeBaseText.test.mjs tests/knowledgeBasePresentation.test.mjs tests/domMatrixPolyfill.test.mjs tests/knowledgeBaseIndexStore.test.mjs tests/knowledgeBaseService.test.mjs tests/knowledgeBaseAgentTools.test.mjs",

@@ -255,7 +255,9 @@ import {
   recordOwnerSentPrivateChatA2AMessage,
   startPrivateChatDaemon,
   stopPrivateChatDaemon,
+  triggerFriendActionFromGuidance,
 } from './services/privateChatDaemon';
+import { detectMutualFriendInviteIntent } from './services/friendGuidanceIntent';
 import {
   startPrivateChatBackfill,
   stopPrivateChatBackfill,
@@ -341,6 +343,7 @@ import { A2A_GUIDANCE_MAX_LENGTH, a2aGuidanceQueue, normalizeA2AGuidanceText } f
 import { coworkLog } from './libs/coworkLogger';
 import {
   buildA2AGuidanceRestartPrompt,
+  composeA2AGuidanceRestartDelivery,
   generateA2AGuidanceRestartMessage,
   shouldRestartA2APrivateChatForGuidance,
 } from './services/a2aGuidanceRestart';
@@ -12366,6 +12369,48 @@ if (!gotTheLock) {
             )
           : null;
         const currentMetadata = parseJsonRecord(currentMapping?.metadataJson);
+
+        // S6 final-verification defect #4: an explicit owner mutual-friend
+        // instruction (「请完成互相关注」) must reach the S5 owner-authorization
+        // chain deterministically. Neither guidance delivery path could do it
+        // alone — the queued path only applies inside the next inbound peer
+        // message turn (in the followsMe=true endgame the peer has just
+        // followed and stays silent), and the restart path is a one-shot
+        // composer with no friend-tag protocol. Fire the card here, then let
+        // the guidance continue through its normal queued/restart delivery.
+        if (detectMutualFriendInviteIntent(guidance)) {
+          const guidanceMetabot = getMetabotStore().getMetabotById(session.metabotId);
+          const guidancePeerGlobalMetaId = toSafeString(
+            session.peerGlobalMetaId || currentMetadata.peerGlobalMetaId
+          ).trim();
+          triggerFriendActionFromGuidance({
+            coworkStore: coworkStoreInst,
+            sessionId,
+            externalConversationId: sourceContext.externalConversationId,
+            metabot: guidanceMetabot
+              ? {
+                id: guidanceMetabot.id,
+                name: guidanceMetabot.name,
+                globalmetaid: guidanceMetabot.globalmetaid ?? '',
+              }
+              : { id: session.metabotId, name: session.metabotName ?? '', globalmetaid: '' },
+            peerGlobalMetaId: guidancePeerGlobalMetaId,
+            peerName: session.peerName ?? null,
+            action: 'invite',
+            createPin: (metabotStore, metabot_id, payload, options) => createPin(
+              metabotStore,
+              metabot_id,
+              payload,
+              { ...options, feeRate: getGlobalFeeRate('mvc') }
+            ),
+            metabotStore: getMetabotStore(),
+            requestFriendActionApproval: requestDaemonFriendActionApproval,
+            resolveFriendPairState: resolveDaemonFriendPairState,
+            emitLog: (msg) => console.log(msg),
+            emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+          });
+        }
+
         const shouldRestart = shouldRestartA2APrivateChatForGuidance({
           session,
           sourceChannel: sourceContext.sourceChannel,
@@ -12446,15 +12491,49 @@ if (!gotTheLock) {
           });
           if (!replyText) throw new Error('Local MetaBot did not generate a restart message');
 
+          // S6 defect #4 hardening: the restart prompt carries no friend-tag
+          // protocol, so a tag here means the model echoed one from the
+          // embedded recent-message context. Never deliver it verbatim —
+          // strip it and route the action through the owner-authorization
+          // flow exactly like the daemon's reply chain does.
+          const restartDelivery = composeA2AGuidanceRestartDelivery(replyText);
+
           const sent = await sendEncryptedSimplemsg({
             metabotId: session.metabotId,
             wallet,
             peerGlobalMetaId,
             peerChatPubkey: chatPubkey,
-            plaintext: replyText,
+            plaintext: restartDelivery.text,
             replyPin,
             createPin: async (metabotId, payload) => createPin(metabotStoreInst, metabotId, payload, { feeRate: getGlobalFeeRate('mvc') }),
           });
+
+          if (restartDelivery.friendAction) {
+            triggerFriendActionFromGuidance({
+              coworkStore: coworkStoreInst,
+              sessionId,
+              externalConversationId: sourceContext.externalConversationId,
+              metabot: {
+                id: metabot.id,
+                name: metabot.name,
+                globalmetaid: metabot.globalmetaid ?? '',
+              },
+              peerGlobalMetaId,
+              peerName: session.peerName ?? null,
+              action: restartDelivery.friendAction,
+              createPin: (metabotStore, metabot_id, payload, options) => createPin(
+                metabotStore,
+                metabot_id,
+                payload,
+                { ...options, feeRate: getGlobalFeeRate('mvc') }
+              ),
+              metabotStore: metabotStoreInst,
+              requestFriendActionApproval: requestDaemonFriendActionApproval,
+              resolveFriendPairState: resolveDaemonFriendPairState,
+              emitLog: (msg) => console.log(msg),
+              emitToRenderer: (channel, data) => broadcastToRenderers(channel, data),
+            });
+          }
 
           coworkStoreInst.updateConversationMappingMetadata(
             'metaweb_private',

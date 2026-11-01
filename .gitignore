@@ -66,6 +66,9 @@ tests/*
 !tests/friendWiringIntegration.test.mjs
 !tests/friendInviteFlow.test.mjs
 !tests/friendInviteOverlayChain.test.mjs
+!tests/friendGuidanceIntent.test.ts
+!tests/friendGuidanceTrigger.test.mjs
+!tests/friendGuidanceOverlayChain.test.mjs
 !tests/socialTrustPrompt.test.mjs
 !tests/gatewayCore.test.mjs
 !tests/startupTiers.test.mjs

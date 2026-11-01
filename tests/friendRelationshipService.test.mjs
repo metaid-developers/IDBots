@@ -165,7 +165,7 @@ test('provider maps the relation fold to the friend tri-state with block flags',
   }));
   const provider = new MetasoFriendRelationshipProvider({ baseUrl: 'http://social.test', fetchImpl });
   const pair = await provider.resolvePairState({ firstGlobalMetaID: SOURCE, secondGlobalMetaID: PEER });
-  assert.deepEqual(pair, { status: 'not_confirmed', blocking: true, blockedBy: false });
+  assert.deepEqual(pair, { status: 'not_confirmed', blocking: true, blockedBy: false, followsMe: true, followedByMe: false });
   assert.equal(await provider.resolveFriendStatus({ firstGlobalMetaID: SOURCE, secondGlobalMetaID: PEER }), 'not_confirmed');
   assert.equal(calls.length, 1, 'TTL cache serves the second lookup without a refetch');
 });
@@ -205,7 +205,7 @@ test('provider failures open the breaker and short-circuit to unknown without ne
   assert.equal(calls.length, 2, 'breaker opens at the failure threshold');
   // While open: immediate unknown, no fetch, no throw.
   const shortCircuit = await provider.resolvePairState({ firstGlobalMetaID: SOURCE, secondGlobalMetaID: PEER });
-  assert.deepEqual(shortCircuit, { status: 'unknown', blocking: null, blockedBy: null });
+  assert.deepEqual(shortCircuit, { status: 'unknown', blocking: null, blockedBy: null, followsMe: null, followedByMe: null });
   assert.equal(calls.length, 2);
   // After the cooldown the breaker half-opens: a success closes it again.
   clock += 61_000;
@@ -221,7 +221,7 @@ test('provider failures open the breaker and short-circuit to unknown without ne
     now: () => clock,
   });
   const healedPair = await healed.resolvePairState({ firstGlobalMetaID: SOURCE, secondGlobalMetaID: PEER });
-  assert.deepEqual(healedPair, { status: 'confirmed', blocking: false, blockedBy: false });
+  assert.deepEqual(healedPair, { status: 'confirmed', blocking: false, blockedBy: false, followsMe: false, followedByMe: false });
 });
 
 test('malformed pair input resolves to unknown without touching the network', async () => {
@@ -231,11 +231,11 @@ test('malformed pair input resolves to unknown without touching the network', as
   const provider = new MetasoFriendRelationshipProvider({ baseUrl: 'http://social.test', fetchImpl });
   assert.deepEqual(
     await provider.resolvePairState({ firstGlobalMetaID: 'not-a-gmid', secondGlobalMetaID: PEER }),
-    { status: 'unknown', blocking: null, blockedBy: null },
+    { status: 'unknown', blocking: null, blockedBy: null, followsMe: null, followedByMe: null },
   );
   assert.deepEqual(
     await provider.resolvePairState({ firstGlobalMetaID: SOURCE, secondGlobalMetaID: SOURCE }),
-    { status: 'unknown', blocking: null, blockedBy: null },
+    { status: 'unknown', blocking: null, blockedBy: null, followsMe: null, followedByMe: null },
   );
   assert.equal(calls.length, 0);
 });
