@@ -643,6 +643,7 @@ export class WeixinGateway extends EventEmitter {
             mimeType: attachment.mimeType,
             fileSize: attachment.fileSize,
             fileName: attachment.fileName,
+            duration: attachment.duration,
             localPath: attachment.localPath,
           });
         }

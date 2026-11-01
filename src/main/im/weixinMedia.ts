@@ -55,8 +55,27 @@ export const WEIXIN_CDN_HOST_ALLOWLIST = new Set([
 
 /** Per-image inbound cap (matches the Telegram channel's 30 MB image口径). */
 export const WEIXIN_INBOUND_MAX_IMAGE_BYTES = 30 * 1024 * 1024;
-/** Per-file inbound cap. 100 MB is the official plugin's media ceiling. */
+/**
+ * Per-file inbound cap. 100 MB, read from the official plugin:
+ * `@tencent-weixin/openclaw-weixin@2.4.10` `src/media/media-download.ts:9`
+ * (`const WEIXIN_MEDIA_MAX_BYTES = 100 * 1024 * 1024;`), used by the FILE branch.
+ */
 export const WEIXIN_INBOUND_MAX_FILE_BYTES = 100 * 1024 * 1024;
+/**
+ * Per-video inbound cap — deliberately its own constant: a video is not an image,
+ * and reusing the 30 MB image guard would silently drop ordinary phone videos.
+ *
+ * Provenance (verified, not chosen): the official plugin carries ONE media
+ * ceiling, `WEIXIN_MEDIA_MAX_BYTES = 100 * 1024 * 1024`
+ * (`@tencent-weixin/openclaw-weixin@2.4.10`, `src/media/media-download.ts:9`), and
+ * its VIDEO branch passes exactly that number to `saveMedia(...)`
+ * (`src/media/media-download.ts:145`). 100 MB is therefore the only video number
+ * the vendor code actually states. It is a *client-side save guard*, not a
+ * documented server limit; the plugin's other size knob `maxSingleMediaBytes`
+ * (25 MB, `src/config/config-schema.ts:44`) is a quote-cache retention budget and
+ * says nothing about transfer. Full table: `docs/weixin-media.md` §5.
+ */
+export const WEIXIN_INBOUND_MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 /** Max attachments kept from ONE inbound message (Telegram parity). */
 export const WEIXIN_INBOUND_MAX_ATTACHMENTS = 20;
 /**
@@ -349,6 +368,31 @@ export interface WeixinMediaRef {
   fileName: string | null;
   /** Server-reported plaintext size hint, when present. */
   sizeHint: number | null;
+  /** `video_item.play_length` exactly as received; absent for non-video items. */
+  playLength?: number | null;
+}
+
+/**
+ * Unit of `video_item.play_length`.
+ *
+ * UNVERIFIED — the official plugin declares the field
+ * (`@tencent-weixin/openclaw-weixin@2.4.10` `src/api/types.ts:139`) but never
+ * reads it anywhere in its source, so vendor code yields no unit. We therefore do
+ * not translate it into `IMMediaAttachment.duration` (documented as seconds);
+ * filling a seconds field from an unknown unit would be a guess. Flip this only
+ * with an observed sample: send a video of known length and compare.
+ */
+export const WEIXIN_VIDEO_PLAY_LENGTH_UNIT: 'unknown' | 's' | 'ms' = 'unknown';
+
+/** Convert `play_length` to seconds when (and only when) its unit is proven. */
+export function weixinPlayLengthToSeconds(
+  playLength: number | null | undefined,
+  unit: 'unknown' | 's' | 'ms' = WEIXIN_VIDEO_PLAY_LENGTH_UNIT
+): number | null {
+  if (playLength == null || !Number.isFinite(playLength) || playLength < 0) return null;
+  if (unit === 's') return playLength;
+  if (unit === 'ms') return Math.round((playLength / 1000) * 10) / 10;
+  return null;
 }
 
 export interface WeixinMediaRefResult {
@@ -407,6 +451,7 @@ function toRef(item: WeixinMessageItem, kind: WeixinMediaRef['kind']): WeixinMed
     aesKeyHex: kind === 'image' ? readString(holder, 'aeskey') : null,
     fileName: kind === 'file' ? readString(holder, 'file_name') : null,
     sizeHint: readNumber(holder, kind === 'image' ? ['mid_size', 'hd_size'] : kind === 'video' ? ['video_size'] : ['len']),
+    playLength: kind === 'video' ? readNumber(holder, ['play_length']) : null,
   };
 }
 
@@ -581,7 +626,11 @@ export async function downloadWeixinMedia(
 ): Promise<IMMediaAttachment> {
   const network = params.network ?? defaultWeixinMediaNetwork;
   const maxBytes = params.maxBytes
-    ?? (ref.kind === 'image' ? WEIXIN_INBOUND_MAX_IMAGE_BYTES : WEIXIN_INBOUND_MAX_FILE_BYTES);
+    ?? (ref.kind === 'image'
+      ? WEIXIN_INBOUND_MAX_IMAGE_BYTES
+      : ref.kind === 'video'
+        ? WEIXIN_INBOUND_MAX_VIDEO_BYTES
+        : WEIXIN_INBOUND_MAX_FILE_BYTES);
 
   let url: string;
   if (ref.fullUrl) {
@@ -620,12 +669,22 @@ export async function downloadWeixinMedia(
   }
 
   const sniffed = sniffImageMime(plaintext);
-  const displayName = sanitizeWeixinFileName(
-    ref.fileName,
-    sniffed ? `weixin-image${extensionForMime(sniffed)}` : undefined
-  );
+  const fallbackName = sniffed
+    ? `weixin-image${extensionForMime(sniffed)}`
+    : ref.kind === 'video'
+      ? 'weixin-video.mp4'
+      : undefined;
+  const displayName = sanitizeWeixinFileName(ref.fileName, fallbackName);
   const mimeType = sniffed
-    || (ref.fileName ? mimeFromFileName(ref.fileName) : (ref.kind === 'image' ? 'image/jpeg' : 'application/octet-stream'));
+    || (ref.fileName
+      ? mimeFromFileName(ref.fileName)
+      // The vendor plugin saves every inbound video as video/mp4
+      // (`src/media/media-download.ts:145`), so that is the honest default here.
+      : ref.kind === 'image'
+        ? 'image/jpeg'
+        : ref.kind === 'video'
+          ? 'video/mp4'
+          : 'application/octet-stream');
   const extension = sniffed ? extensionForMime(sniffed) : extensionForMime(mimeType);
 
   fs.mkdirSync(params.dir, { recursive: true });
@@ -636,13 +695,22 @@ export async function downloadWeixinMedia(
   const localPath = resolveInsideDir(params.dir, diskName);
   fs.writeFileSync(localPath, plaintext, { mode: 0o600 });
 
-  return {
+  const attachment: IMMediaAttachment = {
     type: imMediaTypeFor(ref.kind),
     localPath,
     mimeType,
     fileName: displayName,
     fileSize: plaintext.length,
   };
+  // Video metadata: duration only once its unit is proven, and width/height not at
+  // all — the protocol's only dimension fields are `thumb_width` / `thumb_height`,
+  // which describe the THUMBNAIL, not the video frame. Copying those into
+  // `width`/`height` would be a fabricated fact.
+  if (ref.kind === 'video') {
+    const seconds = weixinPlayLengthToSeconds(ref.playLength);
+    if (seconds != null) attachment.duration = seconds;
+  }
+  return attachment;
 }
 
 // ---------------------------------------------------------------------------

@@ -397,6 +397,15 @@ function describeUnsupportedItems(itemList: WeixinMessageItem[] | undefined): st
   return `[unsupported weixin message: ${Array.from(new Set(kinds)).join(', ')}]`;
 }
 
+/** Human-readable size for the one-line media description (e.g. `12.3MB`). */
+export function formatWeixinMediaSize(bytes: number | undefined): string | null {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return null;
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) return `${mb.toFixed(1)}MB`;
+  const kb = bytes / 1024;
+  return kb >= 1 ? `${kb.toFixed(0)}KB` : `${bytes}B`;
+}
+
 /**
  * One-line Chinese description for a media-only message, so the agent always
  * receives something it can act on instead of an empty body.
@@ -410,6 +419,11 @@ export function describeWeixinAttachments(attachments: IMMediaAttachment[] | und
   if (attachments.length === 1 && documents === 1) {
     const name = attachments[0].fileName;
     return name ? `用户发送了文件「${name}」` : '用户发送了文件 1 个';
+  }
+
+  if (attachments.length === 1 && videos === 1) {
+    const size = formatWeixinMediaSize(attachments[0].fileSize);
+    return size ? `用户发送了一个视频 ${size}` : '用户发送了一个视频';
   }
 
   const parts: string[] = [];
