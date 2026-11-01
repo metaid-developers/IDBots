@@ -88,9 +88,21 @@ SEND-MEDIA-OK {"conversationId":"o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat",
 What this proves: `getuploadurl` accepted the request shape, the CDN accepted the
 ciphertext and returned `x-encrypted-param`, and `sendmessage` returned `ret=0` for
 an `image_item` carrying `encrypt_type: 1` and `mid_size = 94600` padded to
-`94608`. What it does **not** prove: that the image rendered in the recipient's
-WeChat client. No human confirmation of receipt was obtained, so this leg is
-recorded as **链路成功 / 人眼回执未确认 (human receipt NOT verified)**.
+`94608`.
+
+Human receipt was then confirmed over the same conversation. The recipient was
+asked, in a message that specified the exact reply phrase, whether the 94,600-byte
+gradient image had arrived; the reply was:
+
+```
+[IMCoworkHandler] 处理消息: { "conversationId": "o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat",
+                              "originalContent": "收到图片" }
+```
+
+So this leg is **PASS with human confirmation**. The honest limit of that
+confirmation: it is "the human said the image arrived", not an independent
+description of the image contents (the phrase was prescribed to avoid ambiguity),
+and it came back on the same `conversationId` that sent the request.
 
 ## 5. Live leg C — WeChat → IDBots file: PASS in the other session's run, file verified here
 
@@ -150,8 +162,10 @@ not claim authorship of, or live measurement for, the concurrent session's commi
 | --- | --- | --- |
 | 微信发图片 → IDBots 收到并落盘 | **PASS** | §3: log + 19,186-byte valid PNG at an absolute path, hash re-checked, content described correctly by the agent |
 | 微信发文件 → IDBots 收到并落盘 | **PASS (captured by the concurrent session)** | §5: log + 86-byte UTF-8 file re-checked here; not this worker's own run |
-| IDBots 回发图片 → 微信能收到 | **链路 PASS / 人眼回执未确认** | §4: CDN upload + `sendmessage` `ret=0`; nobody confirmed the image appeared on the phone |
+| IDBots 回发图片 → 微信能收到 | **PASS** | §4: CDN upload + `sendmessage` `ret=0`, plus a human "收到图片" reply at 01:18 on the same conversation |
 
-Nothing in this table is rounded up: the third row is deliberately not a clean
-"pass" because "微信能收到" is a claim about a human's screen, and no human
-confirmed it in this run.
+Nothing in this table is rounded up. Two rows rest on evidence produced during the
+window of this run by another instance sharing the same worktree (§5) — that is
+stated in the row itself rather than absorbed into a clean "pass". The third row's
+human confirmation is a prescribed one-line reply, which proves arrival but not
+that the rendered image was inspected for quality.
