@@ -74,7 +74,14 @@ interface ProbeDatabaseSync {
 
 /**
  * Open a candidate idbots.sqlite READ-ONLY and read the metabots row count
- * plus the newest updated_at. The database is opened through SQLite's
+ * plus the newest updated_at. The count EXCLUDES the seeded 'welcome'
+ * system bot: a library holding only the welcome bot is still an empty
+ * library for recovery purposes (the 2026-11-01 Windows incident left
+ * users with exactly that state — a fresh DB plus a welcome bot — and
+ * they must still be offered recovery). Schemas without a metabot_type
+ * column fall back to the unfiltered count.
+ *
+ * The database is opened through SQLite's
  * `immutable=1` URI mode: a plain { readOnly: true } open of a WAL-mode
  * database CREATES -shm/-wal sidecars next to the candidate (verified
  * empirically on node:sqlite), which would violate the read-only contract
@@ -124,10 +131,23 @@ export function readSqliteMetabotsSummary(dbPath: string): SqliteMetabotsSummary
   }
 
   try {
-    const statement = db.prepare(
-      'SELECT COUNT(*) AS metabots_count, MAX(updated_at) AS last_updated_at FROM metabots',
-    );
-    const rows = statement.all();
+    let rows: Array<Record<string, unknown>>;
+    try {
+      // Count REAL bots: the seeded 'welcome' system bot does not make a
+      // library non-empty (a fresh install carries one). A NULL type counts
+      // as a real bot — very old schemas predate the metabot_type backfill.
+      rows = db
+        .prepare(
+          "SELECT COUNT(*) AS metabots_count, MAX(updated_at) AS last_updated_at FROM metabots WHERE metabot_type IS NULL OR metabot_type != 'welcome'",
+        )
+        .all();
+    } catch {
+      // Legacy schema without a metabot_type column: fall back to the
+      // unfiltered count rather than losing the candidate.
+      rows = db
+        .prepare('SELECT COUNT(*) AS metabots_count, MAX(updated_at) AS last_updated_at FROM metabots')
+        .all();
+    }
     const row = rows[0];
     if (!row) {
       return null;

@@ -19662,12 +19662,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // detectable across junction swaps / data-directory migrations.
     writeDataGuardSnapshot('startup');
 
-    // feat/legacy-data-recovery: metabots count of the freshly opened store,
-    // shared by the recovery guard and the version-change backup. A missing
-    // metabots table (brand-new database) reads as 0.
+    // feat/legacy-data-recovery: count of REAL bots in the freshly opened
+    // store, used by the recovery guard. The seeded 'welcome' system bot
+    // does NOT make a library non-empty — a welcome-only library (the exact
+    // state the 2026-11-01 Windows incident left behind) is still an empty
+    // library and must get the recovery offer. A missing metabots table
+    // (brand-new database) reads as 0.
     const countCurrentMetabots = (): number => {
       try {
-        const result = store.getDatabase().exec('SELECT COUNT(*) FROM metabots');
+        const result = store.getDatabase().exec("SELECT COUNT(*) FROM metabots WHERE metabot_type != 'welcome'");
         return Number(result[0]?.values?.[0]?.[0] ?? 0);
       } catch {
         return 0;
