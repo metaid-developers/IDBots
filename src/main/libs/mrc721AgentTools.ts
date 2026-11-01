@@ -68,6 +68,24 @@ export type Mrc721ToolsControl = {
     totalCost: number;
     feeAssist?: unknown;
   }>;
+  /** 收藏级修改:issuer-only modify pin carrying the full merged content. */
+  collectionUpdate(input: {
+    metabotId: number;
+    collectionName: string;
+    name?: string;
+    desc?: string;
+    website?: string;
+    cover?: string;
+    metadata?: unknown;
+    network?: 'mvc' | 'btc';
+  }): Promise<{
+    collectionName: string;
+    pinId: string;
+    txids: string[];
+    totalCost: number;
+    feeAssist?: unknown;
+    updatedFields: string[];
+  }>;
   /** R2: mint one item pin (+ optional follow-up item_desc pin). */
   mint(input: {
     metabotId: number;
@@ -276,6 +294,29 @@ export function formatMrc721CollectionCreateResult(input: {
   }
   lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
   lines.push('- next: mrc721_mint to add items under this collection.');
+  return lines.join('\n');
+}
+
+export function formatMrc721CollectionUpdateResult(input: {
+  collectionName: string;
+  pinId: string;
+  txids: string[];
+  totalCost: number;
+  feeAssist?: unknown;
+  updatedFields: string[];
+}): string {
+  const lines: string[] = [];
+  lines.push(`Collection "${input.collectionName}" update broadcast on-chain (operation=modify pin at the collection_desc path).`);
+  lines.push(`- modify pinId: ${input.pinId}`);
+  if (input.txids.length) lines.push(`- txids: ${input.txids.join(', ')}`);
+  lines.push(`- cost: ${input.totalCost} sats`);
+  lines.push(...feeAssistReceiptLines(input.feeAssist));
+  lines.push(`- updated fields: ${input.updatedFields.join(', ')} — merged into the FULL latest collection content (full rewrite, not a diff); issuer permission verified against the collection_desc creator.`);
+  lines.push(
+    '- visibility: the indexed collection shows the merged content once the indexer ingests the modify pin '
+    + '(indexing latency = pin confirmation latency) — verify with mrc721_collection_info (cover / modify history).',
+  );
+  lines.push(`- view link: ${markdownSelfLink(`pin://${input.pinId}`)}`);
   return lines.join('\n');
 }
 
@@ -508,6 +549,81 @@ export function buildMrc721AgentTools(deps: {
         }));
       } catch (error) {
         return textResult(`mrc721_collection_create failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_collection_update (收藏级修改, write)
+  // -------------------------------------------------------------------------
+  const mrc721CollectionUpdate = tool(
+    'mrc721_collection_update',
+    [
+      'Modify the display info of an MRC-721 collection THIS session MetaBot issued (pin-based MetaID NFT — NOT the MetaContract wallet_nft_* line): name / desc / website / cover / metadata, with cover addable AND replaceable after creation.',
+      'Broadcasts an operation=modify pin at the SAME collection_desc path carrying the FULL latest content merged with the overrides (not a diff); the indexer resolves the modify chain to the latest version. Issuer-only: the tool verifies the session bot is the collection_desc creator and refuses otherwise.',
+      'Upload new artwork first (metabot-upload-file) to get a cover pinId; cover accepts a metafile pinId or metafile:// URI (same behavior as mrc721_mint). The collection must be registered and indexed. On-chain write with fees.',
+    ].join(' '),
+    {
+      collection_name: z.string().min(1).describe('Collection namespace name to modify (must be indexed; see mrc721_collection_info).'),
+      name: z.string().optional().describe('New display name.'),
+      desc: z.string().optional().describe('New description.'),
+      website: z.string().optional().describe('New website URL.'),
+      cover: z.string().optional().describe('New cover: metafile pinId (64-hex…i0) or metafile:// URI — added or replaced (upload via metabot-upload-file first).'),
+      metadata: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('New extra metadata (JSON object or JSON string), replaces the previous value.'),
+      network: z.enum(['mvc', 'btc']).optional().describe('Write network; default mvc (BTC writes are not yet supported for MRC-721 in this version).'),
+    },
+    async (args: {
+      collection_name: string;
+      name?: string;
+      desc?: string;
+      website?: string;
+      cover?: string;
+      metadata?: unknown;
+      network?: 'mvc' | 'btc';
+    }) => {
+      const owner = requireSessionMetabot('mrc721_collection_update');
+      if (typeof owner === 'string') return textResult(owner, true);
+      let collectionName: string;
+      try {
+        collectionName = validateMrc721CollectionName(args.collection_name);
+      } catch (error) {
+        return textResult(`mrc721_collection_update: ${errorMessage(error)}`, true);
+      }
+      if (args.network === 'btc') {
+        return textResult('mrc721_collection_update: BTC-side writes are not supported in this version — use network mvc.', true);
+      }
+      const hasOverride = Boolean(
+        asString(args.name) || asString(args.desc) || asString(args.website) || asString(args.cover)
+        || (args.metadata != null && (typeof args.metadata !== 'string' || args.metadata.trim() !== '')),
+      );
+      if (!hasOverride) {
+        return textResult(
+          'mrc721_collection_update: nothing to update — pass at least one of name/desc/website/cover/metadata.',
+          true,
+        );
+      }
+
+      try {
+        const result = await control.collectionUpdate({
+          metabotId: owner,
+          collectionName,
+          name: asString(args.name) || undefined,
+          desc: asString(args.desc) || undefined,
+          website: asString(args.website) || undefined,
+          cover: asString(args.cover) || undefined,
+          metadata: args.metadata,
+          network: 'mvc',
+        });
+        return textResult(formatMrc721CollectionUpdateResult({
+          collectionName: result.collectionName,
+          pinId: result.pinId,
+          txids: result.txids,
+          totalCost: result.totalCost,
+          feeAssist: result.feeAssist,
+          updatedFields: result.updatedFields,
+        }));
+      } catch (error) {
+        return textResult(`mrc721_collection_update failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
     }
   );
@@ -870,6 +986,21 @@ export function buildMrc721AgentTools(deps: {
       if (collection.cover) lines.push(`- cover: ${collection.cover}`);
       if (collection.metadata) lines.push(`- metadata: ${collection.metadata}`);
       lines.push(`- genesis: ${[collection.genesisChainName ? `chain ${collection.genesisChainName}` : '', collection.genesisHeight != null ? `height ${collection.genesisHeight}` : '', collection.genesisTx ? `tx ${collection.genesisTx}` : ''].filter(Boolean).join(', ') || '(unknown)'}`);
+      // Modify chain (version history of collection_desc modify pins). The
+      // indexer exposes it permissively today — accept both key casings and
+      // string-or-object entries until the P2 contract freezes the shape.
+      const rawHistory = (collection as { modifyHistory?: unknown; modify_history?: unknown }).modifyHistory
+        ?? (collection as { modify_history?: unknown }).modify_history;
+      if (Array.isArray(rawHistory) && rawHistory.length) {
+        const ids = rawHistory
+          .map((entry) => (typeof entry === 'string'
+            ? entry
+            : String((entry as { pinid?: unknown; pinId?: unknown })?.pinid ?? (entry as { pinId?: unknown })?.pinId ?? '')))
+          .filter(Boolean);
+        if (ids.length) {
+          lines.push(`- modify history (${ids.length}): ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ' …' : ''}`);
+        }
+      }
       if (args.include_items !== false && (collection.pinid || pinId)) {
         try {
           const page = await fetchMrc721CollectionItems({ pinid: collection.pinid || pinId, size: args.size });
@@ -894,6 +1025,7 @@ export function buildMrc721AgentTools(deps: {
 
   return [
     mrc721CollectionCreate,
+    mrc721CollectionUpdate,
     mrc721Mint,
     mrc721Transfer,
     mrc721Balance,

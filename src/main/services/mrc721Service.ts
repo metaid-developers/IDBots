@@ -530,7 +530,7 @@ export function waitForMrc721ItemInfo(params: {
 export type Mrc721CreatePinFn = (
   metabotId: number,
   metaidData: {
-    operation: 'create';
+    operation: 'create' | 'modify';
     path: string;
     encryption?: '0' | '1' | '2';
     version?: string;
@@ -604,6 +604,111 @@ export async function createMrc721Collection(
       contentType: 'application/json',
       payload: JSON.stringify(content),
     }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_collection_create' })),
+  };
+}
+
+export interface Mrc721CollectionUpdateInput {
+  metabotId: number;
+  collectionName: string;
+  name?: string;
+  desc?: string;
+  website?: string;
+  cover?: string;
+  metadata?: unknown;
+  network?: 'mvc' | 'btc';
+  origin?: string;
+  /** Pre-fetched current collection (tests); fetched from the indexer when omitted. */
+  current?: Mrc721CollectionSummary | null;
+}
+
+export interface Mrc721CollectionUpdateResult extends Mrc721PinWriteResult {
+  collectionName: string;
+  /** Fields the caller overrode (the rest of the content rides unchanged). */
+  updatedFields: string[];
+}
+
+/**
+ * 收藏级修改:operation=modify pin at the SAME collection_desc path, carrying
+ * the FULL latest content (current indexed fields merged with the caller's
+ * overrides — a full rewrite, not a diff); the indexer resolves the modify
+ * chain's latest version. Issuer-only: the session bot's MVC address must
+ * equal the collection_desc creator recorded by the indexer.
+ */
+export async function updateMrc721Collection(
+  deps: { createPin: Mrc721CreatePinFn; store: MetabotStore },
+  input: Mrc721CollectionUpdateInput,
+): Promise<Mrc721CollectionUpdateResult> {
+  const collectionName = validateMrc721CollectionName(input.collectionName);
+
+  const overrides = {
+    name: validateMrc721TextField(input.name, 'name', MRC721_FIELD_LIMITS.name),
+    desc: validateMrc721TextField(input.desc, 'desc', MRC721_FIELD_LIMITS.desc),
+    website: validateMrc721TextField(input.website, 'website', MRC721_FIELD_LIMITS.website),
+    cover: normalizeMrc721CoverUri(input.cover),
+  };
+  const hasMetadataOverride = input.metadata != null
+    && (typeof input.metadata !== 'string' || input.metadata.trim() !== '');
+  const updatedFields = [
+    overrides.name ? 'name' : '',
+    overrides.desc ? 'desc' : '',
+    overrides.website ? 'website' : '',
+    overrides.cover ? 'cover' : '',
+    hasMetadataOverride ? 'metadata' : '',
+  ].filter(Boolean);
+  if (!updatedFields.length) {
+    throw new Error('nothing to update — pass at least one of name/desc/website/cover/metadata');
+  }
+
+  const current = input.current !== undefined
+    ? input.current
+    : await fetchMrc721CollectionInfo({ name: collectionName });
+  if (!current) {
+    throw new Error(
+      `collection "${collectionName}" is not in the index — nothing to modify yet. `
+      + 'A collection can only be updated after it is registered and indexed (verify with mrc721_collection_info).',
+    );
+  }
+
+  const botAddress = deps.store.getMetabotById(input.metabotId)?.mvc_address ?? '';
+  if (!botAddress) {
+    throw new Error('the session MetaBot has no MVC address');
+  }
+  if (!current.createAddress) {
+    throw new Error(
+      `the indexer did not return the issuer of "${collectionName}" — cannot verify the modify permission; refusing to broadcast.`,
+    );
+  }
+  if (current.createAddress !== botAddress) {
+    throw new Error(
+      `only the issuing MetaBot can update a collection: "${collectionName}" was issued by `
+      + `${current.createAddress}, but this session bot is ${botAddress}.`,
+    );
+  }
+
+  // Full-content rewrite: latest indexed fields + overrides. totalSupply /
+  // royaltyRate ride along unchanged (they are not modifiable in this
+  // version); absent index fields stay absent unless overridden.
+  const content = buildMrc721CollectionDescContent({
+    name: overrides.name ?? current.name ?? collectionName,
+    totalSupply: current.totalSupply != null ? validateMrc721TotalSupply(current.totalSupply) : undefined,
+    royaltyRate: current.royaltyRate != null ? validateMrc721RoyaltyRate(current.royaltyRate) : undefined,
+    desc: overrides.desc ?? current.desc,
+    website: overrides.website ?? current.website,
+    cover: overrides.cover ?? current.cover,
+    metadata: hasMetadataOverride ? input.metadata : current.metadata,
+  });
+
+  return {
+    collectionName,
+    updatedFields,
+    ...(await broadcastMrc721Pin(deps.createPin, input.metabotId, {
+      operation: 'modify',
+      path: `${MRC721_PATH_ROOT}/${collectionName}/collection_desc`,
+      encryption: '0',
+      version: '1.0.0',
+      contentType: 'application/json',
+      payload: JSON.stringify(content),
+    }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_collection_update' })),
   };
 }
 
