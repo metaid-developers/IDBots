@@ -8,12 +8,56 @@ import { getMainWorkerCandidatePaths, resolveMainWorkerPath } from './workerPath
 
 const DEFAULT_PATH = "m/44'/10001'/0'/0/0";
 
+/**
+ * One forced-spend entry for buildMvcTransferRawTx ("include_outpoints"): the
+ * outpoint is unconditionally spent as the FIRST input(s) of the built tx.
+ * Value must come from the indexer (MRC-721 item/info output/outputValue) —
+ * 1-sat pin UTXOs never pass the wallet-api funding filter. Consumed by the
+ * MRC-721 transfer/trade flows (R3/R4 of docs/…/IDBOTS_MRC721_REQUIREMENTS.md).
+ */
+export interface MvcIncludeOutpoint {
+  txid: string;
+  vout: number;
+  satoshis: number;
+}
+
+/** Validate + normalize include entries; empty/null returns []. */
+export function validateIncludeOutpoints(input: unknown): MvcIncludeOutpoint[] {
+  if (input == null) return [];
+  if (!Array.isArray(input)) {
+    throw new Error('include_outpoints must be an array of {txid, vout, satoshis}');
+  }
+  const seen = new Set<string>();
+  const result: MvcIncludeOutpoint[] = [];
+  for (const raw of input) {
+    const record = (raw ?? {}) as Record<string, unknown>;
+    const txid = String(record.txid ?? '').trim().toLowerCase();
+    const vout = Number(record.vout);
+    const satoshis = Number(record.satoshis);
+    if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
+      throw new Error('include_outpoints entries need a 64-hex txid');
+    }
+    if (!Number.isInteger(vout) || vout < 0) {
+      throw new Error(`include_outpoints entries need an integer vout >= 0 (${txid})`);
+    }
+    if (!Number.isInteger(satoshis) || satoshis <= 0) {
+      throw new Error(`include_outpoints entries need integer satoshis > 0 (${txid}:${vout})`);
+    }
+    const key = `${txid}:${vout}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ txid, vout, satoshis });
+  }
+  return result;
+}
+
 export interface BuildMvcTransferRawTxParams {
   metabotId: number;
   toAddress: string;
   amountSats: number;
   feeRate: number;
   excludeOutpoints?: string[];
+  includeOutpoints?: MvcIncludeOutpoint[];
 }
 
 export interface BuildMvcFtToken {
@@ -91,6 +135,7 @@ interface WalletRawTxServiceDeps {
     amountSats: number;
     feeRate: number;
     excludeOutpoints: string[];
+    includeOutpoints: MvcIncludeOutpoint[];
   }) => Promise<WorkerTransferResult>;
   runMvcFtTransferRawTxWorker?: (params: {
     mnemonic: string;
@@ -538,6 +583,7 @@ async function runMvcTransferRawTxWorker(params: {
   amountSats: number;
   feeRate: number;
   excludeOutpoints: string[];
+  includeOutpoints: MvcIncludeOutpoint[];
 }): Promise<WorkerTransferResult> {
   return await runWorker(
     'buildMvcTransferRawTxWorker.js',
@@ -546,6 +592,7 @@ async function runMvcTransferRawTxWorker(params: {
       amountSats: params.amountSats,
       feeRate: params.feeRate,
       excludeOutpoints: params.excludeOutpoints,
+      includeOutpoints: params.includeOutpoints,
     },
     {
       IDBOTS_METABOT_MNEMONIC: params.mnemonic,
@@ -616,6 +663,12 @@ export async function buildMvcTransferRawTx(
   deps: WalletRawTxServiceDeps = {},
 ): Promise<BuildMvcTransferRawTxResult> {
   const excludeOutpoints = validateCommonTransferFields(params);
+  const includeOutpoints = validateIncludeOutpoints(params.includeOutpoints);
+  for (const entry of includeOutpoints) {
+    if (excludeOutpoints.includes(`${entry.txid}:${entry.vout}`)) {
+      throw new Error(`include_outpoints conflicts with exclude_outpoints: ${entry.txid}:${entry.vout}`);
+    }
+  }
   if (!Number.isInteger(params.amountSats) || params.amountSats <= 0) {
     throw new Error('amount_sats must be a positive integer');
   }
@@ -633,6 +686,7 @@ export async function buildMvcTransferRawTx(
     amountSats: params.amountSats,
     feeRate: params.feeRate,
     excludeOutpoints,
+    includeOutpoints,
   });
   const summary = summarizeMvcTransferTx({
     txHex: workerResult.txHex,
