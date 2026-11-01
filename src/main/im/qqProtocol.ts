@@ -23,7 +23,7 @@
 
 import * as path from 'path';
 
-import type { IMMediaAttachment, IMMediaType, IMMessage } from './types';
+import type { IMMediaAttachment, IMMediaType, IMMessage, IMTrustContext } from './types';
 
 /** Default REST base, from `dist/protocol/api/api-client.js` (`DEFAULT_BASE_URL`). */
 export const QQ_DEFAULT_API_BASE_URL = 'https://api.sgroup.qq.com';
@@ -246,6 +246,11 @@ export interface QQToIMMessageOptions {
   failedAttachments?: number;
   /** Set when the message came in through a known @-mention path (diagnostics). */
   mentionedVia?: string;
+  /**
+   * Frozen trust decision from the gateway entry point. Carried (and
+   * re-frozen here) so downstream turns cannot recompute or widen it.
+   */
+  trust?: IMTrustContext;
 }
 
 /**
@@ -268,6 +273,8 @@ export function toQQIMMessage(msg: QQInboundLike, options: QQToIMMessageOptions)
     ? options.attachments
     : undefined;
 
+  const trust = options.trust ? Object.freeze({ ...options.trust }) : undefined;
+
   const isGroup = target.scope === 'group';
   return {
     platform: 'qq',
@@ -279,6 +286,7 @@ export function toQQIMMessage(msg: QQInboundLike, options: QQToIMMessageOptions)
     chatType: isGroup ? 'group' : 'direct',
     timestamp: parseQQTimestamp(msg.timestamp, options.now),
     ...(attachments ? { attachments } : {}),
+    ...(trust ? { trust } : {}),
   };
 }
 

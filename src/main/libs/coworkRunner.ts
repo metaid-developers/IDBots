@@ -21,6 +21,8 @@ import { isDshShutdownError } from './dshShutdownError';
 import { truncateUtf16Units } from './llmSafeText';
 import { DshStreamUiGate } from './dshStreamUiGate';
 import type { DshHostToolImagePayload, DshRuntimeConfigInput, DshUsageSnapshot } from './dshKernel/types';
+import type { IMTrustContext } from '../im/types';
+import { imTrustAllowsMemoryRead, imTrustAllowsMemoryWrite, imTrustAllowsTools } from '../im/qqTrust';
 import { foldDshUsageProjection, dshPromptSideTokens, dshContextUsageFromPressure } from './dshUsageProjection';
 import type { DshUsageStatsRow } from './dshUsageProjection';
 import { buildSessionHistoryHandoff, dshApiFormatOf, dshSessionIdOf, isDshSessionHandle, makeDshSessionHandle, resolveKernelChoice } from './coworkKernelRouting';
@@ -1658,6 +1660,15 @@ interface ActiveSession {
    * this marker object, same reason as metawebSurfSession.
    */
   practiceSession?: PracticeSessionState;
+  /**
+   * IM entry-point trust decision (qqTrust.resolveQQMessageGate), frozen on the
+   * message and re-asserted on every turn. `toolScope: 'none'` means the host
+   * tool surface is EMPTY and every built-in tool call is denied by the policy
+   * hook — a group turn physically cannot reach files/shell/wallet/chain.
+   * Immutable for the lifetime of the turn: downstream code may read it, never
+   * widen it.
+   */
+  imTrust?: IMTrustContext;
   /** Permission mode controlling tool gating (default/plan/acceptEdits/bypassPermissions). */
   permissionMode: CoworkPermissionMode;
   /** Runtime effort override from the UI picker; a canonical rung, the 'default' sentinel (model default, skipping brain/global), or null = tiered defaults (brain → global → per-model). */
@@ -3755,6 +3766,39 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
+   * Merge two entry-point trust contexts, NARROWING only.
+   *
+   * A session can be continued with a fresh message; the effective grant is
+   * the intersection of what the earlier turn had and what this turn asks for.
+   * No path ever upgrades `toolScope`, memory or attachment policy.
+   */
+  private mergeImTrust(
+    existing: IMTrustContext | undefined,
+    next: IMTrustContext | undefined
+  ): IMTrustContext | undefined {
+    if (!existing) return next ? (Object.freeze({ ...next }) as IMTrustContext) : undefined;
+    if (!next) return existing;
+    const rank: Record<IMTrustContext['level'], number> = {
+      'bot-sender': 4,
+      'stranger-dm': 3,
+      group: 2,
+      'owner-dm': 1,
+    };
+    const level = rank[next.level] >= rank[existing.level] ? next.level : existing.level;
+    return Object.freeze({
+      level,
+      toolScope: existing.toolScope === 'local' && next.toolScope === 'local' ? 'local' : 'none',
+      memoryRead: existing.memoryRead === true && next.memoryRead === true,
+      memoryWrite: existing.memoryWrite === true && next.memoryWrite === true,
+      attachmentPolicy:
+        existing.attachmentPolicy === 'allow' && next.attachmentPolicy === 'allow' ? 'allow' : 'reject',
+      groupId: next.groupId ?? existing.groupId ?? null,
+      decidedAt: next.decidedAt,
+      reason: `merged:${existing.reason}|${next.reason}`,
+    }) as IMTrustContext;
+  }
+
+  /**
    * READ gate for the session memory surface: volatile injection (scoped
    * memory blocks, self-identity + experience) and the read-only recall
    * tools. disableMemoryUpdates blocks reads too (orchestrator blackout);
@@ -3763,6 +3807,8 @@ export class CoworkRunner extends EventEmitter {
   private isSessionMemoryReadEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
     const target = activeSession ?? this.activeSessions.get(sessionId);
     if (target?.disableMemoryUpdates) return false;
+    // IM trust gate: a group turn never reads long-term memory / knowledge.
+    if (!imTrustAllowsMemoryRead(target?.imTrust)) return false;
     return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
   }
 
@@ -3775,6 +3821,8 @@ export class CoworkRunner extends EventEmitter {
   private isSessionMemoryWriteEnabled(sessionId: string, activeSession?: ActiveSession | null): boolean {
     const target = activeSession ?? this.activeSessions.get(sessionId);
     if (target?.disableMemoryUpdates || target?.memoryReadOnly) return false;
+    // IM trust gate: a group turn never writes long-term memory / knowledge.
+    if (!imTrustAllowsMemoryWrite(target?.imTrust)) return false;
     return this.getSessionMemoryPolicy(sessionId).memoryEnabled;
   }
 
@@ -6948,6 +6996,11 @@ export class CoworkRunner extends EventEmitter {
     activeSession: ActiveSession,
     baseSystemPrompt: string
   ): { skillsSection: string | null; skillsCatalogMode: 'volatile' | 'inline' | 'legacy' } {
+    // IM trust gate: a no-tools conversation gets no skills rules and no
+    // catalog. 'legacy' is the mode that suppresses the volatile tail too.
+    if (activeSession.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
+      return { skillsSection: null, skillsCatalogMode: 'legacy' };
+    }
     // Only an actually-EMBEDDED catalog counts as legacy — a prose mention
     // (e.g. the default system prompt's web-search rule referencing the
     // skills catalog) must not suppress the split, or every default session
@@ -7042,6 +7095,11 @@ export class CoworkRunner extends EventEmitter {
     disableRemoteServicesPrompt: boolean
   ): Promise<string> {
     const sections: VolatileSection[] = [];
+    // IM trust gate: a no-tools conversation (QQ group) must not receive the
+    // owner's live browser tabs, an active goal, or any skills catalog — those
+    // are host context, not group context.
+    const sessionTrust = this.activeSessions.get(sessionId)?.imTrust;
+    const trustSuppressed = Boolean(sessionTrust) && !imTrustAllowsTools(sessionTrust);
     // Cerebellum (小脑) per-turn decision bundle (2026-10-16 merge): the
     // memory re-rank, skill shortlist, remote-service shortlist, volatile
     // block gate, and knowledge hot rank used to fire FIVE parallel
@@ -7228,7 +7286,7 @@ export class CoworkRunner extends EventEmitter {
         });
       }
     }
-    if (this.getBrowserContextPrompt) {
+    if (this.getBrowserContextPrompt && !trustSuppressed) {
       // Browser tab state is live; fetch async and degrade silently on failure.
       sections.push({
         key: 'browser',
@@ -7239,7 +7297,7 @@ export class CoworkRunner extends EventEmitter {
     // other volatile blocks; a stable goal text costs nothing after its first
     // injection thanks to content-hash dedup.
     const goal = this.store.getSessionWithoutMessages(sessionId)?.goal ?? null;
-    if (goal && goal.status === 'active') {
+    if (goal && goal.status === 'active' && !trustSuppressed) {
       sections.push({
         key: 'goal',
         text: buildGoalPromptSection(goal),
@@ -7279,7 +7337,7 @@ export class CoworkRunner extends EventEmitter {
     // re-injects the changed block — the cacheable system-prompt head never
     // moves. Sessions in 'inline' (sandbox) or 'legacy' mode already carry
     // their catalog in the system prompt and skip this entirely.
-    if (this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile') {
+    if (this.activeSessions.get(sessionId)?.skillsCatalogMode === 'volatile' && !trustSuppressed) {
       sections.push({
         key: 'skills-catalog',
         text: this.coworkSkillPromptsProvider?.(this.store.getMetabotIdForSession(sessionId))?.catalog ?? '',
@@ -8217,6 +8275,8 @@ export class CoworkRunner extends EventEmitter {
        * tool surface by risk class + the practice interaction guard on every
        * tool call. Materialized by the scheduler from a dream practice proposal. */
       practiceSession?: PracticeSessionState;
+      /** IM entry-point trust decision (see ActiveSession.imTrust). */
+      imTrust?: IMTrustContext;
       disableRemoteServicesPrompt?: boolean;
       workspaceRoot?: string;
       confirmationMode?: 'modal' | 'text';
@@ -8335,6 +8395,7 @@ export class CoworkRunner extends EventEmitter {
       metawebStudySession: options.metawebStudySession,
       metawebSurfSession: options.metawebSurfSession,
       practiceSession: options.practiceSession,
+      imTrust: this.mergeImTrust(undefined, options.imTrust),
       permissionMode: options.permissionMode ?? session.permissionMode ?? 'default',
       // Caller-provided seed (picker pick / global default) wins; otherwise
       // hydrate the session's persisted effort so restarts keep the choice.
@@ -8409,7 +8470,7 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
-  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode } = {}): Promise<void> {
+  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode; imTrust?: IMTrustContext } = {}): Promise<void> {
     this.stoppedSessions.delete(sessionId);
 
     // Apply mid-session permission mode change if requested.
@@ -8430,10 +8491,14 @@ export class CoworkRunner extends EventEmitter {
         systemPrompt: options.systemPrompt,
         skipInitialUserMessage: options.skipUserMessage,
         permissionMode: options.permissionMode,
+        ...(options.imTrust ? { imTrust: options.imTrust } : {}),
         autoApproveTools: getPersistedAutoApproveTools(),
       });
       return;
     }
+    // Trust can only be NARROWED across turns, never widened (a group turn
+    // must not inherit a better grant from an earlier turn of the same id).
+    activeSession.imTrust = this.mergeImTrust(activeSession.imTrust, options.imTrust);
     if (
       activeSession.localTurnState === 'starting'
       || (
@@ -11879,8 +11944,13 @@ export class CoworkRunner extends EventEmitter {
       parameters: Record<string, unknown>,
       execute: (args: any) => Promise<unknown>
     ) => ({ name, description, parameters: normalizeToolSchema(parameters), execute })
-    const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined)
     const activeSession = this.activeSessions.get(sessionId)
+    // IM trust: toolScope 'none' => EMPTY tool surface. Not a deny rule the
+    // model could argue with — the tools are not registered at all.
+    if (activeSession?.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
+      return []
+    }
+    const tools = this.buildSessionInlineTools(sessionId, passthrough, undefined)
     if (!activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) {
       return tools
     }
@@ -11914,6 +11984,17 @@ export class CoworkRunner extends EventEmitter {
     const activeSession = this.activeSessions.get(sessionId)
     const normalized = String(toolName ?? '').toLowerCase()
     try {
+      // IM trust gate, FIRST and unconditional: when the entry point decided
+      // this conversation has no tool surface (group chat), every tool call —
+      // host or built-in (Read/Write/Bash/WebFetch/...) — is denied. Absence
+      // above is the primary control; this is the backstop for built-ins that
+      // the runtime always mounts.
+      if (activeSession?.imTrust && !imTrustAllowsTools(activeSession.imTrust)) {
+        return {
+          decision: 'deny',
+          reason: 'IM trust gate: this conversation has no tool surface (group chat is Q&A only).',
+        }
+      }
       if (this.isBlockedBuiltinWebTool(normalized)) {
         return { decision: 'deny', reason: 'Tool blocked by app policy: WebSearch/WebFetch are disabled in this environment.' }
       }

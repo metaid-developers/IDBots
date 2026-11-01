@@ -62,6 +62,12 @@ import {
   type QQMediaNetwork,
 } from './qqMedia';
 import { QQStore, normalizeQQAccountId, type QQCredentialSource } from './qqStore';
+import {
+  QQ_GROUP_MEDIA_NOTICE,
+  QQGroupAuditLog,
+  resolveQQMessageGate,
+  summarizeForAudit,
+} from './qqTrust';
 
 /** Default outer backoff, one step above the SDK's own 60 s ceiling. */
 export const DEFAULT_QQ_RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10_000, 30_000, 60_000];
@@ -240,6 +246,15 @@ export interface QQGatewayOptions {
   qrLoginTimeoutMs?: number;
   /** Typing indicator only exists for C2C (USAGE.md §9.3); default on. */
   typingIndicator?: boolean;
+  /**
+   * LIVE security config reader. The settings page writes through
+   * `imStore.setQQConfig` without restarting the gateway, so a snapshot taken
+   * in `start()` would silently keep serving the old allowlist. Returns
+   * partial config; `qqTrust` normalizes it (missing/typo => strictest).
+   */
+  configProvider?: () => Partial<QQConfig> | null | undefined;
+  /** Group audit trail writer (tests inject a temp dir). */
+  auditLog?: QQGroupAuditLog;
 }
 
 export interface QQLoginEvent {
@@ -279,6 +294,8 @@ export class QQGateway extends EventEmitter {
   private readonly qrDisplayTimeoutMs: number;
   private readonly qrLoginTimeoutMs: number;
   private readonly typingIndicator: boolean;
+  private readonly configProvider?: () => Partial<QQConfig> | null | undefined;
+  private readonly auditLog: QQGroupAuditLog;
 
   private config: QQConfig | null = null;
   private status: QQGatewayStatus = { ...DEFAULT_QQ_STATUS };
@@ -327,6 +344,26 @@ export class QQGateway extends EventEmitter {
     this.qrDisplayTimeoutMs = options.qrDisplayTimeoutMs ?? 60_000;
     this.qrLoginTimeoutMs = options.qrLoginTimeoutMs ?? 5 * 60_000;
     this.typingIndicator = options.typingIndicator ?? true;
+    this.configProvider = options.configProvider;
+    this.auditLog = options.auditLog ?? new QQGroupAuditLog(undefined, this.now);
+  }
+
+  /**
+   * The config the gate must judge with. Live provider first (settings can
+   * change mid-run), snapshot second (unit tests / start-only callers).
+   * Fail-closed: a throwing provider returns null, which the gate treats as
+   * "no allowlist, no owner" => every message is a silent drop.
+   */
+  private liveConfig(): Partial<QQConfig> | null {
+    if (this.configProvider) {
+      try {
+        const live = this.configProvider();
+        if (live && typeof live === 'object') return live;
+      } catch {
+        return null;
+      }
+    }
+    return this.config;
   }
 
   getMediaRootDir(): string {
@@ -778,7 +815,44 @@ export class QQGateway extends EventEmitter {
   // ==================== Inbound ====================
 
   private async handleInbound(msg: QQInboundLike): Promise<void> {
-    if (!msg || msg.senderIsBot) return;
+    if (!msg) return;
+
+    // ── ONE decision at the entry point ──────────────────────────────────
+    // Trust is computed here and only here. Everything downstream (dedupe,
+    // media, model turn, tools, memory) reads the frozen context. A gate that
+    // throws has already resolved to a silent drop inside qqTrust.
+    const decidedAt = this.now();
+    const gate = resolveQQMessageGate(msg, this.liveConfig(), decidedAt);
+    const isGroup = msg.kind === 'group';
+    const groupAudit = isGroup
+      ? {
+          groupId: gate.groupId ?? (msg.groupOpenid || '').trim(),
+          senderId: gate.senderId,
+          question: summarizeForAudit(msg.content),
+        }
+      : null;
+
+    if (gate.action === 'silent-drop') {
+      // Strangers in DMs, non-allowlisted groups, other bots: NO reply text.
+      // Silence is the security property, not a courtesy.
+      if (groupAudit) {
+        this.auditLog.record({
+          at: new Date(decidedAt).toISOString(),
+          ...groupAudit,
+          reply: '',
+          outcome: 'dropped',
+          trustLevel: gate.trust.level,
+          reason: gate.reason,
+        });
+      }
+      this.debugLog('inbound dropped by trust gate', {
+        messageId: (msg.messageId || '').trim(),
+        level: gate.trust.level,
+        reason: gate.reason,
+      });
+      return;
+    }
+
     const messageId = (msg.messageId || '').trim();
     if (messageId) {
       if (this.isDuplicate(messageId)) return;
@@ -788,9 +862,7 @@ export class QQGateway extends EventEmitter {
     const appId = this.credentials?.appId ?? '';
     const decision = qqMentionDecision(msg, appId);
     if (msg.kind === 'group' && !decision.mentioned) {
-      if (this.config?.debug) {
-        console.log('[QQ Gateway] group message ignored (no @mention)', { messageId });
-      }
+      this.debugLog('group message ignored (no @mention)', { messageId });
       return;
     }
     if (!decision.mentioned) return;
@@ -798,6 +870,35 @@ export class QQGateway extends EventEmitter {
     const target = qqReplyTarget(msg);
     if (!target) return;
     const conversationId = qqConversationId(target.scope, target.targetId);
+    // Cache the reply target BEFORE any outbound send: the refusal notice (and
+    // every later reply) resolves its target from this cache.
+    this.rememberTarget(conversationId, target);
+    this.lastConversationId = conversationId;
+    this.status = { ...this.status, lastInboundAt: this.now(), lastError: null };
+    this.emitStatus();
+
+    // ── Layer 1 attachment policy (groups: never download) ───────────────
+    if (gate.trust.attachmentPolicy === 'reject' && this.hasInboundMedia(msg)) {
+      const notice = gate.notice ?? QQ_GROUP_MEDIA_NOTICE;
+      try {
+        await this.sendText(conversationId, notice);
+      } catch (error) {
+        this.debugLog('group media refusal could not be delivered', {
+          error: this.describeError(error),
+        });
+      }
+      if (groupAudit) {
+        this.auditLog.record({
+          at: new Date(this.now()).toISOString(),
+          ...groupAudit,
+          reply: summarizeForAudit(notice),
+          outcome: 'static-reply',
+          trustLevel: gate.trust.level,
+          reason: 'group-media-refused',
+        });
+      }
+      return;
+    }
 
     const collected = await this.collectInboundMedia(msg, conversationId);
     const asr = collected.asrTexts.join(' ').trim();
@@ -811,13 +912,11 @@ export class QQGateway extends EventEmitter {
       attachments: collected.attachments,
       failedAttachments: collected.failed,
       mentionedVia: decision.via,
+      // Frozen by qqTrust and re-frozen by toQQIMMessage.
+      trust: gate.trust,
     });
     if (!message) return;
 
-    this.rememberTarget(conversationId, target);
-    this.lastConversationId = conversationId;
-    this.status = { ...this.status, lastInboundAt: this.now(), lastError: null };
-    this.emitStatus();
     this.emit('message', message);
 
     if (!this.onMessageCallback) return;
@@ -828,19 +927,46 @@ export class QQGateway extends EventEmitter {
     }
 
     await this.enqueueConversation(conversationId, async () => {
+      let replySummary = '';
+      let outcome: 'answered' | 'error' = 'answered';
       const replyFn = async (text: string): Promise<void> => {
+        replySummary = summarizeForAudit(text) || replySummary;
         await this.sendText(conversationId, text);
       };
       await this.withTyping(target, async () => {
         try {
           await this.onMessageCallback!(message, replyFn);
         } catch (error) {
+          outcome = 'error';
           this.status = { ...this.status, lastError: this.describeError(error) };
           this.emitStatus();
           this.emitError(error instanceof Error ? error : new Error(this.describeError(error)));
         }
       });
+      if (groupAudit) {
+        this.auditLog.record({
+          at: new Date(this.now()).toISOString(),
+          ...groupAudit,
+          reply: replySummary,
+          outcome,
+          trustLevel: gate.trust.level,
+          reason: gate.reason,
+        });
+      }
     });
+  }
+
+  /** True when the inbound payload carries at least one media reference. */
+  private hasInboundMedia(msg: QQInboundLike): boolean {
+    if (Array.isArray(msg.attachments) && msg.attachments.length > 0) return true;
+    return false;
+  }
+
+  private debugLog(message: string, meta?: Record<string, unknown>): void {
+    const live = this.liveConfig();
+    if (live?.debug) {
+      console.log(`[QQ Gateway] ${message}`, meta ?? {});
+    }
   }
 
   private async collectInboundMedia(

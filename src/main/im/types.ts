@@ -223,6 +223,51 @@ export interface QQConfig {
   appSecret?: string;
   metabotId?: number | null;
   debug?: boolean;
+  /**
+   * Group policy. DEFAULT `allowlist` with an EMPTY list — i.e. no group is
+   * served until the owner adds one. `open` lets any group talk to the bot
+   * (layer-1 Q&A only, still no tools); `disabled` refuses every group.
+   */
+  groupPolicy?: QQGroupPolicy;
+  /** Group OpenIDs served when `groupPolicy === 'allowlist'`. */
+  groupAllowlist?: string[];
+  /**
+   * Layer 3 (local machine operations: files, shell, attachments, wallet,
+   * chain writes). DEFAULT OFF. Turning this on does NOT widen groups — their
+   * tool surface stays structurally empty.
+   */
+  localToolsEnabled?: boolean;
+  /** Stable ids (OpenIDs) allowed to use layer 3 after the switch is on. */
+  localToolsAllowFrom?: string[];
+}
+
+export type QQGroupPolicy = 'open' | 'allowlist' | 'disabled';
+
+/**
+ * Trust level frozen at the IM message entry point (`qqTrust.ts`).
+ *
+ * Carried on the `IMMessage` and then on the runner's per-turn session marker.
+ * Downstream code may READ it; it must never recompute or widen it mid-turn.
+ */
+export type IMTrustLevel = 'group' | 'owner-dm' | 'stranger-dm' | 'bot-sender';
+
+export interface IMTrustContext {
+  level: IMTrustLevel;
+  /**
+   * `none` = the session's tool surface is EMPTY (no host tools registered and
+   * every built-in tool call is denied). `local` = layer 3 granted to the
+   * bound owner.
+   */
+  toolScope: 'none' | 'local';
+  /** Long-term memory + knowledge-base READS. */
+  memoryRead: boolean;
+  /** Long-term memory + knowledge-base WRITES (turn-end update included). */
+  memoryWrite: boolean;
+  /** Group messages never download inbound media. */
+  attachmentPolicy: 'allow' | 'reject';
+  groupId?: string | null;
+  decidedAt: number;
+  reason: string;
 }
 
 export interface QQGatewayStatus {
@@ -299,6 +344,12 @@ export interface IMMessage {
   // 媒体附件（Telegram 支持）
   attachments?: IMMediaAttachment[];
   mediaGroupId?: string;      // 媒体组 ID（用于合并多张图片）
+  /**
+   * Entry-point trust decision for channels that enforce one (currently QQ).
+   * Absent means "legacy channel, no trust gate"; a QQ message without this
+   * field is dropped by the manager (fail-closed).
+   */
+  trust?: IMTrustContext;
 }
 
 export interface IMReplyContext {
@@ -436,6 +487,12 @@ export const DEFAULT_QQ_CONFIG: QQConfig = {
   ownerUserOpenid: null,
   metabotId: null,
   debug: true,
+  // Security defaults: no group is served until the owner adds one, and
+  // layer 3 (local machine operations) is off for everybody.
+  groupPolicy: 'allowlist',
+  groupAllowlist: [],
+  localToolsEnabled: false,
+  localToolsAllowFrom: [],
 };
 
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {

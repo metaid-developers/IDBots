@@ -67,7 +67,12 @@ export class IMGatewayManager extends EventEmitter {
     this.telegramGateway = new TelegramGateway();
     this.discordGateway = new DiscordGateway();
     this.weixinGateway = new WeixinGateway();
-    this.qqGateway = new QQGateway();
+    this.qqGateway = new QQGateway({
+      // LIVE config: the settings page can change the group allowlist or the
+      // layer-3 switch while the gateway is connected. A snapshot from
+      // `start()` would keep enforcing the old policy.
+      configProvider: () => this.imStore.getQQConfig(),
+    });
 
     // Store Cowork dependencies if provided
     if (options?.coworkRunner && options?.coworkStore) {
@@ -254,6 +259,31 @@ export class IMGatewayManager extends EventEmitter {
       replyFn: (text: string) => Promise<void>
     ): Promise<void> => {
       try {
+        // QQ is the first channel with an entry-point trust gate. A QQ message
+        // without a frozen trust context is a contract violation -> fail
+        // closed (silence, no error text). Strangers/bots never get here at
+        // all (the gateway drops them), this is defence in depth.
+        if (message.platform === 'qq') {
+          const trust = message.trust;
+          if (!trust) {
+            console.warn('[IMGatewayManager] Dropping QQ message without a trust context (fail-closed)', {
+              conversationId: message.conversationId,
+              chatType: message.chatType,
+            });
+            return;
+          }
+          if (trust.level === 'stranger-dm' || trust.level === 'bot-sender') {
+            return;
+          }
+          if (message.chatType === 'group' && trust.toolScope !== 'none') {
+            // Structural invariant: a group turn can never carry local tools.
+            console.warn('[IMGatewayManager] Refusing a group turn with a non-empty tool scope', {
+              conversationId: message.conversationId,
+            });
+            return;
+          }
+        }
+
         let response: string;
         const targetMetabotId = this.getRouteMetabotIdForPlatform(message.platform);
 
@@ -274,6 +304,9 @@ export class IMGatewayManager extends EventEmitter {
           response = await this.chatHandler.processMessage(message);
         }
 
+        // Silent turns (e.g. a dropped or empty answer) must not push an empty
+        // bubble into the chat.
+        if (typeof response === 'string' && !response.trim()) return;
         await replyFn(response);
       } catch (error: any) {
         console.error(`[IMGatewayManager] Error processing message: ${error.message}`);
