@@ -226,6 +226,11 @@ test('mime and magic-byte helpers', () => {
   assert.equal(mimeFromFileName('unknown.zzz'), 'application/octet-stream');
   assert.equal(extensionForMime('image/png'), '.png');
   assert.equal(extensionForMime('application/x-unknown'), '.bin');
+  // Regression: a live inbound 新建文本文档.txt landed as `.bin` before this map
+  // learned the text types (docs/weixin-media-verification.md §2.2).
+  assert.equal(extensionForMime(mimeFromFileName('新建文本文档.txt')), '.txt');
+  assert.equal(extensionForMime('text/markdown'), '.md');
+  assert.equal(extensionForMime('application/json'), '.json');
   assert.equal(sniffImageMime(pngBytes()), 'image/png');
   assert.equal(sniffImageMime(Buffer.from([0xff, 0xd8, 0xff, 0x01])), 'image/jpeg');
   assert.equal(sniffImageMime(Buffer.from('plain text')), null);

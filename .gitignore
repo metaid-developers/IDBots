@@ -828,3 +828,4 @@ blob-report/
 !tests/weixinMedia.test.ts
 !docs/weixin-media.md
 !docs/weixin-media-delegated-verification.md
+!docs/weixin-media-verification.md
