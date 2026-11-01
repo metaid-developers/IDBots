@@ -748,8 +748,9 @@ export function buildTransferTxB(S: TransferTxBStaticInputs): TransferTxBResult 
   const prevTokenAmount = BigInt(String(prevDp.tokenAmount));
   // Lineage input proof — VERBATIM SDK bytes (same stage2b verdict as LIST).
   const inputRes = TokenUtil.getTxInputProof(tokenTx, S.prevTokenInputIndex);
+  // The repo-level eslint config disables @typescript-eslint/no-var-requires, so
+  // the old inline disable became an "unused directive" error (max-warnings 0).
   const ProofClasses = scryptlib.buildTypeClasses(
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     require('meta-contract/dist/mcp02/contract-desc/txUtil_desc.json'),
   );
   const tokenTxInputProof = rebuildTxInputProof(ProofClasses, inputRes[0]);
