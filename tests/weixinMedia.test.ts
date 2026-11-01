@@ -36,12 +36,21 @@ import {
   sniffImageMime,
   uploadKindForFile,
   weixinAesKeyToCdnField,
+  weixinPlayLengthToSeconds,
   WeixinMediaError,
   WEIXIN_INBOUND_MAX_IMAGE_BYTES,
+  WEIXIN_INBOUND_MAX_VIDEO_BYTES,
+  WEIXIN_VIDEO_PLAY_LENGTH_UNIT,
   type WeixinMediaNetwork,
   type WeixinMediaRef,
 } from '../src/main/im/weixinMedia';
-import { WEIXIN_ITEM_TYPE_FILE, WEIXIN_ITEM_TYPE_IMAGE, WEIXIN_ITEM_TYPE_VIDEO } from '../src/main/im/weixinProtocol';
+import {
+  describeWeixinAttachments,
+  formatWeixinMediaSize,
+  WEIXIN_ITEM_TYPE_FILE,
+  WEIXIN_ITEM_TYPE_IMAGE,
+  WEIXIN_ITEM_TYPE_VIDEO,
+} from '../src/main/im/weixinProtocol';
 import { decideWeixinImageCompression } from '../src/main/im/weixinImage';
 import { WeixinGateway } from '../src/main/im/weixinGateway';
 import { WeixinStore } from '../src/main/im/weixinStore';
@@ -73,6 +82,8 @@ class FakeMediaNetwork implements WeixinMediaNetwork {
   readonly downloadUrls: string[] = [];
   readonly uploadUrls: string[] = [];
   readonly uploadedBodies: Buffer[] = [];
+  /** Per-download cap the production code asked for, in call order. */
+  readonly downloadMaxBytes: number[] = [];
   downloadHandler: (url: string) => Buffer;
   uploadHandler: (body: Buffer) => { status: number; encryptedParam: string | null; errorText?: string };
 
@@ -87,6 +98,7 @@ class FakeMediaNetwork implements WeixinMediaNetwork {
 
   async fetchBytes(url: string, options: { maxBytes: number }): Promise<Buffer> {
     this.downloadUrls.push(url);
+    this.downloadMaxBytes.push(options.maxBytes);
     const body = this.downloadHandler(url);
     // Mirror the production guard so maxBytes is actually exercised.
     if (body.length > options.maxBytes) {
@@ -425,6 +437,103 @@ test('downloadWeixinMedia rejects an item with no download credential', async ()
   await assert.rejects(
     downloadWeixinMedia(imageRef({ encryptQueryParam: null, fullUrl: null }), { dir, network }),
     WeixinMediaError
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Video: separate inbound cap, metadata, one-line description
+// ---------------------------------------------------------------------------
+
+function videoRef(overrides: Partial<WeixinMediaRef> = {}): WeixinMediaRef {
+  return {
+    kind: 'video',
+    encryptQueryParam: 'video-param',
+    fullUrl: null,
+    aesKeyBase64: null,
+    aesKeyHex: null,
+    fileName: null,
+    sizeHint: null,
+    playLength: null,
+    ...overrides,
+  };
+}
+
+test('inbound video reuses the shared pipeline but a separate 100 MB cap', async () => {
+  const dir = tempDir('idbots-weixin-video-');
+  const key = crypto.randomBytes(16);
+  const plaintext = Buffer.concat([Buffer.from('00000018667479706d703432', 'hex'), Buffer.alloc(2048, 0x11)]);
+  const network = new FakeMediaNetwork(() => encryptAesEcb(plaintext, key));
+
+  const attachment = await downloadWeixinMedia(
+    videoRef({ aesKeyBase64: Buffer.from(key).toString('base64') }),
+    { dir, network }
+  );
+
+  // Same download → decrypt → persist path as images/files …
+  assert.equal(attachment.type, 'video');
+  assert.equal(attachment.mimeType, 'video/mp4');
+  assert.equal(attachment.fileSize, plaintext.length);
+  assert.equal(path.dirname(attachment.localPath), path.resolve(dir));
+  assert.deepEqual(fs.readFileSync(attachment.localPath), plaintext);
+  // … but its own cap, and not the 30 MB image guard.
+  assert.equal(network.downloadMaxBytes[0], WEIXIN_INBOUND_MAX_VIDEO_BYTES);
+  assert.notEqual(WEIXIN_INBOUND_MAX_VIDEO_BYTES, WEIXIN_INBOUND_MAX_IMAGE_BYTES);
+  // No fabricated metadata: the protocol carries no video width/height.
+  assert.equal(attachment.width, undefined);
+  assert.equal(attachment.height, undefined);
+  assert.equal(attachment.duration, undefined, 'play_length unit is unproven');
+});
+
+test('an image still uses the image cap — the video cap is not shared', async () => {
+  const dir = tempDir('idbots-weixin-image-cap-');
+  const key = crypto.randomBytes(16);
+  const network = new FakeMediaNetwork(() => encryptAesEcb(pngBytes(), key));
+  await downloadWeixinMedia(
+    imageRef({ aesKeyBase64: Buffer.from(key).toString('base64') }),
+    { dir, network }
+  );
+  assert.equal(network.downloadMaxBytes[0], WEIXIN_INBOUND_MAX_IMAGE_BYTES);
+});
+
+test('weixinPlayLengthToSeconds stays empty until the unit is proven', () => {
+  assert.equal(WEIXIN_VIDEO_PLAY_LENGTH_UNIT, 'unknown');
+  assert.equal(weixinPlayLengthToSeconds(12), null);
+  assert.equal(weixinPlayLengthToSeconds(12, 's'), 12);
+  assert.equal(weixinPlayLengthToSeconds(12345, 'ms'), 12.3);
+  assert.equal(weixinPlayLengthToSeconds(null), null);
+  assert.equal(weixinPlayLengthToSeconds(undefined), null);
+});
+
+test('readWeixinMediaRefs carries video play_length through untouched', () => {
+  const videoItem = {
+    type: WEIXIN_ITEM_TYPE_VIDEO,
+    video_item: {
+      media: { encrypt_query_param: 'video-param', aes_key: 'video-key' },
+      video_size: 8192,
+      play_length: 12000,
+    },
+  };
+  const result = readWeixinMediaRefs([videoItem] as never);
+  assert.equal(result.refs[0].kind, 'video');
+  assert.equal(result.refs[0].playLength, 12000);
+  assert.equal(result.refs[0].sizeHint, 8192);
+});
+
+test('a video-only message becomes a description carrying its size', () => {
+  assert.equal(formatWeixinMediaSize(12.3 * 1024 * 1024), '12.3MB');
+  assert.equal(formatWeixinMediaSize(1536), '2KB');
+  assert.equal(formatWeixinMediaSize(512), '512B');
+  assert.equal(formatWeixinMediaSize(undefined), null);
+
+  assert.equal(
+    describeWeixinAttachments([
+      { type: 'video', localPath: '/tmp/x.mp4', mimeType: 'video/mp4', fileSize: 12.9 * 1024 * 1024 },
+    ]),
+    '用户发送了一个视频 12.9MB'
+  );
+  assert.equal(
+    describeWeixinAttachments([{ type: 'video', localPath: '/tmp/x.mp4', mimeType: 'video/mp4' }]),
+    '用户发送了一个视频'
   );
 });
 
