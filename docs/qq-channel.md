@@ -95,6 +95,83 @@ through the same 0600 store, then the settings page calls `im:gateway:start('qq'
 - `guild` / `dm` events are ignored: the high-level facade does not derive a
   `replyTarget` for them (SDK `USAGE.md` §5.3), so they are outside this channel's
   contract.
+- Group answers are layer-1 Q&A only (see §3.1): the bot cannot touch the host machine
+  from a group, whatever a group member asks.
+
+## 3.1 Security boundary (three layers, enforced in code)
+
+Why this exists: after the bot was invited to a group, **any group member** could command
+it, and each of those turns ran with the host bot's full local surface (files, shell,
+wallet, chain writes). Prompt wording cannot fix that, so the decision is made once, at
+the message entry point (`src/main/im/qqTrust.ts`), and carried — frozen — through the
+whole turn.
+
+| Layer | Who | What they get |
+| --- | --- | --- |
+| 1. Normal conversation | anyone in an allowlisted group | text Q&A only: **no tools, no memory, no attachments** |
+| 2. Owner-only | the bound owner OpenID, direct messages | Q&A + long-term memory read/write |
+| 3. Local machine operations | **nobody by default** | files / shell / attachments / wallet / chain writes, only when the switch is on AND the identity is in `localToolsAllowFrom` |
+
+Enforcement points (all code, none prompt-only):
+
+- **One decision per message.** `resolveQQMessageGate()` returns an immutable
+  `IMTrustContext`; `toQQIMMessage()` re-freezes it. `IMGatewayManager` drops a QQ message
+  with no trust context, and `CoworkRunner` can only *narrow* trust when a session is
+  continued — never widen it.
+- **Group tool surface is empty.** `buildDshHostTools()` returns `[]` for
+  `toolScope !== 'local'` (tools are not registered at all), and the policy hook
+  (`evaluateDshToolPolicy`) denies every built-in tool (Read/Write/Bash/WebFetch/…) even
+  if the runtime mounts it. The skills catalog, the browser-tab block, the active goal and
+  the remote-services directory are suppressed as well.
+- **Group content never becomes memory.** Group turns run with
+  `disableMemoryUpdates: true`, the skills/KB tools are not mounted, and the nightly
+  consolidation query explicitly excludes sessions whose mapping channel is
+  `im:%:group`. Group sessions are also `hidden_from_session_list = 1`, which keeps them
+  out of the recent-session pulse another (private) chat would otherwise see — no group →
+  private context flow.
+- **Group workspace is isolated.** A group session's cwd is
+  `<userData>/qq-group-workspaces/<group-openid>`, created empty, never the owner's
+  working directory. The system prompt for a group is a minimal Q&A prompt with no
+  skills catalog, no tool instructions and no owner context.
+- **Strangers get silence.** An unknown DM sender receives **no text at all** — not even
+  "unauthorized" — and no typing indicator. Only the bound `ownerUserOpenid` can trigger
+  a DM turn, and an unbound channel serves nobody (fail-closed).
+- **Group allowlist.** `groupPolicy` is `open | allowlist | disabled`; the default is
+  `allowlist` with an **empty list**, i.e. no group is answered until the owner adds one.
+  An unknown/invalid policy value degrades to `disabled`.
+- **Group attachments are refused.** Images/files/videos in a group are never downloaded
+  and never written to disk; the bot replies once with
+  `群里不支持看文件，私聊我` and does not run a model turn.
+- **Identity is the stable id.** `senderId` (`member_openid` in groups, the user OpenID in
+  C2C) is the only identity input. Display names are never consulted, so a forged nickname
+  cannot gain anything. `senderIsBot === true` (SDK `author.bot`) is dropped first, which
+  also breaks bot-to-bot @ loops.
+- **Fail-closed.** Any throw inside the gate, a missing sender id, a missing group id or a
+  missing owner binding resolves to a silent drop — never to a permissive fallback.
+- **Audit.** Every group trigger appends one JSONL record under `<userData>/qq/audit/`
+  with group id, sender id, question summary (≤200 chars), reply summary, outcome and
+  reason. The settings card lets the owner edit the policy, the group allowlist, the
+  layer-3 switch and its allowlist.
+
+### Inviter verification: not possible, stated plainly
+
+**无法校验邀请人 (the inviter cannot be verified).** The official SDK exposes only
+`ready` / `resumed` / `disconnected` / `error` / `message` / `interaction` events
+(`USAGE.md` §8); there is **no** group-join event and no "who invited the bot" field in
+`GROUP_AT_MESSAGE_CREATE`. Therefore:
+
+- there is no code path that claims to check the inviter — nothing pretends it works;
+- a group is answered **only** if its `group_openid` is in `groupAllowlist`;
+- a bot pulled into a stranger's group stays silent until the owner adds that group id.
+
+This is a platform limitation, not a product decision, and the settings card says so in
+the UI (`qqGroupInviteWarning`).
+
+> Owner-binding assumption (not live-verified): the QR connector returns `userOpenid`, and
+> the SDK maps a C2C message's `senderId` from `ev.author.user_openid`
+> (`dist/protocol/gateway/event-dispatcher.js:63`). The gate compares those two values.
+> The field names line up, but a real scan + real DM was not available to this session, so
+> the end-to-end equality is **not tested** — see the verification record.
 
 ## 4. Concurrency (the Weixin lesson)
 
@@ -197,6 +274,10 @@ Two layers:
 - **No live account was used.** QR scan completion, real messages, and real media could
   not be tested; see the verification doc for the exact "not tested + reason" list.
 - Active pushes (no `msgId`) are subject to QQ-side quotas we cannot measure offline.
+- **Inviter cannot be verified** (see §3.1): the SDK has no group-join event with an
+  inviter field, so group access is allowlist-only by design.
+- Layer 3 is OFF by default; an owner who wants local capabilities over QQ must enable
+  the switch and add their own OpenID. Until then, owner DMs are also plain chat.
 - Streaming (`openStream`) and Markdown (`sendMarkdown`, needs markdown permission) are
   not wired: the framework has no streaming surface and `markdownSupport` would have to
   become a per-bot setting.

@@ -13,6 +13,7 @@ No push, no PR (per task brief).
 | Renderer typecheck | `npx tsc -p tsconfig.json --noEmit` | **pass**, no diagnostics |
 | Lint (0 warnings) | `pnpm run lint` | **pass**, exit 0, no output |
 | Offline QQ suite | `pnpm run test:qq` | **32/32 pass**, 0 fail, ~0.3 s, no network |
+| Security regression suite | `npx tsx --test tests/qqSecurity.test.ts` | **24/24 pass**, 0 fail, no network |
 | Dev launch | `env -u ELECTRON_RUN_AS_NODE -u IDBOTS_ELECTRON_PATH pnpm run electron:dev:dsh` | **pass** — Vite on :5185, Electron window painted, renderer initialisation complete |
 
 Notes:
@@ -81,6 +82,40 @@ QR authorization
 31. `beginLogin` persists the credential and restarts the gateway with it
 32. manual credentials are saved under the appId slot and can start the gateway
 
+## 2.1 Security regression coverage (`tests/qqSecurity.test.ts`, 24 tests)
+
+The incident that motivated this work: a bot invited into a group could be commanded by
+**any** member, with the host bot's full local surface. The suite pins every red line:
+
+| # | Invariant pinned |
+| --- | --- |
+| SEC-01 | group turns are layer-1 only: no tools, no memory read/write, no attachments |
+| SEC-02 | the default is `allowlist` + empty list ⇒ no group is served at all |
+| SEC-03 | owner DM is layer 2: memory on, layer 3 still OFF |
+| SEC-04 | layer 3 needs BOTH the switch and its own allowlist (naming the owner) |
+| SEC-05 | a stranger DM is a silent drop with no reply text |
+| SEC-06 | no owner binding ⇒ every DM is a stranger (fail-closed) |
+| SEC-07 | identity is the stable id; a forged display name changes nothing |
+| SEC-08 | `senderIsBot` is dropped first (no bot-to-bot loop) |
+| SEC-09 | an unknown group policy degrades to `disabled` |
+| SEC-10 | the gate never throws: malformed input is a silent drop |
+| SEC-11 | inviter fields are never consulted; only the allowlist decides |
+| SEC-12 | audit summaries are collapsed and capped at 200 chars |
+| SEC-13 | group workspaces are per-group and path-traversal-safe |
+| SEC-14 | a non-allowlisted group gets no reply and no callback, but an audit line |
+| SEC-15 | a stranger DM produces no reply, no typing, no callback |
+| SEC-16 | an allowed group turn carries a frozen no-tool trust context + audit line |
+| SEC-17 | group image/file/video: zero downloads, zero disk writes, fixed notice only |
+| SEC-18 | owner DM still downloads attachments (layer 2 unchanged) |
+| SEC-19 | a bot sender is dropped even in an open group |
+| SEC-20 | runner: empty tool surface + deny-all backstop + suppressed skills/browser/goal |
+| SEC-21 | group sessions stay out of nightly consolidation and the recent-session pulse |
+| SEC-22 | group sessions get an isolated workspace, a minimal prompt, no memory |
+| SEC-23 | `DEFAULT_QQ_CONFIG` is the strict one |
+| SEC-24 | the docs state the inviter cannot be verified |
+
+Every case runs against fake SDK / fake network surfaces; nothing leaves the process.
+
 ## 3. Live (real app) checks
 
 ### 3.1 Settings card
@@ -122,6 +157,10 @@ successful scan.
 | SDK chunked upload (>5 MB) on a real network | **not tested** | no credentials and no upload endpoint session |
 | Packaged (ASAR) ESM import | **not tested** | dev build only; plain Node import was verified separately |
 | Group message with real `GROUP_AT_MESSAGE_CREATE` payload | **not tested** | no bot in a real group |
+| Real group allowlist enforcement on a live group | **not tested** | same as above; covered offline by SEC-14/SEC-16 |
+| Real stranger DM silence on a live QQ account | **not tested** | no second QQ account was available; covered offline by SEC-15 |
+| Group attachment refusal against the real CDN | **not tested** | no live group; covered offline by SEC-17 (asserts zero fetch attempts) |
+| Layer-3 grant end-to-end over QQ (files/shell) | **not tested** | deliberately OFF by default; enabling it needs the owner's decision |
 
 The live rows above must stay "not tested" until an owner-scanned bot is available.
 
@@ -148,7 +187,8 @@ the QQ code are unaffected.
 - Code: `src/main/im/qq*.ts`, wiring in `types.ts` / `imStore.ts` /
   `imGatewayManager.ts` / `main.ts` / `preload.ts`, renderer card in `IMSettings.tsx`,
   logo `public/qq.svg`.
-- Tests: `tests/qqGateway.test.ts` (`pnpm run test:qq`).
+- Tests: `tests/qqGateway.test.ts` (`pnpm run test:qq`),
+  `tests/qqSecurity.test.ts` (24 security regressions).
 - Docs: `docs/qq-channel.md`, this file, `docs/qq-channel-pr.md`.
 - Runtime evidence (gitignored): `.dev-userdata-dsh/qq-card.png`,
   `.dev-userdata-dsh/qq-qr2.png`, `.dev-userdata-dsh/qq-dev*.log`.

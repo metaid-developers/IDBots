@@ -24,6 +24,8 @@ import {
   type QQProbeFetch,
 } from '../src/main/im/qqGateway';
 import { QQStore, normalizeQQAccountId } from '../src/main/im/qqStore';
+import { QQGroupAuditLog } from '../src/main/im/qqTrust';
+import type { QQConfig } from '../src/main/im/types';
 import {
   QQ_INBOUND_MAX_BYTES,
   QQ_MEDIA_LIMITS_BYTES,
@@ -224,6 +226,7 @@ interface GatewayHarness {
   connector: ConnectorHarness;
   mediaRoot: string;
   stateDir: string;
+  auditDir: string;
   clock: { value: number };
   sleeps: number[];
 }
@@ -237,6 +240,7 @@ function makeGateway(options: {
 } = {}): GatewayHarness {
   const stateDir = makeTempDir('state');
   const mediaRoot = options.mediaRoot ?? makeTempDir('media');
+  const auditDir = makeTempDir('audit');
   const store = new QQStore(stateDir);
   const factory = new FakeFactory({ rejectStartOnce: options.rejectStartOnce });
   const connector = makeConnector();
@@ -257,17 +261,33 @@ function makeGateway(options: {
     mediaNetwork: options.mediaNetwork ?? makeMediaNetwork(Buffer.from('fake-bytes')),
     probeFetch: options.probeFetch,
     typingIndicator: true,
+    auditLog: new QQGroupAuditLog(auditDir),
   });
 
-  return { gateway, store, factory, connector, mediaRoot, stateDir, clock, sleeps };
+  return { gateway, store, factory, connector, mediaRoot, stateDir, auditDir, clock, sleeps };
 }
 
-async function startGateway(harness: GatewayHarness): Promise<FakeBot> {
+/**
+ * Start with the security surface EXPLICITLY configured, because the product
+ * default is deliberately the strictest one (no owner binding => every DM is
+ * a stranger; empty allowlist => no group is served).
+ *
+ * The shared default here binds `user-openid-1` as the owner and opens groups
+ * so the pre-existing behavioural tests keep exercising their subject. The
+ * security suite (tests/qqSecurity.test.ts) drives the strict paths.
+ */
+async function startGateway(harness: GatewayHarness, overrides: Partial<QQConfig> = {}): Promise<FakeBot> {
   await harness.gateway.start({
     enabled: true,
     appId: '102000001',
     appSecret: 'test-secret-value',
     debug: false,
+    ownerUserOpenid: 'user-openid-1',
+    groupPolicy: 'open',
+    groupAllowlist: [],
+    localToolsEnabled: false,
+    localToolsAllowFrom: [],
+    ...overrides,
   });
   await waitFor(() => harness.factory.bots.length === 1, 2000, 'first bot');
   return harness.factory.bots[0];
@@ -670,8 +690,16 @@ test('same-conversation messages are serialized; different conversations run in 
     const first = bot.emitMessage(inbound({ messageId: 'q-1', content: 'first' }));
     await waitFor(() => gates.has('first'));
     const second = bot.emitMessage(inbound({ messageId: 'q-2', content: 'second' }));
+    // A second DM sender no longer exists (DMs are owner-only), so the
+    // "different conversation" half of this test uses a group.
     const other = bot.emitMessage(
-      inbound({ kind: 'c2c', senderId: 'user-2', messageId: 'q-3', content: 'other-chat' })
+      inbound({
+        kind: 'group',
+        groupOpenid: 'g-parallel',
+        rawEventType: 'GROUP_AT_MESSAGE_CREATE',
+        messageId: 'q-3',
+        content: 'other-chat',
+      })
     );
     await waitFor(() => gates.has('other-chat'), 1000, 'parallel conversation');
 
