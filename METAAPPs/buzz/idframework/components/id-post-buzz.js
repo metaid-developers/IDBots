@@ -153,6 +153,8 @@ class IdPostBuzz extends HTMLElement {
 
   _pickBuzzPayload(pin) {
     var candidates = [
+      // Aggregation-layer rows expose the payload as a ready object.
+      this._tryParseJsonObject(pin && pin.payload),
       this._tryParseJsonObject(pin && pin.content),
       this._tryParseJsonObject(pin && pin.contentSummary),
       this._tryParseJsonObject(pin && pin.contentBody),
@@ -227,7 +229,7 @@ class IdPostBuzz extends HTMLElement {
     }
     if (text[0] === '/') {
       var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-      var manBase = String(serviceLocator.metaid_man || 'https://www.show.now/man').replace(/\/+$/, '');
+      var manBase = String(serviceLocator.metaid_man || 'https://manapi.metaid.io').replace(/\/+$/, '');
       return manBase + text;
     }
     return text;
@@ -309,8 +311,11 @@ class IdPostBuzz extends HTMLElement {
 
     try {
       var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-      var base = String(serviceLocator.metaid_man || 'https://www.show.now/man').replace(/\/+$/, '');
-      var response = await fetch(base + '/social/buzz/info?pinId=' + encodeURIComponent(pinId), { method: 'GET' });
+      // Aggregation-layer post detail (so.metaid.io); the retired show.now
+      // /social/buzz/info route went offline 2026-11-01. 40400 = the pin is
+      // outside the buzz-only index (unknown, not zero).
+      var aggBase = String(serviceLocator.social_agg || 'https://so.metaid.io').replace(/\/+$/, '');
+      var response = await fetch(aggBase + '/api/social/post/' + encodeURIComponent(pinId), { method: 'GET' });
       if (!response.ok) throw new Error('fetch quote detail failed');
       var json = await response.json();
       if (!json) throw new Error('fetch quote detail failed');
@@ -321,8 +326,9 @@ class IdPostBuzz extends HTMLElement {
 
       var payload = this._pickBuzzPayload(pin);
       var content = this._extractBuzzContent(pin, payload);
-      var address = this._pickFirstString([pin.address, pin.creator, pin.createAddress, pin.pinAddress]);
-      var metaId = this._pickFirstString([pin.metaid, pin.metaId, pin.CreateMetaid, pin.globalMetaId]);
+      var author = pin.author && typeof pin.author === 'object' ? pin.author : null;
+      var address = this._pickFirstString([pin.address, pin.creator, pin.createAddress, pin.pinAddress, author && author.address]);
+      var metaId = this._pickFirstString([pin.metaid, pin.metaId, pin.CreateMetaid, pin.globalMetaId, author && (author.metaId || author.metaid || author.globalMetaId)]);
       var userInfo = address
         ? await this._fetchUserInfoByAddress(address)
         : { name: '', metaId: '', avatar: '', address: '' };

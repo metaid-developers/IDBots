@@ -35,6 +35,7 @@ CLAUDE.md
 localdocs/
 docs/*
 !docs/twin-bot-orchestration.md
+!docs/social-read-resilience.md
 !docs/nft-trade-protocol-draft.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/
@@ -444,6 +445,7 @@ man_base_data_pebble/
 !tests/metaidRpcWalletToolsRoutes.test.mjs
 !tests/groupChatAgentTools.test.mjs
 !tests/omniReaderAgentTools.test.mjs
+!tests/buzzAppSocialSources.test.mjs
 !tests/browserOpenAgentTools.test.mjs
 !tests/screenshotAgentTools.test.mjs
 !tests/hostLocationService.test.mjs
