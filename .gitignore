@@ -61,6 +61,7 @@ docs/*
 !docs/tickets/
 !docs/tickets/**
 tests/*
+!tests/dataGuard.test.mjs
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
 !tests/friendWiringIntegration.test.mjs

@@ -6,6 +6,7 @@ import path from 'path';
 import initSqlJs, { SqlJsStatic } from 'sql.js';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
+import type { DataGuardStats } from './libs/dataGuard';
 import { truncateUtf16Units } from './libs/llmSafeText';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
@@ -4554,6 +4555,25 @@ export class SqliteStore {
       console.warn('Failed to migrate legacy MEMORY.md entries:', error);
       return;
     }
+  }
+
+  /**
+   * Data-guard snapshot counters (see libs/dataGuard.ts): the rough magnitude
+   * of the last known database contents, written OUTSIDE the database file so
+   * a vanished database stays detectable. Best-effort — a failed query reads
+   * as 0 instead of breaking the snapshot write.
+   */
+  getDataGuardStats(): DataGuardStats {
+    const countOf = (table: string): number => {
+      try {
+        const result = this.db.exec(`SELECT COUNT(*) as count FROM ${table}`);
+        const value = result[0]?.values[0]?.[0];
+        return typeof value === 'number' ? value : 0;
+      } catch {
+        return 0;
+      }
+    };
+    return { bots: countOf('metabots'), messages: countOf('cowork_messages') };
   }
 
   private migrateFromElectronStore(userDataPath: string) {
