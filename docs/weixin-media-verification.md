@@ -12,10 +12,10 @@ Code under test: branch `feat/weixin-media` in
 what changed afterwards is listed in §4).
 
 Runtime: `pnpm run electron:dev:dsh` (vite 5185 + Electron), userData
-`.dev-userdata-dsh`, media root `.dev-userdata-dsh/weixin-inbound`.
+`<dev-userdata>`, media root `<dev-userdata>/weixin-inbound`.
 The WeChat bot token was **reused** from the previous `feat/weixin-channel` work
 (copied into this worktree's userData at 01:03); **no new QR scan was performed in
-this session**. Conversation: `o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat` (the
+this session**. Conversation: `<REDACTED_CONVERSATION_ID>` (the
 "WeChat ClawBot" chat in the desktop client).
 
 ---
@@ -44,11 +44,11 @@ this session**. Conversation: `o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat` (the
 [1]   mimeType: 'image/png',
 [1]   fileSize: 19186,
 [1]   fileName: 'weixin-image.png',
-[1]   localPath: '.../.dev-userdata-dsh/weixin-inbound/weixin_1793552755185_d3c925ba.png'
+[1]   localPath: '.../<dev-userdata>/weixin-inbound/weixin_1793552755185_d3c925ba.png'
 [1] }
 ```
 
-File: `.dev-userdata-dsh/weixin-inbound/weixin_1793552755185_d3c925ba.png`,
+File: `<dev-userdata>/weixin-inbound/weixin_1793552755185_d3c925ba.png`,
 19,186 bytes, mtime 01:05:55.
 
 ### 2.2 Inbound file (01:13:13)
@@ -63,7 +63,7 @@ File: `.dev-userdata-dsh/weixin-inbound/weixin_1793552755185_d3c925ba.png`,
 [1]   fileName: '新建文本文档.txt',
 [1]   duration: undefined,
 [1]   playLength: null,
-[1]   localPath: '.../.dev-userdata-dsh/weixin-inbound/weixin_1793553193804_9b27e1a2.bin'
+[1]   localPath: '.../<dev-userdata>/weixin-inbound/weixin_1793553193804_9b27e1a2.bin'
 [1] }
 ```
 
@@ -87,7 +87,7 @@ Sample A — 01:10:25, 654,534 bytes (`dev-video.log:186`):
 [1]   fileSize: 654534,
 [1]   fileName: 'weixin-video.mp4',
 [1]   duration: undefined,
-[1]   localPath: '.../.dev-userdata-dsh/weixin-inbound/weixin_1793553025167_57ea6b5a.mp4'
+[1]   localPath: '.../<dev-userdata>/weixin-inbound/weixin_1793553025167_57ea6b5a.mp4'
 [1] }
 ```
 
@@ -116,7 +116,7 @@ Sample C — 01:17, **final build** (`dev-final.log:186`):
 [1]   fileName: 'weixin-video.mp4',
 [1]   duration: 9,
 [1]   playLength: 9,
-[1]   localPath: '.../.dev-userdata-dsh/weixin-inbound/weixin_1793553440763_48526ea7.mp4'
+[1]   localPath: '.../<dev-userdata>/weixin-inbound/weixin_1793553440763_48526ea7.mp4'
 [1] }
 ```
 
@@ -136,15 +136,15 @@ sender's original HEVC MP4 (65 bytes of MP4 header + payload; `ffprobe` agrees).
 Command (real gateway code, live credentials):
 
 ```
-node .dev-userdata-dsh/weixin-media-task/outbound-live.cjs \
-  "o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat" /tmp/weixin-media-fixtures/weixin-test-image.png
+node <dev-userdata>/weixin-media-task/outbound-live.cjs \
+  "<REDACTED_CONVERSATION_ID>" /tmp/weixin-media-fixtures/weixin-test-image.png
 ```
 
 Output:
 
 ```
 [Weixin Gateway] media sent { kind: 'image', bytes: 1969, fileName: 'weixin-test-image.png' }
-SEND-MEDIA-OK {"conversationId":"o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat","file":"weixin-test-image.png","bytes":1969,"elapsedMs":1467}
+SEND-MEDIA-OK {"conversationId":"<REDACTED_CONVERSATION_ID>","file":"weixin-test-image.png","bytes":1969,"elapsedMs":1467}
 ```
 
 Visual confirmation: the 640×480 orange test image appears in the WeChat
@@ -153,14 +153,14 @@ Visual confirmation: the 640×480 orange test image appears in the WeChat
 ### 2.5 Outbound video
 
 ```
-node …/outbound-live.cjs "o9cq80_Jrfc-…@im.wechat" /tmp/weixin-media-fixtures/weixin-test-video.mp4
+node …/outbound-live.cjs "<REDACTED_CONVERSATION_ID>" /tmp/weixin-media-fixtures/weixin-test-video.mp4
 ```
 
 Output (final build):
 
 ```
 [Weixin Gateway] media sent { kind: 'video', bytes: 15063, fileName: 'weixin-test-video.mp4' }
-SEND-MEDIA-OK {"conversationId":"o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat","file":"weixin-test-video.mp4","bytes":15063,"elapsedMs":1339}
+SEND-MEDIA-OK {"conversationId":"<REDACTED_CONVERSATION_ID>","file":"weixin-test-video.mp4","bytes":15063,"elapsedMs":1339}
 ```
 
 Visual confirmation: WeChat renders it as a **video message** (play triangle,

@@ -1,7 +1,7 @@
 # Weixin channel — on-machine verification record
 
 Date: 2026-11-02 (local, Asia/Shanghai)
-Worktree: `/Users/pamper/idbots/project/bots/1/2026-10-30/idbots-weixin/IDBots/.worktrees/feat-weixin-channel`
+Worktree: `<repo>
 Branch: `feat/weixin-channel` (base `61d11c4`, not pushed, no PR)
 Code under test: `51c3fd2` (feature + cancel fix + lint cleanup); this record is committed after it.
 Environment: macOS 15.6.1 (arm64), node v24.19.0, pnpm 11.24.0, Electron 41.10.5.
@@ -34,7 +34,7 @@ if a minimal-diff review is preferred.
 ## 2. Dev app boot — PASS
 
 `pnpm run electron:dev:dsh` starts Vite (port 5185) and Electron with the isolated
-profile `./.dev-userdata-dsh` / `./.dev-appdata-dsh`.
+profile `./<dev-userdata>` / `./<dev-appdata>`.
 
 Environment caveat worth recording: this shell inherits `ELECTRON_RUN_AS_NODE=1`
 from the host IDBots process, which makes `electron .` run the main bundle as plain
@@ -177,8 +177,8 @@ The live leg — whether WeChat accepts the `item_list` shape — is unverified.
 | --- | --- |
 | Settings card screenshot | `docs/assets/weixin-settings-card.png` |
 | QR pending screenshot | `docs/assets/weixin-qr-pending.png` |
-| Dev/lint/test logs (gitignored, local) | `.dev-userdata-dsh/weixin-task/*.log` |
-| CDP driver scripts (gitignored, local) | `.dev-userdata-dsh/weixin-task/cdp-*.mjs` |
+| Dev/lint/test logs (gitignored, local) | `<dev-userdata>/weixin-task/*.log` |
+| CDP driver scripts (gitignored, local) | `<dev-userdata>/weixin-task/cdp-*.mjs` |
 
 The dev run was stopped with `pkill` at the end of the session; port 5185 and the
 Electron processes were confirmed gone.

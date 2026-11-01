@@ -16,7 +16,7 @@ reported as passing without a log line or a file on disk behind it.
 
 | Item | Value |
 | --- | --- |
-| Worktree | `/Users/pamper/idbots/project/bots/1/2026-10-30/idbots-weixin/IDBots/.worktrees/feat-weixin-media` |
+| Worktree | `<repo> |
 | Branch | `feat/weixin-media`, created from `main` (`61d11c4`) |
 | Inheritance of the text channel | `merge --no-ff feat/weixin-channel` → merge commit `78bf768`; `main`'s working tree was never touched |
 | Ahead of `origin/main` | 21 commits |
@@ -37,7 +37,7 @@ The two `env -u` unsets are required on this machine: the host shell exports
 
 ## 3. Live leg A — WeChat → IDBots image: PASS (measured by this worker)
 
-Log: `.dev-userdata-dsh/weixin-media-task/dev.log` (run started 01:03).
+Log: `<dev-userdata>/weixin-media-task/dev.log` (run started 01:03).
 
 ```
 [Weixin Gateway] inbound media saved {
@@ -45,12 +45,12 @@ Log: `.dev-userdata-dsh/weixin-media-task/dev.log` (run started 01:03).
   mimeType: 'image/png',
   fileSize: 19186,
   fileName: 'weixin-image.png',
-  localPath: '.../.dev-userdata-dsh/weixin-inbound/weixin_1793552755185_d3c925ba.png'
+  localPath: '.../<dev-userdata>/weixin-inbound/weixin_1793552755185_d3c925ba.png'
 }
 [IMGatewayManager] Using Cowork mode for message processing
 [IMCoworkHandler] 处理消息: {
   "platform": "weixin",
-  "conversationId": "o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat",
+  "conversationId": "<REDACTED_CONVERSATION_ID>",
   "originalContent": "用户发送了图片 1 张",
   "formattedContent": "用户发送了图片 1 张\n\n[附件信息]\n- 类型: image, 路径: .../weixin_1793552755185_d3c925ba.png, 提示: 可调用 describe_image …, 文件名: weixin-image.png, MIME: image/png, 大小: 18.7KB",
   "attachments": [ { "type": "image", "localPath": ".../weixin_1793552755185_d3c925ba.png",
@@ -81,7 +81,7 @@ gateway (`sendMedia`, no app instance involved) against the live endpoint:
 
 ```
 [Weixin Gateway] media sent { kind: 'image', bytes: 94600, fileName: 'outbound-live.png' }
-SEND-MEDIA-OK {"conversationId":"o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat",
+SEND-MEDIA-OK {"conversationId":"<REDACTED_CONVERSATION_ID>",
                "file":"outbound-live.png","bytes":94600,"elapsedMs":1401}
 ```
 
@@ -95,7 +95,7 @@ asked, in a message that specified the exact reply phrase, whether the 94,600-by
 gradient image had arrived; the reply was:
 
 ```
-[IMCoworkHandler] 处理消息: { "conversationId": "o9cq80_Jrfc-0O8gZ-LMBPlsQZyk@im.wechat",
+[IMCoworkHandler] 处理消息: { "conversationId": "<REDACTED_CONVERSATION_ID>",
                               "originalContent": "收到图片" }
 ```
 
@@ -113,7 +113,7 @@ claimed:
 ```
 [Weixin Gateway] inbound media saved { kind: 'file', mimeType: 'text/plain', fileSize: 86,
   fileName: '新建文本文档.txt',
-  localPath: '.../.dev-userdata-dsh/weixin-inbound/weixin_1793553193804_9b27e1a2.bin' }
+  localPath: '.../<dev-userdata>/weixin-inbound/weixin_1793553193804_9b27e1a2.bin' }
 [IMCoworkHandler] 处理消息: { "originalContent": "用户发送了文件「新建文本文档.txt」",
   "formattedContent": "… 类型: document, … 文件名: 新建文本文档.txt, MIME: text/plain, 大小: 0.1KB" }
 ```
