@@ -15,7 +15,8 @@ QQ Open Platform SDK (`@tencent-connect/qqbot-nodejs@1.0.5`) and QR connector
 
 - Direct chat (C2C) text; group chat answered only when the bot is @-mentioned.
 - Inbound image / file / video downloaded to a per-conversation media directory with
-  sanitized remote names, path containment, HTTPS-only fetches, and size guards.
+  sanitized remote names, path containment, HTTPS-only fetches (including a re-check of the
+  final redirect hop), and size guards.
 - Outbound image / video / file through the SDK's helpers, including its automatic
   chunked upload above 5 MB.
 - Two onboarding paths: QR bind (AppID + AppSecret obtained from the scan) and a manual
@@ -41,6 +42,7 @@ Each commit has one English development buzz, published as **AI_沈知珩**.
 | 4 | `44238765` | feat: add QQ channel card to IM settings | `pin://52fc4e12c81aec0c4bf86a1d3f5edd980e48883f3194611d92386518a0173f4bi0` |
 | 5 | `44f9ea5f` | test: add offline QQ gateway test suite | `pin://0dca174ad2aa0d64e9bce34755558d192c8fae617487f688f632703dc7e602b6i0` |
 | 6 | `f955f537` | docs: document QQ channel architecture and verification | `pin://4ff2e2df0b911a7d23d861897afba21a65df0ee561d692c1ee96d23a8bc669c3i0` |
+| 7 | `8484a229` | fix: re-validate redirect target for QQ media downloads | `pin://0525937d70be65a53ea04021c7babb3797e7de1e5557a04fcf82f2b3b9268ee3i0` |
 
 ## Attribution
 
