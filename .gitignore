@@ -61,6 +61,9 @@ docs/*
 !docs/tickets/
 !docs/tickets/**
 !docs/weixin-channel.md
+!docs/assets/
+!docs/assets/**
+!docs/weixin-channel-verification.md
 tests/*
 !tests/friendAgentTools.test.mjs
 !tests/friendRelationshipService.test.mjs
