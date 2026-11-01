@@ -144,6 +144,7 @@ import {
 import {
   runStartupDataRecoveryGuard,
   runVersionChangeBackup,
+  hasExistingSqliteDataFile,
   readDataDirectoryOverrideMarker,
   resolveLocalAppDataRoot,
   resolveWindowsOldUsersRoot,
@@ -19656,18 +19657,40 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       console.log('Created default project directory:', defaultProjectDir);
     }
 
+    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
+    // userData/backups/ rotating slots whenever the app version changes —
+    // BEFORE the store opens, so the snapshot captures the on-disk database
+    // before SqliteStore.create runs schema migrations against it (a
+    // post-open snapshot could never rescue a bad migration).
+    try {
+      const backupOutcome = runVersionChangeBackup({
+        currentVersion: app.getVersion(),
+        userDataPath: app.getPath('userData'),
+        hasExistingData: hasExistingSqliteDataFile(app.getPath('userData')),
+        log: (line) => console.log(line),
+      });
+      if (backupOutcome !== 'no-version-change') {
+        startupLog(`sqlite version backup: ${backupOutcome}`);
+      }
+    } catch (backupError) {
+      console.warn('[Main] version-change backup failed (boot continues):', backupError);
+    }
+
     store = await initStore();
     startupLog('store ready');
     // Refresh the data-guard fingerprint so a vanished database stays
     // detectable across junction swaps / data-directory migrations.
     writeDataGuardSnapshot('startup');
 
-    // feat/legacy-data-recovery: metabots count of the freshly opened store,
-    // shared by the recovery guard and the version-change backup. A missing
-    // metabots table (brand-new database) reads as 0.
+    // feat/legacy-data-recovery: count of REAL bots in the freshly opened
+    // store, used by the recovery guard. The seeded 'welcome' system bot
+    // does NOT make a library non-empty — a welcome-only library (the exact
+    // state the 2026-11-01 Windows incident left behind) is still an empty
+    // library and must get the recovery offer. A missing metabots table
+    // (brand-new database) reads as 0.
     const countCurrentMetabots = (): number => {
       try {
-        const result = store.getDatabase().exec('SELECT COUNT(*) FROM metabots');
+        const result = store.getDatabase().exec("SELECT COUNT(*) FROM metabots WHERE metabot_type != 'welcome'");
         return Number(result[0]?.values?.[0]?.[0] ?? 0);
       } catch {
         return 0;
@@ -19717,22 +19740,6 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       } catch (recoveryError) {
         console.warn('[Main] legacy data recovery guard failed (boot continues):', recoveryError);
       }
-    }
-
-    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
-    // userData/backups/ rotating slots whenever the app version changes.
-    try {
-      const backupOutcome = runVersionChangeBackup({
-        currentVersion: app.getVersion(),
-        userDataPath: app.getPath('userData'),
-        hasExistingData: countCurrentMetabots() > 0,
-        log: (line) => console.log(line),
-      });
-      if (backupOutcome !== 'no-version-change') {
-        startupLog(`sqlite version backup: ${backupOutcome}`);
-      }
-    } catch (backupError) {
-      console.warn('[Main] version-change backup failed (boot continues):', backupError);
     }
 
     // REQ-A-8: start the tenant bootstrap state machine BEFORE the gateway so

@@ -24,6 +24,7 @@ import {
   copySqliteTrio,
   overwriteStaleSqliteSidecars,
   runVersionChangeBackup,
+  hasExistingSqliteDataFile,
   readVersionMarker,
   readDataDirectoryOverrideMarker,
   writeDataDirectoryOverrideMarker,
@@ -39,15 +40,15 @@ function makeTmpDir(prefix) {
 }
 
 /** Create a real candidate data directory with an idbots.sqlite carrying
- *  the given metabots rows (name, updated_at). */
+ *  the given metabots rows (name, updated_at[, metabot_type='worker']). */
 function writeFixtureDb(dir, rows) {
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, DB_FILENAME);
   const db = createNativeSqliteDatabase(dbPath);
   assert.ok(db, 'node:sqlite unavailable — cannot build test fixtures');
-  db.run('CREATE TABLE IF NOT EXISTS metabots (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, updated_at INTEGER NOT NULL)');
-  for (const [name, updatedAt] of rows) {
-    db.run('INSERT INTO metabots (name, updated_at) VALUES (?, ?)', [name, updatedAt]);
+  db.run("CREATE TABLE IF NOT EXISTS metabots (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, metabot_type TEXT NOT NULL DEFAULT 'worker' CHECK (metabot_type IN ('twin', 'worker', 'welcome')), updated_at INTEGER NOT NULL)");
+  for (const [name, updatedAt, type] of rows) {
+    db.run('INSERT INTO metabots (name, metabot_type, updated_at) VALUES (?, ?, ?)', [name, type ?? 'worker', updatedAt]);
   }
   db.close(); // checkpoints WAL into the main file
   return dbPath;
@@ -104,6 +105,40 @@ test('readSqliteMetabotsSummary: counts rows and reads the newest updated_at', (
   assert.ok(summary);
   assert.equal(summary.metabotsCount, 3);
   assert.equal(summary.lastUpdatedAt, 200);
+});
+
+test('readSqliteMetabotsSummary: the seeded welcome system bot does not count as library content', () => {
+  const dir = makeTmpDir('drc-probe-welcome-');
+  const dbPath = writeFixtureDb(dir, [
+    ['real-bot', 100],
+    ['welcome', 200, 'welcome'],
+  ]);
+  const summary = readSqliteMetabotsSummary(dbPath);
+  assert.ok(summary);
+  assert.equal(summary.metabotsCount, 1, 'a welcome-only addition must not make the library non-empty');
+  assert.equal(summary.lastUpdatedAt, 100);
+
+  // Welcome-only library (the exact state the 2026-11-01 Windows incident
+  // left behind): reads as EMPTY so the recovery offer still fires.
+  const welcomeOnly = readSqliteMetabotsSummary(
+    writeFixtureDb(makeTmpDir('drc-probe-welcome-only-'), [['welcome', 300, 'welcome']]),
+  );
+  assert.ok(welcomeOnly);
+  assert.equal(welcomeOnly.metabotsCount, 0);
+});
+
+test('readSqliteMetabotsSummary: legacy schema without metabot_type falls back to the unfiltered count', () => {
+  const dir = makeTmpDir('drc-probe-legacy-');
+  fs.mkdirSync(dir, { recursive: true });
+  const dbPath = path.join(dir, DB_FILENAME);
+  const db = createNativeSqliteDatabase(dbPath);
+  db.run('CREATE TABLE metabots (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, updated_at INTEGER NOT NULL)');
+  db.run("INSERT INTO metabots (name, updated_at) VALUES ('old-bot', 42)");
+  db.close();
+  const summary = readSqliteMetabotsSummary(dbPath);
+  assert.ok(summary, 'a pre-metabot_type database must not be lost as a candidate');
+  assert.equal(summary.metabotsCount, 1);
+  assert.equal(summary.lastUpdatedAt, 42);
 });
 
 test('readSqliteMetabotsSummary: missing file, empty db, and db without metabots table read as unusable/empty', () => {
@@ -262,6 +297,15 @@ test('overwriteStaleSqliteSidecars zeroes stale non-empty wal/shm but keeps repl
 // ---------------------------------------------------------------------------
 // Version-change backup rotation (copy & create only — nothing is deleted)
 // ---------------------------------------------------------------------------
+
+test('hasExistingSqliteDataFile: true only for a non-empty idbots.sqlite (pre-open upgrade signal)', () => {
+  const dir = makeTmpDir('drc-hasfile-');
+  assert.equal(hasExistingSqliteDataFile(dir), false, 'no database file → fresh install');
+  fs.writeFileSync(path.join(dir, DB_FILENAME), 'x');
+  assert.equal(hasExistingSqliteDataFile(dir), true, 'non-empty file → upgrade boot');
+  fs.writeFileSync(path.join(dir, DB_FILENAME), '');
+  assert.equal(hasExistingSqliteDataFile(dir), false, 'zero-byte file reads as no data');
+});
 
 test('version backup: fresh install initializes the marker only; upgrades rotate 5 slots overwriting the oldest', () => {
   const userData = makeTmpDir('drc-ver-');
