@@ -820,3 +820,4 @@ blob-report/
 !tests/mobileVoiceBackfill.test.ts
 !tests/mobileVoiceProtocol.test.ts
 !tests/mobileVoiceWireup.test.tsx
+!tests/weixinGateway.test.ts
