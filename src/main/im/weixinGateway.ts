@@ -157,6 +157,7 @@ export class WeixinGateway extends EventEmitter {
     if (this.running) {
       await this.stop();
     }
+    await this.cancelLogin();
 
     this.config = config ? { ...config } : null;
     this.accountId = normalizeWeixinAccountId(config?.accountId);
@@ -205,6 +206,7 @@ export class WeixinGateway extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    await this.cancelLogin();
     const wasRunning = this.running || Boolean(this.pollLoopPromise);
     this.running = false;
 
@@ -271,7 +273,7 @@ export class WeixinGateway extends EventEmitter {
    * Poll the QR status once. Long-polls server side; a client-side timeout is
    * reported as `wait` (that is the documented meaning of the timeout).
    */
-  async pollQrStatus(): Promise<WeixinQrStatus> {
+  async pollQrStatus(signal?: AbortSignal): Promise<WeixinQrStatus> {
     const pending = this.pendingQr;
     if (!pending) {
       throw new Error('No pending Weixin QR login; call requestQrCode() first.');
@@ -286,6 +288,7 @@ export class WeixinGateway extends EventEmitter {
         query: { qrcode: pending.qrcode },
         extraHeaders: { 'iLink-App-ClientVersion': '1' },
         timeoutMs: this.qrPollTimeoutMs,
+        signal,
       });
       data = response.data;
     } catch (error) {
@@ -343,7 +346,6 @@ export class WeixinGateway extends EventEmitter {
   async beginLogin(): Promise<WeixinQrCode> {
     await this.cancelLogin();
     const qr = await this.requestQrCode();
-    if (this.loginLoopPromise) return qr;
 
     const controller = new AbortController();
     this.loginAbort = controller;
@@ -354,20 +356,19 @@ export class WeixinGateway extends EventEmitter {
     return qr;
   }
 
+  /**
+   * Abort a pending QR authorization.
+   *
+   * Deliberately does NOT await the background loop: that loop may be parked in a
+   * 35 s long poll, and the settings UI needs the state cleared immediately. The
+   * abort signal makes the in-flight request settle on its own.
+   */
   async cancelLogin(): Promise<void> {
-    if (this.loginAbort) {
-      this.loginAbort.abort();
-      this.loginAbort = null;
-    }
-    const loop = this.loginLoopPromise;
-    if (loop) {
-      try {
-        await loop;
-      } catch {
-        // ignore
-      }
-      this.loginLoopPromise = null;
-    }
+    const controller = this.loginAbort;
+    this.loginAbort = null;
+    this.loginLoopPromise = null;
+    if (controller) controller.abort();
+
     if (this.pendingQr || this.status.loginPending) {
       this.pendingQr = null;
       this.status = { ...this.status, loginPending: false, loginState: 'idle', qrContent: null };
@@ -379,7 +380,7 @@ export class WeixinGateway extends EventEmitter {
     while (!signal.aborted && this.status.loginPending) {
       let result: WeixinQrStatus;
       try {
-        result = await this.pollQrStatus();
+        result = await this.pollQrStatus(signal);
       } catch (error) {
         if (signal.aborted) return;
         const message = this.describeError(error);

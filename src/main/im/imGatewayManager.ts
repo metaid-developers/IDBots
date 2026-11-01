@@ -763,7 +763,9 @@ export class IMGatewayManager extends EventEmitter {
       return (config.telegram.botToken || '').trim() ? [] : ['botToken'];
     }
     if (platform === 'weixin') {
-      return this.weixinGateway.hasCredentials(config.weixin) ? [] : ['weixinQrLogin'];
+      return this.weixinGateway.hasCredentials(config.weixin)
+        ? []
+        : ['WeChat authorization (scan the QR code first)'];
     }
     return (config.discord.botToken || '').trim() ? [] : ['botToken'];
   }

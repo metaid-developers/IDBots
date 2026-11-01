@@ -468,6 +468,45 @@ test('sendText splits a long reply into <=1800 character sendmessage calls', asy
   await gateway.stop();
 });
 
+test('cancelLogin clears the pending state immediately, without waiting for the long poll', async () => {
+  const store = makeStore();
+  const transport = new FakeTransport((request) => {
+    if (request.path === 'ilink/bot/get_bot_qrcode') {
+      return { status: 200, data: { qrcode: 'qr-cancel', qrcode_img_content: 'qr-content', ret: 0 } };
+    }
+    if (request.path === 'ilink/bot/get_qrcode_status') {
+      // Park the poll exactly like the server's 35 s long poll.
+      return new Promise<never>((_resolve, reject) => {
+        const signal = request.signal;
+        if (!signal) {
+          reject(new Error('expected an abort signal on the qr status poll'));
+          return;
+        }
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    }
+    throw new Error(`unexpected path ${request.path}`);
+  });
+
+  const gateway = makeGateway(transport, store);
+  await gateway.beginLogin();
+  assert.equal(gateway.getStatus().loginPending, true);
+
+  const started = Date.now();
+  await gateway.cancelLogin();
+  const elapsed = Date.now() - started;
+
+  assert.equal(gateway.getStatus().loginPending, false);
+  assert.equal(gateway.getStatus().loginState, 'idle');
+  assert.equal(gateway.getStatus().qrContent, null);
+  assert.ok(elapsed < 200, `cancelLogin must not wait for the long poll (took ${elapsed}ms)`);
+
+  // The aborted placeholder poll must have carried a signal.
+  const qrPolls = transport.callsTo('ilink/bot/get_qrcode_status');
+  assert.ok(qrPolls.length >= 1);
+  assert.ok(qrPolls.every((call) => Boolean(call.signal)));
+});
+
 // ---------------------------------------------------------------------------
 // Failure handling
 // ---------------------------------------------------------------------------
