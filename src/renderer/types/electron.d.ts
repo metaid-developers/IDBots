@@ -1629,6 +1629,11 @@ interface IElectronAPI {
   appInfo: {
     getVersion: () => Promise<string>;
     getSystemLocale: () => Promise<string>;
+    getDataDirectory: () => Promise<{
+      userDataPath: string;
+      backupsPath: string;
+      appVersion: string;
+    }>;
   };
   updateNotification: {
     shouldForceShow: () => Promise<boolean>;

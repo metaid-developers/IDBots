@@ -102,6 +102,12 @@
       "channel": "app:openSettings"
     },
     {
+      "path": "appInfo.getDataDirectory",
+      "kind": "invoke",
+      "channel": "app:getDataDirectory",
+      "args": []
+    },
+    {
       "path": "appInfo.getSystemLocale",
       "kind": "invoke",
       "channel": "app:getSystemLocale",

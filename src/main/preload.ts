@@ -866,6 +866,11 @@ contextBridge.exposeInMainWorld('electron', {
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
+    getDataDirectory: () => ipcRenderer.invoke('app:getDataDirectory') as Promise<{
+      userDataPath: string;
+      backupsPath: string;
+      appVersion: string;
+    }>,
   },
   updateNotification: {
     shouldForceShow: () => ipcRenderer.invoke('updateNotification:shouldForceShow') as Promise<boolean>,

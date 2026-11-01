@@ -20,6 +20,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // 设置
     settings: '设置',
     settingsCurrentVersion: '当前版本号：',
+    settingsDataDirectory: '数据目录',
+    settingsDataDirectoryDesc: 'IDBots 数据（机器人、会话、设置）的存放位置；如需找回或备份旧数据，可在此目录的 backups 文件夹中查看。',
+    settingsDataDirectoryOpen: '打开数据目录',
+    settingsDataDirectoryOpenFailed: '打开数据目录失败',
     general: '通用',
     model: '模型',
     shortcuts: '快捷键',
@@ -3295,6 +3299,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     // Settings
     settings: 'Settings',
     settingsCurrentVersion: 'Current version: ',
+    settingsDataDirectory: 'Data directory',
+    settingsDataDirectoryDesc: 'Where IDBots keeps your data (bots, sessions, settings). Recovery snapshots live in the backups folder inside it.',
+    settingsDataDirectoryOpen: 'Open data directory',
+    settingsDataDirectoryOpenFailed: 'Failed to open the data directory',
     general: 'General',
     model: 'Model',
     shortcuts: 'Shortcuts',

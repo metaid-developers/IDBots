@@ -136,7 +136,20 @@ import { MetaIDRelationshipResolver } from './services/metaidRelationshipResolve
 import { MetaIDContactViewService } from './services/metaidContactViewService';
 import { Scheduler } from './libs/scheduler';
 import { initLogger, getLogFilePath } from './logger';
-import { resolveRuntimeDataPaths } from './libs/runtimeDataPaths';
+import {
+  APP_DATA_PATH_ENV,
+  USER_DATA_PATH_ENV,
+  resolveRuntimeDataPaths,
+} from './libs/runtimeDataPaths';
+import {
+  runStartupDataRecoveryGuard,
+  runVersionChangeBackup,
+  readDataDirectoryOverrideMarker,
+  resolveLocalAppDataRoot,
+  resolveWindowsOldUsersRoot,
+  backupsDirFor,
+  SKIPPED_CANDIDATES_KV_KEY,
+} from './services/dataRecoveryService';
 import { shouldAcquireSingleInstanceLock, shouldRefuseSharedUserData } from './libs/singleInstanceLock';
 import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
@@ -2470,6 +2483,11 @@ const downloadMetafileWithDialog = async (
   return { success: true, canceled: false, path: saveResult.filePath };
 };
 
+/** True when an env data-path override (dev/testing escape hatch) is set;
+ *  runtimeDataPaths.ts (via resolveRuntimeDataPaths) honors these first. */
+const hasRuntimeDataPathEnvOverride = (): boolean =>
+  Boolean((process.env[APP_DATA_PATH_ENV] ?? '').trim() || (process.env[USER_DATA_PATH_ENV] ?? '').trim());
+
 const configureUserDataPath = (): void => {
   const currentUserDataPath = app.getPath('userData');
   const currentAppDataPath = app.getPath('appData');
@@ -2484,7 +2502,19 @@ const configureUserDataPath = (): void => {
     console.log(`[Main] appData path updated: ${currentAppDataPath} -> ${resolvedPaths.appDataPath}`);
   }
 
-  const nextUserDataPath = resolvedPaths.userDataPath;
+  let nextUserDataPath = resolvedPaths.userDataPath;
+  // feat/legacy-data-recovery: honor a persisted "switch data directory"
+  // choice from the data-recovery dialog — unless an env override (the
+  // dev/testing escape hatch) is present, which always wins. An invalid
+  // marker (target gone) is ignored, never deleted.
+  if (!hasRuntimeDataPathEnvOverride()) {
+    const overrideTarget = readDataDirectoryOverrideMarker(resolvedPaths.appDataPath);
+    if (overrideTarget) {
+      console.log(`[Main] userData path override (data recovery): ${nextUserDataPath} -> ${overrideTarget}`);
+      nextUserDataPath = overrideTarget;
+    }
+  }
+
   if (currentUserDataPath !== nextUserDataPath) {
     app.setPath('userData', nextUserDataPath);
     console.log(`[Main] userData path updated: ${currentUserDataPath} -> ${nextUserDataPath}`);
@@ -11028,6 +11058,16 @@ if (!gotTheLock) {
 
   registerIpcHandler('app:getVersion', () => app.getVersion());
   registerIpcHandler('app:getSystemLocale', () => getOsLocale());
+  // feat/legacy-data-recovery ②: data-directory visibility for the Settings
+  // page (path display + "open directory" button).
+  registerIpcHandler('app:getDataDirectory', () => {
+    const userDataPath = app.getPath('userData');
+    return {
+      userDataPath,
+      backupsPath: backupsDirFor(userDataPath),
+      appVersion: app.getVersion(),
+    };
+  });
 
   // Update notification IPC handlers
   registerIpcHandler('updateNotification:shouldForceShow', () => {
@@ -19612,6 +19652,79 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     // Refresh the data-guard fingerprint so a vanished database stays
     // detectable across junction swaps / data-directory migrations.
     writeDataGuardSnapshot('startup');
+
+    // feat/legacy-data-recovery: metabots count of the freshly opened store,
+    // shared by the recovery guard and the version-change backup. A missing
+    // metabots table (brand-new database) reads as 0.
+    const countCurrentMetabots = (): number => {
+      try {
+        const result = store.getDatabase().exec('SELECT COUNT(*) FROM metabots');
+        return Number(result[0]?.values?.[0]?.[0] ?? 0);
+      } catch {
+        return 0;
+      }
+    };
+
+    // feat/legacy-data-recovery ①: turn a silent empty-library boot (Windows
+    // reinstall / data-directory drift) into an active recovery offer:
+    // scan candidate locations for a database that still has bots, then
+    // Import data / Switch data directory / Skip (persisted). Server mode
+    // has no dialog surface, so the guard is desktop-only.
+    if (!isServerMode() && process.env.NODE_ENV !== 'test') {
+      try {
+        const recoveryAction = await runStartupDataRecoveryGuard({
+          discovery: {
+            appDataPath: app.getPath('appData'),
+            currentUserDataPath: app.getPath('userData'),
+            localAppDataPath: resolveLocalAppDataRoot(app.getPath('appData')),
+            windowsOldUsersPath: resolveWindowsOldUsersRoot(),
+          },
+          getCurrentMetabotsCount: countCurrentMetabots,
+          getSkippedCandidateDbPaths: () => {
+            const skipped = store.get<Record<string, number>>(SKIPPED_CANDIDATES_KV_KEY);
+            return Object.keys(skipped ?? {});
+          },
+          persistSkippedCandidate: (dbPath) => {
+            const skipped = store.get<Record<string, number>>(SKIPPED_CANDIDATES_KV_KEY) ?? {};
+            store.set(SKIPPED_CANDIDATES_KV_KEY, { ...skipped, [dbPath]: Date.now() });
+          },
+          showMessageBox: (options) => dialog.showMessageBox(options),
+          closeCurrentStore: () => {
+            store.close();
+          },
+          relaunchApp: () => {
+            app.relaunch();
+          },
+          exitApp: (code) => {
+            app.exit(code);
+          },
+          log: (line) => console.log(line),
+        });
+        if (recoveryAction === 'import-executed' || recoveryAction === 'switch-executed') {
+          startupLog(`data recovery ${recoveryAction}; relaunching`);
+          return; // process is exiting via relaunch; stop booting
+        }
+        startupLog(`data recovery guard: ${recoveryAction}`);
+      } catch (recoveryError) {
+        console.warn('[Main] legacy data recovery guard failed (boot continues):', recoveryError);
+      }
+    }
+
+    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
+    // userData/backups/ rotating slots whenever the app version changes.
+    try {
+      const backupOutcome = runVersionChangeBackup({
+        currentVersion: app.getVersion(),
+        userDataPath: app.getPath('userData'),
+        hasExistingData: countCurrentMetabots() > 0,
+        log: (line) => console.log(line),
+      });
+      if (backupOutcome !== 'no-version-change') {
+        startupLog(`sqlite version backup: ${backupOutcome}`);
+      }
+    } catch (backupError) {
+      console.warn('[Main] version-change backup failed (boot continues):', backupError);
+    }
 
     // REQ-A-8: start the tenant bootstrap state machine BEFORE the gateway so
     // the readiness provider is live from the gateway's first answer
