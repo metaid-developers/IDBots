@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon, ArrowDownIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
@@ -7,6 +7,7 @@ import { coworkAttachmentAdmission } from '@/components/cowork/coworkComposerAtt
 import ChatComposerAttachments from '../components/ChatComposerAttachments';
 import { EmojiPickerPanel, rememberRecentEmoji } from '../components/EmojiPickerPanel';
 import { insertEmojiAtCaret } from '../chat/emojiTextInsert';
+import { isNearBottom } from '../chat/autoScroll';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import TwemojiText from '@/components/chat/TwemojiText';
 import { t } from '../../i18n';
@@ -296,6 +297,11 @@ export default function ChatScreen(props: {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // Refs (caret notes: emojiTextInsert.ts).
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Scroll guard (autoScroll.ts): follow new content only while the
+  // viewport hugs the transcript bottom; reading history keeps the scroll
+  // position frozen and shows the "new messages" pill instead.
+  const stickToBottomRef = useRef(true);
+  const [showNewMessages, setShowNewMessages] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingCaretRef = useRef<number | null>(null);
   const keyboardInset = useKeyboardInset();
@@ -340,10 +346,38 @@ export default function ChatScreen(props: {
     },
   });
 
+  // Track stickiness on user scroll: leaving the near-bottom zone releases
+  // auto-follow; returning to it re-arms follow and dismisses the pill.
   useEffect(() => {
     const list = listRef.current;
-    if (list) list.scrollTop = list.scrollHeight;
+    if (!list) return;
+    const onScroll = () => {
+      const near = isNearBottom(list);
+      stickToBottomRef.current = near;
+      if (near) setShowNewMessages(false);
+    };
+    list.addEventListener('scroll', onScroll, { passive: true });
+    return () => list.removeEventListener('scroll', onScroll);
+  }, []);
+  // Auto-scroll on message/streaming updates, guarded by stickiness: near
+  // the bottom this preserves the original follow exactly; further up the
+  // position must not move at all — only flag the pill.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (stickToBottomRef.current) {
+      list.scrollTop = list.scrollHeight;
+    } else {
+      setShowNewMessages(true);
+    }
   }, [chat.messages, chat.isStreaming]);
+  const scrollToLatest = () => {
+    const list = listRef.current;
+    if (!list) return;
+    stickToBottomRef.current = true;
+    setShowNewMessages(false);
+    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+  };
   useEffect(() => setPreviewPath(null), [chat.sessionId]);
 
   // Insertion point: DOM selection (focused) / pending caret / end.
@@ -410,26 +444,42 @@ export default function ChatScreen(props: {
         </div>
       ) : null}
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {chat.hasMoreHistory ? (
-          <button type="button" onClick={() => void chat.loadEarlierMessages()} className="mb-3 min-h-[36px] w-full rounded-lg border border-[var(--border-color)] text-xs text-[var(--text-secondary)]">
-            {t('mobile.chat.loadEarlier')}
-          </button>
-        ) : null}
-        {chat.messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-            <p className="text-base font-semibold text-[var(--text-primary)]">
-              {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
+      {/* Relative wrapper anchors the floating new-messages pill to the
+          transcript's bottom edge (just above the composer). */}
+      <div className="relative min-h-0 flex-1">
+        <div ref={listRef} className="h-full overflow-y-auto px-3 py-3">
+          {chat.hasMoreHistory ? (
+            <button type="button" onClick={() => void chat.loadEarlierMessages()} className="mb-3 min-h-[36px] w-full rounded-lg border border-[var(--border-color)] text-xs text-[var(--text-secondary)]">
+              {t('mobile.chat.loadEarlier')}
+            </button>
+          ) : null}
+          {chat.messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+              <p className="text-base font-semibold text-[var(--text-primary)]">
+                {chat.restoring ? t('mobile.common.loading') : t('mobile.chat.emptyTitle')}
+              </p>
+              {!chat.restoring ? <p className="text-sm text-[var(--text-secondary)]">{t('mobile.chat.emptyBody')}</p> : null}
+            </div>
+          ) : (
+            chat.messages.map((message) => <MessageRow key={message.id} message={message} onOpenFile={openPreview} />)
+          )}
+          {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
+            <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">
+              {t(`mobile.chat.phase.${turnPhase}`)}
             </p>
-            {!chat.restoring ? <p className="text-sm text-[var(--text-secondary)]">{t('mobile.chat.emptyBody')}</p> : null}
-          </div>
-        ) : (
-          chat.messages.map((message) => <MessageRow key={message.id} message={message} onOpenFile={openPreview} />)
-        )}
-        {turnPhase !== 'idle' && turnPhase !== 'completed' ? (
-          <p className="px-2 py-1 text-xs text-[var(--text-secondary)]" data-testid="turn-phase">
-            {t(`mobile.chat.phase.${turnPhase}`)}
-          </p>
+          ) : null}
+        </div>
+        {showNewMessages ? (
+          <button
+            type="button"
+            onClick={scrollToLatest}
+            aria-label={t('mobile.chat.newMessages')}
+            data-testid="chat-new-messages-pill"
+            className="absolute bottom-3 left-1/2 z-10 flex min-h-[36px] -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--bg-panel)] px-4 text-xs font-medium text-[var(--text-primary)] shadow-lg active:bg-[var(--bg-hover)]"
+          >
+            <ArrowDownIcon className="h-4 w-4" aria-hidden />
+            {t('mobile.chat.newMessages')}
+          </button>
         ) : null}
       </div>
 
