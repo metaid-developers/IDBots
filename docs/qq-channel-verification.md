@@ -12,9 +12,9 @@ No push, no PR (per task brief).
 | Electron compile | `pnpm run compile:electron` | **pass** — `tsc --project electron-tsconfig.json` + `copy-electron-js.cjs`, no diagnostics |
 | Renderer typecheck | `npx tsc -p tsconfig.json --noEmit` | **pass**, no diagnostics |
 | Lint (0 warnings) | `pnpm run lint` | **pass**, exit 0, no output |
-| Offline QQ suite | `pnpm run test:qq` | **67/67 pass** (32 gateway + 24 security + 11 classification), 0 fail, no network |
+| Offline QQ suite | `pnpm run test:qq` | **68/68 pass** (32 gateway + 24 security + 12 classification), 0 fail, no network |
 | Security regression suite | `npx tsx --test tests/qqSecurity.test.ts` | **24/24 pass**, 0 fail, no network |
-| Session classification suite | `tests/qqSessionClassification.test.ts` | **11/11 pass**, 0 fail, no network |
+| Session classification suite | `tests/qqSessionClassification.test.ts` | **12/12 pass**, 0 fail, no network |
 | Dev launch | `env -u ELECTRON_RUN_AS_NODE -u IDBOTS_ELECTRON_PATH pnpm run electron:dev:dsh` | **pass** — Vite on :5185, Electron window painted, renderer initialisation complete |
 
 Notes:
@@ -133,7 +133,8 @@ marker. Pinned by tests:
 | CLS-06 | every IM session is created as `standard`; the old direct⇒a2a mapping is gone |
 | CLS-07 | group/direct grants do not depend on session type (spoofed type changes nothing) |
 | CLS-08 | the frozen trust still rides every turn (group prompt, memory gates) |
-| CLS-09 | list rows expose `im_channel` / `im_conversation_id` from the mapping table |
+| CLS-09 | list rows AND full sessions expose `im_channel` / `im_conversation_id` from the mapping table |
+| CLS-09b | a legacy `a2a` IM row is grouped into the LOCAL list at render time (and loses A2A UI) |
 | CLS-10 | group conversations stay out of the recent-session pulse |
 
 ## 3. Live (real app) checks

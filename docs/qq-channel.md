@@ -171,9 +171,12 @@ conversation mapping, not from the session type:
 `imConversationId` by reading `cowork_conversation_mappings`. Consequences:
 
 - **No destructive migration.** Sessions created before this change keep
-  `session_type = 'a2a'` in SQLite; the list still classifies them correctly from the
-  mapping, and a legacy `IM-qq-<timestamp>` title is replaced **at render time only** (the
-  stored title is untouched). A user-renamed or model-generated title always wins.
+  `session_type = 'a2a'` in SQLite; the sidebar puts them in the LOCAL list at render time
+  (`a2a` rows WITH an IM channel are local, and are excluded from the A2A group), the row
+  renders the IM badge instead of the A2A peer affordances, the detail view suppresses the
+  A2A panels, and a legacy `IM-<platform>-<timestamp>` title is replaced **at render time
+  only** (the stored title is untouched). A user-renamed or model-generated title always
+  wins.
 - Very old rows that only carry the untyped `im:<platform>` channel are classified from
   the stored conversation id (`qq:group:…` / `qq:c2c:…`); if that is missing too, the row
   gets **no badge** rather than a guess.

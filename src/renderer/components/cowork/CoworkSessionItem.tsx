@@ -564,7 +564,9 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   const showRunningIndicator = session.status === 'running';
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const showStatusIndicator = showRunningIndicator || showUnreadIndicator;
-  const isA2A = session.sessionType === 'a2a';
+  // A legacy IM direct row may still carry session_type 'a2a'; it must not get
+  // the A2A peer avatar/refresh affordances. The mapping channel wins.
+  const isA2A = session.sessionType === 'a2a' && !session.imChannel;
   // Bot Browser co-work sessions are listed in the same home history as local
   // chats; a small type badge keeps them identifiable at a glance (clicking
   // one returns to the Bot Browser surface).

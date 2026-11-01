@@ -418,6 +418,14 @@ export interface CoworkSession {
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   messages: CoworkMessage[];
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`), read
+   * from the conversation mapping. Legacy IM rows stored as 'a2a' are rendered
+   * as IM rows without a data migration.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Bounded A2A history state supplied by the renderer session endpoint. */
   messageHistory?: CoworkMessageHistoryState;
   createdAt: number;

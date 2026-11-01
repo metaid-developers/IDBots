@@ -2858,7 +2858,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // useChatExperienceMode for the cross-window reactivity contract.
   const chatExperienceMode = useChatExperienceMode();
   const isAssistantMode = isAssistantModeOwnerChatSession(chatExperienceMode, currentSession);
-  const isA2ASession = currentSession?.sessionType === 'a2a';
+  // Legacy IM direct rows can still be stored as 'a2a'. The conversation
+  // mapping is the display source of truth, so an IM row never renders the
+  // A2A panels (peer profile, episode history, A2A errors).
+  const isA2ASession = currentSession?.sessionType === 'a2a' && !currentSession?.imChannel;
   const isPrivateA2ASession = useMemo(() => (
     currentSession?.sessionType === 'a2a'
     && currentSession.messages.some((message) => message.metadata?.sourceChannel === 'metaweb_private')
@@ -3294,7 +3297,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     a2aThreadEpisodes.map((episode) => [episode.episodeIndex, episode]),
   ), [a2aThreadEpisodes]);
   const a2aPeerGlobalMetaId = useMemo(() => {
-    if (currentSession?.sessionType !== 'a2a') return null;
+    if (currentSession?.sessionType !== 'a2a' || currentSession?.imChannel) return null;
     const sessionPeerGlobalMetaId = typeof currentSession.peerGlobalMetaId === 'string'
       ? currentSession.peerGlobalMetaId.trim()
       : '';
@@ -3513,7 +3516,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // Fetch peer avatar for A2A sessions when peerAvatar is missing or not directly renderable.
   // Falls back to senderGlobalMetaId from the first incoming message if peerGlobalMetaId is missing.
   useEffect(() => {
-    if (currentSession?.sessionType !== 'a2a') {
+    if (currentSession?.sessionType !== 'a2a' || currentSession?.imChannel) {
       setFetchedPeerAvatar(null);
       return;
     }

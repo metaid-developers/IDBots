@@ -190,14 +190,43 @@ test('CLS-08 the handler still threads the frozen trust into every turn', () => 
   assert.match(handler, /disableMemoryUpdates: true|memoryReadOnly: true/, 'memory gates stay');
 });
 
-test('CLS-09 list rows expose the IM channel for display without a data migration', () => {
+test('CLS-09 list rows AND full sessions expose the IM channel (no data migration)', () => {
   const store = readSource('src/main/coworkStore.ts');
-  assert.match(store, /AS im_channel/, 'listSessions must expose im_channel');
-  assert.match(store, /AS im_conversation_id/, 'listSessions must expose im_conversation_id');
+  assert.ok(
+    (store.match(/AS im_channel/g) ?? []).length >= 2,
+    'both listSessions and getSession must expose im_channel'
+  );
+  assert.match(store, /AS im_conversation_id/, 'the conversation id rides along for the suffix');
   assert.match(
     store,
     /im\.channel LIKE 'im:%'/,
     'the classification is read from the mapping table (works for old rows)'
+  );
+});
+
+test('CLS-09b a legacy a2a IM row is grouped into the LOCAL list at render time', () => {
+  const sidebar = readSource('src/renderer/components/Sidebar.tsx');
+  assert.match(
+    sidebar,
+    /session\.sessionType !== 'a2a' \|\| isImSession\(session\)/,
+    'IM rows belong to the local group even when stored as a2a'
+  );
+  assert.match(
+    sidebar,
+    /session\.sessionType === 'a2a' && !isImSession\(session\)/,
+    'and must not also appear in the a2a group'
+  );
+  const item = readSource('src/renderer/components/cowork/CoworkSessionItem.tsx');
+  assert.match(
+    item,
+    /session\.sessionType === 'a2a' && !session\.imChannel/,
+    'A2A-only row affordances must switch off for IM rows'
+  );
+  const detail = readSource('src/renderer/components/cowork/CoworkSessionDetail.tsx');
+  assert.match(
+    detail,
+    /currentSession\?\.sessionType === 'a2a' && !currentSession\?\.imChannel/,
+    'A2A panels must switch off for IM rows'
   );
 });
 
