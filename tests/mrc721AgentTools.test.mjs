@@ -26,6 +26,7 @@ const OTHER_ADDRESS = '1OtherBotAddress5678';
 
 const TOOL_NAMES = [
   'mrc721_collection_create',
+  'mrc721_collection_update',
   'mrc721_mint',
   'mrc721_transfer',
   'mrc721_balance',
@@ -35,7 +36,7 @@ const TOOL_NAMES = [
 ];
 
 function makeHarness(overrides = {}) {
-  const calls = { collectionCreate: [], mint: [], transfer: [] };
+  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [] };
   const control = {
     getMetabotMvcAddress: (id) => (id === 1 ? BOT_ADDRESS : id === 15 ? OTHER_ADDRESS : null),
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : null),
@@ -47,6 +48,17 @@ function makeHarness(overrides = {}) {
         pinId: DESC_PINID,
         txids: ['tx1'],
         totalCost: 500,
+      };
+    },
+    collectionUpdate: async (input) => {
+      calls.collectionUpdate.push(input);
+      if (overrides.collectionUpdateError) throw overrides.collectionUpdateError;
+      return {
+        collectionName: input.collectionName,
+        pinId: DESC_PINID,
+        txids: ['tx1'],
+        totalCost: 400,
+        updatedFields: input.cover ? ['cover'] : ['name'],
       };
     },
     mint: async (input) => {
@@ -157,6 +169,67 @@ test('mrc721_collection_create validates collection_name locally', async () => {
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /lowercase/);
   assert.equal(calls.collectionCreate.length, 0);
+});
+
+test('mrc721_collection_update forwards overrides and renders the modify receipt', async () => {
+  const { calls, byName } = makeHarness();
+  const coverPinId = `${'ef'.repeat(32)}i1`;
+  const result = await byName.mrc721_collection_update.handler({
+    collection_name: 'pixel-cats',
+    cover: coverPinId,
+  });
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /operation=modify pin at the collection_desc path/);
+  assert.match(result.content[0].text, /updated fields: cover/);
+  assert.match(result.content[0].text, /mrc721_collection_info/);
+  assert.deepEqual(calls.collectionUpdate[0], {
+    metabotId: 1,
+    collectionName: 'pixel-cats',
+    name: undefined,
+    desc: undefined,
+    website: undefined,
+    cover: coverPinId,
+    metadata: undefined,
+    network: 'mvc',
+  });
+});
+
+test('mrc721_collection_update surfaces issuer and index errors from the control', async () => {
+  const { byName } = makeHarness({ collectionUpdateError: new Error('only the issuing MetaBot can update a collection') });
+  const result = await byName.mrc721_collection_update.handler({ collection_name: 'pixel-cats', name: 'New' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /only the issuing MetaBot/);
+});
+
+test('mrc721_collection_update refuses no-op calls before touching the control', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_collection_update.handler({ collection_name: 'pixel-cats' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /nothing to update/);
+  assert.equal(calls.collectionUpdate.length, 0);
+});
+
+test('mrc721_collection_info shows the modify history when the indexer provides it', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(async (url) => {
+    if (String(url).includes('/api/mrc721/collection/info')) {
+      return jsonResponse({
+        code: 1,
+        data: {
+          collectionName: 'pixel-cats',
+          name: 'Pixel Cats',
+          cover: 'metafile://cover1',
+          totalnum: 0,
+          pinid: DESC_PINID,
+          modifyHistory: ['modifypin1i0', 'modifypin2i0'],
+        },
+      });
+    }
+    return jsonResponse({ code: 1, data: { list: [] } });
+  }, () => byName.mrc721_collection_info.handler({ name: 'pixel-cats' }));
+  const text = result.content[0].text;
+  assert.match(text, /- cover: metafile:\/\/cover1/);
+  assert.match(text, /modify history \(2\): modifypin1i0, modifypin2i0/);
 });
 
 test('mrc721_mint refuses an exhausted collection and warns on unregistered ones', async () => {

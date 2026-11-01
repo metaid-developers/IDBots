@@ -19,6 +19,7 @@ const {
   isMvcAddress,
   createMrc721Collection,
   createMrc721Mint,
+  updateMrc721Collection,
   transferMrc721Item,
   fetchMrc721CollectionInfo,
   fetchMrc721ItemInfo,
@@ -221,6 +222,113 @@ test('createMrc721Collection rejects reserved names before any pin is built', as
   await assert.rejects(
     () => createMrc721Collection({ createPin }, { metabotId: 7, collectionName: 'collection_desc' }),
     /reserved/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Collection update (operation=modify, issuer-only, full-content rewrite)
+// ---------------------------------------------------------------------------
+
+test('updateMrc721Collection broadcasts an issuer-verified full-content modify pin', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  const current = {
+    collectionName: 'pixel-cats',
+    name: 'Pixel Cats',
+    desc: 'old desc',
+    website: 'https://cats.example',
+    totalSupply: 100,
+    royaltyRate: 5,
+    pinid: `${'cd'.repeat(32)}i0`,
+    createAddress: BOT_ADDRESS,
+    cover: 'metafile://old',
+  };
+  const coverPinId = `${'ef'.repeat(32)}i1`;
+  const result = await updateMrc721Collection(
+    { createPin, store: makeStore() },
+    { metabotId: 7, collectionName: 'pixel-cats', cover: coverPinId, current },
+  );
+  assert.equal(result.collectionName, 'pixel-cats');
+  assert.deepEqual(result.updatedFields, ['cover']);
+  assert.equal(calls.length, 1);
+  const { metabotId, metaidData, options } = calls[0];
+  assert.equal(metabotId, 7);
+  assert.equal(metaidData.operation, 'modify');
+  assert.equal(metaidData.path, '/nft/mrc721/pixel-cats/collection_desc');
+  assert.equal(metaidData.contentType, 'application/json');
+  assert.equal(options.origin, 'tool:mrc721_collection_update');
+  // Full rewrite: current fields ride unchanged, cover is replaced.
+  assert.deepEqual(JSON.parse(metaidData.payload), {
+    name: 'Pixel Cats',
+    totalSupply: 100,
+    royaltyRate: 5,
+    desc: 'old desc',
+    website: 'https://cats.example',
+    cover: `metafile://${coverPinId}`,
+  });
+});
+
+test('updateMrc721Collection fetches the current collection from the indexer when not provided', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  await withFetchStub(
+    async () => jsonResponse({ code: 1, data: { collectionName: 'pixel-cats', name: 'Pixel Cats', createAddress: BOT_ADDRESS } }),
+    async () => {
+      const result = await updateMrc721Collection(
+        { createPin, store: makeStore() },
+        { metabotId: 7, collectionName: 'pixel-cats', name: 'Renamed Cats' },
+      );
+      assert.deepEqual(result.updatedFields, ['name']);
+    },
+  );
+  const content = JSON.parse(calls[0].metaidData.payload);
+  assert.equal(content.name, 'Renamed Cats');
+});
+
+test('updateMrc721Collection passes indexed metadata through and lets overrides win', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  const current = { collectionName: 'pixel-cats', createAddress: BOT_ADDRESS, metadata: '{"trait":"old"}' };
+  await updateMrc721Collection(
+    { createPin, store: makeStore() },
+    { metabotId: 7, collectionName: 'pixel-cats', desc: 'new desc', current },
+  );
+  let content = JSON.parse(calls[0].metaidData.payload);
+  assert.deepEqual(content.metadata, { trait: 'old' });
+  assert.equal(content.desc, 'new desc');
+
+  await updateMrc721Collection(
+    { createPin, store: makeStore() },
+    { metabotId: 7, collectionName: 'pixel-cats', metadata: { trait: 'new' }, current },
+  );
+  content = JSON.parse(calls[1].metaidData.payload);
+  assert.deepEqual(content.metadata, { trait: 'new' });
+});
+
+test('updateMrc721Collection refuses non-issuers, unindexed collections, unverifiable creators, and no-ops', async () => {
+  const { createPin, calls } = makeCreatePinSpy();
+  const base = { metabotId: 7, collectionName: 'pixel-cats' };
+  const current = { collectionName: 'pixel-cats', name: 'P', createAddress: BOT_ADDRESS };
+  await assert.rejects(
+    () => updateMrc721Collection(
+      { createPin, store: makeStore() },
+      { ...base, name: 'New', current: { ...current, createAddress: '1SomeoneElse' } },
+    ),
+    /only the issuing MetaBot/,
+  );
+  await assert.rejects(
+    () => updateMrc721Collection({ createPin, store: makeStore() }, { ...base, name: 'New', current: null }),
+    /not in the index/,
+  );
+  await assert.rejects(
+    () => updateMrc721Collection(
+      { createPin, store: makeStore() },
+      { ...base, name: 'New', current: { ...current, createAddress: '' } },
+    ),
+    /cannot verify the modify permission/,
+  );
+  // No-op guard fires before any indexer lookup or pin broadcast.
+  await assert.rejects(
+    () => updateMrc721Collection({ createPin, store: makeStore() }, { ...base, current }),
+    /nothing to update/,
   );
   assert.equal(calls.length, 0);
 });

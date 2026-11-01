@@ -195,6 +195,7 @@ import {
   createMrc721Collection,
   createMrc721Mint,
   transferMrc721Item,
+  updateMrc721Collection,
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
 import { buildMvcTransferRawTx } from './services/walletRawTxService';
@@ -7737,10 +7738,11 @@ const getCoworkRunner = () => {
       ),
       },
       // mrc721_* tool backends (MRC-721 pin-based MetaID NFTs, R6): one
-      // chain-write budget per tool op (collection_create / mint / transfer),
-      // not per pin — a mint is one mint pin plus an optional item_desc pin.
-      // The transfer backend spends the item UTXO via the forced-outpoint
-      // raw-tx builder (include_outpoints) and broadcasts through wallet-api.
+      // chain-write budget per tool op (collection_create / collection_update
+      // / mint / transfer), not per pin — a mint is one mint pin plus an
+      // optional item_desc pin. The transfer backend spends the item UTXO via
+      // the forced-outpoint raw-tx builder (include_outpoints) and broadcasts
+      // through wallet-api.
       mrc721Tools: {
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
@@ -7748,6 +7750,13 @@ const getCoworkRunner = () => {
         collectionCreate: (input) => withChainWriteBudget(
           'mrc721_collection_create',
           () => createMrc721Collection({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        collectionUpdate: (input) => withChainWriteBudget(
+          'mrc721_collection_update',
+          () => updateMrc721Collection(
+            { createPin: mrc721CreatePinBackend, store: getMetabotStore() },
+            input,
+          ),
         ),
         mint: (input) => withChainWriteBudget(
           'mrc721_mint',
