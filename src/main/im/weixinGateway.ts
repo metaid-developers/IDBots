@@ -644,6 +644,8 @@ export class WeixinGateway extends EventEmitter {
             fileSize: attachment.fileSize,
             fileName: attachment.fileName,
             duration: attachment.duration,
+            // Raw vendor field, kept so the unit can be settled from a real sample.
+            playLength: ref.playLength,
             localPath: attachment.localPath,
           });
         }
