@@ -465,7 +465,7 @@ test('inbound video reuses the shared pipeline but a separate 100 MB cap', async
   const network = new FakeMediaNetwork(() => encryptAesEcb(plaintext, key));
 
   const attachment = await downloadWeixinMedia(
-    videoRef({ aesKeyBase64: Buffer.from(key).toString('base64') }),
+    videoRef({ aesKeyBase64: Buffer.from(key).toString('base64'), playLength: 9 }),
     { dir, network }
   );
 
@@ -481,7 +481,8 @@ test('inbound video reuses the shared pipeline but a separate 100 MB cap', async
   // No fabricated metadata: the protocol carries no video width/height.
   assert.equal(attachment.width, undefined);
   assert.equal(attachment.height, undefined);
-  assert.equal(attachment.duration, undefined, 'play_length unit is unproven');
+  // play_length is seconds (verified against a live sample), so it is mapped.
+  assert.equal(attachment.duration, 9);
 });
 
 test('an image still uses the image cap — the video cap is not shared', async () => {
@@ -495,11 +496,13 @@ test('an image still uses the image cap — the video cap is not shared', async 
   assert.equal(network.downloadMaxBytes[0], WEIXIN_INBOUND_MAX_IMAGE_BYTES);
 });
 
-test('weixinPlayLengthToSeconds stays empty until the unit is proven', () => {
-  assert.equal(WEIXIN_VIDEO_PLAY_LENGTH_UNIT, 'unknown');
-  assert.equal(weixinPlayLengthToSeconds(12), null);
+test('weixinPlayLengthToSeconds maps a seconds value and converts milliseconds', () => {
+  // The unit is 's' because a live 9.0417 s clip arrived with play_length = 9.
+  assert.equal(WEIXIN_VIDEO_PLAY_LENGTH_UNIT, 's');
+  assert.equal(weixinPlayLengthToSeconds(9), 9);
   assert.equal(weixinPlayLengthToSeconds(12, 's'), 12);
   assert.equal(weixinPlayLengthToSeconds(12345, 'ms'), 12.3);
+  assert.equal(weixinPlayLengthToSeconds(12, 'unknown'), null);
   assert.equal(weixinPlayLengthToSeconds(null), null);
   assert.equal(weixinPlayLengthToSeconds(undefined), null);
 });

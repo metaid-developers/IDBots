@@ -381,14 +381,14 @@ export interface WeixinMediaRef {
 /**
  * Unit of `video_item.play_length`.
  *
- * UNVERIFIED — the official plugin declares the field
- * (`@tencent-weixin/openclaw-weixin@2.4.10` `src/api/types.ts:139`) but never
- * reads it anywhere in its source, so vendor code yields no unit. We therefore do
- * not translate it into `IMMediaAttachment.duration` (documented as seconds);
- * filling a seconds field from an unknown unit would be a guess. Flip this only
- * with an observed sample: send a video of known length and compare.
+ * VERIFIED by a live sample on 2026-11-02: the WeChat client delivered a clip
+ * whose measured duration is 9.0417 s (`ffprobe`) and `video_item.play_length`
+ * was `9` — seconds, truncated to an integer. Vendor code alone could not settle
+ * this: the field is declared in `@tencent-weixin/openclaw-weixin@2.4.10`
+ * `src/api/types.ts:139` but never read anywhere in that package. The sample is
+ * the proof; `docs/weixin-media-verification.md` keeps the log line and path.
  */
-export const WEIXIN_VIDEO_PLAY_LENGTH_UNIT: 'unknown' | 's' | 'ms' = 'unknown';
+export const WEIXIN_VIDEO_PLAY_LENGTH_UNIT: 'unknown' | 's' | 'ms' = 's';
 
 /** Convert `play_length` to seconds when (and only when) its unit is proven. */
 export function weixinPlayLengthToSeconds(

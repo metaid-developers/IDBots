@@ -140,15 +140,22 @@ What the vendor code does **not** say, and therefore what we do **not** claim:
   1 GB". Those are not vendor code and were **not** used; they are recorded here
   only so the next reader does not mistake them for evidence.
 
-### `video_item.play_length` — unit unverified
+### `video_item.play_length` — unit settled by a live sample
 
 `src/api/types.ts:139` declares `play_length?: number`, but the plugin **never
-reads it** anywhere in `src/`. With no vendor consumer there is no unit to infer.
-We therefore keep `WEIXIN_VIDEO_PLAY_LENGTH_UNIT = 'unknown'` and leave
-`IMMediaAttachment.duration` empty rather than guess between seconds and
-milliseconds. Flipping it to `'s'` or `'ms'` requires one observed sample: send a
-video of known length and compare the raw `play_length` with the measured duration
-(§8 records whatever was actually observed).
+reads it** anywhere in `src/`, so vendor code alone gives no unit. It was settled
+empirically instead:
+
+* the WeChat client delivered a clip whose measured duration is **9.0417 s**
+  (`ffprobe`);
+* the gateway logged `playLength: 9` for that same item.
+
+⇒ `play_length` is **seconds, truncated to an integer**. `WEIXIN_VIDEO_PLAY_LENGTH_UNIT`
+is therefore `'s'` and `IMMediaAttachment.duration` is filled from it. The log line
+and file path are in `docs/weixin-media-verification.md` §5.
+
+`width`/`height` remain empty: the protocol only carries `thumb_width` /
+`thumb_height`, which describe the thumbnail, not the frame.
 
 ---
 
