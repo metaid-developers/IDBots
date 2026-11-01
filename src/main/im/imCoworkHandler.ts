@@ -382,6 +382,34 @@ export class IMCoworkHandler extends EventEmitter {
   }
 
   /**
+   * Local-list title: platform + chat kind, with a short group suffix so two
+   * groups are distinguishable. Deliberately carries NO user content (a group
+   * title can be changed by anyone in the group).
+   */
+  private buildImSessionTitle(
+    platform: IMPlatform,
+    chatType: 'direct' | 'group',
+    imConversationId: string
+  ): string {
+    const platformLabel: Record<string, string> = {
+      qq: 'QQ',
+      weixin: 'WeChat',
+      telegram: 'Telegram',
+      discord: 'Discord',
+      feishu: 'Feishu',
+      dingtalk: 'DingTalk',
+      nim: 'NIM',
+      xiaomifeng: 'Xiaomifeng',
+    };
+    const label = platformLabel[platform] ?? platform.toUpperCase();
+    if (chatType === 'direct') return `${label} · 私聊`;
+    const raw = (imConversationId || '').trim();
+    const groupId = raw.includes(':') ? raw.slice(raw.lastIndexOf(':') + 1) : raw;
+    const suffix = groupId.replace(/[^A-Za-z0-9]/g, '').slice(-4);
+    return suffix ? `${label} · 群聊 · ${suffix}` : `${label} · 群聊`;
+  }
+
+  /**
    * Create (once) and return the isolated workspace for a group conversation.
    * The directory starts empty: even if a tool ever slipped through, there is
    * nothing of the owner's to read from here.
@@ -409,7 +437,10 @@ export class IMCoworkHandler extends EventEmitter {
   ): Promise<string> {
     // Create new Cowork session
     const config = this.coworkStore.getConfig();
-    const title = `IM-${platform}-${Date.now()}`;
+    // Human-readable title so the list distinguishes platform + chat kind at a
+    // glance. Both direct and group IM sessions live in the LOCAL list now
+    // (session_type 'standard'), so the title/badge carries the distinction.
+    const title = this.buildImSessionTitle(platform, chatType, imConversationId);
     const groupMode = trust?.level === 'group';
     const initialNoTools = Boolean(trust) && !imTrustAllowsTools(trust);
     const systemPrompt = groupMode
@@ -441,23 +472,14 @@ export class IMCoworkHandler extends EventEmitter {
       'local', // IM always uses local mode
       [],
       targetMetabotId,
-      chatType === 'direct' ? 'a2a' : 'standard',
+      // ALL IM sessions are 'standard' (local list). A direct IM chat used to
+      // be 'a2a', which pushed it into the "online conversations" tab; the
+      // permission model never depended on this — group/direct trust is
+      // decided by the entry gate (trust.level) and is unchanged.
+      'standard',
       chatType === 'direct' ? senderId : null,
       chatType === 'direct' ? senderName : null
     );
-
-    // Group conversations are hidden from the session list: they are untrusted
-    // external content, and `hidden_from_session_list` is ALSO what keeps them
-    // out of the recent-session pulse another (private) session would inject.
-    if (groupMode) {
-      try {
-        this.coworkStore.setSessionHiddenFromList(session.id, true);
-      } catch (error) {
-        console.warn('[IMCoworkHandler] Failed to hide group session from the session list', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
 
     // Save mapping
     this.imStore.createSessionMapping(imConversationId, platform, session.id, targetMetabotId);

@@ -532,17 +532,17 @@ test('SEC-21 group conversations stay out of nightly consolidation and the recen
     /gm\.channel LIKE 'im:%:group'/,
     'dream activity must not ingest IM group sessions'
   );
-  const handler = readSource('src/main/im/imCoworkHandler.ts');
-  assert.match(
-    handler,
-    /setSessionHiddenFromList\(session\.id, true\)/,
-    'group sessions must be hidden, which also excludes them from the recent-session pulse'
-  );
   const store = readSource('src/main/coworkStore.ts');
   assert.match(
     store,
-    /recentSessionPulse\([\s\S]*?hidden_from_session_list, 0\) = 0/,
-    'the recent-session pulse must keep filtering hidden sessions'
+    /recentSessionPulse\([\s\S]*?group_map\.channel LIKE 'im:%:group'/,
+    'the recent-session pulse must exclude group conversations explicitly'
+  );
+  const handler = readSource('src/main/im/imCoworkHandler.ts');
+  assert.match(
+    handler,
+    /ALL IM sessions are 'standard'/,
+    'group sessions are visible locally, classified by the mapping channel'
   );
 });
 

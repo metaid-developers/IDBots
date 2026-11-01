@@ -153,6 +153,41 @@ Enforcement points (all code, none prompt-only):
   reason. The settings card lets the owner edit the policy, the group allowlist, the
   layer-3 switch and its allowlist.
 
+### Session classification (local list, group vs direct)
+
+All IM sessions — direct AND group — are created as `session_type = 'standard'`, i.e.
+they live in the owner's **local conversation list**. Direct IM chats used to be created as
+`'a2a'`, which pushed them into the online-conversations tab; that split is gone.
+
+The row tells the two apart with a display marker, and the marker is derived from the
+conversation mapping, not from the session type:
+
+| Row | Title (new sessions) | Badge |
+| --- | --- | --- |
+| QQ direct | `QQ · 私聊` | 私聊 |
+| QQ group | `QQ · 群聊 · <last 4 of group openid>` | 群 |
+
+`listSessions()` exposes `imChannel` (`im:qq:group` / `im:qq:direct`) and
+`imConversationId` by reading `cowork_conversation_mappings`. Consequences:
+
+- **No destructive migration.** Sessions created before this change keep
+  `session_type = 'a2a'` in SQLite; the list still classifies them correctly from the
+  mapping, and a legacy `IM-qq-<timestamp>` title is replaced **at render time only** (the
+  stored title is untouched). A user-renamed or model-generated title always wins.
+- Very old rows that only carry the untyped `im:<platform>` channel are classified from
+  the stored conversation id (`qq:group:…` / `qq:c2c:…`); if that is missing too, the row
+  gets **no badge** rather than a guess.
+- **Security is unaffected.** Group/direct restrictions are decided by the entry gate
+  (`trust.level`), never by `session_type`; making IM sessions 'standard' does not grant a
+  direct chat any group limit or vice versa. The group session keeps its isolated
+  workspace, empty tool surface, memory blackout and audit trail.
+- **One behaviour is preserved by code, not by the hidden flag:** group sessions stay out
+  of the recent-session pulse (`recentSessionPulse` excludes `im:%:group`), so a group
+  message can still never be quoted into a private-chat prompt. They are visible in the
+  owner's own list, which is intended.
+- Archived rows are **not** re-classified: an IM direct session archived before this change
+  stays under the A2A archive tab; sessions archived afterwards are standard.
+
 ### Inviter verification: not possible, stated plainly
 
 **无法校验邀请人 (the inviter cannot be verified).** The official SDK exposes only

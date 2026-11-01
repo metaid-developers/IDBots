@@ -2,12 +2,27 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CoworkSessionSummary, CoworkSessionStatus } from '../../types/cowork';
 import { ArchiveBoxIcon, ArrowRightOnRectangleIcon, CheckIcon, ChevronRightIcon, ClipboardDocumentIcon, EllipsisHorizontalIcon, PencilSquareIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
-import { getCoworkSessionTitleClassName, getAssistantSessionDisplayTitle, shouldShowCoworkA2ADot } from './coworkSessionPresentation.js';
+import { getCoworkSessionTitleClassName, getAssistantSessionDisplayTitle, shouldShowCoworkA2ADot, getImSessionChannelInfo, isLegacyImSessionTitle } from './coworkSessionPresentation.js';
 import { copyCoworkSessionLinkToClipboard } from './coworkSessionLink.js';
 import { isRenderableAvatarSource } from '../../utils/avatarSource';
 import { resolveSessionSidebarSection } from '../../utils/sessionAutoGrouping';
 import type { SessionSidebarSection } from '../../utils/sessionAutoGrouping';
 import { scrollEventMovesAnchor } from '../../utils/anchoredPopover';
+
+const IM_PLATFORM_LABELS: Record<string, string> = {
+  qq: 'QQ',
+  weixin: 'WeChat',
+  telegram: 'Telegram',
+  discord: 'Discord',
+  feishu: 'Feishu',
+  dingtalk: 'DingTalk',
+  nim: 'NIM',
+  xiaomifeng: 'Xiaomifeng',
+};
+
+function imPlatformLabel(platform: string): string {
+  return IM_PLATFORM_LABELS[platform] ?? platform.toUpperCase();
+}
 
 interface CoworkSessionItemProps {
   session: CoworkSessionSummary;
@@ -562,11 +577,27 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
   // shows, so it is skipped in favor of the name; any real title (user-edited,
   // or derived from the conversation) still wins.
   const isPrivatePlaceholderTitle = isA2A && /^Private-[A-Za-z0-9]{6,12}$/.test(storedTitle);
-  const displayTitle = isPrivatePlaceholderTitle && session.peerName?.trim()
-    ? session.peerName.trim()
-    : getAssistantSessionDisplayTitle(storedTitle, assistantMode)
-      || session.peerName
-      || i18nService.t('coworkNewSession');
+  // IM rows (direct AND group) now live in this local list. Their kind is
+  // shown by title + badge; rows created before the re-classification keep
+  // their old generic `IM-<platform>-<ts>` title, which is replaced at RENDER
+  // time only (stored rows are never rewritten).
+  const imInfo = getImSessionChannelInfo(session);
+  const imKindLabel = imInfo
+    ? imInfo.isGroup
+      ? i18nService.t('coworkImGroupKind')
+      : i18nService.t('coworkImDirectKind')
+    : '';
+  const imFallbackTitle = imInfo
+    ? `${imPlatformLabel(imInfo.platform)} · ${imKindLabel}${imInfo.suffix ? ` · ${imInfo.suffix}` : ''}`
+    : '';
+  const useImFallbackTitle = Boolean(imInfo) && (!storedTitle || isLegacyImSessionTitle(storedTitle));
+  const displayTitle = useImFallbackTitle
+    ? imFallbackTitle
+    : isPrivatePlaceholderTitle && session.peerName?.trim()
+      ? session.peerName.trim()
+      : getAssistantSessionDisplayTitle(storedTitle, assistantMode)
+        || session.peerName
+        || i18nService.t('coworkNewSession');
   const menuItems = useMemo(() => {
     return [
       { key: 'copy-session-id', label: copySessionIdLabel, onClick: handleCopySessionIdClick },
@@ -665,12 +696,26 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
                 className="flex-1 min-w-0 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg px-2 py-1 text-sm font-medium dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
               />
             ) : (
-              <h3 className={getCoworkSessionTitleClassName({
-                sessionType: session.sessionType,
-                serviceOrderStatus: session.serviceOrderSummary?.status,
-              })}>
-                {displayTitle}
-              </h3>
+              <>
+                <h3 className={getCoworkSessionTitleClassName({
+                  sessionType: session.sessionType,
+                  serviceOrderStatus: session.serviceOrderSummary?.status,
+                })}>
+                  {displayTitle}
+                </h3>
+                {imInfo && (
+                  <span
+                    className={`ml-1.5 shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none ${
+                      imInfo.isGroup
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-claude-accent/10 text-claude-accent'
+                    }`}
+                    title={imFallbackTitle}
+                  >
+                    {imInfo.isGroup ? i18nService.t('coworkImGroupBadge') : i18nService.t('coworkImDirectBadge')}
+                  </span>
+                )}
+              </>
             )}
           </div>
           <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary leading-tight">

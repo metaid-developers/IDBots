@@ -862,6 +862,14 @@ export interface CoworkSessionSummary {
   archivedAt?: number | null;
   /** Session type: 'standard' = human↔MetaBot, 'a2a' = MetaBot↔MetaBot */
   sessionType?: CoworkSessionType;
+  /**
+   * IM channel behind this row (`im:qq:group` / `im:qq:direct`), read from the
+   * conversation mappings. Display-layer only, so legacy IM rows created as
+   * 'a2a' are badged correctly without a data migration.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Remote peer MetaBot's display name (A2A sessions only) */
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */

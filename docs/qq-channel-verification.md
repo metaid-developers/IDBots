@@ -12,8 +12,9 @@ No push, no PR (per task brief).
 | Electron compile | `pnpm run compile:electron` | **pass** — `tsc --project electron-tsconfig.json` + `copy-electron-js.cjs`, no diagnostics |
 | Renderer typecheck | `npx tsc -p tsconfig.json --noEmit` | **pass**, no diagnostics |
 | Lint (0 warnings) | `pnpm run lint` | **pass**, exit 0, no output |
-| Offline QQ suite | `pnpm run test:qq` | **32/32 pass**, 0 fail, ~0.3 s, no network |
+| Offline QQ suite | `pnpm run test:qq` | **67/67 pass** (32 gateway + 24 security + 11 classification), 0 fail, no network |
 | Security regression suite | `npx tsx --test tests/qqSecurity.test.ts` | **24/24 pass**, 0 fail, no network |
+| Session classification suite | `tests/qqSessionClassification.test.ts` | **11/11 pass**, 0 fail, no network |
 | Dev launch | `env -u ELECTRON_RUN_AS_NODE -u IDBOTS_ELECTRON_PATH pnpm run electron:dev:dsh` | **pass** — Vite on :5185, Electron window painted, renderer initialisation complete |
 
 Notes:
@@ -116,6 +117,25 @@ The incident that motivated this work: a bot invited into a group could be comma
 
 Every case runs against fake SDK / fake network surfaces; nothing leaves the process.
 
+### 2.2 Session classification (`tests/qqSessionClassification.test.ts`, 11 tests)
+
+Owner follow-up: direct and group IM chats both belong in the LOCAL list, told apart by a
+marker. Pinned by tests:
+
+| # | Invariant pinned |
+| --- | --- |
+| CLS-01 | a group row is recognised from `im:qq:group` + conversation id (last-4 suffix) |
+| CLS-02 | a direct row is recognised and carries no group suffix |
+| CLS-03 | non-IM / untyped-and-unknown channels classify as null (no wrong badge) |
+| CLS-03b | legacy `im:<platform>` rows recover the kind from `qq:group:` / `qq:c2c:` |
+| CLS-04 | old `IM-<platform>-<ts>` titles are detected; user titles are preserved |
+| CLS-05 | short/absent ids degrade to an empty suffix |
+| CLS-06 | every IM session is created as `standard`; the old direct⇒a2a mapping is gone |
+| CLS-07 | group/direct grants do not depend on session type (spoofed type changes nothing) |
+| CLS-08 | the frozen trust still rides every turn (group prompt, memory gates) |
+| CLS-09 | list rows expose `im_channel` / `im_conversation_id` from the mapping table |
+| CLS-10 | group conversations stay out of the recent-session pulse |
+
 ## 3. Live (real app) checks
 
 ### 3.1 Settings card
@@ -187,8 +207,9 @@ the QQ code are unaffected.
 - Code: `src/main/im/qq*.ts`, wiring in `types.ts` / `imStore.ts` /
   `imGatewayManager.ts` / `main.ts` / `preload.ts`, renderer card in `IMSettings.tsx`,
   logo `public/qq.svg`.
-- Tests: `tests/qqGateway.test.ts` (`pnpm run test:qq`),
-  `tests/qqSecurity.test.ts` (24 security regressions).
+- Tests: `tests/qqGateway.test.ts`, `tests/qqSecurity.test.ts` (24 security regressions),
+  `tests/qqSessionClassification.test.ts` (11 classification regressions) — all under
+  `pnpm run test:qq`.
 - Docs: `docs/qq-channel.md`, this file, `docs/qq-channel-pr.md`.
 - Runtime evidence (gitignored): `.dev-userdata-dsh/qq-card.png`,
   `.dev-userdata-dsh/qq-qr2.png`, `.dev-userdata-dsh/qq-dev*.log`.
