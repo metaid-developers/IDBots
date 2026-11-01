@@ -35,8 +35,17 @@ function asString(value: unknown): string {
 // Indexer base URLs (see the skill references).
 const MANAPI_BASE = 'https://manapi.metaid.io';
 const METAFILE_INDEXER_BASE = 'https://file.metaid.io/metafile-indexer';
-const SHOWNOW_BASE = 'https://show.now/man';
-const MAN_BASE = 'https://man.metaid.io';
+
+// Social reads were single-pointed at the retired man/show.now service layer
+// (offline 2026-11-01, verified from two machines: man.metaid.io whole-site
+// 502, show.now 301 → www.show.now 504 upstream-unreachable). They now target
+// the metaso-p2p aggregation layer — the same live backend behind
+// search_social_posts, confirmed to carry same-day data. Degradation
+// contract: if this layer goes down too, every social action fails with an
+// explicit isError naming the failed endpoint; an empty/blank page is never
+// fabricated, because a fabricated empty list would read as "no data" — a
+// different fact from "cannot read".
+const SOCIAL_AGG_BASE = 'https://so.metaid.io';
 
 /** Keep large indexer payloads from flooding the conversation. */
 const MAX_RESULT_CHARS = 20000;
@@ -50,10 +59,10 @@ const TRUNCATION_NOTE_RESERVE = 256;
 
 /**
  * The pagination token echoed by the indexer, if any. manapi paged responses
- * carry cursor/nextCursor at the top level or under `data`; show.now buzz
- * lists echo lastId. A truncated page is only recoverable if the note names
- * the token and its value — the old note pointed at a field it had just cut
- * out of the JSON.
+ * carry cursor/nextCursor at the top level or under `data`; the aggregation
+ * layer's social pages echo nextCursor under `data`. A truncated page is only
+ * recoverable if the note names the token and its value — the old note
+ * pointed at a field it had just cut out of the JSON.
  */
 function responseCursor(data: unknown): { key: string; value: string } | null {
   if (data === null || typeof data !== 'object') return null;
@@ -74,6 +83,21 @@ function truncationNote(kept: number, total: number, cursor: { key: string; valu
     return `[omni_read: first ${kept} of ${total} chars — ${cursor.key} "${cursor.value}" present; re-run with ${cursor.key}="${cursor.value}" for the next page]`;
   }
   return `[omni_read: first ${kept} of ${total} chars — no pagination cursor in the response; narrow the query (page/size) to reach the rest]`;
+}
+
+/**
+ * Tag a response served by a substitute read path so a caller cannot mistake
+ * it for the retired backend's native semantics (e.g. the personalized
+ * recommended feed served as sort=hot, the notification list served as the
+ * aggregation layer's interactions inbox). Adds a `_degraded` field to the
+ * envelope — the only mutation omni_read performs on indexer JSON besides
+ * list-page truncation.
+ */
+function markDegraded(json: unknown, note: string): unknown {
+  if (json !== null && typeof json === 'object' && !Array.isArray(json)) {
+    return { ...(json as Record<string, unknown>), _degraded: note };
+  }
+  return json;
 }
 
 /**
@@ -367,8 +391,9 @@ export function buildOmniReaderAgentTools(deps: {
     [
       'Read-only raw MetaID/MetaWeb indexer queries — the low-level fallback returning raw indexer JSON; never writes on-chain.',
       'Actions: user_info, search_users, buzz_newest | buzz_recommended | buzz_hot | buzz_search | buzz_info, notifications, followers | following, pin, pin_version, pin_list, metaid_list, block_list, mempool_list, pins_by_path | pins_by_metaid | pins_by_address, pin_content, file_info, file_latest, files_by_creator | files_by_metaid | files_by_extension, indexer_status | indexer_stats, global_counts.',
+      'Social reads (buzz_*, notifications, followers/following) are served by the metaso-p2p aggregation layer (so.metaid.io) — the retired show.now / man.metaid.io service layer went offline 2026-11-01. Engagement counts are TRI-STATE: a number (including 0) is a real count; a pin the buzz-only index does not cover has NO counts (buzz_info answers code 40400 "social post not found") — that is UNKNOWN, NEVER 0 (unknown ≠ 0). Responses served by a substitute semantics carry a `_degraded` field (buzz_recommended → sort=hot; notifications → interactions inbox).',
       'List pages that exceed the result budget come back as VALID JSON holding whole rows only, with `truncated: true` and `returned` telling you how much of the page you got; the server\'s own `total`/`nextCursor` are preserved, so when `truncated` is true the page is PARTIAL — page with cursor/size instead of treating it as the full list. When not even one whole row fits, the result falls back to a declared `[omni_read: first N of M chars — …]` cut instead (still page with cursor/size); either way an over-budget result is never a silently torn document.',
-      'Parameters per action are documented on the fields below; paged actions echo lastId/cursor — pass it back for the next page (notifications lastId returns entries NEWER than that id and excludes answers to your questions; poll get_question_answers for those). Prefer search_metaids / metaid_profile for identity discovery and search_social_posts for full-text social search when those fit.',
+      'Parameters per action are documented on the fields below; paged actions echo cursor/nextCursor — pass it back for the next page (buzz feeds and followers/following page with cursor; notifications-lastId-style paging retired with the old backend). Prefer search_metaids / metaid_profile for identity discovery and search_social_posts for full-text social search when those fit.',
     ].join(' '),
     {
       action: z.enum(ACTIONS).describe('Which indexer query to run.'),
@@ -378,16 +403,16 @@ export function buildOmniReaderAgentTools(deps: {
       keyword: z.string().optional().describe('Search keyword for search_users.'),
       keytype: z.enum(['metaid', 'name']).optional().describe('search_users key type; omit to search both.'),
       limit: z.number().int().optional().describe('search_users result limit (default 10).'),
-      lastId: z.string().optional().describe('Paging cursor echoed by buzz/notification list responses.'),
+      lastId: z.string().optional().describe('Legacy paging cursor from the retired show.now feeds; buzz actions still accept it and forward it as cursor. Prefer cursor.'),
       size: z.number().int().optional().describe('Page size. buzz_hot caps at 50; pins_by_path allows 1-100.'),
-      followed: z.number().int().min(0).max(1).optional().describe('buzz_newest filter: 1 = followed users only, 0 = all.'),
-      userAddress: z.string().optional().describe('Wallet address for buzz_recommended personalization.'),
+      followed: z.number().int().min(0).max(1).optional().describe('buzz_newest filter: 1 = posts by authors the given metaid follows (requires metaid), 0/omitted = all posts.'),
+      userAddress: z.string().optional().describe('buzz_recommended: accepted for compatibility only — personalization retired with the old backend; the feed degrades to sort=hot (response carries _degraded).'),
       key: z.string().optional().describe('Search keyword for buzz_search.'),
       pinId: z.string().optional().describe('Pin id (txid+iN) for pin, pin_version, buzz_info, pin_content, file_info.'),
       ver: z.number().int().optional().describe('pin_version version number; 0 = initial version, >= 1 = history.'),
       page: z.number().int().optional().describe('Page number for pin_list, metaid_list, block_list, mempool_list.'),
       path: z.string().optional().describe('MetaID protocol path, e.g. /protocols/simplebuzz. Required for pins_by_path and pins_by_address.'),
-      cursor: z.string().optional().describe('Cursor-based paging token (string). followers/following default to 0.'),
+      cursor: z.string().optional().describe('Cursor-based paging token (string). Used by buzz feeds, notifications (interactions inbox) and followers/following on the aggregation layer.'),
       firstPinId: z.string().optional().describe('First pin id of a file chain for file_latest.'),
       extension: z.string().optional().describe('File extension like .jpg for files_by_extension.'),
       timestamp: z.string().optional().describe('Optional timestamp filter for files_by_extension.'),
@@ -437,30 +462,53 @@ export function buildOmniReaderAgentTools(deps: {
           }
 
           case 'buzz_newest': {
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/newest', {
-              lastId: asString(args.lastId) || undefined,
+            // Aggregation feed (metaso-p2p /api/social/feed): newest first,
+            // cursor-paged (echoes nextCursor). Engagement counts in each row
+            // are tri-state: a number (including a real 0) is a count the
+            // buzz-only index covers; for pins it does not cover the detail
+            // read answers 40400 instead — unknown, NEVER 0.
+            const followed = args.followed === 1;
+            const subject = asString(args.metaid);
+            if (followed && !subject) {
+              return textResult(
+                'omni_read buzz_newest followed=1 requires metaid (the subject whose followed-authors feed is requested).',
+                true,
+              );
+            }
+            const url = buildUrl(SOCIAL_AGG_BASE, 'api/social/feed', {
               size: args.size,
-              metaid: asString(args.metaid) || undefined,
-              followed: args.followed,
+              cursor: asString(args.cursor) || asString(args.lastId) || undefined,
+              publisher: !followed && subject ? subject : undefined,
+              scope: followed ? 'following' : undefined,
+              user: followed ? subject : undefined,
             });
             return textResult(formatData(await control.fetchJson(url)));
           }
 
           case 'buzz_recommended': {
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/recommended', {
-              lastId: asString(args.lastId) || undefined,
+            // The personalized recommended feed retired with show.now; the
+            // aggregation layer has no per-user ranking, so this action
+            // degrades to sort=hot (top engagement within the last 48h) and
+            // the payload says so via _degraded.
+            const url = buildUrl(SOCIAL_AGG_BASE, 'api/social/feed', {
+              sort: 'hot',
               size: args.size,
-              userAddress: asString(args.userAddress) || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            const json = await control.fetchJson(url);
+            return textResult(formatData(markDegraded(
+              json,
+              'buzz_recommended: personalized ranking retired with show.now; serving sort=hot (top engagement, last 48h) from the metaso-p2p aggregation layer. userAddress is not used for ranking.',
+            )));
           }
 
           case 'buzz_hot': {
             if (args.size !== undefined && args.size > 50) {
               return textResult('omni_read buzz_hot size must be <= 50.', true);
             }
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/hot', {
-              lastId: asString(args.lastId) || undefined,
+            // sort=hot is a single page (top engagement within the last 48h);
+            // the aggregation layer does not paginate it.
+            const url = buildUrl(SOCIAL_AGG_BASE, 'api/social/feed', {
+              sort: 'hot',
               size: args.size,
             });
             return textResult(formatData(await control.fetchJson(url)));
@@ -469,10 +517,13 @@ export function buildOmniReaderAgentTools(deps: {
           case 'buzz_search': {
             const key = asString(args.key);
             if (!key) return textResult('omni_read buzz_search requires key.', true);
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/search', {
-              lastId: asString(args.lastId) || undefined,
+            // Single case-insensitive substring term (aggregation-layer
+            // semantics); multiple terms are OR-joined only by the higher
+            // level search_social_posts tool.
+            const url = buildUrl(SOCIAL_AGG_BASE, 'api/social/feed', {
+              keyword: key,
               size: args.size,
-              key,
+              cursor: asString(args.cursor) || asString(args.lastId) || undefined,
             });
             return textResult(formatData(await control.fetchJson(url)));
           }
@@ -480,7 +531,12 @@ export function buildOmniReaderAgentTools(deps: {
           case 'buzz_info': {
             const pinId = asString(args.pinId);
             if (!pinId) return textResult('omni_read buzz_info requires pinId.', true);
-            const url = buildUrl(SHOWNOW_BASE, 'social/buzz/info', { pinId });
+            // Aggregated post detail. code 40400 "social post not found" is
+            // the buzz-only index saying it does not COVER the pin (metaTask
+            // roots, metaapp pins, witness submissions...) — an explicit
+            // unknown, never zero counts; read the raw pin with `pin` /
+            // `pin_content` instead.
+            const url = buildUrl(SOCIAL_AGG_BASE, `api/social/post/${encodeURIComponent(pinId)}`);
             const json = await control.fetchJson(url);
             // Fire-and-forget chain-read ledger entry; the raw indexer JSON
             // is not normalized, so extraction is best-effort.
@@ -491,28 +547,43 @@ export function buildOmniReaderAgentTools(deps: {
           case 'notifications': {
             const address = asString(args.address);
             if (!address) return textResult('omni_read notifications requires address.', true);
-            // The "notifcation" spelling is the backend's; keep it verbatim.
-            // Served by the MAN indexer: manapi answers this route with a
-            // perpetual empty list for every address, while man.metaid.io
-            // returns real notifications with the identical shape.
-            const url = buildUrl(MAN_BASE, 'api/notifcation/list', {
-              address,
+            // The native notification backend (man.metaid.io
+            // /api/notifcation/list) went offline 2026-11-01 (whole-site
+            // 502), and manapi's same route answers a perpetual empty list —
+            // indistinguishable from "no notifications", i.e. a fabricated
+            // blank. Degrade to the aggregation layer's deterministic inbox
+            // instead (likes/comments on the owner's pins + answers to their
+            // questions) and mark the payload _degraded so the semantic
+            // change is machine-checkable.
+            const url = buildUrl(SOCIAL_AGG_BASE, 'api/metaweb/interactions', {
+              owner: address,
               size: args.size,
-              lastId: asString(args.lastId) || undefined,
+              cursor: asString(args.cursor) || asString(args.lastId) || undefined,
             });
-            return textResult(formatData(await control.fetchJson(url)));
+            const json = await control.fetchJson(url);
+            return textResult(formatData(markDegraded(
+              json,
+              'notifications: the man.metaid.io notification list is offline; serving the metaso-p2p interactions inbox (likes/comments on your pins + answers to your questions) instead.',
+            )));
           }
 
           case 'followers':
           case 'following': {
             const metaid = asString(args.metaid);
             if (!metaid) return textResult(`omni_read ${args.action} requires metaid.`, true);
-            const endpoint = args.action === 'followers' ? 'followerList' : 'followingList';
-            const url = buildUrl(MAN_BASE, `api/metaid/${endpoint}/${encodeURIComponent(metaid)}`, {
-              cursor: asString(args.cursor) || '0',
-              size: args.size,
-              followDetail: 'true',
-            });
+            // man.metaid.io's follow-list routes are offline (whole-site 502
+            // since 2026-11-01); the aggregation layer serves the same lists
+            // (globalMetaId OR legacy hex metaId both key the route),
+            // cursor-paged, block-filtered.
+            const endpoint = args.action === 'followers' ? 'followers' : 'following';
+            const url = buildUrl(
+              SOCIAL_AGG_BASE,
+              `api/social/globalmetaid/${encodeURIComponent(metaid)}/${endpoint}`,
+              {
+                cursor: asString(args.cursor) || undefined,
+                size: args.size,
+              },
+            );
             return textResult(formatData(await control.fetchJson(url)));
           }
 

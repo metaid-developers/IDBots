@@ -215,6 +215,18 @@ class IdBuzzList extends HTMLElement {
     return this._normalizeTab(app && app.buzzTab ? app.buzzTab : 'new');
   }
 
+  /**
+   * True when the current tab is served by a declared substitute read path
+   * (FetchBuzzCommand sets buzz.tabs[tab].degraded). Drives the on-screen
+   * degradation notice so a degraded feed is never passed off as native.
+   */
+  _isDegradedTab() {
+    var tab = this._getCurrentTab();
+    if (tab !== 'recommend') return false;
+    var buzz = this._getStore('buzz');
+    return !!(buzz && buzz.tabs && buzz.tabs.recommend && buzz.tabs.recommend.degraded === true);
+  }
+
   _parseProfileMetaidFromPath(path) {
     var matched = String(path || '').match(/^\/profile\/([^/?#]+)/);
     if (!matched || !matched[1]) return '';
@@ -578,6 +590,8 @@ class IdBuzzList extends HTMLElement {
 
   _pickBuzzPayload(pin) {
     var candidates = [
+      // Aggregation-layer rows expose the payload as a ready object.
+      this._tryParseJsonObject(pin && pin.payload),
       this._tryParseJsonObject(pin && pin.content),
       this._tryParseJsonObject(pin && pin.contentSummary),
       this._tryParseJsonObject(pin && pin.contentBody),
@@ -770,17 +784,20 @@ class IdBuzzList extends HTMLElement {
   _normalizePinToBuzzItem(pin) {
     var payload = this._pickBuzzPayload(pin);
     var modifyHistory = Array.isArray(pin && pin.modify_history) ? pin.modify_history : [];
+    // Aggregation-layer rows: pinId/author{address,metaId}/createdAt(seconds)
+    // /protocolPath; legacy rows keep id/address/timestamp/path.
+    var author = pin && pin.author && typeof pin.author === 'object' ? pin.author : null;
     return {
-      id: (pin && pin.id) || '',
-      address: (pin && pin.address) || '',
-      timestamp: Number(pin && pin.timestamp) * 1000 || Date.now(),
-      path: (pin && pin.path) || '',
-      metaid: (pin && pin.metaid) || '',
+      id: (pin && (pin.id || pin.pinId)) || '',
+      address: (pin && (pin.address || pin.createAddress || (author && author.address))) || '',
+      timestamp: Number(pin && (pin.timestamp || pin.createdAt)) * 1000 || Date.now(),
+      path: (pin && (pin.path || pin.protocolPath)) || '',
+      metaid: (pin && (pin.metaid || pin.metaId || (author && (author.metaId || author.metaid || author.globalMetaId)))) || '',
       chainName: (pin && pin.chainName) || '',
       content: this._extractBuzzContent(pin, payload),
       attachments: this._extractBuzzAttachments(pin, payload),
       quotePin: this._extractBuzzQuotePin(pin, payload),
-      lastId: modifyHistory.length ? modifyHistory[modifyHistory.length - 1] : ((pin && pin.id) || ''),
+      lastId: modifyHistory.length ? modifyHistory[modifyHistory.length - 1] : ((pin && (pin.id || pin.pinId)) || ''),
     };
   }
 
@@ -823,20 +840,24 @@ class IdBuzzList extends HTMLElement {
     this.render();
     try {
       var serviceLocator = (typeof window !== 'undefined' && window.ServiceLocator) ? window.ServiceLocator : {};
-      var base = (serviceLocator.metaid_man || 'https://www.show.now/man').replace(/\/+$/, '');
-      var response = await fetch(base + '/social/buzz/info?pinId=' + encodeURIComponent(normalizedPinId), { method: 'GET' });
+      // Primary: aggregation-layer post detail (so.metaid.io). code 40400
+      // "social post not found" means the buzz-only index does not COVER the
+      // pin — an explicit unknown, not zero engagement.
+      var aggBase = String(serviceLocator.social_agg || 'https://so.metaid.io').replace(/\/+$/, '');
+      var manBase = String(serviceLocator.metaid_man || 'https://manapi.metaid.io').replace(/\/+$/, '');
+      var response = await fetch(aggBase + '/api/social/post/' + encodeURIComponent(normalizedPinId), { method: 'GET' });
       if (!response.ok) throw new Error('fetch quote detail failed');
       var json = await response.json();
       if (!json) throw new Error('fetch quote detail failed');
       var payload = (json && typeof json.code === 'number') ? (json.data || {}) : (json.data || json || {});
       var pin = payload && payload.tweet ? payload.tweet : payload;
 
-      if (!pin || !pin.id) {
+      if (!pin || (!pin.id && !pin.pinId)) {
         // Backward-compatible fallback for non-social environments.
         if (this._isCommandRegistered('getPinDetail')) {
           pin = await window.IDFramework.dispatch('getPinDetail', { numberOrId: normalizedPinId });
         } else {
-          var fallbackResp = await fetch(base + '/api/pin/' + encodeURIComponent(normalizedPinId), { method: 'GET' });
+          var fallbackResp = await fetch(manBase + '/api/pin/' + encodeURIComponent(normalizedPinId), { method: 'GET' });
           if (!fallbackResp.ok) throw new Error('fetch quote detail failed');
           var fallbackJson = await fallbackResp.json();
           pin = (fallbackJson && typeof fallbackJson.code === 'number')
@@ -1458,6 +1479,17 @@ class IdBuzzList extends HTMLElement {
         .error {
           color: var(--id-text-error, #b91c1c);
         }
+        .degraded-note {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 34px;
+          padding: 6px 12px;
+          color: #92400e;
+          background: #fef3c7;
+          font-size: 12px;
+          text-align: center;
+        }
         .spinner {
           width: 16px;
           height: 16px;
@@ -1518,6 +1550,7 @@ class IdBuzzList extends HTMLElement {
           </div>
         </div>
         <div class="buzz-list">
+          ${this._isDegradedTab() ? `<div class="degraded-note">${this._escapeHtml(this._t('buzz.list.degradedRecommend', 'Personalized recommendations are temporarily unavailable; showing hot posts from the last 48h instead.'))}</div>` : ''}
           ${this._loading ? `<div class="loading"><span class="spinner"></span>${this._escapeHtml(this._t('buzz.list.loadingBuzz', 'Loading buzz...'))}</div>` : ''}
           ${!this._loading && this._error ? `<div class="error">${this._escapeHtml(this._error)}</div>` : ''}
           ${!this._loading && !this._error && this._buzzList.length === 0 ? `<div class="empty">${this._escapeHtml(this._emptyMessage || this._t('buzz.list.emptyDefault', 'No buzz data.'))}</div>` : ''}

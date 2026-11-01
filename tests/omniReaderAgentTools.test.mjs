@@ -113,25 +113,60 @@ test('search_users requires keyword', async () => {
   assert.equal(calls.fetchJson.length, 0);
 });
 
-test('buzz_newest forwards lastId/size/metaid/followed to show.now', async () => {
+test('buzz_newest maps to the aggregation feed: cursor paging, publisher filter, followed scope', async () => {
   const { calls, byName } = makeHarness();
   await byName.omni_read.handler({
-    action: 'buzz_newest', lastId: '99', size: 10, metaid: 'm1', followed: 1,
+    action: 'buzz_newest', cursor: 'c9', size: 10, metaid: 'm1', followed: 1,
   });
   const url = new URL(calls.fetchJson[0]);
-  assert.equal(url.origin + url.pathname, 'https://show.now/man/social/buzz/newest');
-  assert.equal(url.searchParams.get('lastId'), '99');
+  assert.equal(url.origin + url.pathname, 'https://so.metaid.io/api/social/feed');
+  assert.equal(url.searchParams.get('cursor'), 'c9');
   assert.equal(url.searchParams.get('size'), '10');
-  assert.equal(url.searchParams.get('metaid'), 'm1');
-  assert.equal(url.searchParams.get('followed'), '1');
+  assert.equal(url.searchParams.get('scope'), 'following');
+  assert.equal(url.searchParams.get('user'), 'm1');
+  assert.equal(url.searchParams.get('publisher'), null);
+  // Without followed=1 the metaid is a publisher filter instead.
+  await byName.omni_read.handler({ action: 'buzz_newest', metaid: 'm1', lastId: 'legacy7' });
+  const publisherUrl = new URL(calls.fetchJson[1]);
+  assert.equal(publisherUrl.searchParams.get('publisher'), 'm1');
+  assert.equal(publisherUrl.searchParams.get('scope'), null);
+  // Legacy lastId is still forwarded as cursor.
+  assert.equal(publisherUrl.searchParams.get('cursor'), 'legacy7');
+  // followed=1 without a subject is an explicit error, not a silent blank.
+  const missing = await byName.omni_read.handler({ action: 'buzz_newest', followed: 1 });
+  assert.equal(missing.isError, true);
+  assert.match(missing.content[0].text, /followed=1 requires metaid/);
+  assert.equal(calls.fetchJson.length, 2);
 });
 
-test('buzz_hot rejects size > 50 without fetching', async () => {
+test('buzz_recommended degrades to sort=hot and marks the payload _degraded', async () => {
+  const { calls, byName } = makeHarness({
+    fetchJsonResult: { code: 0, data: { items: [], hasMore: false } },
+  });
+  const result = await byName.omni_read.handler({ action: 'buzz_recommended', size: 5, userAddress: '1Boat' });
+  assert.equal(result.isError, undefined);
+  const url = new URL(calls.fetchJson[0]);
+  assert.equal(url.origin + url.pathname, 'https://so.metaid.io/api/social/feed');
+  assert.equal(url.searchParams.get('sort'), 'hot');
+  assert.equal(url.searchParams.get('size'), '5');
+  // userAddress is no longer a ranking input; it must not reach the wire.
+  assert.equal(url.searchParams.get('userAddress'), null);
+  const payload = JSON.parse(result.content[0].text);
+  assert.match(payload._degraded, /sort=hot/);
+  assert.match(payload._degraded, /userAddress is not used for ranking/);
+});
+
+test('buzz_hot rejects size > 50 without fetching and maps to sort=hot', async () => {
   const { calls, byName } = makeHarness();
   const result = await byName.omni_read.handler({ action: 'buzz_hot', size: 51 });
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /size must be <= 50/);
   assert.equal(calls.fetchJson.length, 0);
+  await byName.omni_read.handler({ action: 'buzz_hot', size: 20 });
+  const url = new URL(calls.fetchJson[0]);
+  assert.equal(url.origin + url.pathname, 'https://so.metaid.io/api/social/feed');
+  assert.equal(url.searchParams.get('sort'), 'hot');
+  assert.equal(url.searchParams.get('size'), '20');
 });
 
 test('buzz_search requires key; buzz_info requires pinId', async () => {
@@ -145,48 +180,63 @@ test('buzz_search requires key; buzz_info requires pinId', async () => {
   assert.equal(calls.fetchJson.length, 0);
 });
 
-test('buzz_search and buzz_info hit the show.now endpoints', async () => {
+test('buzz_search and buzz_info hit the aggregation layer endpoints', async () => {
   const { calls, byName } = makeHarness();
   await byName.omni_read.handler({ action: 'buzz_search', key: 'meta id' });
   const searchUrl = new URL(calls.fetchJson[0]);
-  assert.equal(searchUrl.origin + searchUrl.pathname, 'https://show.now/man/social/buzz/search');
-  assert.equal(searchUrl.searchParams.get('key'), 'meta id');
+  assert.equal(searchUrl.origin + searchUrl.pathname, 'https://so.metaid.io/api/social/feed');
+  assert.equal(searchUrl.searchParams.get('keyword'), 'meta id');
   await byName.omni_read.handler({ action: 'buzz_info', pinId: 'txid1i0' });
   const infoUrl = new URL(calls.fetchJson[1]);
-  assert.equal(infoUrl.origin + infoUrl.pathname, 'https://show.now/man/social/buzz/info');
-  assert.equal(infoUrl.searchParams.get('pinId'), 'txid1i0');
+  assert.equal(infoUrl.origin + infoUrl.pathname, 'https://so.metaid.io/api/social/post/txid1i0');
 });
 
-test('notifications keeps the backend "notifcation" typo and requires address', async () => {
-  const { calls, byName } = makeHarness();
+test('notifications degrades to the interactions inbox and marks the payload _degraded', async () => {
+  const { calls, byName } = makeHarness({
+    fetchJsonResult: { code: 0, data: { items: [], hasMore: false } },
+  });
   const missing = await byName.omni_read.handler({ action: 'notifications' });
   assert.equal(missing.isError, true);
   assert.match(missing.content[0].text, /requires address/);
-  await byName.omni_read.handler({ action: 'notifications', address: '1Boat', size: 20, lastId: '1773555167558' });
+  const result = await byName.omni_read.handler({ action: 'notifications', address: '1Boat', size: 20, cursor: 'cx1' });
   const url = new URL(calls.fetchJson[0]);
-  // manapi.metaid.io answers this route with a perpetual empty list; the
-  // working host is man.metaid.io (verified live for multiple addresses).
-  assert.equal(url.origin + url.pathname, 'https://man.metaid.io/api/notifcation/list');
-  assert.equal(url.searchParams.get('address'), '1Boat');
+  assert.equal(url.origin + url.pathname, 'https://so.metaid.io/api/metaweb/interactions');
+  assert.equal(url.searchParams.get('owner'), '1Boat');
   assert.equal(url.searchParams.get('size'), '20');
-  assert.equal(url.searchParams.get('lastId'), '1773555167558');
+  assert.equal(url.searchParams.get('cursor'), 'cx1');
+  const payload = JSON.parse(result.content[0].text);
+  assert.match(payload._degraded, /interactions inbox/);
 });
 
-test('followers/following hit man.metaid.io with followDetail=true and cursor default 0', async () => {
+test('followers/following hit the aggregation follow lists (no dead man.metaid.io)', async () => {
   const { calls, byName } = makeHarness();
   await byName.omni_read.handler({ action: 'followers', metaid: 'm1' });
   const followersUrl = new URL(calls.fetchJson[0]);
-  assert.equal(followersUrl.origin + followersUrl.pathname, 'https://man.metaid.io/api/metaid/followerList/m1');
-  assert.equal(followersUrl.searchParams.get('cursor'), '0');
-  assert.equal(followersUrl.searchParams.get('followDetail'), 'true');
+  assert.equal(followersUrl.origin + followersUrl.pathname, 'https://so.metaid.io/api/social/globalmetaid/m1/followers');
   await byName.omni_read.handler({ action: 'following', metaid: 'm1', cursor: '5', size: 10 });
   const followingUrl = new URL(calls.fetchJson[1]);
-  assert.equal(followingUrl.origin + followingUrl.pathname, 'https://man.metaid.io/api/metaid/followingList/m1');
+  assert.equal(followingUrl.origin + followingUrl.pathname, 'https://so.metaid.io/api/social/globalmetaid/m1/following');
   assert.equal(followingUrl.searchParams.get('cursor'), '5');
   assert.equal(followingUrl.searchParams.get('size'), '10');
   const missing = await byName.omni_read.handler({ action: 'followers' });
   assert.equal(missing.isError, true);
   assert.match(missing.content[0].text, /requires metaid/);
+});
+
+test('tool contract states the tri-state engagement semantics and the backend switch', () => {
+  const { byName } = makeHarness();
+  const description = String(byName.omni_read.description);
+  // unknown ≠ 0 must be part of the LLM-visible contract, not just a comment.
+  assert.match(description, /NEVER 0/);
+  assert.match(description, /so\.metaid\.io/);
+  assert.match(description, /_degraded/);
+});
+
+test('a social read against a dead aggregation layer fails explicitly, never as a blank page', async () => {
+  const { byName } = makeHarness({ fetchJsonError: new Error('HTTP 504 from indexer') });
+  const result = await byName.omni_read.handler({ action: 'buzz_newest', size: 5 });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /omni_read buzz_newest failed: HTTP 504 from indexer/);
 });
 
 test('pin and pin_version build manapi URLs', async () => {

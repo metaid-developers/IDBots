@@ -2,8 +2,12 @@
  * FetchBuzzCommand
  *
  * Supports two modes:
- * 1) Timeline mode (new/hot/following/recommend/profile) via /social/buzz/*
- * 2) Legacy path mode via /pin/path/list (kept for compatibility)
+ * 1) Timeline mode (new/hot/following/recommend/profile) via the metaso-p2p
+ *    aggregation layer (social_agg, /api/social/feed) — the retired show.now
+ *    /social/buzz/* routes went offline 2026-11-01 and are never requested.
+ *    'recommend' degrades to sort=hot (no per-user ranking exists upstream)
+ *    and flags the result `degraded` so the UI can declare it.
+ * 2) Legacy path mode via manapi /api/pin/path/list (kept for compatibility)
  */
 export default class FetchBuzzCommand {
   async execute({ payload = {}, stores, delegate }) {
@@ -78,7 +82,7 @@ export default class FetchBuzzCommand {
       };
     }
 
-    var rawResponse = await delegate('metaid_man', endpoint, { method: 'GET' });
+    var rawResponse = await delegate('social_agg', endpoint, { method: 'GET' });
     var normalized = this._normalizeSocialBuzzResponse(rawResponse);
     var enrichedList = await this._enrichBuzzList(normalized.list, delegate);
 
@@ -87,12 +91,18 @@ export default class FetchBuzzCommand {
       total: normalized.total,
       nextCursor: normalized.nextCursor,
       hasMore: normalized.hasMore,
+      degraded: tab === 'recommend',
     };
 
     if (stores && stores.buzz) {
       stores.buzz.total = result.total;
       stores.buzz.nextCursor = result.nextCursor;
       stores.buzz.lastUpdatedAt = Date.now();
+      if (stores.buzz.tabs && stores.buzz.tabs[tab]) {
+        // Declared degradation: recommend is served as hot; the UI must be
+        // able to say so instead of silently passing it off as personalized.
+        stores.buzz.tabs[tab].degraded = result.degraded === true;
+      }
     }
 
     return result;
@@ -103,37 +113,40 @@ export default class FetchBuzzCommand {
     var size = params.size;
     var lastId = params.lastId;
     var metaid = params.metaid;
-    var userAddress = params.userAddress;
 
+    // Aggregation-layer feed (metaso-p2p /api/social/feed): cursor-paged,
+    // newest by default; sort=hot is a single page (top engagement, last 48h).
     var query = new URLSearchParams({
       size: String(size),
-      lastId: String(lastId || ''),
     });
+    if (lastId && tab !== 'hot') query.set('cursor', String(lastId));
 
     if (tab === 'new') {
-      return '/social/buzz/newest?' + query.toString();
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'hot') {
-      return '/social/buzz/hot?' + query.toString();
+      query.set('sort', 'hot');
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'following') {
       if (!metaid) return '';
-      query.set('metaid', metaid);
-      query.set('followed', '1');
-      return '/social/buzz/newest?' + query.toString();
+      query.set('scope', 'following');
+      query.set('user', metaid);
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'recommend') {
-      if (!userAddress) return '';
-      query.set('userAddress', userAddress);
-      return '/social/buzz/recommended?' + query.toString();
+      // Personalized ranking retired with show.now; degrade to hot and let
+      // the caller flag it (result.degraded) so the UI declares the caliber.
+      query.set('sort', 'hot');
+      return '/api/social/feed?' + query.toString();
     }
     if (tab === 'profile') {
       if (!metaid) return '';
-      query.set('metaid', metaid);
-      return '/social/buzz/newest?' + query.toString();
+      query.set('publisher', metaid);
+      return '/api/social/feed?' + query.toString();
     }
 
-    return '/social/buzz/newest?' + query.toString();
+    return '/api/social/feed?' + query.toString();
   }
 
   async _executeLegacyPathMode(context) {
@@ -153,7 +166,7 @@ export default class FetchBuzzCommand {
       path: path,
     }).toString();
 
-    var rawResponse = await delegate('metaid_man', '/pin/path/list?' + query, { method: 'GET' });
+    var rawResponse = await delegate('metaid_man', '/api/pin/path/list?' + query, { method: 'GET' });
     var normalized = this._normalizePinListResponse(rawResponse);
     var enrichedList = await this._enrichBuzzList(normalized.list, delegate);
 
@@ -216,7 +229,14 @@ export default class FetchBuzzCommand {
       payload = response.data;
     }
 
-    var list = Array.isArray(payload && payload.list) ? payload.list : [];
+    // Aggregation-layer pages carry `items` + nextCursor/hasMore; the retired
+    // show.now shape used `list` + lastId. Both are accepted.
+    var list = [];
+    if (Array.isArray(payload && payload.items)) {
+      list = payload.items;
+    } else if (Array.isArray(payload && payload.list)) {
+      list = payload.list;
+    }
     var total = Number((payload && payload.total) ?? list.length);
     if (!Number.isFinite(total)) total = list.length;
 
@@ -227,11 +247,16 @@ export default class FetchBuzzCommand {
       nextCursor = normalizedLastId;
     }
 
+    var hasMore = !!(nextCursor && list.length > 0);
+    if (payload && payload.hasMore !== undefined) {
+      hasMore = payload.hasMore === true;
+    }
+
     return {
       list: list,
       total: total,
       nextCursor: nextCursor,
-      hasMore: !!(nextCursor && list.length > 0),
+      hasMore: hasMore,
     };
   }
 
@@ -291,6 +316,17 @@ export default class FetchBuzzCommand {
   }
 
   _extractInlineUserInfo(pin, address) {
+    // Aggregation-layer rows carry the author inline (`pin.author`); the
+    // retired show.now rows used `pin.userInfo`.
+    var author = pin && pin.author && typeof pin.author === 'object' ? pin.author : null;
+    if (author) {
+      return {
+        metaId: String(author.globalMetaId || author.metaId || author.metaid || '').trim(),
+        name: String(author.name || author.nickName || author.nickname || '').trim(),
+        avatar: String(author.avatar || author.avatarUrl || '').trim(),
+        address: String(author.address || address || '').trim(),
+      };
+    }
     var userInfo = pin && pin.userInfo && typeof pin.userInfo === 'object' ? pin.userInfo : null;
     if (!userInfo) return null;
 
@@ -307,19 +343,23 @@ export default class FetchBuzzCommand {
     var modifyHistory = Array.isArray(pin && pin.modify_history) ? pin.modify_history : [];
 
     var id = String((pin && (pin.id || pin.pinId || pin.pinid)) || '').trim();
-    var address = String((pin && (pin.address || pin.createAddress || pin.creatorAddress)) || '').trim();
+    var author = pin && pin.author && typeof pin.author === 'object' ? pin.author : null;
+    var address = String((pin && (pin.address || pin.createAddress || pin.creatorAddress || (author && author.address))) || '').trim();
     var timestamp = this._normalizeTimestamp(pin && (pin.timestamp || pin.time || pin.createdAt));
-    var path = String((pin && pin.path) || '').trim();
-    var metaid = String((pin && (pin.metaid || pin.metaId || pin.globalMetaId)) || '').trim();
+    var path = String((pin && (pin.path || pin.protocolPath)) || '').trim();
+    var metaid = String((pin && (pin.metaid || pin.metaId || pin.globalMetaId || (author && (author.metaId || author.metaid || author.globalMetaId)))) || '').trim();
     var chainName = String((pin && (pin.chainName || pin.chain || pin.network)) || '').trim();
 
     var content = this._extractBuzzContent(pin, payload);
     var attachments = this._extractBuzzAttachments(pin, payload);
     var quotePin = this._extractBuzzQuotePin(pin, payload);
 
-    var likeCount = Number((pin && (pin.likeCount || pin.likeNum)) || 0);
-    var commentCount = Number((pin && (pin.commentCount || pin.commentNum)) || 0);
-    var forwardCount = Number((pin && (pin.forwardCount || pin.forwardNum || pin.repostCount)) || 0);
+    // Tri-state engagement counts: a finite number (including a real 0) is a
+    // count; absent/null/"unavailable" means the index offered NO count for
+    // this pin (outside the buzz-only coverage) and stays null — unknown ≠ 0.
+    var likeCount = this._pickCount(pin, ['likeCount', 'likeNum']);
+    var commentCount = this._pickCount(pin, ['commentCount', 'commentNum']);
+    var forwardCount = this._pickCount(pin, ['forwardCount', 'forwardNum', 'repostCount', 'quoteCount']);
 
     return {
       id: id,
@@ -332,14 +372,33 @@ export default class FetchBuzzCommand {
       attachments: attachments,
       quotePin: quotePin,
       lastId: modifyHistory.length ? modifyHistory[modifyHistory.length - 1] : id,
-      likeCount: Number.isFinite(likeCount) ? likeCount : 0,
-      commentCount: Number.isFinite(commentCount) ? commentCount : 0,
-      forwardCount: Number.isFinite(forwardCount) ? forwardCount : 0,
+      likeCount: likeCount,
+      commentCount: commentCount,
+      forwardCount: forwardCount,
     };
+  }
+
+  /**
+   * Engagement count, or null when the source offered none. A present finite
+   * number — including an explicit 0 — is a real count; an absent/null/
+   * "unavailable"/non-numeric field is unreadable and stays null so the UI
+   * renders unknown ("—") instead of fabricating a zero.
+   */
+  _pickCount(pin, keys) {
+    for (var i = 0; i < keys.length; i += 1) {
+      var raw = pin ? pin[keys[i]] : undefined;
+      if (raw === null || raw === undefined || raw === '') continue;
+      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+      var parsed = Number(String(raw).trim());
+      if (raw !== undefined && String(raw).trim() !== '' && Number.isFinite(parsed)) return parsed;
+    }
+    return null;
   }
 
   _pickBuzzPayload(pin) {
     var candidates = [
+      // Aggregation-layer rows expose the payload as a ready object.
+      this._tryParseJsonObject(pin && pin.payload),
       this._tryParseJsonObject(pin && pin.content),
       this._tryParseJsonObject(pin && pin.contentSummary),
       this._tryParseJsonObject(pin && pin.contentBody),
