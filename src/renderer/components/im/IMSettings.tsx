@@ -8,11 +8,12 @@ import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState, store } from '../../store';
 import { imService } from '../../services/im';
-import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, clearError } from '../../store/slices/imSlice';
+import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setWeixinConfig, clearError } from '../../store/slices/imSlice';
 import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 import MetaBotSelector, { type MetaBotForSelector } from '../cowork/MetaBotSelector';
+import QRCode from 'qrcode';
 
 interface IMMetabotOption extends MetaBotForSelector {}
 
@@ -34,6 +35,7 @@ const platformMeta: Record<IMPlatform, { label: string; logo: string }> = {
   feishu: { label: 'Feishu', logo: 'feishu.png' },
   telegram: { label: 'Telegram', logo: 'telegram.svg' },
   discord: { label: 'Discord', logo: 'discord.svg' },
+  weixin: { label: 'WeChat', logo: 'weixin.svg' },
 };
 
 const verdictColorClass: Record<IMConnectivityTestResult['verdict'], string> = {
@@ -69,6 +71,11 @@ const IMSettings: React.FC = () => {
   });
   const [chainListenerRunning, setChainListenerRunning] = useState(false);
   const [chainListenerLoading, setChainListenerLoading] = useState(false);
+  // Weixin QR authorization state (client-side only; the token never reaches the renderer)
+  const [weixinQrImage, setWeixinQrImage] = useState<string | null>(null);
+  const [weixinLoginLoading, setWeixinLoginLoading] = useState(false);
+  const [weixinLoginError, setWeixinLoginError] = useState('');
+  const [weixinHasCredentials, setWeixinHasCredentials] = useState(false);
 
   // Subscribe to language changes
   useEffect(() => {
@@ -198,6 +205,7 @@ const IMSettings: React.FC = () => {
       feishu: setFeishuConfig,
       telegram: setTelegramConfig,
       discord: setDiscordConfig,
+      weixin: setWeixinConfig,
     }[platform];
     dispatch(setConfigAction({ metabotId }));
     const stateAfterDispatch = store.getState();
@@ -279,6 +287,7 @@ const IMSettings: React.FC = () => {
       feishu: setFeishuConfig,
       telegram: setTelegramConfig,
       discord: setDiscordConfig,
+      weixin: setWeixinConfig,
     }[platform];
 
     // Update Redux state
@@ -308,6 +317,7 @@ const IMSettings: React.FC = () => {
   const feishuConnected = status.feishu.connected;
   const telegramConnected = status.telegram.connected;
   const discordConnected = status.discord.connected;
+  const weixinConnected = status.weixin.connected;
 
   // Compute visible platforms based on language
   const platforms = useMemo<IMPlatform[]>(() => {
@@ -336,6 +346,9 @@ const IMSettings: React.FC = () => {
     if (platform === 'discord') {
       return !!config.discord.botToken;
     }
+    if (platform === 'weixin') {
+      return weixinHasCredentials;
+    }
     return !!(config.feishu.appId && config.feishu.appSecret);
   };
 
@@ -349,6 +362,7 @@ const IMSettings: React.FC = () => {
     if (platform === 'dingtalk') return dingtalkConnected;
     if (platform === 'telegram') return telegramConnected;
     if (platform === 'discord') return discordConnected;
+    if (platform === 'weixin') return weixinConnected;
     return feishuConnected;
   };
 
@@ -378,6 +392,71 @@ const IMSettings: React.FC = () => {
       toggleGateway(platform);
     }
   };
+
+  // ==================== Weixin QR authorization ====================
+
+  const refreshWeixinCredentials = async () => {
+    try {
+      const result = await window.electron.im.weixinCheckCredentials();
+      setWeixinHasCredentials(Boolean(result?.success && result.hasCredentials));
+    } catch {
+      setWeixinHasCredentials(false);
+    }
+  };
+
+  const renderWeixinQr = async (content: string) => {
+    try {
+      const dataUrl = await QRCode.toDataURL(content, { width: 320, margin: 1 });
+      setWeixinQrImage(dataUrl);
+    } catch {
+      setWeixinQrImage(null);
+      setWeixinLoginError(i18nService.t('weixinScanExpired'));
+    }
+  };
+
+  const handleWeixinScan = async () => {
+    setWeixinLoginLoading(true);
+    setWeixinLoginError('');
+    try {
+      const result = await window.electron.im.weixinLoginStart();
+      if (result?.success && result.content) {
+        await renderWeixinQr(result.content);
+        await refreshWeixinCredentials();
+      } else {
+        setWeixinLoginError(result?.error || i18nService.t('weixinScanExpired'));
+      }
+    } catch (error: any) {
+      setWeixinLoginError(error?.message || 'Failed to start the WeChat QR login');
+    } finally {
+      setWeixinLoginLoading(false);
+    }
+  };
+
+  const handleWeixinCancelScan = async () => {
+    try {
+      await window.electron.im.weixinLoginCancel();
+    } catch {
+      // ignore: the pending login will time out on its own
+    }
+    setWeixinQrImage(null);
+  };
+
+  useEffect(() => {
+    void refreshWeixinCredentials();
+  }, []);
+
+  useEffect(() => {
+    if (status.weixin.loginPending && status.weixin.qrContent) {
+      setWeixinLoginError('');
+      void renderWeixinQr(status.weixin.qrContent);
+    }
+    if (!status.weixin.loginPending) {
+      setWeixinQrImage(null);
+    }
+    if (status.weixin.connected) {
+      setWeixinHasCredentials(true);
+    }
+  }, [status.weixin.loginPending, status.weixin.qrContent, status.weixin.connected]);
 
   const renderConnectivityTestButton = (platform: IMPlatform) => (
     <button
@@ -712,6 +791,88 @@ const IMSettings: React.FC = () => {
             {status.telegram.lastError && (
               <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
                 {status.telegram.lastError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Weixin Settings */}
+        {activePlatform === 'weixin' && (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+              {i18nService.t('weixinChannelNotice')}
+            </div>
+
+            <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {weixinConnected
+                ? i18nService.t('weixinAuthorized')
+                : weixinHasCredentials
+                  ? i18nService.t('weixinScanHint')
+                  : i18nService.t('weixinNoCredentials')}
+            </div>
+
+            {weixinQrImage && (
+              <div className="flex flex-col items-center gap-2 rounded-xl border dark:border-claude-darkBorder border-claude-border p-3">
+                <img src={weixinQrImage} alt="WeChat QR code" className="h-40 w-40" />
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {status.weixin.loginState === 'scanned'
+                    ? i18nService.t('weixinScanScanned')
+                    : i18nService.t('weixinScanWaiting')}
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {!status.weixin.loginPending ? (
+                <button
+                  type="button"
+                  onClick={() => { void handleWeixinScan(); }}
+                  disabled={weixinLoginLoading}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                >
+                  <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
+                  {weixinLoginLoading ? i18nService.t('loading') : i18nService.t('weixinScanConnect')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { void handleWeixinCancelScan(); }}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                >
+                  <XMarkIcon className="h-3.5 w-3.5 mr-1.5" />
+                  {i18nService.t('weixinScanCancel')}
+                </button>
+              )}
+              {weixinConnected && (
+                <button
+                  type="button"
+                  onClick={() => { void imService.stopGateway('weixin'); }}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                >
+                  {i18nService.t('weixinDisconnect')}
+                </button>
+              )}
+              {renderConnectivityTestButton('weixin')}
+            </div>
+
+            <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('weixinScanHint')}
+            </p>
+            <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('weixinTokenHint')}
+            </p>
+
+            {renderMetabotSelector('weixin')}
+
+            {weixinLoginError && (
+              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+                {weixinLoginError}
+              </div>
+            )}
+
+            {status.weixin.lastError && (
+              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+                {status.weixin.lastError}
               </div>
             )}
           </div>
