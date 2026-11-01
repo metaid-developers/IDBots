@@ -11,6 +11,15 @@ export interface FriendPairState {
   status: FriendRelationshipStatus;
   blocking: boolean | null;
   blockedBy: boolean | null;
+  /**
+   * Optional directional /follow flags, from the FIRST identity's perspective
+   * (the daemon passes the local bot as first): followsMe = the second
+   * identity follows the first; followedByMe = the first follows the second.
+   * Optional so providers without directional data stay compatible; null or
+   * absent = unknown.
+   */
+  followsMe?: boolean | null;
+  followedByMe?: boolean | null;
 }
 
 /** Minimum Bot identity projection required by the relationship resolver. */

@@ -210,3 +210,54 @@ test('A2A invite approval still renders when the sessions list has not loaded (c
   assert.ok(markup.includes('data-cowork-permission-overlay="true"'), 'overlay rendered via the currentSession fallback');
   assert.ok(markup.includes('互加好友'), 'invite question rendered');
 });
+
+/**
+ * S6 final-verification defect #4 (deny-arm visibility): the real device
+ * found no CLEARLY visible deny entry on the friend authorization card,
+ * leaving the reject branch untestable. The friend card must render an
+ * unmistakable side-by-side 允许/拒绝 pair — its own header as the title and
+ * an explicitly red-styled deny — while generic prompts keep their original
+ * subtle styling byte-for-byte.
+ */
+test('friend-action card: clear side-by-side allow/deny pair, header title, explicit deny styling', () => {
+  const markup = renderOverlay(
+    [friendInvitePermission()],
+    'sess-a2a-invite',
+    [sessionSummary({ id: 'sess-a2a-invite', sessionType: 'a2a', title: 'AI_Sunny' })],
+  );
+
+  assert.ok(markup.includes('data-friend-action-card="invite"'), 'friend card is marked for styling');
+  assert.ok(markup.includes('好友确认'), 'friend card title renders the question header, not the generic title');
+  assert.ok(!markup.includes(i18nService.t('coworkGlobalPermissionTitle')), 'generic title is replaced on the friend card');
+  // Both actions visible side by side in the same action row.
+  const denyLabel = i18nService.t('coworkDeny');
+  const allowLabel = i18nService.t('coworkApprovalAllowOnce');
+  assert.ok(markup.includes(denyLabel), 'deny action rendered');
+  assert.ok(markup.includes(allowLabel), 'allow action rendered');
+  const actionRowStart = markup.indexOf('data-friend-action-card="invite"');
+  const denyIndex = markup.indexOf(denyLabel, actionRowStart);
+  const allowIndex = markup.indexOf(allowLabel, actionRowStart);
+  assert.ok(denyIndex > actionRowStart && allowIndex > denyIndex, 'deny and allow sit side by side inside the friend action row');
+  // The deny arm must be visible WITHOUT hover: explicit red border+text.
+  const denyButtonStart = markup.lastIndexOf('<button', denyIndex);
+  const denyButtonMarkup = markup.slice(denyButtonStart, denyIndex);
+  assert.ok(denyButtonMarkup.includes('border-red-300'), 'deny carries a visible red border');
+  assert.ok(denyButtonMarkup.includes('text-red-600'), 'deny carries visible red text');
+  assert.ok(denyButtonMarkup.includes('font-semibold'), 'deny is bolded for prominence');
+});
+
+test('generic prompts keep the original subtle deny styling and generic title', () => {
+  const markup = renderOverlay(
+    [permission()],
+    'sess-current',
+    [sessionSummary()],
+  );
+
+  assert.ok(!markup.includes('data-friend-action-card='), 'generic prompt is not marked as a friend card');
+  assert.ok(markup.includes(i18nService.t('coworkGlobalPermissionTitle')), 'generic title kept');
+  const denyLabel = i18nService.t('coworkDeny');
+  const denyIndex = markup.indexOf(denyLabel);
+  const denyButtonMarkup = markup.slice(markup.lastIndexOf('<button', denyIndex), denyIndex);
+  assert.ok(denyButtonMarkup.includes('border-claude-border'), 'generic deny keeps the subtle outline');
+  assert.ok(!denyButtonMarkup.includes('border-red-300'), 'generic deny does not take the friend-card red styling');
+});
