@@ -56,6 +56,8 @@ import { dispatchViewSession, parseIdbotsSessionUri } from '../utils/sessionDeep
 import { buildLocalFileUrl, isMobileBridgeRuntime } from '../services/localFileUrl';
 import { isTwemojiAssetUrl } from './chat/twemoji';
 import remarkTwemoji from './chat/remarkTwemoji';
+import NftCard from './chat/NftCard';
+import { isNftCardFenceLanguage, parseNftCardFence } from './chat/nftCardSyntax';
 
 /**
  * Code-block languages worth highlighting in chat output.
@@ -482,6 +484,18 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   }, [trimmedCodeText]);
 
   if (!isInline) {
+    // S3 chat NFT card: a fenced block tagged `nft-card` carrying a JSON
+    // payload renders as an NftCard instead of a code block (every markdown
+    // surface — CoWork, A2A, group transcripts — shares this path). An
+    // unparsable payload keeps the plain code-block rendering, so a hostile
+    // or truncated fence degrades exactly like any unknown fence tag.
+    if (isNftCardFenceLanguage(fenceLanguage)) {
+      const cardData = parseNftCardFence(trimmedCodeText);
+      if (cardData) {
+        return <NftCard data={cardData} />;
+      }
+    }
+
     // Simple code block without language - minimal styling
     if (!match) {
       return (

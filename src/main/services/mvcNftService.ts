@@ -19,6 +19,8 @@ export interface MvcNftItem {
   outputIndex: number;
   height: number;
   icon?: string;
+  /** https direct artwork link (wallet-api v4 utxo-list `imgUrl`). */
+  imgUrl?: string;
   metaTxId?: string;
 }
 
@@ -63,6 +65,7 @@ interface RawMvcNftUtxoRow {
   flag?: string;
   name?: string;
   icon?: string;
+  imgUrl?: string;
   seriesName?: string;
 }
 
@@ -144,6 +147,17 @@ function normalizeSatoshi(value: unknown): number {
 function normalizeIcon(value: unknown): string | undefined {
   const icon = String(value ?? '').trim();
   return icon || undefined;
+}
+
+/**
+ * v4 utxo-list `imgUrl` is an https direct artwork link (compress variant on
+ * metalet.space). Only https survives: the value flows into chat cards that
+ * render it as an <img> source.
+ */
+function normalizeImgUrl(value: unknown): string | undefined {
+  const url = String(value ?? '').trim();
+  if (!url || !/^https:\/\//i.test(url) || /\s/.test(url)) return undefined;
+  return url.slice(0, 512);
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -280,6 +294,7 @@ export async function getMvcNftBalance(
       outputIndex: normalizeOutpointIndex(row.txIndex),
       height: normalizeHeight(row.height),
       icon: normalizeIcon(row.icon),
+      imgUrl: normalizeImgUrl(row.imgUrl),
       metaTxId: row.metaTxId ? String(row.metaTxId) : undefined,
     });
   }
