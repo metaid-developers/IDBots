@@ -12,8 +12,8 @@
 //      candidate database).
 //   2. Version-change backup (runVersionChangeBackup): when the app version
 //      changes, snapshot the sqlite trio (idbots.sqlite / -wal / -shm) into
-//      userData/backups/ rotating slot directories before the new build can
-//      touch the database.
+//      userData/backups/ rotating slot directories — wired BEFORE the store
+//      opens so the snapshot captures the pre-migration database.
 //
 // HARD CONSTRAINT (delegation): copy & create only — this module must never
 // delete files or directories. "Keep the latest 5" is therefore implemented
@@ -572,7 +572,26 @@ export function writeVersionMarker(userDataPath: string, version: string, now: n
 }
 
 /**
- * Pre-upgrade sqlite snapshot: run once per boot after the store is ready.
+ * Whether <userDataPath> already carries a non-empty idbots.sqlite — the
+ * "is this an upgrade" signal for the version-change backup. Called BEFORE
+ * the store opens, so there is no store to query: file presence + size is
+ * the whole answer (a fresh install has no database file yet; an upgrade
+ * boot has the previous build's file, pre-migration bytes).
+ */
+export function hasExistingSqliteDataFile(userDataPath: string): boolean {
+  try {
+    return fs.statSync(path.join(userDataPath, DB_FILENAME)).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pre-upgrade sqlite snapshot: run once per boot BEFORE the store opens.
+ * SqliteStore.create runs schema migrations at open, so a snapshot taken
+ * after `store ready` would capture post-migration bytes and could never
+ * rescue a bad migration — the pre-open on-disk trio is the state that
+ * must be preserved.
  * - same version as the marker → nothing to do;
  * - version changed (or marker exists with another version) → snapshot the
  *   trio into a rotating version slot, then update the marker;
@@ -583,7 +602,7 @@ export function writeVersionMarker(userDataPath: string, version: string, now: n
 export function runVersionChangeBackup(options: {
   currentVersion: string;
   userDataPath: string;
-  /** Whether the current database carries real data (metabots > 0). */
+  /** Whether userData already carries a non-empty idbots.sqlite (pre-open there is no store to query). */
   hasExistingData: boolean;
   now?: number;
   log?: (line: string) => void;

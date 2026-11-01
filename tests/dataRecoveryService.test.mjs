@@ -24,6 +24,7 @@ import {
   copySqliteTrio,
   overwriteStaleSqliteSidecars,
   runVersionChangeBackup,
+  hasExistingSqliteDataFile,
   readVersionMarker,
   readDataDirectoryOverrideMarker,
   writeDataDirectoryOverrideMarker,
@@ -296,6 +297,15 @@ test('overwriteStaleSqliteSidecars zeroes stale non-empty wal/shm but keeps repl
 // ---------------------------------------------------------------------------
 // Version-change backup rotation (copy & create only — nothing is deleted)
 // ---------------------------------------------------------------------------
+
+test('hasExistingSqliteDataFile: true only for a non-empty idbots.sqlite (pre-open upgrade signal)', () => {
+  const dir = makeTmpDir('drc-hasfile-');
+  assert.equal(hasExistingSqliteDataFile(dir), false, 'no database file → fresh install');
+  fs.writeFileSync(path.join(dir, DB_FILENAME), 'x');
+  assert.equal(hasExistingSqliteDataFile(dir), true, 'non-empty file → upgrade boot');
+  fs.writeFileSync(path.join(dir, DB_FILENAME), '');
+  assert.equal(hasExistingSqliteDataFile(dir), false, 'zero-byte file reads as no data');
+});
 
 test('version backup: fresh install initializes the marker only; upgrades rotate 5 slots overwriting the oldest', () => {
   const userData = makeTmpDir('drc-ver-');

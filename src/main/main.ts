@@ -144,6 +144,7 @@ import {
 import {
   runStartupDataRecoveryGuard,
   runVersionChangeBackup,
+  hasExistingSqliteDataFile,
   readDataDirectoryOverrideMarker,
   resolveLocalAppDataRoot,
   resolveWindowsOldUsersRoot,
@@ -19656,6 +19657,25 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       console.log('Created default project directory:', defaultProjectDir);
     }
 
+    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
+    // userData/backups/ rotating slots whenever the app version changes —
+    // BEFORE the store opens, so the snapshot captures the on-disk database
+    // before SqliteStore.create runs schema migrations against it (a
+    // post-open snapshot could never rescue a bad migration).
+    try {
+      const backupOutcome = runVersionChangeBackup({
+        currentVersion: app.getVersion(),
+        userDataPath: app.getPath('userData'),
+        hasExistingData: hasExistingSqliteDataFile(app.getPath('userData')),
+        log: (line) => console.log(line),
+      });
+      if (backupOutcome !== 'no-version-change') {
+        startupLog(`sqlite version backup: ${backupOutcome}`);
+      }
+    } catch (backupError) {
+      console.warn('[Main] version-change backup failed (boot continues):', backupError);
+    }
+
     store = await initStore();
     startupLog('store ready');
     // Refresh the data-guard fingerprint so a vanished database stays
@@ -19720,22 +19740,6 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       } catch (recoveryError) {
         console.warn('[Main] legacy data recovery guard failed (boot continues):', recoveryError);
       }
-    }
-
-    // feat/legacy-data-recovery ③: snapshot the sqlite trio into
-    // userData/backups/ rotating slots whenever the app version changes.
-    try {
-      const backupOutcome = runVersionChangeBackup({
-        currentVersion: app.getVersion(),
-        userDataPath: app.getPath('userData'),
-        hasExistingData: countCurrentMetabots() > 0,
-        log: (line) => console.log(line),
-      });
-      if (backupOutcome !== 'no-version-change') {
-        startupLog(`sqlite version backup: ${backupOutcome}`);
-      }
-    } catch (backupError) {
-      console.warn('[Main] version-change backup failed (boot continues):', backupError);
     }
 
     // REQ-A-8: start the tenant bootstrap state machine BEFORE the gateway so
