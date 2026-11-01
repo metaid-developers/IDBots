@@ -99,7 +99,7 @@ test('extract → encrypt → decrypt → import round-trip with metabot_id rema
   const objects = extractBackupObjects(db, bot.id, wallet);
 
   const kinds = objects.map((o) => o.kind).sort();
-  assert.deepEqual(kinds, ['dream_daily', 'key_envelope', 'knowledge', 'memory', 'memory', 'memory_tombstone']);
+  assert.deepEqual(kinds, ['bot_profile', 'dream_daily', 'key_envelope', 'knowledge', 'memory', 'memory', 'memory_tombstone']);
   // The deleted row never ships as a live object — only as a minimal tombstone.
   assert.ok(!objects.some((o) => o.data.text === 'forgotten'));
   const tombstone = objects.find((o) => o.kind === 'memory_tombstone');
@@ -131,7 +131,7 @@ test('extract → encrypt → decrypt → import round-trip with metabot_id rema
   );
   const first = importBackupObjects(target.db, restoredBot.id, importedObjects);
   assert.equal(first.imported, 5); // 2 memories + 1 source + 1 daily + 1 knowledge
-  assert.equal(first.skipped, 1); // key_envelope is never imported as a row
+  assert.equal(first.skipped, 2); // key_envelope + bot_profile are never imported as rows
 
   const memories = target.db.exec(`SELECT * FROM user_memories WHERE metabot_id = ?`, [restoredBot.id]);
   assert.equal(memories[0].values.length, 2);
@@ -183,7 +183,7 @@ test('journal rebuild from manifest: post-restore backup diffs to zero', async (
 
   // Fresh device: restore imports the rows, then rebuilds the journal.
   const target = await openStore('idbots-journal-dst-');
-  const restoredBot = createBot(target.metabotStore, 'journal-bot-re', TEST_GID);
+  const restoredBot = createBot(target.metabotStore, 'journal-bot', TEST_GID);
   importBackupObjects(target.db, restoredBot.id, objects);
   rebuildChainBackupStateFromManifest(target.db, {
     botGlobalMetaId: TEST_GID,
@@ -248,7 +248,7 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   assert.equal(first.botsManifestSynced, true);
   assert.equal(manifestSyncs, 1);
   assert.equal(first.bots.length, 1);
-  assert.equal(first.bots[0].uploadedObjects, 2); // memory + key_envelope
+  assert.equal(first.bots[0].uploadedObjects, 3); // memory + key_envelope + bot_profile
   assert.equal(first.bots[0].segments, 1);
 
   // One object pin (create) + one manifest pin (create).
@@ -264,7 +264,7 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   const key = deriveBackupKey(TEST_MNEMONIC, TEST_GID);
   const segment = decryptJson(key, Buffer.from(envelope.payload, 'base64'));
   assert.equal(objectId(segment), envelope.segment);
-  assert.equal(segment.objects.length, 2);
+  assert.equal(segment.objects.length, 3);
 
   // State journal written.
   const state = readChainBackupState(source.db, TEST_GID);
@@ -275,7 +275,7 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   const second = await runChainBackup(deps);
   assert.equal(second.success, true);
   assert.equal(second.bots[0].uploadedObjects, 0);
-  assert.equal(second.bots[0].skippedObjects, 2);
+  assert.equal(second.bots[0].skippedObjects, 3);
   assert.equal(manifestSyncs, 2);
   const secondObjectPins = published.slice(objectPins.length).filter((p) => p.metaidData.path === CHAIN_BACKUP_OBJECT_PATH);
   assert.equal(secondObjectPins.length, 0);
