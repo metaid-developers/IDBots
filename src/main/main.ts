@@ -105,7 +105,14 @@ import { getGitBranch } from './libs/gitWorkspace';
 import { detectSystemChromium } from './libs/chromiumRuntime';
 import { CoworkStreamUiDeltaEncoder } from './libs/coworkStreamUiDelta';
 import { IMGatewayManager, IMPlatform, IMGatewayConfig } from './im';
-import { APP_NAME } from './appConstants';
+import { APP_NAME, DB_FILENAME } from './appConstants';
+import {
+  detectMissingDatabase,
+  describeMissingDbEvidence,
+  fingerprintPathFor,
+  writeDataGuardFingerprint,
+  type DataGuardFingerprint,
+} from './libs/dataGuard';
 import { getSkillServiceManager } from './skillServices';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 import { isAutoLaunched, getAutoLaunchEnabled, setAutoLaunchEnabled } from './autoLaunchManager';
@@ -2476,7 +2483,8 @@ const configureUserDataPath = (): void => {
   }
 };
 
-const migrateLegacyUserData = (): void => {
+/** Returns true when any entry was copied in from a legacy app directory. */
+const migrateLegacyUserData = (): boolean => {
   const appDataPath = app.getPath('appData');
   const userDataPath = app.getPath('userData');
   const legacyRoots = LEGACY_APP_NAMES
@@ -2484,13 +2492,14 @@ const migrateLegacyUserData = (): void => {
     .filter(legacyPath => legacyPath !== userDataPath && fs.existsSync(legacyPath));
 
   if (legacyRoots.length === 0) {
-    return;
+    return false;
   }
 
   if (!fs.existsSync(userDataPath)) {
     fs.mkdirSync(userDataPath, { recursive: true });
   }
 
+  let copiedAny = false;
   for (const legacyRoot of legacyRoots) {
     try {
       const entries = fs.readdirSync(legacyRoot);
@@ -2506,12 +2515,14 @@ const migrateLegacyUserData = (): void => {
           force: false,
           errorOnExist: false,
         });
+        copiedAny = true;
       }
       console.log(`[Main] Migrated missing user data from legacy directory: ${legacyRoot}`);
     } catch (error) {
       console.warn(`[Main] Failed to migrate legacy user data from ${legacyRoot}:`, error);
     }
   }
+  return copiedAny;
 };
 
 // REQ-A-1/REQ-A-7: apply the C1 /data path defaults BEFORE app path
@@ -3251,7 +3262,11 @@ const initStore = async (): Promise<SqliteStore> => {
     if (!app.isReady()) {
       throw new Error('Store accessed before app is ready.');
     }
-    storeInitPromise = SqliteStore.create(app.getPath('userData'));
+    await ensureDataGuardAck();
+    // Another caller may have raced through the data-guard gate first.
+    if (!storeInitPromise) {
+      storeInitPromise = SqliteStore.create(app.getPath('userData'));
+    }
   }
   return storeInitPromise;
 };
@@ -3296,6 +3311,97 @@ const getStoreOrNull = (): SqliteStore | null => {
   } catch {
     return null;
   }
+};
+
+// --- Data guard (missing-database startup protection; see libs/dataGuard.ts) ---
+// When the database file is gone while the environment shows signs of a
+// previous installation, warn before a brand-new empty database is created.
+// Detection runs OUTSIDE the database (fingerprint file + usage artifacts) so
+// it still works when the data directory itself was swapped out.
+
+let dataGuardAckPromise: Promise<void> | null = null;
+// Set by initApp: a legacy (OctoBot) migration copying entries in this boot
+// explains a database-less directory without any data loss.
+let legacyUserDataCopiedThisBoot = false;
+
+const getDataGuardFingerprintPath = (): string =>
+  fingerprintPathFor(path.dirname(app.getPath('userData')), app.getPath('userData'));
+
+const writeDataGuardSnapshot = (phase: string): void => {
+  try {
+    const storeSnapshot = getStoreOrNull();
+    if (!storeSnapshot) {
+      return;
+    }
+    const snapshot: DataGuardFingerprint = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      userDataPath: app.getPath('userData'),
+      stats: storeSnapshot.getDataGuardStats(),
+    };
+    writeDataGuardFingerprint(getDataGuardFingerprintPath(), snapshot);
+    console.log(`[Main] Data guard snapshot written (${phase}).`);
+  } catch (error) {
+    // Best-effort by design: a failed snapshot write must never disturb
+    // startup or shutdown.
+    console.warn(`[Main] Data guard snapshot write failed (${phase}):`, error);
+  }
+};
+
+const ensureDataGuardAck = (): Promise<void> => {
+  if (!dataGuardAckPromise) {
+    dataGuardAckPromise = (async () => {
+      if (process.env.IDBOTS_DISABLE_DATA_GUARD === '1') {
+        return;
+      }
+      const userDataPath = app.getPath('userData');
+      const evidence = detectMissingDatabase({
+        userDataPath,
+        dbFilename: DB_FILENAME,
+        fingerprintPath: getDataGuardFingerprintPath(),
+      });
+      if (!evidence) {
+        return;
+      }
+      if (legacyUserDataCopiedThisBoot) {
+        console.warn('[Main] Data guard: database missing but legacy user data was migrated this boot; skipping the missing-data dialog.');
+        return;
+      }
+      console.warn(`[Main] Data guard: database missing while prior usage was detected (${describeMissingDbEvidence(evidence)})`);
+      if (isServerMode()) {
+        // Headless: no dialog is possible; surface the condition and keep
+        // booting (server deployments manage their own recovery).
+        return;
+      }
+      const detailParts = [
+        `Data directory:\n${evidence.userDataPath}`,
+        describeMissingDbEvidence(evidence),
+        'If you expected your existing bots and conversations to be here, choose "Quit", then restore your database file (idbots.sqlite — together with any idbots.sqlite-wal / idbots.sqlite-shm files) into the data directory above before starting IDBots again.',
+        'Choosing "Start with a new database" creates an empty database. It does not delete your previous data, but IDBots will no longer read or write it.',
+      ];
+      const choice = dialog.showMessageBoxSync({
+        type: 'warning',
+        title: 'IDBots — previous data not found',
+        message: 'IDBots is about to start with a brand-new empty database.',
+        detail: detailParts.join('\n\n'),
+        buttons: ['Quit', 'Start with a new database'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (choice === 0) {
+        console.error('[Main] Data guard: quitting instead of starting on an empty database.');
+        app.exit(0);
+        throw new Error('data-guard: quit before creating an empty database');
+      }
+      console.warn('[Main] Data guard: continuing with a new empty database by user choice.');
+    })().catch((error) => {
+      // The guard must never wedge startup: an internal failure falls back to
+      // the historical behavior (create the database silently).
+      console.error('[Main] Data guard failed; continuing startup:', error);
+    });
+  }
+  return dataGuardAckPromise;
 };
 
 /**
@@ -19238,6 +19344,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
   let isCleanupInProgress = false;
 
   const runAppCleanup = async (): Promise<void> => {
+    // Refresh the data-guard fingerprint with the latest counters while the
+    // store is still open, so the "last known contents" stays current.
+    writeDataGuardSnapshot('shutdown');
     // Cancel any startup tier that has not fired yet: cleanup is running, and
     // a tier firing now would start a daemon with no stopper left behind.
     cancelDeferredStartupWork();
@@ -19417,7 +19526,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     await app.whenReady();
     startupLog('app.whenReady resolved');
 
-    migrateLegacyUserData();
+    legacyUserDataCopiedThisBoot = migrateLegacyUserData();
 
     // Sweep stale app-update download artifacts from previous sessions
     // (best effort; partial files younger than the TTL are kept for resume).
@@ -19437,6 +19546,9 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
 
     store = await initStore();
     startupLog('store ready');
+    // Refresh the data-guard fingerprint so a vanished database stays
+    // detectable across junction swaps / data-directory migrations.
+    writeDataGuardSnapshot('startup');
 
     // REQ-A-8: start the tenant bootstrap state machine BEFORE the gateway so
     // the readiness provider is live from the gateway's first answer
