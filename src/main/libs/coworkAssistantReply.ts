@@ -117,12 +117,32 @@ export function isMalformedToolCallDshTurnError(outcome: { kind?: string; error?
   return /tool input is invalid JSON/i.test(String(outcome.error?.message ?? ''));
 }
 
+/**
+ * Zhipu (Z.ai / bigmodel.cn) gateway transient-outage fingerprint, mirrored
+ * verbatim from the upstream response body the gateway returns when it loses
+ * its backend mid-request: `server_error: 网络错误，错误id <server-id> ，请稍
+ * 后重试。[<server-id>]`. This is a fixed upstream error-body template (the
+ * id is a server-side timestamp), not natural-language intent matching — same
+ * category as the quota/auth fingerprints below. pi-ai's English-only failure
+ * classifier cannot fingerprint the Chinese template and lands it on the
+ * generic `PI_AI_ERROR` code, which used to bypass both turn-resume ladders
+ * entirely (2026-11-01 session b07c64e9: two hard turn deaths at 21:13/21:40
+ * while the same route served fine turns minutes either side; a full-corpus
+ * journal scan 9/25–11/01 found 13 such deaths, all on zhipu routes, zero on
+ * deepseek routes).
+ */
+const ZHIPU_GATEWAY_NETERR_MESSAGE_FINGERPRINT = /server_error: 网络错误，错误id [0-9a-zA-Z]+ ，请稍后重试/;
+
 /** True when a DSH turn outcome is an error whose failure code is transient
- *  (environmental) and therefore worth an automatic turn-level resume. */
-export function isTransientDshTurnError(outcome: { kind?: string; error?: { code?: string } }): boolean {
+ *  (environmental) and therefore worth an automatic turn-level resume — a
+ *  kernel-normalized transient code, or the Zhipu gateway network-error
+ *  fingerprint riding the generic `PI_AI_ERROR` code (see the fingerprint
+ *  comment above for why it cannot be kernel-classified). */
+export function isTransientDshTurnError(outcome: { kind?: string; error?: { code?: string; message?: string } }): boolean {
   if (outcome?.kind !== 'error') return false;
   const code = outcome.error?.code;
-  return typeof code === 'string' && TRANSIENT_TURN_ERROR_CODES.has(code);
+  if (typeof code === 'string' && TRANSIENT_TURN_ERROR_CODES.has(code)) return true;
+  return ZHIPU_GATEWAY_NETERR_MESSAGE_FINGERPRINT.test(String(outcome.error?.message ?? ''));
 }
 
 /**
