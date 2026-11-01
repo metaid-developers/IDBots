@@ -278,6 +278,12 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'im:weixin:login:start': { tier: 'P2' },
   'im:weixin:login:cancel': { tier: 'P2' },
   'im:weixin:credentials:check': { tier: 'P2' },
+  // QQ: the QR payload and AppID are identifiers; the AppSecret is accepted only
+  // on the write path and is stored 0600, never readable back over IPC.
+  'im:qq:login:start': { tier: 'P2' },
+  'im:qq:login:cancel': { tier: 'P2' },
+  'im:qq:credentials:check': { tier: 'P2' },
+  'im:qq:credentials:set': { tier: 'P2', note: 'write-only AppSecret; no read-back channel exists.' },
   'chainBackup:getState': { tier: 'P2' },
   'chainBackup:backup': { tier: 'P2', timeoutMs: 900_000, note: '`02`/C2 Limits: timeout 900 s.' },
   'chainBackup:restore': { tier: 'N', note: '`02`: needs mnemonic import; later release.' },

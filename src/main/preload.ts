@@ -909,10 +909,10 @@ contextBridge.exposeInMainWorld('electron', {
     setConfig: (config: any) => ipcRenderer.invoke('im:config:set', config),
 
     // Gateway control
-    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin') => ipcRenderer.invoke('im:gateway:start', platform),
-    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin') => ipcRenderer.invoke('im:gateway:stop', platform),
+    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => ipcRenderer.invoke('im:gateway:start', platform),
+    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => ipcRenderer.invoke('im:gateway:stop', platform),
     testGateway: (
-      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin',
+      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq',
       configOverride?: any
     ) => ipcRenderer.invoke('im:gateway:test', platform, configOverride),
 
@@ -920,6 +920,13 @@ contextBridge.exposeInMainWorld('electron', {
     weixinLoginStart: () => ipcRenderer.invoke('im:weixin:login:start'),
     weixinLoginCancel: () => ipcRenderer.invoke('im:weixin:login:cancel'),
     weixinCheckCredentials: () => ipcRenderer.invoke('im:weixin:credentials:check'),
+
+    // QQ official bot: QR bind (AppID + AppSecret) and manual credential entry.
+    qqLoginStart: () => ipcRenderer.invoke('im:qq:login:start'),
+    qqLoginCancel: () => ipcRenderer.invoke('im:qq:login:cancel'),
+    qqCheckCredentials: () => ipcRenderer.invoke('im:qq:credentials:check'),
+    qqSetCredentials: (params: { appId: string; appSecret: string; botId?: string | null; ownerUserOpenid?: string | null }) =>
+      ipcRenderer.invoke('im:qq:credentials:set', params),
 
     // Status
     getStatus: () => ipcRenderer.invoke('im:status:get'),

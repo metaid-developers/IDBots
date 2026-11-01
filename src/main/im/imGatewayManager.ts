@@ -10,6 +10,7 @@ import { FeishuGateway } from './feishuGateway';
 import { TelegramGateway } from './telegramGateway';
 import { DiscordGateway } from './discordGateway';
 import { WeixinGateway } from './weixinGateway';
+import { QQGateway } from './qqGateway';
 import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
@@ -31,7 +32,7 @@ import { tApp } from '../libs/appLanguage';
 
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
-const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin'] as const;
+const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin', 'qq'] as const;
 type ManagedIMPlatform = typeof MANAGED_IM_PLATFORMS[number];
 
 export interface IMGatewayManagerOptions {
@@ -45,6 +46,8 @@ export class IMGatewayManager extends EventEmitter {
   private telegramGateway: TelegramGateway;
   private discordGateway: DiscordGateway;
   private weixinGateway: WeixinGateway;
+  private qqGateway: QQGateway;
+  private qqLoginListener: ((result: { state: string }) => void) | null = null;
   private imStore: IMStore;
   private chatHandler: IMChatHandler | null = null;
   private coworkHandler: IMCoworkHandler | null = null;
@@ -64,6 +67,7 @@ export class IMGatewayManager extends EventEmitter {
     this.telegramGateway = new TelegramGateway();
     this.discordGateway = new DiscordGateway();
     this.weixinGateway = new WeixinGateway();
+    this.qqGateway = new QQGateway();
 
     // Store Cowork dependencies if provided
     if (options?.coworkRunner && options?.coworkStore) {
@@ -165,6 +169,28 @@ export class IMGatewayManager extends EventEmitter {
       this.emit('statusChange', this.getStatus());
       this.emit('weixinLogin', result);
     });
+
+    // QQ events
+    this.qqGateway.on('status', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('connected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('disconnected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('error', (error) => {
+      this.emit('error', { platform: 'qq', error });
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('message', (message: IMMessage) => {
+      this.emit('message', message);
+    });
+    this.qqGateway.on('login', (result: { state: string }) => {
+      this.emit('statusChange', this.getStatus());
+      this.emit('qqLogin', result);
+    });
   }
 
   /**
@@ -197,6 +223,11 @@ export class IMGatewayManager extends EventEmitter {
     if (this.weixinGateway && !this.weixinGateway.isConnected()) {
       console.log('[IMGatewayManager] Reconnecting Weixin...');
       this.weixinGateway.reconnectIfNeeded();
+    }
+
+    if (this.qqGateway && !this.qqGateway.isConnected()) {
+      console.log('[IMGatewayManager] Reconnecting QQ...');
+      this.qqGateway.reconnectIfNeeded();
     }
   }
 
@@ -260,6 +291,7 @@ export class IMGatewayManager extends EventEmitter {
     this.telegramGateway.setMessageCallback(messageHandler);
     this.discordGateway.setMessageCallback(messageHandler);
     this.weixinGateway.setMessageCallback(messageHandler);
+    this.qqGateway.setMessageCallback(messageHandler);
   }
 
   /**
@@ -336,6 +368,7 @@ export class IMGatewayManager extends EventEmitter {
       telegram: this.telegramGateway.getStatus(),
       discord: this.discordGateway.getStatus(),
       weixin: this.weixinGateway.getStatus(),
+      qq: this.qqGateway.getStatus(),
     };
   }
 
@@ -551,6 +584,8 @@ export class IMGatewayManager extends EventEmitter {
       await this.discordGateway.start(config.discord);
     } else if (platform === 'weixin') {
       await this.weixinGateway.start(config.weixin);
+    } else if (platform === 'qq') {
+      await this.qqGateway.start(config.qq);
     }
   }
 
@@ -568,6 +603,8 @@ export class IMGatewayManager extends EventEmitter {
       await this.discordGateway.stop();
     } else if (platform === 'weixin') {
       await this.weixinGateway.stop();
+    } else if (platform === 'qq') {
+      await this.qqGateway.stop();
     }
   }
 
@@ -611,6 +648,73 @@ export class IMGatewayManager extends EventEmitter {
   /** Whether the Weixin channel has a stored token (drives the settings UI state). */
   hasWeixinCredentials(): boolean {
     return this.weixinGateway.hasCredentials(this.imStore.getWeixinConfig());
+  }
+
+  // ==================== QQ authorization ====================
+
+  /**
+   * Start a QQ QR bind: the connector resolves once the user confirms on the
+   * phone, then the gateway writes AppID + AppSecret into its 0600 store and
+   * starts itself. The AppSecret never reaches the renderer.
+   */
+  async startQQLogin(): Promise<{ content: string }> {
+    this.updateChatHandler();
+
+    const onLogin = (result: { state: string }): void => {
+      if (result.state !== 'confirmed') {
+        this.emit('statusChange', this.getStatus());
+        return;
+      }
+      // The gateway persists credentials and (re)starts itself; only the
+      // non-secret appId is mirrored into the config table for the UI.
+      const summary = this.qqGateway.credentialSummary();
+      if (summary.appId) {
+        this.imStore.setQQConfig({ enabled: true, appId: summary.appId, appSecret: undefined });
+      }
+      this.emit('statusChange', this.getStatus());
+    };
+
+    if (this.qqLoginListener) {
+      this.qqGateway.off('login', this.qqLoginListener);
+    }
+    this.qqLoginListener = onLogin;
+    this.qqGateway.on('login', onLogin);
+    return this.qqGateway.beginLogin();
+  }
+
+  async cancelQQLogin(): Promise<void> {
+    if (this.qqLoginListener) {
+      this.qqGateway.off('login', this.qqLoginListener);
+      this.qqLoginListener = null;
+    }
+    await this.qqGateway.cancelLogin();
+  }
+
+  /** Whether a QQ AppID + AppSecret are available (store or live config). */
+  hasQQCredentials(): boolean {
+    return this.qqGateway.hasCredentials(this.imStore.getQQConfig());
+  }
+
+  /** Persist manually entered credentials (0600 file, never the config table). */
+  saveQQCredentials(params: {
+    appId: string;
+    appSecret: string;
+    botId?: string | null;
+    ownerUserOpenid?: string | null;
+  }): { appId: string; botId: string | null } {
+    const stored = this.qqGateway.saveManualCredentials(params);
+    this.imStore.setQQConfig({
+      appId: stored.appId,
+      botId: stored.botId,
+      ownerUserOpenid: params.ownerUserOpenid ?? null,
+      appSecret: undefined,
+    });
+    return { appId: stored.appId, botId: stored.botId };
+  }
+
+  /** Credential-free summary for the settings page. */
+  getQQCredentialSummary(): { hasCredentials: boolean; appId: string | null; source: string | null } {
+    return this.qqGateway.credentialSummary();
   }
 
   /**
@@ -658,6 +762,14 @@ export class IMGatewayManager extends EventEmitter {
         console.error(`[IMGatewayManager] Failed to start Weixin: ${error.message}`);
       }
     }
+
+    if (config.qq.enabled && this.qqGateway.hasCredentials(config.qq)) {
+      try {
+        await this.startGateway('qq');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Failed to start QQ: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -670,6 +782,7 @@ export class IMGatewayManager extends EventEmitter {
       this.telegramGateway.stop(),
       this.discordGateway.stop(),
       this.weixinGateway.stop(),
+      this.qqGateway.stop(),
     ]);
   }
 
@@ -677,7 +790,7 @@ export class IMGatewayManager extends EventEmitter {
    * Check if any gateway is connected
    */
   isAnyConnected(): boolean {
-    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected() || this.weixinGateway.isConnected();
+    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected() || this.weixinGateway.isConnected() || this.qqGateway.isConnected();
   }
 
   /**
@@ -695,6 +808,9 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'weixin') {
       return this.weixinGateway.isConnected();
+    }
+    if (platform === 'qq') {
+      return this.qqGateway.isConnected();
     }
     return this.feishuGateway.isConnected();
   }
@@ -721,6 +837,8 @@ export class IMGatewayManager extends EventEmitter {
         await this.discordGateway.sendNotification(text);
       } else if (platform === 'weixin') {
         await this.weixinGateway.sendNotification(text);
+      } else if (platform === 'qq') {
+        await this.qqGateway.sendNotification(text);
       }
       return true;
     } catch (error: any) {
@@ -742,6 +860,7 @@ export class IMGatewayManager extends EventEmitter {
       telegram: { ...current.telegram, ...(configOverride.telegram || {}) },
       discord: { ...current.discord, ...(configOverride.discord || {}) },
       weixin: { ...current.weixin, ...(configOverride.weixin || {}) },
+      qq: { ...current.qq, ...(configOverride.qq || {}) },
       settings: { ...current.settings, ...(configOverride.settings || {}) },
     };
   }
@@ -766,6 +885,11 @@ export class IMGatewayManager extends EventEmitter {
       return this.weixinGateway.hasCredentials(config.weixin)
         ? []
         : ['WeChat authorization (scan the QR code first)'];
+    }
+    if (platform === 'qq') {
+      return this.qqGateway.hasCredentials(config.qq)
+        ? []
+        : ['QQ AppID + AppSecret (scan the QR code or enter them manually)'];
     }
     return (config.discord.botToken || '').trim() ? [] : ['botToken'];
   }
@@ -807,6 +931,10 @@ export class IMGatewayManager extends EventEmitter {
 
     if (platform === 'weixin') {
       return this.weixinGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS);
+    }
+
+    if (platform === 'qq') {
+      return this.qqGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS, config.qq);
     }
 
     const discordToken = (config.discord.botToken || '').trim();

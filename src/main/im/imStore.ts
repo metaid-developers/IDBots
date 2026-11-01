@@ -11,6 +11,7 @@ import {
   TelegramConfig,
   DiscordConfig,
   WeixinConfig,
+  QQConfig,
   IMSettings,
   IMPlatform,
   IMSessionMapping,
@@ -19,8 +20,18 @@ import {
   DEFAULT_TELEGRAM_CONFIG,
   DEFAULT_DISCORD_CONFIG,
   DEFAULT_WEIXIN_CONFIG,
+  DEFAULT_QQ_CONFIG,
   DEFAULT_IM_SETTINGS,
 } from './types';
+
+/**
+ * `appSecret` must never reach the renderer through `im:config:get`, so the
+ * read path drops it even if an older config row still carries one.
+ */
+function stripQQSecret(config: QQConfig): QQConfig {
+  const { appSecret: _secret, ...safe } = config;
+  return safe;
+}
 
 export class IMStore {
   private db: Database;
@@ -84,7 +95,7 @@ export class IMStore {
    * Migrate existing IM configs to ensure stable defaults.
    */
   private migrateDefaults(): void {
-    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin'] as const;
+    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin', 'qq'] as const;
     let changed = false;
 
     for (const platform of platforms) {
@@ -166,6 +177,7 @@ export class IMStore {
     const telegram = this.getConfigValue<TelegramConfig>('telegram') ?? DEFAULT_TELEGRAM_CONFIG;
     const discord = this.getConfigValue<DiscordConfig>('discord') ?? DEFAULT_DISCORD_CONFIG;
     const weixin = this.getConfigValue<WeixinConfig>('weixin') ?? DEFAULT_WEIXIN_CONFIG;
+    const qq = this.getConfigValue<QQConfig>('qq') ?? DEFAULT_QQ_CONFIG;
     const settings = this.getConfigValue<IMSettings>('settings') ?? DEFAULT_IM_SETTINGS;
 
     // Resolve enabled field: default to false for safety
@@ -185,6 +197,7 @@ export class IMStore {
       telegram: resolveEnabled(telegram, DEFAULT_TELEGRAM_CONFIG),
       discord: resolveEnabled(discord, DEFAULT_DISCORD_CONFIG),
       weixin: resolveEnabled(weixin, DEFAULT_WEIXIN_CONFIG),
+      qq: stripQQSecret(resolveEnabled(qq, DEFAULT_QQ_CONFIG)),
       settings: { ...DEFAULT_IM_SETTINGS, ...settings },
     };
   }
@@ -204,6 +217,9 @@ export class IMStore {
     }
     if (config.weixin) {
       this.setWeixinConfig(config.weixin);
+    }
+    if (config.qq) {
+      this.setQQConfig(config.qq);
     }
     if (config.settings) {
       this.setIMSettings(config.settings);
@@ -270,6 +286,24 @@ export class IMStore {
     this.setConfigValue('weixin', { ...current, ...config });
   }
 
+  // ==================== QQ Config ====================
+
+  getQQConfig(): QQConfig {
+    const stored = this.getConfigValue<QQConfig>('qq');
+    return stripQQSecret({ ...DEFAULT_QQ_CONFIG, ...stored });
+  }
+
+  /**
+   * Persist QQ config. `appSecret` is accepted for API symmetry but is never
+   * written to the config table: the caller must have stored it through
+   * `QQStore` / `im:qq:credentials:set` first.
+   */
+  setQQConfig(config: Partial<QQConfig>): void {
+    const current = this.getQQConfig();
+    const { appSecret: _ignoredSecret, ...safe } = { ...current, ...config };
+    this.setConfigValue('qq', stripQQSecret(safe));
+  }
+
   // ==================== IM Settings ====================
 
   getIMSettings(): IMSettings {
@@ -302,7 +336,8 @@ export class IMStore {
     const hasTelegram = !!config.telegram.botToken;
     const hasDiscord = !!config.discord.botToken;
     const hasWeixin = !!(config.weixin.token || '').trim();
-    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasWeixin;
+    const hasQQ = !!config.qq.appId.trim();
+    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasWeixin || hasQQ;
   }
 
   /**

@@ -18235,6 +18235,68 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
+  // QQ Open Platform: QR bind + manual AppID/AppSecret. The AppSecret travels
+  // only renderer -> main and is written to the 0600 QQ store; no read path
+  // exposes it again.
+  registerIpcHandler('im:qq:login:start', async () => {
+    try {
+      const result = await getIMGatewayManager().startQQLogin();
+      return { success: true, content: result.content };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to start QQ QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:login:cancel', async () => {
+    try {
+      await getIMGatewayManager().cancelQQLogin();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cancel QQ QR login',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:credentials:check', async () => {
+    try {
+      const summary = getIMGatewayManager().getQQCredentialSummary();
+      return { success: true, hasCredentials: summary.hasCredentials, appId: summary.appId, source: summary.source };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read QQ credential state',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:credentials:set', async (
+    _event,
+    params: { appId?: string; appSecret?: string; botId?: string | null; ownerUserOpenid?: string | null }
+  ) => {
+    try {
+      if (!params || typeof params.appId !== 'string' || typeof params.appSecret !== 'string') {
+        return { success: false, error: 'appId and appSecret are required' };
+      }
+      const stored = getIMGatewayManager().saveQQCredentials({
+        appId: params.appId,
+        appSecret: params.appSecret,
+        botId: params.botId ?? null,
+        ownerUserOpenid: params.ownerUserOpenid ?? null,
+      });
+      return { success: true, appId: stored.appId };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save QQ credentials',
+      };
+    }
+  });
+
   registerIpcHandler('im:status:get', async () => {
     try {
       const status = getIMGatewayManager().getStatus();
