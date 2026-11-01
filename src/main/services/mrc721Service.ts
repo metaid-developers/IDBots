@@ -429,6 +429,21 @@ export async function fetchMrc721AddressItems(params: {
   return page.items;
 }
 
+/** 地址持有的 NFT 原始分页形态 (cursor + size; NFT 钱包聚合端翻页拉全量用). */
+export async function fetchMrc721AddressItemsPage(params: {
+  address: string;
+  pinId?: string;
+  cursor?: string | number;
+  size?: number;
+}): Promise<Mrc721Page<Mrc721ItemSummary>> {
+  return fetchMrc721List<Mrc721ItemSummary>('/api/mrc721/address/item', {
+    address: params.address,
+    pinId: params.pinId,
+    cursor: params.cursor,
+    size: params.size,
+  });
+}
+
 /** NFT 详情 (output/outputValue 为当前 UTXO,转移与交易构建直接使用). */
 export async function fetchMrc721ItemInfo(params: {
   pinId: string;

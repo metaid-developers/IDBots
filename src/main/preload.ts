@@ -1130,6 +1130,22 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('idbots:getAddressBalance', options),
     getMetabotWalletAssets: (input: { metabotId: number }) =>
       ipcRenderer.invoke('idbots:getMetabotWalletAssets', input),
+    getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) =>
+      ipcRenderer.invoke('idbots:getMetabotNfts', input),
+    transferMetabotMvcNft: (params: {
+      metabotId: number;
+      genesis: string;
+      codehash: string;
+      tokenIndex: string;
+      toAddress: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:transferMetabotMvcNft', params),
+    transferMetabotMrc721: (params: {
+      metabotId: number;
+      pinId: string;
+      toAddress: string;
+      feeRate: number;
+    }) => ipcRenderer.invoke('idbots:transferMetabotMrc721', params),
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
     getTokenTransferFeeSummary: (input: { kind: 'mrc20' | 'mvc-ft' }) =>
       ipcRenderer.invoke('idbots:getTokenTransferFeeSummary', input),

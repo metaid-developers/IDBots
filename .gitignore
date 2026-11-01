@@ -834,3 +834,6 @@ blob-report/
 !tests/mobileVoiceWireup.test.tsx
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
+!tests/metabotNftService.test.mjs
+!tests/metabotNftIpc.test.mjs
+!tests/metabotNftPresentation.test.mjs

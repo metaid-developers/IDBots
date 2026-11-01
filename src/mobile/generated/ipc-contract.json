@@ -1708,6 +1708,14 @@
       "args": []
     },
     {
+      "path": "idbots.getMetabotNfts",
+      "kind": "invoke",
+      "channel": "idbots:getMetabotNfts",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "idbots.getMetabotWalletAssets",
       "kind": "invoke",
       "channel": "idbots:getMetabotWalletAssets",
@@ -1781,6 +1789,22 @@
       "channel": "idbots:syncMetaBotEditChanges",
       "args": [
         "input"
+      ]
+    },
+    {
+      "path": "idbots.transferMetabotMrc721",
+      "kind": "invoke",
+      "channel": "idbots:transferMetabotMrc721",
+      "args": [
+        "params"
+      ]
+    },
+    {
+      "path": "idbots.transferMetabotMvcNft",
+      "kind": "invoke",
+      "channel": "idbots:transferMetabotMvcNft",
+      "args": [
+        "params"
       ]
     },
     {
