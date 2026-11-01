@@ -403,3 +403,307 @@ test('wallet_token_* tools registered in the same factory as wallet_nft_*', asyn
   );
   void controlCalls; void tools2;
 });
+
+// ---------------------------------------------------------------------------
+// 8. op=1 TRANSFER amount gates (core) — full-utxo move, checker dust floor
+// ---------------------------------------------------------------------------
+test('transfer amount gates: partial move rejected, full-utxo accepted, checker dust floor', () => {
+  const bad = core.checkTokenTransferAmountGates({ transferTokenAmount: 40000000n, utxoTokenAmount: 100000000n });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.violations.some((v) => v.includes('partial transfer rejected')), bad.violations.join('; '));
+  const ok = core.checkTokenTransferAmountGates({
+    transferTokenAmount: BigInt(META.token_amount),
+    utxoTokenAmount: BigInt(META.token_amount),
+    checkerSats: 3000,
+  });
+  assert.equal(ok.ok, true, ok.violations.join('; '));
+  assert.equal(
+    core.checkTokenTransferAmountGates({ transferTokenAmount: 1n, utxoTokenAmount: 1n, checkerSats: 599 }).ok,
+    false,
+    'checker below dust',
+  );
+  assert.equal(core.checkTokenTransferAmountGates({ transferTokenAmount: 0n, utxoTokenAmount: 0n }).ok, false);
+  assert.throws(
+    () => core.assertTokenTransferAmountGates({ transferTokenAmount: 2n, utxoTokenAmount: 1n }),
+    /partial transfer/,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 9. TRANSFER assembly dry-run (offline): LIST shape minus the trade coupling
+//    — checker (receiver = RAW receiver) must fully PASS offline, token leg
+//    at worst CHECKSIG_FAMILY (dry key vs the real seller authorization EQ),
+//    out0 locked to the receiver carrying the FULL utxo amount.
+// ---------------------------------------------------------------------------
+test('TRANSFER assembly dry-run: checker leg PASS offline, receiver binding + full-amount conservation', () => {
+  const tokenTxHex = readHex('f518099d-raw.hex');
+  const tokenTx = new mvc.Transaction(tokenTxHex);
+  const tokenScriptBuf = tokenTx.outputs[0].script.toBuffer();
+
+  const dry = assembly.makeDryTokenSellKeypair('mvcTokenTransfer.test');
+  const signer = { mode: 'dry', ...dry };
+  // dry receiver: a second deterministic keypair's address (raw MVC address)
+  const receiver = assembly.makeDryTokenSellKeypair('mvcTokenTransfer.receiver');
+  const receiverH160Buf = Buffer.from(mvc.Address.fromString(receiver.address, 'livenet').hashBuffer);
+  const receiverH160Hex = receiverH160Buf.toString('hex');
+
+  // offline-minted checker cast: op=1 family, receiver = RAW receiver hash160
+  const checkerSats = 3000n;
+  const checkerType = assembly.getOptimumCheckerType(1, 3);
+  const checkerLock = assembly.buildTransferCheckLock({
+    type: checkerType,
+    tokenCodeHashHex: assembly.getTokenCodeHashHex(tokenScriptBuf),
+    tokenIdHex: assembly.getTokenIdHex(tokenScriptBuf),
+    receiverHash160Buf: receiverH160Buf,
+    tokenAmount: BigInt(META.token_amount),
+  });
+  const mint = assembly.buildCheckerMintTx({
+    checkerLock,
+    checkerSats,
+    funding: { txid: 'aa'.repeat(32), vout: 0, sats: checkerSats + 1000n },
+    signer,
+  });
+  const checker = {
+    scriptBuf: checkerLock,
+    sats: checkerSats,
+    type: checkerType,
+    txid: mint.txid,
+    vout: mint.outIdx,
+    txHex: mint.txHex,
+  };
+
+  // stage2b dry posture: TRUE sender pubkey / change h160 from the public TxA
+  const txa = new mvc.Transaction(readHex('txa-seed-raw.hex'));
+  const sigBuf = txa.inputs[0].script.toBuffer();
+  const pushes = [];
+  {
+    let i = 0;
+    while (i < sigBuf.length) {
+      const op = sigBuf[i];
+      if (op > 0 && op < 0x4c) {
+        pushes.push(sigBuf.subarray(i + 1, i + 1 + op));
+        i += 1 + op;
+      } else break;
+    }
+  }
+  const sellerPub = pushes.find((b) => b.length === 33);
+  assert.ok(sellerPub, 'seller pubkey not found in public TxA scriptSig');
+
+  const result = assembly.buildTransferTxB({
+    tokenTxHex,
+    tokenVout: 0,
+    tokenTxid: META.token_txid,
+    prevTokenTxHex: readHex('g-prev-raw.hex'),
+    prevTokenInputIndex: 0,
+    tokenAmount: BigInt(META.token_amount),
+    receiverH160Buf,
+    checker,
+    funding: { txid: 'bb'.repeat(32), vout: 1, sats: 50000n },
+    signer,
+    feeRate: 1,
+    dryRunOverrides: { senderPubKeyHex: sellerPub.toString('hex'), changeH160Hex: META.seller_h160 },
+  });
+
+  assert.equal(result.verdicts.checker.cls, 'PASS', result.verdicts.checker.detail.slice(0, 160));
+  assert.ok(
+    result.verdicts.token.cls === 'PASS' || result.verdicts.token.cls === 'CHECKSIG_FAMILY',
+    `token leg unexpected: ${result.verdicts.token.cls} ${result.verdicts.token.detail.slice(0, 160)}`,
+  );
+
+  const tx = new mvc.Transaction(result.txHex);
+  assert.equal(tx.inputs.length, 3, 'token+checker+funding inputs');
+  assert.equal(Buffer.from(tx.inputs[0].prevTxId).toString('hex'), META.token_txid, 'token leg at input 0');
+  // receiver binding: out0 is a standard token utxo locked to the receiver
+  const dpOut = assembly.parseTokenDataPart(result.tokenOutScript);
+  assert.equal(String(dpOut.tokenAmount), META.token_amount, 'conservation: FULL utxo amount carried');
+  assert.equal(Buffer.from(dpOut.tokenAddress, 'hex').toString('hex'), receiverH160Hex, 'token out locked to receiver h160');
+  assert.equal(result.receiverH160Hex, receiverH160Hex);
+  // consensus txid convention == mvc-lib id
+  assert.equal(result.txid, tx.id);
+  // deterministic fee convergence + dust floor on every output
+  assert.ok(result.fee >= BigInt(result.size), `fee ${result.fee} < size ${result.size}`);
+  for (const out of tx.outputs) assert.ok(Number(out.satoshis) >= 600, `output below dust: ${out.satoshis}`);
+});
+
+test('TRANSFER assembly: partial transfer rejected in the construction path', () => {
+  const tokenTxHex = readHex('f518099d-raw.hex');
+  const tokenScriptBuf = new mvc.Transaction(tokenTxHex).outputs[0].script.toBuffer();
+  const dry = assembly.makeDryTokenSellKeypair('mvcTokenTransfer.partial');
+  const receiverH160Buf = Buffer.alloc(20, 0x07);
+  const checkerLock = assembly.buildTransferCheckLock({
+    type: assembly.getOptimumCheckerType(1, 3),
+    tokenCodeHashHex: assembly.getTokenCodeHashHex(tokenScriptBuf),
+    tokenIdHex: assembly.getTokenIdHex(tokenScriptBuf),
+    receiverHash160Buf: receiverH160Buf,
+    tokenAmount: BigInt('40000000'),
+  });
+  const signer = { mode: 'dry', ...dry };
+  const mint = assembly.buildCheckerMintTx({
+    checkerLock,
+    checkerSats: 3000n,
+    funding: { txid: 'cc'.repeat(32), vout: 0, sats: 4000n },
+    signer,
+  });
+  assert.throws(
+    () => assembly.buildTransferTxB({
+      tokenTxHex,
+      tokenVout: 0,
+      tokenTxid: META.token_txid,
+      prevTokenTxHex: readHex('g-prev-raw.hex'),
+      prevTokenInputIndex: 0,
+      tokenAmount: BigInt('40000000'), // partial!
+      receiverH160Buf,
+      checker: {
+        scriptBuf: checkerLock,
+        sats: 3000n,
+        type: assembly.getOptimumCheckerType(1, 3),
+        txid: mint.txid,
+        vout: mint.outIdx,
+        txHex: mint.txHex,
+      },
+      funding: { txid: 'dd'.repeat(32), vout: 0, sats: 50000n },
+      signer,
+      feeRate: 1,
+    }),
+    /partial transfer/,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 10. service orchestration for transfer (offline via DI): the worker's txs
+//     are broadcast by the SERVICE in order (mint → transfer); a non-retryable
+//     funding failure fails closed with the raw txs preserved.
+// ---------------------------------------------------------------------------
+test('executeMvcTokenSellTrade transfer: service broadcasts mint → transfer in order; funding failure preserves raw txs', async () => {
+  const service = require('../dist-electron/main/services/mvcTokenSellService.js');
+  const broadcasted = [];
+  const fundingTxid = 'aa'.repeat(31) + '01';
+  const finalTxid = 'bb'.repeat(31) + '02';
+  const deps = {
+    fetchFtBalance: async () => [],
+    fetchRawTx: async () => { throw new Error('unexpected read in execute test'); },
+    buildTradeRawTx: async (_store, params) => {
+      assert.equal(params.action, 'transfer');
+      assert.equal(params.receiverAddress, '1AGo1uNPZ7Fti4n8XxKdjA2GNwnXna6oTM');
+      assert.equal(params.genesis, 'ab'.repeat(32));
+      return {
+        funding_txs: [{ name: 'checkerMint', txid: fundingTxid, raw_tx: 'f010' }],
+        funding_txids: [fundingTxid],
+        raw_tx: 'f020',
+        txid: finalTxid,
+        spent_outpoints: [fundingTxid + ':0'],
+      };
+    },
+    broadcastTx: async (rawTx) => { broadcasted.push(rawTx); },
+  };
+  const result = await service.executeMvcTokenSellTrade(
+    { getMetabotWalletByMetabotId: () => null }, // store shape unused by DI path
+    {
+      metabotId: 1,
+      action: 'transfer',
+      genesis: 'ab'.repeat(32),
+      codehash: 'cd'.repeat(20),
+      receiverAddress: '1AGo1uNPZ7Fti4n8XxKdjA2GNwnXna6oTM',
+      feeRate: 1,
+    },
+    deps,
+  );
+  assert.deepEqual(broadcasted, ['f010', 'f020'], 'broadcast order: checker mint first, then the transfer tx');
+  assert.equal(result.txId, finalTxid);
+  assert.deepEqual(result.fundingTxIds, [fundingTxid]);
+  assert.equal(result.action, 'transfer');
+
+  // non-retryable funding failure (plain error): fail closed, raw txs preserved
+  const depsFail = {
+    ...deps,
+    broadcastTx: async () => { throw new Error('plain non-retryable failure'); },
+  };
+  await assert.rejects(
+    () => service.executeMvcTokenSellTrade(
+      { getMetabotWalletByMetabotId: () => null },
+      {
+        metabotId: 1,
+        action: 'transfer',
+        genesis: 'ab'.repeat(32),
+        codehash: 'cd'.repeat(20),
+        receiverAddress: '1AGo1uNPZ7Fti4n8XxKdjA2GNwnXna6oTM',
+        feeRate: 1,
+      },
+      depsFail,
+    ),
+    (err) => {
+      assert.match(err.message, /funding stage failed/);
+      assert.match(err.message, /manual recovery/);
+      return true;
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 11. wallet_token_transfer registration + handler fail-closed behaviors
+// ---------------------------------------------------------------------------
+test('wallet_token_transfer registered; session-less and non-address receivers fail closed before control', async () => {
+  const { buildWalletAgentTools } = require('../dist-electron/main/libs/walletAgentTools.js');
+  const calls = [];
+  const tool = (name, description, schema, handler) => {
+    calls.push({ name, description, schema, handler });
+    return { name };
+  };
+  const transferCalls = [];
+  const control = new Proxy({}, {
+    get: (_t, prop) => {
+      if (prop === 'resolveMetabotIdByName') return () => null;
+      if (prop === 'getMetabotMvcAddress') return () => null;
+      if (prop === 'transferToken') {
+        return async (p) => {
+          transferCalls.push(p);
+          return { txId: 'bb'.repeat(31) + '02', fundingTxIds: ['aa'.repeat(31) + '01'] };
+        };
+      }
+      return async () => { throw new Error(`unexpected control call in transfer registration test: ${String(prop)}`); };
+    },
+  });
+
+  // session-less posture first: no metabot resolves, transfer must fail closed
+  const tools = buildWalletAgentTools({ tool, control, sessionId: 't-transfer', resolveMetabotId: () => undefined });
+  assert.ok(tools.some((t) => t && t.name === 'wallet_token_transfer'), 'wallet_token_transfer returned by the factory');
+  const t = calls.find((c) => c.name === 'wallet_token_transfer');
+  assert.ok(t, 'wallet_token_transfer registered');
+  assert.ok(t.schema.receiver_address && t.schema.genesis && t.schema.codehash, 'required schema fields');
+
+  const noSession = await t.handler({
+    genesis: 'ab'.repeat(32),
+    codehash: 'cd'.repeat(20),
+    receiver_address: '1AGo1uNPZ7Fti4n8XxKdjA2GNwnXna6oTM',
+  });
+  assert.equal(noSession.isError, true);
+  assert.match(noSession.content[0].text, /own wallet/);
+  assert.equal(transferCalls.length, 0, 'no control call without a session');
+
+  // with a session: non-address receivers are rejected before control
+  const tools2 = buildWalletAgentTools({
+    tool: (name, description, schema, handler) => ({ name, handler }),
+    control,
+    sessionId: 't-transfer-2',
+    resolveMetabotId: () => 7,
+  });
+  const handler2 = tools2.find((x) => x.name === 'wallet_token_transfer').handler;
+  const badReceiver = await handler2({ genesis: 'ab'.repeat(32), codehash: 'cd'.repeat(20), receiver_address: 'Alice' });
+  assert.equal(badReceiver.isError, true);
+  assert.match(badReceiver.content[0].text, /raw MVC address/);
+  assert.equal(transferCalls.length, 0, 'non-address receiver never reaches control');
+
+  // valid call: uppercase genesis/codehash normalized, control sees the raw address
+  const ok = await handler2({
+    genesis: 'AB'.repeat(32),
+    codehash: 'CD'.repeat(20),
+    receiver_address: '1AGo1uNPZ7Fti4n8XxKdjA2GNwnXna6oTM',
+  });
+  assert.equal(ok.isError, undefined);
+  assert.match(ok.content[0].text, /Token TRANSFER broadcast/);
+  assert.equal(transferCalls.length, 1);
+  assert.equal(transferCalls[0].metabotId, 7);
+  assert.equal(transferCalls[0].genesis, 'ab'.repeat(32));
+  assert.equal(transferCalls[0].codehash, 'cd'.repeat(20));
+  assert.equal(transferCalls[0].receiverAddress, '1AGo1uNPZ7Fti4n8XxKdjA2GNwnXna6oTM');
+});

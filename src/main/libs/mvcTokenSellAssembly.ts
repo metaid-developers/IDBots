@@ -38,7 +38,7 @@ export const SIGHASH_SINGLE_FORKID = 0x43; // protoheader.scrypt:27 + scryptType
 export const OP_TRANSFER = 1;
 export const OP_UNLOCK_FROM_CONTRACT = 2;
 export { DUST_SATS } from './mvcTokenSellCore';
-import { assertTokenSellAmountGates, decodeTokenSellSeedLock } from './mvcTokenSellCore';
+import { assertTokenSellAmountGates, assertTokenTransferAmountGates, decodeTokenSellSeedLock } from './mvcTokenSellCore';
 
 const d256 = (b: Buffer) => createHash('sha256').update(createHash('sha256').update(b).digest()).digest();
 const hexB = (b: Buffer | Uint8Array) => Buffer.from(b).toString('hex');
@@ -669,6 +669,215 @@ export function buildListTxB(S: ListTxBStaticInputs): ListTxBResult {
     tokenSats,
     tokenOutScript,
     seedAddrH,
+    outIdx: { token: built.tokenOutIdx, change: built.changeIdx },
+    prev: { prevTokenAddress, prevTokenAmount, prevVout },
+    verdicts: wired.verdicts,
+  };
+}
+
+// ---------- TRANSFER (op=1, non-trade full-utxo move) assembly ----------
+export interface TransferTxBStaticInputs {
+  tokenTxHex: string; // raw tx carrying the token utxo being transferred
+  tokenVout: number;
+  tokenTxid: string; // consensus id of tokenTxHex (fail-fast cross-check)
+  prevTokenTxHex: string; // direct parent of the token leg (lineage)
+  prevTokenInputIndex: number; // token's input slot inside tokenTx (default 0)
+  tokenAmount: bigint; // full dataPart amount of the utxo (gates already applied)
+  receiverH160Buf: Buffer; // raw MVC receiver address hash160
+  checker: CheckerCast; // op=1 family cast, receiver = receiverH160Buf, amount = tokenAmount
+  funding: SimpleFundingUtxo; // session bot P2PKH utxo paying fees
+  signer: TokenSellSigner;
+  /** sat/byte fee floor; the live-fire legs converged at 1 (deterministic estimate). */
+  feeRate?: number;
+  /**
+   * Dry-run posture (tests only): sign with an unreachable dry key while
+   * pushing the TRUE sender pubkey / change hash160 recovered from public
+   * chain data, so only the CHECKSIG-family cell can be unprovable offline.
+   * The real path (session bot == token owner) never sets this.
+   */
+  dryRunOverrides?: { senderPubKeyHex: string; changeH160Hex: string };
+}
+
+export interface TransferTxBResult {
+  tc: any;
+  txHex: string;
+  txid: string;
+  fee: bigint;
+  size: number;
+  rounds: number;
+  inSatSum: bigint;
+  tokenSats: bigint;
+  tokenOutScript: Buffer;
+  receiverH160Hex: string;
+  outIdx: { token: number; change: number };
+  prev: { prevTokenAddress: string; prevTokenAmount: bigint; prevVout: number };
+  verdicts: { token: VerifyVerdict; checker: VerifyVerdict };
+}
+
+/**
+ * Non-trade op=1 TRANSFER assembly (wallet_token_transfer): the TokenSell
+ * LIST shape trimmed of its trade coupling —
+ *   in0 = token utxo (op=1 TRANSFER, 18-param unlock, verbatim SDK input0
+ *        proof + backtrace lineage, same as LIST),
+ *   in1 = checker (TransferCheck op=1 family, OCS leg; receiver = the RAW
+ *        receiver hash160 — conservation pairs with the full utxo amount),
+ *   in2 = session funding P2PKH (fees)
+ *   → out0 = token locked to the receiver (taker.mjs out0 shape:
+ *        getNewTokenScript(token, receiverH160, fullAmount)), out1 = change.
+ * No seed lock, no price output, no listing tuple — this is a plain move.
+ */
+export function buildTransferTxB(S: TransferTxBStaticInputs): TransferTxBResult {
+  const tokenTx = new mvc.Transaction(S.tokenTxHex);
+  if (tokenTx.id !== S.tokenTxid) throw new Error(`token raw consensus id ${tokenTx.id} != ${S.tokenTxid}`);
+  const tokenScriptBuf = tokenTx.outputs[S.tokenVout].script.toBuffer();
+  const tokenSats = BigInt(tokenTx.outputs[S.tokenVout].satoshis);
+  const dp = parseTokenDataPart(tokenScriptBuf);
+  // CONSTRUCTION-PATH HARD GATE (offline-enforceable): a TRANSFER moves the
+  // token utxo IN FULL — the checker conservation pairs the TransferCheck
+  // receiver amount with the token output amount.
+  const utxoTokenAmount = BigInt(String(dp.tokenAmount));
+  assertTokenTransferAmountGates({
+    transferTokenAmount: S.tokenAmount,
+    utxoTokenAmount,
+    checkerSats: S.checker.sats,
+  });
+
+  const prevTokenTx = new mvc.Transaction(S.prevTokenTxHex);
+  const prevVout = tokenTx.inputs[S.prevTokenInputIndex].outputIndex;
+  const prevDp = parseTokenDataPart(prevTokenTx.outputs[prevVout].script.toBuffer());
+  const prevTokenAddress = Buffer.from(prevDp.tokenAddress as string, 'hex').toString('hex');
+  const prevTokenAmount = BigInt(String(prevDp.tokenAmount));
+  // Lineage input proof — VERBATIM SDK bytes (same stage2b verdict as LIST).
+  const inputRes = TokenUtil.getTxInputProof(tokenTx, S.prevTokenInputIndex);
+  const ProofClasses = scryptlib.buildTypeClasses(
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('meta-contract/dist/mcp02/contract-desc/txUtil_desc.json'),
+  );
+  const tokenTxInputProof = rebuildTxInputProof(ProofClasses, inputRes[0]);
+  const tokenTxHeader = inputRes[1];
+  const prevTokenTxOutputProof = new ProofClasses.TxOutputProof(TokenUtil.getTxOutputProof(prevTokenTx, prevVout));
+
+  const receiverH160 = Buffer.from(S.receiverH160Buf);
+  if (receiverH160.length !== 20) throw new Error('receiver hash160 must be 20 bytes');
+  const tokenOutScript = getNewTokenScript(tokenScriptBuf, receiverH160, S.tokenAmount);
+  const senderPubKeyHex = S.dryRunOverrides?.senderPubKeyHex ?? S.signer.pubHex;
+  const senderH160 = Buffer.from(S.dryRunOverrides?.changeH160Hex ?? S.signer.h160Hex, 'hex');
+
+  const inSatSum = tokenSats + S.checker.sats + S.funding.sats;
+  const fixedOut = tokenSats;
+  const feeRate = Number(S.feeRate) > 0 ? Number(S.feeRate) : 1;
+  let changeSat = inSatSum - fixedOut - 15000n;
+  let built: { tc: any; tokenIdx: number; chkIdx: number; fundIdx: number; tokenOutIdx: number; changeIdx: number } | null = null;
+  let wired: { tokenCall: ReturnType<InstanceType<typeof TokenFactory>['unlock']>; checkCall: unknown; verdicts: { token: VerifyVerdict; checker: VerifyVerdict } } | null = null;
+  let rounds = 0;
+  let finalFee = 0n;
+  for (let round = 0; round < 8; round++) {
+    rounds = round + 1;
+    const tc = new TxComposer(new mvc.Transaction());
+    const tokenIdx = tc.appendInput({ txId: S.tokenTxid, outputIndex: S.tokenVout, satoshis: Number(tokenSats), lockingScript: new mvc.Script(tokenScriptBuf) });
+    if (tokenIdx !== 0) throw new Error('token leg must be input index 0');
+    const chkIdx = tc.appendInput({ txId: S.checker.txid, outputIndex: S.checker.vout, satoshis: Number(S.checker.sats), lockingScript: new mvc.Script(S.checker.scriptBuf) });
+    const fundIdx = tc.appendInput({ txId: S.funding.txid, outputIndex: S.funding.vout, satoshis: Number(S.funding.sats), lockingScript: new mvc.Script(p2pkhScript(senderH160)) });
+    const tokenOutIdx = tc.appendOutput({ lockingScript: new mvc.Script(tokenOutScript), satoshis: Number(tokenSats) });
+    let changeIdx = -1;
+    if (changeSat > 0n) changeIdx = tc.appendOutput({ lockingScript: new mvc.Script(p2pkhScript(senderH160)), satoshis: Number(changeSat) });
+    built = { tc, tokenIdx, chkIdx, fundIdx, tokenOutIdx, changeIdx };
+
+    const prevouts = new Prevouts();
+    prevouts.addVout(S.tokenTxid, S.tokenVout);
+    prevouts.addVout(S.checker.txid, S.checker.vout);
+    prevouts.addVout(S.funding.txid, S.funding.vout);
+
+    // token leg: op=1 TRANSFER, 18-param unlock (same live ABI as LIST)
+    const tokenInst = newTokenContract();
+    tokenInst.setFormatedDataPart(dp as any);
+    const preimageHex = preimageToHex(tc.getInputPreimage(tokenIdx, SIGHASH_ALL_FORKID));
+    const sigRaw = tc.getTxFormatSig(S.signer.privKey, tokenIdx, SIGHASH_ALL_FORKID);
+    const senderSig = typeof sigRaw === 'string' ? sigRaw : scryptlib.toHex(sigRaw);
+    const checkerProof = new ProofClasses.TxOutputProof(TokenUtil.getTxOutputProof(new mvc.Transaction(S.checker.txHex), S.checker.vout));
+    const tokenCall = tokenInst.unlock({
+      txPreimage: new scryptlib.SigHashPreimage(preimageHex),
+      prevouts: new scryptlib.Bytes(prevouts.toHex()),
+      tokenInputIndex: tokenIdx,
+      amountCheckHashIndex: S.checker.type - 1,
+      amountCheckInputIndex: chkIdx,
+      amountCheckTxOutputProofInfo: checkerProof,
+      amountCheckScript: new scryptlib.Bytes(hexB(S.checker.scriptBuf)),
+      prevTokenInputIndex: S.prevTokenInputIndex,
+      prevTokenAddress: new scryptlib.Bytes(prevTokenAddress),
+      prevTokenAmount,
+      tokenTxHeader,
+      tokenTxInputProof,
+      prevTokenTxOutputProof,
+      senderPubKey: new scryptlib.PubKey(senderPubKeyHex),
+      senderSig: new scryptlib.Sig(senderSig),
+      contractInputIndex: 0,
+      contractTxOutputProof: new ProofClasses.TxOutputProof(TokenUtil.getEmptyTxOutputProof()),
+      operation: OP_TRANSFER,
+    });
+    tc.getInput(tokenIdx).setScript(tokenCall.toScript());
+
+    // checker leg: TransferCheck op=1 family (receiver = raw receiver), OCS preimage
+    const checkInst = TokenTransferCheckFactory.createContract(S.checker.type);
+    if (S.checker.dataPartObj) (checkInst as any).setFormatedDataPart(S.checker.dataPartObj);
+    const tokProof = TokenUtil.getTxOutputProof(tokenTx, S.tokenVout);
+    const checkPreimage = buildOcsCheckPreimage(tc, chkIdx, S.checker.scriptBuf, S.checker.sats);
+    const checkCall = checkInst.unlock({
+      txPreimage: new scryptlib.SigHashPreimage(checkPreimage),
+      prevouts: new scryptlib.Bytes(prevouts.toHex()),
+      tokenScript: new scryptlib.Bytes(hexB(tokenScriptBuf)),
+      tokenTxHeaderArray: new scryptlib.Bytes(hexB(Buffer.from(tokProof.txHeader.serialize(), 'hex'))),
+      tokenTxHashProofArray: new scryptlib.Bytes(
+        hexB(Buffer.concat([TokenUtil.getUInt32Buf(Buffer.from(tokProof.hashProof.serialize(), 'hex').length), Buffer.from(tokProof.hashProof.serialize(), 'hex')])),
+      ),
+      tokenSatoshiBytesArray: new scryptlib.Bytes(hexB(Buffer.from(tokProof.satoshiBytes.serialize(), 'hex'))),
+      inputTokenAddressArray: new scryptlib.Bytes(hexB(Buffer.from(dp.tokenAddress as string, 'hex'))),
+      inputTokenAmountArray: new scryptlib.Bytes(
+        hexB(
+          (() => {
+            const b = Buffer.alloc(8);
+            b.writeBigUInt64LE(S.tokenAmount);
+            return b;
+          })(),
+        ),
+      ),
+      tokenOutputSatoshis: Number(tokenSats),
+      changeSatoshis: Number(changeSat),
+      changeAddress: new scryptlib.Ripemd160(senderH160.toString('hex')),
+      opReturnScript: new scryptlib.Bytes(''),
+    });
+    tc.getInput(chkIdx).setScript(checkCall.toScript());
+
+    // funding leg: session bot P2PKH
+    tc.unlockP2PKHInput(S.signer.privKey, fundIdx, SIGHASH_ALL_FORKID);
+
+    // deterministic fee convergence
+    const feeTarget = BigInt(Math.ceil(estimateTxLenMax(tc) * feeRate));
+    const spentFee = inSatSum - fixedOut - changeSat;
+    const verdicts = {
+      token: classifyVerify(tokenCall.verify({ tx: tc.getTx(), inputIndex: tokenIdx, inputSatoshis: Number(tokenSats) })),
+      checker: runBareInterpreter(tc.getInput(chkIdx).script.toBuffer(), S.checker.scriptBuf, tc.getTx(), chkIdx, S.checker.sats),
+    };
+    wired = { tokenCall, checkCall, verdicts };
+    if (spentFee >= feeTarget && spentFee - feeTarget < 3n) {
+      finalFee = spentFee;
+      break;
+    }
+    changeSat = inSatSum - fixedOut - feeTarget;
+    if (changeSat > 0n && changeSat < 600n) changeSat = 0n;
+  }
+  if (!built || !wired) throw new Error('TRANSFER fee loop not converged');
+  return {
+    tc: built.tc,
+    txHex: built.tc.getTx().serialize(true),
+    txid: consensusTxId(built.tc),
+    fee: finalFee,
+    size: built.tc.getTx().toBuffer().length,
+    rounds,
+    inSatSum,
+    tokenSats,
+    tokenOutScript,
+    receiverH160Hex: receiverH160.toString('hex'),
     outIdx: { token: built.tokenOutIdx, change: built.changeIdx },
     prev: { prevTokenAddress, prevTokenAmount, prevVout },
     verdicts: wired.verdicts,

@@ -74,7 +74,7 @@ export type WalletToolsControl = {
     orders?: MvcNftSellOrders;
     error?: string;
   }>>;
-  // ----- FT TokenSell (LIST / take / cancel=self-take; mirrors the NFT block) -----
+  // ----- FT TokenSell (transfer / LIST / take / cancel=self-take; mirrors the NFT block) -----
   listMvcFtTokens(input: {
     metabotIds?: number[];
     address?: string;
@@ -84,6 +84,14 @@ export type WalletToolsControl = {
     balance?: import('../services/mvcTokenSellService').MvcFtTokenBalance;
     error?: string;
   }>>;
+  transferToken(params: {
+    metabotId: number;
+    genesis: string;
+    codehash: string;
+    tokenTxid?: string;
+    tokenVout?: number;
+    receiverAddress: string;
+  }): Promise<{ txId: string; fundingTxIds: string[] }>;
   verifyMvcTokenSellListing(listing: import('../services/walletRawTxService').MvcTokenSellListingRef): Promise<import('../services/mvcTokenSellService').MvcTokenSellOrderVerify>;
   sellToken(params: {
     metabotId: number;
@@ -894,6 +902,70 @@ export function buildWalletAgentTools(deps: {
     }
   );
 
+  const walletTokenTransfer = tool(
+    'wallet_token_transfer',
+    [
+      'Transfer ONE MVC FT (MetaContract fungible token) utxo from THIS session MetaBot\'s own wallet to a receiver address — non-trade op=1 TRANSFER, full-utxo semantics: the entire token utxo amount moves, no partial quantities.',
+      'Use when the owner asks to send/move FT tokens without listing them for sale. The token is identified by genesis + codehash (see wallet_token_balance); when the address holds several utxos of that genesis, pass token_txid (+ token_vout) to pick one.',
+      'receiver_address must be a RAW MVC address (tokens only transfer to addresses, not local bots — resolve a bot\'s address first). The receiver gets a standard token utxo they can re-transfer or list.',
+      'Signing runs in a subprocess worker; ordered txs broadcast (checker mint → transfer). Returns the txids; verify with wallet_token_balance afterwards.',
+      'Token moves are irreversible on-chain — confirm the token and receiver with the owner before calling when ambiguous.',
+    ].join(' '),
+    {
+      genesis: z.string().min(1).describe('FT genesis id (64 hex).'),
+      codehash: z.string().min(1).describe('FT codehash (40 hex).'),
+      token_txid: z.string().optional().describe('Token utxo txid (64 hex) — required when the address holds several utxos of this genesis.'),
+      token_vout: z.number().int().nonnegative().optional().describe('Token utxo output index.'),
+      receiver_address: z.string().min(1).describe('Raw MVC address receiving the full token utxo.'),
+    },
+    async (args: {
+      genesis: string;
+      codehash: string;
+      token_txid?: string;
+      token_vout?: number;
+      receiver_address: string;
+    }) => {
+      const metabotId = resolveMetabotId(sessionId);
+      if (metabotId == null) {
+        return textResult('wallet_token_transfer could not determine which MetaBot owns this session; transfers must spend the session bot\'s own wallet.', true);
+      }
+      const genesis = asString(args.genesis).toLowerCase();
+      const codehash = asString(args.codehash).toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(genesis) || !/^[0-9a-f]{40}$/.test(codehash)) {
+        return textResult('wallet_token_transfer requires genesis (64 hex) and codehash (40 hex). Use wallet_token_balance to look them up.', true);
+      }
+      const receiverAddress = asString(args.receiver_address).trim();
+      if (!receiverAddress || !looksLikeMvcAddress(receiverAddress)) {
+        return textResult('wallet_token_transfer: receiver_address must be a raw MVC address (tokens only transfer to addresses, not local bots).', true);
+      }
+      const tokenTxid = asString(args.token_txid).toLowerCase();
+      if (tokenTxid && !/^[0-9a-f]{64}$/.test(tokenTxid)) {
+        return textResult('wallet_token_transfer: token_txid must be 64 hex.', true);
+      }
+      try {
+        const result = await control.transferToken({
+          metabotId,
+          genesis,
+          codehash,
+          tokenTxid: tokenTxid || undefined,
+          tokenVout: args.token_vout,
+          receiverAddress,
+        });
+        const lines = [
+          'Token TRANSFER broadcast on-chain.',
+          `- transfer txid: ${result.txId}`,
+          `- funding txids: ${result.fundingTxIds.join(', ')}`,
+          `- to: ${receiverAddress}`,
+          '- Full-utxo semantics — the entire token utxo amount moved. Verify with wallet_token_balance after the txs confirm.',
+        ];
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return textResult(`wallet_token_transfer failed: ${msg}`, true);
+      }
+    }
+  );
+
   const buildTokenListingArg = (args: {
     sell_txid?: string;
     sell_output_index?: number;
@@ -1185,6 +1257,7 @@ export function buildWalletAgentTools(deps: {
     walletNftCancelSell,
     walletNftBuy,
     walletTokenBalance,
+    walletTokenTransfer,
     walletTokenSellOrders,
     walletTokenSell,
     walletTokenBuy,
