@@ -1,8 +1,10 @@
 /**
  * User Settings Component
- * Local human user identity: create / import / mnemonic backup / profile / logout.
- * Single-user model: at most one identity per device; switching accounts means
- * logging out first, then importing or creating again.
+ * Local human user identity: create / import / mnemonic backup / profile /
+ * switch account / logout.
+ * Single-user model: at most one identity per device. "Switch Account" removes
+ * the current local identity (chain data is unaffected) and lands directly on
+ * the mnemonic import view; "Log Out" removes it and lands on the empty view.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -15,11 +17,14 @@ import {
   ExclamationTriangleIcon,
   ArrowPathIcon,
   ArrowLeftIcon,
+  ArrowRightStartOnRectangleIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
+import { coworkService } from '../../services/cowork';
 import MnemonicWordGrid from './MnemonicWordGrid';
 import UserBackupMnemonicModal from './UserBackupMnemonicModal';
 import ChainBackupRestorePrompt from './ChainBackupRestorePrompt';
+import ChainBackupMnemonicReminderModal from './ChainBackupMnemonicReminderModal';
 
 type ViewState = 'loading' | 'empty' | 'create' | 'backup' | 'import' | 'profile';
 
@@ -178,8 +183,11 @@ const UserSettings: React.FC = () => {
   const [nameError, setNameError] = useState('');
   const [backupModalOpen, setBackupModalOpen] = useState(false);
 
-  // Logout
+  // Logout / switch account — the same confirm modal with different copy and a
+  // different landing view ('switch' lands directly on the mnemonic import).
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
+  const [logoutMode, setLogoutMode] = useState<'logout' | 'switch'>('logout');
+  const [mnemonicReminderOpen, setMnemonicReminderOpen] = useState(false);
   const [revealedMnemonic, setRevealedMnemonic] = useState('');
   const [revealLoading, setRevealLoading] = useState(false);
   const [revealError, setRevealError] = useState('');
@@ -494,6 +502,14 @@ const UserSettings: React.FC = () => {
       if (result.success) {
         setChainBackupLastRun(Date.now());
         showToast(i18nService.t('userSettingsChainBackupSuccess'));
+        // The reminder matters the moment new data actually became recoverable
+        // on-chain: without the mnemonic no other device can decrypt it. A
+        // no-op incremental run (nothing new uploaded) does not re-prompt.
+        const uploadedNow = result.bots.reduce((n, bot) => n + bot.uploadedObjects, 0);
+        const segmentsNow = result.bots.reduce((n, bot) => n + bot.segments, 0);
+        if (uploadedNow > 0 || segmentsNow > 0) {
+          setMnemonicReminderOpen(true);
+        }
       } else if (result.resumable) {
         showToast(i18nService.t('userSettingsChainBackupPaused'));
       } else {
@@ -518,6 +534,12 @@ const UserSettings: React.FC = () => {
       setChainRestoreResult(result);
       if (result.success) {
         showToast(i18nService.t('userSettingsChainBackupRestoreSuccess'));
+        // The restore added bots and sessions behind the live UI's back
+        // (Settings renders as an overlay over CoworkView). Reload the bot
+        // roster and the session list so the restored state is visible
+        // immediately, without an app restart.
+        window.dispatchEvent(new CustomEvent('app:metabots-changed'));
+        void coworkService.loadSessions();
       } else {
         const restoreError = result.error ?? result.bots.find((bot) => bot.error)?.error ?? '';
         showToast(`${i18nService.t('userSettingsChainBackupRestoreFailed')}: ${restoreError}`);
@@ -530,7 +552,9 @@ const UserSettings: React.FC = () => {
     }
   };
 
-  const openLogoutModal = () => {    setLogoutError('');
+  const openLogoutModal = (mode: 'logout' | 'switch' = 'logout') => {
+    setLogoutMode(mode);
+    setLogoutError('');
     setRevealError('');
     setRevealedMnemonic('');
     setLogoutModalOpen(true);
@@ -560,6 +584,7 @@ const UserSettings: React.FC = () => {
 
   const handleLogout = async () => {
     if (logoutLoading) return;
+    const mode = logoutMode;
     setLogoutLoading(true);
     setLogoutError('');
     try {
@@ -571,8 +596,8 @@ const UserSettings: React.FC = () => {
       setIdentity(null);
       setLogoutModalOpen(false);
       setRevealedMnemonic('');
-      setView('empty');
-      showToast(i18nService.t('userSettingsLogoutSuccess'));
+      setView(mode === 'switch' ? 'import' : 'empty');
+      showToast(mode === 'switch' ? i18nService.t('userSettingsSwitchSuccess') : i18nService.t('userSettingsLogoutSuccess'));
     } catch (error: any) {
       setLogoutError(error?.message || i18nService.t('userSettingsLogoutFailed'));
     } finally {
@@ -958,7 +983,15 @@ const UserSettings: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={openLogoutModal}
+              onClick={() => openLogoutModal('switch')}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+            >
+              <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5 mr-1.5" />
+              {i18nService.t('userSettingsSwitchAccount')}
+            </button>
+            <button
+              type="button"
+              onClick={() => openLogoutModal('logout')}
               className="px-3 py-1.5 text-xs font-medium rounded-xl bg-red-600 hover:bg-red-700 text-white transition-colors active:scale-[0.98]"
             >
               {i18nService.t('userSettingsLogout')}
@@ -1159,10 +1192,10 @@ const UserSettings: React.FC = () => {
                   </div>
                   <div>
                     <h2 className="text-lg font-semibold dark:text-claude-darkText text-claude-text">
-                      {i18nService.t('userSettingsLogoutConfirmTitle')}
+                      {i18nService.t(logoutMode === 'switch' ? 'userSettingsSwitchConfirmTitle' : 'userSettingsLogoutConfirmTitle')}
                     </h2>
                     <p className="mt-2 text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                      {i18nService.t('userSettingsLogoutConfirmWarning')}
+                      {i18nService.t(logoutMode === 'switch' ? 'userSettingsSwitchConfirmWarning' : 'userSettingsLogoutConfirmWarning')}
                     </p>
                   </div>
                 </div>
@@ -1213,7 +1246,7 @@ const UserSettings: React.FC = () => {
                     disabled={logoutLoading}
                     className="px-4 py-2 text-sm rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
-                    {i18nService.t('userSettingsLogoutConfirm')}
+                    {i18nService.t(logoutMode === 'switch' ? 'userSettingsSwitchConfirm' : 'userSettingsLogoutConfirm')}
                   </button>
                 </div>
               </div>
@@ -1231,6 +1264,17 @@ const UserSettings: React.FC = () => {
               setChainRestorePrompt(null);
               void handleChainRestore(true);
             }}
+          />
+        )}
+
+        {/* Post-backup mnemonic reminder */}
+        {mnemonicReminderOpen && (
+          <ChainBackupMnemonicReminderModal
+            onViewMnemonic={() => {
+              setMnemonicReminderOpen(false);
+              setBackupModalOpen(true);
+            }}
+            onClose={() => setMnemonicReminderOpen(false)}
           />
         )}
 
