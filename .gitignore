@@ -65,6 +65,9 @@ docs/*
 !docs/assets/
 !docs/assets/**
 !docs/weixin-channel-verification.md
+!docs/qq-channel.md
+!docs/qq-channel-verification.md
+!docs/qq-channel-pr.md
 tests/*
 !tests/dataGuard.test.mjs
 !tests/friendAgentTools.test.mjs
@@ -73,6 +76,7 @@ tests/*
 !tests/friendInviteFlow.test.mjs
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts
+!tests/qqGateway.test.ts
 !tests/friendGuidanceTrigger.test.mjs
 !tests/friendGuidanceOverlayChain.test.mjs
 !tests/socialTrustPrompt.test.mjs
