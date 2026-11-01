@@ -601,6 +601,42 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
     }
   }
 
+  // Name-conflict pre-pass. A device that ran the welcome flow already holds a
+  // placeholder Twin (random pool name), and the user may have created other
+  // bots before importing their mnemonic. `restoreMetabotFromMnemonicCore`
+  // refuses duplicate names, so a restored Bot whose name collides with a
+  // purely-local bot would otherwise fail its whole skeleton (and with it the
+  // data import). The incoming name is the user's real on-chain data and wins:
+  // the local placeholder is renamed with a " (local)" suffix instead. Bots
+  // that belong to the backup set (same globalmetaid) are matched later by id
+  // and never renamed here.
+  const backupGids = new Set(pending.map((candidate) => candidate.entry.globalMetaId));
+  for (const item of pending) {
+    try {
+      const profile = profileOf(item.objects);
+      const incomingName = (typeof profile?.name === 'string' && profile.name.trim())
+        || item.entry.name.trim();
+      if (!incomingName) continue;
+      const lowerIncoming = incomingName.toLowerCase();
+      for (const local of metabotStore.listMetabots()) {
+        if (backupGids.has((local.globalmetaid ?? '').trim())) continue;
+        if (local.name.trim().toLowerCase() !== lowerIncoming) continue;
+        let suffix = 2;
+        let renamed = `${incomingName} (local)`;
+        while (metabotStore.listMetabots().some((m) => m.name.trim().toLowerCase() === renamed.toLowerCase())) {
+          renamed = `${incomingName} (local ${suffix})`;
+          suffix += 1;
+        }
+        metabotStore.updateMetabot(local.id, { name: renamed });
+        deps.saveDb?.();
+      }
+    } catch (error) {
+      // Best-effort: the skeleton restore below still reports NAME_DUPLICATE
+      // plainly if the rename could not go through.
+      console.warn('[ChainBackup] restore name-conflict rename failed:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
   for (const item of pending) {
     try {
       emit({ phase: 'skeleton', botName: item.entry.name, botIndex: item.botIndex, botCount: entries.length });
@@ -662,11 +698,30 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
     }
   }
 
-  const twinTarget = pending.find((item) => item.metabot && !item.botResult.error && isTwinTarget(item));
-  if (twinTarget?.metabot) {
-    twinTarget.metabot = metabotStore.updateMetabot(twinTarget.metabot.id, { metabot_type: 'twin' }) ?? twinTarget.metabot;
-  } else {
-    metabotStore.ensureTwinExists();
+  // Twin finalization. Every restore-capable device already holds a Twin —
+  // the welcome flow creates one before the user can import a mnemonic, and
+  // with no Twin at all `ensureTwinExists` inside the skeleton restore
+  // promotes the first restored bot. Promoting the backup's Twin onto either
+  // of those throws TWIN_ALREADY_EXISTS and used to abort the whole restore.
+  // The backup's Twin carries the user's real persona and memories, so it
+  // wins: demote the local placeholder Twin(s) and retry the promotion.
+  try {
+    const twinTarget = pending.find((item) => item.metabot && !item.botResult.error && isTwinTarget(item));
+    if (twinTarget?.metabot) {
+      try {
+        twinTarget.metabot = metabotStore.updateMetabot(twinTarget.metabot.id, { metabot_type: 'twin' }) ?? twinTarget.metabot;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message !== 'TWIN_ALREADY_EXISTS') throw error;
+        metabotStore.demoteOtherTwins(twinTarget.metabot.id);
+        twinTarget.metabot = metabotStore.updateMetabot(twinTarget.metabot.id, { metabot_type: 'twin' }) ?? twinTarget.metabot;
+      }
+    } else {
+      metabotStore.ensureTwinExists();
+    }
+    deps.saveDb?.();
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
   }
 
   for (const item of pending) {
