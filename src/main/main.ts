@@ -170,6 +170,14 @@ import {
 import { executeWalletMvcTransfer } from './services/walletTransferService';
 import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
+import {
+  broadcastMvcTx,
+  createMrc721Collection,
+  createMrc721Mint,
+  transferMrc721Item,
+  type Mrc721CreatePinFn,
+} from './services/mrc721Service';
+import { buildMvcTransferRawTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import {
   buildTokenTransferPreview as buildTokenTransferPreviewService,
@@ -3731,6 +3739,25 @@ const createCerebellumEffortSelector = () =>
 function estimateMvcPinNeedSats(): number {
   return Math.ceil(resolveCreatePinFeeRate('mvc') * 600);
 }
+
+/**
+ * mrc721_* tool backends (R6 of the IDBots MRC-721 requirements): pin-based
+ * MetaID NFT writes from the session bot's OWN wallet. createPin resolves the
+ * fee tier like the metabotChainWrite backend; the chain-write budget is
+ * applied per tool op in the mrc721Tools control below (one budget per
+ * collection_create / mint / transfer, not per pin).
+ */
+const mrc721CreatePinBackend: Mrc721CreatePinFn = (metabotId, metaidData, options) =>
+  withMvcBalanceHint(
+    getMetabotStore(),
+    metabotId,
+    options?.network,
+    () => createPin(getMetabotStore(), metabotId, metaidData, {
+      ...options,
+      feeRate: options?.feeRate ?? resolveCreatePinFeeRate(options?.network ?? 'mvc'),
+    }),
+    { estimateNeedSats: () => estimateMvcPinNeedSats() },
+  );
 
 // metaso-p2p social (friend & simpleblock) API options: IDBOTS_SOCIAL_API_BASE_URL
 // overrides the default so.metaid.io base for staging integration ahead of
@@ -7564,6 +7591,34 @@ const getCoworkRunner = () => {
           feeRate: getGlobalFeeRate('mvc'),
         }),
       ),
+      },
+      // mrc721_* tool backends (MRC-721 pin-based MetaID NFTs, R6): one
+      // chain-write budget per tool op (collection_create / mint / transfer),
+      // not per pin — a mint is one mint pin plus an optional item_desc pin.
+      // The transfer backend spends the item UTXO via the forced-outpoint
+      // raw-tx builder (include_outpoints) and broadcasts through wallet-api.
+      mrc721Tools: {
+        getMetabotMvcAddress: (metabotId) =>
+          getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
+        resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        collectionCreate: (input) => withChainWriteBudget(
+          'mrc721_collection_create',
+          () => createMrc721Collection({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        mint: (input) => withChainWriteBudget(
+          'mrc721_mint',
+          () => createMrc721Mint({ createPin: mrc721CreatePinBackend }, input),
+        ),
+        transfer: (input) => withChainWriteBudget(
+          'mrc721_transfer',
+          () => transferMrc721Item(
+            {
+              buildRawTx: (store, params) => buildMvcTransferRawTx(store, params),
+              broadcastTx: broadcastMvcTx,
+            },
+            { ...input, store: getMetabotStore(), feeRate: getGlobalFeeRate('mvc') },
+          ),
+        ),
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then

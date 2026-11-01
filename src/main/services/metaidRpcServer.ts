@@ -91,7 +91,7 @@ import {
 } from './chatGatewayRoutes';
 import { sendBotBrowserOpenUri } from './botBrowserOpenUriService';
 import { uploadMetaFile } from './metaFileUploadService';
-import { buildMvcFtTransferRawTx, buildMvcOrderedRawTxBundle, buildMvcTransferRawTx } from './walletRawTxService';
+import { buildMvcFtTransferRawTx, buildMvcOrderedRawTxBundle, buildMvcTransferRawTx, type BuildMvcTransferRawTxParams } from './walletRawTxService';
 import { executeTransfer } from './transferService';
 import { parseAddressIndexFromPath } from './metabotWalletService';
 import { executeMrc20Transfer } from './mrc20Service';
@@ -1360,6 +1360,7 @@ export function startMetaidRpcServer(
         amount_sats?: number;
         fee_rate?: number;
         exclude_outpoints?: string[];
+        include_outpoints?: Array<{ txid?: string; vout?: number; satoshis?: number }>;
       };
       try {
         parsed = JSON.parse(body) as {
@@ -1368,6 +1369,7 @@ export function startMetaidRpcServer(
           amount_sats?: number;
           fee_rate?: number;
           exclude_outpoints?: string[];
+          include_outpoints?: Array<{ txid?: string; vout?: number; satoshis?: number }>;
         };
       } catch {
         res.writeHead(400);
@@ -1382,6 +1384,12 @@ export function startMetaidRpcServer(
           amountSats: Number(parsed.amount_sats),
           feeRate: Number(parsed.fee_rate),
           excludeOutpoints: parsed.exclude_outpoints,
+          // Optional force-spend (MRC-721 transfers); shape-validated inside
+          // buildMvcTransferRawTx (validateIncludeOutpoints). Omitted from the
+          // params entirely when absent — callers diff the params contract.
+          ...(parsed.include_outpoints
+            ? { includeOutpoints: parsed.include_outpoints as BuildMvcTransferRawTxParams['includeOutpoints'] }
+            : {}),
         });
         res.writeHead(200);
         res.end(JSON.stringify({ success: true, ...result }));

@@ -288,6 +288,10 @@ import {
   buildWalletAgentTools,
   type WalletToolsControl,
 } from './walletAgentTools';
+import {
+  buildMrc721AgentTools,
+  type Mrc721ToolsControl,
+} from './mrc721AgentTools';
 import type { ExternalTransferInfo } from '../services/walletTransferService';
 import {
   buildPrivateChatAgentTools,
@@ -2378,6 +2382,13 @@ export interface CoworkRunnerOptions {
    */
   walletTools?: WalletToolsControl;
   /**
+   * When set, every cowork session gets the mrc721_* tools (MRC-721 pin-based
+   * MetaID NFTs): collection issue/mint/transfer from the session bot's own
+   * wallet plus index reads (holdings, collections, item/collection detail).
+   * Separate lineage from the MetaContract wallet_nft_* tools.
+   */
+  mrc721Tools?: Mrc721ToolsControl;
+  /**
    * When set, every cowork session gets the describe_image tool backed by
    * recognizeImageViaRelay() (services/visionRelayService.ts). The relay's
    * VLM reads a local image and returns a text description + OCR, so sessions
@@ -2710,6 +2721,7 @@ export class CoworkRunner extends EventEmitter {
   private predictionTools?: PredictionAgentControl;
   private metaFileUpload?: MetaFileUploadControl;
   private walletTools?: WalletToolsControl;
+  private mrc721Tools?: Mrc721ToolsControl;
   private visionRelay?: VisionRelayControl;
   private mediaTools?: MediaToolsControl;
   private metabotManage?: MetabotManageControl;
@@ -2897,6 +2909,7 @@ export class CoworkRunner extends EventEmitter {
     this.predictionTools = options?.predictionTools;
     this.metaFileUpload = options?.metaFileUpload;
     this.walletTools = options?.walletTools;
+    this.mrc721Tools = options?.mrc721Tools;
     this.visionRelay = options?.visionRelay;
     this.mediaTools = options?.mediaTools;
     this.metabotManage = options?.metabotManage;
@@ -13114,6 +13127,20 @@ export class CoworkRunner extends EventEmitter {
           sessionId,
           resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
           confirmExternalTransfer: (info) => this.confirmExternalTransfer(sessionId, info),
+        })
+      );
+    }
+    // MRC-721 tools (pin-based MetaID NFTs): issue/mint/transfer from the
+    // session bot's OWN wallet plus index reads. Separate lineage from the
+    // MetaContract wallet_nft_* tools above — the mrc721_ prefix is the
+    // protocol naming boundary.
+    if (this.mrc721Tools) {
+      memoryTools.push(
+        ...buildMrc721AgentTools({
+          tool,
+          control: this.mrc721Tools,
+          sessionId,
+          resolveMetabotId: (sid) => this.getMemoryBackend().resolveMetabotIdForMemory(sid) ?? undefined,
         })
       );
     }
