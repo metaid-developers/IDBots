@@ -87,6 +87,10 @@ const IMSettings: React.FC = () => {
   const [qqAppSecret, setQqAppSecret] = useState('');
   const [qqSaving, setQqSaving] = useState(false);
   const [qqSaveMessage, setQqSaveMessage] = useState('');
+  // QQ security surface (group policy + layer-3 switch). Enforced in the main
+  // process; this UI only edits the config.
+  const [qqGroupAllowlistText, setQqGroupAllowlistText] = useState('');
+  const [qqLocalAllowFromText, setQqLocalAllowFromText] = useState('');
 
   // Subscribe to language changes
   useEffect(() => {
@@ -421,6 +425,38 @@ const IMSettings: React.FC = () => {
   const telegramConnected = status.telegram.connected;
   const discordConnected = status.discord.connected;
   const weixinConnected = status.weixin.connected;
+  const qqGroupAllowlistSignature = (config.qq.groupAllowlist ?? []).join('\n');
+  const qqLocalAllowFromSignature = (config.qq.localToolsAllowFrom ?? []).join('\n');
+  useEffect(() => {
+    setQqGroupAllowlistText(qqGroupAllowlistSignature);
+  }, [qqGroupAllowlistSignature]);
+  useEffect(() => {
+    setQqLocalAllowFromText(qqLocalAllowFromSignature);
+  }, [qqLocalAllowFromSignature]);
+
+  const parseQQIdList = (text: string): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of text.split(/[\n,]/)) {
+      const id = raw.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  };
+
+  const saveQQSecurity = async (patch: Partial<typeof config.qq>) => {
+    try {
+      dispatch(setQQConfig(patch));
+      const next = store.getState().im.config;
+      await imService.updateConfig({ qq: next.qq });
+      setQqSaveMessage(i18nService.t('qqConnected'));
+    } catch (error: any) {
+      setQqLoginError(error?.message ?? String(error));
+    }
+  };
+
   const qqConnected = status.qq.connected;
 
   // Compute visible platforms based on language
@@ -1098,6 +1134,93 @@ const IMSettings: React.FC = () => {
             <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
               {i18nService.t('qqGroupHint')}
             </p>
+
+            <div className="space-y-2 rounded-xl border dark:border-claude-darkBorder border-claude-border p-3">
+              <p className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                {i18nService.t('qqSecurityTitle')}
+              </p>
+
+              <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('qqGroupPolicyLabel')}
+              </label>
+              <select
+                value={config.qq.groupPolicy ?? 'allowlist'}
+                onChange={(e) => {
+                  const value = e.target.value as 'open' | 'allowlist' | 'disabled';
+                  void saveQQSecurity({ groupPolicy: value });
+                }}
+                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm"
+              >
+                <option value="allowlist">{i18nService.t('qqGroupPolicyAllowlist')}</option>
+                <option value="open">{i18nService.t('qqGroupPolicyOpen')}</option>
+                <option value="disabled">{i18nService.t('qqGroupPolicyDisabled')}</option>
+              </select>
+
+              {(config.qq.groupPolicy ?? 'allowlist') === 'allowlist' && (
+                <>
+                  <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('qqGroupAllowlistLabel')}
+                  </label>
+                  <textarea
+                    value={qqGroupAllowlistText}
+                    onChange={(e) => setQqGroupAllowlistText(e.target.value)}
+                    onBlur={() => {
+                      void saveQQSecurity({ groupAllowlist: parseQQIdList(qqGroupAllowlistText) });
+                    }}
+                    rows={3}
+                    placeholder={i18nService.t('qqGroupAllowlistEmpty')}
+                    spellCheck={false}
+                    className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs font-mono"
+                  />
+                  <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {i18nService.t('qqGroupAllowlistHint')}
+                  </p>
+                </>
+              )}
+
+              <label className="flex items-start gap-2 text-xs dark:text-claude-darkText text-claude-text">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={config.qq.localToolsEnabled === true}
+                  onChange={(e) => {
+                    void saveQQSecurity({
+                      localToolsEnabled: e.target.checked,
+                      localToolsAllowFrom: parseQQIdList(qqLocalAllowFromText),
+                    });
+                  }}
+                />
+                <span>{i18nService.t('qqLocalToolsEnable')}</span>
+              </label>
+
+              {config.qq.localToolsEnabled === true && (
+                <>
+                  <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {i18nService.t('qqLocalToolsAllowFromLabel')}
+                  </label>
+                  <textarea
+                    value={qqLocalAllowFromText}
+                    onChange={(e) => setQqLocalAllowFromText(e.target.value)}
+                    onBlur={() => {
+                      void saveQQSecurity({ localToolsAllowFrom: parseQQIdList(qqLocalAllowFromText) });
+                    }}
+                    rows={2}
+                    spellCheck={false}
+                    className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs font-mono"
+                  />
+                </>
+              )}
+
+              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('qqLocalToolsHint')}
+              </p>
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {i18nService.t('qqGroupInviteWarning')}
+              </p>
+              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('qqGroupIsolationHint')}
+              </p>
+            </div>
 
             {renderMetabotSelector('qq')}
 

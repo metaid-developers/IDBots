@@ -127,6 +127,14 @@ export interface QQConfig {
   appSecret?: string;
   metabotId?: number | null;
   debug?: boolean;
+  /** Group policy: open | allowlist | disabled. Missing => strictest. */
+  groupPolicy?: 'open' | 'allowlist' | 'disabled';
+  /** Group OpenIDs served when groupPolicy === 'allowlist'. */
+  groupAllowlist?: string[];
+  /** Layer 3 (local machine operations). Default OFF. */
+  localToolsEnabled?: boolean;
+  /** Stable ids allowed to use layer 3 after the switch is on. */
+  localToolsAllowFrom?: string[];
 }
 
 export interface QQGatewayStatus {
