@@ -262,6 +262,11 @@ export const defaultQQMediaNetwork: QQMediaNetwork = {
       if (!response.ok) {
         throw new QQMediaError(`media download failed with HTTP ${response.status}`);
       }
+      // `fetch` follows redirects. Re-validate the FINAL hop so a signed CDN URL
+      // cannot bounce the request onto a private/loopback host.
+      if (response.url) {
+        assertQQMediaUrl(response.url);
+      }
       const declared = Number(response.headers.get('content-length') || '');
       if (Number.isFinite(declared) && declared > options.maxBytes) {
         throw new QQMediaError(`media download refused: declared size ${declared} exceeds ${options.maxBytes}`);
