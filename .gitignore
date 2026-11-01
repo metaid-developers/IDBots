@@ -721,6 +721,8 @@ man_base_data_pebble/
 !tests/inlineHtmlReportBlock.test.tsx
 !tests/inlineMetaAppBlock.test.tsx
 !tests/markdownContentSingleTilde.test.tsx
+!tests/nftCardMarkdown.test.tsx
+!tests/walletNftCardAttach.test.mjs
 !tests/groupTaskWorkingState.test.mjs
 !tests/groupTaskSkillTurnMemoryReadOnly.test.mjs
 !tests/coworkAssistantModeSessionGate.test.ts
