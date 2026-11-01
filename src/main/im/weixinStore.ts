@@ -45,7 +45,6 @@ export function normalizeWeixinAccountId(accountId?: string | null): string {
  */
 export function resolveDefaultWeixinStateDir(): string {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const electron = require('electron');
     const userData = electron?.app?.getPath?.('userData');
     if (typeof userData === 'string' && userData) {
