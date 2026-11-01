@@ -8,7 +8,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState, store } from '../../store';
 import { imService } from '../../services/im';
-import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setWeixinConfig, clearError } from '../../store/slices/imSlice';
+import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setWeixinConfig, setQQConfig, clearError } from '../../store/slices/imSlice';
 import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
@@ -36,6 +36,7 @@ const platformMeta: Record<IMPlatform, { label: string; logo: string }> = {
   telegram: { label: 'Telegram', logo: 'telegram.svg' },
   discord: { label: 'Discord', logo: 'discord.svg' },
   weixin: { label: 'WeChat', logo: 'weixin.svg' },
+  qq: { label: 'QQ', logo: 'qq.svg' },
 };
 
 const verdictColorClass: Record<IMConnectivityTestResult['verdict'], string> = {
@@ -76,6 +77,15 @@ const IMSettings: React.FC = () => {
   const [weixinLoginLoading, setWeixinLoginLoading] = useState(false);
   const [weixinLoginError, setWeixinLoginError] = useState('');
   const [weixinHasCredentials, setWeixinHasCredentials] = useState(false);
+  // QQ QR authorization + manual credentials (the AppSecret never comes back).
+  const [qqQrImage, setQqQrImage] = useState<string | null>(null);
+  const [qqLoginLoading, setQqLoginLoading] = useState(false);
+  const [qqLoginError, setQqLoginError] = useState('');
+  const [qqHasCredentials, setQqHasCredentials] = useState(false);
+  const [qqAppId, setQqAppId] = useState('');
+  const [qqAppSecret, setQqAppSecret] = useState('');
+  const [qqSaving, setQqSaving] = useState(false);
+  const [qqSaveMessage, setQqSaveMessage] = useState('');
 
   // Subscribe to language changes
   useEffect(() => {
@@ -155,6 +165,107 @@ const IMSettings: React.FC = () => {
   const handleDiscordChange = (field: 'botToken', value: string) => {
     dispatch(setDiscordConfig({ [field]: value }));
   };
+
+  // ==================== QQ authorization ====================
+
+  const refreshQQCredentials = async () => {
+    try {
+      const result = await window.electron.im.qqCheckCredentials();
+      const has = Boolean(result?.success && result.hasCredentials);
+      setQqHasCredentials(has);
+      if (has && result?.appId && !qqAppId) {
+        setQqAppId(result.appId);
+      }
+    } catch {
+      setQqHasCredentials(false);
+    }
+  };
+
+  const renderQQQr = async (content: string) => {
+    try {
+      const dataUrl = await QRCode.toDataURL(content, { width: 320, margin: 1 });
+      setQqQrImage(dataUrl);
+    } catch {
+      setQqQrImage(null);
+      setQqLoginError(i18nService.t('qqScanExpired'));
+    }
+  };
+
+  const handleQQScan = async () => {
+    setQqLoginLoading(true);
+    setQqLoginError('');
+    setQqSaveMessage('');
+    try {
+      const result = await window.electron.im.qqLoginStart();
+      if (result?.success && result.content) {
+        await renderQQQr(result.content);
+        await refreshQQCredentials();
+      } else {
+        setQqLoginError(result?.error || i18nService.t('qqScanExpired'));
+      }
+    } catch (error: any) {
+      setQqLoginError(error?.message || 'Failed to start the QQ QR login');
+    } finally {
+      setQqLoginLoading(false);
+    }
+  };
+
+  const handleQQCancelScan = async () => {
+    try {
+      await window.electron.im.qqLoginCancel();
+    } catch {
+      // ignore: the pending login times out on its own
+    }
+    setQqQrImage(null);
+  };
+
+  const handleQQFillCredentials = async () => {
+    const appId = qqAppId.trim();
+    const appSecret = qqAppSecret.trim();
+    if (!appId || !appSecret) {
+      setQqLoginError(i18nService.t('qqCredentialsRequired'));
+      return;
+    }
+    setQqSaving(true);
+    setQqLoginError('');
+    setQqSaveMessage('');
+    try {
+      const saved = await window.electron.im.qqSetCredentials({ appId, appSecret });
+      if (!saved?.success) {
+        setQqLoginError(saved?.error || 'Failed to save QQ credentials');
+        return;
+      }
+      // The secret is now in the 0600 store; drop the renderer copy immediately.
+      setQqAppSecret('');
+      dispatch(setQQConfig({ appId }));
+      await imService.updateConfig({ qq: { ...config.qq, enabled: true, appId } });
+      const started = await imService.startGateway('qq');
+      setQqHasCredentials(true);
+      setQqSaveMessage(started ? i18nService.t('qqConnected') : i18nService.t('qqSavedNotConnected'));
+    } catch (error: any) {
+      setQqLoginError(error?.message || 'Failed to save QQ credentials');
+    } finally {
+      setQqSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshQQCredentials();
+  }, []);
+
+  useEffect(() => {
+    if (status.qq.loginPending && status.qq.qrContent) {
+      setQqLoginError('');
+      void renderQQQr(status.qq.qrContent);
+    }
+    if (!status.qq.loginPending) {
+      setQqQrImage(null);
+    }
+    if (status.qq.connected) {
+      setQqHasCredentials(true);
+      if (status.qq.appId) setQqAppId(status.qq.appId);
+    }
+  }, [status.qq.loginPending, status.qq.qrContent, status.qq.connected, status.qq.appId]);
 
   const handleChainListenerToggle = async (type: ChainListenerToggleType, enabled: boolean) => {
     setChainListenerLoading(true);
@@ -318,6 +429,7 @@ const IMSettings: React.FC = () => {
   const telegramConnected = status.telegram.connected;
   const discordConnected = status.discord.connected;
   const weixinConnected = status.weixin.connected;
+  const qqConnected = status.qq.connected;
 
   // Compute visible platforms based on language
   const platforms = useMemo<IMPlatform[]>(() => {
@@ -349,6 +461,9 @@ const IMSettings: React.FC = () => {
     if (platform === 'weixin') {
       return weixinHasCredentials;
     }
+    if (platform === 'qq') {
+      return qqHasCredentials;
+    }
     return !!(config.feishu.appId && config.feishu.appSecret);
   };
 
@@ -363,6 +478,7 @@ const IMSettings: React.FC = () => {
     if (platform === 'telegram') return telegramConnected;
     if (platform === 'discord') return discordConnected;
     if (platform === 'weixin') return weixinConnected;
+    if (platform === 'qq') return qqConnected;
     return feishuConnected;
   };
 
@@ -873,6 +989,132 @@ const IMSettings: React.FC = () => {
             {status.weixin.lastError && (
               <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
                 {status.weixin.lastError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* QQ Settings (official QQ Open Platform bot) */}
+        {activePlatform === 'qq' && (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+              {i18nService.t('qqChannelNotice')}
+            </div>
+
+            <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {qqConnected
+                ? i18nService.t('qqConnected')
+                : qqHasCredentials
+                  ? i18nService.t('qqReady')
+                  : i18nService.t('qqNoCredentials')}
+            </div>
+
+            {qqQrImage && (
+              <div className="flex flex-col items-center gap-2 rounded-xl border dark:border-claude-darkBorder border-claude-border p-3">
+                <img src={qqQrImage} alt="QQ QR code" className="h-40 w-40" />
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {status.qq.loginState === 'scanned' || status.qq.loginState === 'confirmed'
+                    ? i18nService.t('qqScanScanned')
+                    : i18nService.t('qqScanWaiting')}
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {!status.qq.loginPending ? (
+                <button
+                  type="button"
+                  onClick={() => { void handleQQScan(); }}
+                  disabled={qqLoginLoading}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                >
+                  <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
+                  {qqLoginLoading ? i18nService.t('loading') : i18nService.t('qqScanConnect')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { void handleQQCancelScan(); }}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                >
+                  <XMarkIcon className="h-3.5 w-3.5 mr-1.5" />
+                  {i18nService.t('qqScanCancel')}
+                </button>
+              )}
+              {qqConnected && (
+                <button
+                  type="button"
+                  onClick={() => { void imService.stopGateway('qq'); }}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors active:scale-[0.98]"
+                >
+                  {i18nService.t('qqDisconnect')}
+                </button>
+              )}
+              {renderConnectivityTestButton('qq')}
+            </div>
+
+            <div className="space-y-1.5 rounded-xl border dark:border-claude-darkBorder border-claude-border p-3">
+              <p className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                {i18nService.t('qqManualTitle')}
+              </p>
+              <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                AppID
+              </label>
+              <input
+                type="text"
+                value={qqAppId}
+                onChange={(e) => setQqAppId(e.target.value)}
+                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                placeholder="1020xxxxxx"
+                autoComplete="off"
+              />
+              <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                AppSecret
+              </label>
+              <input
+                type="password"
+                value={qqAppSecret}
+                onChange={(e) => setQqAppSecret(e.target.value)}
+                className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
+                placeholder={qqHasCredentials ? '••••••••••••••••' : ''}
+                autoComplete="new-password"
+              />
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { void handleQQFillCredentials(); }}
+                  disabled={qqSaving}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                >
+                  {qqSaving ? i18nService.t('loading') : i18nService.t('qqSaveConnect')}
+                </button>
+                {qqSaveMessage && (
+                  <span className="text-xs text-green-600 dark:text-green-400">{qqSaveMessage}</span>
+                )}
+              </div>
+              <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                {i18nService.t('qqSecretHint')}
+              </p>
+            </div>
+
+            <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('qqScanHint')}
+            </p>
+            <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+              {i18nService.t('qqGroupHint')}
+            </p>
+
+            {renderMetabotSelector('qq')}
+
+            {qqLoginError && (
+              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+                {qqLoginError}
+              </div>
+            )}
+
+            {status.qq.lastError && (
+              <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">
+                {status.qq.lastError}
               </div>
             )}
           </div>

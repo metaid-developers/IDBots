@@ -112,9 +112,38 @@ export interface WeixinGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== QQ Types ====================
+
+export interface QQConfig {
+  enabled: boolean;
+  /** QQ Open Platform AppID (public identifier). */
+  appId: string;
+  botId?: string | null;
+  ownerUserOpenid?: string | null;
+  /**
+   * Write-only: the renderer may send an AppSecret to `im:qq:credentials:set`,
+   * but `im:config:get` never returns one. Do not render or persist this value.
+   */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+export interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  appId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
@@ -122,6 +151,7 @@ export interface IMGatewayConfig {
   telegram: TelegramConfig;
   discord: DiscordConfig;
   weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
 
@@ -136,6 +166,7 @@ export interface IMGatewayStatus {
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
   weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -274,12 +305,22 @@ export const DEFAULT_WEIXIN_CONFIG: WeixinConfig = {
   debug: true,
 };
 
+export const DEFAULT_QQ_CONFIG: QQConfig = {
+  enabled: false,
+  appId: '',
+  botId: null,
+  ownerUserOpenid: null,
+  metabotId: null,
+  debug: true,
+};
+
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_CONFIG,
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
   weixin: DEFAULT_WEIXIN_CONFIG,
+  qq: DEFAULT_QQ_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -321,6 +362,17 @@ export const DEFAULT_IM_STATUS: IMGatewayStatus = {
     startedAt: null,
     lastError: null,
     accountId: null,
+    loginPending: false,
+    loginState: 'idle',
+    qrContent: null,
+    lastInboundAt: null,
+    lastOutboundAt: null,
+  },
+  qq: {
+    connected: false,
+    startedAt: null,
+    lastError: null,
+    appId: null,
     loginPending: false,
     loginState: 'idle',
     qrContent: null,
