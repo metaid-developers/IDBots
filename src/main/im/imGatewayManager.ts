@@ -9,6 +9,7 @@ import { DingTalkGateway } from './dingtalkGateway';
 import { FeishuGateway } from './feishuGateway';
 import { TelegramGateway } from './telegramGateway';
 import { DiscordGateway } from './discordGateway';
+import { WeixinGateway } from './weixinGateway';
 import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
@@ -30,7 +31,7 @@ import { tApp } from '../libs/appLanguage';
 
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
-const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord'] as const;
+const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin'] as const;
 type ManagedIMPlatform = typeof MANAGED_IM_PLATFORMS[number];
 
 export interface IMGatewayManagerOptions {
@@ -43,6 +44,7 @@ export class IMGatewayManager extends EventEmitter {
   private feishuGateway: FeishuGateway;
   private telegramGateway: TelegramGateway;
   private discordGateway: DiscordGateway;
+  private weixinGateway: WeixinGateway;
   private imStore: IMStore;
   private chatHandler: IMChatHandler | null = null;
   private coworkHandler: IMCoworkHandler | null = null;
@@ -61,6 +63,7 @@ export class IMGatewayManager extends EventEmitter {
     this.feishuGateway = new FeishuGateway();
     this.telegramGateway = new TelegramGateway();
     this.discordGateway = new DiscordGateway();
+    this.weixinGateway = new WeixinGateway();
 
     // Store Cowork dependencies if provided
     if (options?.coworkRunner && options?.coworkStore) {
@@ -138,6 +141,30 @@ export class IMGatewayManager extends EventEmitter {
     this.discordGateway.on('message', (message: IMMessage) => {
       this.emit('message', message);
     });
+
+    // Weixin events
+    this.weixinGateway.on('status', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('connected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('disconnected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('error', (error) => {
+      this.emit('error', { platform: 'weixin', error });
+      this.emit('statusChange', this.getStatus());
+    });
+    this.weixinGateway.on('message', (message: IMMessage) => {
+      this.emit('message', message);
+    });
+    this.weixinGateway.on('login', (result: { state: string }) => {
+      // QR authorization reached a terminal state; surface it so the settings UI
+      // and any listener can react (a confirmed login is persisted by the gateway).
+      this.emit('statusChange', this.getStatus());
+      this.emit('weixinLogin', result);
+    });
   }
 
   /**
@@ -165,6 +192,11 @@ export class IMGatewayManager extends EventEmitter {
     if (this.discordGateway && !this.discordGateway.isConnected()) {
       console.log('[IMGatewayManager] Reconnecting Discord...');
       this.discordGateway.reconnectIfNeeded();
+    }
+
+    if (this.weixinGateway && !this.weixinGateway.isConnected()) {
+      console.log('[IMGatewayManager] Reconnecting Weixin...');
+      this.weixinGateway.reconnectIfNeeded();
     }
   }
 
@@ -227,6 +259,7 @@ export class IMGatewayManager extends EventEmitter {
     this.feishuGateway.setMessageCallback(messageHandler);
     this.telegramGateway.setMessageCallback(messageHandler);
     this.discordGateway.setMessageCallback(messageHandler);
+    this.weixinGateway.setMessageCallback(messageHandler);
   }
 
   /**
@@ -302,6 +335,7 @@ export class IMGatewayManager extends EventEmitter {
       feishu: this.feishuGateway.getStatus(),
       telegram: this.telegramGateway.getStatus(),
       discord: this.discordGateway.getStatus(),
+      weixin: this.weixinGateway.getStatus(),
     };
   }
 
@@ -515,6 +549,8 @@ export class IMGatewayManager extends EventEmitter {
       await this.telegramGateway.start(config.telegram);
     } else if (platform === 'discord') {
       await this.discordGateway.start(config.discord);
+    } else if (platform === 'weixin') {
+      await this.weixinGateway.start(config.weixin);
     }
   }
 
@@ -530,7 +566,51 @@ export class IMGatewayManager extends EventEmitter {
       await this.telegramGateway.stop();
     } else if (platform === 'discord') {
       await this.discordGateway.stop();
+    } else if (platform === 'weixin') {
+      await this.weixinGateway.stop();
     }
+  }
+
+  // ==================== Weixin QR authorization ====================
+
+  /**
+   * Start a Weixin QR authorization: request a QR payload and keep polling in the
+   * background. The token returned by `confirmed` is written to the credential
+   * file (mode 0600) by the gateway — never into the renderer-visible config.
+   * On success the channel is enabled and started.
+   */
+  async startWeixinLogin(): Promise<{ qrcode: string; content: string }> {
+    this.updateChatHandler();
+
+    const onLogin = async (result: { state: string; error?: string | null }): Promise<void> => {
+      this.weixinGateway.off('login', onLogin);
+      if (result.state !== 'confirmed') {
+        this.emit('statusChange', this.getStatus());
+        return;
+      }
+      this.imStore.setWeixinConfig({ enabled: true });
+      try {
+        await this.startGateway('weixin');
+        console.log('[IMGatewayManager] Weixin channel authorized and started');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Weixin authorized but failed to start: ${error.message}`);
+      }
+      this.emit('statusChange', this.getStatus());
+    };
+
+    const qr = await this.weixinGateway.beginLogin();
+    this.weixinGateway.on('login', onLogin);
+    return { qrcode: qr.qrcode, content: qr.content };
+  }
+
+  /** Abort a pending Weixin QR authorization. */
+  async cancelWeixinLogin(): Promise<void> {
+    await this.weixinGateway.cancelLogin();
+  }
+
+  /** Whether the Weixin channel has a stored token (drives the settings UI state). */
+  hasWeixinCredentials(): boolean {
+    return this.weixinGateway.hasCredentials(this.imStore.getWeixinConfig());
   }
 
   /**
@@ -570,6 +650,14 @@ export class IMGatewayManager extends EventEmitter {
         console.error(`[IMGatewayManager] Failed to start Discord: ${error.message}`);
       }
     }
+
+    if (config.weixin.enabled && this.weixinGateway.hasCredentials(config.weixin)) {
+      try {
+        await this.startGateway('weixin');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Failed to start Weixin: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -581,6 +669,7 @@ export class IMGatewayManager extends EventEmitter {
       this.feishuGateway.stop(),
       this.telegramGateway.stop(),
       this.discordGateway.stop(),
+      this.weixinGateway.stop(),
     ]);
   }
 
@@ -588,7 +677,7 @@ export class IMGatewayManager extends EventEmitter {
    * Check if any gateway is connected
    */
   isAnyConnected(): boolean {
-    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected();
+    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected() || this.weixinGateway.isConnected();
   }
 
   /**
@@ -603,6 +692,9 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'discord') {
       return this.discordGateway.isConnected();
+    }
+    if (platform === 'weixin') {
+      return this.weixinGateway.isConnected();
     }
     return this.feishuGateway.isConnected();
   }
@@ -627,6 +719,8 @@ export class IMGatewayManager extends EventEmitter {
         await this.telegramGateway.sendNotification(text);
       } else if (platform === 'discord') {
         await this.discordGateway.sendNotification(text);
+      } else if (platform === 'weixin') {
+        await this.weixinGateway.sendNotification(text);
       }
       return true;
     } catch (error: any) {
@@ -647,6 +741,7 @@ export class IMGatewayManager extends EventEmitter {
       feishu: { ...current.feishu, ...(configOverride.feishu || {}) },
       telegram: { ...current.telegram, ...(configOverride.telegram || {}) },
       discord: { ...current.discord, ...(configOverride.discord || {}) },
+      weixin: { ...current.weixin, ...(configOverride.weixin || {}) },
       settings: { ...current.settings, ...(configOverride.settings || {}) },
     };
   }
@@ -666,6 +761,9 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'telegram') {
       return (config.telegram.botToken || '').trim() ? [] : ['botToken'];
+    }
+    if (platform === 'weixin') {
+      return this.weixinGateway.hasCredentials(config.weixin) ? [] : ['weixinQrLogin'];
     }
     return (config.discord.botToken || '').trim() ? [] : ['botToken'];
   }
@@ -705,6 +803,10 @@ export class IMGatewayManager extends EventEmitter {
       });
     }
 
+    if (platform === 'weixin') {
+      return this.weixinGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS);
+    }
+
     const discordToken = (config.discord.botToken || '').trim();
     const response = await axios.get('https://discord.com/api/v10/users/@me', {
       timeout: CONNECTIVITY_TIMEOUT_MS,
@@ -740,6 +842,7 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'dingtalk') return status.dingtalk.startedAt;
     if (platform === 'telegram') return status.telegram.startedAt;
+    if (platform === 'weixin') return status.weixin.startedAt;
     return status.discord.startedAt;
   }
 
@@ -747,6 +850,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastInboundAt;
     if (platform === 'feishu') return status.feishu.lastInboundAt;
     if (platform === 'telegram') return status.telegram.lastInboundAt;
+    if (platform === 'weixin') return status.weixin.lastInboundAt;
     return status.discord.lastInboundAt;
   }
 
@@ -754,6 +858,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastOutboundAt;
     if (platform === 'feishu') return status.feishu.lastOutboundAt;
     if (platform === 'telegram') return status.telegram.lastOutboundAt;
+    if (platform === 'weixin') return status.weixin.lastOutboundAt;
     return status.discord.lastOutboundAt;
   }
 
@@ -761,6 +866,7 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastError;
     if (platform === 'feishu') return status.feishu.error;
     if (platform === 'telegram') return status.telegram.lastError;
+    if (platform === 'weixin') return status.weixin.lastError;
     return status.discord.lastError;
   }
 
