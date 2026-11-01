@@ -216,15 +216,24 @@ class IdBuzzList extends HTMLElement {
   }
 
   /**
-   * True when the current tab is served by a declared substitute read path
-   * (FetchBuzzCommand sets buzz.tabs[tab].degraded). Drives the on-screen
-   * degradation notice so a degraded feed is never passed off as native.
+   * i18n key of the on-screen degradation notice for the current tab, or ''
+   * when the tab is served natively. FetchBuzzCommand sets
+   * buzz.tabs[tab].degraded (recommend served as hot) and
+   * buzz.tabs[tab].chainFallback (aggregation layer unreachable; raw chain
+   * pins served without engagement counts) — a degraded feed is never
+   * passed off as native.
    */
-  _isDegradedTab() {
+  _degradedNoticeKey() {
     var tab = this._getCurrentTab();
-    if (tab !== 'recommend') return false;
     var buzz = this._getStore('buzz');
-    return !!(buzz && buzz.tabs && buzz.tabs.recommend && buzz.tabs.recommend.degraded === true);
+    var tabState = buzz && buzz.tabs && buzz.tabs[tab];
+    if (tabState && tabState.chainFallback === true) return 'buzz.list.degradedChain';
+    if (tab === 'recommend' && tabState && tabState.degraded === true) return 'buzz.list.degradedRecommend';
+    return '';
+  }
+
+  _isDegradedTab() {
+    return !!this._degradedNoticeKey();
   }
 
   _parseProfileMetaidFromPath(path) {
@@ -1550,7 +1559,7 @@ class IdBuzzList extends HTMLElement {
           </div>
         </div>
         <div class="buzz-list">
-          ${this._isDegradedTab() ? `<div class="degraded-note">${this._escapeHtml(this._t('buzz.list.degradedRecommend', 'Personalized recommendations are temporarily unavailable; showing hot posts from the last 48h instead.'))}</div>` : ''}
+          ${this._isDegradedTab() ? `<div class="degraded-note">${this._escapeHtml(this._t(this._degradedNoticeKey(), ''))}</div>` : ''}
           ${this._loading ? `<div class="loading"><span class="spinner"></span>${this._escapeHtml(this._t('buzz.list.loadingBuzz', 'Loading buzz...'))}</div>` : ''}
           ${!this._loading && this._error ? `<div class="error">${this._escapeHtml(this._error)}</div>` : ''}
           ${!this._loading && !this._error && this._buzzList.length === 0 ? `<div class="empty">${this._escapeHtml(this._emptyMessage || this._t('buzz.list.emptyDefault', 'No buzz data.'))}</div>` : ''}

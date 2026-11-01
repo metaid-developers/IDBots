@@ -254,25 +254,28 @@ class IdBuzzActions extends HTMLElement {
     return false;
   }
 
-  // Tri-state engagement counts: null = the index offered no count for this
-  // pin (unknown — never fabricate a 0); a number (including 0) is real.
+  // Tri-state engagement counts: the string 'unavailable' = the index
+  // offered no count for this pin (unknown — never fabricate a 0; null is
+  // never used as the unknown marker because `|| 0` swallows it silently);
+  // a number (including 0) is real.
   _baseCount(item, key) {
     var raw = item ? item[key] : undefined;
-    if (raw === null || raw === undefined || raw === '') return null;
+    if (raw === null || raw === undefined || raw === '') return 'unavailable';
+    if (typeof raw === 'string' && raw.trim().toLowerCase() === 'unavailable') return 'unavailable';
     var parsed = typeof raw === 'number' ? raw : Number(String(raw).trim());
-    return Number.isFinite(parsed) ? parsed : null;
+    return Number.isFinite(parsed) ? parsed : 'unavailable';
   }
 
   // Apply a local delta on top of a possibly-unknown base: unknown stays the
   // delta itself once the user acts; a known base shifts normally.
   _countWithDelta(base, delta) {
-    if (base === null) return delta > 0 ? delta : null;
+    if (base === 'unavailable') return delta > 0 ? delta : 'unavailable';
     return Math.max(0, base + delta);
   }
 
   // Render a tri-state count: unknown renders as "—", a real 0 as "0".
   _formatCount(value) {
-    return (value === null || value === undefined) ? '—' : String(value);
+    return value === 'unavailable' ? '—' : String(value);
   }
 
   _makeSnapshot() {

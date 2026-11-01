@@ -35,6 +35,7 @@ CLAUDE.md
 localdocs/
 docs/*
 !docs/twin-bot-orchestration.md
+!docs/social-read-resilience.md
 !docs/nft-trade-protocol-draft.md
 !docs/cloud-mobile/
 !docs/metaid_protocols/

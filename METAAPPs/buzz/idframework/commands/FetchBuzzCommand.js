@@ -82,8 +82,29 @@ export default class FetchBuzzCommand {
       };
     }
 
-    var rawResponse = await delegate('social_agg', endpoint, { method: 'GET' });
-    var normalized = this._normalizeSocialBuzzResponse(rawResponse);
+    // Ordered read path (BOT-009 supplement #7): level 1 aggregation feed,
+    // level 2 chain-sourced direct pin read via manapi (new → pins_by_path,
+    // profile → pins_by_metaid; following/hot/recommend have no chain
+    // equivalent — a follow graph and an engagement ranking are aggregation
+    // constructs), level 3 throw → the UI's explicit fetch-failed state.
+    var rawResponse;
+    var chainFallback = false;
+    try {
+      rawResponse = await delegate('social_agg', endpoint, { method: 'GET' });
+    } catch (aggError) {
+      var chainEndpoint = this._buildChainFallbackEndpoint({ tab: tab, size: size, cursor: lastId, metaid: metaid });
+      if (!chainEndpoint) throw aggError;
+      rawResponse = await delegate('metaid_man', chainEndpoint, { method: 'GET' });
+      chainFallback = true;
+    }
+
+    var normalized = chainFallback
+      ? this._normalizePinListResponse(rawResponse)
+      : this._normalizeSocialBuzzResponse(rawResponse);
+    if (chainFallback) {
+      normalized.hasMore = !!(normalized.nextCursor && normalized.list.length > 0);
+    }
+    // Chain-direct rows carry no engagement counts: 'unavailable' per row.
     var enrichedList = await this._enrichBuzzList(normalized.list, delegate);
 
     var result = {
@@ -92,6 +113,7 @@ export default class FetchBuzzCommand {
       nextCursor: normalized.nextCursor,
       hasMore: normalized.hasMore,
       degraded: tab === 'recommend',
+      chainFallback: chainFallback,
     };
 
     if (stores && stores.buzz) {
@@ -99,13 +121,41 @@ export default class FetchBuzzCommand {
       stores.buzz.nextCursor = result.nextCursor;
       stores.buzz.lastUpdatedAt = Date.now();
       if (stores.buzz.tabs && stores.buzz.tabs[tab]) {
-        // Declared degradation: recommend is served as hot; the UI must be
-        // able to say so instead of silently passing it off as personalized.
+        // Declared degradation: recommend is served as hot; a chain fallback
+        // serves raw pins without counts. The UI must be able to say so
+        // instead of silently passing either off as the native feed.
         stores.buzz.tabs[tab].degraded = result.degraded === true;
+        stores.buzz.tabs[tab].chainFallback = result.chainFallback === true;
       }
     }
 
     return result;
+  }
+
+  /**
+   * Level-2 endpoint on the manapi pin control plane (chain-sourced direct
+   * read). Returns '' when the tab's read shape has no chain equivalent.
+   */
+  _buildChainFallbackEndpoint(params) {
+    var tab = params.tab;
+    var size = params.size;
+    var cursor = this._normalizeCursor(params.cursor);
+    var metaid = params.metaid;
+
+    var query = new URLSearchParams({
+      path: '/protocols/simplebuzz',
+      size: String(Number.isFinite(size) && size > 0 ? size : 10),
+    });
+    if (cursor) query.set('cursor', cursor);
+
+    if (tab === 'new') {
+      return '/api/pin/path/list?' + query.toString();
+    }
+    if (tab === 'profile') {
+      if (!metaid) return '';
+      return '/api/metaid/pin/list/' + encodeURIComponent(metaid) + '?' + query.toString();
+    }
+    return '';
   }
 
   _buildTimelineEndpoint(params) {
@@ -356,7 +406,9 @@ export default class FetchBuzzCommand {
 
     // Tri-state engagement counts: a finite number (including a real 0) is a
     // count; absent/null/"unavailable" means the index offered NO count for
-    // this pin (outside the buzz-only coverage) and stays null — unknown ≠ 0.
+    // this pin (outside the buzz-only coverage) and becomes the STRING
+    // "unavailable" — machine-checkable unknown. Never null (null gets
+    // silently swallowed by `|| 0` downstream) and never 0 (unknown ≠ 0).
     var likeCount = this._pickCount(pin, ['likeCount', 'likeNum']);
     var commentCount = this._pickCount(pin, ['commentCount', 'commentNum']);
     var forwardCount = this._pickCount(pin, ['forwardCount', 'forwardNum', 'repostCount', 'quoteCount']);
@@ -379,20 +431,24 @@ export default class FetchBuzzCommand {
   }
 
   /**
-   * Engagement count, or null when the source offered none. A present finite
-   * number — including an explicit 0 — is a real count; an absent/null/
-   * "unavailable"/non-numeric field is unreadable and stays null so the UI
-   * renders unknown ("—") instead of fabricating a zero.
+   * Engagement count, or the string 'unavailable' when the source offered
+   * none. A present finite number — including an explicit 0 — is a real
+   * count; an absent/null/'unavailable'/non-numeric field is unreadable and
+   * becomes 'unavailable' (NOT null: null is silently coerced to 0 by
+   * `|| 0` patterns; value === 'unavailable' is the machine-checkable
+   * unknown of the tri-state contract).
    */
   _pickCount(pin, keys) {
     for (var i = 0; i < keys.length; i += 1) {
       var raw = pin ? pin[keys[i]] : undefined;
       if (raw === null || raw === undefined || raw === '') continue;
-      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
-      var parsed = Number(String(raw).trim());
-      if (raw !== undefined && String(raw).trim() !== '' && Number.isFinite(parsed)) return parsed;
+      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 'unavailable';
+      var text = String(raw).trim();
+      if (!text || text.toLowerCase() === 'unavailable' || text.toLowerCase() === 'null') continue;
+      var parsed = Number(text);
+      if (Number.isFinite(parsed)) return parsed;
     }
-    return null;
+    return 'unavailable';
   }
 
   _pickBuzzPayload(pin) {

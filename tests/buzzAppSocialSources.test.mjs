@@ -102,7 +102,7 @@ test('aggregation rows normalize: payload/author extraction, cursor/hasMore, tri
   assert.equal(item.forwardCount, 1);
 });
 
-test('missing engagement counts stay null (unknown), never coerced to 0', async () => {
+test('missing engagement counts become the string "unavailable", never null and never 0', async () => {
   const page = JSON.parse(JSON.stringify(AGG_FEED_PAGE));
   const row = page.data.items[0];
   delete row.likeCount;
@@ -112,9 +112,55 @@ test('missing engagement counts stay null (unknown), never coerced to 0', async 
   const command = new FetchBuzzCommand();
   const result = await command.execute({ payload: { tab: 'new', size: 10 }, delegate });
   const item = result.list[0];
-  assert.equal(item.likeCount, null, 'absent count must stay null');
-  assert.equal(item.commentCount, null, 'null count must stay null');
-  assert.equal(item.forwardCount, null, '"unavailable" count must stay null');
+  // Machine-checkable tri-state (BOT-009 #9): value === 'unavailable' is the
+  // ONLY unknown marker; null/0/missing must not leak through as unknown
+  // (or the reverse — unknown must not become 0 via `|| 0`).
+  assert.equal(item.likeCount, 'unavailable', 'absent count → "unavailable"');
+  assert.equal(item.commentCount, 'unavailable', 'null count → "unavailable"');
+  assert.equal(item.forwardCount, 'unavailable', '"unavailable" stays "unavailable"');
+  assert.notEqual(item.likeCount, null, 'null must never be the unknown marker');
+  assert.notEqual(item.likeCount, 0, 'unknown must never be coerced to 0');
+});
+
+test('feed falls back to the chain-sourced pin list when the aggregation layer is down', async () => {
+  const stores = { buzz: { tabs: { new: {} }, total: 0 } };
+  const { calls, delegate } = makeDelegate((service) => {
+    if (service === 'social_agg') throw new Error('HTTP 504');
+    return { code: 0, data: { list: [{ id: 'c'.repeat(64) + 'i0', content: '{"content":"chain row"}' }], nextCursor: 'cn1' } };
+  });
+  const command = new FetchBuzzCommand();
+  const result = await command.execute({ payload: { tab: 'new', size: 10 }, stores, delegate });
+  // b) fallback lands on the next level: manapi chain-direct read.
+  assert.equal(calls[0].service, 'social_agg');
+  assert.equal(calls[1].service, 'metaid_man');
+  const url = new URL(`https://x.test${calls[1].endpoint}`);
+  assert.equal(url.pathname, '/api/pin/path/list');
+  assert.equal(url.searchParams.get('path'), '/protocols/simplebuzz');
+  // a) not a blank: real rows served, degraded flag set for the UI notice.
+  assert.equal(result.list.length, 1);
+  assert.equal(result.chainFallback, true);
+  assert.equal(stores.buzz.tabs.new.chainFallback, true);
+  // Chain rows carry no counts → "unavailable" (unknown ≠ 0).
+  assert.equal(result.list[0].likeCount, 'unavailable');
+});
+
+test('profile feed falls back to pins_by_metaid; following/hot have no chain fallback', async () => {
+  const { calls, delegate } = makeDelegate((service) => {
+    if (service === 'social_agg') throw new Error('HTTP 504');
+    return { code: 0, data: { list: [], nextCursor: null } };
+  });
+  const command = new FetchBuzzCommand();
+  await command.execute({ payload: { tab: 'profile', size: 10, metaid: 'f'.repeat(64) }, delegate });
+  const profileUrl = new URL(`https://x.test${calls[1].endpoint}`);
+  assert.equal(profileUrl.pathname, `/api/metaid/pin/list/${'f'.repeat(64)}`);
+
+  // c) whole-chain failure on a shape with no level-2 rejects explicitly
+  // (the UI renders its fetch-failed state, never an empty "no content").
+  const dead = makeDelegate(() => new Error('HTTP 504'));
+  await assert.rejects(
+    command.execute({ payload: { tab: 'following', size: 10, metaid: 'f'.repeat(64) }, delegate: dead.delegate }),
+    /HTTP 504/,
+  );
 });
 
 test('recommend degrades to hot and flags the store so the UI can declare it', async () => {

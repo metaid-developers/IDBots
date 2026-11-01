@@ -20,13 +20,17 @@ import {
 // - social_agg (so.metaid.io, metaso-p2p aggregation layer) is the PRIMARY
 //   social data source: feeds, post detail, comments, follow lists. It carries
 //   same-day data and is the same backend behind search_social_posts.
-// - metaid_man / man_api now point at the alive manapi control plane
-//   (/api/info/*, /api/pin/*, /api/pin/path/list) for non-social pin reads.
-// Degradation contract: when social_agg is unreachable the feed surfaces an
-// explicit fetch-failed state — it never renders an empty feed as "no
-// content". Engagement counts are tri-state: a number (including a real 0) is
-// a count; a pin outside the buzz-only index has NO counts (detail read says
-// not-found) — that is UNKNOWN and renders as "—", never as 0 (unknown ≠ 0).
+// - metaid_man / man_api point at the alive manapi control plane
+//   (/api/info/*, /api/pin/*, /api/pin/path/list). They double as the LEVEL-2
+//   chain-sourced fallback for feed-shaped reads (see FetchBuzzCommand:
+//   newest → /api/pin/path/list, profile → /api/metaid/pin/list).
+// Degradation contract (ordered fallback, never a single swapped base):
+// aggregation → chain-direct (raw pins, counts "unavailable", on-screen
+// notice) → explicit fetch-failed error state — an empty page is never
+// passed off as "no content". Engagement counts are tri-state: a number
+// (including a real 0) is a count; the string "unavailable" is UNKNOWN and
+// renders as "—", never as 0 (unknown ≠ 0; null is never the unknown marker
+// because `|| 0` swallows it). Full base list: docs/social-read-resilience.md.
 window.ServiceLocator = {
   social_agg: 'https://so.metaid.io',
   metaid_man: 'https://manapi.metaid.io',
@@ -61,6 +65,7 @@ const BUZZ_I18N_CATALOGS = {
         guestFollowing: 'Connect wallet to view following feed.',
         guestRecommend: 'Connect wallet to view recommended feed.',
         degradedRecommend: 'Personalized recommendations are temporarily unavailable; showing hot posts from the last 48h instead.',
+        degradedChain: 'Social aggregation layer unreachable; showing raw on-chain posts — engagement counts unavailable (—), not zero.',
         noMore: 'No more content.',
         fetchFailed: 'Failed to fetch buzz list',
         loadingBuzz: 'Loading buzz...',
@@ -215,6 +220,7 @@ const BUZZ_I18N_CATALOGS = {
         guestFollowing: '请先连接钱包后查看关注流',
         guestRecommend: '请先连接钱包后查看推荐流',
         degradedRecommend: '个性化推荐暂时不可用，正在展示近 48 小时热门内容',
+        degradedChain: '社交聚合层暂不可达，正在展示链上原始动态——互动计数未知（—），非零',
         noMore: '没有更多内容了',
         fetchFailed: '获取动态失败',
         loadingBuzz: '正在加载动态...',

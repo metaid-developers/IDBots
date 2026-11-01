@@ -236,7 +236,50 @@ test('a social read against a dead aggregation layer fails explicitly, never as 
   const { byName } = makeHarness({ fetchJsonError: new Error('HTTP 504 from indexer') });
   const result = await byName.omni_read.handler({ action: 'buzz_newest', size: 5 });
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /omni_read buzz_newest failed: HTTP 504 from indexer/);
+  // Level 1 (aggregation) AND level 2 (chain fallback) failures are both named.
+  assert.match(result.content[0].text, /aggregation layer .*unreachable/);
+  assert.match(result.content[0].text, /chain fallback manapi pins_by_path also failed/);
+});
+
+test('buzz_newest falls back to the chain-sourced pin list when only the aggregation layer is down', async () => {
+  const { calls, byName } = makeHarness({
+    fetchJsonError: { 'so.metaid.io': new Error('HTTP 504 from indexer') },
+    fetchJsonResult: { code: 0, data: { list: [{ id: 'pini0' }], nextCursor: 'c1' } },
+  });
+  const result = await byName.omni_read.handler({ action: 'buzz_newest', size: 5 });
+  assert.equal(result.isError, undefined);
+  // b) fallback lands on the next level: manapi chain-direct read.
+  const fallbackUrl = new URL(calls.fetchJson[1]);
+  assert.equal(fallbackUrl.origin + fallbackUrl.pathname, 'https://manapi.metaid.io/api/pin/path/list');
+  assert.equal(fallbackUrl.searchParams.get('path'), '/protocols/simplebuzz');
+  const payload = JSON.parse(result.content[0].text);
+  assert.match(payload._degraded, /pins_by_path/);
+  // Machine-checkable tri-state: counts on a chain-direct payload are the
+  // string "unavailable" — not null, not 0.
+  assert.equal(payload.data.likeCount, 'unavailable');
+  assert.equal(payload.data.commentCount, 'unavailable');
+});
+
+test('buzz_info falls back to the raw chain pin with "unavailable" counts when the aggregation layer is down', async () => {
+  const { calls, byName } = makeHarness({
+    fetchJsonError: { 'so.metaid.io': new Error('HTTP 504 from indexer') },
+    fetchJsonResult: { code: 0, data: { id: 'pini0', content: '{}' } },
+  });
+  const result = await byName.omni_read.handler({ action: 'buzz_info', pinId: 'pini0' });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls.fetchJson[1], 'https://manapi.metaid.io/api/pin/pini0');
+  const payload = JSON.parse(result.content[0].text);
+  assert.match(payload._degraded, /raw chain pin/);
+  assert.equal(payload.data.likeCount, 'unavailable');
+  assert.equal(payload.data.quoteCount, 'unavailable');
+});
+
+test('buzz_hot has no chain fallback: a dead aggregation layer is an explicit error', async () => {
+  const { calls, byName } = makeHarness({ fetchJsonError: new Error('HTTP 504 from indexer') });
+  const result = await byName.omni_read.handler({ action: 'buzz_hot', size: 5 });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /aggregation layer .*unreachable/);
+  assert.equal(calls.fetchJson.length, 1, 'no second-level fetch for a ranking-shaped read');
 });
 
 test('pin and pin_version build manapi URLs', async () => {
