@@ -323,6 +323,12 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'audio/wav': '.wav',
   'application/pdf': '.pdf',
   'application/zip': '.zip',
+  // Text-ish MIME types: without these an inbound .txt/.md/.json/.csv lands as
+  // `.bin`, which hides what the file actually is from the agent.
+  'text/plain': '.txt',
+  'text/markdown': '.md',
+  'text/csv': '.csv',
+  'application/json': '.json',
 };
 
 export function mimeFromFileName(fileName: string | null | undefined): string {
