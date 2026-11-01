@@ -8,7 +8,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { SignalIcon, XMarkIcon, CheckCircleIcon, XCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { RootState, store } from '../../store';
 import { imService } from '../../services/im';
-import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setWeixinConfig, setQQConfig, clearError } from '../../store/slices/imSlice';
+import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig, setQQConfig, clearError } from '../../store/slices/imSlice';
+import { getPlatformConfigAction } from './platformConfigActions';
 import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
@@ -311,14 +312,8 @@ const IMSettings: React.FC = () => {
     const trimmed = rawValue.trim();
     const parsed = trimmed ? Number(trimmed) : NaN;
     const metabotId = Number.isFinite(parsed) ? parsed : null;
-    const setConfigAction = {
-      dingtalk: setDingTalkConfig,
-      feishu: setFeishuConfig,
-      telegram: setTelegramConfig,
-      discord: setDiscordConfig,
-      weixin: setWeixinConfig,
-    }[platform];
-    dispatch(setConfigAction({ metabotId }));
+    const setMetabotIdAction = getPlatformConfigAction(platform);
+    dispatch(setMetabotIdAction({ metabotId }));
     const stateAfterDispatch = store.getState();
     await imService.updateConfig(stateAfterDispatch.im.config);
   };
@@ -392,17 +387,14 @@ const IMSettings: React.FC = () => {
     const isEnabled = config[platform].enabled;
     const newEnabled = !isEnabled;
 
-    // Map platform to its Redux action
-    const setConfigAction = {
-      dingtalk: setDingTalkConfig,
-      feishu: setFeishuConfig,
-      telegram: setTelegramConfig,
-      discord: setDiscordConfig,
-      weixin: setWeixinConfig,
-    }[platform];
+    // Map platform to its Redux action. The registry is exhaustive over
+    // IMPlatform, so this can no longer resolve to undefined for a platform
+    // whose key was forgotten (that shipped once as `setConfigAction is not a
+    // function` on the QQ enable switch).
+    const setEnabledAction = getPlatformConfigAction(platform);
 
     // Update Redux state
-    dispatch(setConfigAction({ enabled: newEnabled }));
+    dispatch(setEnabledAction({ enabled: newEnabled }));
 
     // Persist the updated config (construct manually since Redux state hasn't re-rendered yet)
     await imService.updateConfig({ [platform]: { ...config[platform], enabled: newEnabled } });
@@ -412,7 +404,7 @@ const IMSettings: React.FC = () => {
       const success = await imService.startGateway(platform);
       if (!success) {
         // Rollback enabled state on failure
-        dispatch(setConfigAction({ enabled: false }));
+        dispatch(setEnabledAction({ enabled: false }));
         await imService.updateConfig({ [platform]: { ...config[platform], enabled: false } });
       } else {
         await runConnectivityTest(platform, {
@@ -505,7 +497,10 @@ const IMSettings: React.FC = () => {
     const canToggle = isEnabled || canStart(platform);
     if (canToggle && !isLoading) {
       setActivePlatform(platform);
-      toggleGateway(platform);
+      // toggleGateway handles its own errors (startGateway returns false, never
+      // throws); mark the promise void so a rejection can't escape as an
+      // unhandledrejection the way the pre-fix TypeError did.
+      void toggleGateway(platform);
     }
   };
 

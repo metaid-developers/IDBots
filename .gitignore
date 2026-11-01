@@ -77,6 +77,7 @@ tests/*
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts
 !tests/qqGateway.test.ts
+!tests/imPlatformConfigActions.test.ts
 !tests/friendGuidanceTrigger.test.mjs
 !tests/friendGuidanceOverlayChain.test.mjs
 !tests/socialTrustPrompt.test.mjs
