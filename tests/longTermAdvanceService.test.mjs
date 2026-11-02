@@ -1164,6 +1164,178 @@ test('a heartbeat-owned session still rotates on budget once the owner is gone, 
   assert.notEqual(report.escalated[0].sessionId, boundId);
 });
 
+// ── P3 venue rules: owner-facing turns never fork the human conversation ──
+
+test('2026-11-02 incident: a waiting-owner turn never rotates — the fat heartbeat session holding the owner\'s latest word is kept', async () => {
+  // Production incident: the acceptance ticket sat on a 401-message
+  // heartbeat-owned session; the owner's last word (2h before dawn) was in
+  // that same session. A stale-wait convergence turn fired while the owner
+  // slept, the reason classified as a WORK turn, so the venue guards did not
+  // apply and the session rotated into a fresh one — the re-pushed ticket
+  // surfaced the new session as the decision venue, and the owner's morning
+  // ruling landed in a forked conversation. A turn whose prompt carries the
+  // owner-wait block (ANY turn on a waiting_owner sub-project) is
+  // owner-facing in effect: it stays where the owner last spoke, budget or
+  // not.
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const now = Date.now();
+  await new LongTermAdvanceService(deps).run(now); // opens + binds session 1
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'acceptance proposed' }, 'twin').ok);
+  assert.ok(store.addNote(taskId, subtask.id, 'worked past the wait (v1.0.2 shipped)', 'twin').ok);
+  cowork.counts.set(boundId, DEFAULT_SESSION_ROTATION_MESSAGES);
+  // The owner's newest message is IN the bound session, two hours ago — past
+  // the engagement window (asleep), but still their latest word.
+  const t2 = now + 3 * HOUR;
+  cowork.engagement.set(boundId, { lastOwnerMessageAtMs: t2 - 2 * HOUR, lastAssistantMessageAtMs: t2 - 2 * HOUR });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.match(report.escalated[0].reasons[0], /stale owner wait/);
+  assert.equal(report.escalated[0].sessionId, boundId, 'the turn stays in the session holding the owner\'s latest word');
+  assert.equal(report.escalated[0].reusedSession, true, 'no rotation');
+  assert.equal(cowork.calls.create.length, 1, 'no fresh session was opened');
+  const prompt = runner.starts[runner.starts.length - 1].prompt;
+  assert.match(prompt, /full re-presentation/, 'the decision re-push still happens — in the right session');
+  assert.doesNotMatch(prompt, /SESSION ROTATION/);
+});
+
+test('an owner-facing turn targets the owner\'s latest conversation even when the bound work session is over budget', async () => {
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const now = Date.now();
+  await new LongTermAdvanceService(deps).run(now); // opens + binds the work session
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'pick A or B' }, 'twin').ok);
+  assert.ok(store.addNote(taskId, subtask.id, 'worked past the wait', 'twin').ok);
+  cowork.counts.set(boundId, DEFAULT_SESSION_ROTATION_MESSAGES);
+  // The owner's newest word is in a DIFFERENT related conversation (their own
+  // chat), two hours ago — not live, so no engaged-rebind happens; only the
+  // venue rules move the decision line there.
+  cowork.registerSession('owner-chat', 7);
+  assert.ok(store.bindSession(subtask.id, 'owner-chat', 'system').ok); // make it related
+  assert.ok(store.bindSession(subtask.id, boundId, 'system').ok);
+  const t2 = now + 3 * HOUR;
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: t2 - 2 * HOUR, lastAssistantMessageAtMs: null });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'owner-chat', 'the decision re-push lands in the owner\'s conversation');
+  assert.equal(report.escalated[0].reusedSession, true, 'no fresh session');
+  assert.equal(cowork.calls.create.length, 1, 'the over-budget work session was not rotated either');
+  assert.equal(store.getTask(taskId).subtasks[0].sessionId, 'owner-chat', 'the binding converged');
+  assert.doesNotMatch(runner.starts[runner.starts.length - 1].prompt, /SESSION ROTATION/);
+});
+
+test('with no owner message anywhere, an owner-facing turn falls back to the task\'s definition session', async () => {
+  const { store, cowork, deps } = await openWorld();
+  const created = store.createTask({ ...SPEC, definitionSessionId: 'def-sess' }, 'owner');
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.ok(store.activateTask(created.value.id, 'owner').ok);
+  const taskId = created.value.id;
+  cowork.registerSession('def-sess', 7);
+  const now = Date.now();
+  await new LongTermAdvanceService(deps).run(now); // pending → opens + binds the work session
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  assert.ok(store.waitSubtask(subtask.id, { kind: 'owner', note: 'pick A or B' }, 'twin').ok);
+  assert.ok(store.addNote(taskId, subtask.id, 'worked past the wait', 'twin').ok);
+  cowork.counts.set(boundId, DEFAULT_SESSION_ROTATION_MESSAGES);
+
+  const report = await new LongTermAdvanceService(deps).run(now + 3 * HOUR);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'def-sess', 'fell back to the definition session');
+  assert.equal(report.escalated[0].reusedSession, true);
+  assert.equal(store.getTask(taskId).subtasks[0].sessionId, 'def-sess');
+});
+
+test('per-sweep convergence: every waiting-owner decision line follows the owner\'s venue across sub-projects', async () => {
+  // The 2026-11-02 fork shape: sub-project #2's ticket lived in a day-old
+  // rotation session while #6 ran in the owner's chat — two live lines for
+  // one task. The sweep converges ALL waiting_owner bindings onto the
+  // owner's venue (so the decision surface points at the conversation the
+  // owner reads) without firing any turn.
+  const { store, cowork, runner, deps } = await openWorld();
+  const created = store.createTask(
+    { title: 'Fork shape', goal: 'Two live lines, one task.', subtasks: [{ title: 'Runs in the owner chat' }, { title: 'Ticket parked in a work session' }] },
+    'owner',
+  );
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.ok(store.activateTask(created.value.id, 'owner').ok);
+  const taskId = created.value.id;
+  const detail = store.getTask(taskId);
+  const [first, second] = detail.subtasks;
+  assert.ok(store.beginSubtask(first.id, 'twin').ok);
+  assert.ok(store.beginSubtask(second.id, 'twin').ok);
+  assert.ok(store.waitSubtask(second.id, { kind: 'owner', note: 'ticket parked from a work session' }, 'twin').ok);
+  cowork.registerSession('work-sess', 7, 'longterm');
+  assert.ok(store.bindSession(second.id, 'work-sess', 'system').ok);
+  cowork.registerSession('owner-chat', 7);
+  assert.ok(store.bindSession(first.id, 'owner-chat', 'system').ok); // makes the owner's chat a related session
+  // The owner is live in their chat, and #1 just began (no quiet push due).
+  const t2 = Date.now();
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: t2 - 5 * 60_000, lastAssistantMessageAtMs: null });
+
+  const report = await new LongTermAdvanceService(deps).run(t2);
+  assert.equal(report.escalated.length, 0, JSON.stringify(report));
+  assert.equal(runner.starts.length, 0, 'convergence is silent — no turn fired');
+  assert.equal(store.getTask(taskId).subtasks.find((s) => s.id === second.id).sessionId, 'owner-chat');
+  const events = store.getTask(taskId).events;
+  assert.ok(events.some((event) => event.kind === 'note' && event.actor === 'system' && /session bound: owner-chat/.test(event.detail)));
+  // Idempotent: a second sweep binds nothing new.
+  const noteCount = events.filter((event) => /session bound/.test(event.detail)).length;
+  await new LongTermAdvanceService(deps).run(t2 + 60_000);
+  const after = store.getTask(taskId).events.filter((event) => /session bound/.test(event.detail)).length;
+  assert.equal(after, noteCount, 'no repeated convergence notes');
+});
+
+test('a cold work turn in a heartbeat-owned session parks owner decisions instead of asking in-session', async () => {
+  // Rule 4: the owner is not in a bot work session — a question asked there
+  // becomes a second conversation line the owner must discover. Decisions
+  // discovered mid-work are journaled (longterm_subtask_wait) and delivered
+  // to the owner's conversation by the next owner-facing turn.
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  await new LongTermAdvanceService(deps).run(Date.now()); // pending → cold work turn in a fresh longterm session
+  const prompt = runner.starts[0].prompt;
+  assert.match(prompt, /Record the decision request with longterm_subtask_wait/);
+  assert.doesNotMatch(prompt, /exactly ONE question, multiple choice/);
+});
+
+test('a cold work turn in the owner\'s own conversation still asks directly', async () => {
+  const { store, cowork, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const now = Date.now();
+  // First run binds #1 to a heartbeat session, then the owner drives the
+  // task from their own chat (engaged rebind), goes away, and a work push
+  // is due — cold, but in the owner's conversation.
+  await new LongTermAdvanceService(deps).run(now);
+  const heartbeatSessionId = store.getTask(taskId).subtasks[0].sessionId;
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  cowork.registerSession('owner-chat', 7);
+  assert.ok(store.bindSession(subtask.id, 'owner-chat', 'system').ok);
+  assert.ok(store.bindSession(subtask.id, heartbeatSessionId, 'system').ok);
+  const tEngaged = now + 1 * HOUR;
+  cowork.engagement.set('owner-chat', { lastOwnerMessageAtMs: tEngaged - 5 * 60_000, lastAssistantMessageAtMs: null });
+  await new LongTermAdvanceService(deps).run(tEngaged);
+  const boundId = store.getTask(taskId).subtasks[0].sessionId;
+  assert.equal(boundId, 'owner-chat', 'binding followed the owner');
+  cowork.counts.set('owner-chat', 12);
+  const report = await new LongTermAdvanceService(deps).run(tEngaged + 90 * 60_000);
+  assert.equal(report.escalated.length, 1, JSON.stringify(report));
+  assert.equal(report.escalated[0].sessionId, 'owner-chat');
+  const prompt = runner.starts[runner.starts.length - 1].prompt;
+  assert.match(prompt, /exactly ONE question, multiple choice/);
+  assert.doesNotMatch(prompt, /Record the decision request with longterm_subtask_wait/);
+});
+
 test('getSessionEngagement: heartbeat prompts and cross-session bot relays are not the owner', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-lt-engage-'));
   const sqliteStore = await SqliteStore.create(dir);
