@@ -143,8 +143,13 @@ test('restart while running requeues the delivery and keeps the original message
 });
 
 test('a failed continuation retries with the stored message and completes without another insert', async () => {
+  let releaseSecondAttempt;
+  const secondAttemptGate = new Promise((resolve) => { releaseSecondAttempt = resolve; });
   const world = await openWorld({
-    onContinue: (attempt) => { if (attempt === 1) throw new Error('temporary model outage'); },
+    onContinue: async (attempt) => {
+      if (attempt === 1) throw new Error('temporary model outage');
+      await secondAttemptGate;
+    },
   });
   try {
     world.runner.insertCrossSessionMessageAndQueue(deliveryInput(world, 'retry-success'));
@@ -152,12 +157,14 @@ test('a failed continuation retries with the stored message and completes withou
     assert.equal(world.deliveryStore.getById('retry-success').state, 'pending');
     assert.equal(world.deliveryStore.getById('retry-success').attempts, 1);
 
+    releaseSecondAttempt();
     await waitFor(() => assert.equal(world.deliveryStore.getById('retry-success').state, 'completed'));
     assert.equal(world.calls.length, 2);
     assert.equal(world.deliveryStore.getById('retry-success').attempts, 2);
     assert.equal(world.coworkStore.getSessionMessages(world.target.id).length, 1);
     assert.equal(world.runner.getCrossSessionDeliveryReliabilitySnapshot().retrying, 0);
   } finally {
+    releaseSecondAttempt();
     dispose(world);
   }
 });

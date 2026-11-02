@@ -959,13 +959,13 @@ test('P-A: empty final reply + bare session → plain WORKER_EMPTY_HANDOFF (unch
 
 test('P-A: workspace git evidence is merged into the summary (commit=[...])', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-worker-git-'));
-  const run = (args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  const run = (args, env = {}) => execFileSync('git', args, { cwd: dir, stdio: 'pipe', env: { ...process.env, ...env } });
   run(['init', '-q']);
   run(['config', 'user.email', 'worker@test']);
   run(['config', 'user.name', 'Worker']);
   fs.writeFileSync(path.join(dir, 'a.txt'), 'v1');
   run(['add', '-A']);
-  run(['commit', '-q', '-m', 'feat: worker deliverable']);
+  run(['commit', '-q', '-m', 'feat: worker deliverable'], { GIT_COMMITTER_DATE: '2035-01-01T00:00:00Z' });
   const short = run(['rev-parse', '--short=7', 'HEAD']).toString().trim();
   const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
     await params.onSessionCreated('worker-session-2');
@@ -983,7 +983,7 @@ test('P-A: workspace git evidence is merged into the summary (commit=[...])', as
     assert.match(error, new RegExp(`commit=\\[${short}\\]`));
   } finally {
     sqliteStore.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* Windows best effort */ }
   }
 });
 
