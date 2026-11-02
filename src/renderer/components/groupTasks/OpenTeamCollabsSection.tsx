@@ -3,7 +3,7 @@ import { i18nService } from '../../services/i18n';
 import { openTeamCollabService } from '../../services/openTeamCollabService';
 import type { OpenTeamCollabSummary, OpenTeamGuestInvite, OpenTeamGuestInviteStatus } from '../../types/openTeamCollab';
 import { formatGroupTaskTime } from './groupTaskUtils';
-import { GroupTaskTypeBadge } from './GroupTaskSidebarList';
+import { GroupTaskTypeBadge, GroupTaskGuestBadge } from './GroupTaskSidebarList';
 
 /** Short display form of a GlobalMetaID / group id (same style as the task detail rail). */
 export function shortGlobalMetaId(value: string | null | undefined): string {
@@ -295,7 +295,8 @@ export const OpenTeamCollabSidebarRow: React.FC<{
         <span className="flex-1 min-w-0 truncate text-sm font-medium dark:text-claude-darkText text-claude-text">
           {openTeamCollabTitle(collab)}
         </span>
-        <GroupTaskTypeBadge openTeam={true} />
+        <GroupTaskTypeBadge type="openteam-guest" />
+        <GroupTaskGuestBadge />
         <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${openTeamCollabStatusBadgeClass(collab)}`}>
           {openTeamCollabStatusLabel(collab)}
         </span>
