@@ -171,6 +171,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('botBrowser:completeLlm', input),
     requestPermissions: (input: { actorId?: string; resourceUri?: string; sessionId?: string; payload?: unknown }) =>
       ipcRenderer.invoke('botBrowser:requestPermissions', input),
+    buyNft: (input: { actorId?: string; resourceUri?: string; sessionId?: string; payload?: unknown }) =>
+      ipcRenderer.invoke('botBrowser:buyNft', input),
     sendPrivateChat: (input: {
       actorId?: string;
       peerGlobalMetaId?: string;

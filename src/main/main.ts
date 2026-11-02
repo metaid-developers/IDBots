@@ -490,6 +490,7 @@ import {
   type BotBrowserHostPickedFile,
   type BotBrowserLlmCompleteInput,
   type BotBrowserMetaFileUploadInput,
+  type BotBrowserNftBuyInput,
   type BotBrowserPinWriteInput,
   type BotBrowserPermissionsInput,
   type HumanBridgeActor,
@@ -3122,6 +3123,17 @@ function getBotBrowserBridgeServiceForWindow(ownerWindow: BrowserWindow | null):
       }
     },
     pickFiles: (input) => pickBotBrowserMetaFiles(ownerWindow, input),
+    // browser.nft.buy backend: the SAME signer path and chain-write budget the
+    // wallet_nft_buy agent tool uses (executeMvcNftTrade action=buy). Runs
+    // only for a confirmed purchase intent; keys stay in the main process.
+    buyNft: (params) => withChainWriteBudget(
+      'wallet_nft_buy',
+      () => executeMvcNftTrade(getMetabotStore(), {
+        ...params,
+        action: 'buy',
+        feeRate: getGlobalFeeRate('mvc'),
+      }),
+    ),
   });
   if (ownerWindow) {
     botBrowserBridgeServices.set(ownerWindow, service);
@@ -3137,7 +3149,8 @@ function botBrowserBridgeInput<
     | BotBrowserPinWriteInput
     | BotBrowserMetaFileUploadInput
     | BotBrowserLlmCompleteInput
-    | BotBrowserPermissionsInput,
+    | BotBrowserPermissionsInput
+    | BotBrowserNftBuyInput,
 >(
   input: unknown,
 ): T {
@@ -11393,6 +11406,17 @@ if (!gotTheLock) {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     return getBotBrowserBridgeServiceForWindow(ownerWindow).requestPermissions(
       botBrowserBridgeInput<BotBrowserPermissionsInput>(input),
+    );
+  });
+
+  // browser.nft.buy trusted action: two-phase confirmed NFT purchase. The
+  // service refuses to run the signer without a valid user-approved
+  // confirmRequest (payment gate for the archived wallet_nft_buy bypass
+  // defect); keys never leave the main process.
+  registerIpcHandler('botBrowser:buyNft', async (event, input: unknown) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    return getBotBrowserBridgeServiceForWindow(ownerWindow).buyNft(
+      botBrowserBridgeInput<BotBrowserNftBuyInput>(input),
     );
   });
 

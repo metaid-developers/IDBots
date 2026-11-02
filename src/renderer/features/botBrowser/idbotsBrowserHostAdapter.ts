@@ -94,6 +94,13 @@ export interface IdBotsBrowserHostAdapterInput {
   uploadMetaFile?: (input: BotBrowserBridgeTrustedActionRequest) => Promise<BrowserCommandResult<unknown>>;
   completeLlm?: (input: BotBrowserBridgeTrustedActionRequest) => Promise<BrowserCommandResult<unknown>>;
   requestPermissions?: (input: BotBrowserBridgeTrustedActionRequest) => Promise<BrowserCommandResult<unknown>>;
+  /**
+   * NFT purchase trusted action (browser.nft.buy): forwards the page's
+   * purchase intent to the main-process bridge service, which runs the
+   * two-phase confirmation and executes wallet_nft_buy ONLY for a valid
+   * user-approved confirmRequest. Keys stay in the host.
+   */
+  buyNft?: (input: BotBrowserBridgeTrustedActionRequest) => Promise<BrowserCommandResult<unknown>>;
   openConversation: (request: BotBrowserConversationRequest) => Promise<void>;
   /**
    * Sends an on-chain /protocols/simplemsg PIN (ECDH-encrypted) to a peer.
@@ -426,6 +433,7 @@ export function createIdbotsBrowserHostAdapter(
           cacheManagement: true,
           templateSettings: true,
           walletLogin: false,
+          nftBuy: true,
         },
         labels: {
           actorChip: 'Actor',
@@ -580,6 +588,33 @@ export function createIdbotsBrowserHostAdapter(
           'pin_write_failed',
           'MetaID PIN write failed.',
           'MetaID PIN write is not supported in this IDBots build.',
+        );
+      }
+
+      if (actionKind === 'nft-buy') {
+        if (!input.buyNft) {
+          return browserFailure(
+            'unsupported_method',
+            'NFT purchase is not supported in this IDBots build.',
+          );
+        }
+        // 'nft-buy' ships in the next agent-browser-host-contract release;
+        // the installed 0.7.1 union does not list it yet, so bridge the kind
+        // through unknown. The runtime dispatch matches the plain string.
+        const nftBuyKind = 'nft-buy' as unknown as BrowserTrustedActionKind;
+        return runBridgeTrustedAction(
+          input.buyNft,
+          {
+            actorId: text(actionInput.actorId) || undefined,
+            resourceUri: actionInput.resourceUri,
+            sessionId: text(actionInput.sessionId) || undefined,
+            payload: actionInput.payload,
+          },
+          nftBuyKind,
+          'botBrowser:buyNft',
+          'nft_buy_failed',
+          'NFT purchase failed.',
+          'NFT purchase is not supported in this IDBots build.',
         );
       }
 

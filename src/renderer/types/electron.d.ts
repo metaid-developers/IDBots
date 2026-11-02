@@ -1077,6 +1077,12 @@ interface IElectronAPI {
       sessionId?: string;
       payload?: unknown;
     }) => Promise<HostBrowserCommandResult<unknown>>;
+    buyNft: (input: {
+      actorId?: string;
+      resourceUri?: string;
+      sessionId?: string;
+      payload?: unknown;
+    }) => Promise<HostBrowserCommandResult<unknown>>;
     sendPrivateChat: (input: {
       actorId?: string;
       peerGlobalMetaId?: string;

@@ -257,6 +257,7 @@ tests/*
 !tests/botBrowserModeSwitch.test.tsx
 !tests/sidebarNavigation.test.mjs
 !tests/botBrowserBridgeService.test.mjs
+!tests/botBrowserNftBuy.test.mjs
 !tests/botBrowserHumanPinWrite.test.mjs
 !tests/humanIdentityPinWriter.test.mjs
 !tests/pinPathResolver.test.mjs

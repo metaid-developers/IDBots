@@ -40,6 +40,9 @@ export const INLINE_METAAPP_SUPPORTED_METHODS = new Set([
 export const INLINE_METAAPP_BROWSER_ONLY_METHODS = new Set([
   'browser.privateChat.compose',
   'browser.simplemsg.compose',
+  // Purchase confirmation card lives in the Bot Browser chrome; the bubble
+  // has no surface for the two-phase NFT purchase approval.
+  'browser.nft.buy',
   'browser.app.session.start',
   'browser.app.session.list',
   'browser.app.session.status',
