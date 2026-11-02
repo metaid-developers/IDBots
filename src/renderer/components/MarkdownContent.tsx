@@ -64,6 +64,8 @@ import {
   parseNftCardFence,
   parseNftCardGroupFence,
 } from './chat/nftCardSyntax';
+import EscrowCard from './chat/EscrowCard';
+import { isEscrowCardFenceLanguage, parseEscrowCardFence } from './chat/escrowCardSyntax';
 
 /**
  * Code-block languages worth highlighting in chat output.
@@ -507,6 +509,18 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const cardData = parseNftCardFence(trimmedCodeText);
       if (cardData) {
         return <NftCard data={cardData} />;
+      }
+    }
+
+    // S3 escrow trade cards: an `escrow-card` fence renders the escrow state
+    // machine skeleton (current state / next actor / remaining time).
+    // Unparsable payloads keep the plain code-block rendering, same as the
+    // nft-card branch. Its own fence tag keeps it disjoint from nft-card and
+    // the (unmerged) pay-card.
+    if (isEscrowCardFenceLanguage(fenceLanguage)) {
+      const escrowData = parseEscrowCardFence(trimmedCodeText);
+      if (escrowData) {
+        return <EscrowCard data={escrowData} />;
       }
     }
 

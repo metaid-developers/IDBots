@@ -41,6 +41,7 @@
     "test:wallet": "pnpm run compile:electron && node --test tests/metabotWalletService.test.mjs",
     "test:mrc721": "pnpm run compile:electron && node --test tests/mrc721Service.test.mjs tests/mrc721AgentTools.test.mjs tests/mrc721AtomicSwap.test.mjs tests/buildMvcTransferRawTxWorker.test.mjs",
     "test:nft": "pnpm run compile:electron && node --test tests/metabotNftService.test.mjs tests/metabotNftIpc.test.mjs tests/metabotNftPresentation.test.mjs",
+"test:s3-escrow": "npx tsx --test tests/escrowOrderStateMachine.test.ts tests/escrowCardMarkdown.test.tsx",
     "test:im-gateway": "pnpm run compile:electron && node --test tests/imGatewayConnectivity.test.mjs",
     "test:weixin": "npx tsx --test tests/weixinGateway.test.ts tests/weixinMedia.test.ts",
     "test:qq": "npx tsx --test tests/qqGateway.test.ts tests/qqSecurity.test.ts tests/qqSessionClassification.test.ts tests/qqGroupCandidates.test.ts tests/qqRateLimit.test.ts",
