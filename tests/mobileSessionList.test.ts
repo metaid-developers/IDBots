@@ -331,7 +331,7 @@ describe('SessionDrawer search + rows (SSR)', () => {
     const markup = renderDrawer({
       sessions: [
         session('today-run', realNow - 60_000, { status: 'running' }),
-        session('yesterday-idle', realNow - 26 * 60 * 60 * 1000),
+        session('yesterday-idle', new Date(realNow).setHours(12, 0, 0, 0) - 24 * 60 * 60 * 1000),
         session('old-idle', realNow - 4 * 24 * 60 * 60 * 1000),
       ],
     });
