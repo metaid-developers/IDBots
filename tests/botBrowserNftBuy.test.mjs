@@ -62,8 +62,11 @@ function createStore(metabots = [createMetabot(), createMetabot({ id: 8, name: '
   };
 }
 
-const GENESIS = 'a'.repeat(64);
-const CODEHASH = 'b'.repeat(40);
+// Real MetaContract genesis is 40 hex on-chain (MetaBot Avatar
+// 005d69cba8c80e6978157e146f998c21288a9d49); 64-hex stays accepted.
+const GENESIS = '005d69cba8c80e6978157e146f998c21288a9d49';
+const GENESIS_64 = 'a'.repeat(64);
+const CODEHASH = 'e205939ad9956673ce7da9fbd40514b30f66dc35';
 const SELL_TXID = 'c'.repeat(64);
 
 function nftBuyPayload(overrides = {}) {
@@ -138,6 +141,17 @@ test('nft buy: a bare page intent NEVER executes the signer — phase 1 only iss
   assert.equal(manual.confirmRequest.payload.genesis, GENESIS);
   assert.equal(manual.confirmRequest.payload.hostConfirmation.id, 'nftbuy-1');
   assert.equal(manual.confirmRequest.payload.hostConfirmation.token, 'opaque-token-1');
+});
+
+test('nft buy: a 64-hex genesis passes validation the same as the on-chain 40-hex form', async () => {
+  const { deps, calls } = createBuyDeps();
+  const service = createBotBrowserBridgeService(deps);
+
+  const result = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload({ genesis: GENESIS_64 }) });
+
+  const manual = readManual(result);
+  assert.equal(calls.length, 0);
+  assert.equal(manual.confirmRequest.payload.genesis, GENESIS_64);
 });
 
 test('nft buy: the exact confirmRequest executes buyNft once and returns both txids', async () => {
@@ -262,6 +276,7 @@ test('nft buy: invalid four-tuples are refused before any confirmation or signer
 
   const cases = [
     nftBuyPayload({ genesis: 'not-hex' }),
+    nftBuyPayload({ genesis: 'a'.repeat(41) }),
     nftBuyPayload({ codehash: 'zz' }),
     nftBuyPayload({ tokenIndex: 'abc' }),
     nftBuyPayload({ priceSats: 0 }),
