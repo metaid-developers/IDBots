@@ -160,7 +160,6 @@ export const useNftCardHeal = (data: NftCardData): NftCardData => {
     };
     // `data` is captured once per missing-field combination; the primitive
     // deps below cover every field nftCardNeedsHeal reads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, needsHeal, imgUrl, icon, issuer, issuerLabel]);
 
   if (!healed) return data;

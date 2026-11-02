@@ -15170,11 +15170,27 @@ if (!gotTheLock) {
         const lastActivityAt = Math.max(lastSpeakAt ?? 0, lastWorkingAt ?? 0) || null;
 
         return {
+          // Required GroupTaskMember fields (synthetic for OpenTeam guests)
+          id: 0, // No local row for guest members
+          taskId: 0, // Not tied to a local task
+          metabotId: null,
           globalmetaid: row.sender_global_metaid,
+          role: 'member' as const,
+          joinedPinId: null,
+          createdAt: null,
+          displayName: row.sender_name ?? 'Unknown',
+          removedAt: null,
+          removePinId: null,
           name: row.sender_name ?? 'Unknown',
+          status: 'standby' as const, // Default status for guest members
+          statusChangedAt: null,
+          // GroupTaskMemberSummary extension fields
           avatar: null, // OpenTeam guest doesn't have avatar info
           lastActivityAt,
           lastSpeakAt,
+          lastWorkingAt,
+          workStatus: null, // No local worker session
+          inviteStatus: null, // Guest members joined via external invite
         };
       });
 
