@@ -928,6 +928,18 @@ contextBridge.exposeInMainWorld('electron', {
     qqSetCredentials: (params: { appId: string; appSecret: string; botId?: string | null; ownerUserOpenid?: string | null }) =>
       ipcRenderer.invoke('im:qq:credentials:set', params),
 
+    // QQ group authorisation without the 32-hex group OpenID: the gateway
+    // remembers groups that messaged the bot while NOT allowlisted (silently:
+    // no reply, no model, no tool, no memory), and these calls let the settings
+    // page allow / ignore them. Recording is not authorisation.
+    qqListGroupCandidates: () => ipcRenderer.invoke('im:qq:groups:candidates:list'),
+    qqDismissGroupCandidate: (groupId: string) =>
+      ipcRenderer.invoke('im:qq:groups:candidates:dismiss', { groupId }),
+    qqRestoreGroupCandidate: (groupId: string) =>
+      ipcRenderer.invoke('im:qq:groups:candidates:restore', { groupId }),
+    qqResolveGroupName: (groupId: string) =>
+      ipcRenderer.invoke('im:qq:groups:candidates:name', { groupId }),
+
     // Status
     getStatus: () => ipcRenderer.invoke('im:status:get'),
 

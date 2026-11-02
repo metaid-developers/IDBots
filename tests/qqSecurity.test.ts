@@ -22,6 +22,7 @@ import * as path from 'path';
 
 import { QQGateway, type QQBotFactory, type QQBotLike, type QQMediaNetwork } from '../src/main/im/qqGateway';
 import { QQStore } from '../src/main/im/qqStore';
+import { QQGroupCandidateStore } from '../src/main/im/qqCandidates';
 import {
   QQGroupAuditLog,
   QQ_GROUP_MEDIA_NOTICE,
@@ -163,6 +164,10 @@ async function startHarness(options: {
     mediaNetwork: options.network ?? makeMediaNetwork(Buffer.from([0x89, 0x50, 0x4e, 0x47])),
     typingIndicator: false,
     auditLog: audit,
+    // Isolate the recorded-candidate list per test: a refused group IS now
+    // remembered (see qqGroupCandidates.test.ts), so a shared dir would leak
+    // state between cases and hide a real regression behind test order.
+    groupCandidates: new QQGroupCandidateStore(makeTempDir('candidates')),
   });
   await gateway.start({
     ...baseConfig(),

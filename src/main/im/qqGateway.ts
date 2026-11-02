@@ -63,6 +63,12 @@ import {
 } from './qqMedia';
 import { QQStore, normalizeQQAccountId, type QQCredentialSource } from './qqStore';
 import {
+  QQGroupCandidateStore,
+  normalizeQQGroupId,
+  type QQGroupNameStatus,
+} from './qqCandidates';
+import { createQQGroupInfoLookup, type QQGroupInfoLookup } from './qqGroupInfo';
+import {
   QQ_GROUP_MEDIA_NOTICE,
   QQGroupAuditLog,
   resolveQQMessageGate,
@@ -255,12 +261,54 @@ export interface QQGatewayOptions {
   configProvider?: () => Partial<QQConfig> | null | undefined;
   /** Group audit trail writer (tests inject a temp dir). */
   auditLog?: QQGroupAuditLog;
+  /**
+   * Store for groups that messaged the bot while NOT allowlisted.
+   *
+   * Recording exists so the owner can allow a group without ever handling the
+   * 32-hex group OpenID by hand. It is NOT authorisation: see `qqCandidates.ts`.
+   * Tests inject a temp dir; production defaults to `<userData>/qq`.
+   */
+  groupCandidates?: QQGroupCandidateStore;
+  /**
+   * Optional group-NAME lookup (`GET /v2/groups/{openid}/info`). Defaults to the
+   * real platform call; tests inject a fake so the suite stays offline.
+   */
+  groupInfoLookup?: QQGroupInfoLookup;
 }
 
 export interface QQLoginEvent {
   state: 'wait' | 'scanned' | 'expired' | 'confirmed' | 'error';
   error: string | null;
   appId: string | null;
+}
+
+/**
+ * One remembered group, shaped for the settings page.
+ *
+ * `groupId` is the platform's group OpenID and is ALWAYS present — it is the
+ * only identifier the platform guarantees. `name` is an optional extra that
+ * exists only when the (whitelist-gated) group-info endpoint answered.
+ */
+export interface QQGroupCandidateView {
+  groupId: string;
+  name: string | null;
+  nameStatus: QQGroupNameStatus;
+  nameCheckedAt: number | null;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  messageCount: number;
+  ignored: boolean;
+  allowed: boolean;
+}
+
+export interface QQGroupCandidateReport {
+  /**
+   * Groups to ask the owner about: recorded, not ignored, and not in the
+   * allowlist. These are the rows that carry an 「允许」 button.
+   */
+  pending: QQGroupCandidateView[];
+  /** Every remembered group, newest activity first (names included). */
+  all: QQGroupCandidateView[];
 }
 
 interface CachedTarget {
@@ -296,6 +344,8 @@ export class QQGateway extends EventEmitter {
   private readonly typingIndicator: boolean;
   private readonly configProvider?: () => Partial<QQConfig> | null | undefined;
   private readonly auditLog: QQGroupAuditLog;
+  private readonly groupCandidates: QQGroupCandidateStore;
+  private readonly groupInfoLookup: QQGroupInfoLookup;
 
   private config: QQConfig | null = null;
   private status: QQGatewayStatus = { ...DEFAULT_QQ_STATUS };
@@ -346,6 +396,21 @@ export class QQGateway extends EventEmitter {
     this.typingIndicator = options.typingIndicator ?? true;
     this.configProvider = options.configProvider;
     this.auditLog = options.auditLog ?? new QQGroupAuditLog(undefined, this.now);
+    this.groupCandidates = options.groupCandidates ?? new QQGroupCandidateStore();
+    this.groupInfoLookup =
+      options.groupInfoLookup
+      ?? createQQGroupInfoLookup({
+        // Read the LIVE credential pair. Never logs it, never returns it.
+        getCredentials: () => {
+          const resolved = this.resolveCredentials(this.liveConfig());
+          if (!resolved) return null;
+          return {
+            appId: resolved.credentials.appId,
+            appSecret: resolved.credentials.appSecret,
+          };
+        },
+        now: this.now,
+      });
   }
 
   /**
@@ -382,6 +447,97 @@ export class QQGateway extends EventEmitter {
     callback: (message: IMMessage, replyFn: (text: string) => Promise<void>) => Promise<void>
   ): void {
     this.onMessageCallback = callback;
+  }
+
+  // ==================== Group candidates ====================
+  //
+  // Read/act on groups that messaged the bot while not allowlisted. The whole
+  // point is that the owner never types a 32-hex group OpenID: it arrives from
+  // the platform, the settings page lists it, one click allows it.
+
+  /**
+   * The allowlist the GATE would use right now (trim + drop empties), so the
+   * "pending" list can never disagree with the decision on the message path.
+   */
+  private currentAllowlist(): string[] {
+    const live = this.liveConfig();
+    const raw = Array.isArray(live?.groupAllowlist) ? live?.groupAllowlist : [];
+    return (raw ?? [])
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter((value) => value.length > 0);
+  }
+
+  /** Remembered groups + the ones that still need a decision. */
+  getGroupCandidates(): QQGroupCandidateReport {
+    const allowlist = new Set(this.currentAllowlist());
+    const all: QQGroupCandidateView[] = this.groupCandidates
+      .list()
+      .map((entry) => ({
+        groupId: entry.groupId,
+        name: entry.name,
+        nameStatus: entry.nameStatus,
+        nameCheckedAt: entry.nameCheckedAt,
+        firstSeenAt: entry.firstSeenAt,
+        lastSeenAt: entry.lastSeenAt,
+        messageCount: entry.messageCount,
+        ignored: entry.ignored,
+        allowed: allowlist.has(entry.groupId),
+      }));
+    return {
+      pending: all.filter((entry) => !entry.ignored && !entry.allowed),
+      all,
+    };
+  }
+
+  /** Owner pressed 拒绝/忽略: hide it from the pending list, still not allowed. */
+  dismissGroupCandidate(groupId: string): QQGroupCandidateReport {
+    this.groupCandidates.setIgnored(groupId, true);
+    return this.getGroupCandidates();
+  }
+
+  /** Undo an ignore. */
+  restoreGroupCandidate(groupId: string): QQGroupCandidateReport {
+    this.groupCandidates.setIgnored(groupId, false);
+    return this.getGroupCandidates();
+  }
+
+  /**
+   * Ask the platform for this group's name.
+   *
+   * Optional and non-load-bearing: the official endpoint is whitelist-gated
+   * (error 11253), so a normal bot gets `forbidden` and the UI shows the id
+   * alone. Never throws; a failure only records that no name is available.
+   */
+  async refreshGroupCandidateName(groupId: string): Promise<QQGroupCandidateView | null> {
+    const id = normalizeQQGroupId(groupId);
+    if (!id) return null;
+    let result: { name: string | null; status: QQGroupNameStatus };
+    try {
+      const lookup = await this.groupInfoLookup(id);
+      result = { name: lookup.name, status: lookup.status };
+    } catch (error) {
+      result = { name: null, status: 'error' };
+      this.debugLog('group name lookup threw', { error: this.describeError(error) });
+    }
+    const stored = this.groupCandidates.setName(id, result, this.now());
+    if (!stored) return null;
+    const allowlist = new Set(this.currentAllowlist());
+    return {
+      groupId: stored.groupId,
+      name: stored.name,
+      nameStatus: stored.nameStatus,
+      nameCheckedAt: stored.nameCheckedAt,
+      firstSeenAt: stored.firstSeenAt,
+      lastSeenAt: stored.lastSeenAt,
+      messageCount: stored.messageCount,
+      ignored: stored.ignored,
+      allowed: allowlist.has(stored.groupId),
+    };
+  }
+
+  /** Where the candidate list lives (diagnostics; no secrets). */
+  getGroupCandidateFile(): string {
+    return this.groupCandidates.filePath();
   }
 
   hasCredentials(config?: QQConfig | null): boolean {
@@ -835,6 +991,20 @@ export class QQGateway extends EventEmitter {
     if (gate.action === 'silent-drop') {
       // Strangers in DMs, non-allowlisted groups, other bots: NO reply text.
       // Silence is the security property, not a courtesy.
+      //
+      // The ONE side effect allowed here: remember the group id so the owner can
+      // allow it from the settings page without ever handling the 32-hex id.
+      // This is a local list write and nothing else — no model call, no tool,
+      // no memory write, no attachment download, and no widening of `gate`.
+      // A recorded group stays refused on its next message until the owner
+      // actually adds it to `groupAllowlist`.
+      if (gate.pendingGroupId) {
+        try {
+          this.groupCandidates.record(gate.pendingGroupId, decidedAt);
+        } catch {
+          // Recording is best effort; it must never influence the decision.
+        }
+      }
       if (groupAudit) {
         this.auditLog.record({
           at: new Date(decidedAt).toISOString(),
@@ -1233,7 +1403,7 @@ export class QQGateway extends EventEmitter {
   // ==================== Credentials ====================
 
   private resolveCredentials(
-    config: QQConfig | null
+    config: Partial<QQConfig> | null
   ): { credentials: QQLoginCredentials; source: QQCredentialSource } | null {
     const explicitSecret = (config?.appSecret || '').trim();
     const explicitAppId = (config?.appId || '').trim();

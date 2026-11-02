@@ -149,6 +149,36 @@ export interface QQGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+/**
+ * Result of the optional platform group-name lookup.
+ *
+ *   ok          a name is available
+ *   forbidden   the endpoint exists but is whitelist-only (code 11253) — the UI
+ *               must say "only the group ID is available" instead of guessing
+ *   unavailable no credentials, or the lookup was never run
+ *   error       network / unexpected failure
+ */
+export type QQGroupNameStatus = 'ok' | 'forbidden' | 'unavailable' | 'error';
+
+/**
+ * A group that messaged the bot while NOT allowlisted.
+ *
+ * The 32-hex `groupId` is the only identifier the platform guarantees and is
+ * always present; `name` is an optional extra. Authorising happens by adding
+ * `groupId` to `groupAllowlist` — never by typing it.
+ */
+export interface QQGroupCandidateView {
+  groupId: string;
+  name: string | null;
+  nameStatus: QQGroupNameStatus;
+  nameCheckedAt: number | null;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  messageCount: number;
+  ignored: boolean;
+  allowed: boolean;
+}
+
 // ==================== Common IM Types ====================
 
 export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq';

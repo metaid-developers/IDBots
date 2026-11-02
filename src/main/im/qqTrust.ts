@@ -63,6 +63,19 @@ export interface QQGateDecision {
   /** Group OpenID when the inbound message came from a group. */
   groupId: string | null;
   senderId: string;
+  /**
+   * Set ONLY when a group was refused because it is not in the allowlist.
+   *
+   * It means "this id may be REMEMBERED as a candidate", never "this group may
+   * be served". The gateway writes it to the candidate store and returns; the
+   * action stays `silent-drop`, so there is still no reply, no model call, no
+   * tool and no memory write. The very next message from the same group is
+   * refused again unless the owner added it to `groupAllowlist`.
+   *
+   * Absent for every other refusal (policy disabled, missing id, bot sender,
+   * stranger DM): those are not "candidates for the owner to allow".
+   */
+  pendingGroupId?: string | null;
   /** Why this decision was made — audit/log material, never user facing. */
   reason: string;
 }
@@ -139,11 +152,13 @@ function deny(
   groupId: string | null,
   reason: string,
   decidedAt: number,
-  notice?: string
+  notice?: string,
+  pendingGroupId?: string | null
 ): QQGateDecision {
   return {
     action: notice ? 'static-reply' : 'silent-drop',
     ...(notice ? { notice } : {}),
+    ...(pendingGroupId ? { pendingGroupId } : {}),
     trust: frozenTrust({
       level,
       toolScope: 'none',
@@ -202,7 +217,12 @@ export function resolveQQMessageGate(
         security.groupPolicy === 'allowlist'
         && !security.groupAllowlist.includes(groupId)
       ) {
-        return deny('group', senderId, groupId, 'group-not-allowlisted', now);
+        // The id is handed back ONLY so the gateway can remember it as a
+        // candidate for the owner to allow in the settings page. The action is
+        // still `silent-drop`: remembering is not answering, and the next
+        // message from this group is refused again until `groupAllowlist`
+        // actually contains it.
+        return deny('group', senderId, groupId, 'group-not-allowlisted', now, undefined, groupId);
       }
       // Layer 1 only. Tools/memory/attachments are structurally off.
       return {

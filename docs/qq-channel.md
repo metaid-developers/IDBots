@@ -137,8 +137,10 @@ Enforcement points (all code, none prompt-only):
   "unauthorized" — and no typing indicator. Only the bound `ownerUserOpenid` can trigger
   a DM turn, and an unbound channel serves nobody (fail-closed).
 - **Group allowlist.** `groupPolicy` is `open | allowlist | disabled`; the default is
-  `allowlist` with an **empty list**, i.e. no group is answered until the owner adds one.
-  An unknown/invalid policy value degrades to `disabled`.
+  `allowlist` with an **empty list**, i.e. no group is answered until the owner allows one.
+  An unknown/invalid policy value degrades to `disabled`. Groups are authorized from the
+  settings list — the id is captured from the platform, never typed by a human (see
+  「Group authorization without the 32-hex group OpenID」).
 - **Group attachments are refused.** Images/files/videos in a group are never downloaded
   and never written to disk; the bot replies once with
   `群里不支持看文件，私聊我` and does not run a model turn.
@@ -150,8 +152,8 @@ Enforcement points (all code, none prompt-only):
   missing owner binding resolves to a silent drop — never to a permissive fallback.
 - **Audit.** Every group trigger appends one JSONL record under `<userData>/qq/audit/`
   with group id, sender id, question summary (≤200 chars), reply summary, outcome and
-  reason. The settings card lets the owner edit the policy, the group allowlist, the
-  layer-3 switch and its allowlist.
+  reason. The settings card lets the owner edit the policy, allow or remove groups from the
+  recorded candidate list, and switch layer 3 with its own allowlist.
 
 ### Session classification (local list, group vs direct)
 
@@ -190,6 +192,75 @@ conversation mapping, not from the session type:
   owner's own list, which is intended.
 - Archived rows are **not** re-classified: an IM direct session archived before this change
   stays under the A2A archive tab; sessions archived afterwards are standard.
+
+### Group authorization without the 32-hex group OpenID
+
+**The deadlock this replaced.** The allowlist could only be filled with the platform's
+group OpenID — 32 hex characters such as
+`D5C5A8FEDB9C07ED3962FC31238BE4EE`. That string exists **only** inside an inbound message
+payload; it is never shown in the QQ client, and it is not the 8-digit 群号 the owner sees.
+So the old flow required the bot to *receive* a message from the group in order to learn the
+id, while the gate dropped unauthorized messages **without remembering the id**. The id was
+discarded on arrival, the list could never be filled, and the group could never be opened.
+Asking the owner to paste the id was asking for a value with no legitimate source.
+
+**Recording, not granting.** When `groupPolicy === 'allowlist'` and a group is not in the
+list, the gate returns `silent-drop` plus a `pendingGroupId`. The gateway then writes that
+id to `<userData>/qq/group-candidates.json` and returns. Precisely what does and does not
+happen on that path:
+
+| Step | Happens? |
+| --- | --- |
+| Reply text / typing indicator | **no** |
+| Model turn (`onMessageCallback`) | **no** |
+| Tool call of any kind | **no** |
+| Memory / knowledge-base write | **no** |
+| Attachment download | **no** |
+| Local id written to a state file | yes (id, timestamps, drop counter) |
+| Message content / sender stored | **no** — only the group id |
+
+Recording is therefore **not** authorisation. The next message from the same group is
+refused again, because the decision still reads `groupAllowlist` and nothing else. An
+explicit `disabled` policy records nothing at all — an opt-out is honoured, not harvested.
+
+**The settings card** (`IMSettings.tsx`) shows a 「待授权的群」 list. Each row displays the
+group name when the platform supplied one and otherwise 「未命名群」, always followed by the
+full group ID with a one-click copy button, plus 允许 / 拒绝 / 查群名. 「允许」appends the id
+to `groupAllowlist` (the existing config path — no new write path); 「拒绝」marks it ignored
+and removes it from the list; the allowed list below carries 移除. **There is no textarea
+and no input box asking for a group id anywhere**: a human never has to produce, type, or
+transcribe 32 hex characters, and no screen asks them to.
+
+**Group names: what the platform actually provides (verified, not assumed).**
+
+1. **The inbound group event carries no name.** In
+   `@tencent-connect/qqbot-nodejs@1.0.5`, `dist/protocol/types.d.ts → GroupMessageEvent`
+   declares exactly `id`, `content`, `timestamp`, `author{member_openid, username?, bot?}`,
+   `group_openid`, `attachments?`, `mentions?`, `message_scene?`, `message_type?`,
+   `msg_elements?`. A full grep of the SDK's `dist/` tree for `group_name` / `groupName` /
+   `chat_name` returns **nothing**, and `dist/protocol/api/routes.js` defines only message,
+   file, upload, gateway and interaction paths. The message payload can never show a name.
+2. **The Open Platform does publish a name endpoint.**
+   [`GET /v2/groups/{group_openid}/info`](https://bot.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_info.get.html)
+   returns `group_openid`, `group_name`, `group_finger_memo`, `group_class_text`,
+   `group_tags`, `group_member_num` at 30 QPM.
+3. **That endpoint is whitelist-only.** The same page's error table documents
+   **code 11253「应用无接口访问权限 — 该接口仅白名单机器人可用，请联系平台运营申请权限」**.
+   A normal bot therefore gets `forbidden` and **no name**.
+
+**Consequence, stated in the UI and enforced in code** (`src/main/im/qqGroupInfo.ts`): the
+group ID is the authoritative identifier and is always displayed. A name appears **only**
+when a lookup returned `ok`. On `forbidden` the row says, in words, that the platform did
+not grant the endpoint (error 11253) and that only the ID is available; on
+`unavailable`/`error` it says the name could not be fetched right now. We never derive,
+guess, truncate-and-label, or placeholder a name. A name that was known is cleared if a
+later re-check fails, so a revoked permission cannot leave a stale label behind
+(`QQGroupCandidateStore.setName`).
+
+Storage facts: `<userData>/qq/group-candidates.json`, mode `0600`, atomic write
+(tmp + rename), capped at 100 remembered groups (oldest `lastSeenAt` evicted) so an invite
+storm cannot grow it without bound, and a torn/unreadable file reads as **empty** — an
+empty candidate list can only ever refuse groups.
 
 ### Inviter verification: not possible, stated plainly
 
@@ -303,6 +374,10 @@ Two layers:
 | `im:qq:login:cancel` | P2 | abort the pending QR bind |
 | `im:qq:credentials:check` | P2 | `{ hasCredentials, appId, source }` — no secret |
 | `im:qq:credentials:set` | P2 | write-only AppID/AppSecret into the 0600 store |
+| `im:qq:groups:candidates:list` | P2 | recorded unauthorized groups: `{ pending, all }` (ids + optional names) |
+| `im:qq:groups:candidates:dismiss` | P2 | mark a group ignored (still refused, off the list) |
+| `im:qq:groups:candidates:restore` | P2 | undo an ignore |
+| `im:qq:groups:candidates:name` | P2 | optional platform name lookup; returns `nameStatus` (`ok` / `forbidden` / `unavailable` / `error`) |
 | `im:gateway:start/stop/test` | P2 | existing channels, now accept `'qq'` |
 
 `src/mobile/generated/ipc-contract.json` was regenerated.
@@ -316,6 +391,14 @@ Two layers:
   inviter field, so group access is allowlist-only by design.
 - Layer 3 is OFF by default; an owner who wants local capabilities over QQ must enable
   the switch and add their own OpenID. Until then, owner DMs are also plain chat.
+- **Group names are usually unavailable.** The group-info endpoint is whitelist-only
+  (error 11253), so most bots will only ever see the 32-hex group ID. That is the honest
+  default, not a bug: the UI says so on the row and the ID is always shown with a copy
+  button. Nothing in the UI asks a human to type a group id.
+- **A group must speak before it can be allowed.** The platform reveals the group OpenID
+  only in an inbound message, so the bot must receive at least one (silently recorded)
+  message from the group. There is no way to pre-authorize a group that has never
+  messaged the bot.
 - Streaming (`openStream`) and Markdown (`sendMarkdown`, needs markdown permission) are
   not wired: the framework has no streaming surface and `markdownSupport` would have to
   become a per-bot setting.

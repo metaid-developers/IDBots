@@ -79,6 +79,7 @@ tests/*
 !tests/qqGateway.test.ts
 !tests/qqSecurity.test.ts
 !tests/qqSessionClassification.test.ts
+!tests/qqGroupCandidates.test.ts
 !tests/imPlatformConfigActions.test.ts
 !tests/friendGuidanceTrigger.test.mjs
 !tests/friendGuidanceOverlayChain.test.mjs

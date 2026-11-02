@@ -11,6 +11,7 @@ import { TelegramGateway } from './telegramGateway';
 import { DiscordGateway } from './discordGateway';
 import { WeixinGateway } from './weixinGateway';
 import { QQGateway } from './qqGateway';
+import type { QQGroupCandidateReport, QQGroupCandidateView } from './qqGateway';
 import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
@@ -748,6 +749,35 @@ export class IMGatewayManager extends EventEmitter {
   /** Credential-free summary for the settings page. */
   getQQCredentialSummary(): { hasCredentials: boolean; appId: string | null; source: string | null } {
     return this.qqGateway.credentialSummary();
+  }
+
+  // ==================== QQ group candidates ====================
+  //
+  // Groups that messaged the bot while not allowlisted. Exposed so the settings
+  // page can offer allow/ignore instead of asking the owner to paste a 32-hex
+  // group OpenID they have no way of knowing.
+
+  /** Remembered groups, split into "needs a decision" and "all". */
+  getQQGroupCandidates(): QQGroupCandidateReport {
+    return this.qqGateway.getGroupCandidates();
+  }
+
+  /** Owner pressed 拒绝: hide the group from the pending list (still refused). */
+  dismissQQGroupCandidate(groupId: string): QQGroupCandidateReport {
+    return this.qqGateway.dismissGroupCandidate(groupId);
+  }
+
+  /** Undo a 拒绝. */
+  restoreQQGroupCandidate(groupId: string): QQGroupCandidateReport {
+    return this.qqGateway.restoreGroupCandidate(groupId);
+  }
+
+  /**
+   * Optional platform name lookup. The endpoint is whitelist-gated (11253), so
+   * `nameStatus` is the answer the UI must render — never a fabricated name.
+   */
+  refreshQQGroupCandidateName(groupId: string): Promise<QQGroupCandidateView | null> {
+    return this.qqGateway.refreshGroupCandidateName(groupId);
   }
 
   /**

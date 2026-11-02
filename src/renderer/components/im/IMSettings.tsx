@@ -12,6 +12,7 @@ import { setDingTalkConfig, setFeishuConfig, setTelegramConfig, setDiscordConfig
 import { getPlatformConfigAction } from './platformConfigActions';
 import { i18nService } from '../../services/i18n';
 import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatewayConfig } from '../../types/im';
+import type { QQGroupCandidateView } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 import MetaBotSelector, { type MetaBotForSelector } from '../cowork/MetaBotSelector';
 import QRCode from 'qrcode';
@@ -89,7 +90,17 @@ const IMSettings: React.FC = () => {
   const [qqSaveMessage, setQqSaveMessage] = useState('');
   // QQ security surface (group policy + layer-3 switch). Enforced in the main
   // process; this UI only edits the config.
-  const [qqGroupAllowlistText, setQqGroupAllowlistText] = useState('');
+  //
+  // Groups are NOT typed in any more: the owner cannot know the platform's
+  // 32-hex group OpenID, so the gateway records the id of every group that
+  // messaged the bot while unauthorized and this page lists them.
+  const [qqGroupCandidates, setQqGroupCandidates] = useState<QQGroupCandidateView[]>([]);
+  /** Every recorded group (pending + allowed + ignored) — used for name display. */
+  const [qqGroupCandidatesAll, setQqGroupCandidatesAll] = useState<QQGroupCandidateView[]>([]);
+  const [qqGroupCandidatesLoading, setQqGroupCandidatesLoading] = useState(false);
+  const [qqGroupCandidateError, setQqGroupCandidateError] = useState('');
+  const [qqGroupIdCopied, setQqGroupIdCopied] = useState<string | null>(null);
+  const [qqGroupNameNotice, setQqGroupNameNotice] = useState<string | null>(null);
   const [qqLocalAllowFromText, setQqLocalAllowFromText] = useState('');
 
   // Subscribe to language changes
@@ -425,11 +436,7 @@ const IMSettings: React.FC = () => {
   const telegramConnected = status.telegram.connected;
   const discordConnected = status.discord.connected;
   const weixinConnected = status.weixin.connected;
-  const qqGroupAllowlistSignature = (config.qq.groupAllowlist ?? []).join('\n');
   const qqLocalAllowFromSignature = (config.qq.localToolsAllowFrom ?? []).join('\n');
-  useEffect(() => {
-    setQqGroupAllowlistText(qqGroupAllowlistSignature);
-  }, [qqGroupAllowlistSignature]);
   useEffect(() => {
     setQqLocalAllowFromText(qqLocalAllowFromSignature);
   }, [qqLocalAllowFromSignature]);
@@ -455,6 +462,119 @@ const IMSettings: React.FC = () => {
     } catch (error: any) {
       setQqLoginError(error?.message ?? String(error));
     }
+  };
+
+  // ---- QQ pending groups -------------------------------------------------
+  //
+  // The main process remembers the group OpenID of every group that messaged
+  // the bot while it was NOT allowlisted (silently: no reply, no model, no
+  // tool, no memory). This page is the only place that list is shown, and the
+  // only way a group ever gets authorized — by clicking 允许, never by typing.
+
+  const applyQQGroupCandidateReport = (
+    pending?: QQGroupCandidateView[] | null,
+    all?: QQGroupCandidateView[] | null
+  ) => {
+    if (Array.isArray(pending)) setQqGroupCandidates(pending);
+    if (Array.isArray(all)) setQqGroupCandidatesAll(all);
+  };
+
+  const refreshQQGroupCandidates = async (options: { silent?: boolean } = {}) => {
+    // `silent` is for the background poll: it must not flash the button label
+    // every 8 seconds while the owner is reading the list.
+    if (!options.silent) setQqGroupCandidatesLoading(true);
+    try {
+      const result = await window.electron.im.qqListGroupCandidates();
+      if (result?.success) {
+        applyQQGroupCandidateReport(result.pending, result.all);
+        setQqGroupCandidateError('');
+      } else {
+        setQqGroupCandidateError(result?.error || 'Failed to read pending QQ groups');
+      }
+    } catch (error: any) {
+      setQqGroupCandidateError(error?.message || 'Failed to read pending QQ groups');
+    } finally {
+      if (!options.silent) setQqGroupCandidatesLoading(false);
+    }
+  };
+
+  const allowQQGroup = async (groupId: string) => {
+    const current = config.qq.groupAllowlist ?? [];
+    if (!current.includes(groupId)) {
+      await saveQQSecurity({ groupAllowlist: [...current, groupId] });
+    }
+    await refreshQQGroupCandidates();
+  };
+
+  const removeQQGroup = async (groupId: string) => {
+    const current = config.qq.groupAllowlist ?? [];
+    await saveQQSecurity({ groupAllowlist: current.filter((id) => id !== groupId) });
+    await refreshQQGroupCandidates();
+  };
+
+  const ignoreQQGroup = async (groupId: string) => {
+    try {
+      const result = await window.electron.im.qqDismissGroupCandidate(groupId);
+      if (result?.success) {
+        applyQQGroupCandidateReport(result.pending, result.all);
+        setQqGroupCandidateError('');
+      } else {
+        setQqGroupCandidateError(result?.error || 'Failed to ignore the group');
+      }
+    } catch (error: any) {
+      setQqGroupCandidateError(error?.message || 'Failed to ignore the group');
+    }
+  };
+
+  const copyQQGroupId = async (groupId: string) => {
+    try {
+      await navigator.clipboard.writeText(groupId);
+      setQqGroupIdCopied(groupId);
+      setTimeout(() => setQqGroupIdCopied((current) => (current === groupId ? null : current)), 1500);
+    } catch {
+      // Clipboard permission can be denied; the id is still selectable on screen.
+      setQqGroupIdCopied(null);
+    }
+  };
+
+  const resolveQQGroupName = async (groupId: string) => {
+    setQqGroupNameNotice(null);
+    try {
+      const result = await window.electron.im.qqResolveGroupName(groupId);
+      if (!result?.success) {
+        setQqGroupCandidateError(result?.error || 'Failed to resolve the group name');
+        return;
+      }
+      // `nameStatus` is the honest answer: only 'ok' carries a name. Saying so
+      // out loud is the point — we never dress an id up as a name.
+      if (result.nameStatus === 'forbidden') {
+        setQqGroupNameNotice(i18nService.t('qqGroupNameForbidden'));
+      } else if (result.nameStatus === 'ok') {
+        setQqGroupNameNotice(null);
+      } else {
+        setQqGroupNameNotice(i18nService.t('qqGroupNameUnavailable'));
+      }
+      await refreshQQGroupCandidates();
+    } catch (error: any) {
+      setQqGroupCandidateError(error?.message || 'Failed to resolve the group name');
+    }
+  };
+
+  useEffect(() => {
+    if (activePlatform !== 'qq') return;
+    void refreshQQGroupCandidates();
+    // Light poll while the QQ card is open: the owner @-mentions the bot in a
+    // new group, then wants the row to appear without reloading the app.
+    const timer = setInterval(() => {
+      void refreshQQGroupCandidates({ silent: true });
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [activePlatform]);
+
+  /** Recorded name for an already-allowed group, if the platform gave us one. */
+  const qqKnownGroupName = (groupId: string): string | null => {
+    const match = qqGroupCandidatesAll.find((candidate) => candidate.groupId === groupId);
+    return match?.name ?? null;
   };
 
   const qqConnected = status.qq.connected;
@@ -1158,22 +1278,166 @@ const IMSettings: React.FC = () => {
 
               {(config.qq.groupPolicy ?? 'allowlist') === 'allowlist' && (
                 <>
-                  <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                    {i18nService.t('qqGroupAllowlistLabel')}
-                  </label>
-                  <textarea
-                    value={qqGroupAllowlistText}
-                    onChange={(e) => setQqGroupAllowlistText(e.target.value)}
-                    onBlur={() => {
-                      void saveQQSecurity({ groupAllowlist: parseQQIdList(qqGroupAllowlistText) });
-                    }}
-                    rows={3}
-                    placeholder={i18nService.t('qqGroupAllowlistEmpty')}
-                    spellCheck={false}
-                    className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs font-mono"
-                  />
+                  {/* Pending groups. No paste box anywhere: the id comes from
+                      the platform, the owner only decides. */}
+                  <div className="space-y-2 rounded-lg border dark:border-claude-darkBorder/70 border-claude-border/70 p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                        {i18nService.t('qqPendingGroupsTitle')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { void refreshQQGroupCandidates(); }}
+                        disabled={qqGroupCandidatesLoading}
+                        className="inline-flex items-center px-2 py-1 text-[11px] font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {qqGroupCandidatesLoading ? i18nService.t('loading') : i18nService.t('qqPendingGroupsRefresh')}
+                      </button>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                      {i18nService.t('qqPendingGroupsHint')}
+                    </p>
+
+                    {qqGroupCandidates.length === 0 ? (
+                      <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {i18nService.t('qqPendingGroupsEmpty')}
+                      </p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {qqGroupCandidates.map((candidate) => (
+                          <li
+                            key={candidate.groupId}
+                            className="rounded-lg dark:bg-claude-darkSurface/60 bg-claude-surface/60 p-2 space-y-1.5"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="text-xs font-medium truncate dark:text-claude-darkText text-claude-text"
+                                title={candidate.name ?? candidate.groupId}
+                              >
+                                {candidate.name ?? i18nService.t('qqPendingGroupUnnamed')}
+                              </span>
+                              <span className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary shrink-0">
+                                {i18nService.t('qqPendingGroupMessageCount').replace('{count}', String(candidate.messageCount))}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              <code
+                                className="flex-1 min-w-0 truncate rounded dark:bg-claude-darkSurface bg-claude-surface px-1.5 py-1 text-[11px] font-mono dark:text-claude-darkTextSecondary text-claude-textSecondary select-all"
+                                title={candidate.groupId}
+                              >
+                                {candidate.groupId}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={() => { void copyQQGroupId(candidate.groupId); }}
+                                className="shrink-0 px-2 py-1 text-[11px] rounded border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                              >
+                                {qqGroupIdCopied === candidate.groupId
+                                  ? i18nService.t('qqGroupIdCopied')
+                                  : i18nService.t('qqGroupIdCopy')}
+                              </button>
+                            </div>
+
+                            {candidate.nameStatus === 'forbidden' && (
+                              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                                {i18nService.t('qqGroupNameForbidden')}
+                              </p>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => { void allowQQGroup(candidate.groupId); }}
+                                className="px-2.5 py-1 text-[11px] font-medium rounded-lg bg-claude-accent text-white hover:opacity-90 transition-opacity"
+                              >
+                                {i18nService.t('qqPendingGroupAllow')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { void ignoreQQGroup(candidate.groupId); }}
+                                className="px-2.5 py-1 text-[11px] rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                              >
+                                {i18nService.t('qqPendingGroupIgnore')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { void resolveQQGroupName(candidate.groupId); }}
+                                className="px-2.5 py-1 text-[11px] rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                                title={i18nService.t('qqGroupNameLookupHint')}
+                              >
+                                {i18nService.t('qqGroupNameLookup')}
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {qqGroupNameNotice && (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400">{qqGroupNameNotice}</p>
+                    )}
+                    {qqGroupCandidateError && (
+                      <p className="text-[11px] text-red-500">{qqGroupCandidateError}</p>
+                    )}
+                  </div>
+
+                  {/* Allowed groups. Removal lives here, not in a textarea. */}
+                  <div className="space-y-1.5">
+                    <span className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {i18nService.t('qqGroupAllowlistLabel')}
+                    </span>
+                    {(config.qq.groupAllowlist ?? []).length === 0 ? (
+                      <p className="text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        {i18nService.t('qqGroupAllowlistEmpty')}
+                      </p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {(config.qq.groupAllowlist ?? []).map((groupId) => (
+                          <li
+                            key={groupId}
+                            className="flex items-center gap-1.5 rounded-lg dark:bg-claude-darkSurface/60 bg-claude-surface/60 px-2 py-1.5"
+                          >
+                            <div className="flex-1 min-w-0">
+                              {qqKnownGroupName(groupId) && (
+                                <p className="text-[11px] font-medium truncate dark:text-claude-darkText text-claude-text">
+                                  {qqKnownGroupName(groupId)}
+                                </p>
+                              )}
+                              <code
+                                className="block truncate text-[11px] font-mono dark:text-claude-darkTextSecondary text-claude-textSecondary select-all"
+                                title={groupId}
+                              >
+                                {groupId}
+                              </code>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => { void copyQQGroupId(groupId); }}
+                              className="shrink-0 px-2 py-1 text-[11px] rounded border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                            >
+                              {qqGroupIdCopied === groupId
+                                ? i18nService.t('qqGroupIdCopied')
+                                : i18nService.t('qqGroupIdCopy')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { void removeQQGroup(groupId); }}
+                              className="shrink-0 px-2 py-1 text-[11px] rounded border border-red-500/40 text-red-500 hover:bg-red-500/10 transition-colors"
+                            >
+                              {i18nService.t('qqAllowedGroupRemove')}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
                   <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
                     {i18nService.t('qqGroupAllowlistHint')}
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {i18nService.t('qqGroupNamePolicyHint')}
                   </p>
                 </>
               )}

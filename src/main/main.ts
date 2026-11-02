@@ -18297,6 +18297,85 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     }
   });
 
+  // QQ group authorisation, without the 32-hex id.
+  //
+  // The allowlist can only hold the platform's group OpenID, and the only place
+  // that id exists is an inbound message payload — the owner can never type it.
+  // The gateway therefore REMEMBERS groups that messaged the bot while not
+  // allowlisted (silently: no reply, no model, no tool, no memory). These IPC
+  // handlers expose that local list so the settings page can offer "allow" and
+  // "ignore" buttons instead of a paste box. Recording is never authorisation:
+  // `groupAllowlist` still decides, and only the existing config path writes it.
+  registerIpcHandler('im:qq:groups:candidates:list', async () => {
+    try {
+      const report = getIMGatewayManager().getQQGroupCandidates();
+      return { success: true, pending: report.pending, all: report.all };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read QQ group candidates',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:groups:candidates:dismiss', async (_event, params: { groupId?: string }) => {
+    try {
+      const groupId = typeof params?.groupId === 'string' ? params.groupId : '';
+      if (!groupId.trim()) {
+        return { success: false, error: 'groupId is required' };
+      }
+      const report = getIMGatewayManager().dismissQQGroupCandidate(groupId);
+      return { success: true, pending: report.pending, all: report.all };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to dismiss the QQ group candidate',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:groups:candidates:restore', async (_event, params: { groupId?: string }) => {
+    try {
+      const groupId = typeof params?.groupId === 'string' ? params.groupId : '';
+      if (!groupId.trim()) {
+        return { success: false, error: 'groupId is required' };
+      }
+      const report = getIMGatewayManager().restoreQQGroupCandidate(groupId);
+      return { success: true, pending: report.pending, all: report.all };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to restore the QQ group candidate',
+      };
+    }
+  });
+
+  registerIpcHandler('im:qq:groups:candidates:name', async (_event, params: { groupId?: string }) => {
+    try {
+      const groupId = typeof params?.groupId === 'string' ? params.groupId : '';
+      if (!groupId.trim()) {
+        return { success: false, error: 'groupId is required' };
+      }
+      // Optional platform lookup. `nameStatus` is the honest answer:
+      // 'ok' has a name, 'forbidden' means the endpoint is whitelist-only (11253).
+      const candidate = await getIMGatewayManager().refreshQQGroupCandidateName(groupId);
+      if (!candidate) {
+        return { success: false, error: 'That group is not in the candidate list' };
+      }
+      return {
+        success: true,
+        candidate,
+        nameStatus: candidate.nameStatus,
+        name: candidate.name,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resolve the QQ group name',
+      };
+    }
+  });
+
   registerIpcHandler('im:status:get', async () => {
     try {
       const status = getIMGatewayManager().getStatus();

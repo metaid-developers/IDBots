@@ -185,6 +185,48 @@ successful scan.
 
 The live rows above must stay "not tested" until an owner-scanned bot is available.
 
+## 3.4 Group authorization round (2026-11-02, second pass)
+
+Scope: replace "paste a 32-hex group OpenID" with "the bot silently records candidate
+groups, the settings page offers 允许".
+
+### What was verified, and how
+
+| Claim | Evidence class | How it was checked |
+| --- | --- | --- |
+| The inbound group event carries **no** group name | **primary source (installed SDK)** | `node_modules/@tencent-connect/qqbot-nodejs@1.0.5/dist/protocol/types.d.ts → GroupMessageEvent` lists exactly `id/content/timestamp/author/group_openid/attachments?/mentions?/message_scene?/message_type?/msg_elements?`; `grep -rn "group_name\|groupName\|chat_name" dist/` returns nothing; `dist/protocol/api/routes.js` defines only message/file/upload/gateway/interaction paths |
+| The platform **does** publish a name endpoint | **primary source (official docs)** | `GET /v2/groups/{group_openid}/info` → `group_openid, group_name, group_finger_memo, group_class_text, group_tags, group_member_num`, 30 QPM |
+| That endpoint is whitelist-only | **primary source (official docs, error table)** | code **11253 「应用无接口访问权限 — 该接口仅白名单机器人可用，请联系平台运营申请权限」** |
+| Recording is silent: no reply, no model turn, no tool, no memory, no attachment | executable | `tests/qqGroupCandidates.test.ts` CAND-01/02/03/04/05/06 assert `bot.sentTexts === []`, `delivered.length === 0`, and that the state file contains the id but **not** the message text or the sender id |
+| Recording is not authorisation | executable | CAND-02 (second message still unanswered), CAND-08 (ignore → never answered), CAND-10 (removal → pending again) |
+| Allow makes the group answerable, still layer-1 only | executable | CAND-07 asserts one reply and `trust = {level:'group', toolScope:'none', memoryRead:false, memoryWrite:false, attachmentPolicy:'reject'}` |
+| No name is invented on refusal | executable | CAND-12 (fake 403 + code 11253 → `status:'forbidden'`, `name:null`), CAND-13 (no credentials → zero requests), CAND-14 (stale name cleared after a later refusal) |
+| The remembered list is bounded | executable | CAND-17 — 112 ids recorded, 100 kept, oldest evicted |
+
+### Gates re-run for this round
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Electron compile | `pnpm run compile:electron` | **pass**, no diagnostics |
+| Renderer typecheck | `npx tsc --noEmit -p tsconfig.json` | **pass**, no diagnostics |
+| Full build | `pnpm run build` | **pass** (tsc + vite renderer + preload + twemoji invariant) |
+| Lint (0 warnings) | `pnpm run lint` | **pass**, exit 0, no output |
+| QQ suite | `pnpm run test:qq` | **87/87 pass** (32 gateway + 24 security + 12 classification + 19 candidates), 0 fail, no network |
+| IPC contract | `node scripts/generate-ipc-contract.mjs --check` | **fresh**; 445 methods; four new channels carry a P2 tier (no untiered warnings) |
+| IPC contract/registry tests | `node --test tests/ipcContract.test.mjs tests/ipcRegistry.test.mjs` | **10/10 pass** |
+| Mobile channel + IM gateway tests | `node --test tests/mobileChannels.test.mjs tests/imGatewayConnectivity.test.mjs` | **15/15 pass** |
+
+### Not tested (this round)
+
+| Item | Status | Reason |
+| --- | --- | --- |
+| A real unauthorized group appearing in the settings list | **not tested live** | needs a bot bound to a real group; the local file write and the IPC read are covered offline |
+| A real `GET /v2/groups/{openid}/info` 200 response with a real name | **not tested live** | the endpoint needs a whitelisted app; the `ok` / `forbidden` / `error` branches are covered with a fake transport |
+| Clicking 允许 in the packaged UI | **not tested live** | the renderer side is compiled and typechecked; the effect (allowlist append) uses the pre-existing `im:config:set` path already exercised by the earlier round |
+
+The claim "群名需白名单" is therefore a **documented platform limitation**, not an
+observation of our own bot receiving 11253 — we never had a whitelisted app to test with.
+
 ## 4. Incident disclosure (not part of the QQ deliverable)
 
 Launching the dev shell with a **fresh** userData profile triggered the app's own first-run
@@ -209,8 +251,11 @@ the QQ code are unaffected.
   `imGatewayManager.ts` / `main.ts` / `preload.ts`, renderer card in `IMSettings.tsx`,
   logo `public/qq.svg`.
 - Tests: `tests/qqGateway.test.ts`, `tests/qqSecurity.test.ts` (24 security regressions),
-  `tests/qqSessionClassification.test.ts` (11 classification regressions) — all under
+  `tests/qqSessionClassification.test.ts` (12 classification regressions),
+  `tests/qqGroupCandidates.test.ts` (19 candidate/authorisation regressions) — all under
   `pnpm run test:qq`.
+- New code: `src/main/im/qqCandidates.ts` (candidate store),
+  `src/main/im/qqGroupInfo.ts` (optional, whitelist-aware name lookup).
 - Docs: `docs/qq-channel.md`, this file, `docs/qq-channel-pr.md`.
 - Runtime evidence (gitignored): `.dev-userdata-dsh/qq-card.png`,
   `.dev-userdata-dsh/qq-qr2.png`, `.dev-userdata-dsh/qq-dev*.log`.
