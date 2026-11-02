@@ -459,6 +459,7 @@ test('the format tag sits inside the artwork wrapper — card and detail modal a
     const detailTag = detail.indexOf('data-nft-format="metacontract"');
     assert.ok(detailTag > detailWrapper, 'detail format tag sits inside the artwork column');
     assert.ok(!/>Format</.test(detail), 'no separate Format detail row — the tag is the single format source');
+    assert.ok(!/fields as of the broadcast/.test(detail), 'the noisy note paragraph is deleted from the detail modal');
   });
 });
 
@@ -476,6 +477,18 @@ test('an nft-card fence renders the card with the format tag, not a code block',
     assert.match(markup, /AI_Sunny/);
     assert.match(markup, /100,000 sats/);
     assert.match(markup, /LISTED/);
+    // Fixed four-row contract: price rides Row1 (right-aligned), Owner and
+    // Issuer are constant slots — this metacontract fence carries no issuer,
+    // so the Issuer slot shows the em-dash placeholder (heal fills it later).
+    const seriesRow = markup.indexOf('data-nft-row="series"');
+    const ownerRow = markup.indexOf('data-nft-row="owner"');
+    const issuerRow = markup.indexOf('data-nft-row="issuer"');
+    const priceAt = markup.indexOf('100,000 sats');
+    assert.ok(
+      seriesRow > -1 && priceAt > seriesRow && ownerRow > priceAt && issuerRow > ownerRow,
+      'price rides Row1; Owner and Issuer stay the constant rows below',
+    );
+    assert.match(markup.slice(issuerRow), />—</, 'un-healed Issuer slot renders the em-dash placeholder');
     // First-paint src is the owner-finalized compress canonical form
     // (no www, no extension), derived from the fence icon.
     assert.match(
@@ -484,6 +497,47 @@ test('an nft-card fence renders the card with the format tag, not a code block',
     );
     // Not the code-block rendering.
     assert.doesNotMatch(markup, /language-nft-card/);
+  });
+});
+
+test('both formats render the same fixed four-row slots and tightened spacing (row-count equality)', () => {
+  withWindowStub(() => {
+    // MetaContract with full identity rows, MRC-721 with a fence-carried
+    // issuer, and a bare metacontract card with neither owner nor issuer —
+    // all three must expose exactly the rows series → owner → issuer, the
+    // em-dash placeholders included, so grouped heights can never differ.
+    const bare = parseNftCardFence(
+      JSON.stringify({ format: 'metacontract', genesis: GENESIS, codehash: CODEHASH, tokenIndex: '7', name: 'X' }),
+    )!;
+    const markups = {
+      metacontract: renderToStaticMarkup(<NftCard data={parseNftCardFence(JSON.stringify(CARD_PAYLOAD))!} />),
+      mrc721: renderToStaticMarkup(<NftCard data={parseNftCardFence(JSON.stringify(MRC721_PAYLOAD))!} />),
+      bare: renderToStaticMarkup(<NftCard data={bare} />),
+    };
+    const expected = ['data-nft-row="series"', 'data-nft-row="owner"', 'data-nft-row="issuer"'];
+    for (const [format, markup] of Object.entries(markups)) {
+      assert.deepEqual(
+        markup.match(/data-nft-row="(series|owner|issuer)"/g),
+        expected,
+        `${format} renders the constant three-marker slot structure`,
+      );
+      assert.match(markup, /gap-\[3px\]/, 'text block uses the tightened 3px row gap');
+      assert.match(markup, /px-2\.5 pt-1\.5 pb-2/, 'text block uses the tightened padding');
+      assert.match(markup, /h-4/, 'identity rows pin h-4');
+      if (format !== 'bare') {
+        assert.match(markup, /h-3\.5 w-3\.5/, 'identity avatars pin h-3.5 w-3.5 when a chip renders');
+      }
+      assert.ok(!/pt-0/.test(markup), 'the old standalone price row wrapper is gone');
+    }
+    // Row1 carries the price right-aligned on the metacontract card; the
+    // MRC-721 card shows it too (22000 sats).
+    assert.match(markups.metacontract, /100,000 sats/);
+    assert.match(markups.mrc721, /22,000 sats/);
+    // Bare card: owner and issuer placeholders, never a chip.
+    const bareIssuer = markups.bare.indexOf('data-nft-row="issuer"');
+    assert.match(markups.bare.slice(bareIssuer), />—</);
+    const bareOwner = markups.bare.indexOf('data-nft-row="owner"');
+    assert.match(markups.bare.slice(bareOwner, bareIssuer), />—</);
   });
 });
 
@@ -559,6 +613,11 @@ test('adjacent fences render one horizontal-scroll group; a single fence stays s
     );
     assert.match(group, /data-nft-card-group="true"/);
     assert.match(group, /overflow-x-auto/);
+    // Equal-height contract: the group stretches members (items-start gone)
+    // and each card button fills the stretched row with h-full.
+    assert.match(group, /items-stretch/);
+    assert.doesNotMatch(group, /items-start/);
+    assert.match(group, /h-full/);
     assert.equal((group.match(/data-nft-card="true"/g) ?? []).length, 2);
     assert.match(group, /data-nft-format="metacontract"/);
     assert.match(group, /data-nft-format="mrc721"/);
