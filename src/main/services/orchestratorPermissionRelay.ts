@@ -15,18 +15,13 @@
  * this module directly with stub runner/store objects.
  */
 import type { CoworkRunner } from '../libs/coworkRunner';
+import type { PermissionResult } from '../libs/coworkPermissionTypes';
 
 type RelayPermissionRequest = {
   requestId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
   timeoutDefault?: 'allow' | 'deny' | null;
-};
-
-type RelayPermissionResult = {
-  behavior: 'allow' | 'deny';
-  updatedInput?: Record<string, unknown>;
-  message?: string;
 };
 
 type RelayStore = {
@@ -162,7 +157,7 @@ function ensureState(
   return state;
 }
 
-function relayTimeoutResult(request: RelayPermissionRequest): RelayPermissionResult | null {
+function relayTimeoutResult(request: RelayPermissionRequest): PermissionResult | null {
   // Questions with no default stay until a person answers. Tool approvals
   // carry timeoutDefault 'allow'; delete and other safety confirms carry 'deny'.
   if (request.toolName === 'AskUserQuestion' && request.timeoutDefault !== 'allow' && request.timeoutDefault !== 'deny') {

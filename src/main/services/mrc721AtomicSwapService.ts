@@ -41,7 +41,6 @@ import {
 export type { Mrc721AtomicSwapListing, Mrc721Outpoint };
 export { MRC721_MIN_SELL_PRICE_SATS, MRC721_ATOMIC_SWAP_SIGHASH };
 
-const METALET_HOST = MRC721_METALET_HOST;
 const NET = 'livenet';
 const RECENT_TX_SCAN = 20;
 
@@ -177,7 +176,7 @@ export async function isMrc721OutpointUnspent(input: {
   let flag: string | undefined;
   for (let page = 0; page < 5; page += 1) {
     const params = new URLSearchParams({ address, net: NET, ...(flag ? { flag } : {}) });
-    const json = await metaletJson(`${METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`, fetchImpl);
+    const json = await metaletJson(`${MRC721_METALET_HOST}/wallet-api/v4/mvc/address/utxo-list?${params}`, fetchImpl);
     if (json.code !== 0) {
       throw mrc721ListingError(
         'check 4 (unspent)',
@@ -198,7 +197,7 @@ export async function isMrc721OutpointUnspent(input: {
   let txFlag = '';
   while (recent.length < RECENT_TX_SCAN) {
     const params = new URLSearchParams({ address, net: NET, ...(txFlag ? { flag: txFlag } : {}) });
-    const json = await metaletJson(`${METALET_HOST}/wallet-api/v4/mvc/address/tx-list?${params}`, fetchImpl);
+    const json = await metaletJson(`${MRC721_METALET_HOST}/wallet-api/v4/mvc/address/tx-list?${params}`, fetchImpl);
     if (json.code !== 0) {
       throw mrc721ListingError(
         'check 4 (unspent)',
@@ -230,7 +229,7 @@ export async function isMrc721OutpointUnspent(input: {
     checked += 1;
     try {
       const json = await metaletJson(
-        `${METALET_HOST}/wallet-api/v4/mvc/tx/raw?net=${NET}&txId=${txid}`,
+        `${MRC721_METALET_HOST}/wallet-api/v4/mvc/tx/raw?net=${NET}&txId=${txid}`,
         fetchImpl,
       );
       const hex = typeof (json.data as { hex?: string } | undefined)?.hex === 'string'
