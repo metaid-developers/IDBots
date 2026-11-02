@@ -80,6 +80,16 @@ export const LONGTERM_ADVANCE_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAX_ESCALATIONS_PER_RUN = 2;
 const DEFAULT_NUDGE_THROTTLE_MS = 30 * 60_000;
 /**
+ * Cap on attention-driven escalation turns per subtask (pre-release review
+ * P1): each failed worker attempt produces a NEW attention key that bypasses
+ * the nudge throttle, so a step whose re-dispatch keeps failing could buy a
+ * twin supervision turn every sweep, forever. Past this many attention-driven
+ * escalations on the same subtask the sweep parks it waiting_owner instead of
+ * escalating again — the owner steers, and their engagement resets the
+ * counter.
+ */
+export const MAX_ATTENTION_ESCALATIONS_PER_SUBTASK = 5;
+/**
  * Quiet time before re-presenting a parked owner decision (default 12h — a
  * daily digest, not a nag). The decision surface is now permanently visible
  * without any twin turn: the waiting_owner session rides the MAIN timeline
@@ -708,7 +718,15 @@ export class LongTermAdvanceService {
       // The owner is actively responding in a related session: every
       // owner-facing reminder is redundant — the conversation itself is
       // handling the decision. The secretary stops nagging once you reply.
+      // Their steering also re-opens a capped attention cycle.
       if (engagement.ownerVenueSessionId && ownerFacing) {
+        const capped = store.getSuperviseState(card.id)?.attentionEscalation;
+        if (capped && capped.subtaskId === current.id && capped.count > 0) {
+          store.setSuperviseState(card.id, {
+            lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
+            attentionEscalation: { subtaskId: current.id, count: 0 },
+          });
+        }
         report.skipped.push({ taskId: card.id, reason: 'owner is actively engaged in a related session — owner-facing reminder suppressed' });
         continue;
       }
@@ -723,6 +741,32 @@ export class LongTermAdvanceService {
       ) {
         report.skipped.push({ taskId: card.id, reason: 'twin recently active in a related session — work push suppressed' });
         continue;
+      }
+      // Attention retry cap: a fresh attention key bypasses the nudge
+      // throttle by design, so a step whose twin re-dispatch keeps failing
+      // would otherwise buy a supervision turn every sweep, forever. Past the
+      // cap, park the subtask for the owner instead of escalating again.
+      if (attentionForTurn !== null) {
+        const capped = store.getSuperviseState(card.id)?.attentionEscalation;
+        const attentionCount = capped && capped.subtaskId === current.id ? capped.count : 0;
+        if (attentionCount >= MAX_ATTENTION_ESCALATIONS_PER_SUBTASK) {
+          if (current.status !== 'waiting_owner') {
+            const parked = store.waitSubtask(current.id, {
+              kind: 'owner',
+              note: `attention retries exhausted (${attentionCount} escalations without progress) — owner review needed`,
+            }, 'system');
+            if (parked.ok) current = parked.value;
+          }
+          store.setSuperviseState(card.id, {
+            lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
+            lastAttentionKey: attentionKey!,
+          });
+          report.skipped.push({
+            taskId: card.id,
+            reason: `attention retry cap reached (${attentionCount} escalations on this subtask) — parked for owner review`,
+          });
+          continue;
+        }
       }
       try {
         const outcome = await this.escalate(
@@ -772,9 +816,14 @@ export class LongTermAdvanceService {
           });
         }
         if (attention && attentionIsFresh) {
+          const priorEscalation = store.getSuperviseState(card.id)?.attentionEscalation;
+          const escalationCount = priorEscalation && priorEscalation.subtaskId === current.id
+            ? priorEscalation.count + 1
+            : 1;
           store.setSuperviseState(card.id, {
             lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
             lastAttentionKey: attentionKey!,
+            attentionEscalation: { subtaskId: current.id, count: escalationCount },
           });
         }
         this.emitLog(

@@ -92,6 +92,14 @@ export interface LongTermSuperviseState {
   lastAttentionKey?: string;
   /** Timestamps of recent stale-wait convergence escalations (churn breaker). */
   convergenceAtMs?: number[];
+  /**
+   * Attention-driven escalation count for one subtask (resets when a
+   * different subtask becomes current or the owner engages). Caps the
+   * twin-re-dispatch retry cycle — a fresh failed attempt always produces a
+   * new attention key, so without this counter the advance sweep could keep
+   * buying supervision turns for a step that keeps failing.
+   */
+  attentionEscalation?: { subtaskId: string; count: number };
 }
 
 const CHANNELS: LongTermPreferredChannel[] = ['delegate_bot', 'group_task', 'owner_external', 'owner_together'];
@@ -1327,11 +1335,20 @@ export class LongTermTaskStore {
     const convergenceAtMs = Array.isArray((entry as LongTermSuperviseState).convergenceAtMs)
       ? (entry as LongTermSuperviseState).convergenceAtMs.map(Number).filter((value) => Number.isFinite(value))
       : [];
+    const rawAttentionEscalation = (entry as LongTermSuperviseState).attentionEscalation;
+    const attentionEscalation =
+      rawAttentionEscalation
+      && typeof rawAttentionEscalation === 'object'
+      && typeof (rawAttentionEscalation as { subtaskId?: unknown }).subtaskId === 'string'
+      && Number.isFinite(Number((rawAttentionEscalation as { count?: unknown }).count))
+        ? { subtaskId: rawAttentionEscalation.subtaskId, count: Math.max(0, Math.trunc(Number(rawAttentionEscalation.count))) }
+        : undefined;
     return {
       lastSuperviseAtMs,
       lastFailureSignal: String((entry as LongTermSuperviseState).lastFailureSignal ?? ''),
       lastAttentionKey: String((entry as LongTermSuperviseState).lastAttentionKey ?? ''),
       convergenceAtMs,
+      ...(attentionEscalation ? { attentionEscalation } : {}),
     };
   }
 
@@ -1343,11 +1360,13 @@ export class LongTermTaskStore {
     const lastFailureSignal = state.lastFailureSignal ?? map[taskId]?.lastFailureSignal ?? '';
     const lastAttentionKey = state.lastAttentionKey ?? map[taskId]?.lastAttentionKey ?? '';
     const convergenceAtMs = state.convergenceAtMs ?? map[taskId]?.convergenceAtMs ?? [];
+    const attentionEscalation = state.attentionEscalation ?? map[taskId]?.attentionEscalation;
     map[taskId] = {
       lastSuperviseAtMs: Math.trunc(state.lastSuperviseAtMs),
       lastFailureSignal,
       lastAttentionKey,
       convergenceAtMs: convergenceAtMs.map(Number).filter((value) => Number.isFinite(value)),
+      ...(attentionEscalation ? { attentionEscalation } : {}),
     };
     this.db.run(
       'INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
