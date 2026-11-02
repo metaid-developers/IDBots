@@ -1411,7 +1411,7 @@ const IMSettings: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => { void allowQQGroup(candidate.groupId); }}
-                                className="px-2.5 py-1 text-[11px] font-medium rounded-lg bg-claude-accent text-white hover:opacity-90 transition-opacity"
+                                className="px-2.5 py-1 text-[11px] font-medium rounded-lg bg-claude-accent text-claude-accentInk hover:opacity-90 transition-opacity"
                               >
                                 {i18nService.t('qqPendingGroupAllow')}
                               </button>
