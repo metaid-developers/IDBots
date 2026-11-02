@@ -5,13 +5,12 @@
 // dropped controller-less asks silently, and the question wizard could render
 // null while holding the pending-permission queue.
 //
-// Ownership changed with the kernel 0.2.0-rc.2 timed ask mode: the KERNEL
-// deadline now unwinds unanswered asks (the tool returns
-// { pending: true, callId } and the model continues independent work) instead
-// of the host auto-picking the recommended option after 120s — pending never
-// fabricates an answer the user did not give. The bridge's abort closes the
-// modal via onAskCancelled. The runtime-side E2E for the deadline path lives
-// in dsh-runtime/test/ask-bridge.test.mjs (turn 3).
+// Ownership: ask_user_question waits for a person. The tool is mounted with
+// timeout -1, and the kernel patch ignores a model-supplied timeout, so an
+// unanswered ask does not become { pending: true } and the host does not
+// auto-pick a recommended option. A turn cancel still closes the modal via
+// onAskCancelled. The runtime-side check lives in
+// dsh-runtime/test/ask-bridge.test.mjs.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,19 +47,22 @@ const onAskCancelledBody = (() => {
   return runnerSource.slice(start, start + 1200);
 })();
 
-test('timed ask mode: the kernel deadline owns unanswered asks — no host auto-answer', () => {
-  // The runtime composition mounts tool-ask-user in timed mode with the 300s
-  // row default; the model can still override per call (timeout: -1 blocks).
+test('timed ask mode: unanswered questions wait for a person — no host auto-answer', () => {
+  // The runtime composition mounts tool-ask-user in timed mode with timeout -1
+  // (block until answered). A kernel patch ignores any model-supplied timeout.
   assert.match(generatorSource, /name: '@deepseek-ai\/dsh-tool-ask-user'/);
-  assert.match(generatorSource, /config: \{ mode: 'timed', timeout: 300 \}/);
+  assert.match(generatorSource, /config: \{ mode: 'timed', timeout: -1 \}/);
+  assert.match(
+    readSource('scripts', 'dsh-kernel-patches', '@deepseek-ai+dsh-tool-ask-user+0.2.1-rc.2.patch'),
+    /IDBots patch \(ask-waits-for-human\)/,
+  );
   // The retired host policy is gone: no 120s constant, no backstop timer, and
   // no recommended-option auto-pick — a timeout must never fabricate an answer
   // the user did not give.
   assert.doesNotMatch(runnerSource, /ASK_PER_QUESTION_TIMEOUT_MS/);
   assert.doesNotMatch(onAskRequestBody, /setTimeout/);
   assert.doesNotMatch(onAskRequestBody, /pickRecommendedOptionLabel/);
-  // The renderer wizard never arms its own countdown for DSH asks; the modal
-  // stays open until the user answers or the kernel deadline closes it.
+  // The renderer wizard never arms its own per-question countdown for DSH asks.
   assert.match(onAskRequestBody, /perQuestionTimeoutMs: null/);
 });
 
@@ -127,7 +129,8 @@ test('approval owns the active session composer slot instead of a viewport overl
   assert.doesNotMatch(panelSource, /fixed\s+inset-x-0\s+bottom-0/);
   assert.match(panelSource, /data-cowork-composer-takeover/);
   assert.match(sessionDetailSource, /pendingPermissions\.find\(\(permission\) => permission\.sessionId === currentSession\.id\)/);
-  assert.match(sessionDetailSource, /pendingPermission \? \([\s\S]*?<CoworkPermissionPanel[\s\S]*?: \([\s\S]*?<CoworkPromptInput/);
+  assert.match(sessionDetailSource, /<CoworkPermissionPanel/);
+  assert.match(sessionDetailSource, /A2AFriendApprovalBar/);
   assert.doesNotMatch(appSource, /\{permissionPanel\}/);
   assert.doesNotMatch(overlaySource, /<CoworkPermissionPanel/);
   assert.match(overlaySource, /cowork:viewSession/);
@@ -174,6 +177,8 @@ test('composer takeover copy exists in both locales', () => {
     'coworkApprovalWaiting',
     'coworkApprovalAllowOnce',
     'coworkApprovalAllowDelete',
+    'a2aFriendApprovalInviteTitle',
+    'a2aFriendApprovalRemoveTitle',
   ]) {
     const occurrences = i18nSource.split(`${key}:`).length - 1;
     assert.ok(occurrences >= 2, `${key} must be defined in both the zh and en locale tables (found ${occurrences})`);

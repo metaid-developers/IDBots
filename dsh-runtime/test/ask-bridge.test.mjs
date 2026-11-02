@@ -43,12 +43,11 @@ const main = async () => {
   const names = JSON.stringify(config)
   record('generator mounts the user-questions service and tool',
     names.includes('@deepseek-ai/dsh-user-questions') && names.includes('@deepseek-ai/dsh-tool-ask-user'))
-  // Timed mode (kernel 0.2.0-rc.2): the kernel deadline owns unanswered asks —
-  // the tool returns { pending: true, callId } and the model continues instead
-  // of the host auto-picking an answer.
+  // Timed mode blocks until a person answers. timeout -1 is the row default,
+  // and the kernel patch ignores a model-supplied timeout.
   const askRow = (Array.isArray(config) ? config : []).find((p) => p?.name === '@deepseek-ai/dsh-tool-ask-user')
-  record('generator mounts tool-ask-user in timed mode with the 300s row default',
-    askRow?.config?.mode === 'timed' && askRow?.config?.timeout === 300,
+  record('generator mounts tool-ask-user in timed mode that waits for a person',
+    askRow?.config?.mode === 'timed' && askRow?.config?.timeout === -1,
     JSON.stringify(askRow?.config ?? null))
 
   const configPath = path.join(os.tmpdir(), `dsh-ask-${Date.now()}.json`)
@@ -63,6 +62,7 @@ const main = async () => {
   const sessionId = `ask-${Date.now().toString(36)}`
 
   const events = []
+  const notices = []
   const waiters = new Set()
   const subscription = client.subscribe()
   const pumping = (async () => {
@@ -72,6 +72,7 @@ const main = async () => {
         events.push(notification.params.event)
         for (const wait of waiters) wait(notification.params.event)
       } else if (notification.method?.startsWith('idbots/')) {
+        notices.push(notification)
         for (const wait of waiters) wait(notification)
       }
     }
@@ -123,36 +124,24 @@ const main = async () => {
   const declined = events.find((e) => e.type === 'tool/result' && JSON.stringify(e).includes('declined'))
   record('declined answer surfaces in the tool result', Boolean(declined))
 
-  // Turn 3: timed mode — an unanswered ask goes pending at the kernel deadline
-  // instead of blocking the turn forever. The bridge abort closes the host
-  // prompt via idbots/ask/cancelled; the tool result is { pending: true,
-  // callId, message } and the turn completes with no answer ever sent.
+  // Turn 3: a model-supplied 2s timeout must not close the prompt. The host
+  // patch forces a blocking ask, so the panel stays until this answer.
   const turn3 = waitFor((e) => e?.type === 'turn/end' && e.data?.turn === 3, 30000)
   await client.prompt(sessionId, [{ type: 'text', text: 'CALL_ASK_TOOL_TIMED:2' }])
   const ask3 = await waitFor((n) => n.method === 'idbots/ask/request'
     && n.params.id !== ask.params.id && n.params.id !== ask2.params.id)
   record('timed ask still bridges to the host with detail intact',
     ask3.params.questions?.[0]?.detail === 'Picking a color refreshes the theme; Red is warm, Blue is calm.')
-  const cancelled3 = await waitFor(
-    (n) => n.method === 'idbots/ask/cancelled' && n.params.id === ask3.params.id,
-    15000, 'ask deadline cancellation')
-  record('kernel deadline cancels the bridged host prompt', Boolean(cancelled3))
+  await new Promise((resolve) => setTimeout(resolve, 4000))
+  const cancelledEarly = notices.some((notice) => notice.method === 'idbots/ask/cancelled' && notice.params?.id === ask3.params.id)
+  record('model timeout does not cancel the bridged host prompt', !cancelledEarly)
+  await client.request('idbots/ask/respond', {
+    id: ask3.params.id,
+    answers: [{ id: 'q1', selected: ['Red'] }],
+  })
   await turn3
-  // The tool result text is a JSON string, so the serialized event escapes
-  // the quotes: \"pending\":true inside content[0].text.
-  const pendingResult = events.find((e) => e.type === 'tool/result'
-    && JSON.stringify(e).includes('\\"pending\\":true'))
-  record('unanswered timed ask settles as { pending: true } and the turn continues', Boolean(pendingResult))
-  // A late answer attempt after the deadline fails cleanly: the bridge entry
-  // is gone, so the host gets an explicit error instead of a silent no-op.
-  let lateError = ''
-  try {
-    await client.request('idbots/ask/respond', { id: ask3.params.id, answers: [{ id: 'q1', selected: ['Red'] }] })
-  } catch (error) {
-    lateError = String(error)
-  }
-  record('late answer after the deadline is rejected (no pending ask)',
-    lateError.includes('no pending user question'), lateError.slice(0, 80))
+  const answered3 = events.find((e) => e.type === 'tool/result' && JSON.stringify(e).includes('Red'))
+  record('answer after the ignored model timeout still reaches the tool result', Boolean(answered3))
 
   subscription.close()
   await client.close()

@@ -834,6 +834,10 @@ export interface CoworkPermissionRequest {
   toolUseId?: string | null;
   // AskUserQuestion only: per-question countdown for the wizard; null/undefined = no timeout.
   perQuestionTimeoutMs?: number | null;
+  // Epoch ms when the default button fires. Null/absent = wait for a person.
+  expiresAt?: number | null;
+  // Which button shows the countdown and which action the watchdog takes.
+  timeoutDefault?: 'allow' | 'deny' | null;
 }
 
 export type CoworkPermissionResult =

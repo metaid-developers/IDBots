@@ -599,6 +599,7 @@ man_base_data_pebble/
 !tests/coworkPermissionForwarding.test.mjs
 !tests/coworkPermissionOverlay.test.tsx
 !tests/orchestratorPermissionRelay.test.ts
+!tests/permissionPromptLayout.test.ts
 !tests/opencodeGatewayHeaders.test.mjs
 !tests/agentpediaReplayVectors.test.mjs
 !tests/agentpediaAgentTools.test.mjs

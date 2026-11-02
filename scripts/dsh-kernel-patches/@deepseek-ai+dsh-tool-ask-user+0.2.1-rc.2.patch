@@ -1,6 +1,6 @@
---- a/dsh-runtime/node_modules/@deepseek-ai/dsh-tool-ask-user/lib/index.js
-+++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-tool-ask-user/lib/index.js
-@@ -16,7 +16,7 @@ function validateQuestionIds(questions) {
+--- a/dsh-runtime/node_modules/@deepseek-ai/dsh-tool-ask-user/lib/index.js	2026-11-02 15:37:12
++++ b/dsh-runtime/node_modules/@deepseek-ai/dsh-tool-ask-user/lib/index.js	2026-11-02 15:37:12
+@@ -16,7 +16,7 @@
  		ids.add(question.id);
  	}
  }
@@ -9,7 +9,7 @@
  /**
  * Instruction the pending result carries in its `message` field. It is a field
  * of the result value rather than prose beside it because the recorded result
-@@ -37,6 +37,7 @@ function questionRequest(questions, exec) {
+@@ -37,6 +37,7 @@
  			id: question.id,
  			question: question.question,
  			...question.header !== void 0 ? { header: question.header } : {},
@@ -17,7 +17,7 @@
  			...question.options !== void 0 ? { options: question.options.map((option) => ({ ...option })) } : {},
  			...question.multi_select !== void 0 ? { multiSelect: question.multi_select } : {}
  		})),
-@@ -89,6 +90,10 @@ function registerTimedAskUser(ctx, timeout = 120) {
+@@ -89,6 +90,10 @@
  							type: "string",
  							description: "Optional short heading for the question, such as \"Confirm\" or \"Choose Mode\"."
  						},
@@ -28,7 +28,18 @@
  						options: {
  							type: "array",
  							description: "Optional choices to show the user. If you recommend one, put it first and append \"(Recommended)\" to that label.",
-@@ -214,7 +219,7 @@ const Config = z.object({
+@@ -178,7 +183,9 @@
+ 			}]
+ 		},
+ 		async execute(args, exec) {
+-			const timeout = validateTimeout(args.timeout ?? defaultTimeout);
++			// IDBots patch (ask-waits-for-human): a question waits until a person
++			// answers. The model's timeout parameter must not close the panel.
++			const timeout = -1;
+ 			validateQuestionIds(args.questions);
+ 			const request = questionRequest(args.questions, exec);
+ 			if (timeout !== -1) {
+@@ -214,7 +221,7 @@
  });
  const name = "tool-ask-user";
  const inject = ["tools", "userQuestions"];
@@ -37,7 +48,7 @@
  function apply(ctx, config = {}) {
  	if (config.mode === "timed") {
  		registerTimedAskUser(ctx, config.timeout);
-@@ -245,6 +250,10 @@ function apply(ctx, config = {}) {
+@@ -245,6 +252,10 @@
  						type: "string",
  						description: "Optional short heading for the question, such as \"Confirm\" or \"Choose Mode\"."
  					},
@@ -48,7 +59,7 @@
  					options: {
  						type: "array",
  						description: "Optional choices to show the user. If you recommend one, put it first and append \"(Recommended)\" to that label.",
-@@ -307,6 +316,7 @@ function apply(ctx, config = {}) {
+@@ -307,6 +318,7 @@
  					id: question.id,
  					question: question.question,
  					...question.header !== void 0 ? { header: question.header } : {},

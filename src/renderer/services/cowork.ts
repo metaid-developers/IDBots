@@ -312,6 +312,10 @@ class CoworkService {
         requestId: request.requestId,
         toolUseId: request.toolUseId ?? null,
         perQuestionTimeoutMs: request.perQuestionTimeoutMs ?? null,
+        expiresAt: typeof request.expiresAt === 'number' ? request.expiresAt : null,
+        timeoutDefault: request.timeoutDefault === 'allow' || request.timeoutDefault === 'deny'
+          ? request.timeoutDefault
+          : null,
       }));
     });
     this.streamListenerCleanups.push(permissionCleanup);
@@ -340,6 +344,10 @@ class CoworkService {
           requestId: entry.requestId,
           toolUseId: entry.toolUseId ?? null,
           perQuestionTimeoutMs: entry.perQuestionTimeoutMs ?? null,
+          expiresAt: typeof entry.expiresAt === 'number' ? entry.expiresAt : null,
+          timeoutDefault: entry.timeoutDefault === 'allow' || entry.timeoutDefault === 'deny'
+            ? entry.timeoutDefault
+            : null,
         } as never));
       }
     }).catch(() => undefined);
