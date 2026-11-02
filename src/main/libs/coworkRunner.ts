@@ -2889,6 +2889,15 @@ export class CoworkRunner extends EventEmitter {
   private crossSessionService: CoworkCrossSessionService | null = null;
   private crossSessionDeliveryStore?: CrossSessionDeliveryStore;
 
+  /**
+   * Continuation turns one durable-outbox drain pass may run before yielding
+   * (pre-release review P1): a deep post-downtime backlog otherwise replays
+   * as one back-to-back LLM burst. The finally block re-schedules the rest.
+   */
+  static readonly DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = 3;
+  /** Pause between drain passes once a backlog exceeds one pass. */
+  static readonly DURABLE_CROSS_SESSION_REPLAY_PACE_MS = 60_000;
+
   constructor(store: CoworkStore, options?: CoworkRunnerOptions) {
     super();
     this.store = store;
@@ -8258,7 +8267,7 @@ export class CoworkRunner extends EventEmitter {
     return this.crossSessionDeliveryStore?.reliabilitySnapshot() ?? null;
   }
 
-  private scheduleDurableCrossSessionDrain(targetSessionId: string): void {
+  private scheduleDurableCrossSessionDrain(targetSessionId: string, minDelayMs?: number): void {
     const store = this.crossSessionDeliveryStore;
     if (!store) return;
     if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
@@ -8271,10 +8280,11 @@ export class CoworkRunner extends EventEmitter {
 
     const previousTimer = this.crossSessionDeliveryTimers.get(targetSessionId);
     if (previousTimer) clearTimeout(previousTimer);
+    const delay = Math.max(minDelayMs ?? 0, next.nextAttemptAt - Date.now());
     const timer = setTimeout(() => {
       this.crossSessionDeliveryTimers.delete(targetSessionId);
       void this.drainDurableCrossSessionDeliveries(targetSessionId);
-    }, Math.max(0, next.nextAttemptAt - Date.now()));
+    }, delay);
     timer.unref?.();
     this.crossSessionDeliveryTimers.set(targetSessionId, timer);
   }
@@ -8283,10 +8293,18 @@ export class CoworkRunner extends EventEmitter {
     const store = this.crossSessionDeliveryStore;
     if (!store || this.crossSessionContinuationDraining.has(targetSessionId)) return;
     this.crossSessionContinuationDraining.add(targetSessionId);
+    let continuationsThisPass = 0;
+    let pacedStop = false;
     try {
       while (!this.isCrossSessionTurnRunning(targetSessionId)) {
         if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
           store.cancelTarget(targetSessionId, 'TARGET_SESSION_STOPPED');
+          return;
+        }
+        if (continuationsThisPass >= CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN) {
+          // Yield the pass: the finally block re-schedules the remaining
+          // backlog with a pacing delay instead of replaying it as one burst.
+          pacedStop = true;
           return;
         }
         const next = store.nextDue(targetSessionId);
@@ -8316,6 +8334,7 @@ export class CoworkRunner extends EventEmitter {
 
         const running = store.markRunning(next.id);
         if (running.state !== 'running') continue;
+        continuationsThisPass += 1;
         try {
           await this.continueSession(targetSessionId, renderedMessage, { skipUserMessage: true });
           store.markCompleted(next.id);
@@ -8336,7 +8355,10 @@ export class CoworkRunner extends EventEmitter {
     } finally {
       this.crossSessionContinuationDraining.delete(targetSessionId);
       if (!this.isCrossSessionTurnRunning(targetSessionId) && store.nextPending(targetSessionId)) {
-        this.scheduleDurableCrossSessionDrain(targetSessionId);
+        this.scheduleDurableCrossSessionDrain(
+          targetSessionId,
+          pacedStop ? CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS : undefined,
+        );
       }
     }
   }

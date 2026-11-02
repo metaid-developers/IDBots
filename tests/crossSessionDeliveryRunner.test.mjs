@@ -104,8 +104,39 @@ test('durable delivery completes once and a repeated delivery ID neither reinser
   }
 });
 
-test('restart after message insert but before outbox attachment adopts the message without duplication', async () => {
-  const world = await openWorld();
+test('a deep backlog drains in paced batches instead of one back-to-back burst', async () => {
+  const originalCap = CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN;
+  const originalPace = CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS;
+  CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = 2;
+  CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS = 20;
+  try {
+    const world = await openWorld();
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const queued = world.runner.insertCrossSessionMessageAndQueue(
+          deliveryInput(world, `delivery-pace-${i}`, `pace ${i}`),
+        );
+        assert.equal(queued.insert.ok, true, JSON.stringify(queued));
+      }
+      // Pass 1 stops at the cap; paced passes finish the rest in FIFO order.
+      await waitFor(() => assert.equal(world.calls.length, 5), 2000);
+      assert.deepEqual(
+        world.calls.map((call) => (call.prompt.match(/<cross_session_message[^>]*>([^<]*)</) ?? [])[1]),
+        ['pace 0', 'pace 1', 'pace 2', 'pace 3', 'pace 4'],
+      );
+      const snapshot = world.runner.getCrossSessionDeliveryReliabilitySnapshot();
+      assert.equal(snapshot.completed, 5);
+      assert.equal(snapshot.pending, 0);
+    } finally {
+      dispose(world);
+    }
+  } finally {
+    CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = originalCap;
+    CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS = originalPace;
+  }
+});
+
+test('restart after message insert but before outbox attachment adopts the message without duplication', async () => {  const world = await openWorld();
   try {
     const input = deliveryInput(world, 'crash-before-attach', 'persisted before crash');
     world.deliveryStore.enqueue(input);
