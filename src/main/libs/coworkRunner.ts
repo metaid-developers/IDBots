@@ -524,7 +524,7 @@ const SUBAGENT_PROGRESS_THROTTLE_MS = 1_000;
 const ASSISTANT_OWNER_UPDATE_PER_TURN_CAP = 6;
 export const ASSISTANT_OWNER_WAIT_INITIAL_MS = 5 * 60_000;
 export const ASSISTANT_OWNER_WAIT_MAX_MS = 30 * 60_000;
-export const TURN_ACK_OPENING_FALLBACK_MS = 2_000;
+export const TURN_ACK_OPENING_FALLBACK_MS = 250;
 // Tools that never mutate the workspace or external state. Used by 'plan'
 // permission mode to enforce read-only behavior; owner_update only writes the
 // session's own UI transcript. Bash is intentionally excluded (it can do
@@ -1551,17 +1551,10 @@ interface ActiveSession {
   assistantOwnerLastVisibleAt?: number;
   assistantOwnerHeartbeatCount?: number;
   assistantOwnerWaitingForTool?: boolean;
-  /**
-   * True when this turn was kicked with skipInitialUserMessage — the prompt is
-   * host-authored (first-run greeting, machine flows) and no user message
-   * entered the transcript. Turn acknowledgments exist to acknowledge a USER
-   * message, so this flag gates the whole ack emission (template phrase and
-   * LLM bubble): on the first-run greeting the ack rules ("acknowledge only,
-   * never greet, never answer") contradict the greeting instruction, and the
-   * free-relay flash model resolved the conflict by leaking its deliberation
-   * in English as the ack bubble — the very first sentence a fresh user saw.
-   */
+  /** Persistence-only flag; it does not identify whether the owner initiated the turn. */
   skipInitialUserMessage: boolean;
+  /** Explicit owner-initiated turn, including UI starts whose user message is already persisted. */
+  acknowledgeOwner?: boolean;
   delegationRequestEmitted: boolean;
   staleResumeDetected: boolean;
   staleResumeRetryAllowed: boolean;
@@ -8436,6 +8429,7 @@ export class CoworkRunner extends EventEmitter {
     prompt: string,
     options: {
       skipInitialUserMessage?: boolean;
+      acknowledgeOwner?: boolean;
       skillIds?: string[];
       systemPrompt?: string;
       autoApprove?: boolean;
@@ -8585,6 +8579,7 @@ export class CoworkRunner extends EventEmitter {
       turnSettlementResolved: false,
       disableRemoteServicesPrompt: Boolean(options.disableRemoteServicesPrompt),
       skipInitialUserMessage: Boolean(options.skipInitialUserMessage),
+      acknowledgeOwner: options.acknowledgeOwner === true,
       autoApprove: options.autoApprove ?? false,
       disableMemoryUpdates: Boolean(options.disableMemoryUpdates),
       memoryReadOnly: Boolean(options.memoryReadOnly),
@@ -10773,7 +10768,7 @@ export class CoworkRunner extends EventEmitter {
         // cross-session deliveries are different: the owner still needs an
         // immediate, contextual opening even though insertion is not repeated.
         const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
-        if (ackSourceChannel === 'cowork_ui' && (!activeSession.skipInitialUserMessage || crossSessionDelivery)) {
+        if (ackSourceChannel === 'cowork_ui' && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
           const earlyAckTier = effectiveEffortRung != null
             ? mapCerebellumEffortRungToTurnAckTier(effectiveEffortRung)
             : 'generic'

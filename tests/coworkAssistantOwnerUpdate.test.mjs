@@ -251,7 +251,7 @@ test('turn teardown clears the waiting timer so it cannot leak into the next sub
   t.mock.timers.reset()
 })
 
-test('opening fallback persists at two seconds and a late LLM opening cannot duplicate it', (t) => {
+test('opening fallback persists at 250ms and a late LLM opening cannot duplicate it', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { runner, store } = setup()
   const active = runner.activeSessions.get('s1')
@@ -259,7 +259,7 @@ test('opening fallback persists at two seconds and a late LLM opening cannot dup
   const prompt = '你要不搜一下本机看有没有这个文件？'
   runner.armTurnAckOpeningFallback('s1', prompt, active, 1)
 
-  t.mock.timers.tick(1_999)
+  t.mock.timers.tick(249)
   assert.equal(store.messages.length, 0)
   t.mock.timers.tick(1)
   assert.equal(store.messages.length, 1)
