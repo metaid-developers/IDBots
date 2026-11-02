@@ -12,6 +12,7 @@ import { SecondaryPageShell } from './SecondaryPageShell';
 export function AccountPage(props: { onBack: () => void }): JSX.Element {
   const [sheet, setSheet] = useState<'logout' | 'delete' | null>(null);
   const [reason, setReason] = useState('');
+  const [confirmText, setConfirmText] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -53,6 +54,7 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
           onClick={() => {
             setDone(false);
             setReason('');
+            setConfirmText('');
             setSheet('delete');
           }}
           className="flex min-h-[52px] w-full items-center justify-between py-2 text-[15px] text-red-600"
@@ -85,40 +87,99 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
       ) : null}
       {sheet === 'delete' ? (
         <BottomSheet title={t('mobile.me.deleteTitle')} onClose={() => setSheet(null)}>
-          {done ? (
-            <p className="min-h-[44px] py-3 text-center text-sm font-medium text-emerald-600">
-              {t('mobile.me.deleteDone')}
-            </p>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm text-[var(--text-secondary)]">{t('mobile.me.deleteBody')}</p>
-              <input
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder={t('mobile.me.deleteReasonPlaceholder')}
-                className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none"
-              />
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setSheet(null)}
-                  className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] py-2 text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
-                >
-                  {t('mobile.me.botCancel')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void doDelete()}
-                  disabled={busy}
-                  className="min-h-[44px] flex-1 rounded-xl bg-red-600 py-2 font-medium text-white active:opacity-80 disabled:opacity-40"
-                >
-                  {t('mobile.me.deleteConfirm')}
-                </button>
-              </div>
-            </div>
-          )}
+          <AccountDeleteSheet
+            busy={busy}
+            done={done}
+            reason={reason}
+            confirmText={confirmText}
+            onReasonChange={setReason}
+            onConfirmTextChange={setConfirmText}
+            onCancel={() => setSheet(null)}
+            onConfirm={() => void doDelete()}
+          />
         </BottomSheet>
       ) : null}
     </SecondaryPageShell>
+  );
+}
+
+/**
+ * Presentational body of the delete-account confirmation sheet, factored out
+ * so the SSR-only test stack can pin both states of the typed-confirmation
+ * gate (repo has no jsdom; see tests/mobileMeIa.test.tsx).
+ *
+ * Gate: the confirm button stays disabled until the typed text equals the
+ * prompt-shown phrase exactly (zh word for delete, en "DELETE"). The reason
+ * field and the deletion request call sequence are unchanged — the gate only
+ * delays the button, never alters what is submitted.
+ */
+export function AccountDeleteSheet(props: {
+  busy: boolean;
+  done: boolean;
+  reason: string;
+  confirmText: string;
+  onReasonChange: (value: string) => void;
+  onConfirmTextChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}): JSX.Element {
+  const phrase = t('mobile.me.deleteConfirmPhrase');
+  // Empty phrase (missing copy) must fail CLOSED, never silently unlock.
+  const gateSatisfied = phrase.length > 0 && props.confirmText === phrase;
+
+  if (props.done) {
+    return (
+      <p className="min-h-[44px] py-3 text-center text-sm font-medium text-emerald-600">
+        {t('mobile.me.deleteDone')}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-[var(--text-secondary)]">{t('mobile.me.deleteBody')}</p>
+      <div>
+        <p
+          data-testid="account-delete-confirm-prompt"
+          className="mb-2 text-sm font-medium text-[var(--text-primary)]"
+        >
+          {t('mobile.me.deleteConfirmPrompt', { phrase })}
+        </p>
+        <input
+          value={props.confirmText}
+          onChange={(event) => props.onConfirmTextChange(event.target.value)}
+          placeholder={phrase}
+          data-testid="account-delete-confirm-input"
+          data-confirm-phrase={phrase}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none"
+        />
+      </div>
+      <input
+        value={props.reason}
+        onChange={(event) => props.onReasonChange(event.target.value)}
+        placeholder={t('mobile.me.deleteReasonPlaceholder')}
+        className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none"
+      />
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={props.onCancel}
+          className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] py-2 text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+        >
+          {t('mobile.me.botCancel')}
+        </button>
+        <button
+          type="button"
+          data-testid="account-delete-confirm"
+          onClick={props.onConfirm}
+          disabled={props.busy || !gateSatisfied}
+          className="min-h-[44px] flex-1 rounded-xl bg-red-600 py-2 font-medium text-white active:opacity-80 disabled:opacity-40"
+        >
+          {t('mobile.me.deleteConfirm')}
+        </button>
+      </div>
+    </div>
   );
 }
