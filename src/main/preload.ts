@@ -1276,6 +1276,11 @@ contextBridge.exposeInMainWorld('electron', {
     retrySubsidy: () => ipcRenderer.invoke('userIdentity:retrySubsidy'),
     retryChainSync: () => ipcRenderer.invoke('userIdentity:retryChainSync'),
   },
+  paymentInfo: {
+    get: () => ipcRenderer.invoke('paymentInfo:get'),
+    save: (input: { info: unknown }) => ipcRenderer.invoke('paymentInfo:save', input),
+    clear: () => ipcRenderer.invoke('paymentInfo:clear'),
+  },
   social: {
     /** S5 friend badge data source: pair state via the S4 metaso provider (main-side TTL cache). */
     getPairRelationship: (input: { observerGlobalMetaId: string; peerGlobalMetaId: string }) =>

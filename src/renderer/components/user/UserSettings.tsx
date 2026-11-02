@@ -25,6 +25,7 @@ import MnemonicWordGrid from './MnemonicWordGrid';
 import UserBackupMnemonicModal from './UserBackupMnemonicModal';
 import ChainBackupRestorePrompt from './ChainBackupRestorePrompt';
 import ChainBackupMnemonicReminderModal from './ChainBackupMnemonicReminderModal';
+import PaymentReceivingSettings from '../settings/PaymentReceivingSettings';
 
 type ViewState = 'loading' | 'empty' | 'create' | 'backup' | 'import' | 'profile';
 
@@ -1174,6 +1175,9 @@ const UserSettings: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* S3 收款信息：加密保存于本机，绝不上链（design doc 02） */}
+        <PaymentReceivingSettings />
 
         {/* Logout confirmation modal */}
         {logoutModalOpen && (

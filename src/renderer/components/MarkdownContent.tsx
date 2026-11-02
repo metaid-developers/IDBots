@@ -64,6 +64,8 @@ import {
   parseNftCardFence,
   parseNftCardGroupFence,
 } from './chat/nftCardSyntax';
+import PaymentCard from './chat/PaymentCard';
+import { isPayCardFenceLanguage, parsePayCardFence } from './chat/paymentCardSyntax';
 
 /**
  * Code-block languages worth highlighting in chat output.
@@ -507,6 +509,15 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
       const cardData = parseNftCardFence(trimmedCodeText);
       if (cardData) {
         return <NftCard data={cardData} />;
+      }
+    }
+    // S3 fiat payment cards: a `pay-card` fence carrying a JSON payload
+    // renders as a PaymentCard (Alipay point-to-point + QR degrade path).
+    // Unparsable payloads keep the plain code-block rendering.
+    if (isPayCardFenceLanguage(fenceLanguage)) {
+      const paymentData = parsePayCardFence(trimmedCodeText);
+      if (paymentData) {
+        return <PaymentCard data={paymentData} />;
       }
     }
 
