@@ -46,6 +46,28 @@ import type { LongTermSubtask, LongTermTaskDetail } from '../../renderer/types/l
  *    does escalate lands where the owner actually is — hot delivery (short,
  *    conversational) when engaged, cold delivery (full self-contained brief)
  *    otherwise.
+ *
+ * Venue rules (P3): a turn whose reply will ADDRESS the owner — every
+ * owner-facing reason family, and ANY turn on a waiting_owner sub-project
+ * (the owner-wait block mandates a full decision re-presentation whatever
+ * the trigger reason says) — is delivered to the owner's conversation:
+ * the related session holding the owner's newest message (no recency
+ * filter — overnight gaps are the norm and the owner ruling is
+ * auto-follow: wherever they last spoke is where the task's human line
+ * continues), falling back to the definition session, then to the bound
+ * session. Such turns are NEVER subject to the rotation budget: a fat
+ * session is compaction's problem, while rotating a decision re-push into
+ * a fresh, history-less session forks the human conversation (the
+ * 2026-11-02 incident: a stale-wait convergence turn rotated a 401-message
+ * session, the re-pushed acceptance ticket surfaced the new session as the
+ * decision venue, and the owner's morning ruling landed in a fork). Pure
+ * work turns (quiet pushes, supervision, external re-checks) keep rotating
+ * on budget — those sessions are the bots' own workspace. Cold work turns
+ * in heartbeat-owned sessions must not address the owner at all: a
+ * decision discovered mid-work is parked via longterm_subtask_wait and
+ * delivered to the owner's conversation by the next owner-facing turn; a
+ * per-sweep convergence keeps every waiting_owner binding on the owner's
+ * venue so the decision surface never points at a work session.
  */
 
 export const LONGTERM_ADVANCE_INTERVAL_MS = 5 * 60_000;
@@ -322,8 +344,14 @@ function buildOwnerWaitBlock(current: LongTermSubtask, language: string, deliver
  * Extra prompt block for SUPERVISION turns (P1): the TwinBot must deliver a
  * supervision verdict — closer to acceptance, or looping? — and exactly ONE
  * corrective action. Null when this is not a supervision turn.
+ * `ownerConversationSeat` mirrors buildNudgePrompt: a supervision turn in a
+ * bot work session parks owner decisions instead of asking them there.
  */
-function buildSupervisionBlock(attempts: LongTermWorkerAttemptSummary[] | null, language: string): string {
+function buildSupervisionBlock(
+  attempts: LongTermWorkerAttemptSummary[] | null,
+  language: string,
+  ownerConversationSeat = true,
+): string {
   if (attempts === null) return '';
   const dispatchLines = attempts
     .slice(0, 8)
@@ -341,6 +369,9 @@ function buildSupervisionBlock(attempts: LongTermWorkerAttemptSummary[] | null, 
       '- 这是针对委派工作的主动监督：先读 journal（longterm_task_get）与证据，再结合下面的派发记录判断。',
       '- 回复必须回答三个问题：① 自上次监督以来，工作离验收标准更近了吗——给出证据；② 是否在重复同一类失败（同错误、同方法、盲目重试）；③ 监督结论 + 恰好一项行动：继续 / 纠偏（给 worker 发带锚点的纠正指令）/ 终止并重派 / 确属主人决策时才提问。',
       '- 责任链：worker 的所有问题第一责任人是你——先诊断、纠偏、换方法、重派，穷尽之后才升级主人；主人只处理产品决策与不可逆取舍。绝不允许静默等待一个反复失败的循环跑下去。',
+      ...(ownerConversationSeat
+        ? []
+        : ['- 升级主人 = 用 longterm_subtask_wait 记录决策请求（note 按六段决策简报结构写），不是在本会话发问——主人不在本会话，系统会把决策送进他正在使用的会话。']),
       '- 反盲试规则：同一方法以同类方式失败 2 次以上，禁止原样重试第三次——必须换方法、先取证（例如核实代码实际运行的位置与版本），或升级。',
       '- 用 longterm_event_note 记录监督结论（以「supervision: 」开头），让下一轮监督可以直接对比。',
       `- 本任务最近的 worker 派发（新→旧）：\n${dispatchLines}`,
@@ -352,6 +383,9 @@ function buildSupervisionBlock(attempts: LongTermWorkerAttemptSummary[] | null, 
     '- Read the journal (longterm_task_get) and the evidence first, then judge against the dispatch record below.',
     '- Your reply must answer three questions: (1) is the work closer to the acceptance criteria than at the last check — with evidence; (2) is it repeating the same class of failure (same error, same approach, blind retries); (3) verdict + exactly ONE action: continue / correct course (send the worker a corrective instruction carrying the anchor) / stop and reassign / ask the owner only if it is genuinely their call.',
     '- Responsibility chain: worker problems are YOURS first — diagnose, correct, change approach, reassign; escalate to the owner only product decisions and irreversible trade-offs. Never silently wait out a repeatedly failing loop.',
+    ...(ownerConversationSeat
+      ? []
+      : ['- Escalating to the owner = recording the decision request with longterm_subtask_wait (note written as the six-section decision brief), NOT asking in this session — the owner is not here; the system delivers the decision into the conversation they actually use.']),
     '- Anti-blind-retry rule: after the same approach has failed the same way twice, a third identical retry is forbidden — change the approach, gather evidence first (e.g. verify where and which version of the code actually runs), or escalate.',
     '- Journal the verdict with longterm_event_note (prefix "supervision: ") so the next supervision turn can diff against it.',
     `- Recent worker dispatches for this task (newest first):\n${dispatchLines}`,
@@ -366,6 +400,7 @@ function buildNudgePrompt(
   supervisionAttempts: LongTermWorkerAttemptSummary[] | null = null,
   rotation: { messages: number } | null = null,
   delivery: 'cold' | 'hot' = 'cold',
+  ownerConversationSeat = true,
 ): string {
   const criteria = current.acceptanceCriteria.length > 0
     ? current.acceptanceCriteria.map((criterion, index) => `   ${index + 1}. ${criterion}`).join('\n')
@@ -404,7 +439,9 @@ function buildNudgePrompt(
             '   - 如果现在能推进，就推进（begin/继续，走约定好的通道）。',
             '   - 若需委派：先用 longterm_delegation_anchor 生成锚点块并原样放进委派简报——委派不带锚点就是有损中继，worker 会按"合理"而非"正确"去做。',
             '   - 如果下一步要引入目标或事件流里没有的假设、基建或配置（新配置面、新通道、新依赖），先停下来问主人——这是提问，不是你可以自行拍板的事。',
-            '   - 如果需要主人决策，就问他——恰好一个问题，选择题形式、你的推荐项放最前；始终允许他用文字给出自己的答案。',
+            ...(ownerConversationSeat
+              ? ['   - 如果需要主人决策，就问他——恰好一个问题，选择题形式、你的推荐项放最前；始终允许他用文字给出自己的答案。']
+              : ['   - 如果需要主人决策：主人不在本会话——不要在这里向他提问（他看不到这里，提问只会制造一条他需要分辨的新对话线）。用 longterm_subtask_wait 记录决策请求，note 按六段决策简报结构写清问题、选项与推荐项；系统会把这项决策送进主人正在使用的会话。若主人本人后来来到本会话对话，再当面对齐。']),
             '   - 如果被外部条件卡住，用 longterm_subtask_wait 记录等待（精确的备注 + 知道日期就写 waitUntil；waitUntil 一律换算成主人本地时区、带时区偏移的完整 ISO 时间戳——不要写裸 UTC，除非主人明确用 UTC）。',
             '   - 如果交付物可验证地满足全部验收标准，带上证据提请验收。',
             '4. 用主人的语言回复。',
@@ -412,7 +449,7 @@ function buildNudgePrompt(
     ];
     const ownerWaitBlock = buildOwnerWaitBlock(current, language, delivery);
     if (ownerWaitBlock) lines.push(ownerWaitBlock);
-    const supervisionBlock = buildSupervisionBlock(supervisionAttempts, language);
+    const supervisionBlock = buildSupervisionBlock(supervisionAttempts, language, ownerConversationSeat);
     if (supervisionBlock) lines.push(supervisionBlock);
     return lines.join('\n');
   }
@@ -449,7 +486,9 @@ function buildNudgePrompt(
           '   - If the sub-project can advance now, advance it (begin/continue via the agreed channel).',
           '   - If you delegate: first build the anchor with longterm_delegation_anchor and paste it into the delegation brief verbatim — a delegation without the anchor is a lossy relay, and the worker will build the plausible thing instead of the right thing.',
           '   - If the next step introduces any assumption, infrastructure, or config not present in the goal or the journal (a new config surface, channel, or dependency), stop and ask the owner first — that is a question, never your call alone.',
-          '   - If you need the owner, ask — exactly ONE question, multiple choice with your recommended option first; free-text answers always allowed.',
+          ...(ownerConversationSeat
+            ? ['   - If you need the owner, ask — exactly ONE question, multiple choice with your recommended option first; free-text answers always allowed.']
+            : ['   - If you need the owner\'s decision: the owner is NOT in this session — do not ask them here (they will not see it; a question here only creates a second conversation line they must discover and tell apart from the real one). Record the decision request with longterm_subtask_wait, writing the note as the six-section decision brief (question, options, recommendation); the system will deliver it into the conversation the owner actually uses. If the owner themselves later shows up in this session, align with them directly then.']),
           '   - If blocked externally, record the wait with longterm_subtask_wait (precise note + waitUntil when known; ALWAYS convert waitUntil to a full ISO timestamp WITH timezone offset in the owner\'s local timezone — never bare UTC unless the owner explicitly uses UTC).',
           '   - If the deliverable verifiably meets every acceptance criterion, propose acceptance with evidence.',
           '4. Reply in the owner\'s language.',
@@ -549,6 +588,42 @@ export class LongTermAdvanceService {
         this.emitLog(
           `[LongTermAdvance] rebound task "${detail.title}" sub-project #${current.ordinal} to the owner's live session ${venue}`,
         );
+      }
+      // P3 venue convergence: every waiting_owner decision line follows the
+      // owner's conversation, not just the current sub-project's binding. A
+      // wait parked from a work session — or a binding left behind by an old
+      // rotation (the 2026-11-02 fork: sub-project #2's acceptance ticket
+      // lived in a day-old rotation session while #6 ran in the owner's chat)
+      // — would surface that work session as the task's decision venue
+      // (decisionSessionIds → the 待跟进 surface), pulling the owner into a
+      // history-less conversation. Converge silently; idempotent — once every
+      // waiting_owner binding sits on the venue, subsequent sweeps bind
+      // nothing. The convergence notes are bookkeeping, so the event anchor
+      // moves with them (same as the live-venue rebind above).
+      const waitingVenueId = this.resolveOwnerVenue(detail, engagement);
+      if (waitingVenueId !== null) {
+        let converged = false;
+        for (const sub of detail.subtasks) {
+          if (sub.status !== 'waiting_owner' || sub.sessionId === waitingVenueId) continue;
+          if (!store.bindSession(sub.id, waitingVenueId, 'system').ok) continue;
+          converged = true;
+        }
+        if (converged) {
+          const postSweepEventId = store.getTask(card.id)?.events[0]?.id ?? latestEventId;
+          store.setNudgeState(card.id, {
+            lastNudgeAtMs: nudgeState?.lastNudgeAtMs ?? 0,
+            lastEventId: postSweepEventId,
+            ...(engagement.lastOwnerAtMs !== null ? { lastOwnerActivityAtMs: engagement.lastOwnerAtMs } : {}),
+          });
+          nudgeState = store.getNudgeState(card.id);
+          const refreshedCurrent = store
+            .getTask(card.id)
+            ?.subtasks.find((sub) => sub.id === current.id);
+          if (refreshedCurrent) current = refreshedCurrent;
+          this.emitLog(
+            `[LongTermAdvance] converged waiting-owner decision lines of task "${detail.title}" to the owner's session ${waitingVenueId}`,
+          );
+        }
       }
       const reasons = this.collectReasons(detail, current, nowMs, nudgeState?.lastEventId ?? 0, supervision, engagement.lastOwnerAtMs);
       if (reasons.length === 0) {
@@ -787,6 +862,45 @@ export class LongTermAdvanceService {
   }
 
   /**
+   * True when this turn's REPLY will address the owner, whatever the trigger
+   * reason says. Every owner-facing reason family qualifies, and so does ANY
+   * turn on a waiting_owner sub-project: buildOwnerWaitBlock is injected into
+   * the prompt whenever the status is waiting_owner, mandating a full
+   * decision re-presentation. The 2026-11-02 incident: a "stale owner wait"
+   * convergence turn is classified as a WORK turn (correctly, for suppression
+   * semantics) but carried the wait block, so the venue logic keyed on the
+   * reason classification let it rotate into a brand-new session — which then
+   * surfaced as the task's decision venue and forked the owner's conversation
+   * the moment they replied there. Venue and rotation decisions key off this
+   * fail-closed predicate; suppression decisions keep the reason-based
+   * isOwnerFacing (a hot convergence turn while the owner is online blends
+   * into the live conversation instead of nagging).
+   */
+  private isOwnerFacingTurn(reasons: string[], current: LongTermSubtask): boolean {
+    return this.isOwnerFacing(reasons) || current.status === 'waiting_owner';
+  }
+
+  /**
+   * Where an owner-facing turn must land: the related session holding the
+   * owner's NEWEST message (no recency filter — overnight gaps are the norm,
+   * and the owner ruling is auto-follow: wherever they last spoke is where
+   * the task's human line continues), falling back to the task's definition
+   * session (the conversation the task was born in). Null when neither
+   * exists — the caller then keeps the bound session or, as a last resort,
+   * opens one. The rotation budget NEVER applies to owner-facing turns: a
+   * fat session is a bot-context problem (compaction's job), while rotating
+   * the decision line into a session the owner has never opened forks the
+   * human conversation — the exact failure this resolves.
+   */
+  private resolveOwnerVenue(detail: LongTermTaskDetail, engagement: LongTermTaskEngagement): string | null {
+    const coworkStore = this.deps.coworkStore();
+    for (const sessionId of [engagement.lastOwnerSessionId, detail.definitionSessionId]) {
+      if (sessionId && coworkStore.getSession(sessionId)) return sessionId;
+    }
+    return null;
+  }
+
+  /**
    * The wait recorded on this waiting_owner sub-project is stale: the journal
    * shows real work after the latest wait-establishing event ('waiting' or
    * 'proposed'). Direct indexed queries — never the capped 200-event detail
@@ -904,7 +1018,32 @@ export class LongTermAdvanceService {
     let sessionId = '';
     let reusedSession = false;
     let rotation: { from: string; messages: number } | null = null;
-    if (boundSessionId && coworkStore.getSession(boundSessionId)) {
+    // Venue rules (2026-11-02 incident): a turn that will address the owner
+    // runs in the owner's conversation — the session holding their newest
+    // message, else the definition session — never a fresh rotation session
+    // and never subject to the rotation budget. The budget exists to bound
+    // BOT context; a decision re-push the owner must read belongs where they
+    // last spoke, however fat that session is (compaction governs its
+    // context). Suppression semantics stay reason-based (isOwnerFacing) —
+    // this predicate only decides WHERE, not WHETHER.
+    const ownerFacingTurn = this.isOwnerFacingTurn(reasons, current);
+    const ownerVenueId = ownerFacingTurn ? this.resolveOwnerVenue(detail, engagement) : null;
+    if (ownerVenueId !== null) {
+      sessionId = ownerVenueId;
+      reusedSession = true;
+      if (ownerVenueId !== boundSessionId) {
+        this.deps.store().bindSession(current.id, ownerVenueId, 'system');
+        this.deps.store().addNote(
+          detail.id,
+          current.id,
+          `owner-facing line follows the owner's conversation: ${boundSessionId || '(unbound)'} → ${ownerVenueId}`,
+          'system',
+        );
+        this.emitLog(
+          `[LongTermAdvance] converged task "${detail.title}" sub-project #${current.ordinal} owner-facing line to the owner's session ${ownerVenueId}`,
+        );
+      }
+    } else if (boundSessionId && coworkStore.getSession(boundSessionId)) {
       const messageCount = coworkStore.countSessionMessages?.(boundSessionId) ?? 0;
       // Rotation is heartbeat-session hygiene and applies ONLY to sessions the
       // heartbeat created itself (auto-origin 'longterm'). A session the owner
@@ -925,10 +1064,14 @@ export class LongTermAdvanceService {
       //  - an owner-facing turn whose bound session holds the owner's most
       //    recent word (a reminder's only job is to be seen — it belongs
       //    where the owner last spoke, budget or not).
+      // An owner-facing turn with NO resolvable venue also lands here (keep
+      // the bound session, budget or not) — rotating it would strand the
+      // decision re-push in a session the owner has never opened.
       // Work turns in a heartbeat session with no owner presence rotate on budget.
       const boundIsLiveVenue = engagement.ownerVenueSessionId === boundSessionId;
       const boundHasOwnersLatestWord = engagement.lastOwnerSessionId === boundSessionId;
       if (
+        ownerFacingTurn ||
         !heartbeatOwned ||
         messageCount < this.sessionRotationThreshold ||
         boundIsLiveVenue ||
@@ -999,7 +1142,27 @@ export class LongTermAdvanceService {
     // blends into the live conversation instead of reading out a full brief.
     const delivery: 'cold' | 'hot' =
       engagement.ownerVenueSessionId !== null && engagement.ownerVenueSessionId === sessionId ? 'hot' : 'cold';
-    const prompt = buildNudgePrompt(detail, current, reasons, language, supervisionAttempts, rotation, delivery);
+    // Is this turn running inside a conversation the owner reads (their
+    // venue, the definition session, any human-opened session), or inside a
+    // heartbeat-created work session? A COLD turn in a work session must not
+    // address the owner — the owner is not there; a question asked there
+    // becomes a second conversation line the owner has to discover and tell
+    // apart from the real one. Decisions discovered mid-work are parked via
+    // longterm_subtask_wait and delivered to the owner's conversation by the
+    // next owner-facing turn instead.
+    const ownerConversationSeat =
+      sessionId === ownerVenueId ||
+      (sessionId !== '' && coworkStore.getSessionAutoOrigin?.(sessionId) !== 'longterm');
+    const prompt = buildNudgePrompt(
+      detail,
+      current,
+      reasons,
+      language,
+      supervisionAttempts,
+      rotation,
+      delivery,
+      ownerConversationSeat,
+    );
 
     coworkStore.updateSession(sessionId, { status: 'running' });
     const heartbeatMessage = coworkStore.addMessage(sessionId, {
