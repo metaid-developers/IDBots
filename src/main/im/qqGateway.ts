@@ -74,6 +74,7 @@ import {
   resolveQQMessageGate,
   summarizeForAudit,
 } from './qqTrust';
+import { QQRateLimiter } from './qqRateLimit';
 
 /** Default outer backoff, one step above the SDK's own 60 s ceiling. */
 export const DEFAULT_QQ_RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10_000, 30_000, 60_000];
@@ -346,6 +347,11 @@ export class QQGateway extends EventEmitter {
   private readonly auditLog: QQGroupAuditLog;
   private readonly groupCandidates: QQGroupCandidateStore;
   private readonly groupInfoLookup: QQGroupInfoLookup;
+  /**
+   * Group flood guard (3/sender/min, 10/group/min, daily budget, duplicate
+   * suppression). In-memory by design: a restart clears it.
+   */
+  private readonly rateLimiter: QQRateLimiter;
 
   private config: QQConfig | null = null;
   private status: QQGatewayStatus = { ...DEFAULT_QQ_STATUS };
@@ -411,6 +417,7 @@ export class QQGateway extends EventEmitter {
         },
         now: this.now,
       });
+    this.rateLimiter = new QQRateLimiter({ now: this.now });
   }
 
   /**
@@ -1046,6 +1053,61 @@ export class QQGateway extends EventEmitter {
     this.lastConversationId = conversationId;
     this.status = { ...this.status, lastInboundAt: this.now(), lastError: null };
     this.emitStatus();
+
+    // ── Group rate limiting (groups only) ────────────────────────────────
+    // Decided BEFORE any outbound text (the group-media notice included) and
+    // before the model turn. Rejection is SILENT: no sendText, no typing, no
+    // hint of any kind — telling a flooder "too fast" only confirms a live bot.
+    //
+    // Reception and the audit trail are NOT skipped: the message event still
+    // fires (so the renderer sees the inbound line) and a dropped record with
+    // reason `rate-limited:<why>` is appended, so "who flooded" stays
+    // answerable later.
+    //
+    // DM is deliberately out of scope: it is owner-only and already isolated
+    // by the trust gate. All counters below are per group; the daily budget is
+    // the only global one.
+    if (isGroup) {
+      const live = this.liveConfig();
+      const rate = this.rateLimiter.checkGroup({
+        groupId: gate.groupId ?? (msg.groupOpenid || '').trim(),
+        senderId: gate.senderId,
+        content: msg.content,
+        dailyLimit: live?.dailyReplyLimit,
+      });
+      if (!rate.allowed) {
+        const limited = toQQIMMessage(msg, {
+          appId,
+          now: this.now(),
+          attachments: [],
+          failedAttachments: 0,
+          mentionedVia: decision.via,
+          trust: gate.trust,
+        });
+        if (limited) this.emit('message', limited);
+        if (groupAudit) {
+          this.auditLog.record({
+            at: new Date(this.now()).toISOString(),
+            ...groupAudit,
+            reply: '',
+            outcome: 'dropped',
+            trustLevel: gate.trust.level,
+            reason: `rate-limited:${rate.reason}`,
+          });
+        }
+        this.debugLog('group message rate limited', {
+          messageId,
+          groupId: gate.groupId,
+          senderId: gate.senderId,
+          reason: rate.reason,
+          senderCount: rate.senderCount,
+          groupCount: rate.groupCount,
+          dailyCount: rate.dailyCount,
+          dailyLimit: rate.dailyLimit,
+        });
+        return;
+      }
+    }
 
     // ── Layer 1 attachment policy (groups: never download) ───────────────
     if (gate.trust.attachmentPolicy === 'reject' && this.hasInboundMedia(msg)) {

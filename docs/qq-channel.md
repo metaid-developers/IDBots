@@ -155,6 +155,42 @@ Enforcement points (all code, none prompt-only):
   reason. The settings card lets the owner edit the policy, allow or remove groups from the
   recorded candidate list, and switch layer 3 with its own allowlist.
 
+### Group rate limiting (flood guard)
+
+Authorization answers **who may talk to us**; it says nothing about **how often**. An
+allowlisted member could @ the bot a hundred times in a row and every trigger burned a model
+turn. `src/main/im/qqRateLimit.ts` closes that hole at the same entry point as the trust gate.
+
+| Rule | Limit | Configurable |
+| --- | --- | --- |
+| one sender in one group | 3 admitted messages / rolling 60 s | no (hard-coded) |
+| one group, all senders | 10 admitted messages / rolling 60 s | no (hard-coded) |
+| all groups, daily budget | 500 admitted group messages / local day | yes (`dailyReplyLimit`, 1–100000) |
+| duplicate content | a sender's consecutive identical message gets no reply | no |
+
+Properties:
+
+- **Silent.** A rejected message produces **no outbound text at all** — not even
+  「太频繁」/「请稍后」. Telling a flooder that the bot is alive invites more flooding.
+  The only trace is the audit line, whose `reason` becomes `rate-limited:<why>`
+  (`per-sender` / `per-group` / `daily` / `duplicate`) and whose `reply` is empty.
+- **Reception and audit are not blocked.** The inbound `message` event still fires and the
+  dropped record still lands in the group audit trail, so "who flooded" remains answerable.
+  Only the model turn (and the group-media notice) is skipped.
+- **Group-scoped.** Both per-minute counters are keyed by group: a flooded group A does not
+  silence group B. The daily budget is deliberately global — it is the bot's total model
+  budget across groups.
+- **No owner exception.** The owner OpenID is not special inside a group. DMs are out of
+  scope: they are owner-only and already isolated by the trust gate.
+- **In-memory state.** A restart clears the counters, which is acceptable for a flood guard;
+  nothing is written to long-term memory. Duplicate memory and the daily counter reset at
+  the local-day boundary.
+- **Invalid daily values fail strict.** 0, negative, NaN, non-numeric or out-of-range values
+  degrade to the default 500 — never to "unlimited".
+- **Not the conversation queue.** `enqueueConversation` (below) only orders turns; it does
+  not limit how many there are. The rate limiter is the quantity gate, and it runs before
+  the queue.
+
 ### Session classification (local list, group vs direct)
 
 All IM sessions — direct AND group — are created as `session_type = 'standard'`, i.e.

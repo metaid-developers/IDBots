@@ -135,6 +135,11 @@ export interface QQConfig {
   localToolsEnabled?: boolean;
   /** Stable ids allowed to use layer 3 after the switch is on. */
   localToolsAllowFrom?: string[];
+  /**
+   * Daily budget for admitted group messages, across all groups. Default 500.
+   * The per-minute limits are hard-coded, not configurable.
+   */
+  dailyReplyLimit?: number;
 }
 
 export interface QQGatewayStatus {

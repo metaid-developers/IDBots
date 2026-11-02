@@ -23,6 +23,7 @@ import {
   DEFAULT_QQ_CONFIG,
   DEFAULT_IM_SETTINGS,
 } from './types';
+import { normalizeQQDailyReplyLimit } from './qqRateLimit';
 
 /**
  * `appSecret` must never reach the renderer through `im:config:get`, so the
@@ -290,7 +291,11 @@ export class IMStore {
 
   getQQConfig(): QQConfig {
     const stored = this.getConfigValue<QQConfig>('qq');
-    return stripQQSecret({ ...DEFAULT_QQ_CONFIG, ...stored });
+    const merged = stripQQSecret({ ...DEFAULT_QQ_CONFIG, ...stored });
+    // Normalize the configurable daily group budget on every read: a bad row
+    // (0, negative, NaN, a typo) must degrade to the default 500 and never to
+    // "unlimited". This is the same normalizer the limiter uses at runtime.
+    return { ...merged, dailyReplyLimit: normalizeQQDailyReplyLimit(merged.dailyReplyLimit) };
   }
 
   /**

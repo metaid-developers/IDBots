@@ -227,6 +227,53 @@ groups, the settings page offers 允许".
 The claim "群名需白名单" is therefore a **documented platform limitation**, not an
 observation of our own bot receiving 11253 — we never had a whitelisted app to test with.
 
+## 3.5 Group rate limiting round (2026-11-02)
+
+The gap this round closes: allowlisting decided *who* may trigger the bot, but nothing
+limited *how often*. `src/main/im/qqRateLimit.ts` adds four rules at the message entry
+point: 3/sender/group/minute, 10/group/minute, a configurable daily budget (default 500),
+and consecutive-duplicate suppression. Every drop is silent; the audit line records
+`rate-limited:<why>`; reception (the `message` event) still fires.
+
+### Gates re-run for this round
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Electron compile | `pnpm run compile:electron` | **pass**, no diagnostics |
+| Renderer typecheck | `npx tsc --noEmit` | **pass**, no diagnostics |
+| Full build | `pnpm run build` | **pass** (tsc + vite renderer + preload + twemoji invariant) |
+| Lint (0 warnings) | `pnpm run lint` | **pass**, exit 0, no output |
+| QQ suite | `pnpm run test:qq` | **102/102 pass** (32 gateway + 24 security + 12 classification + 19 candidates + **15 rate limit**), 0 fail, no network |
+| i18n key parity | `node --test tests/i18nEnglishCoverage.test.mjs` | **3/3 pass** (new zh keys have English counterparts, no Chinese leakage) |
+
+### New coverage (`tests/qqRateLimit.test.ts`, 15 tests)
+
+1. RL-01 same sender: 4th message in one minute is silently dropped (model not called,
+   reply empty, audit reason `rate-limited:per-sender`)
+2. RL-02 the per-sender window is rolling: after 60 s the sender is served again
+3. RL-03 single group: 11th message in one minute is dropped (`per-group`)
+4. RL-04 daily budget blocks the 6th turn at `dailyReplyLimit=5`, and the cap is read live
+5. RL-05 daily budget resets on the next local day
+6. RL-06 consecutive identical content (whitespace-insensitive) is answered once; a
+   different line resets the comparison
+7. RL-07 duplicate suppression is per sender — another member saying the same thing is served
+8. RL-08 a flooded group does not silence another group
+9. RL-09 the owner is NOT exempt inside a group
+10. RL-10 DMs are outside every group limit, including the daily cap
+11. RL-11 every drop is silent: no "too fast"/"please wait" text, all audit replies empty
+12. RL-12 the per-minute guards are hard-coded at 3 and 10; default daily is 500
+13. RL-13 invalid daily values degrade to 500, never to unlimited
+14. RL-14 content normalization ignores mention markers/whitespace only (case-sensitive)
+15. RL-15 limiter state is group-scoped and `reset()` clears it
+
+### Not tested (this round)
+
+| Item | Status | Reason |
+| --- | --- | --- |
+| A real flood against a live QQ group | **not tested live** | would need a real bound bot and a disposable group; the decision path and audit are covered offline with a fake SDK |
+| Editing the daily cap in the packaged UI | **not test-clicked** | the renderer change is covered by `tsc --noEmit` and `pnpm run build`; the IPC path is the pre-existing `im:config:set`, and the stored value is normalized on read by `IMStore.getQQConfig()` |
+| Restart persistence | **not applicable by design** | counters are in-memory and intentionally reset on restart (documented product decision) |
+
 ## 4. Incident disclosure (not part of the QQ deliverable)
 
 Launching the dev shell with a **fresh** userData profile triggered the app's own first-run

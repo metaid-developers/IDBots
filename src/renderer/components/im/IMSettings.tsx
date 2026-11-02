@@ -15,6 +15,13 @@ import type { IMPlatform, IMConnectivityCheck, IMConnectivityTestResult, IMGatew
 import type { QQGroupCandidateView } from '../../types/im';
 import { getVisibleIMPlatforms } from '../../utils/regionFilter';
 import MetaBotSelector, { type MetaBotForSelector } from '../cowork/MetaBotSelector';
+import {
+  QQ_DAILY_REPLY_LIMIT_DEFAULT,
+  QQ_DAILY_REPLY_LIMIT_MAX,
+  QQ_DAILY_REPLY_LIMIT_MIN,
+  QQ_RATE_GROUP_PER_MINUTE,
+  QQ_RATE_SENDER_PER_MINUTE,
+} from '../../../main/shared/qqRateLimit';
 import QRCode from 'qrcode';
 
 interface IMMetabotOption extends MetaBotForSelector {}
@@ -102,6 +109,8 @@ const IMSettings: React.FC = () => {
   const [qqGroupIdCopied, setQqGroupIdCopied] = useState<string | null>(null);
   const [qqGroupNameNotice, setQqGroupNameNotice] = useState<string | null>(null);
   const [qqLocalAllowFromText, setQqLocalAllowFromText] = useState('');
+  /** Draft text for the configurable daily cap; committed on blur/save. */
+  const [qqDailyLimitText, setQqDailyLimitText] = useState(String(QQ_DAILY_REPLY_LIMIT_DEFAULT));
 
   // Subscribe to language changes
   useEffect(() => {
@@ -441,6 +450,16 @@ const IMSettings: React.FC = () => {
     setQqLocalAllowFromText(qqLocalAllowFromSignature);
   }, [qqLocalAllowFromSignature]);
 
+  // The daily cap is editable, so the input holds a draft string while the
+  // committed value lives in the config. Re-sync whenever the config changes
+  // (including a rollback after a failed save).
+  const qqDailyLimitSignature = String(
+    config.qq.dailyReplyLimit ?? QQ_DAILY_REPLY_LIMIT_DEFAULT
+  );
+  useEffect(() => {
+    setQqDailyLimitText(qqDailyLimitSignature);
+  }, [qqDailyLimitSignature]);
+
   const parseQQIdList = (text: string): string[] => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -462,6 +481,28 @@ const IMSettings: React.FC = () => {
     } catch (error: any) {
       setQqLoginError(error?.message ?? String(error));
     }
+  };
+
+  /**
+   * Commit the daily cap. Invalid input (empty, NaN, 0, negative, above the
+   * guard rail) reverts to the stored value instead of persisting garbage —
+   * the main process would fall back to 500 anyway, and silently disagreeing
+   * with the input is worse than refusing the edit.
+   */
+  const saveQQDailyLimit = async () => {
+    const parsed = Number(qqDailyLimitText.trim());
+    const limit = Number.isFinite(parsed) ? Math.floor(parsed) : Number.NaN;
+    if (
+      !Number.isFinite(limit)
+      || limit < QQ_DAILY_REPLY_LIMIT_MIN
+      || limit > QQ_DAILY_REPLY_LIMIT_MAX
+    ) {
+      setQqDailyLimitText(qqDailyLimitSignature);
+      return;
+    }
+    setQqDailyLimitText(String(limit));
+    if (limit === Number(qqDailyLimitSignature)) return;
+    await saveQQSecurity({ dailyReplyLimit: limit });
   };
 
   // ---- QQ pending groups -------------------------------------------------
@@ -1441,6 +1482,54 @@ const IMSettings: React.FC = () => {
                   </p>
                 </>
               )}
+
+              {/* Group rate limiting. The two per-minute numbers are
+                  hard-coded (they are flood guards, not preferences); only the
+                  daily cap is editable. Every limit is silent by design. */}
+              <div className="space-y-2 rounded-lg border dark:border-claude-darkBorder/70 border-claude-border/70 p-2.5">
+                <p className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                  {i18nService.t('qqRateLimitTitle')}
+                </p>
+                <p className="text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  {i18nService.t('qqRateLimitPerMinuteHint')
+                    .replace('{sender}', String(QQ_RATE_SENDER_PER_MINUTE))
+                    .replace('{group}', String(QQ_RATE_GROUP_PER_MINUTE))}
+                </p>
+                <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('qqDailyLimitLabel')}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={QQ_DAILY_REPLY_LIMIT_MIN}
+                    max={QQ_DAILY_REPLY_LIMIT_MAX}
+                    step={1}
+                    value={qqDailyLimitText}
+                    onChange={(e) => setQqDailyLimitText(e.target.value)}
+                    onBlur={() => { void saveQQDailyLimit(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                    }}
+                    className="block w-32 rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { void saveQQDailyLimit(); }}
+                    className="inline-flex items-center px-3 py-2 text-xs font-medium rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                  >
+                    {i18nService.t('save')}
+                  </button>
+                </div>
+                <p className="text-[11px] leading-relaxed text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  {i18nService.t('qqDailyLimitHint').replace(
+                    '{default}',
+                    String(QQ_DAILY_REPLY_LIMIT_DEFAULT)
+                  )}
+                </p>
+                <p className="text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                  {i18nService.t('qqRateLimitSilentHint')}
+                </p>
+              </div>
 
               <label className="flex items-start gap-2 text-xs dark:text-claude-darkText text-claude-text">
                 <input

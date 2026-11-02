@@ -239,6 +239,15 @@ export interface QQConfig {
   localToolsEnabled?: boolean;
   /** Stable ids (OpenIDs) allowed to use layer 3 after the switch is on. */
   localToolsAllowFrom?: string[];
+  /**
+   * Daily budget for admitted GROUP messages (all groups combined).
+   *
+   * DEFAULT 500. The two per-minute limits (3 per sender per group, 10 per
+   * group) are deliberately NOT configurable — they are flood guards, not
+   * preferences. Invalid values degrade to the default, never to unlimited.
+   * DM is out of scope: direct messages are owner-only and already isolated.
+   */
+  dailyReplyLimit?: number;
 }
 
 export type QQGroupPolicy = 'open' | 'allowlist' | 'disabled';
@@ -493,6 +502,8 @@ export const DEFAULT_QQ_CONFIG: QQConfig = {
   groupAllowlist: [],
   localToolsEnabled: false,
   localToolsAllowFrom: [],
+  // Group model turns per local day, across all groups. See qqRateLimit.ts.
+  dailyReplyLimit: 500,
 };
 
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
