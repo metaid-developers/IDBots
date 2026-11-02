@@ -159,6 +159,8 @@ export class WeixinGateway extends EventEmitter {
   private token: string | null = null;
   private baseUrl: string = WEIXIN_DEFAULT_BASE_URL;
   private syncBuf = '';
+  /** ilink user id of the account that scanned the QR — the only trusted inbound sender. */
+  private ownerUserId: string | null = null;
 
   private pendingQr: { qrcode: string; content: string; createdAt: number } | null = null;
   private loginAbort: AbortController | null = null;
@@ -249,6 +251,12 @@ export class WeixinGateway extends EventEmitter {
 
     this.token = token;
     this.baseUrl = (config.baseUrl || stored?.baseUrl || WEIXIN_DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.ownerUserId = stored?.userId ?? null;
+    if (!this.ownerUserId) {
+      console.warn(
+        '[Weixin Gateway] Stored credentials carry no owner id — every inbound message is dropped until the bot is re-authorized (owner gate).'
+      );
+    }
     const sync = this.store.loadSync(this.accountId);
     this.syncBuf = sync?.getUpdatesBuf ?? '';
     this.failureCount = 0;
@@ -299,6 +307,7 @@ export class WeixinGateway extends EventEmitter {
     }
 
     this.token = null;
+    this.ownerUserId = null;
     this.contextTokens.clear();
     this.typingTickets.clear();
     this.status = { ...DEFAULT_WEIXIN_STATUS };
@@ -378,6 +387,7 @@ export class WeixinGateway extends EventEmitter {
       const stored = this.store.saveCredentials(parsed.credentials, this.accountId, this.now());
       this.token = stored.token;
       this.baseUrl = stored.baseUrl.replace(/\/+$/, '');
+      this.ownerUserId = stored.userId ?? null;
       this.pendingQr = null;
       this.status = {
         ...this.status,
@@ -554,6 +564,18 @@ export class WeixinGateway extends EventEmitter {
   private async handleInbound(raw: WeixinInboundMessage): Promise<void> {
     // Our own outbound echo: never download its media or answer it.
     if (raw?.message_type === WEIXIN_MESSAGE_TYPE_BOT) return;
+
+    // Owner gate (fail-closed). The Weixin channel is a private owner→bot
+    // line: the only trusted sender is the account that scanned the QR code,
+    // whose ilink user id is persisted with the bot credentials. Anything else
+    // — a stranger's DM, a message arriving before that binding exists, or a
+    // malformed sender id — is dropped before any media download or session
+    // work, mirroring the QQ trust gate's drop posture for untrusted senders.
+    const senderId = typeof raw?.from_user_id === 'string' ? raw.from_user_id.trim() : '';
+    if (!senderId || !this.ownerUserId || senderId !== this.ownerUserId) {
+      console.warn('[Weixin Gateway] Dropping inbound message: sender is not the bound owner (owner gate)');
+      return;
+    }
 
     const rawId = raw && raw.message_id != null ? String(raw.message_id) : null;
     if (rawId && this.isDuplicate(rawId)) return;
@@ -1030,6 +1052,7 @@ export class WeixinGateway extends EventEmitter {
   private async handleSessionExpired(message: string): Promise<void> {
     this.running = false;
     this.token = null;
+    this.ownerUserId = null;
     this.syncBuf = '';
     this.contextTokens.clear();
     this.typingTickets.clear();
