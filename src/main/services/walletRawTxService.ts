@@ -495,7 +495,12 @@ export function summarizeMvcTransferTx(params: {
   };
 }
 
-async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(workerBasename: string, payload: unknown, env: NodeJS.ProcessEnv): Promise<T> {
+async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
+  workerBasename: string,
+  payload: unknown,
+  env: NodeJS.ProcessEnv,
+  options?: { requireTxHex?: boolean },
+): Promise<T> {
   const appPath = app.getAppPath();
   const candidatePaths = getMainWorkerCandidatePaths({
     moduleDir: __dirname,
@@ -561,7 +566,7 @@ async function runWorker<T extends WorkerTransferResult = WorkerTransferResult>(
           reject(new Error(parsed.error || 'Worker failed'));
           return;
         }
-        if (!parsed.txHex || typeof parsed.txHex !== 'string') {
+        if (options?.requireTxHex !== false && (!parsed.txHex || typeof parsed.txHex !== 'string')) {
           reject(new Error('Worker did not return txHex'));
           return;
         }
@@ -1185,4 +1190,81 @@ export async function buildMvcOrderedRawTxBundle(
   }
 
   return { steps };
+}
+
+export async function buildMvc721SellPartialTx(
+  store: MetabotStore,
+  params: {
+    metabotId: number;
+    buyerAddress: string;
+    priceSats: number;
+    outpoint: { txid: string; vout: number; satoshis: number };
+  },
+): Promise<{ partialTx: string; sigtype: number }> {
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const result = await runWorker<WorkerTransferResult & { partialTx?: string; sigtype?: number }>(
+    'buildMvc721SellPartialTxWorker.js',
+    {
+      buyerAddress: params.buyerAddress,
+      priceSats: params.priceSats,
+      outpoint: params.outpoint,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+    { requireTxHex: false },
+  );
+  if (!result.partialTx || typeof result.sigtype !== 'number') {
+    throw new Error('Sell worker did not return a partial tx');
+  }
+  return { partialTx: result.partialTx, sigtype: result.sigtype };
+}
+
+export async function completeMvc721BuyTx(
+  store: MetabotStore,
+  params: {
+    metabotId: number;
+    listing: unknown;
+    feeRate: number;
+    excludeOutpoints: string[];
+  },
+): Promise<{
+  txId: string;
+  spentOutpoints: string[];
+  feeSats: number;
+  feeRateEffective: number;
+}> {
+  const wallet = store.getMetabotWalletByMetabotId(params.metabotId);
+  if (!wallet?.mnemonic?.trim()) {
+    throw new Error('MetaBot wallet not found');
+  }
+  const result = await runWorker<WorkerTransferResult & {
+    feeSats?: number;
+    feeRateEffective?: number;
+    spentOutpoints?: string[];
+  }>(
+    'completeMvc721BuyTxWorker.js',
+    {
+      listing: params.listing,
+      feeRate: params.feeRate,
+      excludeOutpoints: params.excludeOutpoints,
+    },
+    {
+      IDBOTS_METABOT_MNEMONIC: wallet.mnemonic,
+      IDBOTS_METABOT_PATH: wallet.path || DEFAULT_PATH,
+    },
+  );
+  if (!result.txid) {
+    throw new Error('Buy worker did not return a txid');
+  }
+  return {
+    txId: result.txid,
+    spentOutpoints: result.spentOutpoints ?? [],
+    feeSats: Number(result.feeSats ?? 0),
+    feeRateEffective: Number(result.feeRateEffective ?? 0),
+  };
 }

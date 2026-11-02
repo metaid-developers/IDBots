@@ -848,6 +848,7 @@ blob-report/
 !tests/mobileVoiceWireup.test.tsx
 !tests/mrc721Service.test.mjs
 !tests/mrc721AgentTools.test.mjs
+!tests/mrc721AtomicSwap.test.mjs
 !tests/weixinGateway.test.ts
 !tests/weixinMedia.test.ts
 !docs/weixin-media.md
