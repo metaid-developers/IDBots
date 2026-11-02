@@ -3,12 +3,12 @@
   "appName": "IDBots",
   "webDir": "www",
   "server": {
-    "url": "https://staging.idbots.world/",
-    "errorPath": "offline.html?retry=https%3A%2F%2Fstaging.idbots.world%2F",
+    "url": "https://app.idbots.world/",
+    "errorPath": "offline.html?retry=https%3A%2F%2Fapp.idbots.world%2F",
     "androidScheme": "https",
     "iosScheme": "capacitor",
     "allowNavigation": [
-      "staging.idbots.world"
+      "app.idbots.world"
     ]
   },
   "android": {
