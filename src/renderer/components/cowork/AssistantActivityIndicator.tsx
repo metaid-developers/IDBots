@@ -81,10 +81,20 @@ export const AssistantActivityIndicator: React.FC<{
   );
 
   const getStatusText = (): string => {
-    // SDK runtime-status signals (api_retry / requesting / turnAck) take
-    // precedence — they describe the transport layer, not the agent loop.
-    // Within the tail run a retry always wins; otherwise the turnAck phrase
-    // beats the generic "thinking" (the calibrated promise is the point).
+    let activityKey: 'assistantStatusSearchingLocal' | 'assistantStatusVerifyingDelivery' | null = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const activity = messages[i].metadata?.turnAckActivity;
+      if (activity === 'search_local') {
+        activityKey = 'assistantStatusSearchingLocal';
+        break;
+      }
+      if (activity === 'verify_delivery') {
+        activityKey = 'assistantStatusVerifyingDelivery';
+        break;
+      }
+      if (activity === 'working') break;
+    }
+
     let sawRequesting = false;
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -96,6 +106,9 @@ export const AssistantActivityIndicator: React.FC<{
       if (status === 'requesting') {
         sawRequesting = true;
       }
+    }
+    if (activityKey && (tailTurnAck || sawRequesting)) {
+      return i18nService.t(activityKey);
     }
     if (ackPhrase && tailTurnAck) {
       return ackPhrase;
@@ -126,18 +139,20 @@ export const AssistantActivityIndicator: React.FC<{
         toolResultIds.add(id);
       }
     }
-    // Walk backwards to find the latest unresolved tool_use. Assistant mode
-    // never names the tool — one generic "working on it" line.
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg.type === 'tool_use') {
         const id = msg.metadata?.toolUseId;
         if (typeof id === 'string' && !toolResultIds.has(id)) {
-          return i18nService.t('assistantStatusWorking');
+          return activityKey
+            ? i18nService.t(activityKey)
+            : i18nService.t('assistantStatusWorking');
         }
       }
     }
-    return fallbackText || i18nService.t(IDLE_PHRASE_KEYS[idlePhraseIndex]);
+    return activityKey
+      ? i18nService.t(activityKey)
+      : fallbackText || i18nService.t(IDLE_PHRASE_KEYS[idlePhraseIndex]);
   };
 
   const avatarSrc = isRenderableAvatarSource(avatar) ? avatar! : DEFAULT_BOT_AVATAR;

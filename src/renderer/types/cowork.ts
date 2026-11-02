@@ -99,6 +99,8 @@ export interface CoworkMessageMetadata {
    * tag records the origin; rendering is the standard assistant bubble.
    */
   turnAckReply?: boolean;
+  turnAckActivity?: 'search_local' | 'verify_delivery' | 'working';
+  finalizationFallback?: boolean;
   isDelegationInternal?: boolean;
   skillIds?: string[];
   /**

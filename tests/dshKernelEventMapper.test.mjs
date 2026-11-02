@@ -1240,7 +1240,7 @@ test('assistant mode: short GLM tool-ride commentary stays hidden and is not pro
   assert.equal(ended.some((a) => a.slot === 'text'), false, 'a short process note never becomes the final answer')
 })
 
-test('assistant mode: a substantive GLM deliverable beside the terminal tool call is promoted exactly once', () => {
+test('assistant mode: a substantive GLM deliverable beside the terminal tool call enters finalizing with the full report as fallback', () => {
   const mapper = assistantMapper()
   glmHeader(mapper)
   const report = `## 汇总\n${'完整交付与验证结果。'.repeat(30)}`
@@ -1258,10 +1258,68 @@ test('assistant mode: a substantive GLM deliverable beside the terminal tool cal
     },
   })
   assert.equal(done.some((a) => a.slot === 'text'), false, 'the candidate is not emitted beside the tool call')
+  mapper.consume({ type: 'tool/call', data: { callId: 'c1', name: 'todo_write', arguments: '{}' } })
+  const ended = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  const turnEnd = ended.find((a) => a.kind === 'turnEnd')
+  assert.equal(turnEnd.finalizationRequired, true)
+  assert.equal(turnEnd.fallbackFinalText, report)
+  assert.equal(ended.some((a) => a.kind === 'messageFinalize' && a.slot === 'text'), false, 'no partial answer is published before finalizing')
+})
+
+test('assistant mode: a complete answer followed by a tool and a short addendum finalizes from the full candidate', () => {
+  const mapper = assistantMapper()
+  const fullAnswer = `**找到了，本机已经有可复用的文件。**${'包含直接回答、验证结果、限制和下一步。'.repeat(12)}`
+  mapper.consume({
+    type: 'assistant/message',
+    data: {
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: fullAnswer },
+          { type: 'tool-call', id: 'c1', name: 'bash', arguments: '{}' },
+        ],
+      },
+    },
+  })
+  mapper.consume({ type: 'tool/call', data: { callId: 'c1', name: 'bash', arguments: '{}' } })
+  const addendum = mapper.consume({
+    type: 'assistant/message',
+    data: { message: { role: 'assistant', content: [{ type: 'text', text: '权限已收紧。接下来还需要你提供编号。' }] } },
+  })
+  assert.equal(addendum.some((a) => a.kind === 'messageFinalize' && a.slot === 'text' && a.content), false, 'the short addendum cannot displace the complete answer')
   const ended = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'stop' } } })
-  const final = ended.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
-  assert.equal(final.content, report)
-  assert.equal(ended.filter((a) => a.kind === 'messageFinalize' && a.slot === 'text').length, 1)
+  const turnEnd = ended.find((a) => a.kind === 'turnEnd')
+  assert.equal(turnEnd.finalizationRequired, true)
+  assert.equal(turnEnd.fallbackFinalText, fullAnswer)
+})
+
+test('assistant mode: a DeepSeek final_answer phase beside tools is still a finalization candidate, not an immediate reply', () => {
+  const mapper = assistantMapper()
+  const done = mapper.consume({
+    type: 'assistant/message',
+    data: {
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '阿码的收尾切片交付了。拉回执并验关键面。' },
+          { type: 'tool-call', id: 'c1', name: 'twin_task_status', arguments: '{}' },
+        ],
+        source: {
+          kind: 'model', provider: 'deepseek', model: 'deepseek-flash',
+          replayState: { kind: 'pi-ai', version: 1, api: 'openai-responses', blocks: [
+            { type: 'text', textSignature: sig('final_answer') },
+            { type: 'tool-call' },
+          ] },
+        },
+      },
+    },
+  })
+  assert.equal(done.some((a) => a.slot === 'text'), false)
+  mapper.consume({ type: 'tool/call', data: { callId: 'c1', name: 'twin_task_status', arguments: '{}' } })
+  const ended = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'stop' } } })
+  const turnEnd = ended.find((a) => a.kind === 'turnEnd')
+  assert.equal(turnEnd.finalizationRequired, true)
+  assert.equal(turnEnd.fallbackFinalText, undefined)
 })
 
 test('assistant mode: twenty GLM commentary rounds produce only the final answer', () => {

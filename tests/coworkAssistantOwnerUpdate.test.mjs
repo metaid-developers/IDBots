@@ -250,3 +250,46 @@ test('turn teardown clears the waiting timer so it cannot leak into the next sub
   assert.equal(store.messages.length, 0)
   t.mock.timers.reset()
 })
+
+test('opening fallback persists at two seconds and a late LLM opening cannot duplicate it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const prompt = '你要不搜一下本机看有没有这个文件？'
+  runner.armTurnAckOpeningFallback('s1', prompt, active, 1)
+
+  t.mock.timers.tick(1_999)
+  assert.equal(store.messages.length, 0)
+  t.mock.timers.tick(1)
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].metadata.turnAckReply, true)
+  assert.match(store.messages[0].content, /本机查找/)
+  assert.equal(active.assistantOwnerUpdateCount, 1)
+
+  runner.emitTurnAckOpeningBubble('s1', prompt, active, 1, 'A late model opening', false)
+  assert.equal(store.messages.length, 1)
+  runner.removeActiveSession('s1', active)
+  assert.equal(active.dshTurnAckFallbackTimer, null)
+  t.mock.timers.reset()
+})
+
+test('the finalization stage rejects every tool through the host policy', async () => {
+  const { runner } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.finalizingTurn = true
+  const result = await runner.evaluateDshToolPolicy('s1', 'bash', { command: 'echo should-not-run' })
+  assert.equal(result.decision, 'deny')
+  assert.match(result.reason, /does not allow tool calls/)
+})
+
+test('an orchestration delivery gets an immediate contextual opening without waiting for a model', async () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckSerial = 1
+  const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收</cross_session_message>'
+  await runner.emitTurnAckReplyBubble('s1', prompt, active, 1)
+  assert.equal(store.messages.length, 1)
+  assert.match(store.messages[0].content, /^Builder阿码已交付一个子任务/)
+  assert.ok(!store.messages[0].content.includes('cross_session'))
+})

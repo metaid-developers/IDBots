@@ -117,9 +117,31 @@ export function sanitizeTurnAckReply(raw: string): string {
   return capped.slice(0, cut).trimEnd();
 }
 
+export type TurnAckActivity = 'search_local' | 'verify_delivery' | 'working';
+
+export function resolveTurnAckActivity(userText: string): TurnAckActivity {
+  const text = userText ?? '';
+  if (/\[ORCH-NOTIFY\]/i.test(text)) return 'verify_delivery';
+  if (/本机|本地|local/i.test(text) && /搜|查找|search|find/i.test(text)) return 'search_local';
+  return 'working';
+}
+
 export function buildFallbackTurnAckReply(userText: string): string {
   const normalized = (userText ?? '').replace(/\s+/g, ' ').trim();
   const cjk = containsCjk(normalized);
+  const activity = resolveTurnAckActivity(normalized);
+  if (activity === 'verify_delivery') {
+    const worker = normalized.match(/\[ORCH-NOTIFY\]\s+worker\s+(.+?)\s+已完成\s+task\s+\S+/i)?.[1]?.trim();
+    const actor = worker || (cjk ? '协作 Bot' : 'The worker bot');
+    return sanitizeTurnAckReply(cjk
+      ? `${actor}已交付一个子任务，我先核对交付物和当前状态，再向你汇报验收结果；如果需要后续发版或你操作，我会一并说明。`
+      : `${actor} has delivered a subtask. I’ll check the deliverables and current state, then report the review outcome and any release or action needed next.`);
+  }
+  if (activity === 'search_local') {
+    return sanitizeTurnAckReply(cjk
+      ? '我先在本机查找相关文件和信息，确认能否直接复用；找到后我会直接告诉你结果。'
+      : 'I’ll search this machine for the relevant files and information, check whether we can reuse them, and tell you the result directly.');
+  }
   const firstSentence = normalized.split(/[。！？!?；;]/, 1)[0]?.trim() ?? '';
   let summary = firstSentence;
   const comma = summary.search(/[,，]/);

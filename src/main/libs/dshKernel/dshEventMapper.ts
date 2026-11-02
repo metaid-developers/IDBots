@@ -36,10 +36,10 @@
 //    ever opens the thinking slot, and converts at `block-start tool-call`
 //    (textRidesThinking) instead of at assistant/message finalize.
 //  - Assistant chat-experience mode (DshEventMapperOptions.assistantMode):
-//    every unphased model family gets the same tool-ride hold and fold, so
-//    ordinary process text cannot bypass owner_update. Substantial unphased
-//    deliverables beside the terminal bookkeeping call are deferred and
-//    promoted once at turn/end instead of being hidden or emitted mid-turn.
+//    every model family and phase label gets the same tool-ride hold and fold,
+//    so ordinary process text cannot bypass owner_update. Substantial answers
+//    followed by more tools enter a bounded finalization step with the full
+//    candidate preserved as fallback instead of publishing a short addendum.
 //    The flag is a getter evaluated per decision, never cached: the mapper is
 //    a long-lived per-session instance and the mode can flip mid-session.
 //
@@ -416,26 +416,21 @@ export class DshEventMapper {
           && !this.turnSawFinalText
           && !this.turnSawStreamedText
           && !this.turnSawToolCall
-        const deferredFinalText = this.assistantMode()
-          && reason.kind === 'stop'
+        const finalizationRequired = this.assistantMode()
+          && (reason.kind === 'stop' || reason.kind === 'completed')
+          && this.turnSawToolCall
           && !this.turnSawFinalText
-          && this.deferredAssistantText?.allowTerminalPromotion
+        const fallbackFinalText = finalizationRequired && this.deferredAssistantText?.allowTerminalPromotion
           ? this.deferredAssistantText.content
-          : null
+          : undefined
         this.closeOpenSlots(actions)
-        if (deferredFinalText) {
-          this.openText(actions)
-          this.textBuf = deferredFinalText
-          this.turnSawFinalText = true
-          this.textOpen = false
-          actions.push({ kind: 'messageFinalize', slot: 'text', content: this.textBuf })
-          this.textBuf = ''
-        }
         actions.push({
           kind: 'turnEnd',
           turn: data.turn,
           reason,
           ...(emptyTerminal ? { emptyTerminal: true } : {}),
+          ...(finalizationRequired ? { finalizationRequired: true } : {}),
+          ...(fallbackFinalText ? { fallbackFinalText } : {}),
         })
         this.turnSawFinalText = false
         this.turnSawStreamedText = false
@@ -643,10 +638,6 @@ export class DshEventMapper {
     let commentary = ''
     const phases = replayTextPhasesOf(data.message)
     if (phases) {
-      // Phase-classified text (DeepSeek Responses): commentary segments are
-      // thinking-aloud around tool calls, only final_answer is the reply.
-      // Content text blocks and replay text blocks are two projections of the
-      // same stream, so walking both in order pairs every block with its tag.
       const commentaryParts: string[] = []
       const finalParts: string[] = []
       let index = 0
@@ -661,6 +652,11 @@ export class DshEventMapper {
       }
       commentary = commentaryParts.join('\n\n')
       visibleText = splitThinkTaggedContent(finalParts.join('\n\n')).text
+      if (hasToolCall && this.assistantMode() && visibleText.length > 0) {
+        this.deferToolRideText(visibleText)
+        commentary = joinThinking([commentary, visibleText])
+        visibleText = ''
+      }
     } else if (hasToolCall && (this.toolRideTextFolds() || this.assistantMode())) {
       const toolRideText = splitThinkTaggedContent(visibleText).text
       this.deferToolRideText(toolRideText)
@@ -672,6 +668,15 @@ export class DshEventMapper {
       visibleText = split.text
     } else {
       visibleText = splitThinkTaggedContent(visibleText).text
+    }
+
+    const shorterAddendum = this.assistantMode()
+      && this.deferredAssistantText?.allowTerminalPromotion
+      && visibleText.length > 0
+      && visibleText.length < (this.deferredAssistantText?.content.length ?? 0)
+    if (shorterAddendum) {
+      commentary = joinThinking([commentary, visibleText])
+      visibleText = ''
     }
 
     // A commentary-only message whose text already streamed into the text slot
