@@ -1835,6 +1835,29 @@ interface IElectronAPI {
       assets?: ElectronMetabotWalletAssets;
       error?: string;
     }>;
+    getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) => Promise<{
+      success: boolean;
+      items?: ElectronMetabotNftListItem[];
+      error?: string;
+    }>;
+    transferMetabotMvcNft: (params: {
+      metabotId: number;
+      genesis: string;
+      codehash: string;
+      tokenIndex: string;
+      toAddress: string;
+      feeRate: number;
+    }) => Promise<{ success: boolean; result?: { txId: string; rawTx: string }; error?: string }>;
+    transferMetabotMrc721: (params: {
+      metabotId: number;
+      pinId: string;
+      toAddress: string;
+      feeRate: number;
+    }) => Promise<{
+      success: boolean;
+      result?: { txId: string; pinId: string; toAddress: string; spentOutpoint: string; outputValue: number };
+      error?: string;
+    }>;
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => Promise<{
       success: boolean;
       list?: Array<{ title: string; desc: string; feeRate: number }>;
@@ -2475,6 +2498,65 @@ interface ElectronMetabotWalletAssets {
 }
 
 type ElectronTokenTransferAsset = ElectronMrc20Asset | ElectronMvcFtAsset;
+
+/** MetaContract NFT raw record riding on a wallet list item (detail view). */
+interface ElectronMetabotMetaContractNftRaw {
+  tokenIndex: string;
+  name: string;
+  satoshi: number;
+  txId: string;
+  outputIndex: number;
+  height: number;
+  icon?: string;
+  imgUrl?: string;
+  metaTxId?: string;
+  seriesName: string;
+  genesis: string;
+  codeHash: string;
+  sensibleId?: string;
+  tokenSupply?: number;
+}
+
+/** MRC721 item summary riding on a wallet list item (detail view). */
+interface ElectronMetabotMrc721Raw {
+  itemPinId: string;
+  collectionName?: string;
+  collectionPinId?: string;
+  number?: number;
+  name?: string;
+  desc?: string;
+  cover?: string;
+  metadata?: string;
+  ownerAddress?: string;
+  ownerMetaId?: string;
+  creatorMinted?: boolean;
+  burned?: boolean;
+  contentType?: string;
+  contentSummary?: string;
+  genesisChainName?: string;
+  genesisHeight?: number;
+  genesisTx?: string;
+  genesisFee?: number;
+  output?: string;
+  outputValue?: number;
+  createTime?: number;
+  transferCount?: number;
+}
+
+/** One normalized NFT in the NFT Wallet modal list. */
+interface ElectronMetabotNftListItem {
+  kind: 'mrc721' | 'metacontract';
+  key: string;
+  name: string;
+  collectionName: string;
+  imageRef?: string;
+  imageUrl?: string;
+  number?: number;
+  tokenIndex?: string;
+  createTime?: number;
+  height?: number;
+  raw: ElectronMetabotMrc721Raw | ElectronMetabotMetaContractNftRaw;
+}
 
 interface IMGatewayStatus {
   dingtalk: DingTalkGatewayStatus;

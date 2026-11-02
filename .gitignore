@@ -843,3 +843,6 @@ blob-report/
 !docs/weixin-media.md
 !docs/weixin-media-delegated-verification.md
 !docs/weixin-media-verification.md
+!tests/metabotNftService.test.mjs
+!tests/metabotNftIpc.test.mjs
+!tests/metabotNftPresentation.test.mjs

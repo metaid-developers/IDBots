@@ -207,6 +207,12 @@ import {
   getTokenTransferChain,
 } from './services/metabotTokenTransferService';
 import { registerMetabotWalletIpcHandlers } from './services/metabotWalletIpc';
+import {
+  getMetabotNftItems,
+  transferMetabotMrc721,
+  transferMetabotMvcNft,
+} from './services/metabotNftService';
+import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -17929,6 +17935,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     },
     buildTokenTransferPreview: buildTokenTransferPreviewService,
     executeTokenTransfer: executeTokenTransferService,
+  });
+
+  registerMetabotNftIpcHandlers({
+    registerIpcHandler,
+    getMetabotStore,
+    getMetabotNftItems: (store, input) => getMetabotNftItems(store, input),
+    transferMetabotMvcNft: (store, input) => transferMetabotMvcNft(store, input),
+    transferMetabotMrc721: (store, input) => transferMetabotMrc721(store, input),
   });
 
   // Traffic-ized gas fee (Phase D): account/binding/balance/usage APIs plus the
