@@ -7,10 +7,17 @@
  * Also renders the WeChat/QQ in-app browser guide (those webviews cannot
  * finish sign-in) and the iPhone Safari "Add to Home Screen" hint.
  *
+ * The theme follows the same stored preference as the app: the app settings
+ * service mirrors the confirmed `app_config.theme` into localStorage
+ * (themeMirror.ts) and this entry resolves it synchronously pre-paint
+ * (login/theme.ts), falling back to the OS scheme like the app's `system`
+ * default. Styling stays inline, keyed on the palette in loginStyles.ts.
+ *
  * The import graph stays tiny (react + mobile i18n + loginApi +
- * inAppBrowser): the control plane serves this bundle before any session
- * exists and it must fit the 80 KB gzip budget (REQ-E-19). No desktop i18n,
- * no redux, no Tailwind, no window.electron: styling is inline.
+ * inAppBrowser + theme/loginStyles): the control plane serves this bundle
+ * before any session exists and it must fit the 80 KB gzip budget
+ * (REQ-E-19). No desktop i18n, no redux, no Tailwind, no window.electron:
+ * styling is inline.
  */
 
 import '../native/installNativeBootstrapFirst';
@@ -25,134 +32,46 @@ import {
 } from './inAppBrowser';
 import { getMe, logout, sendCode, verifyCode } from './loginApi';
 import type { LoginTenant } from './loginApi';
+import { buildStyles, loginPlaceholderStyleTag } from './loginStyles';
 import { probeSessionRecovery } from './sessionRecovery';
+import { initLoginTheme } from './theme';
 
 mobileI18n.initFromDeviceLocale();
+
+// Pre-paint theme resolution: runs before ReactDOM renders, so the
+// documentElement class/background/color-scheme are already correct at first
+// paint (no white flash in dark mode). The inline head script in index.html
+// applies the same resolution during HTML parsing; this re-applies it and
+// wires the live prefers-color-scheme listener for system mode.
+const loginTheme = initLoginTheme();
 
 const DISPLAY_NAME_MIN = 1;
 const DISPLAY_NAME_MAX = 24;
 const PREPARE_POLL_MS = 3000;
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100dvh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    padding: 'max(env(safe-area-inset-top), 24px) 24px max(env(safe-area-inset-bottom), 24px)',
-    backgroundColor: '#F5F7F9',
-    color: '#303133',
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-  },
-  guidePage: {
-    minHeight: '100dvh',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-  },
-  guideSheet: {
-    width: '100%',
-    maxWidth: 480,
-    backgroundColor: '#fff',
-    color: '#303133',
-    borderRadius: '20px 20px 0 0',
-    padding: '24px 24px max(env(safe-area-inset-bottom), 24px)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-    boxShadow: '0 -8px 30px rgba(15, 23, 42, 0.18)',
-  },
-  logo: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: '#ffdc51',
-    color: '#111',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 24,
-    fontWeight: 700,
-  },
-  title: { fontSize: 20, fontWeight: 600, margin: 0 },
-  subtitle: { fontSize: 14, color: '#64748B', textAlign: 'center', margin: 0 },
-  subtitleLeft: { fontSize: 14, color: '#64748B', textAlign: 'left', margin: 0, lineHeight: 1.6 },
-  input: {
-    width: '100%',
-    maxWidth: 320,
-    borderRadius: 12,
-    border: '1px solid #BFC2CC',
-    backgroundColor: '#fff',
-    padding: '12px 16px',
-    fontSize: 14,
-    color: '#303133',
-  },
-  button: {
-    width: '100%',
-    maxWidth: 320,
-    minHeight: 44,
-    borderRadius: 12,
-    border: 'none',
-    backgroundColor: '#ffdc51',
-    color: '#111',
-    fontSize: 15,
-    fontWeight: 600,
-  },
-  textButton: {
-    border: 'none',
-    backgroundColor: 'transparent',
-    color: '#64748B',
-    fontSize: 13,
-    padding: 8,
-  },
-  checkboxRow: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 10,
-    width: '100%',
-    maxWidth: 320,
-    fontSize: 13,
-    lineHeight: 1.5,
-    color: '#475569',
-  },
-  link: { color: '#1D4ED8', textDecoration: 'none' },
-  note: { fontSize: 13, color: '#64748B', textAlign: 'center', margin: 0 },
-  noteSmall: { fontSize: 12, color: '#94A3B8', textAlign: 'center', margin: 0 },
-  error: { fontSize: 13, color: '#B42318', textAlign: 'center', margin: 0 },
-  statusWord: { fontSize: 16, fontWeight: 600, margin: 0 },
-  a2hsCard: {
-    position: 'fixed',
-    left: 12,
-    right: 12,
-    bottom: 'max(env(safe-area-inset-bottom), 12px)',
-    maxWidth: 456,
-    margin: '0 auto',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: '14px 16px',
-    display: 'flex',
-    gap: 12,
-    alignItems: 'center',
-    boxShadow: '0 8px 30px rgba(15, 23, 42, 0.14)',
-    zIndex: 10,
-  },
-  a2hsTitle: { fontSize: 14, fontWeight: 600, margin: '0 0 4px', color: '#303133' },
-  a2hsDismiss: {
-    border: 'none',
-    backgroundColor: '#ffdc51',
-    borderRadius: 10,
-    padding: '8px 12px',
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#111',
-    flexShrink: 0,
-  },
-};
+/** Subscribes the tree to effective theme changes (OS scheme flip in system mode). */
+function useIsDark(): boolean {
+  const [isDark, setIsDark] = useState(loginTheme.isDark());
+  useEffect(
+    () =>
+      loginTheme.subscribe(() => {
+        setIsDark(loginTheme.isDark());
+      }),
+    [],
+  );
+  return isDark;
+}
+
+function useLoginStyles(): Record<string, React.CSSProperties> {
+  const isDark = useIsDark();
+  return React.useMemo(() => buildStyles(isDark), [isDark]);
+}
+
+/** One themed rule for ::placeholder, which inline styles cannot target. */
+function LoginPlaceholderStyle(): JSX.Element {
+  const isDark = useIsDark();
+  return <style>{loginPlaceholderStyleTag(isDark)}</style>;
+}
 
 function normalizePhone(input: string): string {
   const digits = input.replace(/[\s-]/g, '');
@@ -188,6 +107,7 @@ function verifyErrorText(code: string | undefined): string {
 
 /** Polls `getMe` after a successful verify until the tenant opens the app. */
 function PreparingScreen(props: { onSignOut: () => void }): JSX.Element {
+  const styles = useLoginStyles();
   const [tenant, setTenant] = useState<LoginTenant | null>(null);
 
   useEffect(() => {
@@ -250,6 +170,7 @@ function PreparingScreen(props: { onSignOut: () => void }): JSX.Element {
 }
 
 function SessionRecoveryScreen(props: { failed: boolean; onRetry: () => void }): JSX.Element {
+  const styles = useLoginStyles();
   return (
     <div style={styles.page}>
       <div style={styles.logo}>ID</div>
@@ -264,6 +185,7 @@ function SessionRecoveryScreen(props: { failed: boolean; onRetry: () => void }):
 }
 
 function LoginPage(): JSX.Element {
+  const styles = useLoginStyles();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [codeSent, setCodeSent] = useState(false);
@@ -488,6 +410,7 @@ function LoginPage(): JSX.Element {
 
 /** Half-screen guide shown INSTEAD of the login form inside WeChat/QQ webviews. */
 function InAppBrowserGuide(): JSX.Element {
+  const styles = useLoginStyles();
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const onCopyLink = async () => {
@@ -518,6 +441,7 @@ function InAppBrowserGuide(): JSX.Element {
 
 /** Dismissible iPhone Safari hint about Share -> Add to Home Screen. */
 function A2hsHint(): JSX.Element | null {
+  const styles = useLoginStyles();
   const [visible, setVisible] = useState(
     () =>
       typeof navigator !== 'undefined' &&
@@ -546,6 +470,7 @@ function MobileLoginRoot(): JSX.Element {
   }
   return (
     <>
+      <LoginPlaceholderStyle />
       <LoginPage />
       <A2hsHint />
     </>
