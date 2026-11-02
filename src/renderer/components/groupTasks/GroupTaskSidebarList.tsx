@@ -116,10 +116,16 @@ const GroupTaskSidebarList: React.FC<GroupTaskSidebarListProps> = ({
   );
 };
 
-interface GroupTaskSidebarRowProps {
+export interface GroupTaskSidebarRowProps {
   task: GroupTaskSummary;
-  isActive: boolean;
-  onSelectTask: (taskId: number) => void;
+  /** Whether this task is currently selected */
+  isSelected?: boolean;
+  /** Legacy prop name for isSelected */
+  isActive?: boolean;
+  /** Callback when task is clicked */
+  onSelect?: () => void;
+  /** Legacy callback with taskId */
+  onSelectTask?: (taskId: number) => void;
   onTogglePin?: (taskId: number, pinned: boolean) => void;
   onRename?: (taskId: number, title: string) => void;
   onArchive?: (taskId: number) => void;
@@ -127,15 +133,27 @@ interface GroupTaskSidebarRowProps {
   taskType: GroupTaskTypeVariant;
 }
 
-const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
+export const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
   task,
-  isActive,
-  onSelectTask,
+  isSelected: isSelectedProp,
+  isActive: isActiveProp,
+  onSelect: onSelectProp,
+  onSelectTask: onSelectTaskProp,
   onTogglePin,
   onRename,
   onArchive,
   taskType,
 }) => {
+  // Support both new and legacy props
+  const isActive = isSelectedProp ?? isActiveProp ?? false;
+  const handleSelect = () => {
+    if (onSelectProp) {
+      onSelectProp();
+    } else if (onSelectTaskProp) {
+      onSelectTaskProp(task.id);
+    }
+  };
+
   const [hoverRect, setHoverRect] = useState<DOMRect | null>(null);
   const displayTitle = task.displayName?.trim() || task.title;
   const actionLabel = i18nService.t('coworkSessionActions');
@@ -168,13 +186,13 @@ const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
           onClick={() => {
             if (api.isRenaming) return;
             api.closeMenu();
-            onSelectTask(task.id);
+            handleSelect();
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               if (api.isRenaming) return;
-              onSelectTask(task.id);
+              handleSelect();
             }
           }}
           onContextMenu={(event) => {

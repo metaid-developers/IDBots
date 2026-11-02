@@ -4,7 +4,7 @@
  * bot auto-joining an external group task hosted on another machine.
  */
 
-import type { GroupTaskMember } from './groupTask';
+import type { GroupTaskMemberSummary } from './groupTask';
 
 export type OpenTeamCollabStatus = 'active' | 'left';
 
@@ -68,4 +68,4 @@ export interface OpenTeamGuestInvite {
 }
 
 /** Member of an OpenTeam collab group (guest perspective) - uses GroupTaskMember. */
-export type OpenTeamCollabMember = GroupTaskMember;
+export type OpenTeamCollabMember = GroupTaskMemberSummary;

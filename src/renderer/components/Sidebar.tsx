@@ -7,22 +7,14 @@ import { i18nService } from '../services/i18n';
 import CoworkSessionList from './cowork/CoworkSessionList';
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import SessionViewOptionsMenu from './cowork/SessionViewOptionsMenu';
-import GroupTaskSidebarList, { type GroupTaskTypeVariant } from './groupTasks/GroupTaskSidebarList';
-import {
-  OPEN_TEAM_COLLAB_POLL_INTERVAL_MS,
-  OpenTeamCollabSidebarRow,
-} from './groupTasks/OpenTeamCollabsSection';
+import { UnifiedTaskList } from './groupTasks/UnifiedTaskList';
+import type { GroupTaskTypeVariant } from './groupTasks/GroupTaskSidebarList';
+import { OPEN_TEAM_COLLAB_POLL_INTERVAL_MS } from './groupTasks/OpenTeamCollabsSection';
 import { openTeamCollabService } from '../services/openTeamCollabService';
-import { splitGroupTasksByOpenTeam } from './groupTasks/groupTaskUtils.js';
 import { selectCollab, selectTask as selectGroupTask } from '../store/slices/groupTasksSlice';
 import { clearCurrentSession, setNewTaskMetabotId } from '../store/slices/coworkSlice';
 import type { OpenTeamCollabSummary } from '../types/openTeamCollab';
-import {
-  buildUnifiedTaskList,
-  extractGroupTask,
-  getUnifiedTaskType,
-  type UnifiedTaskItem,
-} from '../utils/unifiedTaskList';
+import { buildUnifiedTaskList } from '../utils/unifiedTaskList';
 import { MagnifyingGlassIcon, ClockIcon, CpuChipIcon, ShoppingBagIcon, UserGroupIcon, GlobeAltIcon, ArchiveBoxIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import Tooltip from './ui/Tooltip';
 import ComposeIcon from './icons/ComposeIcon';
@@ -165,6 +157,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
   const groupTasks = useSelector((state: RootState) => state.groupTasks.tasks);
   const selectedGroupTaskId = useSelector((state: RootState) => state.groupTasks.selectedTaskId);
+  const selectedCollabId = useSelector((state: RootState) => state.groupTasks.selectedCollabId);
   const scheduledTasks = useSelector((state: RootState) => state.scheduledTask.tasks);
   // Joined OpenTeam collabs for the records "Group Tasks" tab (remote-hosted
   // tasks this machine's bots participate in; loaded/polled only while that
@@ -265,14 +258,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     [groupTasks, openTeamCollabs],
   );
 
-  // Extract only the GroupTaskSummary items for GroupTaskSidebarList (filters
-  // out collabs, which render as OpenTeamCollabSidebarRow).
-  const groupTaskItems = useMemo(
-    () => unifiedTaskList.map(extractGroupTask).filter((task): task is NonNullable<typeof task> => task !== null),
-    [unifiedTaskList],
-  );
-
-  // Type lookup for each task id (used by GroupTaskSidebarList).
+  // Type lookup for each task id (used by UnifiedTaskList).
   const taskTypeById = useMemo(() => {
     const map = new Map<number, GroupTaskTypeVariant>();
     for (const item of unifiedTaskList) {
@@ -868,30 +854,18 @@ const Sidebar: React.FC<SidebarProps> = ({
                   </p>
                 </div>
               ) : (
-                <div className="space-y-1">
-                  <GroupTaskSidebarList
-                    tasks={groupTaskItems}
-                    selectedTaskId={selectedGroupTaskId}
-                    onSelectTask={handleSelectGroupTask}
-                    onTogglePin={handleToggleGroupTaskPin}
-                    onRename={handleRenameGroupTask}
-                    onArchive={handleArchiveGroupTask}
-                    emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
-                    getTaskType={(task) => taskTypeById.get(task.id) ?? 'local'}
-                  />
-                  {unifiedTaskList.map((item) => {
-                    if (item.kind === 'openteam-guest') {
-                      return (
-                        <OpenTeamCollabSidebarRow
-                          key={`collab-${item.collab.id}`}
-                          collab={item.collab}
-                          onSelect={() => handleSelectOpenTeamCollab(item.collab.id)}
-                        />
-                      );
-                    }
-                    return null;
-                  })}
-                </div>
+                <UnifiedTaskList
+                  items={unifiedTaskList}
+                  selectedTaskId={selectedGroupTaskId}
+                  selectedCollabId={selectedCollabId}
+                  onSelectTask={handleSelectGroupTask}
+                  onSelectCollab={handleSelectOpenTeamCollab}
+                  onTogglePin={handleToggleGroupTaskPin}
+                  onRename={handleRenameGroupTask}
+                  onArchive={handleArchiveGroupTask}
+                  getTaskType={(task) => taskTypeById.get(task.id) ?? 'local'}
+                  emptyText={i18nService.t(activeTaskRecordTab.emptyKey)}
+                />
               )
             ) : (
               <CoworkSessionList

@@ -24,7 +24,7 @@ import {
   shortGlobalMetaId,
 } from './OpenTeamCollabsSection';
 import { GroupTaskTinyAvatar } from './GroupTaskListMeta';
-import { ArrowLeftIcon, ChatBubbleLeftRightIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
@@ -155,7 +155,7 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
             text: null,
             authorGlobalMetaId: msg.senderGlobalMetaId,
             status: 'delivered' as const,
-            createdAt: msg.createdAt,
+            createdAt: msg.chainTimestamp,
           };
         })
         .filter((d): d is NonNullable<typeof d> => d != null && isDigitalDeliverable(d));
