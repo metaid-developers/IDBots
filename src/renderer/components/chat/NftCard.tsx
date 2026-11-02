@@ -19,10 +19,12 @@
  * issuer render as avatar + name chips (address → identity via the existing
  * metaid info IPC); every resolution failure degrades to the emitter label,
  * then a short address — never a blank card. Artwork degradation is
- * layered: imgUrl (https direct, verbatim) → for MetaContract the MetaLet
- * compress direct link (wallet-api icons are MetaLet image-host ids, not
- * MetaID metafiles) → icon metafile content routes → initials placeholder;
- * the card never renders a broken image glyph.
+ * layered and size-aware (owner-finalized dual image-host spec): the card
+ * tries the MetaLet compress direct link (wallet-api icons are MetaLet
+ * image-host ids, not MetaID metafiles) then the wire imgUrl; the detail
+ * view puts the showpay OSS original first, falling back to compress;
+ * MRC-721 keeps the imgUrl → metafile routes chain; the floor is the
+ * initials placeholder — the card never renders a broken image glyph.
  *
  * The component is display-only: data comes verbatim from the fence payload
  * the emitter (usually a wallet/mrc721 tool result) built at action time.
@@ -93,41 +95,63 @@ export interface NftCardArtwork {
 }
 
 /**
- * MetaLet image-host compress direct link for a wallet-api icon.
- *
- * wallet-api v4 `icon` values (even the metafile://-prefixed ones) are
- * MetaLet image-host file names whose pin is NOT a MetaID metafile — the
- * accelerate chain 404s on them (live-verified 2026-11-02: icon
- * metafile://47ff4ea0….png rendered the placeholder, while
- * https://www.metalet.space/metafile/compress/47ff4ea0….png answered
- * 200 image/png). For MetaContract artwork the compress direct link is
- * therefore tried BEFORE the metafile chain; both levels must fail before
- * the placeholder appears. Returns null for anything that is not a single
- * safe file-name segment.
+ * MetaLet image-host file id for a wallet-api icon. wallet-api v4 `icon`
+ * values (even the metafile://-prefixed ones) are MetaLet image-host file
+ * names whose id is NOT a MetaID metafile — the accelerate chain 404s on
+ * them (live-verified 2026-11-02: icon metafile://47ff4ea0….png rendered
+ * the placeholder while the MetaLet compress route answered 200
+ * image/png). The id is the file name minus the metafile:// scheme and
+ * any extension (owner-finalized image spec, 2026-11-02 23:08).
  */
-export const metaletCompressUrlOf = (icon: string): string | null => {
-  const fileName = icon.trim().replace(/^metafile:\/\//i, '');
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(fileName)) return null;
-  return `https://www.metalet.space/metafile/compress/${encodeURIComponent(fileName)}`;
+export const metaletFileIdOf = (icon: string): string | null => {
+  const base = icon.trim().replace(/^metafile:\/\//i, '').split(/[?#]/)[0] ?? '';
+  const fileId = base.replace(/\.[A-Za-z0-9]{1,8}$/, '');
+  return /^[0-9a-f]{64}$/i.test(fileId) ? fileId.toLowerCase() : null;
 };
 
 /**
- * Pure artwork resolution (exported for SSR tests): https imgUrl first
- * (verbatim — wallet-api hands back a working compress link), then for
- * MetaContract the MetaLet compress direct link derived from the icon,
- * then the icon metafile's accelerate→direct content routes — the same
- * ordered chain as the NFT wallet modal. Only exact https URLs and
- * parseable metafile:// URIs survive the syntax layer, so building the
- * fallback chain here needs no extra sanitizing.
+ * Card thumbnail host (owner-finalized): the no-www compress route. The
+ * host answers 301 → www which <img> follows transparently, landing on
+ * 200 image/png (live-verified 2026-11-02 on MetaBot Avatar icons).
  */
-export const resolveNftCardArtwork = (data: NftCardData): NftCardArtwork => {
+export const metaletCompressUrlOf = (icon: string): string | null => {
+  const fileId = metaletFileIdOf(icon);
+  return fileId ? `https://metalet.space/metafile/compress/${fileId}` : null;
+};
+
+/**
+ * Detail-page large image (owner-finalized): the showpay OSS original —
+ * measurably sharper than the compress variant (97KB vs 14KB on the
+ * MetaBot Avatar sample, both answering 200 image/png).
+ */
+export const showpayOriginalUrlOf = (icon: string): string | null => {
+  const fileId = metaletFileIdOf(icon);
+  return fileId ? `https://showpay.oss-cn-beijing.aliyuncs.com/metaFile/original/${fileId}.png` : null;
+};
+
+/**
+ * Pure artwork resolution (exported for SSR tests). MetaContract follows
+ * the owner-finalized dual image-host spec: the card prefers the MetaLet
+ * compress direct link derived from the icon, then the wire imgUrl; the
+ * DETAIL view (large) puts the showpay OSS original first — falling back
+ * to compress, then the wire imgUrl — before the icon metafile routes.
+ * MRC-721 keeps the original three-level chain (imgUrl → accelerate →
+ * direct) at both sizes. Only exact https URLs and parseable metafile://
+ * URIs survive the syntax layer, so building the chain needs no extra
+ * sanitizing.
+ */
+export const resolveNftCardArtwork = (data: NftCardData, opts?: { large?: boolean }): NftCardArtwork => {
   const sources: string[] = [];
-  if (data.imgUrl) sources.push(data.imgUrl);
-  if (data.icon) {
-    if (data.format === 'metacontract') {
-      const compress = metaletCompressUrlOf(data.icon);
-      if (compress && !sources.includes(compress)) sources.push(compress);
+  if (data.format === 'metacontract' && data.icon) {
+    if (opts?.large) {
+      const original = showpayOriginalUrlOf(data.icon);
+      if (original) sources.push(original);
     }
+    const compress = metaletCompressUrlOf(data.icon);
+    if (compress) sources.push(compress);
+  }
+  if (data.imgUrl && !sources.includes(data.imgUrl)) sources.push(data.imgUrl);
+  if (data.icon) {
     const parsed = parseMetafileUri(data.icon);
     if (parsed) {
       if (!sources.includes(parsed.sourceUrl)) sources.push(parsed.sourceUrl);
@@ -189,7 +213,7 @@ const NftCardPlaceholder: React.FC<{ data: NftCardData; large?: boolean }> = ({ 
 );
 
 const NftCardImage: React.FC<{ data: NftCardData; large?: boolean }> = ({ data, large }) => {
-  const artwork = useMemo(() => resolveNftCardArtwork(data), [data]);
+  const artwork = useMemo(() => resolveNftCardArtwork(data, { large }), [data, large]);
   const [failedCount, setFailedCount] = useState(0);
   const exhausted = failedCount >= artwork.sources.length;
 

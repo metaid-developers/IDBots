@@ -40,8 +40,10 @@ import GroupTaskMessageItem from '../src/renderer/components/groupTasks/GroupTas
 import NftCard, {
   formatNftPrice,
   metaletCompressUrlOf,
+  metaletFileIdOf,
   NftCardDetailModal,
   resolveNftCardArtwork,
+  showpayOriginalUrlOf,
 } from '../src/renderer/components/chat/NftCard';
 import { nftCardNeedsHeal, resolveNftCardHeal } from '../src/renderer/components/chat/nftCardHeal';
 import {
@@ -269,18 +271,27 @@ test('formatNftPrice renders sats and a tidy SPACE amount', () => {
   assert.equal(formatNftPrice(undefined), null);
 });
 
-test('artwork resolution: https first; metacontract icons take the MetaLet compress link before the metafile routes', () => {
+test('artwork resolution: compress canonical first; detail view puts the OSS original first (owner-finalized dual image-host spec)', () => {
+  const CARD_FILE_ID = ICON.replace('metafile://', '').replace(/\.jpg$/, '');
   const artwork = resolveNftCardArtwork({ format: 'metacontract', ...CARD_PAYLOAD } as never);
   assert.equal(artwork.missing, false);
-  assert.equal(artwork.sources[0], IMG_URL);
-  // wallet-api icons are MetaLet image-host ids — the compress direct link
-  // (live-verified 200 image/png) is tried BEFORE the accelerate chain.
-  assert.equal(
-    artwork.sources[1],
-    `https://www.metalet.space/metafile/compress/${ICON.replace('metafile://', '')}`,
-  );
+  // Card size: the no-www no-extension compress link derived from the icon
+  // id is THE card thumbnail (owner spec 2026-11-02 23:08); the wire imgUrl
+  // rides after it verbatim, then the metafile routes as last resort.
+  assert.equal(artwork.sources[0], `https://metalet.space/metafile/compress/${CARD_FILE_ID}`);
+  assert.equal(artwork.sources[1], IMG_URL);
   assert.match(artwork.sources[2], /files\/accelerate\/content\//);
   assert.match(artwork.sources[3], /files\/content\//);
+  // Detail size (large): the showpay OSS original comes FIRST — sharper
+  // than compress (live: 97KB vs 14KB, both 200 image/png) — then compress,
+  // then the wire imgUrl.
+  const detail = resolveNftCardArtwork({ format: 'metacontract', ...CARD_PAYLOAD } as never, { large: true });
+  assert.equal(
+    detail.sources[0],
+    `https://showpay.oss-cn-beijing.aliyuncs.com/metaFile/original/${CARD_FILE_ID}.png`,
+  );
+  assert.equal(detail.sources[1], `https://metalet.space/metafile/compress/${CARD_FILE_ID}`);
+  assert.equal(detail.sources[2], IMG_URL);
   // Icon-only metacontract fence (the owner's failing case): the compress
   // link is the FIRST renderable source, derived from the icon id.
   const iconOnly = resolveNftCardArtwork({
@@ -292,37 +303,59 @@ test('artwork resolution: https first; metacontract icons take the MetaLet compr
   } as never);
   assert.equal(
     iconOnly.sources[0],
-    'https://www.metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+    'https://metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7',
+  );
+  assert.equal(
+    iconOnly.sources[0],
+    metaletCompressUrlOf('metafile://47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png'),
   );
   // No artwork at all → placeholder path.
   const bare = resolveNftCardArtwork({ format: 'metacontract', genesis: GENESIS, codehash: CODEHASH, tokenIndex: '1' } as never);
   assert.equal(bare.missing, true);
   assert.deepEqual(bare.sources, []);
-  // MRC-721 icons are real MetaID metafiles — the compress detour never
-  // applies; the chain stays accelerate → content.
+  // MRC-721 icons are real MetaID metafiles — the MetaLet detour never
+  // applies at either size; the chain stays imgUrl → accelerate → content.
   const mrc = resolveNftCardArtwork({ format: 'mrc721', pinId: MRC721_PIN_ID, icon: `metafile://${MRC721_ICON_PIN}` } as never);
   assert.equal(mrc.missing, false);
   assert.equal(mrc.sources.some((source) => source.includes('metalet.space/metafile/compress/')), false);
   assert.match(mrc.sources[0], /files\/accelerate\/content\//);
+  const mrcDetail = resolveNftCardArtwork(
+    { format: 'mrc721', pinId: MRC721_PIN_ID, icon: `metafile://${MRC721_ICON_PIN}` } as never,
+    { large: true },
+  );
+  assert.equal(mrcDetail.sources.some((source) => source.includes('showpay')), false);
+  assert.match(mrcDetail.sources[0], /files\/accelerate\/content\//);
 });
 
 // --- MetaLet compress derivation --------------------------------------------
 
-test('metaletCompressUrlOf derives the wallet-api icon direct link, rejects everything unsafe', () => {
+test('metaletFileIdOf / metaletCompressUrlOf / showpayOriginalUrlOf follow the finalized forms, rejecting everything unsafe', () => {
+  const SAMPLE = '47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7';
+  assert.equal(metaletCompressUrlOf(`metafile://${SAMPLE}.png`), `https://metalet.space/metafile/compress/${SAMPLE}`);
+  // No www, no extension — the owner-pinned canonical form (host 301→www
+  // which <img> follows; live-verified 200 image/png).
+  assert.equal(metaletCompressUrlOf(`metafile://${SAMPLE}.png`)?.includes('www.'), false);
+  // Bare image-host id (no scheme) derives the same link; so does an
+  // extension-less icon and an uppercase id (normalized).
+  assert.equal(metaletCompressUrlOf(`${SAMPLE}.png`), `https://metalet.space/metafile/compress/${SAMPLE}`);
+  assert.equal(metaletCompressUrlOf(`metafile://${SAMPLE}`), `https://metalet.space/metafile/compress/${SAMPLE}`);
   assert.equal(
-    metaletCompressUrlOf('metafile://47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png'),
-    'https://www.metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+    metaletCompressUrlOf(`metafile://${SAMPLE.toUpperCase()}.png`),
+    `https://metalet.space/metafile/compress/${SAMPLE}`,
   );
-  // Bare image-host id (no scheme) derives the same link.
+  // OSS original keeps the .png suffix per the finalized spec.
   assert.equal(
-    metaletCompressUrlOf('47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png'),
-    'https://www.metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+    showpayOriginalUrlOf(`metafile://${SAMPLE}.png`),
+    `https://showpay.oss-cn-beijing.aliyuncs.com/metaFile/original/${SAMPLE}.png`,
   );
-  // Path segments, query strings, whitespace, empty — never a URL.
+  // MRC-721-style pins are MetaID metafiles, not MetaLet ids — no derivation.
+  assert.equal(metaletFileIdOf(`metafile://${MRC721_ICON_PIN}`), null);
+  // Path segments, query strings, whitespace, short ids — never a URL.
   assert.equal(metaletCompressUrlOf('metafile://a/b.png'), null);
   assert.equal(metaletCompressUrlOf('metafile://../etc/passwd'), null);
   assert.equal(metaletCompressUrlOf('id.png?x=1'), null);
   assert.equal(metaletCompressUrlOf('  '), null);
+  assert.equal(metaletFileIdOf('metafile://deadbeef.png'), null);
 });
 
 // --- heal channel (missing artwork / metacontract issuer) --------------------
@@ -443,7 +476,12 @@ test('an nft-card fence renders the card with the format tag, not a code block',
     assert.match(markup, /AI_Sunny/);
     assert.match(markup, /100,000 sats/);
     assert.match(markup, /LISTED/);
-    assert.match(markup, new RegExp(`src="${IMG_URL.replace(/\./g, '\\.')}"`));
+    // First-paint src is the owner-finalized compress canonical form
+    // (no www, no extension), derived from the fence icon.
+    assert.match(
+      markup,
+      new RegExp(`src="https://metalet\\.space/metafile/compress/${ICON.replace('metafile://', '').replace(/\.jpg$/, '')}"`),
+    );
     // Not the code-block rendering.
     assert.doesNotMatch(markup, /language-nft-card/);
   });
