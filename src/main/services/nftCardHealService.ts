@@ -13,22 +13,21 @@
  *        returned verbatim and its `icon` as the metafile fallback.
  *      - mrc721: `mrc721/item/info` by pinId — the item `cover` becomes the
  *        icon (the same metafile chain the NFT wallet modal walks).
- *   2. Missing metacontract issuer: the literal "genesis tx first input"
- *        path is INFEASIBLE through the available endpoints — the wire
- *        `genesis` is a 20-byte contract id (tx/raw rejects 40-hex ids),
- *        and the genesisTxid embedded inside the metaTx metadata is not
- *        servable either (live probe 2026-11-02: "No such mempool or
- *        blockchain transaction"). The validated alternative: the v4 row's
- *        `metaTxId` (the token metadata transaction) — its FIRST input
- *        address is the metadata author/minter. Verified on mainnet with
- *        two independent implementations (bs58check + meta-contract's mvc)
- *        against MetaBot Avatar #7898 and #6734, which share one minter
- *        address (132n3Z5UymSCQAaTcmnCGKeHVxsVgkBuJS).
+ *   2. Missing metacontract issuer, by the AC's preferred route: a v4 row's
+ *        `issuerAddress` when the wire actually carries one (largest live
+ *        series leave it "--"), else the CONTRACT GENESIS TX's first input
+ *        address = the deployer. The genesis txid is recoverable from the
+ *        row's `sensibleId`: its first 32 bytes, byte-reversed, are the
+ *        genesis txid in display order (live-verified 2026-11-02, MetaBot
+ *        Avatar: 4e7a7d3e…ea53 → 53ea2502…7d7a4e, whose first input
+ *        176C9RPW… resolves on-chain to MetaID identity "Bot"; replayed
+ *        independently by both worker sessions on this slice). Issuer
+ *        results are cached per genesis txid for the process lifetime.
  *
  * Every path is best-effort and fails soft: the IPC answers null fields,
  * never throws, so the card degrades to its placeholder / short address.
- * Results are cached per process: identity → heal result, and metaTxId →
- * issuer address.
+ * Results are cached per process: identity → heal result, and genesis
+ * txid → issuer address.
  */
 
 import { createHash } from 'crypto';
@@ -53,7 +52,7 @@ export interface NftCardHealResult {
   imgUrl?: string;
   /** metafile:// fallback artwork (v4 `icon` / MRC-721 item cover). */
   icon?: string;
-  /** First-input address of the token metaTx (metacontract only). */
+  /** Collection issuer: wire issuerAddress when real, else the genesis tx's first input (metacontract only). */
   issuer?: string;
 }
 
@@ -174,17 +173,38 @@ async function fetchMvcRawTxHex(txId: string): Promise<string> {
   return '';
 }
 
-const metaTxIssuerCache = new Map<string, string>();
+/**
+ * sensibleId (v4 utxo-list) = <genesisTxid in internal byte order><genesis
+ * 20B code id>. The display-order txid is the first 32 bytes byte-reversed.
+ * Pure — exported for tests with the live MetaBot Avatar vector.
+ */
+export function reverseSensibleIdToGenesisTxid(sensibleId: string): string | null {
+  const text = String(sensibleId || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64,}$/.test(text)) return null;
+  const internal = Buffer.from(text.slice(0, 64), 'hex');
+  return Buffer.from(internal).reverse().toString('hex');
+}
 
-async function resolveMetaContractIssuer(metaTxId: string | undefined): Promise<string | undefined> {
-  const txId = (metaTxId || '').trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(txId)) return undefined;
-  const cached = metaTxIssuerCache.get(txId);
+const genesisIssuerCache = new Map<string, string>();
+
+/** The wire issuerAddress only counts when it is a real address ("--"/"" don't). */
+function realIssuerAddress(value: unknown): string | undefined {
+  const address = String(value ?? '').trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{20,60}$/.test(address)) return undefined;
+  return address;
+}
+
+async function resolveMetaContractIssuerByGenesis(
+  sensibleId: string | undefined,
+): Promise<string | undefined> {
+  const genesisTxid = reverseSensibleIdToGenesisTxid(sensibleId ?? '');
+  if (!genesisTxid) return undefined;
+  const cached = genesisIssuerCache.get(genesisTxid);
   if (cached) return cached;
   try {
-    const rawHex = await fetchMvcRawTxHex(txId);
+    const rawHex = await fetchMvcRawTxHex(genesisTxid);
     const address = deriveMvcFirstInputAddressFromRawTx(rawHex);
-    if (address) metaTxIssuerCache.set(txId, address);
+    if (address) genesisIssuerCache.set(genesisTxid, address);
     return address ?? undefined;
   } catch {
     return undefined; // silent — issuer is optional enrichment
@@ -268,7 +288,9 @@ async function healMetaContract(input: NftCardHealInput): Promise<NftCardHealRes
         result.imgUrl = imgUrl;
         result.icon = icon;
       }
-      const issuer = await resolveMetaContractIssuer(row.metaTxId);
+      // Issuer: the wire's own issuerAddress when real, else the contract
+      // genesis tx's first input (deployer) via the sensibleId reversal.
+      const issuer = realIssuerAddress(row.issuerAddress) ?? (await resolveMetaContractIssuerByGenesis(row.sensibleId));
       if (issuer) result.issuer = issuer;
     }
   } catch {
