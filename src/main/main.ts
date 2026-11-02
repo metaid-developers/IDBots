@@ -15059,6 +15059,30 @@ if (!gotTheLock) {
     }
   });
 
+  registerIpcHandler('openTeamCollab:getMembers', async (_event, input: { groupId?: string }) => {
+    try {
+      const groupId = String(input?.groupId ?? '').trim();
+      if (!groupId) {
+        throw new Error('groupId is required');
+      }
+      if (!getOpenTeamMembershipStore().hasMembershipForGroup(groupId)) {
+        throw new Error('No OpenTeam membership for this group on this machine');
+      }
+      // Find the collab summary to get the taskId
+      const collabSummaries = await withSqliteRecovery('openTeamCollab:getMembers:summaries', () =>
+        getOpenTeamMembershipStore().listCollabSummaries());
+      const collab = collabSummaries.find((s) => s.groupId === groupId);
+      if (!collab) {
+        throw new Error('Collab not found');
+      }
+      const members = await withSqliteRecovery('openTeamCollab:getMembers', () =>
+        getGroupTaskStore().listMembers(collab.taskId));
+      return { success: true, members };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get group members' };
+    }
+  });
+
   // ==================== Long-Term Task IPC (first-class board, redesign) ====================
   // Owner-side channel (actor='owner'); the Twin acts through the longterm_*
   // agent tools. Every mutation broadcasts longtermTask:update.
