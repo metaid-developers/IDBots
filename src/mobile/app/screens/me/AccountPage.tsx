@@ -39,12 +39,12 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
 
   return (
     <SecondaryPageShell title={t('mobile.me.entry.account')} onBack={props.onBack} testId="me-page-account">
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <button
           type="button"
           data-testid="account-logout"
           onClick={() => setSheet('logout')}
-          className="flex min-h-[52px] w-full items-center justify-between border-b border-[var(--border-color)] py-2 text-[15px] text-[var(--text-primary)]"
+          className="twin-list-row"
         >
           {t('mobile.me.logout')}
         </button>
@@ -57,7 +57,7 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
             setConfirmText('');
             setSheet('delete');
           }}
-          className="flex min-h-[52px] w-full items-center justify-between py-2 text-[15px] text-red-600"
+          className="twin-list-row text-[var(--twin-danger)]"
         >
           {t('mobile.me.deleteAccount')}
         </button>
@@ -70,7 +70,7 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
             <button
               type="button"
               onClick={() => setSheet(null)}
-              className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] py-2 text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+              className="twin-button twin-button-secondary flex-1"
             >
               {t('mobile.me.botCancel')}
             </button>
@@ -78,7 +78,7 @@ export function AccountPage(props: { onBack: () => void }): JSX.Element {
               type="button"
               onClick={() => void doLogout()}
               disabled={busy}
-              className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 font-medium text-black active:opacity-80 disabled:opacity-40"
+              className="twin-button twin-button-primary flex-1"
             >
               {t('mobile.me.logoutConfirm')}
             </button>
@@ -153,20 +153,20 @@ export function AccountDeleteSheet(props: {
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
-          className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none"
+          className="twin-input"
         />
       </div>
       <input
         value={props.reason}
         onChange={(event) => props.onReasonChange(event.target.value)}
         placeholder={t('mobile.me.deleteReasonPlaceholder')}
-        className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none"
+        className="twin-input"
       />
       <div className="flex gap-3">
         <button
           type="button"
           onClick={props.onCancel}
-          className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] py-2 text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+          className="twin-button twin-button-secondary flex-1"
         >
           {t('mobile.me.botCancel')}
         </button>
@@ -175,7 +175,7 @@ export function AccountDeleteSheet(props: {
           data-testid="account-delete-confirm"
           onClick={props.onConfirm}
           disabled={props.busy || !gateSatisfied}
-          className="min-h-[44px] flex-1 rounded-xl bg-red-600 py-2 font-medium text-white active:opacity-80 disabled:opacity-40"
+          className="twin-button twin-button-danger flex-1"
         >
           {t('mobile.me.deleteConfirm')}
         </button>

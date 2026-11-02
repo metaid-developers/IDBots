@@ -23,7 +23,7 @@
           typeof window.matchMedia === 'function' &&
           window.matchMedia('(prefers-color-scheme: dark)').matches;
         var dark = mode === 'dark' || (mode === 'system' && prefersDark);
-        var background = dark ? '#142030' : '#F5F7F9';
+        var background = dark ? '#111112' : '#F2F3F5';
         var root = document.documentElement;
         root.classList.toggle('dark', dark);
         // color-scheme also flips native form controls (inputs, checkbox).

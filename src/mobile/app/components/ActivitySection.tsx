@@ -62,7 +62,7 @@ function ActivityCard({
           disabled={busy}
           onClick={onOpen}
           aria-label={`${t('mobile.activity.openResult')} · ${activity.title} · ${activity.runId ?? activity.taskId}`}
-          className="min-h-[44px] rounded-xl border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
+          className="twin-button twin-button-secondary twin-button-small"
         >
           {t('mobile.activity.openResult')}
         </button>
@@ -72,7 +72,7 @@ function ActivityCard({
             disabled={busy}
             onClick={() => onStage('pause')}
             aria-label={`${t('mobile.activity.pause')} · ${activity.title}`}
-            className="min-h-[44px] rounded-xl border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] disabled:opacity-40"
+            className="twin-button twin-button-secondary twin-button-small"
           >
             {t('mobile.activity.pause')}
           </button>
@@ -83,7 +83,7 @@ function ActivityCard({
             disabled={busy}
             onClick={() => onStage('resume')}
             aria-label={`${t('mobile.activity.resume')} · ${activity.title}`}
-            className="min-h-[44px] rounded-xl border border-[var(--border-color)] px-3 text-sm text-[var(--text-primary)] disabled:opacity-40"
+            className="twin-button twin-button-secondary twin-button-small"
           >
             {t('mobile.activity.resume')}
           </button>
@@ -94,7 +94,7 @@ function ActivityCard({
             disabled={busy}
             onClick={onCancel}
             aria-label={`${t('mobile.activity.cancel')} · ${activity.title}`}
-            className="min-h-[44px] rounded-xl px-3 text-sm text-red-600 active:bg-[var(--bg-hover)] disabled:opacity-40"
+            className="twin-button twin-button-danger-secondary twin-button-small"
           >
             {t('mobile.activity.cancel')}
           </button>
@@ -161,7 +161,7 @@ export function ActivitySection({
             <button
               type="button"
               onClick={() => setCancelTarget(null)}
-              className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] text-[var(--text-primary)]"
+              className="twin-button twin-button-secondary flex-1"
             >
               {t('mobile.tasks.cancel')}
             </button>
@@ -173,7 +173,7 @@ export function ActivitySection({
                 setCancelTarget(null);
                 void setStage(target, 'cancel');
               }}
-              className="min-h-[44px] flex-1 rounded-xl bg-red-600 px-3 font-medium text-white disabled:opacity-40"
+              className="twin-button twin-button-danger flex-1"
             >
               {t('mobile.activity.cancelConfirm')}
             </button>

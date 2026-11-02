@@ -17,7 +17,7 @@ test.describe('gateway permission rendering (F-17a)', () => {
 
   test('real ask payload renders options through the gateway fan-out @gateway', async ({ page }, testInfo) => {
     await page.goto('/app/');
-    await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Sessions' }).click();
     await startNewChatViaPicker(page);
     await page.getByPlaceholder('Type a message…').fill('__f17a_emit_ask__');

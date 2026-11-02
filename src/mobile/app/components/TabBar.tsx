@@ -13,7 +13,7 @@ const TABS: Array<{ id: MobileTab; labelKey: string; icon: typeof ChatBubbleLeft
 export function TabBar(props: { active: MobileTab; onSelect: (tab: MobileTab) => void }): JSX.Element {
   return (
     <nav
-      className="flex shrink-0 items-stretch border-t border-[var(--border-color)] bg-[var(--bg-panel)]"
+      className="twin-tabbar"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       aria-label={t('mobile.app.tabBarLabel')}
     >
@@ -26,11 +26,9 @@ export function TabBar(props: { active: MobileTab; onSelect: (tab: MobileTab) =>
             type="button"
             onClick={() => props.onSelect(tab.id)}
             aria-current={selected ? 'page' : undefined}
-            className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-2 py-1.5 text-[11px] ${
-              selected ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
-            }`}
+            className="twin-tab"
           >
-            <Icon className={`h-6 w-6 ${selected ? 'text-[var(--color-primary)]' : ''}`} aria-hidden />
+            <Icon className="twin-tab-icon" aria-hidden />
             <span>{t(tab.labelKey)}</span>
           </button>
         );

@@ -10,11 +10,10 @@ import { getMe, logout } from '../../login/loginApi';
  */
 
 const PAGE_CLASS =
-  'flex h-[100dvh] flex-col items-center justify-center gap-3 bg-[var(--bg-main)] px-6 text-center';
-const TITLE_CLASS = 'text-lg font-semibold text-[var(--text-primary)]';
-const BODY_CLASS = 'text-sm leading-relaxed text-[var(--text-secondary)]';
-const ACTION_CLASS =
-  'min-h-[44px] rounded-xl border border-[var(--border-color)] px-6 py-2 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-60';
+  'twin-page h-[100dvh] items-center justify-center gap-3 px-6 text-center';
+const TITLE_CLASS = 'twin-title';
+const BODY_CLASS = 'max-w-[320px] text-sm leading-relaxed text-[var(--text-secondary)]';
+const ACTION_CLASS = 'twin-button twin-button-primary px-6';
 
 /**
  * 4013 tenant-unavailable: the tenant process is gone (stopped/suspended).

@@ -1,20 +1,9 @@
 /**
  * Login palette, keyed on the effective dark flag (see login/theme.ts).
  *
- * Values mirror the app theme tokens in src/renderer/index.css so the login
- * page reads as the same product in both schemes:
- *
- *   token            light        dark
- *   --bg-main        #F5F7F9      #142030   (page background)
- *   --bg-panel       #FFFFFF      #1f2937   (cards, sheets, inputs)
- *   --text-primary   #303133      #ffffff
- *   --text-secondary #64748B      #94A3B8
- *   --border-color   #BFC2CC      #6b7280
- *   --color-primary  #ffdc51      #ffdc51   (brand yellow, both schemes)
- *
- * Brand yellow stays identical in dark mode (the app's --color-primary does
- * not change), so every #ffdc51/#111 pairing below is theme-invariant, not a
- * leftover light color.
+ * Values mirror the Twin UI Daylight and Nocturne tokens so the login page
+ * reads as the same product in both schemes. Brand yellow stays identical in
+ * dark mode, and deep gold carries small light-mode accent text.
  */
 
 import type React from 'react';
@@ -33,29 +22,29 @@ interface LoginPalette {
 }
 
 const LIGHT: LoginPalette = {
-  pageBg: '#F5F7F9',
-  surface: '#fff',
-  text: '#303133',
-  textSecondary: '#64748B',
-  checkboxRow: '#475569',
-  border: '#BFC2CC',
-  link: '#1D4ED8',
-  noteSmall: '#94A3B8',
+  pageBg: '#F2F3F5',
+  surface: '#FFFFFF',
+  text: '#242425',
+  textSecondary: '#626267',
+  checkboxRow: '#626267',
+  border: '#D7D9DE',
+  link: '#6B5200',
+  noteSmall: '#76767C',
   error: '#B42318',
-  placeholder: '#94A3B8',
+  placeholder: '#76767C',
 };
 
 const DARK: LoginPalette = {
-  pageBg: '#142030',
-  surface: '#1f2937',
-  text: '#fff',
-  textSecondary: '#94A3B8',
-  checkboxRow: '#CBD5E1',
-  border: '#6b7280',
-  link: '#60A5FA',
-  noteSmall: '#64748B',
+  pageBg: '#111112',
+  surface: '#19191B',
+  text: '#F4F3EF',
+  textSecondary: '#AAA9A4',
+  checkboxRow: '#AAA9A4',
+  border: '#49494D',
+  link: '#FFDC51',
+  noteSmall: '#7E7D79',
   error: '#F87171',
-  placeholder: '#64748B',
+  placeholder: '#7E7D79',
 };
 
 export function loginPalette(isDark: boolean): LoginPalette {
@@ -110,38 +99,35 @@ export function buildStyles(
     logo: {
       width: 64,
       height: 64,
-      borderRadius: 16,
-      backgroundColor: '#ffdc51',
-      color: '#111',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: 24,
-      fontWeight: 700,
+      borderRadius: 18,
+      objectFit: 'cover',
+      imageRendering: 'pixelated',
+      boxShadow: '0 8px 22px rgba(100, 80, 10, 0.12)',
     },
-    title: { fontSize: 20, fontWeight: 600, margin: 0 },
-    subtitle: { fontSize: 14, color: p.textSecondary, textAlign: 'center', margin: 0 },
+    title: { fontSize: 24, fontWeight: 650, letterSpacing: '-0.03em', margin: 0 },
+    subtitle: { fontSize: 14, color: p.textSecondary, textAlign: 'center', margin: 0, lineHeight: 1.5 },
     subtitleLeft: { fontSize: 14, color: p.textSecondary, textAlign: 'left', margin: 0, lineHeight: 1.6 },
     input: {
       width: '100%',
-      maxWidth: 320,
-      borderRadius: 12,
+      maxWidth: 340,
+      minHeight: 46,
+      borderRadius: 14,
       border: `1px solid ${p.border}`,
       backgroundColor: p.surface,
-      padding: '12px 16px',
-      fontSize: 14,
+      padding: '11px 14px',
+      fontSize: 16,
       color: p.text,
     },
     button: {
       width: '100%',
-      maxWidth: 320,
-      minHeight: 44,
-      borderRadius: 12,
+      maxWidth: 340,
+      minHeight: 46,
+      borderRadius: 14,
       border: 'none',
       backgroundColor: '#ffdc51',
-      color: '#111',
+      color: '#2c290f',
       fontSize: 15,
-      fontWeight: 600,
+      fontWeight: 650,
     },
     textButton: {
       border: 'none',

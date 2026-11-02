@@ -17,23 +17,23 @@ export function SecondaryPageShell(props: {
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[var(--bg-main)]" data-testid={props.testId ?? 'me-secondary-page'}>
-      <div className="relative flex h-11 shrink-0 items-center border-b border-[var(--border-color)] bg-[var(--bg-panel)] px-1">
+    <div className="twin-page" data-testid={props.testId ?? 'me-secondary-page'}>
+      <div className="twin-topbar relative shrink-0">
         <button
           type="button"
           onClick={props.onBack}
           aria-label={t('mobile.me.back')}
           data-testid="me-secondary-back"
-          className="flex h-11 w-11 items-center justify-center text-[var(--text-primary)] active:opacity-60"
+          className="twin-icon-button"
         >
           <ArrowLeftIcon className="h-5 w-5" aria-hidden />
         </button>
-        <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-base font-semibold text-[var(--text-primary)]">
+        <h1 className="twin-title-small pointer-events-none absolute left-1/2 -translate-x-1/2">
           {props.title}
         </h1>
         {props.action ? <div className="absolute right-2 flex items-center">{props.action}</div> : null}
       </div>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 pb-[max(env(safe-area-inset-bottom),12px)]">
+      <div className="twin-scroll space-y-3 px-4 py-3 pb-[max(env(safe-area-inset-bottom),12px)]">
         {props.children}
       </div>
     </div>
