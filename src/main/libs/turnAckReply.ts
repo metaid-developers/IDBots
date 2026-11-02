@@ -77,9 +77,11 @@ export function buildTurnAckReplyMessages(
     {
       role: 'system',
       content: [
-        'You write the opening acknowledgment of a chat assistant. The user just sent a message; the full reply is being prepared separately and will appear after yours.',
-        'Write ONE short acknowledgment that confirms you received and understood the request and says in plain words what you are about to do for it.',
-        'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not answer, solve, or start the task. Do not promise results or time limits, and do not ask questions. No markdown, lists, quotes, emoji, or greetings. Output only the finished acknowledgment text — never your thinking, deliberation, or reasoning about these rules or the message.',
+        'You write the opening response of a chat assistant. The user just sent a message; the full work or answer follows later.',
+        'The app has ALREADY shown the user a generic instant acknowledgment; your text REPLACES it, so say something more useful than "received":',
+        '- For a simple question or a greeting, respond naturally as a person would (a greeting gets a greeting back).',
+        '- For a real task, say in plain words how you will approach it, and roughly whether it is quick or will take a while with progress updates.',
+        'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not solve the task or promise deadlines. No markdown, lists, quotes, emoji. No formulaic boilerplate (never "cause and handling path" style phrasing). Output only the finished text — never your thinking or reasoning about these rules.',
         "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
       ].join('\n'),
     },
@@ -126,7 +128,45 @@ export function resolveTurnAckActivity(userText: string): TurnAckActivity {
   return 'working';
 }
 
-export function buildFallbackTurnAckReply(userText: string): string {
+/**
+ * Instant opening lines for the plain "working" case. Deliberately
+ * content-free: the 2026-11-03 incident (session acb5961b) showed the old
+ * template `收到，我先核对「{user text}」的原因和处理路径…` reads as absurd
+ * incident-report boilerplate on greetings and simple messages ("核对你好、
+ * 晚上好的原因"). The instant bubble only bridges the 0-2s window until the
+ * LLM refine replaces its text, so it stays a plain natural acknowledgment.
+ */
+const INSTANT_OPENING_POOL_ZH = [
+  '收到，我马上看。',
+  '好的，这就处理。',
+  '收到，我来安排。',
+  '好，我先看一下。',
+] as const;
+const INSTANT_OPENING_POOL_EN = [
+  'Got it — on it now.',
+  'Sure, taking care of it.',
+  'Got it, looking into it.',
+  'On it — one moment.',
+] as const;
+
+/** Deterministic 0..len-1 pick from a string seed (session id + serial). */
+function pickFromPool(pool: readonly string[], seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return pool[hash % pool.length];
+}
+
+/**
+ * The deterministic opening emitted synchronously at the early-ack site —
+ * the bubble the owner sees within the same tick as the send, immune to any
+ * main-process stall (2026-11-03: the 250ms fallback timer fired 22s late
+ * under an eventloop:lag stall, so the first bubble lost to the model reply).
+ * verify_delivery keeps the actor-aware text (it carries real information);
+ * everything else gets a plain natural line with no user-text interpolation.
+ */
+export function buildInstantTurnAckOpening(userText: string, varietySeed = ''): string {
   const normalized = (userText ?? '').replace(/\s+/g, ' ').trim();
   const cjk = containsCjk(normalized);
   const activity = resolveTurnAckActivity(normalized);
@@ -142,18 +182,7 @@ export function buildFallbackTurnAckReply(userText: string): string {
       ? '我先在本机查找相关文件和信息，确认能否直接复用；找到后我会直接告诉你结果。'
       : 'I’ll search this machine for the relevant files and information, check whether we can reuse them, and tell you the result directly.');
   }
-  const firstSentence = normalized.split(/[。！？!?；;]/, 1)[0]?.trim() ?? '';
-  let summary = firstSentence;
-  const comma = summary.search(/[,，]/);
-  if (comma >= 4) {
-    summary = summary.slice(0, comma);
-  } else if (summary.length > 40) {
-    summary = `${truncateUtf16UnitsSafe(summary, 40).trimEnd()}…`;
-  }
-  if (!summary) summary = cjk ? '这个问题' : 'this request';
-  return sanitizeTurnAckReply(cjk
-    ? `收到，我先核对「${summary}」的原因和处理路径，然后直接推进；有关键进展或需要你决定的事，我会再汇报。`
-    : `Got it. I’ll look into “${summary}”, confirm the cause and next step, then move it forward. I’ll report key milestones or anything that needs your decision.`);
+  return pickFromPool(cjk ? INSTANT_OPENING_POOL_ZH : INSTANT_OPENING_POOL_EN, varietySeed);
 }
 
 /**
