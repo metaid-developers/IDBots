@@ -202,6 +202,26 @@ export class CrossSessionDeliveryStore {
     return this.getById(id)!;
   }
 
+  /**
+   * Push one pending delivery's next attempt past a budget/pause horizon
+   * WITHOUT consuming an attempt or touching its message — the row stays
+   * pending and resumes when its new time comes due. In-memory update only:
+   * a budget pass may defer many rows, so the caller flushes once via
+   * persist() instead of paying a full-DB save per row.
+   */
+  deferDeliveryTo(id: string, nextAttemptAtMs: number, note: string): void {
+    this.db.run(`
+      UPDATE cowork_cross_session_deliveries
+      SET next_attempt_at = ?, last_error = ?, updated_at = ?
+      WHERE id = ? AND state = 'pending'
+    `, [Math.max(0, Math.trunc(nextAttemptAtMs)), note, this.now(), id]);
+  }
+
+  /** Flush pending in-memory store updates to disk (the injected save fn). */
+  persist(): void {
+    this.saveDb();
+  }
+
   cancelTarget(targetSessionId: string, error: string): number {
     const active = this.getAll<{ id: string }>(`
       SELECT id FROM cowork_cross_session_deliveries
