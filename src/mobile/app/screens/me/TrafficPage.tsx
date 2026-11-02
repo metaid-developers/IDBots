@@ -27,10 +27,16 @@ const LEDGER_PAGE_SIZE = 20;
  * pending-order strip over rechargeRecovery, free-grant claim, usage
  * summary + daily table, the static tariff explainer (desktop copy), and
  * the paginated ledger.
+ *
+ * rechargeAllowed=false (native iOS shell, NS1 policy — the same gate as the
+ * ChatScreen quota card and the MeScreen balance card) hides every recharge
+ * entry here instead of leaving a dead button: openRecharge is a no-op when
+ * recharge is disallowed. Undefined keeps the button (legacy call shape).
  */
 export function TrafficPage(props: {
   onBack: () => void;
   onOpenRecharge: () => void;
+  rechargeAllowed?: boolean;
   resyncCounter?: number;
 }): JSX.Element {
   const { meters, loading, error, reload } = useMeters(props.resyncCounter);
@@ -130,13 +136,15 @@ export function TrafficPage(props: {
           <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
             {t('mobile.recharge.expiresAt', { time: formatDateTime(pendingOrder.expiresAt * 1000) })}
           </p>
-          <button
-            type="button"
-            onClick={props.onOpenRecharge}
-            className="mt-3 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
-          >
-            {t('mobile.recharge.resumeOrder')}
-          </button>
+          {props.rechargeAllowed !== false ? (
+            <button
+              type="button"
+              onClick={props.onOpenRecharge}
+              className="mt-3 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+            >
+              {t('mobile.recharge.resumeOrder')}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -171,13 +179,15 @@ export function TrafficPage(props: {
           </p>
         ) : null}
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={props.onOpenRecharge}
-            className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
-          >
-            {t('mobile.me.rechargeEntry')}
-          </button>
+          {props.rechargeAllowed !== false ? (
+            <button
+              type="button"
+              onClick={props.onOpenRecharge}
+              className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+            >
+              {t('mobile.me.rechargeEntry')}
+            </button>
+          ) : null}
           <RedeemButton />
         </div>
       </div>

@@ -287,6 +287,7 @@ export default function MeScreen(props: {
           <TrafficPage
             onBack={requestBack}
             onOpenRecharge={props.onOpenRecharge}
+            rechargeAllowed={props.rechargeAllowed}
             resyncCounter={props.resyncCounter}
           />
         );
