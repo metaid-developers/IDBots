@@ -11,6 +11,14 @@
  * issuer and price at broadcast time; clicking opens a PORTAL-level detail
  * modal (document.body, shared verbatim by every chat surface).
  *
+ * Fixed four-row text block (S3 second-pass polish): every card renders the
+ * same slots — Row1 action/series + price (right-aligned), Row2
+ * name + #serial, Row3 Owner, Row4 Issuer — so side-by-side cards in a
+ * group always carry identical text height (the group stretches members to
+ * the tallest too). The Issuer slot shows an em-dash placeholder while the
+ * metacontract heal lookup is still pending, and fills with the real chip
+ * once it lands.
+ *
  * Visual contract (S3 acceptance): the card is a framed, labeled block —
  * distinct from a plain markdown image bubble, which stays a bare rounded
  * <img> — and carries a format tag ('MRC-721' / 'MetaContract') at the
@@ -285,7 +293,8 @@ export const NftCardIdentityChip: React.FC<{
   address?: string;
   label?: string;
   className?: string;
-}> = ({ address, label, className = '' }) => {
+  avatarClassName?: string;
+}> = ({ address, label, className = '', avatarClassName }) => {
   const identity = useNftCardIdentity(address);
   const displayName = identity?.name || label || (address ? shortAddress(address) : null);
   if (!displayName) return null;
@@ -295,7 +304,7 @@ export const NftCardIdentityChip: React.FC<{
       title={address || undefined}
       className={`flex min-w-0 items-center gap-1 ${className}`}
     >
-      <IdentityAvatar name={displayName} avatarUrl={identity?.avatarUrl ?? null} />
+      <IdentityAvatar name={displayName} avatarUrl={identity?.avatarUrl ?? null} className={avatarClassName} />
       <span className="truncate">{displayName}</span>
     </span>
   );
@@ -368,10 +377,6 @@ export const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => vo
 
   const serial = nftCardSerial(data);
   const title = data.name ? `${data.name}${serial ? ` #${serial}` : ''}` : `NFT${serial ? ` #${serial}` : ''}`;
-  const note =
-    data.format === 'mrc721'
-      ? 'MRC-721 pin-based MetaID NFT · fields as of the broadcast message (owner and price reflect the action that emitted this card).'
-      : 'MVC MetaContract NFT · fields as of the broadcast message (owner and price reflect the action that emitted this card).';
 
   const content = (
     <div
@@ -410,11 +415,8 @@ export const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => vo
             <NftCardImage data={data} large />
             <NftCardFormatTag format={data.format} />
           </div>
-          <div className="flex w-full min-w-0 flex-1 flex-col gap-3 px-4 py-3">
-            <p className="text-[11px] leading-4 text-claude-textSecondary dark:text-claude-darkTextSecondary">
-              {note}
-            </p>
-            <div className="flex flex-col gap-2.5">
+          <div className="flex w-full min-w-0 flex-1 flex-col gap-3 px-4 py-2.5">
+            <div className="flex flex-col gap-2">
               <DetailIdentityRow label="Owner" address={data.owner} labelFallback={data.ownerLabel} />
               {(data.issuer || data.issuerLabel) && (
                 <DetailIdentityRow label="Issuer" address={data.issuer} labelFallback={data.issuerLabel} />
@@ -473,26 +475,35 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
           onClick={openDetail}
           title="View NFT details"
           aria-label={`View NFT details: ${title}`}
-          className="block w-full overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+          className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
         >
           <div className="relative">
             <NftCardImage data={healed} />
             <NftCardFormatTag format={healed.format} />
           </div>
-          <div className="flex flex-col gap-1 px-3 py-2">
-            <div className="flex min-w-0 items-center gap-1.5">
+          {/* Fixed four-row text block: identical slot count on every card
+              (Row1 badge/series + price right-aligned — the standalone price
+              row of the first pass is gone; Row2 name + #serial; Row3 Owner;
+              Row4 Issuer with an em-dash placeholder while the heal is still
+              pending), tightened spacing, so grouped cards align at the
+              bottom and never differ in height. */}
+          <div className="flex flex-col gap-[3px] px-2.5 pt-1.5 pb-2">
+            <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight" data-nft-row="series">
               <ActionBadge action={healed.action} />
               {healed.series ? (
-                <span className="truncate text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                <span className="truncate font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
                   {healed.series}
                 </span>
               ) : (
-                <span className="truncate font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                <span className="truncate font-mono text-claude-textSecondary dark:text-claude-darkTextSecondary">
                   {identityLine ? shortId(identityLine, 8, 6) : 'NFT'}
                 </span>
               )}
+              {price && (
+                <span className="ml-auto shrink-0 font-semibold text-claude-accent">{price.split(' · ')[0]}</span>
+              )}
             </div>
-            <div className="flex min-w-0 items-baseline gap-1">
+            <div className="flex min-w-0 items-baseline gap-1 leading-tight">
               <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">{title}</span>
               {serial && (
                 <span className="shrink-0 font-mono text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -500,27 +511,38 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
                 </span>
               )}
             </div>
-            {(healed.owner || healed.ownerLabel || healed.issuer || healed.issuerLabel || price) && (
-              <div className="flex flex-col gap-0.5 pt-0 text-[11px] leading-tight">
-                {(healed.owner || healed.ownerLabel) && (
-                  <div className="flex min-w-0 items-center gap-1.5 text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                    <span className="shrink-0 opacity-70">Owner</span>
-                    <NftCardIdentityChip address={healed.owner} label={healed.ownerLabel} className="min-w-0 flex-1" />
-                  </div>
-                )}
-                {(healed.issuer || healed.issuerLabel) && (
-                  <div className="flex min-w-0 items-center gap-1.5 text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                    <span className="shrink-0 opacity-70">Issuer</span>
-                    <NftCardIdentityChip address={healed.issuer} label={healed.issuerLabel} className="min-w-0 flex-1" />
-                  </div>
-                )}
-                {price && (
-                  <div className="flex items-center justify-end">
-                    <span className="shrink-0 font-semibold text-claude-accent">{price.split(' · ')[0]}</span>
-                  </div>
-                )}
-              </div>
-            )}
+            <div
+              data-nft-row="owner"
+              className="flex h-4 min-w-0 items-center gap-1.5 text-[11px] leading-tight text-claude-textSecondary dark:text-claude-darkTextSecondary"
+            >
+              <span className="shrink-0 opacity-70">Owner</span>
+              {healed.owner || healed.ownerLabel ? (
+                <NftCardIdentityChip
+                  address={healed.owner}
+                  label={healed.ownerLabel}
+                  className="min-w-0 flex-1"
+                  avatarClassName="h-3.5 w-3.5 text-[8px]"
+                />
+              ) : (
+                <span className="opacity-70">—</span>
+              )}
+            </div>
+            <div
+              data-nft-row="issuer"
+              className="flex h-4 min-w-0 items-center gap-1.5 text-[11px] leading-tight text-claude-textSecondary dark:text-claude-darkTextSecondary"
+            >
+              <span className="shrink-0 opacity-70">Issuer</span>
+              {healed.issuer || healed.issuerLabel ? (
+                <NftCardIdentityChip
+                  address={healed.issuer}
+                  label={healed.issuerLabel}
+                  className="min-w-0 flex-1"
+                  avatarClassName="h-3.5 w-3.5 text-[8px]"
+                />
+              ) : (
+                <span className="opacity-70">—</span>
+              )}
+            </div>
           </div>
         </button>
       </div>
@@ -535,12 +557,14 @@ const cardKeyOf = (data: NftCardData, index: number): string =>
 /**
  * Side-by-side layout for several cards in one message (the nft-card-group
  * fence MarkdownContent produces from adjacent nft-card fences). Horizontal
- * scroll when the row overflows; a single fence never enters this path.
+ * scroll when the row overflows (items keep shrink-0 so cards stay 280px);
+ * items-stretch + the card's h-full button bottom-align every member of the
+ * group — heights differ never. A single fence never enters this path.
  */
 export const NftCardGroup: React.FC<{ cards: NftCardData[]; className?: string }> = ({ cards, className = '' }) => {
   if (!cards.length) return null;
   return (
-    <div data-nft-card-group="true" className={`my-2 flex items-start gap-2 overflow-x-auto pb-1 ${className}`}>
+    <div data-nft-card-group="true" className={`my-2 flex items-stretch gap-2 overflow-x-auto pb-1 ${className}`}>
       {cards.map((card, index) => (
         <NftCard key={cardKeyOf(card, index)} data={card} className="my-0 shrink-0" />
       ))}
