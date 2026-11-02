@@ -49,7 +49,7 @@ interface RawMvcNftSummaryRow {
   seriesName?: string;
 }
 
-interface RawMvcNftUtxoRow {
+export interface RawMvcNftUtxoRow {
   address?: string;
   txId?: string;
   txIndex?: number | string;
@@ -67,6 +67,9 @@ interface RawMvcNftUtxoRow {
   icon?: string;
   imgUrl?: string;
   seriesName?: string;
+  /** Series issuer when wallet-api knows it ("--"/empty for legacy series; live wire 2026-11-02). */
+  issuerAddress?: string;
+  issuerName?: string;
 }
 
 /**
@@ -239,6 +242,12 @@ const defaultDeps: MvcNftServiceDeps = {
     return resolveBroadcastTxResult(rawTx, json);
   },
 }
+
+/**
+ * The default v4 utxo-list fetcher, exposed for the NftCard heal service
+ * (same pagination guards; read-only).
+ */
+export const fetchMvcNftUtxoListByAddress = defaultDeps.fetchUtxoList;
 
 /**
  * Aggregate one address's NFT holdings from the wallet-api read endpoints:

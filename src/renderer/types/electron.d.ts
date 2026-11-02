@@ -1888,6 +1888,17 @@ interface IElectronAPI {
       items?: ElectronMetabotNftListItem[];
       error?: string;
     }>;
+    healNftCard: (input: {
+      format: 'mrc721' | 'metacontract';
+      genesis?: string;
+      tokenIndex?: string;
+      pinId?: string;
+      owner?: string;
+    }) => Promise<{
+      success: boolean;
+      result?: { imgUrl?: string; icon?: string; issuer?: string };
+      error?: string;
+    }>;
     transferMetabotMvcNft: (params: {
       metabotId: number;
       genesis: string;

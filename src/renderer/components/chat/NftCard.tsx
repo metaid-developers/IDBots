@@ -14,16 +14,21 @@
  * Visual contract (S3 acceptance): the card is a framed, labeled block —
  * distinct from a plain markdown image bubble, which stays a bare rounded
  * <img> — and carries a format tag ('MRC-721' / 'MetaContract') at the
- * artwork's bottom-right corner. Holder and issuer render as avatar + name
- * chips (address → identity via the existing metaid info IPC); every
- * resolution failure degrades to the emitter label, then a short address —
- * never a blank card. Artwork degradation is layered: imgUrl (https direct)
- * → icon metafile content route → initials placeholder; the card never
- * renders a broken image glyph.
+ * artwork's bottom-right corner (the detail modal's tag sits at the IMAGE's
+ * corner too — its wrapper never stretches past the artwork). Holder and
+ * issuer render as avatar + name chips (address → identity via the existing
+ * metaid info IPC); every resolution failure degrades to the emitter label,
+ * then a short address — never a blank card. Artwork degradation is
+ * layered: imgUrl (https direct, verbatim) → for MetaContract the MetaLet
+ * compress direct link (wallet-api icons are MetaLet image-host ids, not
+ * MetaID metafiles) → icon metafile content routes → initials placeholder;
+ * the card never renders a broken image glyph.
  *
  * The component is display-only: data comes verbatim from the fence payload
- * the emitter (usually a wallet/mrc721 tool result) built at action time;
- * the only side channel is the identity lookup, cached per address.
+ * the emitter (usually a wallet/mrc721 tool result) built at action time.
+ * Two side channels exist, both cached per identity: the identity lookup
+ * (per address), and the heal channel (per card identity — fills missing
+ * artwork / the metacontract issuer after first paint; see nftCardHeal).
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -31,6 +36,7 @@ import { createPortal } from 'react-dom';
 import { DocumentDuplicateIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { parseMetafileUri } from '../cowork/A2AMessageItem';
 import { useNftCardIdentity, shortAddress } from './nftCardIdentity';
+import { useNftCardHeal } from './nftCardHeal';
 import type { NftCardData } from './nftCardSyntax';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -87,16 +93,41 @@ export interface NftCardArtwork {
 }
 
 /**
- * Pure artwork resolution (exported for SSR tests): https imgUrl first, then
- * the icon metafile's accelerate→direct content routes — the same ordered
- * chain as the NFT wallet modal. Only exact https URLs and parseable
- * metafile:// URIs survive the syntax layer, so building the fallback chain
- * here needs no extra sanitizing.
+ * MetaLet image-host compress direct link for a wallet-api icon.
+ *
+ * wallet-api v4 `icon` values (even the metafile://-prefixed ones) are
+ * MetaLet image-host file names whose pin is NOT a MetaID metafile — the
+ * accelerate chain 404s on them (live-verified 2026-11-02: icon
+ * metafile://47ff4ea0….png rendered the placeholder, while
+ * https://www.metalet.space/metafile/compress/47ff4ea0….png answered
+ * 200 image/png). For MetaContract artwork the compress direct link is
+ * therefore tried BEFORE the metafile chain; both levels must fail before
+ * the placeholder appears. Returns null for anything that is not a single
+ * safe file-name segment.
+ */
+export const metaletCompressUrlOf = (icon: string): string | null => {
+  const fileName = icon.trim().replace(/^metafile:\/\//i, '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(fileName)) return null;
+  return `https://www.metalet.space/metafile/compress/${encodeURIComponent(fileName)}`;
+};
+
+/**
+ * Pure artwork resolution (exported for SSR tests): https imgUrl first
+ * (verbatim — wallet-api hands back a working compress link), then for
+ * MetaContract the MetaLet compress direct link derived from the icon,
+ * then the icon metafile's accelerate→direct content routes — the same
+ * ordered chain as the NFT wallet modal. Only exact https URLs and
+ * parseable metafile:// URIs survive the syntax layer, so building the
+ * fallback chain here needs no extra sanitizing.
  */
 export const resolveNftCardArtwork = (data: NftCardData): NftCardArtwork => {
   const sources: string[] = [];
   if (data.imgUrl) sources.push(data.imgUrl);
   if (data.icon) {
+    if (data.format === 'metacontract') {
+      const compress = metaletCompressUrlOf(data.icon);
+      if (compress && !sources.includes(compress)) sources.push(compress);
+    }
     const parsed = parseMetafileUri(data.icon);
     if (parsed) {
       if (!sources.includes(parsed.sourceUrl)) sources.push(parsed.sourceUrl);
@@ -171,7 +202,7 @@ const NftCardImage: React.FC<{ data: NftCardData; large?: boolean }> = ({ data, 
       src={artwork.sources[failedCount]}
       alt={data.name ? `${data.name}${serial ? ` #${serial}` : ''}` : `NFT${serial ? ` #${serial}` : ''}`}
       loading="lazy"
-      className={`w-full bg-black/5 object-cover dark:bg-white/5 ${large ? 'max-h-[60vh]' : 'aspect-square'}`}
+      className={`block w-full bg-black/5 object-cover dark:bg-white/5 ${large ? 'max-h-[60vh]' : 'aspect-square'}`}
       onError={() => setFailedCount((n) => n + 1)}
     />
   );
@@ -267,7 +298,6 @@ const buildDetailFields = (data: NftCardData): DetailField[] => {
     if (data.genesis) fields.push({ label: 'Genesis', value: data.genesis, mono: true, copy: true });
     if (data.codehash) fields.push({ label: 'Codehash', value: data.codehash, mono: true, copy: true });
   }
-  fields.push({ label: 'Format', value: FORMAT_TAG_LABEL[data.format] });
   const price = formatNftPrice(data.priceSats);
   if (price) fields.push({ label: 'Price', value: price });
   return fields;
@@ -284,7 +314,7 @@ const DetailIdentityRow: React.FC<{ label: string; address?: string; labelFallba
       <div className="text-[10px] font-medium uppercase tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
         {label}
       </div>
-      <div className="flex min-w-0 items-start gap-1.5 text-[12px] leading-5 dark:text-claude-darkText text-claude-text">
+      <div className="flex min-w-0 items-center gap-1.5 text-[12px] leading-4 dark:text-claude-darkText text-claude-text">
         <NftCardIdentityChip address={address} label={labelFallback} className="min-w-0 flex-1" />
         {address && (
           <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -301,8 +331,9 @@ const DetailIdentityRow: React.FC<{ label: string; address?: string; labelFallba
  * Global (portal-level) detail modal — one shared implementation for every
  * chat surface. Rendered into document.body so no bubble transform/overflow
  * clipping can trap it; content is identical wherever the card lives.
+ * Exported for SSR tests (the badge-at-image contract).
  */
-const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => void }> = ({ data, onClose }) => {
+export const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => void }> = ({ data, onClose }) => {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -331,7 +362,7 @@ const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => void }> =
         className="flex max-h-[86vh] w-[min(94vw,640px)] flex-col overflow-hidden rounded-2xl border border-claude-border bg-claude-surface shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-claude-border px-4 py-2.5 dark:border-claude-darkBorder">
+        <div className="flex items-center justify-between gap-2 border-b border-claude-border px-4 py-2 dark:border-claude-darkBorder">
           <div className="flex min-w-0 items-center gap-2">
             <ActionBadge action={data.action ?? 'info'} />
             <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">
@@ -347,34 +378,41 @@ const NftCardDetailModal: React.FC<{ data: NftCardData; onClose: () => void }> =
             <XMarkIcon className="h-4 w-4" />
           </button>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto sm:flex-row">
-          <div className="relative shrink-0 sm:w-[46%]">
+        <div className="flex min-h-0 flex-1 flex-col items-start overflow-y-auto sm:flex-row">
+          {/* self-start keeps the wrapper at the artwork's own height so the
+              format tag sits at the IMAGE's bottom-right corner, not at the
+              (stretched) container's. */}
+          <div className="relative w-full shrink-0 self-start sm:w-[46%]">
             <NftCardImage data={data} large />
             <NftCardFormatTag format={data.format} />
           </div>
-          <div className="flex-1 space-y-2.5 px-4 py-3">
+          <div className="flex w-full min-w-0 flex-1 flex-col gap-3 px-4 py-3">
             <p className="text-[11px] leading-4 text-claude-textSecondary dark:text-claude-darkTextSecondary">
               {note}
             </p>
-            <DetailIdentityRow label="Owner" address={data.owner} labelFallback={data.ownerLabel} />
-            {(data.issuer || data.issuerLabel) && (
-              <DetailIdentityRow label="Issuer" address={data.issuer} labelFallback={data.issuerLabel} />
-            )}
-            {buildDetailFields(data).map((field) => (
-              <div key={field.label} className="min-w-0">
-                <div className="text-[10px] font-medium uppercase tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {field.label}
+            <div className="flex flex-col gap-2.5">
+              <DetailIdentityRow label="Owner" address={data.owner} labelFallback={data.ownerLabel} />
+              {(data.issuer || data.issuerLabel) && (
+                <DetailIdentityRow label="Issuer" address={data.issuer} labelFallback={data.issuerLabel} />
+              )}
+            </div>
+            <div className="flex flex-col gap-2 border-t border-claude-border pt-3 dark:border-claude-darkBorder">
+              {buildDetailFields(data).map((field) => (
+                <div key={field.label} className="min-w-0">
+                  <div className="text-[10px] font-medium uppercase tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                    {field.label}
+                  </div>
+                  <div
+                    className={`flex items-start gap-1 text-[12px] leading-4 dark:text-claude-darkText text-claude-text ${
+                      field.mono ? 'font-mono [overflow-wrap:anywhere]' : ''
+                    }`}
+                  >
+                    <span className="min-w-0 break-all">{field.value}</span>
+                    {field.copy && <CopyButton value={field.value} label={field.label.toLowerCase()} />}
+                  </div>
                 </div>
-                <div
-                  className={`flex items-start gap-1 text-[12px] leading-5 dark:text-claude-darkText text-claude-text ${
-                    field.mono ? 'font-mono [overflow-wrap:anywhere]' : ''
-                  }`}
-                >
-                  <span className="min-w-0 break-all">{field.value}</span>
-                  {field.copy && <CopyButton value={field.value} label={field.label.toLowerCase()} />}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -389,11 +427,15 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
   const [detailOpen, setDetailOpen] = useState(false);
   const openDetail = useCallback(() => setDetailOpen(true), []);
   const closeDetail = useCallback(() => setDetailOpen(false), []);
+  // Fallback lookups (missing artwork / metacontract issuer) fill in
+  // asynchronously after first paint; until then the placeholder and short
+  // address render as-is.
+  const healed = useNftCardHeal(data);
 
-  const serial = nftCardSerial(data);
-  const title = data.name || `NFT${serial ? ` #${serial}` : ''}`;
-  const price = formatNftPrice(data.priceSats);
-  const identityLine = data.format === 'mrc721' ? data.pinId : data.genesis;
+  const serial = nftCardSerial(healed);
+  const title = healed.name || `NFT${serial ? ` #${serial}` : ''}`;
+  const price = formatNftPrice(healed.priceSats);
+  const identityLine = healed.format === 'mrc721' ? healed.pinId : healed.genesis;
 
   return (
     <>
@@ -401,24 +443,24 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
         <button
           type="button"
           data-nft-card="true"
-          data-nft-format={data.format}
-          data-nft-token-index={data.tokenIndex}
-          data-nft-pin-id={data.pinId}
+          data-nft-format={healed.format}
+          data-nft-token-index={healed.tokenIndex}
+          data-nft-pin-id={healed.pinId}
           onClick={openDetail}
           title="View NFT details"
           aria-label={`View NFT details: ${title}`}
           className="block w-full overflow-hidden rounded-xl border border-claude-border bg-claude-surface text-left shadow-subtle transition-shadow hover:shadow-md dark:border-claude-darkBorder dark:bg-claude-darkSurface"
         >
           <div className="relative">
-            <NftCardImage data={data} />
-            <NftCardFormatTag format={data.format} />
+            <NftCardImage data={healed} />
+            <NftCardFormatTag format={healed.format} />
           </div>
-          <div className="space-y-1.5 px-3 py-2.5">
+          <div className="flex flex-col gap-1 px-3 py-2">
             <div className="flex min-w-0 items-center gap-1.5">
-              <ActionBadge action={data.action} />
-              {data.series ? (
+              <ActionBadge action={healed.action} />
+              {healed.series ? (
                 <span className="truncate text-[11px] font-medium text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                  {data.series}
+                  {healed.series}
                 </span>
               ) : (
                 <span className="truncate font-mono text-[11px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -426,7 +468,7 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
                 </span>
               )}
             </div>
-            <div className="flex min-w-0 items-baseline gap-1.5">
+            <div className="flex min-w-0 items-baseline gap-1">
               <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">{title}</span>
               {serial && (
                 <span className="shrink-0 font-mono text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
@@ -434,22 +476,22 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
                 </span>
               )}
             </div>
-            {(data.owner || data.ownerLabel || data.issuer || data.issuerLabel || price) && (
-              <div className="space-y-1 pt-0.5 text-[11px] leading-4">
-                {(data.owner || data.ownerLabel) && (
+            {(healed.owner || healed.ownerLabel || healed.issuer || healed.issuerLabel || price) && (
+              <div className="flex flex-col gap-0.5 pt-0 text-[11px] leading-tight">
+                {(healed.owner || healed.ownerLabel) && (
                   <div className="flex min-w-0 items-center gap-1.5 text-claude-textSecondary dark:text-claude-darkTextSecondary">
                     <span className="shrink-0 opacity-70">Owner</span>
-                    <NftCardIdentityChip address={data.owner} label={data.ownerLabel} className="min-w-0 flex-1" />
+                    <NftCardIdentityChip address={healed.owner} label={healed.ownerLabel} className="min-w-0 flex-1" />
                   </div>
                 )}
-                {(data.issuer || data.issuerLabel) && (
+                {(healed.issuer || healed.issuerLabel) && (
                   <div className="flex min-w-0 items-center gap-1.5 text-claude-textSecondary dark:text-claude-darkTextSecondary">
                     <span className="shrink-0 opacity-70">Issuer</span>
-                    <NftCardIdentityChip address={data.issuer} label={data.issuerLabel} className="min-w-0 flex-1" />
+                    <NftCardIdentityChip address={healed.issuer} label={healed.issuerLabel} className="min-w-0 flex-1" />
                   </div>
                 )}
                 {price && (
-                  <div className="flex items-center justify-end pt-0.5">
+                  <div className="flex items-center justify-end">
                     <span className="shrink-0 font-semibold text-claude-accent">{price.split(' · ')[0]}</span>
                   </div>
                 )}
@@ -458,7 +500,7 @@ const NftCard: React.FC<{ data: NftCardData; className?: string }> = ({ data, cl
           </div>
         </button>
       </div>
-      {detailOpen && <NftCardDetailModal data={data} onClose={closeDetail} />}
+      {detailOpen && <NftCardDetailModal data={healed} onClose={closeDetail} />}
     </>
   );
 };
