@@ -56,8 +56,14 @@ import { dispatchViewSession, parseIdbotsSessionUri } from '../utils/sessionDeep
 import { buildLocalFileUrl, isMobileBridgeRuntime } from '../services/localFileUrl';
 import { isTwemojiAssetUrl } from './chat/twemoji';
 import remarkTwemoji from './chat/remarkTwemoji';
-import NftCard from './chat/NftCard';
-import { isNftCardFenceLanguage, parseNftCardFence } from './chat/nftCardSyntax';
+import NftCard, { NftCardGroup } from './chat/NftCard';
+import {
+  groupAdjacentNftCardFences,
+  isNftCardFenceLanguage,
+  isNftCardGroupFenceLanguage,
+  parseNftCardFence,
+  parseNftCardGroupFence,
+} from './chat/nftCardSyntax';
 
 /**
  * Code-block languages worth highlighting in chat output.
@@ -484,11 +490,19 @@ const CodeBlock: React.FC<any> = ({ node, className, children, ...props }) => {
   }, [trimmedCodeText]);
 
   if (!isInline) {
-    // S3 chat NFT card: a fenced block tagged `nft-card` carrying a JSON
+    // S3 chat NFT cards: a fenced block tagged `nft-card` carrying a JSON
     // payload renders as an NftCard instead of a code block (every markdown
-    // surface — CoWork, A2A, group transcripts — shares this path). An
+    // surface — CoWork, A2A, group transcripts — shares this path); adjacent
+    // nft-card fences are pre-merged into one `nft-card-group` fence so
+    // several cards lay out side by side in a horizontal scroller. An
     // unparsable payload keeps the plain code-block rendering, so a hostile
     // or truncated fence degrades exactly like any unknown fence tag.
+    if (isNftCardGroupFenceLanguage(fenceLanguage)) {
+      const cards = parseNftCardGroupFence(trimmedCodeText);
+      if (cards) {
+        return <NftCardGroup cards={cards} />;
+      }
+    }
     if (isNftCardFenceLanguage(fenceLanguage)) {
       const cardData = parseNftCardFence(trimmedCodeText);
       if (cardData) {
@@ -1034,7 +1048,10 @@ const MarkdownContent = React.memo(({
     [emojiImages]
   );
   const normalizedContent = useMemo(
-    () => encodeFileUrlsInMarkdown(linkifyAgentInternetUris(content)),
+    // groupAdjacentNftCardFences merges runs of ≥2 adjacent nft-card fences
+    // (blank lines only between them) into nft-card-group fences; everything
+    // else — including non-adjacent single fences — passes through verbatim.
+    () => groupAdjacentNftCardFences(encodeFileUrlsInMarkdown(linkifyAgentInternetUris(content))),
     [content]
   );
   return (

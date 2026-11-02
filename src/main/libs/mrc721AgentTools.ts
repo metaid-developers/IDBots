@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { markdownSelfLink } from './metawebUri';
 import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssistReceipt';
+import { appendNftCardBlock, buildMrc721CardFields } from './nftCardMarkdown';
 import {
   fetchMrc721AddressCollections,
   fetchMrc721AddressItems,
@@ -50,6 +51,12 @@ type SdkToolFactory = (
 export type Mrc721ToolsControl = {
   getMetabotMvcAddress(metabotId: number): string | null;
   resolveMetabotIdByName(name: string): number | null;
+  /**
+   * Best-effort index reads for S3 chat NFT card enrichment. Optional so
+   * minimal harnesses keep working; main.ts wires the real service calls.
+   */
+  fetchItemInfo?(pinId: string): Promise<Mrc721ItemSummary | null>;
+  fetchCollectionInfo?(input: { name?: string; pinId?: string }): Promise<Mrc721CollectionSummary | null>;
   /** R1: broadcast the collection_desc pin (first registration wins). */
   collectionCreate(input: {
     metabotId: number;
@@ -421,7 +428,7 @@ export function formatMrc721TransferResult(input: {
 function resolveTransferTarget(
   toRaw: string,
   control: Mrc721ToolsControl,
-): { address: string; metabotId: number | null } | { error: string } {
+): { address: string; metabotId: number | null; name?: string } | { error: string } {
   if (/^\d+$/.test(toRaw)) {
     const id = Number(toRaw);
     const address = control.getMetabotMvcAddress(id);
@@ -429,7 +436,18 @@ function resolveTransferTarget(
     return { error: `local MetaBot not found: ${toRaw}` };
   }
   if (!isMvcAddress(toRaw)) {
-    return { error: `"${toRaw}" is neither a local MetaBot id/name nor an MVC address. For an external recipient pass the full MVC address.` };
+    // Local bot name (the tool description's third accepted form — same
+    // resolution chain as wallet_nft_transfer). The matched name rides along
+    // so the transfer card can prefill the new owner's label.
+    const id = control.resolveMetabotIdByName(toRaw);
+    if (id == null) {
+      return { error: `"${toRaw}" is neither a local MetaBot id/name nor an MVC address. For an external recipient pass the full MVC address.` };
+    }
+    const address = control.getMetabotMvcAddress(id);
+    if (!address) {
+      return { error: `MetaBot ${toRaw} has no MVC address.` };
+    }
+    return { address, metabotId: id, name: toRaw };
   }
   return { address: toRaw, metabotId: null };
 }
@@ -470,6 +488,44 @@ function resolveReadTargets(input: {
     push(sessionMetabotId, control.getMetabotMvcAddress(sessionMetabotId) ?? '');
   }
   return targets;
+}
+
+/**
+ * Card-enrichment reads (S3 chat NFT cards). Both go through the host control
+ * when wired (main.ts), falling back to the direct service calls — every
+ * failure degrades to an identity-only card, never a failed action.
+ */
+async function loadMrc721CardItem(control: Mrc721ToolsControl, pinId: string): Promise<Mrc721ItemSummary | null> {
+  try {
+    return control.fetchItemInfo ? await control.fetchItemInfo(pinId) : await fetchMrc721ItemInfo({ pinId });
+  } catch {
+    return null;
+  }
+}
+
+async function loadMrc721CollectionForCard(
+  control: Mrc721ToolsControl,
+  input: { name?: string; pinId?: string },
+): Promise<{ collection: Mrc721CollectionSummary | null; error?: string }> {
+  try {
+    const collection = control.fetchCollectionInfo
+      ? await control.fetchCollectionInfo(input)
+      : await fetchMrc721CollectionInfo(input);
+    return { collection };
+  } catch (error) {
+    return { collection: null, error: errorMessage(error) };
+  }
+}
+
+/** Collection issuer address for the card's issuer chip — best-effort. */
+async function loadMrc721IssuerAddress(
+  control: Mrc721ToolsControl,
+  collectionName: string | undefined,
+): Promise<string | undefined> {
+  const name = asString(collectionName);
+  if (!name) return undefined;
+  const { collection } = await loadMrc721CollectionForCard(control, { name });
+  return collection?.createAddress || undefined;
 }
 
 export function buildMrc721AgentTools(deps: {
@@ -708,12 +764,17 @@ export function buildMrc721AgentTools(deps: {
       }
 
       let precheckWarning: string | undefined;
-      try {
-        const collection = await fetchMrc721CollectionInfo({ name: collectionName });
-        if (!collection) {
-          precheckWarning = `collection "${collectionName}" is not indexed yet — the mint still lands on-chain, but it only gets collected `
-            + 'after the collection registers. If the collection was never issued, this mint will never index (fee wasted).';
-        } else if (collection.totalSupply != null && collection.totalSupply >= 0
+      let precheckIssuerAddress: string | undefined;
+      const precheck = await loadMrc721CollectionForCard(control, { name: collectionName });
+      if (precheck.error) {
+        precheckWarning = `indexer precheck unavailable (${precheck.error}) — proceeding; supply is enforced by the indexer at ingest.`;
+      } else if (!precheck.collection) {
+        precheckWarning = `collection "${collectionName}" is not indexed yet — the mint still lands on-chain, but it only gets collected `
+          + 'after the collection registers. If the collection was never issued, this mint will never index (fee wasted).';
+      } else {
+        precheckIssuerAddress = precheck.collection.createAddress || undefined;
+        const collection = precheck.collection;
+        if (collection.totalSupply != null && collection.totalSupply >= 0
           && (collection.totalnum ?? 0) >= collection.totalSupply) {
           return textResult(
             `mrc721_mint: collection "${collectionName}" is exhausted (${collection.totalnum}/${collection.totalSupply} minted) — `
@@ -721,8 +782,6 @@ export function buildMrc721AgentTools(deps: {
             true,
           );
         }
-      } catch (error) {
-        precheckWarning = `indexer precheck unavailable (${errorMessage(error)}) — proceeding; supply is enforced by the indexer at ingest.`;
       }
 
       try {
@@ -740,7 +799,26 @@ export function buildMrc721AgentTools(deps: {
         const confirmation = waitMs > 0
           ? await waitForMrc721ItemInfo({ pinId: result.pinId, timeoutMs: waitMs })
           : { hit: null };
-        return textResult(formatMrc721MintResult({
+        // S3 chat card: index snapshot first, then the mint arguments the
+        // emitter itself holds — every field degrades independently, so an
+        // unconfirmed mint still renders an identity-only card.
+        const snapshot = confirmation.hit ?? await loadMrc721CardItem(control, result.pinId);
+        const cardFields = buildMrc721CardFields({
+          pinId: result.pinId,
+          facts: {
+            item: {
+              name: snapshot?.name || asString(args.name) || undefined,
+              collectionName: snapshot?.collectionName || result.collectionName,
+              number: snapshot?.number,
+              cover: snapshot?.cover || asString(args.cover) || undefined,
+              ownerAddress: snapshot?.ownerAddress || control.getMetabotMvcAddress(owner) || undefined,
+            },
+            issuerAddress: precheckIssuerAddress,
+          },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          action: 'minted',
+        });
+        return textResult(appendNftCardBlock(formatMrc721MintResult({
           collectionName: result.collectionName,
           itemPath: result.itemPath,
           pinId: result.pinId,
@@ -751,7 +829,7 @@ export function buildMrc721AgentTools(deps: {
           confirmation,
           waitMs,
           precheckWarning,
-        }));
+        }), cardFields));
       } catch (error) {
         return textResult(`mrc721_mint failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -789,12 +867,26 @@ export function buildMrc721AgentTools(deps: {
         return textResult(`mrc721_transfer: ${target.error}`, true);
       }
       try {
+        // Pre-action snapshot: the item sits in the session bot's wallet right
+        // now, so its display facts are the freshest they will ever be; the
+        // card then records the RECIPIENT as the post-transfer owner.
+        const snapshot = await loadMrc721CardItem(control, pinId);
         const result = await control.transfer({
           metabotId: owner,
           pinId,
           toAddress: target.address,
         });
-        return textResult(formatMrc721TransferResult(result));
+        const cardFields = buildMrc721CardFields({
+          pinId,
+          facts: {
+            item: snapshot,
+            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName),
+          },
+          owner: target.address || undefined,
+          ownerLabel: 'name' in target ? target.name : undefined,
+          action: 'transferred',
+        });
+        return textResult(appendNftCardBlock(formatMrc721TransferResult(result), cardFields));
       } catch (error) {
         return textResult(`mrc721_transfer failed: ${errorMessage(error)}`, true);
       }
@@ -1081,13 +1173,27 @@ export function buildMrc721AgentTools(deps: {
         );
       }
       try {
+        // Pre-action snapshot: the item still sits in the bot's wallet, so
+        // the artwork/name facts survive even if the indexer lags behind the
+        // listing handoff.
+        const snapshot = await loadMrc721CardItem(control, args.item_pin_id);
         const result = await control.sell({
           metabotId: owner,
           itemPinId: args.item_pin_id,
           buyerAddress: args.buyer_address,
           priceSats: args.price_sats,
         });
-        return textResult([
+        const cardFields = buildMrc721CardFields({
+          pinId: result.itemPinId,
+          facts: {
+            item: snapshot,
+            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName),
+          },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          priceSats: result.priceSats,
+          action: 'listed',
+        });
+        return textResult(appendNftCardBlock([
           'MRC-721 listing is ready. Give the listing JSON below to the buyer — they complete payment and the NFT transfer in one transaction.',
           `- item pinId: ${result.itemPinId}`,
           `- buyer: ${result.buyerAddress}`,
@@ -1095,7 +1201,7 @@ export function buildMrc721AgentTools(deps: {
           `- NFT outpoint: ${result.outpoint}`,
           '- listing JSON:',
           result.listingJson,
-        ].join('\n'));
+        ].join('\n'), cardFields));
       } catch (error) {
         return textResult(`mrc721_sell failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }
@@ -1117,14 +1223,28 @@ export function buildMrc721AgentTools(deps: {
       if (typeof owner === 'string') return textResult(owner, true);
       try {
         const result = await control.buy({ metabotId: owner, listing: args.listing });
-        return textResult([
+        // Post-action snapshot from the index doubles as the enrichment read;
+        // indexer lag behind the just-broadcast swap degrades to an
+        // identity-only card (format+pinId+owner+price always survive).
+        const snapshot = await loadMrc721CardItem(control, result.itemPinId);
+        const cardFields = buildMrc721CardFields({
+          pinId: result.itemPinId,
+          facts: {
+            item: snapshot,
+            issuerAddress: await loadMrc721IssuerAddress(control, snapshot?.collectionName),
+          },
+          owner: control.getMetabotMvcAddress(owner) || undefined,
+          priceSats: result.priceSats,
+          action: 'bought',
+        });
+        return textResult(appendNftCardBlock([
           'MRC-721 purchase broadcast on-chain. Payment and the NFT transfer are the same transaction.',
           `- txid: ${result.txId}`,
           `- item pinId: ${result.itemPinId}`,
           `- paid seller ${result.sellerAddress}: ${result.priceSats} sats`,
           `- miner fee: ${result.feeSats} sats (${result.feeRateEffective.toFixed(2)} sat/byte, no change output)`,
           'When it confirms, mrc721_item_info should show you as owner and mrc721_item_info transfer history should include this txid.',
-        ].join('\n'));
+        ].join('\n'), cardFields));
       } catch (error) {
         return textResult(`mrc721_buy failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
       }

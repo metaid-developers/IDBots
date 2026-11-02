@@ -1,6 +1,10 @@
 // S3 chat NFT cards: the wallet NFT action tools (transfer / sell / buy /
 // cancel_sell) must append a `nft-card` fenced block to their success results
 // so the bot's broadcast message automatically carries a renderable card.
+// Dual-format contract: every wallet_* emit carries format:"metacontract";
+// a transfer to a locally-known bot name prefills ownerLabel (the emitter
+// already knows the name — renderer identity lookup is the fallback, not the
+// primary).
 // Enrichment (name/series/icon/imgUrl) comes from a best-effort wallet-api
 // snapshot via control.listMvcNfts; any failure degrades to an identity-only
 // card, never to a missing card or a failed action.
@@ -134,17 +138,40 @@ test('wallet_nft_transfer appends an enriched transferred card with the recipien
   // Facts snapshot comes from the SENDER wallet (pre-action), owner is the recipient.
   assert.deepEqual(harness.calls.listMvcNfts, [{ address: '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx' }]);
   const card = extractCardJson(text);
+  assert.equal(card.format, 'metacontract', 'wallet emits carry the explicit format');
   assert.equal(card.genesis, GENESIS);
   assert.equal(card.codehash, CODEHASH);
   assert.equal(card.tokenIndex, '5028');
   assert.equal(card.name, '小明');
   assert.equal(card.series, 'Metabot Gen 2');
   assert.equal(card.owner, '1GrqX7K9jdnUor8hAoAfDx99uFH2tT75Za');
+  assert.equal(card.ownerLabel, undefined, 'a raw-address recipient has no known label');
   assert.equal(card.action, 'transferred');
   assert.ok(card.imgUrl.startsWith('https://'));
   assert.ok(card.icon.startsWith('metafile://'));
   // Key order is the pinned cross-side contract (renderer parses the same shape).
-  assert.equal(Object.keys(card).join(','), 'genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,action');
+  assert.equal(Object.keys(card).join(','), 'format,genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,action');
+});
+
+test('wallet_nft_transfer to a local bot name prefills the recipient label', async () => {
+  const harness = createHarness();
+  buildTools(harness);
+  const result = await harness.handlers.wallet_nft_transfer.handler({
+    to: 'AI_Sunny',
+    genesis: GENESIS,
+    codehash: CODEHASH,
+    token_index: '5028',
+  });
+  assert.equal(result.isError, undefined);
+  const card = extractCardJson(result.content[0].text);
+  assert.equal(card.format, 'metacontract');
+  assert.equal(card.owner, '1GrqX7K9jdnUor8hAoAfDx99uFH2tT75Za');
+  assert.equal(card.ownerLabel, 'AI_Sunny', 'emitter-known name rides the fence');
+  assert.equal(card.action, 'transferred');
+  assert.equal(
+    Object.keys(card).join(','),
+    'format,genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,ownerLabel,action',
+  );
 });
 
 test('wallet_nft_transfer degrades to an identity-only card when the snapshot fails', async () => {
@@ -158,6 +185,7 @@ test('wallet_nft_transfer degrades to an identity-only card when the snapshot fa
   });
   assert.equal(result.isError, undefined);
   const card = extractCardJson(result.content[0].text);
+  assert.equal(card.format, 'metacontract');
   assert.equal(card.name, undefined);
   assert.equal(card.series, undefined);
   assert.equal(card.imgUrl, undefined);
@@ -180,6 +208,7 @@ test('wallet_nft_sell appends a listed card carrying the ask price and the selle
   // Pre-action snapshot: fetched before the listing broadcast.
   assert.deepEqual(harness.calls.listMvcNfts, [{ address: '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx' }]);
   const card = extractCardJson(text);
+  assert.equal(card.format, 'metacontract');
   assert.equal(card.action, 'listed');
   assert.equal(card.priceSats, 100000);
   assert.equal(card.owner, '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx');
@@ -205,6 +234,7 @@ test('wallet_nft_buy appends a bought card with the ask price and the buyer as o
   // ownership-change check.
   assert.deepEqual(harness.calls.listMvcNfts, [{ address: '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx' }]);
   const card = extractCardJson(text);
+  assert.equal(card.format, 'metacontract');
   assert.equal(card.action, 'bought');
   assert.equal(card.priceSats, 100000);
   assert.equal(card.owner, '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx');
@@ -222,6 +252,7 @@ test('wallet_nft_cancel_sell appends a delisted card without a price', async () 
   const text = result.content[0].text;
   assert.match(text, /NFT sell order cancelled on-chain\./);
   const card = extractCardJson(text);
+  assert.equal(card.format, 'metacontract');
   assert.equal(card.action, 'delisted');
   assert.equal(card.priceSats, undefined);
   assert.equal(card.owner, '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx');

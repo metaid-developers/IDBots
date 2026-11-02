@@ -1402,7 +1402,7 @@ contextBridge.exposeInMainWorld('electron', {
   // Namespace kept under its legacy `p2p` name for the renderer; it now only
   // bridges the metaid user-info/contacts IPC channels.
   p2p: {
-    getUserInfo: (params: { globalMetaId: string }) =>
+    getUserInfo: (params: { globalMetaId?: string; address?: string }) =>
       ipcRenderer.invoke('metaid:getUserInfo', params),
     resolveAvatarSource: (params: { reference: string }) =>
       ipcRenderer.invoke('metaid:resolveAvatarSource', params),

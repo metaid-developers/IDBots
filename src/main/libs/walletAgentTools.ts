@@ -521,6 +521,7 @@ export function buildWalletAgentTools(deps: {
       }
       let toAddress = '';
       let toMetabotId: number | null = null;
+      let toName: string | undefined;
       if (/^\d+$/.test(toRaw)) {
         const id = Number(toRaw);
         const address = control.getMetabotMvcAddress(id);
@@ -539,6 +540,7 @@ export function buildWalletAgentTools(deps: {
           );
         }
         toMetabotId = id;
+        toName = toRaw;
         toAddress = control.getMetabotMvcAddress(id) ?? '';
         if (!toAddress) {
           return textResult(`wallet_nft_transfer: MetaBot ${toRaw} has no mvc address.`, true);
@@ -578,11 +580,13 @@ export function buildWalletAgentTools(deps: {
           '- Verify with wallet_nft_balance after the tx confirms.',
         ];
         return textResult(appendNftCardBlock(lines.join('\n'), {
+          format: 'metacontract',
           genesis,
           codehash,
           tokenIndex,
           ...facts,
           owner: toAddress || undefined,
+          ownerLabel: toName,
           action: 'transferred',
         }));
       } catch (error) {
@@ -717,6 +721,7 @@ export function buildWalletAgentTools(deps: {
           '- Verify with wallet_nft_sell_orders; cancel with wallet_nft_cancel_sell.',
         ];
         return textResult(appendNftCardBlock(lines.join('\n'), {
+          format: 'metacontract',
           genesis,
           codehash,
           tokenIndex,
@@ -806,6 +811,7 @@ export function buildWalletAgentTools(deps: {
           '- Verify the order is gone with wallet_nft_sell_orders.',
         ];
         return textResult(appendNftCardBlock(lines.join('\n'), {
+          format: 'metacontract',
           genesis,
           codehash,
           tokenIndex,
@@ -877,6 +883,7 @@ export function buildWalletAgentTools(deps: {
           '- Verify ownership with wallet_nft_balance and the order closure with wallet_nft_sell_orders after the txs confirm.',
         ];
         return textResult(appendNftCardBlock(lines.join('\n'), {
+          format: 'metacontract',
           genesis,
           codehash,
           tokenIndex,

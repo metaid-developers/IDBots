@@ -196,6 +196,8 @@ import {
   buyMrc721Listing,
   createMrc721Collection,
   createMrc721Mint,
+  fetchMrc721CollectionInfo,
+  fetchMrc721ItemInfo,
   listMrc721MySellOrders,
   mrc721SellOrdersFromSqlite,
   sellMrc721Item,
@@ -2088,6 +2090,40 @@ async function fetchMetaidUserInfoByGlobalMetaId(globalMetaId: string): Promise<
   const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(normalizedGlobalMetaId)}`;
   const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(normalizedGlobalMetaId)}`;
   const res = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isSemanticallyEmptyMetaidInfoPayload, { degradeToLocalOnRemoteError: true });
+  const payload = await res.json() as { code?: number; message?: string; data?: Record<string, unknown> };
+  const data = unwrapMetaidInfoRecord(payload?.data);
+  if (data) {
+    const avatarUrl = await resolveMetaidAvatarSource(data);
+    if (avatarUrl) {
+      data.avatarUrl = avatarUrl;
+    }
+    payload.data = data;
+  }
+  return payload;
+}
+
+/**
+ * Address flavor of the same info lookup (chat NFT card owner/issuer chips):
+ * hits the indexer info route omni_read user_info already uses for addresses
+ * (api/v1/info/address/{addr}) — same payload shape, same unwrap, same avatar
+ * resolution.
+ */
+async function fetchMetaidUserInfoByAddress(address: string): Promise<{
+  code?: number;
+  message?: string;
+  data?: Record<string, unknown>;
+}> {
+  const normalizedAddress = toSafeString(address).trim();
+  if (!normalizedAddress) {
+    return {};
+  }
+  const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/address/${encodeURIComponent(normalizedAddress)}`;
+  const res = await fetchJsonWithFallbackOnMiss(
+    `/api/v1/users/info/address/${encodeURIComponent(normalizedAddress)}`,
+    fallbackUrl,
+    isSemanticallyEmptyMetaidInfoPayload,
+    { degradeToLocalOnRemoteError: true },
+  );
   const payload = await res.json() as { code?: number; message?: string; data?: Record<string, unknown> };
   const data = unwrapMetaidInfoRecord(payload?.data);
   if (data) {
@@ -7785,6 +7821,9 @@ const getCoworkRunner = () => {
         getMetabotMvcAddress: (metabotId) =>
           getMetabotStore().getMetabotById(metabotId)?.mvc_address ?? null,
         resolveMetabotIdByName: (name) => resolveMetabotIdByName(getMetabotStore(), name),
+        // S3 chat NFT card enrichment (best-effort index reads).
+        fetchItemInfo: (pinId) => fetchMrc721ItemInfo({ pinId }),
+        fetchCollectionInfo: (input) => fetchMrc721CollectionInfo({ name: input.name, pinId: input.pinId }),
         collectionCreate: (input) => withChainWriteBudget(
           'mrc721_collection_create',
           () => createMrc721Collection({ createPin: mrc721CreatePinBackend }, input),
@@ -19070,9 +19109,15 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     return false;
   });
 
-  registerIpcHandler('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId: string }) => {
+  registerIpcHandler('metaid:getUserInfo', async (_e: Electron.IpcMainInvokeEvent, params: { globalMetaId?: string; address?: string }) => {
     try {
-      return await fetchMetaidUserInfoByGlobalMetaId(params.globalMetaId);
+      const globalMetaId = toSafeString(params?.globalMetaId).trim();
+      const address = toSafeString(params?.address).trim();
+      // Exactly one lookup key: both-or-neither degrades to an empty payload.
+      if (!!globalMetaId === !!address) return {};
+      return address
+        ? await fetchMetaidUserInfoByAddress(address)
+        : await fetchMetaidUserInfoByGlobalMetaId(globalMetaId);
     } catch (error) {
       // Local-first read: a lookup failure (e.g. the local node is down and the
       // remote indexer is unreachable) degrades to an empty payload instead of

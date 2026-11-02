@@ -1,6 +1,9 @@
 /**
- * Fetch MetaBot / MetaID user info by globalMetaId. Avatar resolution is
- * performed in the main process so renderer consumers stay local-first.
+ * Fetch MetaBot / MetaID user info by globalMetaId or MVC address. Avatar
+ * resolution is performed in the main process so renderer consumers stay
+ * local-first. The address flavor backs the chat NFT card identity chips
+ * (owner/issuer) and hits the same indexer info route omni_read user_info
+ * uses for addresses.
  */
 
 export interface MetaidInfoResult {
@@ -19,7 +22,23 @@ export async function fetchMetaidInfoByGlobalId(
   if (!id) {
     return {};
   }
-  const result = await window.electron.p2p.getUserInfo({ globalMetaId: id });
+  return fetchMetaidInfo({ globalMetaId: id });
+}
+
+export async function fetchMetaidInfoByAddress(
+  address: string
+): Promise<MetaidInfoResult> {
+  const id = (address || '').trim();
+  if (!id) {
+    return {};
+  }
+  return fetchMetaidInfo({ address: id });
+}
+
+async function fetchMetaidInfo(
+  params: { globalMetaId: string } | { address: string }
+): Promise<MetaidInfoResult> {
+  const result = await window.electron.p2p.getUserInfo(params);
   const json = result as { code?: number; message?: string; data?: Record<string, unknown> };
   if (json.code !== 1 && json.code !== undefined) {
     throw new Error(json.message || 'Metabot info request failed');
@@ -32,7 +51,12 @@ export async function fetchMetaidInfoByGlobalId(
     name,
     avatarUrl: avatarUrl || undefined,
     chatpubkey: chatpubkey || undefined,
-    globalMetaId: typeof data.globalMetaId === 'string' ? data.globalMetaId : id,
+    globalMetaId:
+      typeof data.globalMetaId === 'string'
+        ? data.globalMetaId
+        : 'globalMetaId' in params
+          ? params.globalMetaId
+          : undefined,
     metaid: typeof data.metaid === 'string' ? data.metaid : undefined,
     address: typeof data.address === 'string' ? data.address : undefined,
   };
