@@ -57,6 +57,29 @@ function mobileDevProxy() {
     if (secret === undefined) secret = gatewayDevSecret();
     return { 'X-IDBots-Gateway-Secret': secret as string };
   };
+
+  // Real-environment dev (IDBOTS_DEV_REMOTE=https://staging.idbots.world):
+  // forward the tenant surface to a deployed control plane instead of a
+  // local stack, so sign-in lands on the real account (same as the PWA).
+  // No secret header and no path rewrite: the deployed edge already serves
+  // /api, /ws, /files and /upload exactly as the PWA's own origin does.
+  const remote = process.env.IDBOTS_DEV_REMOTE?.trim();
+  if (remote) {
+    const httpTarget = remote.replace(/\/$/, '');
+    const wsTarget = httpTarget.replace(/^http/, 'ws');
+    // The deployed control plane and ws proxy both enforce an Origin
+    // allowlist (non-GET HTTP and the ws handshake), so present the remote
+    // origin; the session cookie itself stays on the dev origin.
+    const originHeader = { headers: { origin: httpTarget } };
+    const cookieRewrite = { cookieDomainRewrite: '' };
+    return {
+      '/api': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
+      '/ws': { target: wsTarget, ws: true, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
+      '/files/': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
+      '/upload': { target: httpTarget, changeOrigin: true, secure: true, ...originHeader, ...cookieRewrite },
+    };
+  }
+
   return {
     // C2 websocket; the client connects to /ws on the page origin.
     '/ws': {
