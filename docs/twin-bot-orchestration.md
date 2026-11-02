@@ -98,6 +98,18 @@ Attempt states are `queued`, `running`, `completed`, `failed`, `timed_out`, and 
 
 All schema changes must be safe, additive, and idempotent for existing user databases.
 
+### Cross-session delivery outbox
+
+`cowork_cross_session_deliveries` persists the wake obligation created by `insertCrossSessionMessageAndQueue`, independently of the message already stored in `cowork_messages`. The delivery is recorded before message insertion and uses the same id as the message, so recovery can adopt an already-written message instead of inserting a duplicate.
+
+Delivery states are `pending`, `running`, `completed`, `failed`, and `cancelled`. A delivery also records its rendered message, attempt count, next retry time, last error, and creation, insertion, start, completion, and update timestamps. `failed` and `cancelled` are terminal audit states; a stopped target retains its message but cancels the wake obligation.
+
+At startup, `running` deliveries return to `pending` while completed and terminal records remain untouched. Before any retry, the host reconciles the delivery id with the persisted message. Target-busy rules and per-target FIFO ordering remain in force. Retries use the stored rendered message and bounded exponential backoff; they do not regenerate content with another model call.
+
+`getCrossSessionDeliveryReliabilitySnapshot` exposes the baseline metrics for this layer: state counts, retrying deliveries, total attempts, oldest pending age, and average and maximum completion latency. These metrics distinguish a persisted message from a continuation that actually started and finished.
+
+The outbox provides durable, idempotent delivery of the wake obligation. It does not claim exactly-once semantics for tools chosen by the target model: external side effects still require their own idempotency and authorization boundaries.
+
 ### Worker Cowork execution
 
 Each delegation attempt creates a new task-specific Cowork session attributed to the selected Worker `metabotId`. A fresh session avoids contaminating an unrelated historical conversation while preserving the Worker's persistent identity through persona, memory, experience, wallet, skills, and workspace attribution.

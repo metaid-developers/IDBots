@@ -12,6 +12,7 @@ import type { PermissionResult } from './coworkPermissionTypes';
 import { stampPermissionDeadline, timeoutDefaultForToolApproval, type PermissionTimeoutDefault } from './permissionTimeoutDefault';
 import { isServerMode } from '../server/serverMode';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus, CoworkPermissionMode } from '../coworkStore';
+import type { CrossSessionDeliveryStore, CrossSessionDeliveryReliabilitySnapshot } from '../crossSessionDeliveryStore';
 import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, getPersistedChatExperienceMode, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
 import { resolveCoworkExecutionMode } from './coworkExecutionMode';
 import { buildGoalPromptSection, type CoworkSessionGoal } from './coworkSessionGoal';
@@ -2186,6 +2187,7 @@ export interface CoworkRunnerOptions {
   twinTaskStatus?: (sessionId: string, taskId: string) => TwinTaskStatusResult;
   twinTaskCancel?: (sessionId: string, taskId: string) => Promise<unknown> | unknown;
   twinTaskReassign?: (sessionId: string, input: Record<string, unknown>) => Promise<DelegateLocalWorkerResult>;
+  crossSessionDeliveryStore?: CrossSessionDeliveryStore;
   /** When set, returns enabled user-configured MCP servers for local execution. */
   mcpServerProvider?: (coworkSessionId: string) => UserConfiguredMcpServerDefinition[];
   /** Per-bot opt-in for the 0.1.7 experimental browser automation backend
@@ -2877,7 +2879,9 @@ export class CoworkRunner extends EventEmitter {
   private crossSessionContinuationQueues: Map<string, QueuedCrossSessionContinuation[]> = new Map();
   private crossSessionContinuationDraining: Set<string> = new Set();
   private crossSessionRunningTurns: Set<string> = new Set();
+  private crossSessionDeliveryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private crossSessionService: CoworkCrossSessionService | null = null;
+  private crossSessionDeliveryStore?: CrossSessionDeliveryStore;
 
   constructor(store: CoworkStore, options?: CoworkRunnerOptions) {
     super();
@@ -2972,6 +2976,11 @@ export class CoworkRunner extends EventEmitter {
       0,
       options?.assistantOwnerWaitTimeoutMs ?? ASSISTANT_OWNER_WAIT_INITIAL_MS
     );
+    this.crossSessionDeliveryStore = options?.crossSessionDeliveryStore;
+    if (this.crossSessionDeliveryStore) {
+      const recoveryTimer = setTimeout(() => this.recoverCrossSessionDeliveriesAfterRestart(), 0);
+      recoveryTimer.unref?.();
+    }
   }
 
 
@@ -8110,6 +8119,10 @@ export class CoworkRunner extends EventEmitter {
   }
 
   private scheduleCrossSessionContinuationDrain(sessionId: string): void {
+    if (this.crossSessionDeliveryStore) {
+      this.scheduleDurableCrossSessionDrain(sessionId);
+      return;
+    }
     if (this.stoppedSessions.has(sessionId)) {
       this.crossSessionContinuationQueues.delete(sessionId);
       return;
@@ -8217,29 +8230,175 @@ export class CoworkRunner extends EventEmitter {
     return true;
   }
 
+  private isDurableCrossSessionTargetStopped(sessionId: string): boolean {
+    return this.stoppedSessions.has(sessionId) || this.store.getSession(sessionId)?.status === 'stopped';
+  }
+
+  private recoverCrossSessionDeliveriesAfterRestart(): void {
+    if (!this.crossSessionDeliveryStore) return;
+    try {
+      for (const targetSessionId of this.crossSessionDeliveryStore.recoverAfterRestart()) {
+        this.scheduleDurableCrossSessionDrain(targetSessionId);
+      }
+    } catch (error) {
+      coworkLog('WARN', 'crossSession:deliveryRecovery', 'Failed to recover durable deliveries', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  getCrossSessionDeliveryReliabilitySnapshot(): CrossSessionDeliveryReliabilitySnapshot | null {
+    return this.crossSessionDeliveryStore?.reliabilitySnapshot() ?? null;
+  }
+
+  private scheduleDurableCrossSessionDrain(targetSessionId: string): void {
+    const store = this.crossSessionDeliveryStore;
+    if (!store) return;
+    if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
+      store.cancelTarget(targetSessionId, 'TARGET_SESSION_STOPPED');
+      return;
+    }
+    if (this.isCrossSessionTurnRunning(targetSessionId) || this.crossSessionContinuationDraining.has(targetSessionId)) return;
+    const next = store.nextPending(targetSessionId);
+    if (!next) return;
+
+    const previousTimer = this.crossSessionDeliveryTimers.get(targetSessionId);
+    if (previousTimer) clearTimeout(previousTimer);
+    const timer = setTimeout(() => {
+      this.crossSessionDeliveryTimers.delete(targetSessionId);
+      void this.drainDurableCrossSessionDeliveries(targetSessionId);
+    }, Math.max(0, next.nextAttemptAt - Date.now()));
+    timer.unref?.();
+    this.crossSessionDeliveryTimers.set(targetSessionId, timer);
+  }
+
+  private async drainDurableCrossSessionDeliveries(targetSessionId: string): Promise<void> {
+    const store = this.crossSessionDeliveryStore;
+    if (!store || this.crossSessionContinuationDraining.has(targetSessionId)) return;
+    this.crossSessionContinuationDraining.add(targetSessionId);
+    try {
+      while (!this.isCrossSessionTurnRunning(targetSessionId)) {
+        if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
+          store.cancelTarget(targetSessionId, 'TARGET_SESSION_STOPPED');
+          return;
+        }
+        const next = store.nextDue(targetSessionId);
+        if (!next) return;
+
+        let renderedMessage = next.renderedMessage;
+        if (!next.messageId || !renderedMessage) {
+          const inserted = this.getCrossSessionService().insertUserMessage({
+            sourceSessionId: next.sourceSessionId,
+            targetSessionId: next.targetSessionId,
+            message: next.message,
+            deliveryId: next.id,
+          });
+          if (!inserted.ok) {
+            store.markCancelled(next.id, String(inserted.message));
+            continue;
+          }
+          store.attachMessage(next.id, inserted.message.id, inserted.message.content);
+          renderedMessage = inserted.message.content;
+          if (!inserted.reused) {
+            this.emit('message', targetSessionId, {
+              ...inserted.message,
+              metadata: inserted.message.metadata ?? undefined,
+            } as CoworkMessage);
+          }
+        }
+
+        const running = store.markRunning(next.id);
+        if (running.state !== 'running') continue;
+        try {
+          await this.continueSession(targetSessionId, renderedMessage, { skipUserMessage: true });
+          store.markCompleted(next.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
+            store.markCancelled(next.id, 'TARGET_SESSION_STOPPED');
+          } else {
+            store.markAttemptFailed(next.id, message);
+          }
+          coworkLog('WARN', 'crossSession:deliveryAttempt', 'Durable continuation failed', {
+            sessionId: targetSessionId,
+            deliveryId: next.id,
+            error: message,
+          });
+        }
+      }
+    } finally {
+      this.crossSessionContinuationDraining.delete(targetSessionId);
+      if (!this.isCrossSessionTurnRunning(targetSessionId) && store.nextPending(targetSessionId)) {
+        this.scheduleDurableCrossSessionDrain(targetSessionId);
+      }
+    }
+  }
+
+  private insertDurableCrossSessionMessageAndQueue(input: {
+    sourceSessionId: string;
+    targetSessionId: string;
+    message: string;
+    deliveryId?: string;
+  }): CoworkCrossSessionInsertAndQueueResult {
+    const store = this.crossSessionDeliveryStore!;
+    const delivery = store.enqueue(input);
+    const result = this.getCrossSessionService().insertUserMessage({
+      ...input,
+      deliveryId: delivery.id,
+    });
+    if (!result.ok) {
+      if (delivery.state === 'pending') store.markCancelled(delivery.id, String(result.message));
+      return { insert: result, runQueued: false };
+    }
+
+    if (delivery.state === 'pending') {
+      store.attachMessage(delivery.id, result.message.id, result.message.content);
+      if (!result.reused) {
+        this.emit('message', result.targetSessionId, {
+          ...result.message,
+          metadata: result.message.metadata ?? undefined,
+        } as CoworkMessage);
+      }
+    }
+
+    if (delivery.state !== 'pending' && delivery.state !== 'running') {
+      return { insert: result, runQueued: false, reason: `DELIVERY_${delivery.state.toUpperCase()}` };
+    }
+    if (this.isDurableCrossSessionTargetStopped(result.targetSessionId)) {
+      store.markCancelled(delivery.id, 'TARGET_SESSION_STOPPED');
+      return {
+        insert: result,
+        runQueued: false,
+        warning: 'MESSAGE_INSERTED_BUT_RUN_NOT_QUEUED',
+        reason: 'TARGET_SESSION_STOPPED',
+        error: `TARGET_SESSION_STOPPED: target session ${result.targetSessionId} is stopped.`,
+      };
+    }
+
+    this.scheduleDurableCrossSessionDrain(result.targetSessionId);
+    return {
+      insert: result,
+      runQueued: true,
+      queueDepth: store.countPending(result.targetSessionId),
+    };
+  }
+
   /**
    * Host cross-session insert + queue-to-continue, the single shared seam for
    * the MCP idbots_session_insert_user_message tool and internal consumers
-   * such as TwinOrchestrationService's ORCH-NOTIFY terminal-state notification:
-   * insert the message into the target session, emit it to session listeners
-   * (UI), then queue a continuation run on the target session — the drain loop
-   * resumes it via continueSession(skipUserMessage) once the target is not
-   * mid-turn, which is exactly the "queue that session to continue" behavior
-   * of the MCP channel.
-   *
-   * Insert and queue are decoupled: an unqueueable target (stopped session,
-   * queue acceptance failure) still keeps the inserted message and reports
-   * runQueued:false with the reason, mirroring the MCP tool's partial-success
-   * contract. Consumers that only care about the insert result use `.insert`.
+   * such as TwinOrchestrationService's ORCH-NOTIFY terminal-state notification.
    */
   insertCrossSessionMessageAndQueue(input: {
     sourceSessionId: string;
     targetSessionId: string;
     message: string;
+    deliveryId?: string;
   }): CoworkCrossSessionInsertAndQueueResult {
+    if (this.crossSessionDeliveryStore) {
+      return this.insertDurableCrossSessionMessageAndQueue(input);
+    }
     const result = this.getCrossSessionService().insertUserMessage(input);
     if (!result.ok) {
-      // Insert failure (missing session, A2A target, …): nothing to queue.
       return { insert: result, runQueued: false };
     }
 

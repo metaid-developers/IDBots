@@ -40,6 +40,7 @@ export type TwinOrchestrationInsertCrossSessionMessageFn = (input: {
   sourceSessionId: string;
   targetSessionId: string;
   message: string;
+  deliveryId?: string;
 }) => CoworkCrossSessionInsertResult;
 
 /** Minimal kv surface for the terminal-state notify guard (SqliteStore in main.ts). */
@@ -247,6 +248,7 @@ export class TwinOrchestrationService {
         sourceSessionId: workerSessionId,
         targetSessionId,
         message: text,
+        deliveryId: guardKey,
       });
       if ('code' in result) {
         // CoworkCrossSessionError (insert failed: missing session, A2A target…)
@@ -267,6 +269,7 @@ export class TwinOrchestrationService {
           sourceSessionId: workerSessionId,
           targetSessionId: task.longtermReportSessionId,
           message: `📋 长期任务子项进展汇报\n\n${text}\n\n（此汇报来自编排任务 ${task.id}，对应长期任务 ${task.longtermTaskId} 的子项 ${task.longtermSubtaskId}）`,
+          deliveryId: `${guardKey}:longterm`,
         });
         if ('code' in ltResult) {
           console.warn(
