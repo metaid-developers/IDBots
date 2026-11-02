@@ -24,8 +24,9 @@ import {
   type QQProbeFetch,
 } from '../src/main/im/qqGateway';
 import { QQStore, normalizeQQAccountId } from '../src/main/im/qqStore';
+import { QQGroupCandidateStore } from '../src/main/im/qqCandidates';
 import { QQGroupAuditLog } from '../src/main/im/qqTrust';
-import type { QQConfig } from '../src/main/im/types';
+import type { IMMessage, QQConfig } from '../src/main/im/types';
 import {
   QQ_INBOUND_MAX_BYTES,
   QQ_MEDIA_LIMITS_BYTES,
@@ -237,6 +238,10 @@ function makeGateway(options: {
   reconnectBackoffMs?: number[];
   rejectStartOnce?: number;
   mediaRoot?: string;
+  /** Settings-page reader, exactly as the manager wires `imStore.getQQConfig`. */
+  configProvider?: () => Partial<QQConfig> | null | undefined;
+  /** Isolated candidate file so a group test never touches the real userData. */
+  groupCandidates?: QQGroupCandidateStore;
 } = {}): GatewayHarness {
   const stateDir = makeTempDir('state');
   const mediaRoot = options.mediaRoot ?? makeTempDir('media');
@@ -262,6 +267,8 @@ function makeGateway(options: {
     probeFetch: options.probeFetch,
     typingIndicator: true,
     auditLog: new QQGroupAuditLog(auditDir),
+    configProvider: options.configProvider,
+    groupCandidates: options.groupCandidates,
   });
 
   return { gateway, store, factory, connector, mediaRoot, stateDir, auditDir, clock, sleeps };
@@ -1039,11 +1046,156 @@ test('manual credentials are saved under the appId slot and can start the gatewa
     const summary = harness.gateway.credentialSummary();
     assert.equal(summary.hasCredentials, true);
     assert.equal(summary.appId, '102000011');
+    assert.equal(summary.ownerUserOpenid, 'owner-2');
     assert.equal(summary.source, 'manual');
     assert.ok(!JSON.stringify(summary).includes('manual-secret'));
 
     await harness.gateway.start({ enabled: true, appId: '102000011', debug: false });
     await waitFor(() => harness.factory.bots.length === 1);
+  } finally {
+    await harness.gateway.stop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Owner binding, END TO END (fresh install)
+// ---------------------------------------------------------------------------
+
+/**
+ * REGRESSION this test exists for: on a brand-new install the config row was
+ * empty. Scanning the QR wrote `ownerUserOpenid` into the 0600 credential file,
+ * but the settings mirror only stored `{ enabled, appId }` — and the trust gate
+ * reads the settings mirror. The owner's very first DM was therefore dropped as
+ * `stranger-dm / no-owner-binding`, even though the credential file clearly
+ * carried the binding.
+ *
+ * The test starts from EMPTY data and drives the production path:
+ *   QR scan -> credential persisted -> settings mirror WITHOUT the owner id
+ *   (the exact broken shape) -> inbound DM -> trust gate -> reply.
+ *
+ * It also pins the two neighbours so the fix cannot widen anything:
+ *   - a non-owner DM is still a silent stranger drop;
+ *   - a non-allowlisted group stays silent (only remembered), and an
+ *     allowlisted group is served at layer 1.
+ */
+test('E2E owner binding: fresh QR scan answers the first owner DM; stranger DM and non-allowlisted group stay silent', async () => {
+  const OWNER = 'owner-openid-fresh-0000000000000001';
+  const STRANGER = 'stranger-openid-0000000000000002';
+  const APP_ID = '102000777';
+  const GROUP = 'D5C5A8FEDB9C07ED3962FC31238BE4EE';
+
+  // EMPTY: no config row, no credential file — a just-installed app.
+  const liveConfig: Partial<QQConfig> = {
+    enabled: false,
+    appId: '',
+    ownerUserOpenid: null,
+    groupPolicy: 'allowlist',
+    groupAllowlist: [],
+    localToolsEnabled: false,
+    localToolsAllowFrom: [],
+    debug: false,
+  };
+  const harness = makeGateway({
+    configProvider: () => liveConfig,
+    groupCandidates: new QQGroupCandidateStore(makeTempDir('candidates')),
+  });
+  try {
+    assert.equal(harness.store.loadCredentials(), null, 'no credential file before the scan');
+
+    // --- 1. the owner scans the QR on the phone -----------------------------
+    const qrPending = harness.gateway.requestQrCode();
+    await waitFor(() => {
+      try {
+        harness.connector.callbacks();
+        return true;
+      } catch {
+        return false;
+      }
+    }, 1000, 'connector start');
+    harness.connector.callbacks().onQrDisplayed?.('https://qq.com/qr/fresh');
+    await qrPending;
+    harness.connector.callbacks().onSuccess?.([
+      { appId: APP_ID, appSecret: 'fresh-secret', userOpenid: OWNER },
+    ]);
+    const credentials = await harness.gateway.pollLogin();
+    assert.equal(credentials.appId, APP_ID);
+    assert.equal(credentials.userOpenid, OWNER);
+    assert.equal(
+      harness.store.loadCredentials(normalizeQQAccountId(APP_ID))?.ownerUserOpenid,
+      OWNER,
+      'the durable 0600 binding carries the owner'
+    );
+
+    // --- 2. the settings mirror lands WITHOUT the owner id ------------------
+    // This is exactly the pre-fix config row: enabled + appId only. The gate
+    // must fall back to the durable binding instead of judging on the mirror.
+    liveConfig.enabled = true;
+    liveConfig.appId = APP_ID;
+    delete liveConfig.ownerUserOpenid;
+
+    await harness.gateway.start(liveConfig as QQConfig);
+    await waitFor(() => harness.factory.bots.length === 1, 2000, 'bot started');
+    const bot = harness.factory.bots[0];
+
+    const seen: IMMessage[] = [];
+    harness.gateway.setMessageCallback(async (message, replyFn) => {
+      seen.push(message);
+      // Never answer a non-owner: silence is the security property.
+      if (message.trust?.level === 'owner-dm') {
+        await replyFn('收到，董事长。');
+        return;
+      }
+      // Layer 1 (group) answers too, without any owner wording.
+      if (message.trust?.level === 'group') await replyFn('群里收到。');
+    });
+
+    // --- 3. the owner's FIRST direct message --------------------------------
+    await bot.emitMessage(inbound({ senderId: OWNER, messageId: 'fresh-owner-1', content: '在吗' }));
+    await waitFor(() => seen.length === 1 && bot.sentTexts.length === 1, 2000, 'owner reply');
+    assert.equal(seen.length, 1, 'the owner DM must reach the pipeline, not be dropped');
+    assert.equal(seen[0].trust?.level, 'owner-dm', 'gate judged owner-dm, not stranger-dm');
+    assert.equal(seen[0].trust?.memoryRead, true, 'owner DM keeps its layer-2 rights');
+    assert.equal(bot.sentTexts.length, 1, 'exactly one reply went out');
+    assert.equal(bot.sentTexts[0].content, '收到，董事长。');
+
+    // --- 4. a stranger DM stays silent --------------------------------------
+    await bot.emitMessage(inbound({ senderId: STRANGER, messageId: 'fresh-stranger-1', content: '你好' }));
+    // A silent drop is synchronous up to its return; give the handler a tick so
+    // a wrong "processed" path would have surfaced before we assert.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(seen.length, 1, 'stranger DM never reaches the message pipeline');
+    assert.equal(bot.sentTexts.length, 1, 'stranger DM produces zero outbound text');
+
+    // --- 5. a group outside the allowlist stays silent ----------------------
+    const groupMessage = (messageId: string): QQInboundLike =>
+      inbound({
+        kind: 'group',
+        senderId: 'member-openid-g',
+        groupOpenid: GROUP,
+        rawEventType: 'GROUP_AT_MESSAGE_CREATE',
+        content: `<@!${APP_ID}> 群里问一句`,
+        messageId,
+      });
+
+    await bot.emitMessage(groupMessage('fresh-group-1'));
+    await waitFor(
+      () => harness.gateway.getGroupCandidates().all.some((candidate) => candidate.groupId === GROUP),
+      2000,
+      'group candidate recorded'
+    );
+    assert.equal(seen.length, 1, 'non-allowlisted group is not served');
+    assert.equal(bot.sentTexts.length, 1, 'non-allowlisted group gets no reply');
+
+    // --- 6. after the owner allows it, the same group is served at layer 1 --
+    liveConfig.groupAllowlist = [GROUP];
+    await bot.emitMessage(groupMessage('fresh-group-2'));
+    await waitFor(() => seen.length === 2 && bot.sentTexts.length === 2, 2000, 'group answer');
+    assert.equal(seen.length, 2, 'allowlisted group reaches the pipeline');
+    assert.equal(seen[1].trust?.level, 'group');
+    assert.equal(seen[1].trust?.toolScope, 'none', 'groups never mount tools');
+    assert.equal(seen[1].trust?.memoryRead, false, 'groups never read memory');
+    assert.equal(bot.sentTexts.length, 2);
+    assert.equal(bot.sentTexts[1].content, '群里收到。');
   } finally {
     await harness.gateway.stop();
   }

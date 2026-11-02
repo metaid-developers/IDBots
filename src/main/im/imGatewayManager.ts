@@ -699,11 +699,20 @@ export class IMGatewayManager extends EventEmitter {
         this.emit('statusChange', this.getStatus());
         return;
       }
-      // The gateway persists credentials and (re)starts itself; only the
-      // non-secret appId is mirrored into the config table for the UI.
+      // The gateway persists credentials (0600) and (re)starts itself. Mirror
+      // BOTH public identifiers into the config table: the AppID for the UI and
+      // the scanned owner OpenID, because the trust gate reads its live config
+      // from this table. Writing only the AppID left a freshly scanned channel
+      // with `ownerUserOpenid: null`, so the owner's first DM was dropped as
+      // `stranger-dm / no-owner-binding`.
       const summary = this.qqGateway.credentialSummary();
       if (summary.appId) {
-        this.imStore.setQQConfig({ enabled: true, appId: summary.appId, appSecret: undefined });
+        this.imStore.setQQConfig({
+          enabled: true,
+          appId: summary.appId,
+          ownerUserOpenid: summary.ownerUserOpenid,
+          appSecret: undefined,
+        });
       }
       this.emit('statusChange', this.getStatus());
     };

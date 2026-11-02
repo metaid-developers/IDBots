@@ -425,17 +425,48 @@ export class QQGateway extends EventEmitter {
    * change mid-run), snapshot second (unit tests / start-only callers).
    * Fail-closed: a throwing provider returns null, which the gate treats as
    * "no allowlist, no owner" => every message is a silent drop.
+   *
+   * OWNER BINDING: the settings row is only a mirror. A QR scan writes the
+   * durable owner binding into `QQStore` (0600) and the config row may lag —
+   * or, on a fresh install, may never carry it at all. Judging with the mirror
+   * alone made the first DM after a successful scan arrive as
+   * `stranger-dm / no-owner-binding`. When the config says nothing about the
+   * owner, the credential store is consulted; an explicitly configured owner
+   * always wins.
    */
   private liveConfig(): Partial<QQConfig> | null {
+    let base: Partial<QQConfig> | null = this.config;
     if (this.configProvider) {
       try {
         const live = this.configProvider();
-        if (live && typeof live === 'object') return live;
+        if (live && typeof live === 'object') base = live;
       } catch {
         return null;
       }
     }
-    return this.config;
+    if (!base) return base;
+    const boundOwner = this.resolveOwnerBinding(base);
+    if (!boundOwner) return base;
+    return { ...base, ownerUserOpenid: boundOwner };
+  }
+
+  /**
+   * Owner OpenID this channel is bound to, from the SAME credential slot that
+   * supplies the AppSecret. Explicit config wins; the store is the fallback.
+   */
+  private resolveOwnerBinding(config: Partial<QQConfig> | null): string | null {
+    const explicit =
+      typeof config?.ownerUserOpenid === 'string' ? config.ownerUserOpenid.trim() : '';
+    if (explicit) return explicit;
+    // Mirror `resolveCredentials()` slot order so the owner binding can never
+    // come from a different account than the one the gateway runs as.
+    const appId = (config?.appId || '').trim();
+    const slots: Array<string | null> = appId ? [appId, normalizeQQAccountId(appId)] : [null];
+    for (const slot of slots) {
+      const owner = this.store.loadCredentials(slot)?.ownerUserOpenid?.trim();
+      if (owner) return owner;
+    }
+    return null;
   }
 
   getMediaRootDir(): string {
@@ -1514,14 +1545,26 @@ export class QQGateway extends EventEmitter {
     return { appId: stored.appId, botId: stored.botId, source: 'manual' };
   }
 
-  /** Credential-free status for the settings page. */
-  credentialSummary(): { hasCredentials: boolean; appId: string | null; source: QQCredentialSource | null } {
+  /**
+   * Credential-free status for the settings page.
+   *
+   * `ownerUserOpenid` is an identifier (never a secret) and is exposed ONLY so
+   * the manager can mirror the durable QR binding into the config table. The
+   * renderer-facing IPC handlers keep returning their own explicit field list.
+   */
+  credentialSummary(): {
+    hasCredentials: boolean;
+    appId: string | null;
+    ownerUserOpenid: string | null;
+    source: QQCredentialSource | null;
+  } {
     const appId = (this.config?.appId || this.credentials?.appId || '').trim();
     const stored = (appId ? this.store.loadCredentials(normalizeQQAccountId(appId)) : null)
       ?? this.store.loadCredentials();
     return {
       hasCredentials: Boolean(stored || this.credentials),
       appId: stored?.appId ?? this.credentials?.appId ?? null,
+      ownerUserOpenid: stored?.ownerUserOpenid ?? this.credentials?.userOpenid ?? null,
       source: stored?.source ?? this.credentialSource,
     };
   }
