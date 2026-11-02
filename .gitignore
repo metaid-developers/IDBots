@@ -77,6 +77,8 @@ tests/*
 !tests/friendInviteOverlayChain.test.mjs
 !tests/friendGuidanceIntent.test.ts
 !tests/qqGateway.test.ts
+!tests/tradeBadge.test.mjs
+!tests/tradeActivityUi.test.tsx
 !tests/qqSecurity.test.ts
 !tests/qqSessionClassification.test.ts
 !tests/qqGroupCandidates.test.ts
