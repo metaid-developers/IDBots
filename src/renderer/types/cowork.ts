@@ -937,6 +937,14 @@ export interface CoworkSessionSummary {
   followUpSource?: CoworkSessionFollowUpSource | null;
   /** ISO timestamp of the last follow-up transition; null = never transitioned. */
   followUpAt?: string | null;
+  /**
+   * S4 chat trade marker: the NFT trade kind this session's conversation
+   * carries — 'p2p' = contract sale/listing or direct transfer (sell/buy/
+   * cancel/transfer tool announcements), 'escrow' = three-party escrow
+   * activity; null/undefined = no trade activity. Write-path maintained by
+   * the main store (upgrade-only), surfaced for the sidebar's trade icon.
+   */
+  tradeBadge?: 'p2p' | 'escrow' | null;
 }
 
 // The New Task composer's working-directory choice. `project` and `folder` both

@@ -16,6 +16,8 @@ import {
   messengerRowClassName,
   messengerTxidRowClassName,
 } from '../chat/messengerBubble';
+import { detectTradeActivity } from '../chat/tradeActivity';
+import TradeActivityBadge from '../chat/TradeActivityBadge';
 import {
   formatA2ATxidPreview,
   normalizeTxidCandidate,
@@ -787,6 +789,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   const contentToRender = shouldRenderDeliveryResult
     ? deliveryResult
     : stripOrderProtocolTag(message.content);
+  // S4 chat trade marker: the message announces an NFT trade (nft-card
+  // fence with a trade action) → a trade chip rides the meta row, same
+  // family as the session-list trade icon.
+  const tradeActivity = detectTradeActivity(contentToRender);
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = messengerMarkdownClassName(displayRight);
   const txidPreview = formatA2ATxidPreview(txid);
@@ -827,6 +833,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           // Meta row: time and txid share one line (two-space gap via gap-1 +
           // ml-1); formats unchanged, copy button stays beside the txid.
           <div className={messengerTxidRowClassName(displayRight)}>
+            {tradeActivity && <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />}
             <span>{formatTime(message.timestamp)}</span>
             <span className="ml-1 font-mono">txid: {txidPreview}</span>
             <button
@@ -841,6 +848,10 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
           </div>
         ) : (
           <span className={messengerMetaClassName}>
+            {tradeActivity && (
+              // Trade chip on the bare-time meta row (same slot, no txid).
+              <TradeActivityBadge kind={tradeActivity.kind} variant="chip" className="mr-1" />
+            )}
             {formatTime(message.timestamp)}
           </span>
         )}

@@ -16,6 +16,7 @@ import {
   type TurnMemoryExtractionChange,
 } from './libs/coworkMemoryJudge';
 import { evaluateConversationMemoryQuality } from './libs/coworkMemoryQuality';
+import { mergeTradeBadge, scanMessageTradeBadge } from './libs/tradeBadge';
 import { stripLoneSurrogates, truncateUtf16Units } from './libs/llmSafeText';
 import type { RecentSessionPulseEntry } from './libs/recentSessionsPrompt';
 import { recordChainBackupTombstones } from './libs/chainBackupTombstones';
@@ -4329,6 +4330,7 @@ export class CoworkStore implements MemoryBackend {
       im_conversation_id?: string | null;
       auto_origin?: string | null;
       fold_override?: string | null;
+      trade_badge?: string | null;
       follow_up_state?: string | null;
       follow_up_source?: string | null;
       follow_up_at?: string | null;
@@ -4378,6 +4380,9 @@ export class CoworkStore implements MemoryBackend {
         ) AS im_conversation_id,
         s.auto_origin,
         s.fold_override,
+        -- S4 chat trade markers: 'p2p' | 'escrow' | NULL (write-path
+        -- maintained, migration backfilled once; see tradeBadge.ts).
+        s.trade_badge,
         s.follow_up_state,
         s.follow_up_source,
         s.follow_up_at,
@@ -4436,6 +4441,7 @@ export class CoworkStore implements MemoryBackend {
       imConversationId: row.im_conversation_id ?? null,
       autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
       foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
+      tradeBadge: (row.trade_badge === 'p2p' || row.trade_badge === 'escrow' ? row.trade_badge : null),
       followUpState: (row.follow_up_state as 'pending' | null) ?? null,
       followUpSource: (row.follow_up_source as CoworkSessionFollowUpSource | null) ?? null,
       followUpAt: row.follow_up_at ?? null,
@@ -5615,6 +5621,7 @@ export class CoworkStore implements MemoryBackend {
       createdAt,
       sequence,
     ]);
+    this.bumpSessionTradeBadge(sessionId, message.content);
 
     return {
       id,
@@ -5624,6 +5631,25 @@ export class CoworkStore implements MemoryBackend {
       sequence,
       metadata: message.metadata,
     };
+  }
+
+  /**
+   * S4 chat trade markers: upgrade the session's trade_badge from one
+   * message's text. Upgrade-only by design — a session that carried a trade
+   * keeps its marker even after later plain messages (trade history is a
+   * fact); escrow outranks p2p (mergeTradeBadge). The scan short-circuits on
+   * fence-less text, so plain messages pay one substring probe.
+   */
+  private bumpSessionTradeBadge(sessionId: string, content: string): void {
+    const kind = scanMessageTradeBadge(content);
+    if (!kind) return;
+    const current = this.getOne<{ trade_badge: string | null }>(
+      'SELECT trade_badge FROM cowork_sessions WHERE id = ?',
+      [sessionId],
+    )?.trade_badge ?? null;
+    const merged = mergeTradeBadge(current as 'p2p' | 'escrow' | null, kind);
+    if (merged === current) return;
+    this.db.run('UPDATE cowork_sessions SET trade_badge = ? WHERE id = ?', [merged, sessionId]);
   }
 
   /**
@@ -5709,6 +5735,7 @@ export class CoworkStore implements MemoryBackend {
 
     this.db.run('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?', [now, sessionId]);
     this.touchSessionActivityAt(sessionId, now, message.type, metadataJson);
+    this.bumpSessionTradeBadge(sessionId, message.content);
     this.db.run(`
       UPDATE a2a_conversation_threads
       SET updated_at = ?
