@@ -392,6 +392,13 @@ export class OrchestrationStore {
     return rows.map(taskFromRow);
   }
 
+  listTasksForLongTermSubtask(taskId: string, subtaskId: string): OrchestrationTask[] {
+    return this.getAll<Row>(
+      `SELECT * FROM orchestration_tasks WHERE longterm_task_id = ? AND longterm_subtask_id = ? ORDER BY created_at ASC, id ASC`,
+      [taskId, subtaskId],
+    ).map(taskFromRow);
+  }
+
   getTaskBySourceSessionId(sourceSessionId: string): OrchestrationTask | null {
     const row = this.getOne<Row>(
       'SELECT * FROM orchestration_tasks WHERE source_session_id = ? ORDER BY created_at ASC LIMIT 1',

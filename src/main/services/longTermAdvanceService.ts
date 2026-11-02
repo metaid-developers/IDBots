@@ -1,6 +1,12 @@
 import type { CoworkExecutionMode, CoworkSessionAutoOrigin } from '../coworkStore';
 import type { LongTermTaskStore } from '../longTermTaskStore';
 import type { LongTermSubtask, LongTermTaskDetail } from '../../renderer/types/longTermTask';
+import {
+  buildLongTermAttentionBlock,
+  longTermAttentionKey,
+  selectLongTermAttention,
+  type LongTermAttentionSelection,
+} from './longTermAttentionAction';
 
 /**
  * Long-term task advancement — the `longterm.advance` heartbeat handler
@@ -139,6 +145,7 @@ const CONVERGENCE_REASON_PREFIXES = ['stale owner wait', 'convergence churn'];
  * one — the churn breaker's whole point is bringing the loop to the owner.)
  */
 const OWNER_FACING_REASON_PREFIXES = [
+  'attention: owner',
   'acceptance proposal awaiting',
   'owner decision still pending',
   'owner quiet window ended',
@@ -239,6 +246,7 @@ export interface LongTermAdvanceDeps {
   externalReminderMs?: number;
   /** P1 supervision: worker dispatch attempts tied to the task (via its bound sessions). */
   listWorkerAttempts?: (taskId: string, subtaskId: string) => LongTermWorkerAttemptSummary[];
+  listOrchestrationAttention?: (taskId: string, subtaskId: string) => LongTermAttentionSelection[];
   /** P1 supervision: leading failed/timed-out dispatch count that trips a supervise turn. */
   failureStreakThreshold?: number;
   /** P1 supervision: default expected duration (minutes) when the sub-project sets none. */
@@ -401,6 +409,7 @@ function buildNudgePrompt(
   rotation: { messages: number } | null = null,
   delivery: 'cold' | 'hot' = 'cold',
   ownerConversationSeat = true,
+  attention: LongTermAttentionSelection | null = null,
 ): string {
   const criteria = current.acceptanceCriteria.length > 0
     ? current.acceptanceCriteria.map((criterion, index) => `   ${index + 1}. ${criterion}`).join('\n')
@@ -498,6 +507,8 @@ function buildNudgePrompt(
   if (ownerWaitBlock) lines.push(ownerWaitBlock);
   const supervisionBlock = buildSupervisionBlock(supervisionAttempts, language);
   if (supervisionBlock) lines.push(supervisionBlock);
+  const attentionBlock = buildLongTermAttentionBlock(attention, language);
+  if (attentionBlock) lines.push(attentionBlock);
   return lines.join('\n');
 }
 
@@ -625,7 +636,46 @@ export class LongTermAdvanceService {
           );
         }
       }
+      const attention = selectLongTermAttention(this.deps.listOrchestrationAttention?.(card.id, current.id) ?? []);
+      const attentionKey = attention ? longTermAttentionKey(attention) : null;
+      const attentionIsFresh = attention !== null && (store.getSuperviseState(card.id)?.lastAttentionKey ?? '') !== attentionKey;
+      if (attention?.attention.waitingOn === 'worker') {
+        report.skipped.push({ taskId: card.id, reason: `orchestration attention is waiting for the Worker (${attention.attention.reason})` });
+        continue;
+      }
+      if (attention?.attention.waitingOn === 'external' && attentionIsFresh) {
+        const parked = store.waitSubtask(current.id, {
+          kind: 'external',
+          note: attention.attention.reason,
+        }, 'system');
+        if (!parked.ok) {
+          report.skipped.push({ taskId: card.id, reason: `external attention could not be recorded: ${parked.error}` });
+          continue;
+        }
+        store.setSuperviseState(card.id, {
+          lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
+          lastAttentionKey: attentionKey!,
+        });
+        report.skipped.push({ taskId: card.id, reason: `external attention recorded without a model turn (${attention.attention.reason})` });
+        continue;
+      }
+
       const reasons = this.collectReasons(detail, current, nowMs, nudgeState?.lastEventId ?? 0, supervision, engagement.lastOwnerAtMs);
+      if (attention && attentionIsFresh && (attention.attention.waitingOn === 'owner' || attention.attention.waitingOn === 'twin')) {
+        if (attention.attention.waitingOn === 'owner' && current.status !== 'waiting_owner') {
+          const parked = store.waitSubtask(current.id, {
+            kind: 'owner',
+            note: attention.attention.humanAction || attention.attention.reason,
+          }, 'system');
+          if (!parked.ok) {
+            report.skipped.push({ taskId: card.id, reason: `owner attention could not be recorded: ${parked.error}` });
+            continue;
+          }
+          current = parked.value;
+        }
+        reasons.unshift(`attention: ${attention.attention.waitingOn} — ${attention.attention.humanAction || attention.attention.reason}`);
+      }
+      const attentionForTurn = attentionIsFresh ? attention : null;
       if (reasons.length === 0) {
         report.skipped.push({ taskId: card.id, reason: `current sub-project is ${current.status}, nothing due` });
         continue;
@@ -643,7 +693,7 @@ export class LongTermAdvanceService {
         nudgeState !== null &&
         nowMs - nudgeState.lastNudgeAtMs < this.nudgeThrottleMs &&
         latestEventId <= nudgeState.lastEventId;
-      if (throttled && !waitDue && supervision === null) {
+      if (throttled && !waitDue && supervision === null && !attentionIsFresh) {
         report.skipped.push({ taskId: card.id, reason: 'nudge throttled (no new events since last escalation)' });
         continue;
       }
@@ -679,8 +729,13 @@ export class LongTermAdvanceService {
           detail,
           current,
           reasons,
-          supervision ? (this.deps.listWorkerAttempts?.(detail.id, current.id) ?? []) : null,
+          attentionForTurn?.attention.waitingOn === 'twin'
+            ? []
+            : attentionForTurn?.attention.waitingOn === 'owner'
+              ? null
+              : supervision ? (this.deps.listWorkerAttempts?.(detail.id, current.id) ?? []) : null,
           engagement,
+          attentionForTurn,
         );
         report.escalated.push({
           taskId: card.id,
@@ -714,6 +769,12 @@ export class LongTermAdvanceService {
           store.setSuperviseState(card.id, {
             lastSuperviseAtMs: prior?.lastSuperviseAtMs ?? 0,
             convergenceAtMs: trail,
+          });
+        }
+        if (attention && attentionIsFresh) {
+          store.setSuperviseState(card.id, {
+            lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
+            lastAttentionKey: attentionKey!,
           });
         }
         this.emitLog(
@@ -1008,6 +1069,7 @@ export class LongTermAdvanceService {
       lastTwinActivityAtMs: null,
       twinSessionActive: false,
     },
+    attention: LongTermAttentionSelection | null = null,
   ): Promise<{ sessionId: string; reusedSession: boolean; journalAnchorEventId: number }> {
     const coworkStore = this.deps.coworkStore();
     const runner = this.deps.coworkRunner();
@@ -1162,6 +1224,7 @@ export class LongTermAdvanceService {
       rotation,
       delivery,
       ownerConversationSeat,
+      attention,
     );
 
     coworkStore.updateSession(sessionId, { status: 'running' });

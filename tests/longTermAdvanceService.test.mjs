@@ -593,6 +593,100 @@ test('routine (non-supervision) turns carry no supervision block', async () => {
   assert.doesNotMatch(runner.starts[0].prompt, /SUPERVISION check on delegated work/i);
 });
 
+test('attention: Twin recovery escalates once per attempt and re-arms only for a new attempt', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  let attemptId = 'restart-a1';
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-restart',
+    attention: { waitingOn: 'twin', reason: 'RECOVERED_AFTER_RESTART', stepId: 'step-1', attemptId },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  const first = await supervisor.run(now);
+  assert.equal(first.escalated.length, 1, JSON.stringify(first));
+  assert.match(first.escalated[0].reasons[0], /attention: twin/);
+  assert.match(runner.starts[0].prompt, /RECOVERED_AFTER_RESTART/);
+  assert.match(runner.starts[0].prompt, /SUPERVISION check on delegated work/i);
+
+  const second = await supervisor.run(now + 5 * 60_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 1, 'the same attention cannot create a duplicate turn');
+
+  attemptId = 'restart-a2';
+  const third = await supervisor.run(now + 10 * 60_000);
+  assert.equal(third.escalated.length, 1, JSON.stringify(third));
+  assert.equal(runner.starts.length, 2, 'a new attempt bypasses the ordinary nudge throttle exactly once');
+});
+
+test('attention: Owner question is journaled once and delivered with the concrete human action', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-owner',
+    attention: { waitingOn: 'owner', reason: 'Worker requested a human decision', humanAction: 'Approve production deploy?', attemptId: 'owner-a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  const first = await supervisor.run(now);
+  assert.equal(first.escalated.length, 1, JSON.stringify(first));
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+  assert.match(runner.starts[0].prompt, /Approve production deploy\?/);
+  assert.match(store.getTask(taskId).subtasks[0].waitNote, /Approve production deploy\?/);
+
+  const second = await supervisor.run(now + 5 * 60_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 1, 'the same owner question is not re-asked');
+});
+
+test('attention: External wait is recorded without an LLM turn and without duplicate journal entries', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-external',
+    attention: { waitingOn: 'external', reason: 'CI still running', attemptId: 'external-a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  const first = await supervisor.run(now);
+  assert.equal(first.escalated.length, 0, JSON.stringify(first));
+  assert.equal(runner.starts.length, 0);
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_external');
+  assert.match(store.getTask(taskId).subtasks[0].waitNote, /CI still running/);
+  const waitingEvents = store.getTask(taskId).events.filter((event) => event.kind === 'waiting' && event.detail.includes('CI still running'));
+  assert.equal(waitingEvents.length, 1);
+
+  const second = await supervisor.run(now + 5 * 60_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 0);
+  assert.equal(store.getTask(taskId).events.filter((event) => event.kind === 'waiting' && event.detail.includes('CI still running')).length, 1);
+});
+
+test('attention: Worker execution suppresses a duplicate quiet push', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-worker',
+    attention: { waitingOn: 'worker', reason: 'Worker attempt is running', attemptId: 'worker-a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const report = await supervisor.run(Date.now());
+  assert.equal(report.escalated.length, 0, JSON.stringify(report));
+  assert.equal(runner.starts.length, 0);
+  assert.match(report.skipped[0].reason, /waiting for the Worker/);
+});
+
 test('telemetry wiring: real OrchestrationStore attempts sourced from the bound session drive the failure streak', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-lt-telemetry-'));
   const sqliteStore = await SqliteStore.create(dir);

@@ -88,6 +88,8 @@ export interface LongTermSuperviseState {
    * supervision turns per budget window (review P1-A).
    */
   lastFailureSignal?: string;
+  /** Last orchestration attention that completed an advancing action. */
+  lastAttentionKey?: string;
   /** Timestamps of recent stale-wait convergence escalations (churn breaker). */
   convergenceAtMs?: number[];
 }
@@ -1328,6 +1330,7 @@ export class LongTermTaskStore {
     return {
       lastSuperviseAtMs,
       lastFailureSignal: String((entry as LongTermSuperviseState).lastFailureSignal ?? ''),
+      lastAttentionKey: String((entry as LongTermSuperviseState).lastAttentionKey ?? ''),
       convergenceAtMs,
     };
   }
@@ -1338,10 +1341,12 @@ export class LongTermTaskStore {
     // write must not wipe the failure dedup, and a supervision-turn write
     // must not wipe the churn-breaker trail.
     const lastFailureSignal = state.lastFailureSignal ?? map[taskId]?.lastFailureSignal ?? '';
+    const lastAttentionKey = state.lastAttentionKey ?? map[taskId]?.lastAttentionKey ?? '';
     const convergenceAtMs = state.convergenceAtMs ?? map[taskId]?.convergenceAtMs ?? [];
     map[taskId] = {
       lastSuperviseAtMs: Math.trunc(state.lastSuperviseAtMs),
       lastFailureSignal,
+      lastAttentionKey,
       convergenceAtMs: convergenceAtMs.map(Number).filter((value) => Number.isFinite(value)),
     };
     this.db.run(
