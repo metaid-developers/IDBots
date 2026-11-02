@@ -131,16 +131,16 @@ export function TrafficPage(props: {
       {/* Pending order strip (rechargeRecovery, §4.4) — resume goes to the
           existing cashier overlay; order cancel lives in the overlay too. */}
       {pendingOrder ? (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10" data-testid="traffic-pending-order">
-          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">{t('mobile.recharge.pendingTitle')}</p>
-          <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+        <div className="twin-notice twin-notice-warning" data-testid="traffic-pending-order">
+          <p className="text-sm font-medium">{t('mobile.recharge.pendingTitle')}</p>
+          <p className="mt-1 text-xs">
             {t('mobile.recharge.expiresAt', { time: formatDateTime(pendingOrder.expiresAt * 1000) })}
           </p>
           {props.rechargeAllowed !== false ? (
             <button
               type="button"
               onClick={props.onOpenRecharge}
-              className="mt-3 min-h-[44px] w-full rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+              className="twin-button twin-button-primary twin-button-full mt-3"
             >
               {t('mobile.recharge.resumeOrder')}
             </button>
@@ -149,17 +149,17 @@ export function TrafficPage(props: {
       ) : null}
 
       {/* Balance headline + the SAME two buttons as the primary card. */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <div className="mb-3 flex gap-3">
-          <div className="flex-1 rounded-xl bg-[var(--bg-main)] p-3">
+          <div className="twin-panel-flat flex-1 rounded-xl bg-[var(--bg-main)] p-3">
             <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.trafficLabel')}</p>
-            <p className="text-2xl font-semibold text-[var(--text-primary)]" data-testid="traffic-balance-traffic">
+            <p className="twin-card-value" data-testid="traffic-balance-traffic">
               {meters?.traffic ? formatBytes(meters.traffic.balanceBytes) : '—'}
             </p>
           </div>
-          <div className="flex-1 rounded-xl bg-[var(--bg-main)] p-3">
+          <div className="twin-panel-flat flex-1 rounded-xl bg-[var(--bg-main)] p-3">
             <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.llmLabel')}</p>
-            <p className="text-2xl font-semibold text-[var(--text-primary)]">
+            <p className="twin-card-value">
               {meters ? `${formatCount(meters.llm.quotaRemaining)} ${meters.llm.unit}` : '—'}
             </p>
           </div>
@@ -183,7 +183,7 @@ export function TrafficPage(props: {
             <button
               type="button"
               onClick={props.onOpenRecharge}
-              className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+              className="twin-button twin-button-primary flex-1"
             >
               {t('mobile.me.rechargeEntry')}
             </button>
@@ -194,7 +194,7 @@ export function TrafficPage(props: {
 
       {/* Free grant (§3.5): desktop-parity claim flow; the confirmed amount
           comes from the claim result, never an invented pre-claim number. */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4" data-testid="traffic-free-grant">
+      <div className="twin-panel twin-panel-padded" data-testid="traffic-free-grant">
         <p className="mb-2 text-xs font-medium text-[var(--text-secondary)]">{t('mobile.me.traffic.freeGrantTitle')}</p>
         {claimState === 'done' && claimBytes !== null ? (
           <p aria-live="polite" className="text-sm text-emerald-600">
@@ -206,7 +206,7 @@ export function TrafficPage(props: {
               type="button"
               onClick={() => void claimFreeGrant()}
               disabled={claimState === 'busy'}
-              className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] py-2 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)] disabled:opacity-40"
+              className="twin-button twin-button-secondary twin-button-full disabled:opacity-40"
             >
               {claimState === 'busy' ? t('mobile.me.traffic.freeGrantClaiming') : t('mobile.me.traffic.freeGrantClaim')}
             </button>
@@ -218,7 +218,7 @@ export function TrafficPage(props: {
       </div>
 
       {/* Usage summary (today / week / month) + collapsible daily table. */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <p className="mb-2 text-xs font-medium text-[var(--text-secondary)]">{t('mobile.me.traffic.usageTitle')}</p>
         <div className="flex gap-3">
           {([
@@ -274,7 +274,7 @@ export function TrafficPage(props: {
       </div>
 
       {/* Static tariff explainer, desktop copy ported (§3.5 trafficTariff*). */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <button
           type="button"
           aria-expanded={tariffOpen}
@@ -310,7 +310,7 @@ export function TrafficPage(props: {
       </div>
 
       {/* Ledger: newest first, paged (§4.4). */}
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         <p className="mb-2 text-xs font-medium text-[var(--text-secondary)]">{t('mobile.me.traffic.ledgerTitle')}</p>
         {ledger.length === 0 && !ledgerLoading && !ledgerError ? (
           <p className="py-3 text-center text-sm text-[var(--text-secondary)]" data-testid="traffic-ledger-empty">
@@ -320,7 +320,7 @@ export function TrafficPage(props: {
         {ledger.map((entry) => (
           <div
             key={`${entry.id}-${entry.timestamp}`}
-            className="flex min-h-[44px] items-center justify-between gap-3 border-b border-[var(--border-color)] py-2 last:border-b-0"
+            className="twin-list-row"
           >
             <div className="min-w-0">
               <p className="truncate text-sm text-[var(--text-primary)]">{entry.remark || entry.sourceType}</p>
@@ -335,7 +335,7 @@ export function TrafficPage(props: {
             type="button"
             data-testid="traffic-ledger-more"
             onClick={() => void loadLedger(ledgerCursor)}
-            className="mt-2 min-h-[44px] w-full rounded-xl border border-[var(--border-color)] py-2 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            className="mt-2 twin-button twin-button-secondary twin-button-full"
           >
             {t('mobile.me.traffic.ledgerLoadMore')}
           </button>

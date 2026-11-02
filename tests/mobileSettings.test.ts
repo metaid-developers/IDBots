@@ -263,14 +263,14 @@ test('login palette matches the app theme tokens in both schemes', () => {
   const light = buildStyles(false);
   assert.equal(dark.page.backgroundColor, LOGIN_PAGE_BG.dark);
   assert.equal(light.page.backgroundColor, LOGIN_PAGE_BG.light);
-  assert.equal(dark.page.color, '#fff');
-  assert.equal(light.page.color, '#303133');
+  assert.equal(dark.page.color, '#F4F3EF');
+  assert.equal(light.page.color, '#242425');
   assert.notEqual(dark.input.backgroundColor, light.input.backgroundColor);
   assert.notEqual(dark.error.color, light.error.color);
   // Brand yellow (#ffdc51, --color-primary) is theme-invariant by design.
   assert.equal(dark.button.backgroundColor, '#ffdc51');
   assert.equal(light.button.backgroundColor, '#ffdc51');
-  assert.equal(dark.logo.color, '#111');
+  assert.equal(dark.logo.imageRendering, 'pixelated');
 });
 
 test('login main.tsx ships no hardcoded color literals (palette lives in loginStyles.ts)', () => {

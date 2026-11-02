@@ -19,13 +19,13 @@ export function MemoryPage(props: { onBack: () => void }): JSX.Element {
   return (
     <SecondaryPageShell title={t('mobile.me.entry.memory')} onBack={props.onBack} testId="me-page-memory">
       <p className="px-1 text-xs leading-5 text-[var(--text-secondary)]">{t('mobile.me.memoryIntro')}</p>
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         {memory.loading ? <p className="py-2 text-sm text-[var(--text-secondary)]">{t('mobile.common.loading')}</p> : null}
         {MEMORY_ROWS.map((row) => (
           <div
             key={row.field}
             data-testid={`memory-row-${row.field}`}
-            className="flex min-h-[44px] items-center justify-between gap-3 border-b border-[var(--border-color)] py-2 last:border-b-0"
+            className="twin-list-row"
           >
             <span className="text-sm text-[var(--text-primary)]">{t(row.labelKey)}</span>
             <Switch

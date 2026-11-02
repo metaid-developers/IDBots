@@ -52,12 +52,12 @@ function UserCard(props: {
       type="button"
       data-testid="user-card"
       onClick={props.onOpen}
-      className="flex min-h-[64px] w-full items-center gap-3 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4 text-left shadow-sm active:bg-[var(--bg-hover)]"
+      className="twin-panel twin-panel-padded flex min-h-[64px] w-full items-center gap-3 text-left"
     >
       <BotAvatar name={identity?.name} avatar={identity?.avatar} size={48} testId="user-card-avatar" />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-semibold text-[var(--text-primary)]">{identity?.name ?? ''}</p>
-        {shortId ? <p className="truncate text-xs text-[var(--text-secondary)]">{shortId}</p> : null}
+        <p className="twin-list-title truncate">{identity?.name ?? ''}</p>
+        {shortId ? <p className="twin-list-subtitle truncate">{shortId}</p> : null}
       </div>
       {identity && !syncOk ? (
         <span className="flex shrink-0 items-center gap-1 text-xs text-red-600" data-testid="user-card-sync-badge" data-state="error">
@@ -101,21 +101,21 @@ function BalanceCard(props: {
         className="mb-3 cursor-pointer rounded-xl"
       >
         <div className="flex gap-3">
-          <div className="flex-1 rounded-xl bg-[var(--bg-main)] p-3">
+          <div className="twin-panel-flat flex-1 rounded-xl bg-[var(--bg-main)] p-3">
             <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.trafficLabel')}</p>
-            <p className="text-lg font-semibold text-[var(--text-primary)]">
+            <p className="twin-card-value">
               {meters?.traffic ? formatBytes(meters.traffic.balanceBytes) : '—'}
             </p>
           </div>
-          <div className="flex-1 rounded-xl bg-[var(--bg-main)] p-3">
+          <div className="twin-panel-flat flex-1 rounded-xl bg-[var(--bg-main)] p-3">
             <p className="text-xs text-[var(--text-secondary)]">{t('mobile.me.llmLabel')}</p>
-            <p className="text-lg font-semibold text-[var(--text-primary)]">
+            <p className="twin-card-value">
               {meters ? `${formatCount(meters.llm.quotaRemaining)} ${meters.llm.unit}` : '—'}
             </p>
           </div>
         </div>
         {lowBalance ? (
-          <p className="mt-2 text-xs text-amber-600" data-testid="balance-low-warning">
+          <p className="twin-help text-[var(--twin-warning)]" data-testid="balance-low-warning">
             {t('mobile.me.traffic.lowBalance')}
           </p>
         ) : null}
@@ -124,7 +124,7 @@ function BalanceCard(props: {
       {error ? (
         <div className="mb-2 flex items-center justify-between gap-2" data-testid="balance-load-error">
           <p className="text-xs text-red-600">{t('mobile.me.balanceLoadFailed')}</p>
-          <button type="button" onClick={() => void reload()} className="min-h-[44px] px-2 text-xs text-[var(--text-primary)]">
+          <button type="button" onClick={() => void reload()} className="twin-button twin-button-ghost twin-button-small">
             {t('mobile.common.retry')}
           </button>
         </div>
@@ -137,7 +137,7 @@ function BalanceCard(props: {
               event.stopPropagation();
               props.onOpenRecharge();
             }}
-            className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 text-sm font-medium text-black active:opacity-80"
+            className="twin-button twin-button-primary flex-1"
           >
             {t('mobile.me.rechargeEntry')}
           </button>
@@ -321,11 +321,14 @@ export default function MeScreen(props: {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-[var(--border-color)] bg-[var(--bg-panel)] px-4 py-3">
-        <h1 className="text-base font-semibold text-[var(--text-primary)]">{t('mobile.me.title')}</h1>
+    <div className="twin-page">
+      <div className="twin-topbar twin-topbar-simple">
+        <div>
+          <h1 className="twin-title">{t('mobile.me.title')}</h1>
+          <p className="twin-subtitle">{t('mobile.me.subtitle')}</p>
+        </div>
       </div>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" data-testid="me-primary-page">
+      <div className="twin-scroll space-y-3 p-3" data-testid="me-primary-page">
         <UserCard identity={identity.identity} onOpen={() => pushRoute('profile')} />
         <BalanceCard
           resyncCounter={props.resyncCounter}
@@ -334,38 +337,34 @@ export default function MeScreen(props: {
           rechargeAllowed={props.rechargeAllowed}
         />
         {ME_ENTRY_GROUPS.map((group) => (
-          <div
-            key={group.group}
-            className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-4 py-1 shadow-sm"
-            data-testid={`me-group-${group.group}`}
-          >
-            {group.titleKey ? (
-              <p className="pt-3 text-xs font-medium uppercase text-[var(--text-secondary)]">{t(group.titleKey)}</p>
-            ) : null}
-            {meEntriesForGroup(group.group).map((entry) => {
-              const Icon = entry.icon;
-              const summary = entry.summary ? entry.summary(summaryInput) : null;
-              return (
-                <button
-                  key={entry.id}
-                  type="button"
-                  data-testid={entry.testId}
-                  onClick={() => pushRoute(entry.id)}
-                  className={`flex min-h-[52px] w-full items-center gap-3 border-b border-[var(--border-color)] py-2 text-left last:border-b-0 ${
-                    entry.danger ? 'text-red-600' : 'text-[var(--text-primary)]'
-                  }`}
-                >
-                  <Icon className="h-5 w-5 shrink-0 text-[var(--text-secondary)]" aria-hidden />
-                  <span className="flex-1 truncate text-[15px]">{t(entry.titleKey)}</span>
-                  {summary ? (
-                    <span className="shrink-0 text-[13px] text-[var(--text-secondary)]" data-testid={`${entry.testId}-summary`}>
-                      {summary}
+          <div key={group.group}>
+            {group.titleKey ? <p className="twin-section-label">{t(group.titleKey)}</p> : null}
+            <div className="twin-list" data-testid={`me-group-${group.group}`}>
+              {meEntriesForGroup(group.group).map((entry) => {
+                const Icon = entry.icon;
+                const summary = entry.summary ? entry.summary(summaryInput) : null;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    data-testid={entry.testId}
+                    onClick={() => pushRoute(entry.id)}
+                    className={`twin-list-row ${entry.danger ? 'text-red-600' : ''}`}
+                  >
+                    <span className="twin-list-leading"><Icon className="h-5 w-5" aria-hidden /></span>
+                    <span className="twin-list-copy">
+                      <span className="twin-list-title">{t(entry.titleKey)}</span>
                     </span>
-                  ) : null}
-                  <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" aria-hidden />
-                </button>
-              );
-            })}
+                    {summary ? (
+                      <span className="twin-list-value" data-testid={`${entry.testId}-summary`}>
+                        {summary}
+                      </span>
+                    ) : null}
+                    <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" aria-hidden />
+                  </button>
+                );
+              })}
+            </div>
           </div>
         ))}
       </div>
@@ -381,7 +380,7 @@ function DiscardConfirmSheet(props: { onCancel: () => void; onDiscard: () => voi
         <button
           type="button"
           onClick={props.onCancel}
-          className="min-h-[44px] flex-1 rounded-xl bg-[var(--color-primary)] py-2 font-medium text-black active:opacity-80"
+          className="twin-button twin-button-primary flex-1"
         >
           {t('mobile.me.discardCancel')}
         </button>
@@ -389,7 +388,7 @@ function DiscardConfirmSheet(props: { onCancel: () => void; onDiscard: () => voi
           type="button"
           data-testid="discard-confirm"
           onClick={props.onDiscard}
-          className="min-h-[44px] flex-1 rounded-xl border border-[var(--border-color)] py-2 text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+          className="twin-button twin-button-secondary flex-1 active:bg-[var(--bg-hover)]"
         >
           {t('mobile.me.discardConfirm')}
         </button>

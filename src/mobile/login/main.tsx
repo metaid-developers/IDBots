@@ -144,7 +144,7 @@ function PreparingScreen(props: { onSignOut: () => void }): JSX.Element {
 
   return (
     <div style={styles.page}>
-      <div style={styles.logo}>ID</div>
+      <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
       <h1 style={styles.title}>{t('mobile.login.preparingTitle')}</h1>
       <p style={styles.statusWord}>
         {t(`mobile.login.preparingStatus.${tenant?.status ?? 'provisioning'}`)}
@@ -173,7 +173,7 @@ function SessionRecoveryScreen(props: { failed: boolean; onRetry: () => void }):
   const styles = useLoginStyles();
   return (
     <div style={styles.page}>
-      <div style={styles.logo}>ID</div>
+      <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
       <h1 style={styles.title}>{t(props.failed ? 'mobile.login.restoreFailed' : 'mobile.login.restoreTitle')}</h1>
       {props.failed ? (
         <button type="button" style={styles.button} onClick={props.onRetry}>
@@ -309,7 +309,7 @@ function LoginPage(): JSX.Element {
 
   return (
     <div style={styles.page}>
-      <div style={styles.logo}>ID</div>
+      <img src="/icon-192.png" alt="IDBots" style={styles.logo} />
       <h1 style={styles.title}>{t('mobile.login.title')}</h1>
       <p style={styles.subtitle}>{t('mobile.login.subtitle')}</p>
       <input

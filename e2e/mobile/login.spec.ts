@@ -34,14 +34,14 @@ test.describe('login sign-up flow', () => {
     await expect(page.getByText('Preparing your Bot')).toBeVisible();
     await attachScreen(testInfo, page, 'login-preparing');
     await page.waitForURL(/\/app\/?$/, { timeout: 60_000 });
-    await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
     await attachScreen(testInfo, page, 'login-landed-in-app');
 
     // A later cold entry with the session cookie must use getMe and return to
     // the app instead of presenting a fresh login form again.
     await page.goto('/login');
     await page.waitForURL(/\/app\/?$/);
-    await expect(page.getByRole('button', { name: 'Chat' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Chat', exact: true })).toBeVisible();
     await attachScreen(testInfo, page, 'login-returning-session-restored');
   });
 });

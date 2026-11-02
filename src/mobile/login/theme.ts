@@ -18,9 +18,8 @@
 
 import { normalizeThemeMode, resolveIsDark, THEME_MIRROR_STORAGE_KEY, type ThemeMode } from '../themeMirror';
 
-/** Page background hex values, kept identical to the app CSS variables
- *  (--bg-main: #F5F7F9 light / #142030 dark, src/renderer/index.css). */
-export const LOGIN_PAGE_BG = { light: '#F5F7F9', dark: '#142030' } as const;
+/** Page backgrounds match the Twin UI Daylight and Nocturne canvas tokens. */
+export const LOGIN_PAGE_BG = { light: '#F2F3F5', dark: '#111112' } as const;
 
 /** Storage abstraction so resolution is testable without a real window. */
 type ThemeStorage = Pick<Storage, 'getItem'>;
@@ -60,7 +59,7 @@ export interface LoginThemeHandle {
  * stays importable under node-based tests.
  */
 export function initLoginTheme(options?: { storage?: ThemeStorage | null }): LoginThemeHandle {
-  let mode = readStoredThemeMode(options?.storage);
+  const mode = readStoredThemeMode(options?.storage);
   let dark = resolveIsDark(mode, systemPrefersDark());
   const listeners = new Set<() => void>();
 

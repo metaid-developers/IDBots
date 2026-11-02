@@ -49,9 +49,8 @@ const EFFORT_LEVELS: ReadonlyArray<string> = ['', 'off', 'low', 'high', 'max'];
 
 const TAB_PANEL_CLASS = 'mt-3 flex flex-col gap-3';
 
-const inputClass =
-  'min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none';
-const labelClass = 'text-xs font-medium text-[var(--text-secondary)]';
+const inputClass = 'twin-input';
+const labelClass = 'twin-label';
 
 function brainValue(option: EditorBrainOption): string {
   return `${option.providerKey}\n${option.modelId}`;
@@ -85,7 +84,7 @@ function TabStrip(props: {
   onChange: (key: EditorTabKey) => void;
 }): JSX.Element {
   return (
-    <div className="flex gap-2 overflow-x-auto" role="tablist">
+    <div className="twin-chip-row" role="tablist">
       {props.tabs.map((entry) => (
         <button
           key={entry}
@@ -95,11 +94,7 @@ function TabStrip(props: {
           disabled={props.disabled}
           data-testid={`bot-tab-${entry}`}
           onClick={() => props.onChange(entry)}
-          className={`min-h-[40px] shrink-0 rounded-xl border px-3 text-sm disabled:opacity-40 ${
-            props.value === entry
-              ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-black'
-              : 'border-[var(--border-color)] text-[var(--text-secondary)]'
-          }`}
+          className="twin-chip"
         >
           {t(`mobile.me.botTab.${entry}`)}
         </button>
@@ -118,7 +113,7 @@ function SkillsBlock(props: {
   onSelect: (updater: (current: string[]) => string[]) => void;
 }): JSX.Element {
   return (
-    <div className="rounded-xl border border-[var(--border-color)] p-3" data-testid="bot-skills-block">
+    <div className="twin-panel twin-panel-flat p-3" data-testid="bot-skills-block">
       <button
         type="button"
         aria-expanded={props.expanded}
@@ -168,7 +163,7 @@ function BrainBlock(props: {
   onEffortChange: (value: string) => void;
 }): JSX.Element {
   return (
-    <div className="rounded-xl border border-[var(--border-color)] p-3">
+    <div className="twin-panel twin-panel-flat p-3">
       <p className={`mb-2 ${labelClass}`}>{t('mobile.me.botBrainSectionLabel')}</p>
       <Field htmlFor="bot-primary-model" label={t('mobile.me.botModelLabel')}>
         <select
@@ -223,7 +218,7 @@ function FallbackBrainBlock(props: {
   onEffortChange: (value: string) => void;
 }): JSX.Element {
   return (
-    <div className="rounded-xl border border-[var(--border-color)] p-3">
+    <div className="twin-panel twin-panel-flat p-3">
       <Field htmlFor="bot-fallback-model" label={t('mobile.me.botFallbackLabel')}>
         <select
           id="bot-fallback-model"
@@ -282,7 +277,7 @@ function AvatarField(props: {
 }): JSX.Element {
   const inputRef = useRef<HTMLInputElement | null>(null);
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-[var(--border-color)] p-3">
+    <div className="flex items-center gap-3 twin-panel twin-panel-flat p-3">
       <BotAvatar name={props.name} avatar={props.avatar} testId="bot-avatar-preview" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <button
@@ -468,28 +463,32 @@ export function BotEditorForm(props: {
     <div className="flex flex-col gap-3" data-testid="bot-form">
       {/* Identity pair: name + role are the only create-mode fields and stay
           top-level in edit mode (desktop persona parity). */}
-      <Field htmlFor="bot-name" label={t('mobile.me.botNameLabel')}>
-        <input
-          id="bot-name"
-          data-testid="bot-name"
-          value={name}
-          disabled={busy}
-          onChange={(event) => setName(event.target.value)}
-          placeholder={t('mobile.me.botNamePlaceholder')}
-          className={inputClass}
-        />
-      </Field>
-      <Field htmlFor="bot-role" label={t('mobile.me.botRoleLabel')}>
-        <input
-          id="bot-role"
-          data-testid="bot-role"
-          value={role}
-          disabled={busy}
-          onChange={(event) => setRole(event.target.value)}
-          placeholder={t('mobile.me.botRolePlaceholder')}
-          className={inputClass}
-        />
-      </Field>
+      <div className="twin-panel twin-panel-padded">
+        <Field htmlFor="bot-name" label={t('mobile.me.botNameLabel')}>
+          <input
+            id="bot-name"
+            data-testid="bot-name"
+            value={name}
+            disabled={busy}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={t('mobile.me.botNamePlaceholder')}
+            className={inputClass}
+          />
+        </Field>
+        <div className="twin-field">
+          <Field htmlFor="bot-role" label={t('mobile.me.botRoleLabel')}>
+            <input
+              id="bot-role"
+              data-testid="bot-role"
+              value={role}
+              disabled={busy}
+              onChange={(event) => setRole(event.target.value)}
+              placeholder={t('mobile.me.botRolePlaceholder')}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      </div>
 
       {!isEdit ? (
         <div data-testid="bot-create-guide" className="rounded-xl bg-[var(--bg-main)] p-3">
@@ -592,7 +591,7 @@ export function BotEditorForm(props: {
               onToggleExpand={() => setSkillsExpanded((current) => !current)}
               onSelect={setSelectedSkills}
             />
-            <div className="rounded-xl border border-[var(--border-color)] p-3">
+            <div className="twin-panel twin-panel-flat p-3">
               <p className={`mb-2 ${labelClass}`}>{t('mobile.me.botA2aSectionLabel')}</p>
               <label className="flex min-h-[44px] items-center justify-between gap-3 text-sm text-[var(--text-primary)]" htmlFor="bot-a2a-auto-reply">
                 <span>
@@ -666,13 +665,13 @@ export function BotEditorForm(props: {
       )}
 
       {busy ? (
-        <p className="rounded-xl bg-[var(--bg-main)] p-3 text-sm text-[var(--text-secondary)]" data-testid="bot-create-progress" aria-live="polite">
+        <p className="twin-notice" data-testid="bot-create-progress" aria-live="polite">
           {t(bot ? 'mobile.me.botUpdating' : 'mobile.me.botCreating')}
         </p>
       ) : null}
       {outcome ? (
         <div
-          className={`rounded-xl border p-3 ${outcome.state === 'synced' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-800'}`}
+          className={`twin-notice ${outcome.state === 'synced' ? 'twin-notice-success' : 'twin-notice-warning'}`}
           data-testid="bot-operation-result"
           data-state={outcome.state}
           aria-live="polite"
@@ -685,7 +684,7 @@ export function BotEditorForm(props: {
         type="button"
         disabled={saveDisabled}
         onClick={() => void props.onSave(resolveInput())}
-        className="min-h-[44px] rounded-xl bg-[var(--color-primary)] py-2 font-medium text-black active:opacity-80 disabled:opacity-40"
+        className="twin-button twin-button-primary twin-button-full"
         data-testid="bot-save"
       >
         {t('mobile.me.botSave')}

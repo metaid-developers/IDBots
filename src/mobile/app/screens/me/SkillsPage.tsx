@@ -12,7 +12,7 @@ export function SkillsPage(props: { onBack: () => void }): JSX.Element {
   const { skills, setEnabled } = useSkills();
   return (
     <SecondaryPageShell title={t('mobile.me.entry.skills')} onBack={props.onBack} testId="me-page-skills">
-      <div className="rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] p-4">
+      <div className="twin-panel twin-panel-padded">
         {skills.length === 0 ? (
           <p className="py-4 text-center text-sm text-[var(--text-secondary)]" data-testid="skills-empty">
             {t('mobile.me.skillsEmpty')}
@@ -22,7 +22,7 @@ export function SkillsPage(props: { onBack: () => void }): JSX.Element {
             <div
               key={skill.id}
               data-testid={`skills-row-${skill.id}`}
-              className="flex min-h-[44px] items-center gap-2 border-b border-[var(--border-color)] py-2 last:border-b-0"
+              className="twin-list-row"
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[15px] text-[var(--text-primary)]">{skill.name}</p>
