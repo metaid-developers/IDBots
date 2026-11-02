@@ -181,6 +181,14 @@
       ]
     },
     {
+      "path": "botBrowser.buyNft",
+      "kind": "invoke",
+      "channel": "botBrowser:buyNft",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "botBrowser.capturePage",
       "kind": "invoke",
       "channel": "botBrowser:capturePage",
