@@ -129,6 +129,7 @@ tests/*
 !tests/longTermTaskAgentTools.test.mjs
 !tests/heartbeatService.test.mjs
 !tests/longTermAdvanceService.test.mjs
+!tests/longTermAttentionAction.test.mjs
 !tests/metataskEngine.test.mjs
 !tests/metataskProjectionStore.test.mjs
 !tests/metataskAgentTools.test.mjs

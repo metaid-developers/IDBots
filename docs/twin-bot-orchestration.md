@@ -126,6 +126,10 @@ The Attempt stores the handoff as evidence, not proof. `ready` and `dropped` sti
 
 A concrete human question has priority over other active work. Active Attempts take priority over passive external waits, and failed or ready-but-unexecuted steps remain Twin responsibilities. This read model is derived from facts at read time rather than stored as another lifecycle field that could contradict the ledger.
 
+The long-term advancement handler consumes the same attention model to close the loop. It selects Owner before Twin, External, and Worker attention across every delegation linked by `longterm_task_id + longterm_subtask_id`. Owner questions are journaled as `waiting_owner` and delivered with their concrete `humanAction`; external blockers are journaled as `waiting_external` without an unnecessary model turn; Twin attention produces one supervision turn; Worker attention suppresses duplicate quiet pushes.
+
+Each attention has a persistent action key composed from its orchestration task, wait kind, step, attempt, question, and reason. A key is consumed only after the advancing action succeeds, so a failed turn may retry but the same condition never creates duplicate turns or reminders. A new attempt or question bypasses the ordinary nudge throttle exactly once, while the existing duration and failure-streak supervision remain as fallbacks.
+
 ### Worker Cowork execution
 
 Each delegation attempt creates a new task-specific Cowork session attributed to the selected Worker `metabotId`. A fresh session avoids contaminating an unrelated historical conversation while preserving the Worker's persistent identity through persona, memory, experience, wallet, skills, and workspace attribution.

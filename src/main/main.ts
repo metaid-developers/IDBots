@@ -439,6 +439,7 @@ import { withChainWriteBudget } from './libs/chainWriteBudget';
 import { buildTwinWorkerDirectory } from './services/twinWorkerDirectoryService';
 import { TwinOrchestrationService } from './services/twinOrchestrationService';
 import { GroupTaskOrchestrationBridge } from './services/groupTaskOrchestrationBridge';
+import { deriveOrchestrationAttention } from './services/orchestrationProgress';
 import { CrossSessionDeliveryStore } from './crossSessionDeliveryStore';
 import { LongTermTaskStore } from './longTermTaskStore';
 import { MetaTaskProjectionStore } from './services/metatask/projectionStore';
@@ -8845,6 +8846,22 @@ const getLongTermAdvanceService = () => {
       },
       // The heartbeat hand-off message follows the owner's UI language.
       getAppLanguage: () => getPersistedAppLanguage(),
+      listOrchestrationAttention: (taskId: string, subtaskId: string) => {
+        try {
+          return getOrchestrationStore().listTasksForLongTermSubtask(taskId, subtaskId).map((task) => {
+            const steps = getOrchestrationStore().listSteps(task.id).map((step) => ({
+              ...step,
+              attempts: getOrchestrationStore().listAttempts(step.id),
+            }));
+            return {
+              orchestrationTaskId: task.id,
+              attention: deriveOrchestrationAttention(task, steps),
+            };
+          });
+        } catch {
+          return [];
+        }
+      },
       // P1 supervision telemetry: worker dispatch attempts sourced from every
       // session EVER bound to THIS sub-project (rotation-safe — the failure
       // streak must survive a session rotation), and only this sub-project's
