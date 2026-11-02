@@ -893,8 +893,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                   })}
                 </div>
               )
-                </div>
-              )
             ) : (
               <CoworkSessionList
                 sessions={localListSessions}

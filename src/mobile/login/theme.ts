@@ -60,7 +60,7 @@ export interface LoginThemeHandle {
  * stays importable under node-based tests.
  */
 export function initLoginTheme(options?: { storage?: ThemeStorage | null }): LoginThemeHandle {
-  let mode = readStoredThemeMode(options?.storage);
+  const mode = readStoredThemeMode(options?.storage);
   let dark = resolveIsDark(mode, systemPrefersDark());
   const listeners = new Set<() => void>();
 
