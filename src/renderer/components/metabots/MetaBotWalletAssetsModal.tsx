@@ -1,8 +1,13 @@
-import React from 'react';
-import { ArrowPathIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useState } from 'react';
+import { ArrowPathIcon, DocumentDuplicateIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import type { Metabot } from '../../types/metabot';
-import { buildWalletAssetsSectionsViewModel } from './metabotWalletPresentation.js';
+import {
+  buildMvcNftItemDetailRows,
+  buildMvcNftItemTileViewModel,
+  buildWalletAssetsSectionsViewModel,
+} from './metabotWalletPresentation.js';
+import { NftArtworkImage } from './NftArtworkImage';
 
 export interface NativeWalletAsset {
   kind: 'native';
@@ -66,6 +71,8 @@ export interface MvcNftWalletAsset {
     name: string;
     satoshi: number;
     icon?: string;
+    /** https direct artwork link (wallet-api v4 utxo-list `imgUrl`). */
+    imgUrl?: string;
   }>;
 }
 
@@ -102,6 +109,90 @@ function copyAddress(address: string): void {
   });
 }
 
+interface MvcNftItemDetail {
+  asset: MvcNftWalletAsset;
+  item: MvcNftWalletAsset['items'][number];
+}
+
+/**
+ * Fullscreen (within the wallet modal) detail layer for one held NFT — same
+ * shape as the chat NftCard detail modal: large artwork with the format tag
+ * at its corner, field rows with copy affordances on the right. Rendered as
+ * an absolute overlay inside the modal's fixed container, so it stacks above
+ * every modal panel without a portal.
+ */
+const MvcNftDetailOverlay: React.FC<{ detail: MvcNftItemDetail; onClose: () => void }> = ({ detail, onClose }) => {
+  const { asset, item } = detail;
+  const tile = buildMvcNftItemTileViewModel(item);
+  const rows = buildMvcNftItemDetailRows(asset, item);
+  const title = `${tile.title}${tile.badge ? ` ${tile.badge}` : ''}`;
+
+  return (
+    <div
+      data-slot="metabot-wallet-nft-detail"
+      className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`NFT detail: ${title}`}
+    >
+      <div
+        className="flex max-h-[86vh] w-[min(94vw,640px)] flex-col overflow-hidden rounded-2xl border border-claude-border bg-claude-surface shadow-xl dark:border-claude-darkBorder dark:bg-claude-darkSurface"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-claude-border px-4 py-2.5 dark:border-claude-darkBorder">
+          <span className="truncate text-sm font-semibold dark:text-claude-darkText text-claude-text">{title}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-claude-textSecondary transition-colors hover:bg-black/5 dark:text-claude-darkTextSecondary dark:hover:bg-white/10"
+            aria-label={i18nService.t('close')}
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto sm:flex-row">
+          <div className="relative shrink-0 sm:w-[46%]">
+            <NftArtworkImage large sources={tile.artworkSources} initials={tile.artworkInitials} alt={tile.title} />
+            <span
+              data-nft-format="metacontract"
+              className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-slate-600/80 px-1.5 py-px text-[10px] font-semibold leading-tight text-white shadow-sm backdrop-blur-sm"
+            >
+              MetaContract
+            </span>
+          </div>
+          <div className="flex-1 space-y-2.5 px-4 py-3">
+            {rows.map((row) => (
+              <div key={row.labelKey} className="min-w-0">
+                <div className="text-[10px] font-medium uppercase tracking-wide text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  {i18nService.t(row.labelKey)}
+                </div>
+                <div
+                  className={`flex items-start gap-1 text-[12px] leading-5 dark:text-claude-darkText text-claude-text ${
+                    row.mono ? 'font-mono [overflow-wrap:anywhere]' : ''
+                  }`}
+                >
+                  <span className="min-w-0 break-all">{row.value}</span>
+                  {row.mono && (
+                    <button
+                      type="button"
+                      onClick={() => copyAddress(row.value)}
+                      className="shrink-0 rounded p-0.5 text-current opacity-60 transition-opacity hover:opacity-100"
+                      aria-label={i18nService.t('metabotCopyAddress')}
+                    >
+                      <DocumentDuplicateIcon className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const MetaBotWalletAssetsModal: React.FC<MetaBotWalletAssetsModalProps> = ({
   isOpen,
   metabot,
@@ -112,6 +203,22 @@ const MetaBotWalletAssetsModal: React.FC<MetaBotWalletAssetsModalProps> = ({
   onRefresh,
   onTransfer,
 }) => {
+  // null = no detail open; the { asset, item } pair a clicked tile showed.
+  const [nftDetail, setNftDetail] = useState<MvcNftItemDetail | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) setNftDetail(null);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!nftDetail) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNftDetail(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [nftDetail]);
+
   if (!isOpen) return null;
 
   const viewModel = buildWalletAssetsSectionsViewModel({ assets, loading, error });
@@ -215,20 +322,39 @@ const MetaBotWalletAssetsModal: React.FC<MetaBotWalletAssetsModalProps> = ({
                         </span>
                       </div>
                       {asset.items.length > 0 && (
-                        <ul className="mt-2 space-y-1 border-t dark:border-claude-darkBorder border-claude-border pt-2">
-                          {asset.items.map((item) => (
-                            <li
-                              key={item.tokenIndex}
-                              className="flex items-center justify-between gap-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary"
-                            >
-                              <span className="truncate">
-                                <span className="font-mono">#{item.tokenIndex}</span>
-                                {item.name ? ` ${item.name}` : ''}
-                              </span>
-                              <span className="font-mono shrink-0">{item.satoshi} sats</span>
-                            </li>
-                          ))}
-                        </ul>
+                        <div className="mt-2 grid grid-cols-3 gap-2 border-t dark:border-claude-darkBorder border-claude-border pt-2 sm:grid-cols-4">
+                          {asset.items.map((item) => {
+                            const tile = buildMvcNftItemTileViewModel(item);
+                            return (
+                              <button
+                                key={item.tokenIndex}
+                                type="button"
+                                data-slot="metabot-wallet-nft-tile"
+                                onClick={() => setNftDetail({ asset, item })}
+                                aria-label={`${i18nService.t('metabotWalletMvcNftAssets')}: ${tile.title}${tile.badge ? ` ${tile.badge}` : ''}`}
+                                className="overflow-hidden rounded-xl border text-left transition-shadow hover:shadow-md dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/50 bg-claude-surface/50"
+                              >
+                                <NftArtworkImage
+                                  sources={tile.artworkSources}
+                                  initials={tile.artworkInitials}
+                                  alt={tile.title}
+                                />
+                                <div className="space-y-0.5 px-2 py-1.5">
+                                  <div className="flex min-w-0 items-baseline gap-1">
+                                    <span className="truncate text-xs font-semibold dark:text-claude-darkText text-claude-text">
+                                      {tile.title}
+                                    </span>
+                                    {tile.badge && (
+                                      <span className="shrink-0 font-mono text-[10px] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                                        {tile.badge}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   ) : (
@@ -275,6 +401,7 @@ const MetaBotWalletAssetsModal: React.FC<MetaBotWalletAssetsModalProps> = ({
           ))}
         </div>
       </div>
+      {nftDetail && <MvcNftDetailOverlay detail={nftDetail} onClose={() => setNftDetail(null)} />}
     </div>
   );
 };

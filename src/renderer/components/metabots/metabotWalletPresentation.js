@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { buildNftArtworkSources } from './metabotNftPresentation.js';
 
 const SECTION_DEFS = [
   { key: "nativeAssets", titleKey: "metabotWalletNativeAssets" },
@@ -26,6 +27,60 @@ export function buildWalletAssetsSectionsViewModel({ assets, loading, error }) {
       };
     }),
   };
+}
+
+/**
+ * Tile view model for one MVC MetaContract NFT held in a wallet asset series:
+ * title (item name → #tokenIndex → NFT), badge serial, and the ordered
+ * artwork candidate chain (imgUrl https direct → icon metafile content
+ * routes → initials placeholder) shared with the NFT wallet modal tiles.
+ */
+export function buildMvcNftItemTileViewModel(item) {
+  const tokenIndex = item?.tokenIndex != null && String(item.tokenIndex).trim() !== ''
+    ? String(item.tokenIndex).trim()
+    : '';
+  const badge = tokenIndex ? `#${tokenIndex}` : '';
+  const name = item?.name?.trim() || '';
+  return {
+    key: tokenIndex,
+    title: name || badge || 'NFT',
+    badge,
+    artworkSources: buildNftArtworkSources({ imageUrl: item?.imgUrl, imageRef: item?.icon }),
+    artworkInitials: (name || 'NFT').slice(0, 2).toUpperCase(),
+  };
+}
+
+const MVC_NFT_DETAIL_MONO_FIELDS = new Set([
+  'metabotNftFieldTokenIndex',
+  'metabotNftFieldGenesis',
+  'metabotNftFieldCodeHash',
+  'metabotNftFieldOwner',
+]);
+
+/**
+ * Detail field rows for one held MVC MetaContract NFT (labelKeys map onto
+ * i18n; mono rows get the copy affordance in the modal). Issuance facts come
+ * from the series (supply), the item (satoshi) and the wallet (holder).
+ */
+export function buildMvcNftItemDetailRows(asset, item) {
+  const rows = [];
+  const push = (labelKey, value) => {
+    const text = value == null ? '' : String(value).trim();
+    if (!text) return;
+    rows.push({ labelKey, value: text, mono: MVC_NFT_DETAIL_MONO_FIELDS.has(labelKey) });
+  };
+
+  push('metabotNftFieldSeries', asset?.seriesName);
+  push('metabotNftFieldTokenIndex', item?.tokenIndex != null && String(item.tokenIndex).trim() !== ''
+    ? `#${String(item.tokenIndex).trim()}`
+    : '');
+  push('metabotNftFieldSupply', asset?.tokenSupply != null ? String(asset.tokenSupply) : '');
+  push('metabotNftFieldNetwork', 'MVC');
+  push('metabotNftFieldSatoshi', item?.satoshi != null && item.satoshi > 0 ? `${item.satoshi} sats` : '');
+  push('metabotNftFieldGenesis', asset?.genesis);
+  push('metabotNftFieldCodeHash', asset?.codeHash);
+  push('metabotNftFieldOwner', asset?.address);
+  return rows;
 }
 
 export function validateTokenTransferDraft({ amount, receiver, maxDisplayBalance }) {

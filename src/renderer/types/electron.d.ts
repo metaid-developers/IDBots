@@ -2578,6 +2578,7 @@ interface ElectronMvcNftAsset {
     name: string;
     satoshi: number;
     icon?: string;
+    imgUrl?: string;
   }>;
 }
 
