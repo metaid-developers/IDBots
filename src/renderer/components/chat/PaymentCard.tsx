@@ -54,6 +54,12 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
   const [copied, setCopied] = useState<'amount' | 'memo' | null>(null);
   const watchdogRef = useRef<LaunchWatchdog | null>(null);
   const copyTimerRef = useRef<number | null>(null);
+  const launchCleanupRef = useRef<(() => void) | null>(null);
+
+  const clearLaunchListeners = useCallback(() => {
+    launchCleanupRef.current?.();
+    launchCleanupRef.current = null;
+  }, []);
 
   // Re-render the QR from the payee's qrContent (doc 02 §2: the card shows a
   // freshly generated code, never re-transmits the seller's image).
@@ -77,6 +83,8 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
     return () => {
       watchdogRef.current?.cancel();
       watchdogRef.current = null;
+      launchCleanupRef.current?.();
+      launchCleanupRef.current = null;
       if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current);
     };
   }, []);
@@ -95,25 +103,47 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
       return;
     }
     setPhase('launching');
+
+    // Any hide signal within the 2s window means Alipay took over. When the
+    // buyer comes back (visibility → visible / window focus) the entry must
+    // re-arm instead of staying on a disabled 「正在拉起支付宝…」 forever
+    // (doc 01 §4 PWA focus-recovery note).
     const onHidden = () => markLaunched();
-    document.addEventListener('visibilitychange', onHidden);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') markLaunched();
+      else {
+        clearLaunchListeners();
+        setPhase((current) => (current === 'launching' ? 'ready' : current));
+      }
+    };
+    const onFocus = () => {
+      clearLaunchListeners();
+      setPhase((current) => (current === 'launching' ? 'ready' : current));
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pagehide', onHidden);
     window.addEventListener('blur', onHidden);
-    watchdogRef.current = startLaunchWatchdog(() => {
-      document.removeEventListener('visibilitychange', onHidden);
+    window.addEventListener('focus', onFocus);
+    launchCleanupRef.current = () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('pagehide', onHidden);
       window.removeEventListener('blur', onHidden);
+      window.removeEventListener('focus', onFocus);
+    };
+    watchdogRef.current = startLaunchWatchdog(() => {
+      clearLaunchListeners();
       setPhase('degraded');
     });
     // Gesture-synchronous assignment (doc 01 §4: within the click handler so
     // mobile browsers do not treat it as a popup).
     window.location.href = url;
-  }, [phase, payee.qrContent, markLaunched]);
+  }, [phase, payee.qrContent, markLaunched, clearLaunchListeners]);
 
   const handleManualFallback = useCallback(() => {
     watchdogRef.current?.cancel();
+    clearLaunchListeners();
     setPhase('degraded');
-  }, []);
+  }, [clearLaunchListeners]);
 
   const handleCopy = useCallback(async (kind: 'amount' | 'memo') => {
     const text = kind === 'amount' ? amountYuan : orderId;
@@ -172,6 +202,11 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
             <p className="text-[11px] leading-4 text-claude-textSecondary dark:text-claude-darkTextSecondary">
               请勿修改金额与备注；转账直接进入卖方账户，平台不经手资金。
             </p>
+            {!canLaunch && (
+              <p className="text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                卖方尚未配置收款码——请让卖方在「设置 → 收款信息」中补充后再付款。
+              </p>
+            )}
             {/* ④ standing manual fallback entry (doc 01 §3: always available) */}
             <button
               type="button"
@@ -185,7 +220,11 @@ const PaymentCard: React.FC<{ data: PaymentCardData }> = ({ data }) => {
           <>
             {/* ③ embedded degrade card: QR + amount + memo + copies */}
             <div className="flex flex-col items-center gap-2 rounded-lg border border-claude-border bg-white px-3 py-3 dark:border-claude-darkBorder dark:bg-white">
-              {qrDataUrl ? (
+              {!payee.qrContent ? (
+                <div className="flex h-[180px] w-[180px] items-center justify-center px-4 text-center text-[11px] text-gray-500">
+                  卖方尚未配置收款码，请先与卖方确认收款方式
+                </div>
+              ) : qrDataUrl ? (
                 <img src={qrDataUrl} alt="支付宝收款码" className="h-[180px] w-[180px]" />
               ) : qrFailed ? (
                 <div className="flex h-[180px] w-[180px] items-center justify-center px-4 text-center text-[11px] text-gray-500">

@@ -865,3 +865,7 @@ blob-report/
 !tests/metabotNftService.test.mjs
 !tests/metabotNftIpc.test.mjs
 !tests/metabotNftPresentation.test.mjs
+!tests/paymentInfoCrypto.test.mjs
+!tests/paymentCardSyntax.test.ts
+!tests/paymentLaunchWatchdog.test.ts
+!tests/paymentPendingRecords.test.ts
