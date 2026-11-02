@@ -91,7 +91,7 @@ export interface CoworkMessageMetadata {
    * stays in the hidden thinking stream; rendering is the standard bubble.
    */
   narration?: boolean;
-  ownerUpdateKind?: 'opening' | 'milestone' | 'problem';
+  ownerUpdateKind?: 'opening' | 'milestone' | 'problem' | 'waiting';
   /**
    * LLM-generated turn-acknowledgment bubble (first-response latency): a
    * short host-side assistant reply emitted before the kernel turn's own

@@ -9,13 +9,9 @@
  * Completeness must NOT be inferred from streaming flags alone: between the
  * tool rounds of a still-running turn every message is settled (nothing
  * carries isStreaming) — tool execution plus the next model roundtrip spans
- * whole seconds. On narration-fold routes that gap is harmless (no
- * non-thinking assistant text exists mid-turn, so there is no delivery
- * candidate to arm the header), but GLM keeps tool-ride text visible by
- * design (foldsToolRideTextIntoThinking), so its mid-turn narration IS a
- * delivery candidate: the gap collapsed the entire transcript behind the
- * header, and the next round's first reasoning chunk re-expanded it — the
- * repeated fold/unfold jumping reported on glm-5.3 (2026-09-27). A live
+ * whole seconds. Owner updates and deferred final candidates can still arm
+ * the delivery header during that gap, and treating the gap as completion
+ * previously collapsed and re-expanded the transcript between rounds. A live
  * session's active turn is therefore complete only once the session stops
  * running; earlier turns keep the streaming-flag scan (a settled turn that
  * still carries a stuck isStreaming flag must not collapse either).

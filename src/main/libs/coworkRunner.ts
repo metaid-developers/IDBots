@@ -46,6 +46,7 @@ import {
   buildCoworkSteerText,
 } from './coworkSteerChannel';
 import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply } from './coworkUtil';
+import { buildFallbackTurnAckReply } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
@@ -520,6 +521,8 @@ const DELETE_TOOL_NAMES = new Set(['delete', 'remove', 'unlink', 'rmdir']);
 // per task_id, so the subagent panel updates don't flood the message stream.
 const SUBAGENT_PROGRESS_THROTTLE_MS = 1_000;
 const ASSISTANT_OWNER_UPDATE_PER_TURN_CAP = 6;
+export const ASSISTANT_OWNER_WAIT_INITIAL_MS = 5 * 60_000;
+export const ASSISTANT_OWNER_WAIT_MAX_MS = 30 * 60_000;
 // Tools that never mutate the workspace or external state. Used by 'plan'
 // permission mode to enforce read-only behavior; owner_update only writes the
 // session's own UI transcript. Bash is intentionally excluded (it can do
@@ -1537,6 +1540,10 @@ interface ActiveSession {
   dshTurnAckSerial?: number;
   dshTurnAckVisibleTextSeen?: boolean;
   assistantOwnerUpdateCount: number;
+  assistantOwnerHeartbeatTimer?: NodeJS.Timeout | null;
+  assistantOwnerLastVisibleAt?: number;
+  assistantOwnerHeartbeatCount?: number;
+  assistantOwnerWaitingForTool?: boolean;
   /**
    * True when this turn was kicked with skipInitialUserMessage — the prompt is
    * host-authored (first-run greeting, machine flows) and no user message
@@ -2614,6 +2621,7 @@ export interface CoworkRunnerOptions {
    * cap (legacy behavior).
    */
   dshToolCallHardCapMs?: number;
+  assistantOwnerWaitTimeoutMs?: number;
 }
 
 /**
@@ -2773,6 +2781,7 @@ export class CoworkRunner extends EventEmitter {
   private readonly dshTurnStallTimeoutMs: number;
   private readonly dshStallExtensionScale: number;
   private readonly dshToolCallHardCapMs: number;
+  private readonly assistantOwnerWaitTimeoutMs: number;
   /**
    * Consecutive stall-watchdog cancellations per cowork session, feeding the
    * strike extension of the adaptive DSH stall deadline. Lives on the runner
@@ -2959,6 +2968,10 @@ export class CoworkRunner extends EventEmitter {
       0,
       options?.dshToolCallHardCapMs ?? DSH_TOOL_CALL_HARD_CAP_MS
     );
+    this.assistantOwnerWaitTimeoutMs = Math.max(
+      0,
+      options?.assistantOwnerWaitTimeoutMs ?? ASSISTANT_OWNER_WAIT_INITIAL_MS
+    );
   }
 
 
@@ -3003,6 +3016,10 @@ export class CoworkRunner extends EventEmitter {
   private removeActiveSession(sessionId: string, activeSession: ActiveSession): void {
     if (this.activeSessions.get(sessionId) !== activeSession) return;
     activeSession.localTurnState = 'closing';
+    if (activeSession.assistantOwnerHeartbeatTimer) {
+      clearTimeout(activeSession.assistantOwnerHeartbeatTimer);
+      activeSession.assistantOwnerHeartbeatTimer = null;
+    }
     activeSession.localInputChannel?.close();
     this.rejectBufferedSteers(
       activeSession,
@@ -8377,6 +8394,10 @@ export class CoworkRunner extends EventEmitter {
       hasAssistantTextOutput: false,
       hasAssistantThinkingOutput: false,
       assistantOwnerUpdateCount: 0,
+      assistantOwnerHeartbeatTimer: null,
+      assistantOwnerLastVisibleAt: Date.now(),
+      assistantOwnerHeartbeatCount: 0,
+      assistantOwnerWaitingForTool: false,
       delegationRequestEmitted: false,
       staleResumeDetected: false,
       staleResumeRetryAllowed: true,
@@ -10606,6 +10627,7 @@ export class CoworkRunner extends EventEmitter {
           const turnAckSerial = (activeSession.dshTurnAckSerial ?? 0) + 1;
           activeSession.dshTurnAckSerial = turnAckSerial;
           activeSession.dshTurnAckVisibleTextSeen = false;
+          this.armAssistantOwnerWaitTimer(sessionId, activeSession);
           void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial);
         }
       } catch { /* best-effort: the ack must never break a turn */ }
@@ -11063,6 +11085,7 @@ export class CoworkRunner extends EventEmitter {
             // the in-flight ledger that extends the watchdog while a tool
             // executes (long bash renders emit nothing until they finish).
             trackDshToolActivity(message);
+            activeSession.assistantOwnerWaitingForTool = dshInFlightToolCallCount() > 0;
             armDshStallWatchdog();
             // Compaction-failure marker for the overflow gate below: a bodyless
             // `400 (no body)` turn death only classifies as context overflow
@@ -11087,6 +11110,7 @@ export class CoworkRunner extends EventEmitter {
               )
             ) {
               activeSession.dshTurnAckVisibleTextSeen = true
+              this.noteAssistantOwnerVisible(sessionId, activeSession)
             }
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
             this.emit('message', sessionId, stored);
@@ -12232,6 +12256,56 @@ export class CoworkRunner extends EventEmitter {
     return images
   }
 
+  private noteAssistantOwnerVisible(sessionId: string, activeSession: ActiveSession, waiting = false): void {
+    if (this.activeSessions.get(sessionId) !== activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) return
+    activeSession.assistantOwnerLastVisibleAt = Date.now()
+    activeSession.assistantOwnerHeartbeatCount = waiting
+      ? (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
+      : 0
+    this.armAssistantOwnerWaitTimer(sessionId, activeSession)
+  }
+
+  private armAssistantOwnerWaitTimer(sessionId: string, activeSession: ActiveSession): void {
+    if (activeSession.assistantOwnerHeartbeatTimer) {
+      clearTimeout(activeSession.assistantOwnerHeartbeatTimer)
+      activeSession.assistantOwnerHeartbeatTimer = null
+    }
+    if (
+      this.assistantOwnerWaitTimeoutMs <= 0
+      || this.activeSessions.get(sessionId) !== activeSession
+      || !this.isAssistantModeOwnerChatSession(sessionId)
+      || (activeSession.assistantOwnerUpdateCount ?? 0) >= ASSISTANT_OWNER_UPDATE_PER_TURN_CAP
+    ) return
+    const heartbeatCount = activeSession.assistantOwnerHeartbeatCount ?? 0
+    const waitWindowMs = Math.min(
+      ASSISTANT_OWNER_WAIT_MAX_MS,
+      this.assistantOwnerWaitTimeoutMs * (2 ** heartbeatCount),
+    )
+    const lastVisibleAt = activeSession.assistantOwnerLastVisibleAt ?? Date.now()
+    activeSession.assistantOwnerLastVisibleAt = lastVisibleAt
+    const delayMs = Math.max(1, waitWindowMs - (Date.now() - lastVisibleAt))
+    activeSession.assistantOwnerHeartbeatTimer = setTimeout(() => {
+      activeSession.assistantOwnerHeartbeatTimer = null
+      if (this.activeSessions.get(sessionId) !== activeSession || activeSession.abortController.signal.aborted) return
+      if (activeSession.pendingPermission) {
+        activeSession.assistantOwnerLastVisibleAt = Date.now()
+        this.armAssistantOwnerWaitTimer(sessionId, activeSession)
+        return
+      }
+      const message = activeSession.assistantOwnerWaitingForTool
+        ? tApp(
+          '有一个执行步骤还在运行，任务没有停止。我会继续等它完成并核对结果；有新的关键进展或需要你操作时，我会及时告诉你。',
+          'One execution step is still running; the task has not stopped. I’ll wait for it to finish and check the result. I’ll let you know when there is meaningful progress or anything that needs your action.',
+        )
+        : tApp(
+          '这一轮仍在处理和核对中，暂时没有新的关键结果。我会继续推进；如果需要你决定或操作，我会马上告诉你。',
+          'This turn is still being processed and checked, with no new key result yet. I’ll keep moving it forward and let you know immediately if a decision or action is needed from you.',
+        )
+      this.emitAssistantOwnerUpdate(sessionId, { message, kind: 'waiting' }, activeSession)
+    }, delayMs)
+    activeSession.assistantOwnerHeartbeatTimer.unref?.()
+  }
+
   private emitAssistantOwnerUpdate(
     sessionId: string,
     args: { message?: unknown; kind?: unknown },
@@ -12245,8 +12319,11 @@ export class CoworkRunner extends EventEmitter {
       return { shown: false, reason: 'message must contain 1-280 characters' }
     }
     const kind = args.kind ?? 'milestone'
-    if (kind !== 'opening' && kind !== 'milestone' && kind !== 'problem') {
-      return { shown: false, reason: 'kind must be opening, milestone or problem' }
+    if (kind !== 'opening' && kind !== 'milestone' && kind !== 'problem' && kind !== 'waiting') {
+      return { shown: false, reason: 'kind must be opening, milestone, problem or waiting' }
+    }
+    if (kind === 'opening' && activeSession.dshTurnAckVisibleTextSeen) {
+      return { shown: false, reason: 'opening already delivered; report only new milestones or problems' }
     }
     const count = activeSession.assistantOwnerUpdateCount ?? 0
     if (count >= ASSISTANT_OWNER_UPDATE_PER_TURN_CAP) {
@@ -12262,6 +12339,7 @@ export class CoworkRunner extends EventEmitter {
     })
     activeSession.assistantOwnerUpdateCount = count + 1
     activeSession.dshTurnAckVisibleTextSeen = true
+    this.noteAssistantOwnerVisible(sessionId, activeSession, kind === 'waiting')
     this.emit('message', sessionId, stored)
     return {
       shown: true,
@@ -16245,17 +16323,11 @@ export class CoworkRunner extends EventEmitter {
   }
 
   /**
-   * LLM-generated turn-acknowledgment bubble (first-response latency). The
-   * template phrase in the activity indicators covers the first second; this
-   * call produces the real thing the owner asked for — an assistant bubble,
-   * written by the LLM about THIS message, landing while the kernel turn is
-   * still pre-flight or reasoning. It rides the title-class one-shot
-   * cognitive path (no kernel spawn), fully parallel to the turn. The
-   * identity/serial/visible-text gates drop it when the turn already
-   * delivered real text or moved on to a newer turn, so an acknowledgment can
-   * never appear after the answer it acknowledges. The bubble is host-side
-   * only: it lives in the UI transcript and never enters the kernel session
-   * log, so the model's own context is untouched.
+   * Guaranteed opening bubble: try the title-class LLM acknowledgement first,
+   * then fall back to a deterministic task-focused opening. The same turn
+   * identity/serial/visible-text gates prevent late or duplicate openers, and
+   * the host opening shares the owner-update budget. Display-only: this bubble
+   * never enters the kernel session log.
    */
   private async emitTurnAckReplyBubble(
     sessionId: string,
@@ -16266,8 +16338,8 @@ export class CoworkRunner extends EventEmitter {
     try {
       const startedAt = Date.now();
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      const reply = await generateTurnAckReply(userPrompt, sessionTitle);
-      if (!reply) return;
+      const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+      const reply = generatedReply || buildFallbackTurnAckReply(userPrompt);
       // Identity first: a fresh ActiveSession is created per submitted
       // message and dshTurnAckSerial restarts at 1 on each, so serial
       // equality alone let turn N's ack (still ≤4s in flight) land inside
@@ -16290,8 +16362,15 @@ export class CoworkRunner extends EventEmitter {
         content: reply,
         metadata: { turnAckReply: true, isFinal: true },
       });
+      turn.dshTurnAckVisibleTextSeen = true;
+      turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
+      this.noteAssistantOwnerVisible(sessionId, turn);
       this.emit('message', sessionId, message);
-      coworkLog('INFO', 'turn:ack', 'llm ack bubble emitted', { sessionId, elapsedMs: Date.now() - startedAt });
+      coworkLog('INFO', 'turn:ack', 'opening bubble emitted', {
+        sessionId,
+        elapsedMs: Date.now() - startedAt,
+        fallback: !generatedReply,
+      });
     } catch (error) {
       coworkLog('WARN', 'turn:ack', 'llm ack bubble skipped', {
         sessionId,

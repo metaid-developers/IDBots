@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   TURN_ACK_REPLY_MAX_CHARS,
+  buildFallbackTurnAckReply,
   buildTurnAckReplyMessages,
   containsCjk,
   sanitizeTurnAckReply,
@@ -37,6 +38,24 @@ test('buildTurnAckReplyMessages: system+user roles, title line optional, user te
   // Long input is truncated to the bounded slice, not forwarded wholesale.
   const long = buildTurnAckReplyMessages({ userText: 'x'.repeat(5000) });
   assert.ok(long[1].content.length < 1500, 'user text slice stays bounded');
+});
+
+test('buildFallbackTurnAckReply: keeps the task focus and direction in the user language', () => {
+  assert.equal(
+    buildFallbackTurnAckReply('依然不能一键购买，点‘一键购买’报错：“购买未完成。请重试。”'),
+    '收到，我先核对「依然不能一键购买」的原因和处理路径，然后直接推进；有关键进展或需要你决定的事，我会再汇报。',
+  );
+  const english = buildFallbackTurnAckReply('Fix the purchase flow');
+  assert.match(english, /^Got it\./);
+  assert.match(english, /Fix the purchase flow/);
+  assert.match(english, /confirm the cause and next step/);
+});
+
+test('buildFallbackTurnAckReply: bounds long input and always returns an opening', () => {
+  const long = buildFallbackTurnAckReply(`Fix ${'x'.repeat(500)}`);
+  assert.ok(long.length <= TURN_ACK_REPLY_MAX_CHARS + 1);
+  assert.match(long, /…/);
+  assert.match(buildFallbackTurnAckReply(''), /this request/);
 });
 
 test('sanitizeTurnAckReply: passes clean text through, strips wrapping noise', () => {
@@ -171,6 +190,10 @@ test('runner: the ack bubble is dropped once the turn delivered visible text or 
     'the bubble is a final assistant message tagged turnAckReply');
   assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
     'the reply rides the one-shot cognitive path with session-title context');
+  assert.ok(body.includes('generatedReply || buildFallbackTurnAckReply(userPrompt)'),
+    'an empty or failed LLM ack still produces a deterministic opening bubble');
+  assert.ok(body.includes('turn.assistantOwnerUpdateCount = Math.max(1,'),
+    'the host opening and model updates share one per-turn budget');
   // The flags are read off the CAPTURED turn object, so a next turn's fresh
   // state can never vouch for an older turn's ack.
   assert.ok(!body.includes('activeSession.dshTurnAckSerial !== turnSerial'),

@@ -1356,9 +1356,9 @@ export function setTurnAckReplyBrainProvider(provider: (() => MetabotBrainOption
  * One-shot LLM acknowledgment for a turn (first-response latency). Mirrors
  * generateSessionTitle: a direct cognitive-layer call — no kernel spawn, no
  * agent loop — so it returns in seconds while the DSH turn is still warming
- * up. Returns '' when the call fails or the output is unusable; the caller
- * keeps the template phrase already showing in the activity indicator.
- * Single attempt, no fallback brain: an ack trades robustness for latency.
+ * up. Returns '' when the call fails or the output is unusable; the runner
+ * then emits a deterministic task-focused opening instead of leaving no
+ * persistent first bubble. Single attempt, no fallback brain.
  */
 export async function generateTurnAckReply(userText: string, sessionTitle?: string | null): Promise<string> {
   try {
@@ -1399,7 +1399,7 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
     // empty, and the openai-compat resolver PROMOTED reasoning_content into
     // content — a mid-thought English analysis fragment then leaked out as
     // the ack bubble. Reject reasoning-promoted content and length-truncated
-    // completions outright; the caller keeps the template phrase.
+    // completions outright; the runner uses its deterministic opening instead.
     const metadata = result.responseMetadata;
     const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
     if (promotedFromReasoning || metadata?.stopReason === 'length') {

@@ -974,17 +974,14 @@ test('explicit DeepSeek route keeps the narration fold', () => {
   assert.match(settled.content, /本地没装 tsx/)
 })
 
-// ---- Assistant chat-experience mode: the fold is mode-symmetric ----------
-// Commentary folds into the hidden thinking display in assistant mode
-// EXACTLY as in professional mode — no mapper action ever carries
-// metadata.narration. Assistant mode's only delta is the post-reasoning hold
-// (POST_REASONING_TEXT_HOLD_UNITS) applied even on effort-off/no-reasoning
-// steps: short commentary cannot flash a visible bubble before a tool call
-// classifies it; text past the window still streams as a possible final
-// answer, and a subsequent tool call performs the existing wrong-bet
-// fold/retraction (identical to professional mode). Visible progress bubbles
-// are minted host-side by explicit owner_update({ message, kind }) calls
-// (coworkRunner emitAssistantOwnerUpdate, capped per turn — see
+// ---- Assistant chat-experience mode: one visibility policy for every family
+// Tool-ride commentary folds into the hidden thinking display on DeepSeek,
+// GLM and unknown routes — no mapper action ever carries metadata.narration.
+// The bounded post-reasoning hold applies even on effort-off/no-reasoning
+// steps; text past the window may stream as a possible final answer, and a
+// subsequent tool call folds it back. Visible progress bubbles are minted
+// host-side by explicit owner_update({ message, kind }) calls (coworkRunner
+// emitAssistantOwnerUpdate, capped per turn — see
 // coworkAssistantOwnerUpdate.test.mjs); the mapper-side contract pinned here
 // is that ordinary commentary never becomes one.
 
@@ -1213,7 +1210,7 @@ test('assistant mode: a turn aborted mid possible-answer stream settles the bubb
   assert.equal(ended.some((a) => a.kind === 'turnEnd'), true)
 })
 
-test('assistant mode: GLM tool-ride text stays a plain visible bubble (no narration tag)', () => {
+test('assistant mode: short GLM tool-ride commentary stays hidden and is not promoted at turn end', () => {
   const mapper = assistantMapper()
   glmHeader(mapper)
   mapper.consume({
@@ -1224,7 +1221,7 @@ test('assistant mode: GLM tool-ride text stays a plain visible bubble (no narrat
     type: 'assistant/chunk',
     data: { chunk: { type: 'block-start', index: 1, blockType: 'tool-call' } },
   })
-  assert.deepEqual(atTool, [], 'no conversion on GLM routes in either mode')
+  assert.deepEqual(atTool, [], 'short GLM commentary is held like every other family')
   const done = mapper.consume({
     type: 'assistant/message',
     data: {
@@ -1237,9 +1234,73 @@ test('assistant mode: GLM tool-ride text stays a plain visible bubble (no narrat
       },
     },
   })
-  const textFinal = done.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
-  assert.equal(textFinal.content, '先看仓库结构。')
-  assert.equal(textFinal.metadata, undefined, 'GLM content is the deliverable, not narration')
+  assert.equal(done.some((a) => a.slot === 'text'), false)
+  assert.match(done.find((a) => a.kind === 'messageFinalize' && a.slot === 'thinking').content, /先看仓库结构/)
+  const ended = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'stop' } } })
+  assert.equal(ended.some((a) => a.slot === 'text'), false, 'a short process note never becomes the final answer')
+})
+
+test('assistant mode: a substantive GLM deliverable beside the terminal tool call is promoted exactly once', () => {
+  const mapper = assistantMapper()
+  glmHeader(mapper)
+  const report = `## 汇总\n${'完整交付与验证结果。'.repeat(30)}`
+  const done = mapper.consume({
+    type: 'assistant/message',
+    data: {
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'deliver and record completion' },
+          { type: 'text', text: report },
+          { type: 'tool-call', id: 'c1', name: 'todo_write', arguments: '{}' },
+        ],
+      },
+    },
+  })
+  assert.equal(done.some((a) => a.slot === 'text'), false, 'the candidate is not emitted beside the tool call')
+  const ended = mapper.consume({ type: 'turn/end', data: { turn: 1, reason: { kind: 'stop' } } })
+  const final = ended.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
+  assert.equal(final.content, report)
+  assert.equal(ended.filter((a) => a.kind === 'messageFinalize' && a.slot === 'text').length, 1)
+})
+
+test('assistant mode: twenty GLM commentary rounds produce only the final answer', () => {
+  const mapper = assistantMapper()
+  glmHeader(mapper)
+  const allActions = []
+  for (let round = 1; round <= 20; round += 1) {
+    const commentary = `第 ${round} 轮：内部检索和核对已完成。`
+    allActions.push(...mapper.consume({
+      type: 'assistant/chunk',
+      data: { turn: 1, step: round, chunk: { type: 'text-delta', index: 0, text: commentary } },
+    }))
+    allActions.push(...mapper.consume({
+      type: 'assistant/chunk',
+      data: { turn: 1, step: round, chunk: { type: 'block-start', index: 1, blockType: 'tool-call' } },
+    }))
+    mapper.consume({ type: 'tool/call', data: { callId: `c${round}`, name: 'bash', arguments: '{}' } })
+    allActions.push(...mapper.consume({
+      type: 'assistant/message',
+      data: {
+        turn: 1,
+        step: round,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: commentary },
+            { type: 'tool-call', id: `c${round}`, name: 'bash', arguments: '{}' },
+          ],
+        },
+      },
+    }))
+  }
+  assert.equal(allActions.some((a) => a.slot === 'text'), false, 'no GLM process round opens a visible text slot')
+  const final = mapper.consume({
+    type: 'assistant/message',
+    data: { message: { role: 'assistant', content: [{ type: 'text', text: '## 汇总\n全部完成。' }] } },
+  })
+  const textFinal = final.find((a) => a.kind === 'messageFinalize' && a.slot === 'text')
+  assert.equal(textFinal.content, '## 汇总\n全部完成。')
 })
 
 test('the assistant-mode getter is evaluated per decision (a mid-stream flip degrades to professional streaming)', () => {
@@ -1272,11 +1333,11 @@ test('the assistant-mode getter is evaluated per decision (a mid-stream flip deg
   assert.equal(converted.metadata.narration, undefined)
 })
 
-test('assistant mode: 20 rounds of internal commentary mint no narration rows and the final answer stays plain', () => {
+test('assistant mode: twenty DeepSeek commentary rounds mint no narration rows and the final answer stays plain', () => {
   // 2026-10-24 session 2c70849f follow-up: the old design minted one
   // narration bubble per tool round — 20 progress bubbles in a single turn.
-  // The mapper contract is now mode-symmetric: commentary folds into the
-  // hidden thinking display, NO mapper action may ever carry
+  // Every model family folds commentary into the hidden thinking display;
+  // NO mapper action may ever carry
   // metadata.narration (visible progress is minted host-side by explicit
   // owner_update calls, see coworkAssistantOwnerUpdate.test.mjs), and the
   // final answer settles as plain visible text. Simulates the kernel's slot
