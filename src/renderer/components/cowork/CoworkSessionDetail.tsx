@@ -74,6 +74,8 @@ import {
   type TodoStatus,
 } from './coworkTodoList';
 import MarkdownContent from '../MarkdownContent';
+import { detectTradeActivity } from '../chat/tradeActivity';
+import TradeActivityBadge from '../chat/TradeActivityBadge';
 import { mapWechatBracketCodesForDisplay } from '../chat/wechatEmojiDisplay';
 import MarkdownViewerPanel from './MarkdownViewerPanel';
 import {
@@ -1834,6 +1836,10 @@ const AssistantMessageItem: React.FC<{
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
   const gigSquareCard = renderGigSquareCard(message.content);
   const thinkSplit = splitThinkTaggedContent(displayContent);
+  // S4 chat trade marker: this message announces an NFT trade (nft-card
+  // fence with a trade action) → a trade chip rides the bubble footer /
+  // professional turn-end row, same family as the messenger chips.
+  const tradeActivity = detectTradeActivity(displayContent);
   const renderExtension = React.useContext(MessageExtensionContext);
 
   if (gigSquareCard) {
@@ -1907,6 +1913,13 @@ const AssistantMessageItem: React.FC<{
                 chatExperienceMode={isAssistantMode ? 'assistant' : 'professional'}
               />
             </div>
+            {tradeActivity && (
+              // Trade chip right under the bubble: the message announced an
+              // NFT trade (same slot family as the A2A meta-row chip).
+              <div className="mt-0.5 px-1">
+                <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
+              </div>
+            )}
             {shouldShowAssistantBubbleActions({ isAssistantMode, showCopyButton }) && (
               // Hover design (owner, 2026-10-19): a single "⋯" beside the bubble
               // opens quote / copy / branch — the old inline strip is gone, so a
@@ -1941,6 +1954,12 @@ const AssistantMessageItem: React.FC<{
         ) : (
           // Professional mode: bare full-width text, actions in a flow row.
           <div className="dark:text-claude-darkText text-claude-text">
+            {tradeActivity && (
+              // Trade chip above the text: the message announced an NFT trade.
+              <div className="mb-1">
+                <TradeActivityBadge kind={tradeActivity.kind} variant="chip" />
+              </div>
+            )}
             {/* Professional mode shares the display-only Twemoji pipeline. */}
             <MarkdownContent
               content={replyContent}

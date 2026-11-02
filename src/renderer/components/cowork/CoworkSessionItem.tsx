@@ -4,6 +4,7 @@ import { ArchiveBoxIcon, ArrowRightOnRectangleIcon, CheckIcon, ChevronRightIcon,
 import { i18nService } from '../../services/i18n';
 import { getCoworkSessionTitleClassName, getAssistantSessionDisplayTitle, shouldShowCoworkA2ADot, getImSessionChannelInfo, isLegacyImSessionTitle } from './coworkSessionPresentation.js';
 import { copyCoworkSessionLinkToClipboard } from './coworkSessionLink.js';
+import TradeActivityBadge from '../chat/TradeActivityBadge';
 import { isRenderableAvatarSource } from '../../utils/avatarSource';
 import { resolveSessionSidebarSection } from '../../utils/sessionAutoGrouping';
 import type { SessionSidebarSection } from '../../utils/sessionAutoGrouping';
@@ -716,6 +717,13 @@ const CoworkSessionItemRow: React.FC<CoworkSessionItemProps> = ({
                   >
                     {imInfo.isGroup ? i18nService.t('coworkImGroupBadge') : i18nService.t('coworkImDirectBadge')}
                   </span>
+                )}
+                {session.tradeBadge && (
+                  // S4 chat trade marker: the session's conversation carried
+                  // an NFT trade (p2p = sale/transfer, escrow = escrow);
+                  // icon-only pill + tooltip, same family as the message
+                  // trade chips.
+                  <TradeActivityBadge kind={session.tradeBadge} variant="icon" className="ml-1.5" />
                 )}
               </>
             )}

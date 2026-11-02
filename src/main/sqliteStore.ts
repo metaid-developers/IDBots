@@ -8,6 +8,7 @@ import type { Database as SqlJsDatabase } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import type { DataGuardStats } from './libs/dataGuard';
 import { truncateUtf16Units } from './libs/llmSafeText';
+import { scanMessageTradeBadge } from './libs/tradeBadge';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
 import { writeFileAtomicSync } from './libs/atomicFile';
@@ -2482,6 +2483,44 @@ export class SqliteStore {
         // ISO timestamp of the last follow-up transition, for sorting/badge
         // staleness in the renderer.
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN follow_up_at TEXT;');
+        this.save();
+      }
+
+      if (!columns.includes('trade_badge')) {
+        // S4 chat trade markers: which NFT trade kind this session's
+        // conversation carries — 'p2p' (contract sale/listing or direct
+        // transfer) or 'escrow' (three-party escrow activity), NULL = none.
+        // Write-path maintained (coworkStore.addMessageWithId only upgrades),
+        // read by listSessions; this backfill seeds historical sessions once.
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN trade_badge TEXT;');
+        try {
+          // One-shot backfill: prefilter messages that could carry an
+          // nft-card fence (cheap LIKE), classify in JS with the strict
+          // scanner, roll each session up to its strongest kind. 70w-row
+          // libraries hit the prefilter on ~14 sessions (measured
+          // 2026-11-02), so the JS pass is tiny; the LIKE sweep itself is a
+          // single one-time sequential scan paid only on this migration.
+          const candidates = this.db.exec(`
+            SELECT session_id, content FROM cowork_messages
+            WHERE content LIKE '%\`\`\`nft%' OR content LIKE '%\`\`\`nftcard%'
+          `);
+          const rollup = new Map<string, string>();
+          for (const row of candidates[0]?.values ?? []) {
+            const sessionId = String(row[0] ?? '');
+            const content = String(row[1] ?? '');
+            if (!sessionId || !content) continue;
+            const kind = scanMessageTradeBadge(content);
+            if (!kind) continue;
+            const existing = rollup.get(sessionId);
+            rollup.set(sessionId, kind === 'escrow' || existing === 'escrow' ? 'escrow' : 'p2p');
+          }
+          for (const [sessionId, kind] of rollup) {
+            this.db.run('UPDATE cowork_sessions SET trade_badge = ? WHERE id = ?', [kind, sessionId]);
+          }
+        } catch {
+          // Backfill is best-effort: the write path heals any session the
+          // sweep missed on its next trade message (upgrade-only).
+        }
         this.save();
       }
 

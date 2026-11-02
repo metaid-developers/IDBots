@@ -401,6 +401,8 @@ interface CoworkSession {
   followUpSource?: 'cerebellum' | 'ask_user' | 'manual' | null;
   /** ISO timestamp of the last follow-up transition; null = never transitioned. */
   followUpAt?: string | null;
+  /** S4 chat trade marker: 'p2p' = contract sale/transfer, 'escrow' = escrow activity, null = none. */
+  tradeBadge?: 'p2p' | 'escrow' | null;
   serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
@@ -522,6 +524,8 @@ interface CoworkSessionSummary {
   followUpSource?: 'cerebellum' | 'ask_user' | 'manual' | null;
   /** ISO timestamp of the last follow-up transition; null = never transitioned. */
   followUpAt?: string | null;
+  /** S4 chat trade marker: 'p2p' = contract sale/transfer, 'escrow' = escrow activity, null = none. */
+  tradeBadge?: 'p2p' | 'escrow' | null;
   serviceOrderSummary?: CoworkServiceOrderSummary | null;
 }
 
