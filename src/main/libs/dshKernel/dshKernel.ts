@@ -640,7 +640,7 @@ export class DshKernel {
         break
       }
       case 'turnEnd':
-        handlers.onTurnEnd(sessionId, action.reason, action.emptyTerminal)
+        handlers.onTurnEnd(sessionId, action.reason, action.emptyTerminal, action.finalizationRequired, action.fallbackFinalText)
         break
       case 'usage':
         handlers.onUsage(sessionId, action.usage)

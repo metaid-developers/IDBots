@@ -25,6 +25,14 @@ export const DEEPSEEK_RESPONSES_REASONING_PLACEHOLDER = '[reasoning unavailable]
 export const EMPTY_TERMINAL_TURN_CONTINUE_PROMPT =
   'The previous turn ended without producing any output or tool action. Continue the task from where you left off and perform the next step.';
 
+export const FINALIZATION_TURN_CONTINUE_PROMPT = [
+  'The execution phase has stopped. Produce the owner-facing final response now, with no tool calls.',
+  'Answer the user\'s original question directly in the first sentence, then give the verified outcome, any remaining limits, the next checkpoint, and any action or decision needed from the user.',
+  'Integrate earlier assistant drafts with the final tool evidence instead of publishing only the latest addendum or a process note. Do not retell the execution log.',
+  'For worker delivery notices, distinguish delivered-for-review from accepted or verified. Never claim verification that the tool evidence does not support.',
+  'Use the conversation language and keep the response useful even if the larger task continues after this checkpoint.',
+].join('\n');
+
 /**
  * Cue fed back to the model when a turn was cut by the output-token ceiling
  * (turn/end reason `max-tokens`) and is auto-continued. Covers both shapes of

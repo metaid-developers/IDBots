@@ -165,8 +165,11 @@ export function startMockServer(port = 48787) {
       // CALL_CUA_FG:<tool> — the cua call carries delivery_mode:"foreground",
       // the pointer-moving route the idbots-cu-route-guard plugin denies.
       const cuaFgCall = /CALL_CUA_FG:([A-Za-z0-9_]+)/.exec(lastUserText)
+      const finalizationCandidate = lastUserText.includes('CALL_FINALIZATION')
+      const finalizingReply = lastUserText.includes('The execution phase has stopped')
       const toolCallFor = isChildRequest ? null
         : cuaFgCall ? `cua_driver_native__${cuaFgCall[1]}`
+        : finalizationCandidate ? 'owner_update'
         : lastUserText.includes('CALL_BIG_TOOL') ? 'big_output_tool'
         : lastUserText.includes('CALL_MID_TOOL') ? 'mid_output_tool'
         : lastUserText.includes('CALL_DANGEROUS') ? 'dangerous_tool'
@@ -249,13 +252,21 @@ export function startMockServer(port = 48787) {
           ...base,
           choices: [{
             index: 0,
-            delta: { role: 'assistant', tool_calls: [{ index: 0, id: `call_${toolCallFor}_1`, type: 'function', function: { name: toolCallFor, arguments: args } }] },
+            delta: {
+              role: 'assistant',
+              ...(finalizationCandidate ? { content: `找到了，本机已经有可复用的文件。${'包含直接回答、验证结果、限制和下一步。'.repeat(12)}` } : {}),
+              tool_calls: [{ index: 0, id: `call_${toolCallFor}_1`, type: 'function', function: { name: toolCallFor, arguments: args } }],
+            },
             finish_reason: null,
           }],
         })
         frame({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
       } else {
-        reply = alreadyHasToolResult ? 'mock says: tool finished, result was huge but bounded' : `mock says: ${lastUserText.slice(0, 40)}`
+        reply = finalizingReply
+          ? '找到了，本机已有可复用文件。验证已完成，下一步只需要你提供编号。'
+          : finalizationCandidate
+            ? '权限已收紧。接下来还需要你提供编号。'
+            : alreadyHasToolResult ? 'mock says: tool finished, result was huge but bounded' : `mock says: ${lastUserText.slice(0, 40)}`
         frame({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] })
         for (const part of [reply.slice(0, Math.ceil(reply.length / 2)), reply.slice(Math.ceil(reply.length / 2))]) {
           frame({ ...base, choices: [{ index: 0, delta: { content: part }, finish_reason: null }] })

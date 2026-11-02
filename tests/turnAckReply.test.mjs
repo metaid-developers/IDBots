@@ -8,6 +8,7 @@ import {
   buildFallbackTurnAckReply,
   buildTurnAckReplyMessages,
   containsCjk,
+  resolveTurnAckActivity,
   sanitizeTurnAckReply,
   sanitizeTurnAckReplyForInput,
 } from '../src/main/libs/turnAckReply.ts';
@@ -56,6 +57,25 @@ test('buildFallbackTurnAckReply: bounds long input and always returns an opening
   assert.ok(long.length <= TURN_ACK_REPLY_MAX_CHARS + 1);
   assert.match(long, /…/);
   assert.match(buildFallbackTurnAckReply(''), /this request/);
+});
+
+test('fallback opening uses a local-search intent instead of a generic status', () => {
+  const prompt = '这个文件好像之前申请过的，你要不搜一下本机看有没有？如果不是一个 APP 一个独立文件，而是跟账号走的，我猜大概率本机上已经有了。';
+  assert.equal(resolveTurnAckActivity(prompt), 'search_local');
+  assert.equal(
+    buildFallbackTurnAckReply(prompt),
+    '我先在本机查找相关文件和信息，确认能否直接复用；找到后我会直接告诉你结果。',
+  );
+});
+
+test('fallback opening names the worker delivery without leaking cross-session markup or ids', () => {
+  const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收；验收后向 owner 交付完整成果</cross_session_message>';
+  assert.equal(resolveTurnAckActivity(prompt), 'verify_delivery');
+  const opening = buildFallbackTurnAckReply(prompt);
+  assert.match(opening, /^Builder阿码已交付一个子任务/);
+  assert.match(opening, /验收结果/);
+  assert.ok(!opening.includes('cross_session'));
+  assert.ok(!opening.includes('46828477'));
 });
 
 test('sanitizeTurnAckReply: passes clean text through, strips wrapping noise', () => {
@@ -138,7 +158,7 @@ test('buildTurnAckReplyMessages: prompt forbids describing/analyzing/quoting the
 test('runner: the LLM ack bubble fires at the early-ack site, gated to cowork_ui, fire-and-forget', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
-  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier)');
+  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
   const llmAckCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
   const envSyncSite = source.indexOf('await this.syncDshSkillSessionEnv(');
   assert.ok(templateAck > 0, 'the template ack still fires first (instant indicator cover)');
@@ -157,28 +177,28 @@ test('runner: the LLM ack bubble fires at the early-ack site, gated to cowork_ui
 // the ack bubble — the first sentence a fresh user ever saw. A turn with no
 // user message has nothing to acknowledge: both the template phrase and the
 // LLM bubble must be gated off.
-test('runner: host-initiated turns (skipInitialUserMessage) emit no turn acknowledgment at all', () => {
+test('runner: pure host-initiated turns stay ack-free while persisted cross-session deliveries get an opening', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
-  const gate = source.indexOf("ackSourceChannel === 'cowork_ui' && !activeSession.skipInitialUserMessage");
-  assert.ok(gate > 0, 'the ack emission (template + LLM bubble) must be gated off for host-initiated turns');
-  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier)');
+  const gate = source.indexOf("ackSourceChannel === 'cowork_ui' && (!activeSession.skipInitialUserMessage || crossSessionDelivery)");
+  assert.ok(gate > 0, 'the ack gate keeps pure host prompts off and admits cross-session deliveries');
+  assert.ok(source.includes('const crossSessionDelivery = /<cross_session_message\\b|\\[ORCH-NOTIFY\\]/i.test(prompt);'),
+    'only an already-persisted cross-session delivery overrides skipInitialUserMessage');
+  const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
   const llmAckCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
   assert.ok(gate < templateAck && gate < llmAckCall,
-    'the gate condition must wrap both the template ack and the LLM bubble call');
-  // The flag is captured per turn from the runner options at ActiveSession
-  // construction, so it reflects THIS turn, not a cached session state.
+    'the gate condition wraps both the template ack and the LLM bubble call');
   assert.ok(
     source.includes('skipInitialUserMessage: Boolean(options.skipInitialUserMessage)'),
-    'the ActiveSession must carry the per-turn skipInitialUserMessage flag',
+    'the ActiveSession still carries the per-turn skipInitialUserMessage flag',
   );
 });
 
 test('runner: the ack bubble is dropped once the turn delivered visible text or moved on', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
-  const emitter = source.indexOf('private async emitTurnAckReplyBubble(');
-  assert.ok(emitter > 0, 'emitTurnAckReplyBubble exists');
+  const emitter = source.indexOf('private cancelTurnAckOpeningFallback(');
+  assert.ok(emitter > 0, 'the opening fallback timer and shared emitter exist');
   const body = source.slice(emitter, source.indexOf('private emitSdkRuntimeStatus(', emitter));
   assert.ok(body.includes('this.activeSessions.get(sessionId) !== turn'),
     'an ack whose turn object is no longer the registry current is dropped (identity)');
@@ -186,29 +206,32 @@ test('runner: the ack bubble is dropped once the turn delivered visible text or 
     'a stale ack superseded by a re-kick on the same object is dropped');
   assert.ok(body.includes('turn.dshTurnAckVisibleTextSeen'),
     'an ack landing after real visible text is dropped');
+  assert.ok(body.includes('turn.dshTurnAckOpeningEmitted'),
+    'a fallback or LLM opening can only be emitted once');
   assert.ok(body.includes("metadata: { turnAckReply: true, isFinal: true }"),
     'the bubble is a final assistant message tagged turnAckReply');
   assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
     'the reply rides the one-shot cognitive path with session-title context');
-  assert.ok(body.includes('generatedReply || buildFallbackTurnAckReply(userPrompt)'),
+  assert.ok(body.includes('generatedReply?.trim() || buildFallbackTurnAckReply(userPrompt)'),
     'an empty or failed LLM ack still produces a deterministic opening bubble');
   assert.ok(body.includes('turn.assistantOwnerUpdateCount = Math.max(1,'),
     'the host opening and model updates share one per-turn budget');
-  // The flags are read off the CAPTURED turn object, so a next turn's fresh
-  // state can never vouch for an older turn's ack.
   assert.ok(!body.includes('activeSession.dshTurnAckSerial !== turnSerial'),
     'the gate must not re-read the registry object for the serial');
-  // The kick site captures the object and the serial at kick time.
   const kick = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial)');
   assert.ok(kick > 0, 'the kick passes the turn object and the kick-time serial');
+  assert.ok(source.includes('this.armTurnAckOpeningFallback(sessionId, prompt, activeSession, turnAckSerial)'),
+    'an independent two-second opening timer is armed beside the LLM attempt');
+  assert.ok(source.includes('activeSession.dshTurnAckOpeningEmitted = false;'),
+    'a reused ActiveSession gets a fresh opening budget for each new submission');
 
-  // The gate flag is armed by a visible text bubble opening in the DSH
-  // onMessage path (anchor on the assignment, not the comment above it).
   const onMessageSite = source.indexOf('activeSession.dshTurnAckVisibleTextSeen = true');
   assert.ok(onMessageSite > 0, 'the onMessage callback arms the visible-text gate');
   const gateSnippet = source.slice(onMessageSite - 700, onMessageSite + 100);
   assert.ok(gateSnippet.includes("type === 'assistant'"));
   assert.ok(gateSnippet.includes('isThinking'));
+  assert.ok(gateSnippet.includes('messageMeta?.isStreaming !== true'),
+    'a speculative streaming placeholder cannot suppress the opening');
 });
 
 test('runner: a fresh ActiveSession restarts the ack serial at 1, so identity — not serial equality — is the cross-turn gate', () => {
