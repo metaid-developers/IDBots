@@ -15143,16 +15143,9 @@ if (!gotTheLock) {
 
       // Get unique members who have sent messages in this group
       const memberRows = await withSqliteRecovery('openTeamCollab:getMembers:uniqueMembers', () =>
-        store.getAll<{ sender_global_metaid: string; sender_name: string | null }>(
-          `SELECT DISTINCT sender_global_metaid, sender_name
-           FROM group_chat_messages
-           WHERE group_id = ? AND sender_global_metaid IS NOT NULL
-           ORDER BY id ASC`,
-          [groupId]
-        )
-      );
+        store.listGroupChatSpeakers(groupId));
 
-      const globalMetaIds = memberRows.map(r => r.sender_global_metaid);
+      const globalMetaIds = memberRows.map(r => r.senderGlobalmetaid);
 
       // Get last speak timestamps
       const lastSpeakMap = await withSqliteRecovery('openTeamCollab:getMembers:lastSpeak', () =>
@@ -15164,7 +15157,7 @@ if (!gotTheLock) {
 
       // Build member summaries
       const members: GroupTaskMemberSummary[] = memberRows.map(row => {
-        const gmid = row.sender_global_metaid.toLowerCase();
+        const gmid = row.senderGlobalmetaid.toLowerCase();
         const lastSpeakAt = lastSpeakMap.get(gmid) ?? null;
         const lastWorkingAt = lastWorkingMap.get(gmid) ?? null;
         const lastActivityAt = Math.max(lastSpeakAt ?? 0, lastWorkingAt ?? 0) || null;
@@ -15174,14 +15167,16 @@ if (!gotTheLock) {
           id: 0, // No local row for guest members
           taskId: 0, // Not tied to a local task
           metabotId: null,
-          globalmetaid: row.sender_global_metaid,
-          role: 'member' as const,
+          globalmetaid: row.senderGlobalmetaid,
+          // GroupTaskMemberRole has no guest variant; guests read as plain
+          // workers (the member UI only special-cases 'chair').
+          role: 'worker' as const,
           joinedPinId: null,
           createdAt: null,
-          displayName: row.sender_name ?? 'Unknown',
+          displayName: row.senderName ?? 'Unknown',
           removedAt: null,
           removePinId: null,
-          name: row.sender_name ?? 'Unknown',
+          name: row.senderName ?? 'Unknown',
           status: 'standby' as const, // Default status for guest members
           statusChangedAt: null,
           // GroupTaskMemberSummary extension fields
@@ -15189,8 +15184,8 @@ if (!gotTheLock) {
           lastActivityAt,
           lastSpeakAt,
           lastWorkingAt,
-          workStatus: null, // No local worker session
-          inviteStatus: null, // Guest members joined via external invite
+          workStatus: 'unknown' as const, // No local worker session for guests
+          inviteStatus: 'none' as const, // Guests joined via external invite
         };
       });
 
