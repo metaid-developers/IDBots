@@ -3,7 +3,7 @@ import type { OpenTeamCollabSummary } from '../../types/openTeamCollab';
 import { i18nService } from '../../services/i18n';
 import { GroupTaskTypeBadge, GroupTaskGuestBadge } from './GroupTaskSidebarList';
 import { relativeTimeTitle } from './GroupTaskListMeta';
-import { formatGroupTaskRelativeTime } from './groupTaskUtils';
+import { formatGroupTaskRelativeTime, toGroupTaskDate } from './groupTaskUtils';
 
 export interface OpenTeamCollabSidebarRowProps {
   collab: OpenTeamCollabSummary;
@@ -25,12 +25,11 @@ export const OpenTeamCollabSidebarRow: React.FC<OpenTeamCollabSidebarRowProps> =
   // Use taskTitle if available, otherwise fallback to botName, or a truncated groupId
   const displayTitle = collab.taskTitle || collab.botName || `Group ${collab.groupId.slice(0, 8)}`;
 
-  // Convert timestamp to ISO string for formatGroupTaskRelativeTime
-  const updatedAtStr = collab.lastMessageAt
-    ? new Date(collab.lastMessageAt).toISOString()
-    : collab.createdAt;
-
-  const relative = formatGroupTaskRelativeTime(updatedAtStr ?? new Date().toISOString());
+  // On-chain timestamps are epoch SECONDS — route them through the shared
+  // auto-detecting helper (toGroupTaskDate) instead of `new Date()`, which
+  // would read them as milliseconds and render ~"20000d" on every row.
+  const updatedAtDate = toGroupTaskDate(collab.lastMessageAt ?? collab.createdAt);
+  const relative = formatGroupTaskRelativeTime(updatedAtDate ? updatedAtDate.getTime() : null);
 
   // Check for unread checkpoint (if hasOpenCheckpoint exists in future)
   const hasCheckpoint = false; // OpenTeam doesn't expose this yet
@@ -71,25 +70,25 @@ export const OpenTeamCollabSidebarRow: React.FC<OpenTeamCollabSidebarRowProps> =
           {hasCheckpoint && (
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
-              <span>{i18nService.t('groupTask.checkpoint')}</span>
+              <span>{i18nService.t('groupTaskCheckpoint')}</span>
             </span>
           )}
 
           {collab.status === 'left' && (
             <span className="text-amber-600 dark:text-amber-400">
-              {i18nService.t('groupTask.left')}
+              {i18nService.t('groupTaskLeft')}
             </span>
           )}
 
           {collab.status === 'active' && collab.messageCount > 0 && (
-            <span>{collab.messageCount} {i18nService.t('groupTask.messages')}</span>
+            <span>{collab.messageCount} {i18nService.t('groupTaskMessages')}</span>
           )}
         </div>
       </div>
 
       {/* Right side: timestamp */}
       <div className="flex-shrink-0 text-xs text-slate-500 dark:text-slate-400">
-        <time dateTime={updatedAtStr ?? undefined} title={relativeTimeTitle(relative.unit, relative.count)}>
+        <time dateTime={updatedAtDate?.toISOString() ?? undefined} title={relativeTimeTitle(relative.unit, relative.count)}>
           {relative.compact}
         </time>
       </div>
