@@ -1,5 +1,5 @@
 {
-  "appId": "world.idbots.app",
+  "appId": "com.idbots.world",
   "appName": "IDBots",
   "webDir": "www",
   "server": {
