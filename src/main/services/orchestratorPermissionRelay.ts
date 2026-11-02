@@ -158,8 +158,9 @@ function ensureState(
 }
 
 function relayTimeoutResult(request: RelayPermissionRequest): PermissionResult | null {
-  // Questions with no default stay until a person answers. Tool approvals
-  // carry timeoutDefault 'allow'; delete and other safety confirms carry 'deny'.
+  // Questions with no default stay until a person answers. Every tool
+  // approval carries timeoutDefault 'deny' (fail-closed since the
+  // 2026-11-03 pre-release review — the auto-allow default was reverted).
   if (request.toolName === 'AskUserQuestion' && request.timeoutDefault !== 'allow' && request.timeoutDefault !== 'deny') {
     return null;
   }

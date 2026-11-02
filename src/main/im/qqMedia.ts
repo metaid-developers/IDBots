@@ -154,6 +154,14 @@ export function assertQQMediaUrl(rawUrl: string): URL {
   if (host.includes(':') && (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80'))) {
     throw new QQMediaError('media url points at a private address');
   }
+  // IPv4-mapped IPv6 (::ffff:127.0.0.1 and friends) resolves to a loopback /
+  // private v4 address — strip the mapping prefix and re-check as v4.
+  if (host.startsWith('::ffff:')) {
+    const mapped = host.slice('::ffff:'.length);
+    if (isPrivateIpv4(mapped) || mapped === '127.0.0.1') {
+      throw new QQMediaError('media url points at a private address');
+    }
+  }
   return url;
 }
 
@@ -250,6 +258,40 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
   else source.addEventListener('abort', () => controller.abort(), { once: true });
 }
 
+/**
+ * Stream the response body with a hard running-byte cap. Buffering the whole
+ * body before checking the cap let a server that omits content-length stream
+ * an arbitrarily large body into memory (pre-release review P1) — reading
+ * chunks and refusing past `maxBytes` bounds memory at maxBytes + one chunk.
+ */
+async function readBodyWithCap(
+  response: Response,
+  maxBytes: number,
+  onExceeded: (bytes: number) => Error,
+): Promise<Buffer> {
+  const body = response.body;
+  if (!body) return Buffer.alloc(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try { await reader.cancel(); } catch { /* best effort */ }
+        throw onExceeded(total);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released by cancel() */ }
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+}
+
 export const defaultQQMediaNetwork: QQMediaNetwork = {
   async fetchBytes(url, options) {
     const controller = new AbortController();
@@ -271,10 +313,8 @@ export const defaultQQMediaNetwork: QQMediaNetwork = {
       if (Number.isFinite(declared) && declared > options.maxBytes) {
         throw new QQMediaError(`media download refused: declared size ${declared} exceeds ${options.maxBytes}`);
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
-      if (bytes.length > options.maxBytes) {
-        throw new QQMediaError(`media download refused: ${bytes.length} bytes exceeds ${options.maxBytes}`);
-      }
+      const bytes = await readBodyWithCap(response, options.maxBytes, (read) =>
+        new QQMediaError(`media download refused: ${read} bytes exceeds ${options.maxBytes}`));
       return { bytes, contentType: response.headers.get('content-type') };
     } finally {
       clearTimeout(timer);

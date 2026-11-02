@@ -206,7 +206,9 @@ export function assertWeixinCdnUrl(url: string): URL {
   } catch {
     throw new WeixinMediaError('media URL is not parseable');
   }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+  if (parsed.protocol !== 'https:') {
+    // The download credential (encrypted_query_param) must not ride cleartext
+    // even for allowlisted hosts.
     throw new WeixinMediaError(`media URL scheme ${parsed.protocol} is not allowed`);
   }
   if (!WEIXIN_CDN_HOST_ALLOWLIST.has(parsed.hostname)) {
@@ -544,6 +546,36 @@ function linkAbort(source: AbortSignal | undefined, controller: AbortController)
   else source.addEventListener('abort', () => controller.abort(), { once: true });
 }
 
+/**
+ * Stream the response body with a hard running-byte cap. Buffering the whole
+ * body before checking the cap let a server that omits content-length stream
+ * an arbitrarily large body into memory (pre-release review P1) — reading
+ * chunks and refusing past `maxBytes` bounds memory at maxBytes + one chunk.
+ */
+async function readBodyWithCap(response: Response, maxBytes: number, onExceeded: (bytes: number) => Error): Promise<Buffer> {
+  const body = response.body;
+  if (!body) return Buffer.alloc(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try { await reader.cancel(); } catch { /* best effort */ }
+        throw onExceeded(total);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released by cancel() */ }
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+}
+
 export const defaultWeixinMediaNetwork: WeixinMediaNetwork = {
   async fetchBytes(url, options) {
     const controller = new AbortController();
@@ -559,11 +591,8 @@ export const defaultWeixinMediaNetwork: WeixinMediaNetwork = {
       if (Number.isFinite(declared) && declared > options.maxBytes) {
         throw new WeixinMediaError(`CDN download refused: declared size ${declared} exceeds ${options.maxBytes}`);
       }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > options.maxBytes) {
-        throw new WeixinMediaError(`CDN download refused: ${buffer.length} bytes exceeds ${options.maxBytes}`);
-      }
-      return buffer;
+      return await readBodyWithCap(response, options.maxBytes, (read) =>
+        new WeixinMediaError(`CDN download refused: ${read} bytes exceeds ${options.maxBytes}`));
     } finally {
       clearTimeout(timer);
     }

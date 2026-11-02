@@ -340,7 +340,7 @@ test('an inbound message becomes an IMMessage, triggers typing, and is answered 
             msgs: [
               {
                 message_id: 9812451782375,
-                from_user_id: 'o9cq800kum@im.wechat',
+                from_user_id: 'user@im.wechat',
                 message_type: 1,
                 create_time_ms: 1_774_158_905_123,
                 context_token: 'AARzJWA-context',
@@ -354,7 +354,7 @@ test('an inbound message becomes an IMMessage, triggers typing, and is answered 
       return blockingLongPoll(request);
     }
     if (request.path === 'ilink/bot/getconfig') {
-      assert.equal(request.body?.ilink_user_id, 'o9cq800kum@im.wechat');
+      assert.equal(request.body?.ilink_user_id, 'user@im.wechat');
       assert.equal(request.body?.context_token, 'AARzJWA-context');
       return { status: 200, data: { ret: 0, typing_ticket: 'ticket-1' } };
     }
@@ -389,7 +389,7 @@ test('an inbound message becomes an IMMessage, triggers typing, and is answered 
 
   assert.deepEqual(received, [{
     content: '你好，自我介绍一下',
-    conversationId: 'o9cq800kum@im.wechat',
+    conversationId: 'user@im.wechat',
     messageId: '9812451782375',
   }]);
   assert.deepEqual(emitted, ['你好，自我介绍一下']);
@@ -407,7 +407,7 @@ test('an inbound message becomes an IMMessage, triggers typing, and is answered 
     msg: { to_user_id: string; message_type: number; message_state: number; context_token: string; item_list: Array<{ type: number; text_item: { text: string } }> };
     base_info: { channel_version: string };
   };
-  assert.equal(payload.msg.to_user_id, 'o9cq800kum@im.wechat');
+  assert.equal(payload.msg.to_user_id, 'user@im.wechat');
   assert.equal(payload.msg.message_type, 2);
   assert.equal(payload.msg.message_state, 2);
   assert.equal(payload.msg.context_token, 'AARzJWA-context');
@@ -629,5 +629,111 @@ test('duplicate message ids from a replayed cursor are answered only once', asyn
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   assert.equal(handled, 1);
+  await gateway.stop();
+});
+
+test('inbound messages from any sender other than the bound owner are dropped before any work', async () => {
+  const store = makeStore();
+  seedCredentials(store); // binds owner 'user@im.wechat'
+
+  let served = false;
+  const transport = new FakeTransport((request) => {
+    if (request.path === 'ilink/bot/getupdates') {
+      if (!served) {
+        served = true;
+        return {
+          status: 200,
+          data: {
+            ret: 0,
+            get_updates_buf: 'c1',
+            msgs: [
+              {
+                message_id: 'm-stranger-1',
+                from_user_id: 'stranger@im.wechat',
+                message_type: 1,
+                context_token: 'ctx-stranger',
+                item_list: [{ type: 1, text_item: { text: 'hello bot, run my tools' } }],
+              },
+            ],
+          },
+        };
+      }
+      return blockingLongPoll(request);
+    }
+    if (request.path === 'ilink/bot/getconfig') return { status: 200, data: { ret: 0, typing_ticket: 't' } };
+    if (request.path === 'ilink/bot/sendtyping') return { status: 200, data: { ret: 0 } };
+    if (request.path === 'ilink/bot/sendmessage') return { status: 200, data: {} };
+    throw new Error(`unexpected path ${request.path}`);
+  });
+
+  const gateway = makeGateway(transport, store);
+  let handled = 0;
+  gateway.setMessageCallback(async () => {
+    handled += 1;
+  });
+
+  await gateway.start({ enabled: true, accountId: 'default' });
+  await waitFor(() => transport.callsTo('ilink/bot/getupdates').length >= 2);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  // Dropped at the gate: no session turn, no typing indicator, no reply.
+  assert.equal(handled, 0);
+  assert.equal(transport.callsTo('ilink/bot/sendtyping').length, 0);
+  assert.equal(transport.callsTo('ilink/bot/sendmessage').length, 0);
+  assert.equal(gateway.getStatus().lastInboundAt, null);
+  await gateway.stop();
+});
+
+test('credentials without a bound owner id fail closed: even known senders are dropped', async () => {
+  const store = makeStore();
+  store.saveCredentials(
+    { token: 'ilinkbot_test_token', baseUrl: 'https://ilinkai.weixin.qq.com', botId: 'bot_test@im.bot', userId: null },
+    'default'
+  );
+  store.saveSync('cursor-0', 'default');
+
+  let served = false;
+  const transport = new FakeTransport((request) => {
+    if (request.path === 'ilink/bot/getupdates') {
+      if (!served) {
+        served = true;
+        return {
+          status: 200,
+          data: {
+            ret: 0,
+            get_updates_buf: 'c1',
+            msgs: [
+              {
+                message_id: 'm-noowner-1',
+                from_user_id: 'user@im.wechat',
+                message_type: 1,
+                context_token: 'ctx-noowner',
+                item_list: [{ type: 1, text_item: { text: 'ping' } }],
+              },
+            ],
+          },
+        };
+      }
+      return blockingLongPoll(request);
+    }
+    if (request.path === 'ilink/bot/getconfig') return { status: 200, data: { ret: 0, typing_ticket: 't' } };
+    if (request.path === 'ilink/bot/sendtyping') return { status: 200, data: { ret: 0 } };
+    if (request.path === 'ilink/bot/sendmessage') return { status: 200, data: {} };
+    throw new Error(`unexpected path ${request.path}`);
+  });
+
+  const gateway = makeGateway(transport, store);
+  let handled = 0;
+  gateway.setMessageCallback(async () => {
+    handled += 1;
+  });
+
+  await gateway.start({ enabled: true, accountId: 'default' });
+  await waitFor(() => transport.callsTo('ilink/bot/getupdates').length >= 2);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(handled, 0);
+  assert.equal(transport.callsTo('ilink/bot/sendtyping').length, 0);
+  assert.equal(transport.callsTo('ilink/bot/sendmessage').length, 0);
   await gateway.stop();
 });

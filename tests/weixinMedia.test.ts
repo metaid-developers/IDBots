@@ -741,7 +741,7 @@ test('gateway downloads an inbound image and hands attachments to IMMessage', as
           msgs: [
             {
               message_id: 'm-image-1',
-              from_user_id: 'wx_user_1',
+              from_user_id: 'user@im.wechat',
               message_type: 1,
               context_token: 'ctx-1',
               create_time_ms: 1_700_000_000_500,
@@ -802,7 +802,7 @@ test('gateway keeps the message when an attachment fails to download', async () 
           msgs: [
             {
               message_id: 'm-file-1',
-              from_user_id: 'wx_user_2',
+              from_user_id: 'user@im.wechat',
               message_type: 1,
               item_list: [
                 { type: WEIXIN_ITEM_TYPE_FILE, file_item: { media: { encrypt_query_param: 'x', aes_key: 'k' }, file_name: 'a.pdf' } },
@@ -924,7 +924,7 @@ test('replyFn sends stripped text then the referenced image', async () => {
         data: {
           ret: 0,
           get_updates_buf: 'cursor-reply',
-          msgs: [{ message_id: 'm-text-1', from_user_id: 'wx_user_5', message_type: 1, item_list: [{ type: 1, text_item: { text: '发我一张图' } }] }],
+          msgs: [{ message_id: 'm-text-1', from_user_id: 'user@im.wechat', message_type: 1, item_list: [{ type: 1, text_item: { text: '发我一张图' } }] }],
         },
       };
     }
@@ -973,7 +973,7 @@ test('replyFn reports a missing media file instead of staying silent', async () 
         data: {
           ret: 0,
           get_updates_buf: 'cursor-missing',
-          msgs: [{ message_id: 'm-text-2', from_user_id: 'wx_user_6', message_type: 1, item_list: [{ type: 1, text_item: { text: '发文件' } }] }],
+          msgs: [{ message_id: 'm-text-2', from_user_id: 'user@im.wechat', message_type: 1, item_list: [{ type: 1, text_item: { text: '发文件' } }] }],
         },
       };
     }

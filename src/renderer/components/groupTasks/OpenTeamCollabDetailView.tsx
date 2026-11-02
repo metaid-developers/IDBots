@@ -291,8 +291,8 @@ const OpenTeamCollabDetailView: React.FC<OpenTeamCollabDetailViewProps> = ({
             </p>
           ) : (
             <div className="space-y-1.5">
-              {members.map((member) => (
-                <React.Fragment key={member.id ?? member.globalmetaid}>
+              {members.map((member, index) => (
+                <React.Fragment key={member.globalmetaid || `member-${index}`}>
                   <div className="group flex items-center gap-2">
                     <GroupTaskTinyAvatar
                       src={member.avatar}

@@ -10,7 +10,7 @@ const { SqliteStore } = require('../dist-electron/main/sqliteStore.js');
 const { LongTermTaskStore } = require('../dist-electron/main/longTermTaskStore.js');
 const { OrchestrationStore } = require('../dist-electron/main/orchestrationStore.js');
 const { CoworkStore } = require('../dist-electron/main/coworkStore.js');
-const { LongTermAdvanceService, DEFAULT_SESSION_ROTATION_MESSAGES } = require('../dist-electron/main/services/longTermAdvanceService.js');
+const { LongTermAdvanceService, DEFAULT_SESSION_ROTATION_MESSAGES, MAX_ATTENTION_ESCALATIONS_PER_SUBTASK } = require('../dist-electron/main/services/longTermAdvanceService.js');
 
 /**
  * LongTermAdvanceService (P1): the longterm.advance heartbeat handler. Real
@@ -620,6 +620,37 @@ test('attention: Twin recovery escalates once per attempt and re-arms only for a
   const third = await supervisor.run(now + 10 * 60_000);
   assert.equal(third.escalated.length, 1, JSON.stringify(third));
   assert.equal(runner.starts.length, 2, 'a new attempt bypasses the ordinary nudge throttle exactly once');
+});
+
+test('attention: a subtask that keeps failing is parked for the owner after the retry cap, not escalated forever', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  let attemptSeq = 0;
+  // Every run reports a NEW failed attempt — a fresh attention key each time,
+  // exactly the runaway shape the review flagged (twin re-dispatch → new
+  // attempt → new key → throttle bypassed).
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-cap',
+    attention: { waitingOn: 'twin', reason: 'RECOVERED_AFTER_RESTART', stepId: 'step-1', attemptId: `cap-a${++attemptSeq}` },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  for (let i = 0; i < MAX_ATTENTION_ESCALATIONS_PER_SUBTASK; i += 1) {
+    const report = await supervisor.run(now + i * 5 * 60_000);
+    assert.equal(report.escalated.length, 1, `run ${i + 1} should escalate: ${JSON.stringify(report)}`);
+  }
+  assert.equal(runner.starts.length, MAX_ATTENTION_ESCALATIONS_PER_SUBTASK);
+
+  // The next fresh attempt no longer buys a turn: the subtask is parked.
+  const capped = await supervisor.run(now + MAX_ATTENTION_ESCALATIONS_PER_SUBTASK * 5 * 60_000);
+  assert.equal(capped.escalated.length, 0, JSON.stringify(capped));
+  assert.equal(runner.starts.length, MAX_ATTENTION_ESCALATIONS_PER_SUBTASK, 'the cap stops further attention turns');
+  assert.match(capped.skipped[0].reason, /attention retry cap reached/);
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+  assert.match(store.getTask(taskId).subtasks[0].waitNote ?? '', /owner review needed/);
 });
 
 test('attention: Owner question is journaled once and delivered with the concrete human action', async () => {

@@ -2881,6 +2881,30 @@ export class CoworkRunner extends EventEmitter {
   private crossSessionDeliveryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private crossSessionService: CoworkCrossSessionService | null = null;
   private crossSessionDeliveryStore?: CrossSessionDeliveryStore;
+  /** Per-local-day replay budget counter (see DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET). */
+  private crossSessionReplayBudget: { dayKey: string; used: number } = { dayKey: '', used: 0 };
+
+  /**
+   * Continuation turns one durable-outbox drain pass may run before yielding
+   * (pre-release review P1): a deep post-downtime backlog otherwise replays
+   * as one back-to-back LLM burst. The finally block re-schedules the rest.
+   */
+  static readonly DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = 3;
+  /** Pause between drain passes once a backlog exceeds one pass. */
+  static readonly DURABLE_CROSS_SESSION_REPLAY_PACE_MS = 60_000;
+  /**
+   * Hard per-local-day budget on REPLAYED deliveries (pre-release review P1,
+   * user decision 2026-11-03): rows enqueued by a PREVIOUS app session cost
+   * LLM turns the moment the app comes back, and pacing alone still spends
+   * the whole backlog eventually. Past this many replayed continuations in
+   * one local day, the rest of the backlog is deferred to the next local
+   * midnight (no attempt consumed, nothing dropped). Deliveries enqueued by
+   * the CURRENT session never count — live cross-session traffic must not
+   * starve behind a stale backlog.
+   */
+  static readonly DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET = 100;
+  /** Process-start marker separating replays (older) from live deliveries. */
+  static DURABLE_CROSS_SESSION_APP_START_MS = Date.now();
 
   constructor(store: CoworkStore, options?: CoworkRunnerOptions) {
     super();
@@ -8251,7 +8275,7 @@ export class CoworkRunner extends EventEmitter {
     return this.crossSessionDeliveryStore?.reliabilitySnapshot() ?? null;
   }
 
-  private scheduleDurableCrossSessionDrain(targetSessionId: string): void {
+  private scheduleDurableCrossSessionDrain(targetSessionId: string, minDelayMs?: number): void {
     const store = this.crossSessionDeliveryStore;
     if (!store) return;
     if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
@@ -8264,10 +8288,11 @@ export class CoworkRunner extends EventEmitter {
 
     const previousTimer = this.crossSessionDeliveryTimers.get(targetSessionId);
     if (previousTimer) clearTimeout(previousTimer);
+    const delay = Math.max(minDelayMs ?? 0, next.nextAttemptAt - Date.now());
     const timer = setTimeout(() => {
       this.crossSessionDeliveryTimers.delete(targetSessionId);
       void this.drainDurableCrossSessionDeliveries(targetSessionId);
-    }, Math.max(0, next.nextAttemptAt - Date.now()));
+    }, delay);
     timer.unref?.();
     this.crossSessionDeliveryTimers.set(targetSessionId, timer);
   }
@@ -8276,14 +8301,42 @@ export class CoworkRunner extends EventEmitter {
     const store = this.crossSessionDeliveryStore;
     if (!store || this.crossSessionContinuationDraining.has(targetSessionId)) return;
     this.crossSessionContinuationDraining.add(targetSessionId);
+    let continuationsThisPass = 0;
+    let pacedStop = false;
+    let budgetDeferred = 0;
     try {
       while (!this.isCrossSessionTurnRunning(targetSessionId)) {
         if (this.isDurableCrossSessionTargetStopped(targetSessionId)) {
           store.cancelTarget(targetSessionId, 'TARGET_SESSION_STOPPED');
           return;
         }
+        if (continuationsThisPass >= CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN) {
+          // Yield the pass: the finally block re-schedules the remaining
+          // backlog with a pacing delay instead of replaying it as one burst.
+          pacedStop = true;
+          return;
+        }
         const next = store.nextDue(targetSessionId);
         if (!next) return;
+
+        // Daily replay budget: a row enqueued by a previous app session only
+        // runs while today's replay budget lasts; past the cap it is pushed
+        // to the next local midnight (no attempt consumed, nothing dropped)
+        // so live deliveries enqueued today keep flowing.
+        if (next.createdAt < CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS) {
+          const nowMs = Date.now();
+          if (this.crossSessionReplayBudgetUsed(nowMs) >= CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET) {
+            store.deferDeliveryTo(next.id, CoworkRunner.nextLocalMidnightMs(nowMs), 'REPLAY_DAILY_BUDGET_DEFERRED');
+            budgetDeferred += 1;
+            if (budgetDeferred === 1) {
+              coworkLog('WARN', 'crossSession:replayBudget', 'Daily replay budget exhausted; deferring the rest of the pre-start backlog to the next local day', {
+                sessionId: targetSessionId,
+                budget: CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET,
+              });
+            }
+            continue;
+          }
+        }
 
         let renderedMessage = next.renderedMessage;
         if (!next.messageId || !renderedMessage) {
@@ -8309,6 +8362,10 @@ export class CoworkRunner extends EventEmitter {
 
         const running = store.markRunning(next.id);
         if (running.state !== 'running') continue;
+        continuationsThisPass += 1;
+        if (next.createdAt < CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS) {
+          this.bumpCrossSessionReplayBudget(Date.now());
+        }
         try {
           await this.continueSession(targetSessionId, renderedMessage, { skipUserMessage: true });
           store.markCompleted(next.id);
@@ -8328,10 +8385,38 @@ export class CoworkRunner extends EventEmitter {
       }
     } finally {
       this.crossSessionContinuationDraining.delete(targetSessionId);
+      if (budgetDeferred > 0) store.persist();
       if (!this.isCrossSessionTurnRunning(targetSessionId) && store.nextPending(targetSessionId)) {
-        this.scheduleDurableCrossSessionDrain(targetSessionId);
+        this.scheduleDurableCrossSessionDrain(
+          targetSessionId,
+          pacedStop ? CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS : undefined,
+        );
       }
     }
+  }
+
+  /** Today's used replay budget, rolling the counter at the local day boundary. */
+  private crossSessionReplayBudgetUsed(nowMs: number): number {
+    const dayKey = CoworkRunner.localDayKey(nowMs);
+    if (this.crossSessionReplayBudget.dayKey !== dayKey) {
+      this.crossSessionReplayBudget = { dayKey, used: 0 };
+    }
+    return this.crossSessionReplayBudget.used;
+  }
+
+  private bumpCrossSessionReplayBudget(nowMs: number): void {
+    this.crossSessionReplayBudgetUsed(nowMs);
+    this.crossSessionReplayBudget.used += 1;
+  }
+
+  private static localDayKey(nowMs: number): string {
+    const date = new Date(nowMs);
+    return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  }
+
+  private static nextLocalMidnightMs(nowMs: number): number {
+    const date = new Date(nowMs);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0).getTime();
   }
 
   private insertDurableCrossSessionMessageAndQueue(input: {
@@ -11352,11 +11437,11 @@ export class CoworkRunner extends EventEmitter {
             stampPermissionDeadline(request, timeoutDefault);
             activeSession.pendingPermission = request;
             this.emit('permissionRequest', sessionId, request);
-            // Shared 60s watchdog (abort-wired). Ordinary tool approvals
-            // auto-allow; safety confirms carried in the reason (external
-            // agent CLI, delete) auto-deny. Either way the blocked tool call
-            // returns instead of wedging the turn. The countdown on the
-            // default button reads request.expiresAt.
+            // Shared 60s watchdog (abort-wired). Every unanswered tool
+            // approval auto-denies (fail-closed, 2026-11-03 review — the
+            // ordinary-approvals auto-allow default was reverted). Either way
+            // the blocked tool call returns instead of wedging the turn. The
+            // countdown on the default button reads request.expiresAt.
             void this.waitForPermissionResponse(sessionId, ask.id, activeSession.abortController.signal, {
               timeoutBehavior: timeoutDefault,
             })

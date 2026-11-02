@@ -104,6 +104,104 @@ test('durable delivery completes once and a repeated delivery ID neither reinser
   }
 });
 
+test('a deep backlog drains in paced batches instead of one back-to-back burst', async () => {
+  const originalCap = CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN;
+  const originalPace = CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS;
+  CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = 2;
+  CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS = 20;
+  try {
+    const world = await openWorld();
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const queued = world.runner.insertCrossSessionMessageAndQueue(
+          deliveryInput(world, `delivery-pace-${i}`, `pace ${i}`),
+        );
+        assert.equal(queued.insert.ok, true, JSON.stringify(queued));
+      }
+      // Pass 1 stops at the cap; paced passes finish the rest in FIFO order.
+      await waitFor(() => assert.equal(world.calls.length, 5), 2000);
+      assert.deepEqual(
+        world.calls.map((call) => (call.prompt.match(/<cross_session_message[^>]*>([^<]*)</) ?? [])[1]),
+        ['pace 0', 'pace 1', 'pace 2', 'pace 3', 'pace 4'],
+      );
+      const snapshot = world.runner.getCrossSessionDeliveryReliabilitySnapshot();
+      assert.equal(snapshot.completed, 5);
+      assert.equal(snapshot.pending, 0);
+    } finally {
+      dispose(world);
+    }
+  } finally {
+    CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = originalCap;
+    CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS = originalPace;
+  }
+});
+
+test('replayed backlog past the daily budget defers to the next day; live deliveries keep flowing', async () => {
+  const originalBudget = CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET;
+  const originalAppStart = CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS;
+  const originalCap = CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN;
+  const originalPace = CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS;
+  // Everything enqueued "now" counts as a replay (created before the patched
+  // app-start marker), so the budget gate is exercisable in-process.
+  CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET = 2;
+  CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS = Date.now() + 3_600_000;
+  CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = 3;
+  CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS = 5;
+  try {
+    const world = await openWorld();
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        const queued = world.runner.insertCrossSessionMessageAndQueue(
+          deliveryInput(world, `delivery-budget-${i}`, `budget ${i}`),
+        );
+        assert.equal(queued.insert.ok, true, JSON.stringify(queued));
+      }
+      await waitFor(() => assert.equal(world.calls.length, 2), 2000);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.equal(world.calls.length, 2, 'the budget stops further replay turns today');
+
+      const snapshot = world.runner.getCrossSessionDeliveryReliabilitySnapshot();
+      assert.equal(snapshot.completed, 2);
+      assert.equal(snapshot.pending, 2, 'deferred rows stay pending, never dropped');
+
+      for (const id of ['delivery-budget-2', 'delivery-budget-3']) {
+        const row = world.deliveryStore.getById(id);
+        assert.equal(row.state, 'pending');
+        assert.equal(row.lastError, 'REPLAY_DAILY_BUDGET_DEFERRED');
+        const expectedMidnight = new Date(
+          new Date().getFullYear(), new Date().getMonth(), new Date().getDate() + 1, 0, 0, 0, 0,
+        ).getTime();
+        assert.equal(row.nextAttemptAt, expectedMidnight);
+      }
+
+      // A delivery enqueued by the CURRENT session never counts against the
+      // replay budget: rewind the replay window so new rows classify as live.
+      CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS = Date.now() - 1;
+      const live = world.runner.insertCrossSessionMessageAndQueue({
+        sourceSessionId: world.source.id,
+        targetSessionId: world.target.id,
+        message: 'live today',
+        deliveryId: 'delivery-live-today',
+      });
+      assert.equal(live.insert.ok, true, JSON.stringify(live));
+      await waitFor(() => assert.equal(world.calls.length, 3), 2000);
+      assert.equal(
+        world.calls[2].prompt.includes('live today'),
+        true,
+        'live delivery drains despite the exhausted replay budget',
+      );
+      assert.equal(world.deliveryStore.getById('delivery-budget-2').state, 'pending', 'deferred replay stays parked');
+    } finally {
+      dispose(world);
+    }
+  } finally {
+    CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_DAILY_BUDGET = originalBudget;
+    CoworkRunner.DURABLE_CROSS_SESSION_APP_START_MS = originalAppStart;
+    CoworkRunner.DURABLE_CROSS_SESSION_MAX_CONTINUATIONS_PER_DRAIN = originalCap;
+    CoworkRunner.DURABLE_CROSS_SESSION_REPLAY_PACE_MS = originalPace;
+  }
+});
+
 test('restart after message insert but before outbox attachment adopts the message without duplication', async () => {
   const world = await openWorld();
   try {

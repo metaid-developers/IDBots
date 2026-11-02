@@ -438,7 +438,10 @@ test('A2A display window skips a hidden error flood and keeps visible conversati
     store.addMessage(session.id, {
       type: 'assistant',
       content: 'wait a moment',
-      metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing' },
+      // A chain-backed A2A reply that was actually delivered carries a txid —
+      // without one the shipped filter classifies it as undelivered monologue
+      // and hides it (shouldHideA2AInternalMessage, chainBackedConversation).
+      metadata: { sourceChannel: 'metaweb_private', direction: 'outgoing', txid: 'ab'.repeat(32) },
     });
     store.addMessage(session.id, {
       type: 'assistant',
