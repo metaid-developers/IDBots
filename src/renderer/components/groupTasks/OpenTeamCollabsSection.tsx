@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import { openTeamCollabService } from '../../services/openTeamCollabService';
 import type { OpenTeamCollabSummary, OpenTeamGuestInvite, OpenTeamGuestInviteStatus } from '../../types/openTeamCollab';
-import { formatGroupTaskTime } from './groupTaskUtils';
-import { GroupTaskTypeBadge, GroupTaskGuestBadge } from './GroupTaskSidebarList';
+import { formatGroupTaskRelativeTime, formatGroupTaskTime } from './groupTaskUtils';
+import { GroupTaskMemberAvatarRow, relativeTimeTitle } from './GroupTaskListMeta';
 
 /** Short display form of a GlobalMetaID / group id (same style as the task detail rail). */
 export function shortGlobalMetaId(value: string | null | undefined): string {
@@ -132,9 +132,11 @@ export const OpenTeamCollabCard: React.FC<{ collab: OpenTeamCollabSummary; onCli
   onClick,
 }) => {
   const inviter = shortGlobalMetaId(collab.inviterGlobalmetaid);
-  const botLabel = collab.botName?.trim() || `bot-${collab.metabotId}`;
   const joinedAt = formatGroupTaskTime(collab.createdAt);
-  const lastActivity = formatGroupTaskTime(collab.lastMessageAt);
+  // Same clock as the local task rows: lastMessageAt is chain_timestamp (unix
+  // SECONDS) — toGroupTaskDate reads it correctly (a naive new Date(seconds)
+  // lands in 1970 and renders absurd "20739d"-class labels).
+  const relative = formatGroupTaskRelativeTime(collab.lastMessageAt ?? collab.createdAt);
   const leftAt = formatGroupTaskTime(collab.leftAt);
   // R4: why/how the membership ended — a kicked collab must read as "removed",
   // not as an unexplained gray "Left" badge. Legacy rows (pre left_* columns)
@@ -165,10 +167,18 @@ export const OpenTeamCollabCard: React.FC<{ collab: OpenTeamCollabSummary; onCli
               {openTeamCollabStatusLabel(collab)}
             </span>
           </div>
-          <div className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary truncate">
-            {i18nService.t('openTeamCollabYourBot')}: {botLabel}
-            {inviter ? ` · ${i18nService.t('openTeamCollabInvitedBy')} ${inviter}` : ''}
-            {joinedAt ? ` · ${i18nService.t('openTeamCollabJoined')} ${joinedAt}` : ''}
+          <div className="mt-1 flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <GroupTaskMemberAvatarRow members={collab.memberPreviews ?? []} />
+            {inviter ? (
+              <span className="shrink-0 truncate">
+                {i18nService.t('openTeamCollabInvitedBy')} {inviter}
+              </span>
+            ) : null}
+            {joinedAt ? (
+              <span className="shrink-0 truncate">
+                {i18nService.t('openTeamCollabJoined')} {joinedAt}
+              </span>
+            ) : null}
           </div>
           {collab.status === 'left' && (leftCauseLabel || leftAt) && (
             <div className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary truncate">
@@ -178,12 +188,14 @@ export const OpenTeamCollabCard: React.FC<{ collab: OpenTeamCollabSummary; onCli
             </div>
           )}
         </div>
-        <div className="shrink-0 text-right text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-          <div>
-            {i18nService.t('openTeamCollabMessageCount').replace('{count}', String(collab.messageCount))}
+        {relative.compact ? (
+          <div
+            className="shrink-0 text-right text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary"
+            title={relativeTimeTitle(relative.unit, relative.count)}
+          >
+            {relative.compact}
           </div>
-          {lastActivity && <div className="mt-0.5">{lastActivity}</div>}
-        </div>
+        ) : null}
       </div>
     </div>
   );
@@ -266,49 +278,3 @@ export function useOpenTeamCollabs(): {
 
   return { items, guestInvites, loaded, removedNotices, dismissRemovedNotice };
 }
-
-/**
- * Compact sidebar row for one joined collab (Bot Home task records, "Group
- * Tasks" tab). Same rhythm as GroupTaskSidebarRow: title + type/status badges
- * on the first line, bot/meta line below.
- */
-export const OpenTeamCollabSidebarRow: React.FC<{
-  collab: OpenTeamCollabSummary;
-  onSelect: () => void;
-}> = ({ collab, onSelect }) => {
-  const botLabel = collab.botName?.trim() || `bot-${collab.metabotId}`;
-  const lastActivity = formatGroupTaskTime(collab.lastMessageAt);
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-      className="px-2.5 py-1.5 rounded-lg cursor-pointer transition-all duration-150 hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
-    >
-      <div className="flex items-center gap-2 mb-0.5">
-        <span className="flex-1 min-w-0 truncate text-sm font-medium dark:text-claude-darkText text-claude-text">
-          {openTeamCollabTitle(collab)}
-        </span>
-        <GroupTaskTypeBadge type="openteam-guest" />
-        <GroupTaskGuestBadge />
-        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${openTeamCollabStatusBadgeClass(collab)}`}>
-          {openTeamCollabStatusLabel(collab)}
-        </span>
-      </div>
-      <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary leading-tight">
-        <span className="truncate">
-          {i18nService.t('openTeamCollabYourBot')}: {botLabel}
-        </span>
-        {lastActivity ? (
-          <span className="shrink-0 whitespace-nowrap">{lastActivity}</span>
-        ) : null}
-      </div>
-    </div>
-  );
-};

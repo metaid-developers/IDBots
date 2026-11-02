@@ -19,32 +19,13 @@ import type { GroupTaskSummary } from '../../types/groupTask';
  */
 export type GroupTaskTypeVariant = 'local' | 'openteam-host' | 'openteam-guest';
 
-export const GroupTaskTypeBadge: React.FC<{ type: GroupTaskTypeVariant }> = ({ type }) => {
-  const isOpenTeam = type === 'openteam-host' || type === 'openteam-guest';
-  return (
-    <span
-      className={`shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none ${
-        isOpenTeam
-          ? 'bg-claude-accent/10 text-claude-accent'
-          : 'border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-textSecondary dark:text-claude-darkTextSecondary'
-      }`}
-    >
-      {i18nService.t(
-        type === 'local'
-          ? 'groupTasksTaskBadgeLocal'
-          : 'groupTasksTaskBadgeOpenTeam'
-      )}
-    </span>
-  );
-};
-
-/**
- * Guest role badge: shown alongside the OpenTeam badge when this machine's bot
- * is a participant (not the host) in a remote-hosted OpenTeam task.
- */
-export const GroupTaskGuestBadge: React.FC = () => (
-  <span className="shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-    {i18nService.t('groupTasksTaskBadgeGuest')}
+export const GroupTaskTypeBadge: React.FC<{ type: GroupTaskTypeVariant }> = ({ type }) => (
+  <span className="shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-textSecondary dark:text-claude-darkTextSecondary">
+    {i18nService.t(
+      type === 'local'
+        ? 'groupTasksTaskBadgeLocal'
+        : 'groupTasksTaskBadgeOpenTeam'
+    )}
   </span>
 );
 
@@ -231,7 +212,6 @@ export const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
               </span>
             )}
             <GroupTaskTypeBadge type={taskType} />
-            {taskType === 'openteam-guest' && <GroupTaskGuestBadge />}
             {task.hasOpenCheckpoint ? (
               <span
                 className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400"
