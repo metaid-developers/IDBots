@@ -260,11 +260,14 @@ const IMSettings: React.FC = () => {
         setQqLoginError(saved?.error || 'Failed to save QQ credentials');
         return;
       }
-      // The secret is now in the 0600 store; drop the renderer copy immediately.
+      // The secret is now in the 0600 store and the main process already
+      // mirrored appId / botId / ownerUserOpenid into `im_config`. Only the
+      // switch is a renderer concern — never send the identifier fields back.
       setQqAppSecret('');
       dispatch(setQQConfig({ appId }));
-      await imService.updateConfig({ qq: { ...config.qq, enabled: true, appId } });
+      await imService.updateConfig({ qq: { enabled: true } } as Partial<IMGatewayConfig>);
       const started = await imService.startGateway('qq');
+      await imService.loadConfig();
       setQqHasCredentials(true);
       setQqSaveMessage(started ? i18nService.t('qqConnected') : i18nService.t('qqSavedNotConnected'));
     } catch (error: any) {
@@ -289,8 +292,16 @@ const IMSettings: React.FC = () => {
     if (status.qq.connected) {
       setQqHasCredentials(true);
       if (status.qq.appId) setQqAppId(status.qq.appId);
+      // The scan writes appId / ownerUserOpenid in the MAIN process; this
+      // component still holds the pre-scan row. Pull it once so the local
+      // snapshot never disagrees with the authoritative config again. Only a
+      // still-blank local appId triggers the reload — comparing "different"
+      // would loop if the main row cannot be read back.
+      if (status.qq.appId && !config.qq.appId) {
+        void imService.loadConfig();
+      }
     }
-  }, [status.qq.loginPending, status.qq.qrContent, status.qq.connected, status.qq.appId]);
+  }, [status.qq.loginPending, status.qq.qrContent, status.qq.connected, status.qq.appId, config.qq.appId]);
 
   const handleChainListenerToggle = async (type: ChainListenerToggleType, enabled: boolean) => {
     setChainListenerLoading(true);
@@ -420,8 +431,13 @@ const IMSettings: React.FC = () => {
     // Update Redux state
     dispatch(setEnabledAction({ enabled: newEnabled }));
 
-    // Persist the updated config (construct manually since Redux state hasn't re-rendered yet)
-    await imService.updateConfig({ [platform]: { ...config[platform], enabled: newEnabled } });
+    // Send ONLY the switch. This component holds a snapshot of `im_config`
+    // from mount time; after a QR scan the main process mirrored appId /
+    // ownerUserOpenid into the row while this snapshot still said
+    // `appId: ''`. Spreading it back here wiped the row and the channel then
+    // failed to resolve its 0600 credential — the "toggle flips it to
+    // disconnected" bug. Identifier fields belong to the main process.
+    await imService.updateConfig({ [platform]: { enabled: newEnabled } } as Partial<IMGatewayConfig>);
 
     if (newEnabled) {
       dispatch(clearError());
@@ -429,10 +445,14 @@ const IMSettings: React.FC = () => {
       if (!success) {
         // Rollback enabled state on failure
         dispatch(setEnabledAction({ enabled: false }));
-        await imService.updateConfig({ [platform]: { ...config[platform], enabled: false } });
+        await imService.updateConfig({ [platform]: { enabled: false } } as Partial<IMGatewayConfig>);
       } else {
+        // Read the authoritative row back (the main process may have rebuilt
+        // appId / ownerUserOpenid from the credential file on the way up).
+        await imService.loadConfig();
+        const refreshed = imService.getConfig();
         await runConnectivityTest(platform, {
-          [platform]: { ...config[platform], enabled: true },
+          [platform]: { ...refreshed[platform], enabled: true },
         } as Partial<IMGatewayConfig>);
       }
     } else {
@@ -475,8 +495,9 @@ const IMSettings: React.FC = () => {
   const saveQQSecurity = async (patch: Partial<typeof config.qq>) => {
     try {
       dispatch(setQQConfig(patch));
-      const next = store.getState().im.config;
-      await imService.updateConfig({ qq: next.qq });
+      // Send the patch, not the whole slice: the snapshot can be older than
+      // the main process's identifier mirror.
+      await imService.updateConfig({ qq: patch } as Partial<IMGatewayConfig>);
       setQqSaveMessage(i18nService.t('qqConnected'));
     } catch (error: any) {
       setQqLoginError(error?.message ?? String(error));

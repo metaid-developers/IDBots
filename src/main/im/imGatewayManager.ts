@@ -73,6 +73,15 @@ export class IMGatewayManager extends EventEmitter {
       // layer-3 switch while the gateway is connected. A snapshot from
       // `start()` would keep enforcing the old policy.
       configProvider: () => this.imStore.getQQConfig(),
+      // The config table is only a MIRROR of the identifiers. Whenever the
+      // gateway resolves the durable 0600 credentials (including the
+      // "table empty, one account file" recovery), write appId / botId /
+      // ownerUserOpenid back so the next toggle and the trust gate agree.
+      onIdentity: (summary) => {
+        if (this.imStore.reconcileQQIdentity(summary)) {
+          this.emit('statusChange', this.getStatus());
+        }
+      },
     });
 
     // Store Cowork dependencies if provided

@@ -115,6 +115,41 @@ export class QQStore {
     }
   }
 
+  /**
+   * Account slots that currently hold a credential file. Ids only — never a
+   * secret, never a path outside the store.
+   */
+  listAccountIds(): string[] {
+    try {
+      const files = fs.readdirSync(this.getAccountDir());
+      const ids = files
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => file.slice(0, -'.json'.length))
+        .filter((id) => Boolean(id) && !id.includes(path.sep));
+      return [...new Set(ids)].sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Resolve credentials WITHOUT knowing the slot.
+   *
+   * WHY: the config table is a mirror of the identifiers, and that mirror can
+   * legitimately be empty (fresh database, a row blanked by an older build, a
+   * settings page that had not reloaded after the QR scan). The 0600 file is
+   * the durable source. `default` wins; otherwise exactly ONE account file is
+   * accepted. Two or more accounts are AMBIGUOUS and resolve to null — picking
+   * one would silently run the channel as a different bot than the owner bound.
+   */
+  loadFromSingleAccount(): QQStoredCredentials | null {
+    const preferred = this.loadCredentials(QQ_DEFAULT_ACCOUNT_ID);
+    if (preferred) return preferred;
+    const ids = this.listAccountIds().filter((id) => id !== QQ_DEFAULT_ACCOUNT_ID);
+    if (ids.length !== 1) return null;
+    return this.loadCredentials(ids[0]);
+  }
+
   saveCredentials(
     credentials: QQLoginCredentials,
     options: {

@@ -81,6 +81,12 @@ export const DEFAULT_QQ_RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 10_000, 30_000
 
 const DEDUPE_TTL_MS = 10 * 60 * 1000;
 const DEDUPE_MAX_ENTRIES = 500;
+/**
+ * Consecutive supervisor failures before the channel is reported as
+ * disconnected. One token/network fetch hiccup retries silently; flipping the
+ * UI to 未连接 on the first attempt is a lie when the SDK is about to recover.
+ */
+export const QQ_OFFLINE_AFTER_FAILURES = 3;
 /** At most one "still processing" notice per conversation per window. */
 const QUEUE_NOTICE_COOLDOWN_MS = 30_000;
 
@@ -275,6 +281,23 @@ export interface QQGatewayOptions {
    * real platform call; tests inject a fake so the suite stays offline.
    */
   groupInfoLookup?: QQGroupInfoLookup;
+  /**
+   * Called after `start()` successfully resolves credentials, with the
+   * credential-free summary. The manager uses it to rebuild the `im_config`
+   * identifier mirror from the durable 0600 file — the table can be empty on a
+   * fresh database while the file already carries appId + owner binding.
+   */
+  onIdentity?: (summary: {
+    appId: string;
+    botId: string | null;
+    ownerUserOpenid: string | null;
+  }) => void;
+  /**
+   * Consecutive supervisor failures tolerated before the channel reports
+   * `connected: false`. A single transient token/network fetch failure must
+   * NOT flip a healthy channel to 未连接 in the UI.
+   */
+  offlineAfterFailures?: number;
 }
 
 export interface QQLoginEvent {
@@ -347,6 +370,12 @@ export class QQGateway extends EventEmitter {
   private readonly auditLog: QQGroupAuditLog;
   private readonly groupCandidates: QQGroupCandidateStore;
   private readonly groupInfoLookup: QQGroupInfoLookup;
+  private readonly onIdentity?: (summary: {
+    appId: string;
+    botId: string | null;
+    ownerUserOpenid: string | null;
+  }) => void;
+  private readonly offlineAfterFailures: number;
   /**
    * Group flood guard (3/sender/min, 10/group/min, daily budget, duplicate
    * suppression). In-memory by design: a restart clears it.
@@ -401,6 +430,11 @@ export class QQGateway extends EventEmitter {
     this.qrLoginTimeoutMs = options.qrLoginTimeoutMs ?? 5 * 60_000;
     this.typingIndicator = options.typingIndicator ?? true;
     this.configProvider = options.configProvider;
+    this.onIdentity = options.onIdentity;
+    this.offlineAfterFailures = Math.max(
+      1,
+      Math.floor(options.offlineAfterFailures ?? QQ_OFFLINE_AFTER_FAILURES)
+    );
     this.auditLog = options.auditLog ?? new QQGroupAuditLog(undefined, this.now);
     this.groupCandidates = options.groupCandidates ?? new QQGroupCandidateStore();
     this.groupInfoLookup =
@@ -458,15 +492,11 @@ export class QQGateway extends EventEmitter {
     const explicit =
       typeof config?.ownerUserOpenid === 'string' ? config.ownerUserOpenid.trim() : '';
     if (explicit) return explicit;
-    // Mirror `resolveCredentials()` slot order so the owner binding can never
-    // come from a different account than the one the gateway runs as.
-    const appId = (config?.appId || '').trim();
-    const slots: Array<string | null> = appId ? [appId, normalizeQQAccountId(appId)] : [null];
-    for (const slot of slots) {
-      const owner = this.store.loadCredentials(slot)?.ownerUserOpenid?.trim();
-      if (owner) return owner;
-    }
-    return null;
+    // Delegate to `resolveCredentials()` so the owner binding can never come
+    // from a different account than the one the gateway runs as — including
+    // the "appId mirror is empty, exactly one 0600 account file" recovery.
+    const resolved = this.resolveCredentials(config);
+    return resolved?.credentials.userOpenid?.trim() || null;
   }
 
   getMediaRootDir(): string {
@@ -583,11 +613,9 @@ export class QQGateway extends EventEmitter {
     if (candidate && candidate.appId && candidate.appSecret && candidate.appSecret.trim()) {
       return true;
     }
-    const appId = (candidate?.appId || '').trim();
-    return Boolean(
-      (appId ? this.store.loadCredentials(normalizeQQAccountId(appId)) : null)
-      ?? this.store.loadCredentials()
-    );
+    // Same resolution order as `resolveCredentials()`: an explicit appId is
+    // authoritative; an EMPTY mirror may recover from the single 0600 account.
+    return Boolean(this.resolveCredentials(candidate ?? null));
   }
 
   /** External reconnect trigger (network restored). */
@@ -603,23 +631,60 @@ export class QQGateway extends EventEmitter {
   // ==================== Lifecycle ====================
 
   async start(config: QQConfig): Promise<void> {
-    if (this.running) {
-      await this.stop();
-    }
     await this.cancelLogin();
 
-    this.config = config ? { ...config } : null;
-    this.accountId = normalizeQQAccountId(config?.appId);
+    const nextConfig = config ? { ...config } : null;
 
-    if (!config || !config.enabled) {
+    // Resolve BEFORE touching a live connection. A toggled-on channel whose
+    // identifier mirror is empty must fail loudly, not tear down the SDK token
+    // loop first and leave the UI reporting 未连接 for a recoverable reason.
+    const resolved = nextConfig && nextConfig.enabled
+      ? this.resolveCredentials(nextConfig)
+      : null;
+    if (nextConfig && nextConfig.enabled && !resolved) {
+      throw new Error('QQ credentials are missing — scan the QR code or enter AppID + AppSecret first.');
+    }
+
+    this.config = nextConfig;
+    this.accountId = normalizeQQAccountId(nextConfig?.appId);
+
+    if (!nextConfig || !nextConfig.enabled) {
+      // Disabling is a real state change: stop a running supervisor.
+      if (this.running) await this.stop();
       console.log('[QQ Gateway] QQ is disabled in config');
       return;
     }
 
-    const resolved = this.resolveCredentials(config);
-    if (!resolved) {
-      throw new Error('QQ credentials are missing — scan the QR code or enter AppID + AppSecret first.');
+    // Same bot, same secret => a config-only change (the enable switch, a
+    // group-policy edit). Keep the live bot and its token refresh loop alive.
+    if (this.running && this.credentials && resolved) {
+      const same =
+        this.credentials.appId === resolved.credentials.appId
+        && this.credentials.appSecret === resolved.credentials.appSecret;
+      if (same) {
+        this.credentials = resolved.credentials;
+        this.credentialSource = resolved.source;
+        this.failureCount = 0;
+        this.status = {
+          ...this.status,
+          appId: resolved.credentials.appId,
+          lastError: this.status.connected ? null : this.status.lastError,
+        };
+        this.emitStatus();
+        this.publishIdentity(resolved.credentials, nextConfig);
+        if (nextConfig.debug) {
+          console.log('[QQ Gateway] Config updated without restarting the live connection', {
+            appId: resolved.credentials.appId,
+          });
+        }
+        return;
+      }
     }
+
+    if (this.running) {
+      await this.stop();
+    }
+    // `stop()` clears the supervisor but the resolved pair is still valid.
     this.credentials = resolved.credentials;
     this.credentialSource = resolved.source;
 
@@ -637,7 +702,7 @@ export class QQGateway extends EventEmitter {
     };
     this.emitStatus();
 
-    if (config.debug) {
+    if (nextConfig.debug) {
       console.log('[QQ Gateway] Starting', {
         appId: resolved.credentials.appId,
         source: resolved.source,
@@ -646,8 +711,28 @@ export class QQGateway extends EventEmitter {
       });
     }
 
+    this.publishIdentity(resolved.credentials, nextConfig);
     this.runAbort = new AbortController();
     this.supervisorPromise = this.runSupervisor(this.runAbort.signal);
+  }
+
+  /**
+   * Hand the credential-free identity to the manager so the `im_config` mirror
+   * can be rebuilt from the durable 0600 file (fresh database, blanked row, or
+   * a settings page that never reloaded after the scan).
+   */
+  private publishIdentity(credentials: QQLoginCredentials, config: QQConfig): void {
+    if (!this.onIdentity) return;
+    try {
+      this.onIdentity({
+        appId: credentials.appId,
+        botId: (config.botId ?? null) || null,
+        ownerUserOpenid: credentials.userOpenid ?? config.ownerUserOpenid ?? null,
+      });
+    } catch (error) {
+      // Mirroring is best-effort; it must never break the connection path.
+      console.warn('[QQ Gateway] identity mirror callback failed:', this.describeError(error));
+    }
   }
 
   async stop(): Promise<void> {
@@ -719,10 +804,24 @@ export class QQGateway extends EventEmitter {
           Math.min(this.failureCount, this.reconnectBackoffMs.length) - 1
         ];
         const message = this.describeError(error);
-        this.status = { ...this.status, connected: false, lastError: message };
+        // A single transient failure (token fetch timeout, one refused socket)
+        // is NOT "disconnected": the supervisor is already retrying. Keep the
+        // channel reported as connected until `offlineAfterFailures`
+        // consecutive attempts have failed, otherwise one bad fetch flashes
+        // 未连接 in the settings page for a channel that is about to recover.
+        const offline = this.failureCount >= this.offlineAfterFailures;
+        this.status = {
+          ...this.status,
+          connected: offline ? false : this.status.connected,
+          lastError: message,
+        };
         this.emitStatus();
         this.emitError(error instanceof Error ? error : new Error(message));
-        console.warn(`[QQ Gateway] Connection failed (attempt ${this.failureCount}), retrying in ${delay}ms:`, message);
+        console.warn(
+          `[QQ Gateway] Connection failed (attempt ${this.failureCount}/${this.offlineAfterFailures}),`
+          + ` ${offline ? 'reporting disconnected, ' : 'keeping the channel up, '}retrying in ${delay}ms:`,
+          message
+        );
         await this.sleep(delay, signal);
       }
     }
@@ -1520,6 +1619,21 @@ export class QQGateway extends EventEmitter {
     const slots = [explicitAppId, normalizeQQAccountId(explicitAppId)].filter(Boolean);
     for (const slot of slots) {
       const stored = this.store.loadCredentials(slot);
+      if (stored) {
+        return {
+          credentials: { appId: stored.appId, appSecret: stored.appSecret, userOpenid: stored.ownerUserOpenid },
+          source: stored.source,
+        };
+      }
+    }
+
+    // EMPTY mirror (`appId: ''`) — fresh database, or a row an older build
+    // blanked. The 0600 account file is the durable source; recover from it
+    // only when it is unambiguous (one account). A non-empty appId is NEVER
+    // overridden: running as a different bot than configured would be worse
+    // than refusing to start.
+    if (!explicitAppId) {
+      const stored = this.store.loadFromSingleAccount();
       if (stored) {
         return {
           credentials: { appId: stored.appId, appSecret: stored.appSecret, userOpenid: stored.ownerUserOpenid },

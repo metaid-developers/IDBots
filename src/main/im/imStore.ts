@@ -34,6 +34,45 @@ function stripQQSecret(config: QQConfig): QQConfig {
   return safe;
 }
 
+const trimmedOrEmpty = (value: unknown): string =>
+  typeof value === 'string' ? value.trim() : '';
+
+/**
+ * Merge a QQ config patch WITHOUT letting a stale snapshot erase identifiers
+ * the main process already knows.
+ *
+ * REGRESSION this exists for: the settings page holds a copy of `im_config`
+ * from mount time. Scanning the QR writes `appId` / `ownerUserOpenid` into the
+ * table from the main process, but the renderer is never reloaded; the next
+ * toggle then sent `{ ...staleCopy, enabled: true }` — i.e. `appId: ''` and
+ * `ownerUserOpenid: null` — and the shallow merge wrote those values straight
+ * over the live row. The row went blank, `resolveCredentials()` could no
+ * longer find the 0600 account slot, and starting the channel failed.
+ *
+ * RULE: an EMPTY identifier in a patch means "not provided", not "erase".
+ * The one exception is a DIFFERENT non-empty `appId`: that is a re-bind, and
+ * the patch is taken verbatim so a new bot never inherits the old owner.
+ */
+export function mergeQQConfigPreservingIdentity(
+  current: QQConfig,
+  incoming: Partial<QQConfig>
+): QQConfig {
+  const merged: QQConfig = { ...current, ...incoming };
+  const incomingAppId = trimmedOrEmpty(incoming.appId);
+  const currentAppId = trimmedOrEmpty(current.appId);
+  const rebinding = incomingAppId !== '' && incomingAppId !== currentAppId;
+  if (rebinding) return merged;
+
+  if (!incomingAppId && currentAppId) merged.appId = currentAppId;
+  if (!trimmedOrEmpty(incoming.botId) && trimmedOrEmpty(current.botId)) {
+    merged.botId = current.botId;
+  }
+  if (!trimmedOrEmpty(incoming.ownerUserOpenid) && trimmedOrEmpty(current.ownerUserOpenid)) {
+    merged.ownerUserOpenid = current.ownerUserOpenid;
+  }
+  return merged;
+}
+
 export class IMStore {
   private db: Database;
   private saveDb: () => void;
@@ -302,11 +341,45 @@ export class IMStore {
    * Persist QQ config. `appSecret` is accepted for API symmetry but is never
    * written to the config table: the caller must have stored it through
    * `QQStore` / `im:qq:credentials:set` first.
+   *
+   * The merge is identity-preserving — see `mergeQQConfigPreservingIdentity`.
    */
   setQQConfig(config: Partial<QQConfig>): void {
     const current = this.getQQConfig();
-    const { appSecret: _ignoredSecret, ...safe } = { ...current, ...config };
+    const merged = mergeQQConfigPreservingIdentity(current, config);
+    const { appSecret: _ignoredSecret, ...safe } = merged;
     this.setConfigValue('qq', stripQQSecret(safe));
+  }
+
+  /**
+   * Backfill the identifier mirror from the durable credential store.
+   *
+   * The config row is a CACHE of what the 0600 file already knows. It can be
+   * empty (fresh database) or stale (a row blanked by an older build) while
+   * the file still carries `appId` / `botId` / `ownerUserOpenid`. Whenever the
+   * gateway resolves credentials it calls this, so a toggle on an empty table
+   * ends with the mirror rebuilt instead of the channel dead.
+   *
+   * Only non-empty identity values are written; nothing is ever cleared here.
+   * Returns true when the row actually changed.
+   */
+  reconcileQQIdentity(identity: {
+    appId?: string | null;
+    botId?: string | null;
+    ownerUserOpenid?: string | null;
+  }): boolean {
+    const appId = trimmedOrEmpty(identity.appId);
+    if (!appId) return false;
+    const current = this.getQQConfig();
+    const patch: Partial<QQConfig> = {};
+    if (appId !== trimmedOrEmpty(current.appId)) patch.appId = appId;
+    const botId = trimmedOrEmpty(identity.botId);
+    if (botId && botId !== trimmedOrEmpty(current.botId)) patch.botId = botId;
+    const owner = trimmedOrEmpty(identity.ownerUserOpenid);
+    if (owner && owner !== trimmedOrEmpty(current.ownerUserOpenid)) patch.ownerUserOpenid = owner;
+    if (Object.keys(patch).length === 0) return false;
+    this.setQQConfig(patch);
+    return true;
   }
 
   // ==================== IM Settings ====================
