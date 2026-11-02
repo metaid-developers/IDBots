@@ -302,6 +302,7 @@ import {
   startPrivateChatBackfill,
   stopPrivateChatBackfill,
 } from './services/privateChatBackfillService';
+import { reconcilePrivateChatDisplayGaps } from './services/privateChatDisplayReconcile';
 import {
   startGroupChatBackfill,
   stopGroupChatBackfill,
@@ -4706,8 +4707,21 @@ const startStartupMessageTier = (): void => {
         globalMetaId: toSafeString(metabot.globalmetaid).trim(),
       })),
     historySync: getPrivateChatHistorySyncService(),
-    onMessagesStored: ({ identity, peerGlobalMetaID }) => {
+    onMessagesStored: ({ identity, peerGlobalMetaID, archivedPinIds }) => {
       try {
+        if (archivedPinIds.length > 0) {
+          const repaired = reconcilePrivateChatDisplayGaps({
+            db: getStore().getDatabase(),
+            coworkStore: getCoworkStore(),
+            identities: [{
+              metabotId: identity.metabotId,
+              globalMetaId: identity.globalMetaId,
+            }],
+            onlyMetabotId: identity.metabotId,
+            onlyPeerGlobalMetaId: peerGlobalMetaID,
+          });
+          if (repaired.inserted > 0) getStore().getSaveFunction()();
+        }
         const backfillExperienceStore = new MetaIDExperienceStore(
           getStore().getDatabase(),
           () => undefined,

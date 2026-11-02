@@ -3673,7 +3673,8 @@ export class CoworkStore implements MemoryBackend {
     const session = this.getSessionWithoutMessages(id);
     if (!session) return null;
     if (session.sessionType === 'a2a') {
-      const page = this.getSessionMessagesPage(id, { limit: messageLimit, displayWindow: true });
+      const limit = normalizeCoworkMessagePageRequest({ limit: messageLimit }).limit;
+      const page = this.getSessionMessagesPage(id, { limit, displayWindow: true });
       // Thread aggregation: "load earlier" must be offered not only while the
       // session's own window has more, but also when previous episodes of the
       // thread exist below it.
@@ -3688,14 +3689,43 @@ export class CoworkStore implements MemoryBackend {
           )
         LIMIT 1
       `, [id]) != null;
+      let messages = page.messages;
+      let hasMoreBefore = page.hasMoreBefore || hasEarlierEpisodes;
+      let beforeSequence = page.beforeSequence;
+      let beforeEpisodeIndex: number | null = null;
+      // A successor episode often holds only the tail of a long bot-to-bot
+      // thread. Opening it alone looks like the peer's unrolled session is
+      // missing days of messages. Fill the rest of this display page from
+      // the previous episodes so both perspectives open on the same span.
+      if (!page.hasMoreBefore && hasEarlierEpisodes && messages.length < limit) {
+        const earlier = this.getA2AConversationHistoryPage(id, {
+          beforeCursor: { episodeIndex: null, beforeSequence: null },
+          limit: limit - messages.length,
+        });
+        if (earlier && earlier.messages.length > 0) {
+          messages = [
+            ...earlier.messages.map((entry) => ({
+              ...entry.message,
+              metadata: {
+                ...(entry.message.metadata ?? {}),
+                a2aEpisodeIndex: entry.episodeIndex,
+              },
+            })),
+            ...messages,
+          ];
+          hasMoreBefore = earlier.hasMoreBefore;
+          beforeSequence = earlier.beforeCursor?.beforeSequence ?? null;
+          beforeEpisodeIndex = earlier.beforeCursor?.episodeIndex ?? null;
+        }
+      }
       return {
         ...session,
-        messages: page.messages,
+        messages,
         messageHistory: {
-          hasMoreBefore: page.hasMoreBefore || hasEarlierEpisodes,
-          beforeSequence: page.beforeSequence,
-          pageSize: normalizeCoworkMessagePageRequest({ limit: messageLimit }).limit,
-          beforeEpisodeIndex: null,
+          hasMoreBefore,
+          beforeSequence,
+          pageSize: limit,
+          beforeEpisodeIndex,
         },
       };
     }
@@ -5530,6 +5560,70 @@ export class CoworkStore implements MemoryBackend {
 
   addMessage(sessionId: string, message: Omit<CoworkMessage, 'id' | 'timestamp'>): CoworkMessage {
     return this.addMessageWithId(sessionId, uuidv4(), message);
+  }
+
+  /**
+   * Insert a private-chat bubble at a historical chain time without touching
+   * the session's list stamp. Sequence is spliced so the A2A display window
+   * (ordered by sequence) keeps chronological order. Does not flush the
+   * database; the caller saves once for a batch.
+   */
+  insertHistoricalCoworkMessage(
+    sessionId: string,
+    message: Omit<CoworkMessage, 'id' | 'timestamp' | 'sequence'> & { timestamp: number },
+  ): CoworkMessage | null {
+    const createdAt = Math.floor(Number(message.timestamp));
+    if (!Number.isFinite(createdAt) || createdAt <= 0) return null;
+    if (!String(message.content ?? '').trim()) return null;
+
+    const successor = this.getOne<{ sequence: number | string | null }>(`
+      SELECT sequence
+      FROM cowork_messages
+      WHERE session_id = ? AND created_at > ?
+      ORDER BY created_at ASC, sequence ASC, ROWID ASC
+      LIMIT 1
+    `, [sessionId, createdAt]);
+    const successorSequence = parseIdNumber(successor?.sequence);
+    let sequence: number;
+    if (successorSequence != null && successorSequence > 0) {
+      this.db.run(`
+        UPDATE cowork_messages
+        SET sequence = sequence + 1
+        WHERE session_id = ? AND sequence >= ?
+      `, [sessionId, successorSequence]);
+      sequence = successorSequence;
+    } else {
+      const sequenceRow = this.db.exec(`
+        SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq
+        FROM cowork_messages
+        WHERE session_id = ?
+      `, [sessionId]);
+      sequence = sequenceRow[0]?.values[0]?.[0] as number || 1;
+    }
+
+    const id = uuidv4();
+    const metadataJson = message.metadata ? JSON.stringify(message.metadata) : null;
+    this.db.run(`
+      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      sessionId,
+      message.type,
+      message.content,
+      metadataJson,
+      createdAt,
+      sequence,
+    ]);
+
+    return {
+      id,
+      type: message.type,
+      content: message.content,
+      timestamp: createdAt,
+      sequence,
+      metadata: message.metadata,
+    };
   }
 
   /**
