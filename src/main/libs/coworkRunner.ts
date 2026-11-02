@@ -8674,7 +8674,7 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
-  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode; imTrust?: IMTrustContext } = {}): Promise<void> {
+  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode; imTrust?: IMTrustContext; acknowledgeOwner?: boolean } = {}): Promise<void> {
     this.stoppedSessions.delete(sessionId);
 
     // Apply mid-session permission mode change if requested.
@@ -8690,16 +8690,25 @@ export class CoworkRunner extends EventEmitter {
     if (!activeSession) {
       // If not active, start a new run. Auto-approve rules default to the
       // persisted app-level list so continuing a session still honors them.
+      // acknowledgeOwner must ride along (2026-11-03 live test, session
+      // fd23405b turn 2): the submission persists the owner's text and calls
+      // with skipUserMessage: true, so without this flag the startSession
+      // fallback silently dropped EVERY follow-up turn's first sentence.
       await this.startSession(sessionId, prompt, {
         skillIds: options.skillIds,
         systemPrompt: options.systemPrompt,
         skipInitialUserMessage: options.skipUserMessage,
+        ...(options.acknowledgeOwner ? { acknowledgeOwner: true } : {}),
         permissionMode: options.permissionMode,
         ...(options.imTrust ? { imTrust: options.imTrust } : {}),
         autoApproveTools: getPersistedAutoApproveTools(),
       });
       return;
     }
+    // Per-turn owner flag: owner submissions mark it true; machine flows
+    // (scheduler, IM relay, cross-session) leave it false so a live session
+    // object never inherits the previous turn's owner acknowledgment.
+    activeSession.acknowledgeOwner = options.acknowledgeOwner === true;
     // Trust can only be NARROWED across turns, never widened (a group turn
     // must not inherit a better grant from an earlier turn of the same id).
     activeSession.imTrust = this.mergeImTrust(activeSession.imTrust, options.imTrust);

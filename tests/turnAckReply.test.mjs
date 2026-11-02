@@ -286,6 +286,22 @@ test('runner: the opening text is injected into the turn prompt so the model nev
     'the block bans repeating the acknowledgment');
 });
 
+// 2026-11-03 live test (session fd23405b turn 2): the owner's follow-up went
+// through continueSession with skipUserMessage: true (the submission persists
+// the text first); with the ActiveSession torn down after the previous turn,
+// the startSession fallback carried no acknowledgeOwner and the whole
+// first-sentence pipeline was skipped — turn 2+ had no bubble at all.
+test('runner: owner follow-ups keep the first-sentence promise across continueSession', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const submission = read('src/main/services/coworkTurnSubmission.ts');
+  assert.ok(submission.includes('acknowledgeOwner: true,'),
+    'the owner submission marks its turns owner-initiated');
+  assert.ok(source.includes('activeSession.acknowledgeOwner = options.acknowledgeOwner === true;'),
+    'the same-object continue resets the per-turn owner flag (machine flows stay ack-free)');
+  assert.ok(source.includes('...(options.acknowledgeOwner ? { acknowledgeOwner: true } : {})'),
+    'the startSession fallback carries the owner flag');
+});
+
 test('runner: a fresh ActiveSession restarts the ack serial at 1, so identity — not serial equality — is the cross-turn gate', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
