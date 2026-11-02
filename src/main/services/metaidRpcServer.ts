@@ -91,7 +91,14 @@ import {
 } from './chatGatewayRoutes';
 import { sendBotBrowserOpenUri } from './botBrowserOpenUriService';
 import { uploadMetaFile } from './metaFileUploadService';
-import { buildMvcFtTransferRawTx, buildMvcOrderedRawTxBundle, buildMvcTransferRawTx, type BuildMvcTransferRawTxParams } from './walletRawTxService';
+import { buildMvc721SellPartialTx, buildMvcFtTransferRawTx, buildMvcOrderedRawTxBundle, buildMvcTransferRawTx, completeMvc721BuyTx, type BuildMvcTransferRawTxParams } from './walletRawTxService';
+import { getMvcSpendSessionSnapshot } from './mvcSpendSessionState';
+import {
+  buyMrc721Listing,
+  mrc721SellOrdersFromSqlite,
+  sellMrc721Item,
+  verifyMrc721Listing,
+} from './mrc721Service';
 import { executeTransfer } from './transferService';
 import { parseAddressIndexFromPath } from './metabotWalletService';
 import { executeMrc20Transfer } from './mrc20Service';
@@ -118,6 +125,9 @@ const METABOT_ACCOUNT_SUMMARY_PATH = '/api/idbots/metabot/account-summary';
 const ADDRESS_BALANCE_PATH = '/api/idbots/address/balance';
 const FEE_RATE_SUMMARY_PATH = '/api/idbots/fee-rate-summary';
 const BUILD_MVC_TRANSFER_RAW_TX_PATH = '/api/idbots/wallet/mvc/build-transfer-rawtx';
+const BUILD_MRC721_SELL_PARTIAL_TX_PATH = '/api/idbots/wallet/mvc/build-mrc721-sell-partial-tx';
+const COMPLETE_MRC721_BUY_TX_PATH = '/api/idbots/wallet/mvc/complete-mrc721-buy-tx';
+const VERIFY_MRC721_LISTING_PATH = '/api/idbots/wallet/mvc/verify-mrc721-listing';
 const BUILD_MVC_FT_TRANSFER_RAW_TX_PATH = '/api/idbots/wallet/mvc-ft/build-transfer-rawtx';
 const BUILD_MVC_RAW_TX_BUNDLE_PATH = '/api/idbots/wallet/mvc/build-rawtx-bundle';
 const EXECUTE_MRC20_TRANSFER_PATH = '/api/idbots/wallet/mrc20/transfer';
@@ -1342,6 +1352,86 @@ export function startMetaidRpcServer(
         });
         res.writeHead(200);
         res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === BUILD_MRC721_SELL_PARTIAL_TX_PATH) {
+      const body = await readRpcJsonObjectBody(req, res, pathname);
+      if (body === null) return;
+      try {
+        const parsed = JSON.parse(body) as {
+          metabot_id?: number;
+          item_pin_id?: string;
+          buyer_address?: string;
+          price_sats?: number;
+          fee_rate?: number;
+        };
+        const feeRate = parsed.fee_rate != null ? Number(parsed.fee_rate) : getGlobalFeeRate('mvc');
+        const listing = await sellMrc721Item(
+          { buildPartialTx: (store, params) => buildMvc721SellPartialTx(store, params) },
+          {
+            store: getMetabotStore(),
+            metabotId: Number(parsed.metabot_id),
+            itemPinId: String(parsed.item_pin_id || ''),
+            buyerAddress: String(parsed.buyer_address || ''),
+            priceSats: Number(parsed.price_sats),
+            feeRate,
+            orders: mrc721SellOrdersFromSqlite(getStore()),
+          },
+        );
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, listing }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === COMPLETE_MRC721_BUY_TX_PATH) {
+      const body = await readRpcJsonObjectBody(req, res, pathname);
+      if (body === null) return;
+      try {
+        const parsed = JSON.parse(body) as {
+          metabot_id?: number;
+          listing?: unknown;
+          fee_rate?: number;
+        };
+        const feeRate = parsed.fee_rate != null ? Number(parsed.fee_rate) : getGlobalFeeRate('mvc');
+        const result = await buyMrc721Listing(
+          { completeBuy: (store, params) => completeMvc721BuyTx(store, params) },
+          {
+            store: getMetabotStore(),
+            metabotId: Number(parsed.metabot_id),
+            listing: parsed.listing,
+            feeRate,
+          },
+        );
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, ...result }));
+      } catch (err) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));
+      }
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === VERIFY_MRC721_LISTING_PATH) {
+      const body = await readRpcJsonObjectBody(req, res, pathname);
+      if (body === null) return;
+      try {
+        const parsed = JSON.parse(body) as { listing?: unknown; metabot_id?: number };
+        const metabotId = Number(parsed.metabot_id);
+        const excludedOutpoints = Number.isInteger(metabotId) && metabotId > 0
+          ? new Set(getMvcSpendSessionSnapshot(metabotId).excludeOutpoints)
+          : undefined;
+        const result = await verifyMrc721Listing(parsed.listing, { excludedOutpoints });
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, listing: result.listing }));
       } catch (err) {
         res.writeHead(400);
         res.end(JSON.stringify({ success: false, error: String((err as Error)?.message || err) }));

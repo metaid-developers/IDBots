@@ -193,13 +193,17 @@ import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftS
 import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
 import {
   broadcastMvcTx,
+  buyMrc721Listing,
   createMrc721Collection,
   createMrc721Mint,
+  listMrc721MySellOrders,
+  mrc721SellOrdersFromSqlite,
+  sellMrc721Item,
   transferMrc721Item,
   updateMrc721Collection,
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
-import { buildMvcTransferRawTx } from './services/walletRawTxService';
+import { buildMvc721SellPartialTx, buildMvcTransferRawTx, completeMvc721BuyTx } from './services/walletRawTxService';
 import { BotWalletTransferStore } from './services/botWalletTransferStore';
 import {
   buildTokenTransferPreview as buildTokenTransferPreviewService,
@@ -7792,6 +7796,53 @@ const getCoworkRunner = () => {
             { ...input, store: getMetabotStore(), feeRate: getGlobalFeeRate('mvc') },
           ),
         ),
+        sell: (input) => withChainWriteBudget(
+          'mrc721_sell',
+          async () => {
+            const listing = await sellMrc721Item(
+              { buildPartialTx: (store, params) => buildMvc721SellPartialTx(store, params) },
+              {
+                ...input,
+                store: getMetabotStore(),
+                feeRate: getGlobalFeeRate('mvc'),
+                orders: mrc721SellOrdersFromSqlite(getStore()),
+              },
+            );
+            return {
+              listingJson: JSON.stringify(listing),
+              itemPinId: listing.itemPinId,
+              buyerAddress: listing.buyerAddress,
+              priceSats: listing.priceSats,
+              outpoint: `${listing.outpoint.txid}:${listing.outpoint.vout}`,
+            };
+          },
+        ),
+        buy: (input) => withChainWriteBudget(
+          'mrc721_buy',
+          () => buyMrc721Listing(
+            { completeBuy: (store, params) => completeMvc721BuyTx(store, params) },
+            {
+              ...input,
+              store: getMetabotStore(),
+              feeRate: getGlobalFeeRate('mvc'),
+            },
+          ),
+        ),
+        listSellOrders: async (input) => {
+          const views = await listMrc721MySellOrders(
+            mrc721SellOrdersFromSqlite(getStore()),
+            input.metabotId,
+          );
+          return views.map((view) => ({
+            id: view.id,
+            status: view.status,
+            reason: view.reason,
+            itemPinId: view.listing.itemPinId,
+            buyerAddress: view.listing.buyerAddress,
+            priceSats: view.listing.priceSats,
+            outpoint: `${view.listing.outpoint.txid}:${view.listing.outpoint.vout}`,
+          }));
+        },
       },
       // send_private_chat tool backend (replacing metabot-chat-privatechat).
       // Mirrors the skill script: resolve the peer chatpubkey on-chain, then

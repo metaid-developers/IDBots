@@ -939,3 +939,16 @@ export async function transferMrc721Item(
     outputValue,
   };
 }
+
+export {
+  buyMrc721Listing,
+  listMrc721MySellOrders,
+  listMrc721SellOrderRecords,
+  mrc721SellOrdersFromSqlite,
+  recordMrc721Listing,
+  sellMrc721Item,
+  verifyMrc721Listing,
+  MRC721_ATOMIC_SWAP_SIGHASH,
+  MRC721_MIN_SELL_PRICE_SATS,
+} from './mrc721AtomicSwapService';
+export type { Mrc721AtomicSwapListing, Mrc721SellOrderView } from './mrc721AtomicSwapService';

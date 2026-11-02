@@ -29,6 +29,9 @@ const TOOL_NAMES = [
   'mrc721_collection_update',
   'mrc721_mint',
   'mrc721_transfer',
+  'mrc721_sell',
+  'mrc721_buy',
+  'mrc721_sell_orders',
   'mrc721_balance',
   'mrc721_collections',
   'mrc721_item_info',
@@ -36,7 +39,7 @@ const TOOL_NAMES = [
 ];
 
 function makeHarness(overrides = {}) {
-  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [] };
+  const calls = { collectionCreate: [], collectionUpdate: [], mint: [], transfer: [], sell: [], buy: [] };
   const control = {
     getMetabotMvcAddress: (id) => (id === 1 ? BOT_ADDRESS : id === 15 ? OTHER_ADDRESS : null),
     resolveMetabotIdByName: (name) => (name === 'AI_Sunny' ? 1 : null),
@@ -84,6 +87,30 @@ function makeHarness(overrides = {}) {
         outputValue: 1,
       };
     },
+    sell: async (input) => {
+      calls.sell.push(input);
+      if (overrides.sellError) throw overrides.sellError;
+      return {
+        listingJson: '{"kind":"mrc721-atomic-swap"}',
+        itemPinId: input.itemPinId,
+        buyerAddress: input.buyerAddress,
+        priceSats: input.priceSats,
+        outpoint: `${'ab'.repeat(32)}:0`,
+      };
+    },
+    buy: async (input) => {
+      calls.buy.push(input);
+      if (overrides.buyError) throw overrides.buyError;
+      return {
+        txId: 'buy-txid',
+        itemPinId: PINID,
+        priceSats: 22000,
+        sellerAddress: OTHER_ADDRESS,
+        feeSats: 400,
+        feeRateEffective: 1.2,
+      };
+    },
+    listSellOrders: async () => overrides.sellOrders ?? [],
   };
   const tools = buildMrc721AgentTools({
     tool: (name, description, schema, handler) => ({ name, description, schema, handler }),
@@ -112,7 +139,7 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-test('registers the seven R6 mrc721_* tools', () => {
+test('registers the R6 mrc721_* tools, including atomic-swap trade', () => {
   const { byName } = makeHarness();
   for (const name of TOOL_NAMES) {
     assert.ok(byName[name], `${name} should be registered`);
@@ -455,4 +482,58 @@ test('formatMrc721* helpers render receipts and sheets', () => {
 
   const transfers = formatMrc721Transfers([{ fromAddress: BOT_ADDRESS, toAddress: OTHER_ADDRESS, txId: 't1' }]);
   assert.match(transfers, /1 transfer\(s\)/);
+});
+
+test('mrc721_sell refuses a price under the 22000 sat floor before any wallet work', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_sell.handler({
+    item_pin_id: PINID,
+    buyer_address: OTHER_ADDRESS,
+    price_sats: 21999,
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /22000/);
+  assert.equal(calls.sell.length, 0);
+});
+
+test('mrc721_sell returns the listing JSON and tells the caller to hand it to the buyer', async () => {
+  const { calls, byName } = makeHarness();
+  const result = await byName.mrc721_sell.handler({
+    item_pin_id: PINID,
+    buyer_address: OTHER_ADDRESS,
+    price_sats: 22000,
+  });
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /Give the listing JSON/);
+  assert.match(result.content[0].text, /mrc721-atomic-swap/);
+  assert.equal(calls.sell.length, 1);
+  assert.equal(calls.sell[0].priceSats, 22000);
+});
+
+test('mrc721_buy surfaces a teaching error and does not hide the failed check', async () => {
+  const { calls, byName } = makeHarness({
+    buyError: new Error('MRC-721 listing failed check 4 (unspent): outpoint is already spent.'),
+  });
+  const result = await byName.mrc721_buy.handler({ listing: { kind: 'mrc721-atomic-swap' } });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /already spent/);
+  assert.equal(calls.buy.length, 1);
+});
+
+test('mrc721_sell_orders lists a local listing with its invalid reason', async () => {
+  const { byName } = makeHarness({
+    sellOrders: [{
+      id: 'order1',
+      status: 'invalid',
+      reason: 'MRC-721 listing failed check 3 (ownership): the NFT is no longer in the seller\'s hand.',
+      itemPinId: PINID,
+      buyerAddress: OTHER_ADDRESS,
+      priceSats: 22000,
+      outpoint: `${'ab'.repeat(32)}:0`,
+    }],
+  });
+  const result = await byName.mrc721_sell_orders.handler({});
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /invalid order1/);
+  assert.match(result.content[0].text, /no longer in the seller's hand/);
 });

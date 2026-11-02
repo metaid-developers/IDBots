@@ -11,6 +11,7 @@ import {
   fetchMrc721ItemTransfers,
   fetchMrc721ItemVerify,
   isMvcAddress,
+  MRC721_MIN_SELL_PRICE_SATS,
   validateMrc721CollectionName,
   waitForMrc721CollectionInfo,
   waitForMrc721ItemInfo,
@@ -117,6 +118,41 @@ export type Mrc721ToolsControl = {
     spentOutpoint: string;
     outputValue: number;
   }>;
+  /** V1.1: seller partial signature. Returns the listing the buyer must receive. */
+  sell(input: {
+    metabotId: number;
+    itemPinId: string;
+    buyerAddress: string;
+    priceSats: number;
+  }): Promise<{
+    listingJson: string;
+    itemPinId: string;
+    buyerAddress: string;
+    priceSats: number;
+    outpoint: string;
+  }>;
+  /** V1.1: verify, fund, sign, and broadcast one atomic swap. */
+  buy(input: {
+    metabotId: number;
+    listing: unknown;
+  }): Promise<{
+    txId: string;
+    itemPinId: string;
+    priceSats: number;
+    sellerAddress: string;
+    feeSats: number;
+    feeRateEffective: number;
+  }>;
+  /** V1.1: local listings this bot created, each rechecked. */
+  listSellOrders(input: { metabotId: number }): Promise<Array<{
+    id: string;
+    status: 'valid' | 'invalid' | 'expired';
+    reason?: string;
+    itemPinId: string;
+    buyerAddress: string;
+    priceSats: number;
+    outpoint: string;
+  }>>;
 };
 
 function textResult(text: string, isError = false) {
@@ -1023,11 +1059,113 @@ export function buildMrc721AgentTools(deps: {
     }
   );
 
+  const mrc721Sell = tool(
+    'mrc721_sell',
+    [
+      'List one MRC-721 item for sale as an atomic swap (pin-based MetaID NFT — NOT wallet_nft_*).',
+      'Builds a partial MVC transaction: input 0 is the NFT (seller-signed), output 0 sends the NFT to buyer_address, output 1 pays price_sats to you.',
+      `price_sats must be at least ${MRC721_MIN_SELL_PRICE_SATS}. Returns the listing JSON — give that text to the buyer. Nothing is broadcast until they buy.`,
+    ].join(' '),
+    {
+      item_pin_id: z.string().min(1).describe('Item pinId from mrc721_item_info (64-hex txid + "i" + index).'),
+      buyer_address: z.string().min(1).describe('MVC address of the buyer. The listing pays the NFT only to this address.'),
+      price_sats: z.number().int().describe(`Ask price in satoshis. Minimum ${MRC721_MIN_SELL_PRICE_SATS}.`),
+    },
+    async (args: { item_pin_id: string; buyer_address: string; price_sats: number }) => {
+      const owner = requireSessionMetabot('mrc721_sell');
+      if (typeof owner === 'string') return textResult(owner, true);
+      if (!Number.isInteger(args.price_sats) || args.price_sats < MRC721_MIN_SELL_PRICE_SATS) {
+        return textResult(
+          `mrc721_sell: Selling Price must be greater than or equals to ${MRC721_MIN_SELL_PRICE_SATS} satoshis. 销售价格最低为${MRC721_MIN_SELL_PRICE_SATS}聪。`,
+          true,
+        );
+      }
+      try {
+        const result = await control.sell({
+          metabotId: owner,
+          itemPinId: args.item_pin_id,
+          buyerAddress: args.buyer_address,
+          priceSats: args.price_sats,
+        });
+        return textResult([
+          'MRC-721 listing is ready. Give the listing JSON below to the buyer — they complete payment and the NFT transfer in one transaction.',
+          `- item pinId: ${result.itemPinId}`,
+          `- buyer: ${result.buyerAddress}`,
+          `- price: ${result.priceSats} sats`,
+          `- NFT outpoint: ${result.outpoint}`,
+          '- listing JSON:',
+          result.listingJson,
+        ].join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_sell failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721Buy = tool(
+    'mrc721_buy',
+    [
+      'Buy an MRC-721 item from a seller listing JSON (atomic swap — one MVC transaction pays the seller and moves the NFT).',
+      'Refuses tampered listings, listings whose NFT has already moved, and payments that would overpay the miner because there is no change output.',
+      'Pass the listing object the seller gave you. You must be the buyer_address on that listing.',
+    ].join(' '),
+    {
+      listing: z.union([z.string(), z.record(z.string(), z.unknown())]).describe('Seller listing JSON object, or the same JSON as a string.'),
+    },
+    async (args: { listing: unknown }) => {
+      const owner = requireSessionMetabot('mrc721_buy');
+      if (typeof owner === 'string') return textResult(owner, true);
+      try {
+        const result = await control.buy({ metabotId: owner, listing: args.listing });
+        return textResult([
+          'MRC-721 purchase broadcast on-chain. Payment and the NFT transfer are the same transaction.',
+          `- txid: ${result.txId}`,
+          `- item pinId: ${result.itemPinId}`,
+          `- paid seller ${result.sellerAddress}: ${result.priceSats} sats`,
+          `- miner fee: ${result.feeSats} sats (${result.feeRateEffective.toFixed(2)} sat/byte, no change output)`,
+          'When it confirms, mrc721_item_info should show you as owner and mrc721_item_info transfer history should include this txid.',
+        ].join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_buy failed: ${errorMessage(error)}${chainWriteFailureDetail(error)}`, true);
+      }
+    },
+  );
+
+  const mrc721SellOrders = tool(
+    'mrc721_sell_orders',
+    [
+      'List MRC-721 atomic-swap listings THIS session MetaBot created locally, and recheck each one.',
+      'There is no on-chain order book. A listing is valid only while the seller signature, indexer ownership, and unspent outpoint still match. Expired means the off-chain expiresAt passed.',
+    ].join(' '),
+    {},
+    async () => {
+      const owner = requireSessionMetabot('mrc721_sell_orders');
+      if (typeof owner === 'string') return textResult(owner, true);
+      try {
+        const orders = await control.listSellOrders({ metabotId: owner });
+        if (!orders.length) {
+          return textResult('No local MRC-721 listings. Create one with mrc721_sell and give the listing JSON to the buyer.');
+        }
+        const lines = [`Local MRC-721 listings (${orders.length}):`];
+        for (const order of orders) {
+          lines.push(`- ${order.status} ${order.id} · ${order.itemPinId} · ${order.priceSats} sats → ${order.buyerAddress} · ${order.outpoint}`);
+          if (order.reason) lines.push(`  reason: ${order.reason}`);
+        }
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_sell_orders failed: ${errorMessage(error)}`, true);
+      }
+    },
+  );
+
   return [
     mrc721CollectionCreate,
     mrc721CollectionUpdate,
     mrc721Mint,
     mrc721Transfer,
+    mrc721Sell,
+    mrc721Buy,
+    mrc721SellOrders,
     mrc721Balance,
     mrc721Collections,
     mrc721ItemInfo,
