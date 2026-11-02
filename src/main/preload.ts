@@ -1125,6 +1125,8 @@ contextBridge.exposeInMainWorld('electron', {
     // P0-1: every [OPENTEAM_INVITE] this machine's bots received (joined or
     // not), newest first — backs the "Received invites" block of the collab UI.
     listGuestInvites: () => ipcRenderer.invoke('openTeamCollab:listGuestInvites'),
+    getMembers: (input: { groupId: string }) =>
+      ipcRenderer.invoke('openTeamCollab:getMembers', input),
   },
   idbots: {
     getMetaBots: () => ipcRenderer.invoke('idbots:getMetaBots'),

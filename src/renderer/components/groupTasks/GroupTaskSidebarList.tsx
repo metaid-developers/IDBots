@@ -17,15 +17,34 @@ import type { GroupTaskSummary } from '../../types/groupTask';
  * entries (remote invitees / remote-hosted) without splitting the list into
  * separate sections. Shared with the joined-collab sidebar row.
  */
-export const GroupTaskTypeBadge: React.FC<{ openTeam: boolean }> = ({ openTeam }) => (
-  <span
-    className={`shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none ${
-      openTeam
-        ? 'bg-claude-accent/10 text-claude-accent'
-        : 'border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-textSecondary dark:text-claude-darkTextSecondary'
-    }`}
-  >
-    {i18nService.t(openTeam ? 'groupTasksTaskBadgeOpenTeam' : 'groupTasksTaskBadgeLocal')}
+export type GroupTaskTypeVariant = 'local' | 'openteam-host' | 'openteam-guest';
+
+export const GroupTaskTypeBadge: React.FC<{ type: GroupTaskTypeVariant }> = ({ type }) => {
+  const isOpenTeam = type === 'openteam-host' || type === 'openteam-guest';
+  return (
+    <span
+      className={`shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none ${
+        isOpenTeam
+          ? 'bg-claude-accent/10 text-claude-accent'
+          : 'border border-claude-border dark:border-claude-darkBorder bg-claude-surfaceMuted dark:bg-claude-darkSurfaceMuted text-claude-textSecondary dark:text-claude-darkTextSecondary'
+      }`}
+    >
+      {i18nService.t(
+        type === 'local'
+          ? 'groupTasksTaskBadgeLocal'
+          : 'groupTasksTaskBadgeOpenTeam'
+      )}
+    </span>
+  );
+};
+
+/**
+ * Guest role badge: shown alongside the OpenTeam badge when this machine's bot
+ * is a participant (not the host) in a remote-hosted OpenTeam task.
+ */
+export const GroupTaskGuestBadge: React.FC = () => (
+  <span className="shrink-0 rounded px-1 py-px text-[9px] font-medium leading-none bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+    {i18nService.t('groupTasksTaskBadgeGuest')}
   </span>
 );
 
@@ -40,6 +59,8 @@ interface GroupTaskSidebarListProps {
   emptyText?: string;
   /** Task ids that carry at least one remote (OpenTeam invitee) seat; they render an Open Team type badge. */
   openTeamTaskIds?: Set<number>;
+  /** Determines type badge variant for each task */
+  getTaskType?: (task: GroupTaskSummary) => GroupTaskTypeVariant;
 }
 
 /**
@@ -58,6 +79,7 @@ const GroupTaskSidebarList: React.FC<GroupTaskSidebarListProps> = ({
   onArchive,
   emptyText,
   openTeamTaskIds,
+  getTaskType,
 }) => {
   if (tasks.length === 0) {
     return (
@@ -71,42 +93,67 @@ const GroupTaskSidebarList: React.FC<GroupTaskSidebarListProps> = ({
 
   return (
     <div className="space-y-1">
-      {tasks.map((task) => (
-        <GroupTaskSidebarRow
-          key={task.id}
-          task={task}
-          isActive={selectedTaskId === task.id}
-          onSelectTask={onSelectTask}
-          onTogglePin={onTogglePin}
-          onRename={onRename}
-          onArchive={onArchive}
-          isOpenTeam={openTeamTaskIds?.has(task.id) ?? false}
-        />
-      ))}
+      {tasks.map((task) => {
+        const taskType = getTaskType
+          ? getTaskType(task)
+          : openTeamTaskIds?.has(task.id)
+            ? 'openteam-host'
+            : 'local';
+        return (
+          <GroupTaskSidebarRow
+            key={task.id}
+            task={task}
+            isActive={selectedTaskId === task.id}
+            onSelectTask={onSelectTask}
+            onTogglePin={onTogglePin}
+            onRename={onRename}
+            onArchive={onArchive}
+            taskType={taskType}
+          />
+        );
+      })}
     </div>
   );
 };
 
-interface GroupTaskSidebarRowProps {
+export interface GroupTaskSidebarRowProps {
   task: GroupTaskSummary;
-  isActive: boolean;
-  onSelectTask: (taskId: number) => void;
+  /** Whether this task is currently selected */
+  isSelected?: boolean;
+  /** Legacy prop name for isSelected */
+  isActive?: boolean;
+  /** Callback when task is clicked */
+  onSelect?: () => void;
+  /** Legacy callback with taskId */
+  onSelectTask?: (taskId: number) => void;
   onTogglePin?: (taskId: number, pinned: boolean) => void;
   onRename?: (taskId: number, title: string) => void;
   onArchive?: (taskId: number) => void;
-  /** Renders the Open Team type badge instead of the local one. */
-  isOpenTeam?: boolean;
+  /** Type badge variant for this task. */
+  taskType: GroupTaskTypeVariant;
 }
 
-const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
+export const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
   task,
-  isActive,
-  onSelectTask,
+  isSelected: isSelectedProp,
+  isActive: isActiveProp,
+  onSelect: onSelectProp,
+  onSelectTask: onSelectTaskProp,
   onTogglePin,
   onRename,
   onArchive,
-  isOpenTeam = false,
+  taskType,
 }) => {
+  // Support both new and legacy props
+  const isActive = isSelectedProp ?? isActiveProp ?? false;
+  const handleSelect = () => {
+    if (onSelectProp) {
+      onSelectProp();
+    } else if (onSelectTaskProp) {
+      onSelectTaskProp(task.id);
+    }
+  };
+
   const [hoverRect, setHoverRect] = useState<DOMRect | null>(null);
   const displayTitle = task.displayName?.trim() || task.title;
   const actionLabel = i18nService.t('coworkSessionActions');
@@ -139,13 +186,13 @@ const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
           onClick={() => {
             if (api.isRenaming) return;
             api.closeMenu();
-            onSelectTask(task.id);
+            handleSelect();
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
               if (api.isRenaming) return;
-              onSelectTask(task.id);
+              handleSelect();
             }
           }}
           onContextMenu={(event) => {
@@ -183,7 +230,8 @@ const GroupTaskSidebarRow: React.FC<GroupTaskSidebarRowProps> = ({
                 {displayTitle}
               </span>
             )}
-            <GroupTaskTypeBadge openTeam={isOpenTeam} />
+            <GroupTaskTypeBadge type={taskType} />
+            {taskType === 'openteam-guest' && <GroupTaskGuestBadge />}
             {task.hasOpenCheckpoint ? (
               <span
                 className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400"

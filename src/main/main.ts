@@ -332,6 +332,8 @@ import {
   createGroupTask,
   listGroupTaskSummaries,
   getGroupTask,
+  getGroupTaskMemberStatus,
+  type GroupTaskMemberSummary,
   closeGroupTask,
   reopenGroupTask,
   reworkGroupTask,
@@ -15106,6 +15108,62 @@ if (!gotTheLock) {
       return { success: true, messages };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to list external collaboration messages' };
+    }
+  });
+
+  registerIpcHandler('openTeamCollab:getMembers', async (_event, input: { groupId?: string }) => {
+    try {
+      const groupId = String(input?.groupId ?? '').trim();
+      if (!groupId) {
+        throw new Error('groupId is required');
+      }
+      if (!getOpenTeamMembershipStore().hasMembershipForGroup(groupId)) {
+        throw new Error('No OpenTeam membership for this group on this machine');
+      }
+
+      // For OpenTeam guest collab, get members from group_chat_messages
+      const store = getGroupTaskStore();
+
+      // Get unique members who have sent messages in this group
+      const memberRows = await withSqliteRecovery('openTeamCollab:getMembers:uniqueMembers', () =>
+        store.getAll<{ sender_global_metaid: string; sender_name: string | null }>(
+          `SELECT DISTINCT sender_global_metaid, sender_name
+           FROM group_chat_messages
+           WHERE group_id = ? AND sender_global_metaid IS NOT NULL
+           ORDER BY id ASC`,
+          [groupId]
+        )
+      );
+
+      const globalMetaIds = memberRows.map(r => r.sender_global_metaid);
+
+      // Get last speak timestamps
+      const lastSpeakMap = await withSqliteRecovery('openTeamCollab:getMembers:lastSpeak', () =>
+        store.getMembersLastSpeakAt(groupId, globalMetaIds));
+
+      // Get last working timestamps
+      const lastWorkingMap = await withSqliteRecovery('openTeamCollab:getMembers:lastWorking', () =>
+        store.getMembersWorkingAt(groupId, globalMetaIds));
+
+      // Build member summaries
+      const members: GroupTaskMemberSummary[] = memberRows.map(row => {
+        const gmid = row.sender_global_metaid.toLowerCase();
+        const lastSpeakAt = lastSpeakMap.get(gmid) ?? null;
+        const lastWorkingAt = lastWorkingMap.get(gmid) ?? null;
+        const lastActivityAt = Math.max(lastSpeakAt ?? 0, lastWorkingAt ?? 0) || null;
+
+        return {
+          globalmetaid: row.sender_global_metaid,
+          name: row.sender_name ?? 'Unknown',
+          avatar: null, // OpenTeam guest doesn't have avatar info
+          lastActivityAt,
+          lastSpeakAt,
+        };
+      });
+
+      return { success: true, members };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get group members' };
     }
   });
 

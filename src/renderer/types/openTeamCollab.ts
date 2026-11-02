@@ -4,6 +4,8 @@
  * bot auto-joining an external group task hosted on another machine.
  */
 
+import type { GroupTaskMemberSummary } from './groupTask';
+
 export type OpenTeamCollabStatus = 'active' | 'left';
 
 /** How a guest membership ended (mirrors OpenTeamMembershipLeftCause in main). */
@@ -64,3 +66,6 @@ export interface OpenTeamGuestInvite {
   createdAt: string | null;
   respondedAt: string | null;
 }
+
+/** Member of an OpenTeam collab group (guest perspective) - uses GroupTaskMember. */
+export type OpenTeamCollabMember = GroupTaskMemberSummary;
