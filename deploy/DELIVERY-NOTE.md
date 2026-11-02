@@ -18,9 +18,10 @@
 | `deploy/hosts/compose.monitoring.yml` | prometheus / alertmanager / alert-relay / blackbox-exporter（均不发布端口） | `/etc/idbots/monitoring.env` |
 | `deploy/hosts/Caddyfile` | REQ-C-5 冻结参考配置：自动签发 TLS、HSTS、26MB 请求体上限、WS 无空闲超时、/files/ 日志脱敏 | `APP_HOST` |
 | `deploy/hosts/daemon.json` | Docker DNS 223.5.5.5/223.6.6.6（REQ-C-2）；json-file 20m×5 日志（C1） | — |
-| `deploy/hosts/firewall.sh` + `idbots-firewall.service` | REQ-C-6 六组 DOCKER-USER 规则（established→cp→tenant:8790→禁租户互访→放行 DNS→禁 metadata/私网/主机→放行出站），systemd 在 docker 启动后重放 | `IDBOTS_TENANT_SUBNET` `IDBOTS_CP_IP` `IDBOTS_DNS_SERVERS`（有默认值） |
+| `deploy/hosts/firewall.sh` + `idbots-firewall.service` | REQ-C-6 六组 DOCKER-USER 规则（established→cp→tenant:8790→禁租户互访→放行 DNS→禁 metadata/私网/主机→放行出站），systemd 在 docker 启动后重放；`IDBOTS_TENANT_SUBNET`/`IDBOTS_CP_IP` 支持空格分隔的并行多栈列表（单机双栈：staging 172.30/16 + 生产 172.31/16） | `IDBOTS_TENANT_SUBNET` `IDBOTS_CP_IP` `IDBOTS_DNS_SERVERS`（有默认值） |
 | `deploy/hosts/firewall-verify.sh` | 主机上一键验证隔离生效：打印在线规则集 + 逐条「应通/应不通」探测（S2-6） | `IDBOTS_TENANT_NETWORK` 等（有默认值） |
-| `deploy/hosts/tests/firewall-sim.sh` | 本机/任意 Docker 机器上的网络命名空间仿真：原样应用生产 firewall.sh 并验证 12 条腿（本次 12/12 PASS） | — |
+| `deploy/hosts/tests/firewall-sim.sh` | 本机/任意 Docker 机器上的网络命名空间仿真：原样应用生产 firewall.sh（双栈并行列表）并验证 20 条腿（原 12 + 第二栈隔离/跨栈阻断 8） | — |
+| `deploy/hosts/tests/firewall-dryrun.sh` | 无 Docker 机器上的规则序断言：iptables stub 记录 firewall.sh 发出的规则序列，验证单栈默认不变、双栈逐栈覆盖与跨栈隔离、列表数不匹配拒绝执行（16 断言） | — |
 | `deploy/hosts/{cp,deploy}.env.example` | 全部 WS-B 变量与主机变量，仅占位符（REQ-C-10/21） | — |
 | `deploy/tenant-image/` | 占位租户镜像（C1/C2 契约面：healthz/readyz/WS welcome+echo/401/4009/4012/1MiB 帧上限/uid1000//data 卷/JSON 日志）+ `build.sh`（出 `{registry}/idbots/tenant:{version}-{commit7}`，带 C1 标签）+ `smoke-test.mjs`（13 项契约冒烟） | `REGISTRY` `IDBOTS_BUILDER`（构建时）；运行期按 C1 环境契约 |
 | `deploy/backup/backup-nightly.sh` | 夜间驱动：先控制面后租户，03:00–05:00 错峰，失败汇总告警 | `/etc/idbots/backup.env` |

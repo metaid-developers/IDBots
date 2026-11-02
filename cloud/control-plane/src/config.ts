@@ -148,9 +148,22 @@ function parseSmsMode(env: NodeJS.ProcessEnv): SmsMode {
  * CP_SMS_MODE=fake is a staging-only escape hatch: refuse to start when the
  * public origin is not clearly non-production (localhost, 127.0.0.1, [::1],
  * or a hostname whose first DNS label is "staging").
+ *
+ * The one exception is CP_SMS_FAKE_ORIGIN_EXPLICIT=true: the deployer states
+ * they knowingly run fake SMS (fixed code for whitelisted numbers) on this
+ * origin — a time-boxed invite-test window until AliyunSmsProvider ships
+ * (see docs/cloud-mobile/change-requests/). The origin itself is never
+ * spoofed or rewritten; without the flag the guard behaves exactly as before.
  */
-export function assertFakeSmsOriginAllowed(publicOriginUrl: URL, smsMode: SmsMode): void {
+export function assertFakeSmsOriginAllowed(
+  publicOriginUrl: URL,
+  smsMode: SmsMode,
+  fakeOriginExplicit = false,
+): void {
   if (smsMode !== 'fake') {
+    return;
+  }
+  if (fakeOriginExplicit) {
     return;
   }
   const hostname = publicOriginUrl.hostname;
@@ -159,9 +172,21 @@ export function assertFakeSmsOriginAllowed(publicOriginUrl: URL, smsMode: SmsMod
     return;
   }
   throw new ConfigError(
-    `CP_SMS_MODE=fake is only allowed on localhost/127.0.0.1/[::1] or *.staging origins; ` +
+    `CP_SMS_MODE=fake is only allowed on localhost/127.0.0.1/[::1] or *.staging origins ` +
+      `(or anywhere with CP_SMS_FAKE_ORIGIN_EXPLICIT=true); ` +
       `got CP_PUBLIC_ORIGIN=${publicOriginUrl.toString()}`,
   );
+}
+
+function parseFakeSmsOriginExplicit(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.CP_SMS_FAKE_ORIGIN_EXPLICIT;
+  if (raw === undefined || raw === '') {
+    return false;
+  }
+  if (raw === 'true' || raw === '1') {
+    return true;
+  }
+  throw new ConfigError(`CP_SMS_FAKE_ORIGIN_EXPLICIT must be "true" or unset, got "${raw}"`);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
@@ -174,7 +199,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): ControlPlaneConfig {
   }
 
   const smsMode = parseSmsMode(env);
-  assertFakeSmsOriginAllowed(publicOriginUrl, smsMode);
+  assertFakeSmsOriginAllowed(publicOriginUrl, smsMode, parseFakeSmsOriginExplicit(env));
 
   const tenantEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
