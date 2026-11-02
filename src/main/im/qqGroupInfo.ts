@@ -182,14 +182,14 @@ export function createQQGroupInfoLookup(options: QQGroupInfoLookupOptions): QQGr
 
     const credentials = options.getCredentials();
     if (!credentials || !credentials.appId || !credentials.appSecret) {
-      return { status: 'unavailable', name: null, detail: '尚未配置机器人凭据，无法查询群名' };
+      return { status: 'unavailable', name: null, detail: '还没连接机器人，查不了群名' };
     }
 
     const token = await accessToken(credentials.appId, credentials.appSecret);
     if (!token) {
       // Token failure is retryable and unrelated to permissions.
       cached = null;
-      return { status: 'error', name: null, detail: '无法获取 access_token，群名查询失败' };
+      return { status: 'error', name: null, detail: '登录状态失效，暂时查不了群名' };
     }
 
     const controller = new AbortController();
@@ -214,7 +214,7 @@ export function createQQGroupInfoLookup(options: QQGroupInfoLookupOptions): QQGr
         const name = typeof record?.group_name === 'string' ? record.group_name.trim() : '';
         if (name) return { status: 'ok', name, detail: null };
         // HTTP 200 without a name: the endpoint answered but said nothing useful.
-        return { status: 'error', name: null, detail: '平台返回成功但未包含 group_name' };
+        return { status: 'error', name: null, detail: 'QQ 这次没有返回群名' };
       }
 
       const { code, message } = readBusinessCode(payload);
@@ -224,17 +224,19 @@ export function createQQGroupInfoLookup(options: QQGroupInfoLookupOptions): QQGr
           name: null,
           detail:
             message
-              || '该接口仅白名单机器人可用（错误码 11253），需向平台运营申请权限；当前只能显示群 ID',
+              || 'QQ 没有把这个群的群名开放给机器人，只能显示群号',
         };
       }
+      // The owner-facing text stays plain; the diagnostics live in the log.
+      console.warn(`[QQGroupInfo] group name lookup failed: HTTP ${response.status}, code ${code ?? 'n/a'}`);
       return {
         status: 'error',
         name: null,
-        detail: `群名查询失败（HTTP ${response.status}${code !== null ? `, code ${code}` : ''}）`,
+        detail: '暂时查不了群名，请稍后再试',
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      return { status: 'error', name: null, detail: `群名查询请求失败：${detail}` };
+      return { status: 'error', name: null, detail: `暂时查不了群名：${detail}` };
     } finally {
       clearTimeout(timer);
     }

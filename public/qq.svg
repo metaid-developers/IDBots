@@ -1,4 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="QQ">
-  <rect x="2" y="2" width="60" height="60" rx="14" fill="#12B7F5"/>
-  <text x="32" y="41" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="700" fill="#FFFFFF">QQ</text>
+  <defs>
+    <linearGradient id="qq-blue" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#35C8F8"/>
+      <stop offset="1" stop-color="#0A9BE0"/>
+    </linearGradient>
+    <clipPath id="qq-body">
+      <ellipse cx="32" cy="22" rx="12.4" ry="12"/>
+      <ellipse cx="32" cy="33" rx="9.8" ry="6"/>
+      <ellipse cx="32" cy="43" rx="13" ry="11.5"/>
+    </clipPath>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#qq-blue)"/>
+  <g transform="translate(0,-0.5)">
+    <ellipse cx="25.6" cy="55" rx="4.4" ry="2.2" fill="#F4A32A"/>
+    <ellipse cx="38.4" cy="55" rx="4.4" ry="2.2" fill="#F4A32A"/>
+    <ellipse cx="32" cy="43" rx="13" ry="11.5" fill="#16202C"/>
+    <ellipse cx="32" cy="33" rx="9.8" ry="6" fill="#16202C"/>
+    <ellipse cx="32" cy="22" rx="12.4" ry="12" fill="#16202C"/>
+    <ellipse cx="32" cy="46.4" rx="8.6" ry="6.8" fill="#FFFFFF"/>
+    <g clip-path="url(#qq-body)">
+      <rect x="14" y="32.2" width="36" height="4.8" fill="#E8463E"/>
+    </g>
+    <path d="M23.4 36.4l4 1-1.2 7.6-3.4-.8z" fill="#D53C36"/>
+    <ellipse cx="26.5" cy="19.6" rx="4.5" ry="5.3" fill="#FFFFFF"/>
+    <ellipse cx="37.5" cy="19.6" rx="4.5" ry="5.3" fill="#FFFFFF"/>
+    <circle cx="27.3" cy="20.4" r="2.3" fill="#10161F"/>
+    <circle cx="36.7" cy="20.4" r="2.3" fill="#10161F"/>
+    <path d="M32 24.2c-2.5 0-4.6 1.1-4.6 2.5 0 1.5 2 4.1 4.6 5.3 2.6-1.2 4.6-3.8 4.6-5.3 0-1.4-2.1-2.5-4.6-2.5z" fill="#F4A32A"/>
+  </g>
 </svg>
