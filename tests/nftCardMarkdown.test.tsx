@@ -39,8 +39,11 @@ import A2AMessageItem from '../src/renderer/components/cowork/A2AMessageItem';
 import GroupTaskMessageItem from '../src/renderer/components/groupTasks/GroupTaskMessageItem';
 import NftCard, {
   formatNftPrice,
+  metaletCompressUrlOf,
+  NftCardDetailModal,
   resolveNftCardArtwork,
 } from '../src/renderer/components/chat/NftCard';
+import { nftCardNeedsHeal, resolveNftCardHeal } from '../src/renderer/components/chat/nftCardHeal';
 import {
   groupAdjacentNftCardFences,
   isNftCardFenceLanguage,
@@ -266,23 +269,165 @@ test('formatNftPrice renders sats and a tidy SPACE amount', () => {
   assert.equal(formatNftPrice(undefined), null);
 });
 
-test('artwork resolution orders https first, then the icon metafile routes', () => {
+test('artwork resolution: https first; metacontract icons take the MetaLet compress link before the metafile routes', () => {
   const artwork = resolveNftCardArtwork({ format: 'metacontract', ...CARD_PAYLOAD } as never);
   assert.equal(artwork.missing, false);
   assert.equal(artwork.sources[0], IMG_URL);
-  assert.match(artwork.sources[1], /files\/accelerate\/content\//);
-  assert.match(artwork.sources[2], /files\/content\//);
+  // wallet-api icons are MetaLet image-host ids — the compress direct link
+  // (live-verified 200 image/png) is tried BEFORE the accelerate chain.
+  assert.equal(
+    artwork.sources[1],
+    `https://www.metalet.space/metafile/compress/${ICON.replace('metafile://', '')}`,
+  );
+  assert.match(artwork.sources[2], /files\/accelerate\/content\//);
+  assert.match(artwork.sources[3], /files\/content\//);
+  // Icon-only metacontract fence (the owner's failing case): the compress
+  // link is the FIRST renderable source, derived from the icon id.
+  const iconOnly = resolveNftCardArtwork({
+    format: 'metacontract',
+    genesis: GENESIS,
+    codehash: CODEHASH,
+    tokenIndex: '1',
+    icon: 'metafile://47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+  } as never);
+  assert.equal(
+    iconOnly.sources[0],
+    'https://www.metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+  );
   // No artwork at all → placeholder path.
   const bare = resolveNftCardArtwork({ format: 'metacontract', genesis: GENESIS, codehash: CODEHASH, tokenIndex: '1' } as never);
   assert.equal(bare.missing, true);
   assert.deepEqual(bare.sources, []);
-  // MRC-721 bare-pin icon resolves through the same chain.
+  // MRC-721 icons are real MetaID metafiles — the compress detour never
+  // applies; the chain stays accelerate → content.
   const mrc = resolveNftCardArtwork({ format: 'mrc721', pinId: MRC721_PIN_ID, icon: `metafile://${MRC721_ICON_PIN}` } as never);
   assert.equal(mrc.missing, false);
+  assert.equal(mrc.sources.some((source) => source.includes('metalet.space/metafile/compress/')), false);
   assert.match(mrc.sources[0], /files\/accelerate\/content\//);
 });
 
-// --- MarkdownContent branch ------------------------------------------------
+// --- MetaLet compress derivation --------------------------------------------
+
+test('metaletCompressUrlOf derives the wallet-api icon direct link, rejects everything unsafe', () => {
+  assert.equal(
+    metaletCompressUrlOf('metafile://47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png'),
+    'https://www.metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+  );
+  // Bare image-host id (no scheme) derives the same link.
+  assert.equal(
+    metaletCompressUrlOf('47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png'),
+    'https://www.metalet.space/metafile/compress/47ff4ea08168435ba9a9d271360923bff159c1719fd6420a4bb0e65b735f30e7.png',
+  );
+  // Path segments, query strings, whitespace, empty — never a URL.
+  assert.equal(metaletCompressUrlOf('metafile://a/b.png'), null);
+  assert.equal(metaletCompressUrlOf('metafile://../etc/passwd'), null);
+  assert.equal(metaletCompressUrlOf('id.png?x=1'), null);
+  assert.equal(metaletCompressUrlOf('  '), null);
+});
+
+// --- heal channel (missing artwork / metacontract issuer) --------------------
+
+test('nftCardNeedsHeal fires only for genuinely missing data', () => {
+  // No artwork at all → heal.
+  assert.equal(nftCardNeedsHeal({ format: 'metacontract', genesis: GENESIS, codehash: CODEHASH, tokenIndex: '1' }), true);
+  // Artwork present, but this metacontract card carries no issuer (the v4
+  // wire cannot provide one at emission time) and knows its owner → still
+  // heals for the issuer.
+  assert.equal(nftCardNeedsHeal({ format: 'metacontract', ...CARD_PAYLOAD }), true);
+  // A fence-carried issuer label satisfies the card — no heal.
+  assert.equal(
+    nftCardNeedsHeal({ format: 'metacontract', ...CARD_PAYLOAD, issuerLabel: 'ShowPayTeam' }),
+    false,
+  );
+  // No owner → the metacontract issuer channel has nothing to scope by → no heal.
+  assert.equal(
+    nftCardNeedsHeal({ format: 'metacontract', genesis: GENESIS, codehash: CODEHASH, tokenIndex: '1', imgUrl: IMG_URL }),
+    false,
+  );
+  // MRC-721 with artwork → never (issuer is fence-carried on that format).
+  assert.equal(nftCardNeedsHeal({ ...MRC721_PAYLOAD }), false);
+  // MRC-721 without artwork → heals the artwork only.
+  const { icon: mrcIcon, ...mrcBare } = MRC721_PAYLOAD;
+  assert.equal(nftCardNeedsHeal(mrcBare), true);
+  void mrcIcon;
+});
+
+test('resolveNftCardHeal passes the healed imgUrl through verbatim and caches per identity', async () => {
+  const HEALED_IMG = 'https://metalet.space/metafile/compress/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png';
+  let calls = 0;
+  const stub = async () => {
+    calls += 1;
+    return { success: true, result: { imgUrl: HEALED_IMG, icon: 'not-a-metafile-uri', issuer: 'not-an-address' } };
+  };
+  globalThis.window = { electron: { idbots: { healNftCard: stub } } } as never;
+  try {
+    const data = {
+      format: 'metacontract' as const,
+      genesis: 'cc'.repeat(20),
+      codehash: CODEHASH,
+      tokenIndex: '9',
+      owner: '1AxUdSkVdDyDreYSYVoDRFeyS1pvQdvcJx',
+    };
+    const first = await resolveNftCardHeal(data as never);
+    assert.deepEqual(first, { imgUrl: HEALED_IMG }, 'imgUrl verbatim; icon/issuer sanitization drops junk');
+    const second = await resolveNftCardHeal(data as never);
+    assert.equal(calls, 1, 'second call is served from the process cache');
+    assert.deepEqual(second, { imgUrl: HEALED_IMG });
+  } finally {
+    delete (globalThis as Record<string, unknown>).window;
+  }
+});
+
+test('resolveNftCardHeal degrades to null with no bridge and never throws on IPC failure', async () => {
+  // No window at all (SSR).
+  assert.equal(await resolveNftCardHeal({ format: 'mrc721', pinId: `ff`.repeat(32) + 'i1' } as never), null);
+  // Bridge present but failing / answering failure — still null, no throw.
+  globalThis.window = {
+    electron: { idbots: { healNftCard: async () => { throw new Error('boom'); } } },
+  } as never;
+  try {
+    assert.equal(
+      await resolveNftCardHeal({ format: 'mrc721', pinId: `ee`.repeat(32) + 'i2' } as never),
+      null,
+    );
+  } finally {
+    delete (globalThis as Record<string, unknown>).window;
+  }
+});
+
+// --- format tag position: the IMAGE's bottom-right, card and detail ----------
+
+test('the format tag sits inside the artwork wrapper — card and detail modal agree', () => {
+  withWindowStub(() => {
+    // ASCII name so the placeholder initials are unambiguous ('BO').
+    const card = renderToStaticMarkup(
+      <NftCard data={{ format: 'metacontract', genesis: GENESIS, codehash: CODEHASH, tokenIndex: '5028', name: 'Boots' }} />,
+    );
+    // Card: placeholder (no artwork) and format tag share the `relative`
+    // wrapper, artwork content first, tag right after it.
+    const wrapperOpen = card.indexOf('class="relative"');
+    assert.ok(wrapperOpen > -1, 'card renders the relative artwork wrapper');
+    const wrapperWindow = card.slice(wrapperOpen, wrapperOpen + 800);
+    const initialsAt = wrapperWindow.indexOf('>BO<');
+    const tagAt = wrapperWindow.indexOf('data-nft-format="metacontract"');
+    assert.ok(
+      initialsAt > -1 && tagAt > initialsAt,
+      'the placeholder initials precede the format tag inside the artwork wrapper',
+    );
+
+    // Detail modal (SSR renders content directly): the wrapper never
+    // stretches past the artwork (self-start), the tag hugs the image, and
+    // the redundant Format field row is gone (the tag is the single source).
+    const detail = renderToStaticMarkup(
+      <NftCardDetailModal data={{ format: 'metacontract', ...CARD_PAYLOAD }} onClose={() => {}} />,
+    );
+    const detailWrapper = detail.indexOf('self-start');
+    assert.ok(detailWrapper > -1, 'detail image wrapper is self-start (badge hugs the image, not the container)');
+    const detailTag = detail.indexOf('data-nft-format="metacontract"');
+    assert.ok(detailTag > detailWrapper, 'detail format tag sits inside the artwork column');
+    assert.ok(!/>Format</.test(detail), 'no separate Format detail row — the tag is the single format source');
+  });
+});
 
 test('an nft-card fence renders the card with the format tag, not a code block', () => {
   withWindowStub(() => {
