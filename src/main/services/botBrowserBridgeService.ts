@@ -877,7 +877,11 @@ function validatePermissionsRequest(payload: unknown):
   };
 }
 
-const NFT_BUY_GENESIS_RE = /^[0-9a-fA-F]{64}$/;
+// Real MetaContract genesis values are 40 hex on-chain (e.g. MetaBot Avatar
+// 005d69cba8c80e6978157e146f998c21288a9d49); 64-hex stays accepted for
+// forward compatibility. Transaction ids are always exactly 64 hex.
+const NFT_BUY_GENESIS_RE = /^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$/;
+const NFT_BUY_TXID_RE = /^[0-9a-fA-F]{64}$/;
 const NFT_BUY_CODEHASH_RE = /^[0-9a-fA-F]{40}$/;
 const NFT_BUY_TOKEN_INDEX_RE = /^[0-9]{1,18}$/;
 const NFT_BUY_IMG_URL_RE = /^(https?:\/\/|metafile:\/\/)/i;
@@ -893,7 +897,7 @@ function validateNftBuyPayload(payload: unknown):
   const codehash = text(body.codehash).toLowerCase();
   const tokenIndex = text(body.tokenIndex);
   if (!NFT_BUY_GENESIS_RE.test(genesis)) {
-    return failure('invalid_params', 'NFT buy requires genesis (64 hex).');
+    return failure('invalid_params', 'NFT buy requires genesis (40 or 64 hex).');
   }
   if (!NFT_BUY_CODEHASH_RE.test(codehash)) {
     return failure('invalid_params', 'NFT buy requires codehash (40 hex).');
@@ -911,7 +915,7 @@ function validateNftBuyPayload(payload: unknown):
   const rawSellTxid = text(body.sellTxid).toLowerCase();
   const rawSellOutputIndex = body.sellOutputIndex;
   if (rawSellTxid !== '' || rawSellOutputIndex !== undefined) {
-    if (!NFT_BUY_GENESIS_RE.test(rawSellTxid)) {
+    if (!NFT_BUY_TXID_RE.test(rawSellTxid)) {
       return failure('invalid_params', 'NFT buy sellTxid must be 64 hex when the sell outpoint is supplied.');
     }
     if (typeof rawSellOutputIndex !== 'number' || !Number.isSafeInteger(rawSellOutputIndex) || rawSellOutputIndex < 0) {
