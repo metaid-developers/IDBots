@@ -625,6 +625,11 @@ export class OrchestrationStore {
   }
 
   recoverAfterRestart(): { attempts: number; steps: number } {
+    const { recoveredAttempts, ...summary } = this.recoverAfterRestartWithDetails();
+    return summary;
+  }
+
+  recoverAfterRestartWithDetails(): { attempts: number; steps: number; recoveredAttempts: OrchestrationAttempt[] } {
     const now = new Date().toISOString();
     // 'timed_out' attempts are also unrecoverable after a restart: the worker
     // session lives inside the runner process and dies with it, so no late
@@ -635,6 +640,7 @@ export class OrchestrationStore {
       this.db.run(`UPDATE orchestration_steps SET status = 'ready', active_attempt_id = NULL, updated_at = ? WHERE id = ? AND status IN ('running','queued')`, [now, attempt.step_id]);
     }
     if (running.length > 0) this.saveDb();
-    return { attempts: running.length, steps: running.length };
+    const recoveredAttempts = running.map((attempt) => this.getAttempt(attempt.id)!);
+    return { attempts: running.length, steps: running.length, recoveredAttempts };
   }
 }

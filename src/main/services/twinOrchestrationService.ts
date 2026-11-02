@@ -292,6 +292,23 @@ export class TwinOrchestrationService {
     return this.deps.getMetabotById(metabotId)?.name?.trim() || `bot-${metabotId}`;
   }
 
+  notifyRestartRecoveredAttempts(attempts: OrchestrationAttempt[]): void {
+    for (const attempt of attempts) {
+      const task = this.deps.orchestrationStore.getTaskForStep(attempt.stepId);
+      if (!task) {
+        console.warn(`[TwinOrchestration] Restart recovery notification skipped: no task for attempt ${attempt.id}`);
+        continue;
+      }
+      this.notifyTwinTerminalState(
+        task,
+        attempt,
+        this.workerNameOf(attempt.workerMetabotId),
+        'failed',
+        'RECOVERED_AFTER_RESTART — host restart interrupted tracking, not a Worker-reported failure; inspect existing artifacts and retry or reassign this step instead of waiting for the old session.',
+      );
+    }
+  }
+
   /**
    * 清单 #10 P-A: read the worker session's messages for substantive-activity
    * detection. Tolerant by design — a missing store method or a store error

@@ -8703,9 +8703,17 @@ const getOrchestrationStore = () => {
   if (!orchestrationStore) {
     const sqliteStore = getStore();
     orchestrationStore = new OrchestrationStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
-    const recovered = orchestrationStore.recoverAfterRestart();
+    const recovered = orchestrationStore.recoverAfterRestartWithDetails();
     if (recovered.attempts > 0) {
       console.warn(`[Orchestration] Recovered ${recovered.attempts} in-flight attempt(s) after restart`);
+      const notifyTimer = setTimeout(() => {
+        try {
+          getTwinOrchestrationService().notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+        } catch (error) {
+          console.warn(`[Orchestration] Restart notification failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 0);
+      notifyTimer.unref?.();
     }
   }
   return orchestrationStore;
