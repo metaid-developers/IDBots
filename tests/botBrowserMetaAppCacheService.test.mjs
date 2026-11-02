@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -654,5 +654,81 @@ test('fetchContentWithFallback falls back to remote when the local node misses',
   } finally {
     localServer.close();
     remoteServer.close();
+  }
+});
+
+// --- MetaApp preview origin port stability --------------------------------
+// Browsers key localStorage by scheme+host+port, so the preview origin must
+// bind a stable port across app launches or every restart orphans all
+// MetaApp localStorage.
+
+function listenOnPort(port) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(() => {});
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function createPortTestDir() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'metaapp-preview-port-'));
+  await writeFile(path.join(dir, 'index.html'), '<!doctype html><html><body>Port probe</body></html>', 'utf8');
+  return dir;
+}
+
+test('MetaApp preview origin binds the first free fixed port candidate', async () => {
+  const dir = await createPortTestDir();
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot: path.join(dir, 'cache'),
+    previewPortCandidates: [47701, 47702],
+  });
+  try {
+    const session = await service.createLocalPreviewSession({ artifactDir: dir, indexFile: 'index.html' });
+    assert.match(session.localPreviewUrl, /^http:\/\/127\.0\.0\.1:47701\/browser-cache\/metaapp-preview\//);
+    const response = await fetch(session.localPreviewUrl);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /Port probe/);
+  } finally {
+    await service.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('MetaApp preview origin falls back to the next fixed port when the first is busy', async () => {
+  const blocker = await listenOnPort(47704);
+  const dir = await createPortTestDir();
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot: path.join(dir, 'cache'),
+    previewPortCandidates: [47704, 47705],
+  });
+  try {
+    const session = await service.createLocalPreviewSession({ artifactDir: dir, indexFile: 'index.html' });
+    assert.match(session.localPreviewUrl, /^http:\/\/127\.0\.0\.1:47705\/browser-cache\/metaapp-preview\//);
+  } finally {
+    await service.stop();
+    await rm(dir, { recursive: true, force: true });
+    blocker.close();
+  }
+});
+
+test('MetaApp preview origin falls back to an ephemeral port when all fixed candidates are busy', async () => {
+  const blockerA = await listenOnPort(47706);
+  const blockerB = await listenOnPort(47707);
+  const dir = await createPortTestDir();
+  const service = createBotBrowserMetaAppCacheService({
+    cacheRoot: path.join(dir, 'cache'),
+    previewPortCandidates: [47706, 47707],
+  });
+  try {
+    const session = await service.createLocalPreviewSession({ artifactDir: dir, indexFile: 'index.html' });
+    const parsed = new URL(session.localPreviewUrl);
+    assert.equal(parsed.hostname, '127.0.0.1');
+    assert.ok(!['47706', '47707'].includes(parsed.port), `expected an ephemeral port, got ${parsed.port}`);
+    assert.match(session.localPreviewUrl, /\/browser-cache\/metaapp-preview\//);
+  } finally {
+    await service.stop();
+    await rm(dir, { recursive: true, force: true });
+    blockerA.close();
+    blockerB.close();
   }
 });
