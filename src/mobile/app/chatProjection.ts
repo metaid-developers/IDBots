@@ -5,6 +5,7 @@ import {
   buildDisplayItems,
   getVisibleAssistantItems,
 } from '@/services/coworkConversationProjection';
+import { quotaKindFromErrorText } from './quotaCodes';
 
 export type ChatDiagnosticKind =
   | 'compaction'
@@ -17,7 +18,8 @@ export type ChatDiagnosticKind =
   | 'turnStalled'
   | 'turnInterrupted'
   | 'steerInterrupted'
-  | 'routeFallback';
+  | 'routeFallback'
+  | 'turnFailed';
 
 export interface ChatMessageView {
   id: string;
@@ -45,8 +47,18 @@ export function chatDiagnosticKind(message: CoworkMessage): ChatDiagnosticKind |
 }
 
 function projectMessage(message: CoworkMessage, role: ChatMessageView['role']): ChatMessageView | null {
-  const diagnostic = chatDiagnosticKind(message);
-  const rawText = diagnostic ? '' : (message.content || message.metadata?.error || '');
+  const metadataDiagnostic = chatDiagnosticKind(message);
+  const errorText = message.content || message.metadata?.error || '';
+  // Terminal error rows that NEITHER a structured diagnostic flag NOR the
+  // relay-quota fallback recognizes carry no machine-readable classification
+  // at all (persisted `Error:` rows store text only). They collapse into the
+  // localized turnFailed one-liner instead of surfacing raw upstream copy on
+  // the phone. Recognized quota rows keep their raw transcript record — the
+  // relay machine code stays visible in the bubble, which the recharge card
+  // copy and the tests agree on.
+  const diagnostic: ChatDiagnosticKind | null = metadataDiagnostic
+    ?? (role === 'error' && quotaKindFromErrorText(errorText) === null ? 'turnFailed' : null);
+  const rawText = diagnostic ? '' : errorText;
   const text = role === 'assistant' ? splitThinkTaggedContent(rawText).text : rawText;
   if (!diagnostic && !text.trim()) return null;
   return {
