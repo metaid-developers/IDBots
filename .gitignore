@@ -742,6 +742,7 @@ man_base_data_pebble/
 !tests/inlineMetaAppBlock.test.tsx
 !tests/markdownContentSingleTilde.test.tsx
 !tests/nftCardMarkdown.test.tsx
+!tests/nftCardHealService.test.mjs
 !tests/walletNftCardAttach.test.mjs
 !tests/harness/
 !tests/harness/nft-card-evidence.html

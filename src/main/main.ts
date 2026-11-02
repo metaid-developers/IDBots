@@ -219,6 +219,7 @@ import {
   transferMetabotMvcNft,
 } from './services/metabotNftService';
 import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
+import { healNftCard } from './services/nftCardHealService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -18081,6 +18082,16 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     getMetabotNftItems: (store, input) => getMetabotNftItems(store, input),
     transferMetabotMvcNft: (store, input) => transferMetabotMvcNft(store, input),
     transferMetabotMrc721: (store, input) => transferMetabotMrc721(store, input),
+  });
+
+  // Chat NftCard heal channel: renderer-side fallback lookups for missing
+  // artwork / metacontract issuer (read-only indexer queries, cached, silent).
+  registerIpcHandler('idbots:healNftCard', async (_event, input: unknown) => {
+    try {
+      return { success: true, result: await healNftCard(input as never) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   // Traffic-ized gas fee (Phase D): account/binding/balance/usage APIs plus the
