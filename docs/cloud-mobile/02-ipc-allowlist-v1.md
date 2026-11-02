@@ -76,7 +76,8 @@ after that date so it gets a tier here.
 | `metabot:list`, `metabot:get`, `metabot:checkNameExists`, `metabot:create`, `metabot:update`, `metabot:setEnabled`, `metabot:getSetting`, `metabot:setSetting` | P1 | |
 | `idbots:getMetaBots`, `idbots:addMetaBot`, `idbots:deleteMetaBot`, `idbots:syncMetaBot`, `idbots:syncMetaBotEditChanges`, `idbots:resumeMetabotSetup` | P1 | |
 | `idbots:createMetaBotOnChain` | P1 | Timeout 300 s. |
-| `idbots:getAddressBalance`, `idbots:getMetabotWalletAssets` | P1 | |
+| `idbots:getAddressBalance`, `idbots:getMetabotWalletAssets`, `idbots:getMetabotNfts` | P1 | |
+| `idbots:healNftCard` | P1 | Re-resolves one NFT card artwork URL (read + local cache update, no funds). |
 | `idbots:getOfficialSkillsStatus`, `idbots:getCommunitySkillsStatus`, `idbots:installOfficialSkill`, `idbots:syncAllOfficialSkills` | P1 | |
 | `idbots:uploadMetabotHomepageFile` | P2-R | R-size. |
 | `idbots:getListenerConfig`, `idbots:getListenerStatus`, `idbots:startMetaWebListener`, `idbots:toggleListener` | P2 | Server mode keeps the listener running by default (REQ-A-8). |
@@ -133,6 +134,7 @@ after that date so it gets a tier here.
 | All 14 `gigSquare:*` channels (`fetchServices`, `fetchProviderInfo`, `pingProvider`, `preflightOrder`, `createServiceOrderPin`, `sendOrder`, `fetchMyServiceOrders`, `fetchRefunds`, `processRefundOrder`, `fetchMyServices`, `publishService`, `modifyService`, `revokeService`, `syncFromRemote`) | P2 | `gigSquare:sendOrder` timeout 300 s. |
 | `providerDiscovery:getOnlineBots`, `providerDiscovery:getOnlineServices`, `providerDiscovery:getSnapshot` | P2 | |
 | `openTeamCollab:list`, `openTeamCollab:listGuestInvites`, `openTeamCollab:listMessages` | P2 | |
+| `openTeamCollab:getMembers` | P2 | Read-only member roster for one collab (renderer sidebar). |
 | `metawebStudy:list` | P2 | |
 
 ### Background Features, Knowledge, IM, Backup
@@ -147,6 +149,9 @@ after that date so it gets a tier here.
 | `knowledgeBase:openDir` | N | Opens a desktop folder. |
 | `im:config:get`, `im:config:set`, `im:status:get`, `im:gateway:start`, `im:gateway:stop`, `im:gateway:test` | P2 | Lets the user answer permission requests through Feishu or DingTalk while the phone is closed. |
 | `im:weixin:login:start`, `im:weixin:login:cancel`, `im:weixin:credentials:check` | P2 | Starts/cancels the Weixin QR authorization and reports whether a token is stored. P2 because the channel exists for the same "answer while the phone is closed" flow; the QR payload itself carries no credential. |
+| `im:qq:login:start`, `im:qq:login:cancel`, `im:qq:credentials:check` | P2 | Starts/cancels the QQ QR authorization and reports whether credentials are stored. The AppID and QR payload are identifiers, not credentials. |
+| `im:qq:credentials:set` | P2 | Write-only: accepts the AppSecret on the write path, stored 0600; no read-back channel exists. |
+| `im:qq:groups:candidates:list`, `im:qq:groups:candidates:dismiss`, `im:qq:groups:candidates:restore`, `im:qq:groups:candidates:name` | P2 | Read-only channel state (group ids that messaged the bot while not allowlisted, plus counters and an optional name lookup). None of these can add a group to the allowlist — that still goes through `im:config:set`. |
 | `chainBackup:getState`, `chainBackup:backup` | P2 | `backup` timeout 900 s. |
 | `chainBackup:restore` | N | Needs mnemonic import; later release. |
 
