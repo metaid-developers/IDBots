@@ -177,13 +177,18 @@ test('runner: the LLM ack bubble fires at the early-ack site, gated to cowork_ui
 // the ack bubble — the first sentence a fresh user ever saw. A turn with no
 // user message has nothing to acknowledge: both the template phrase and the
 // LLM bubble must be gated off.
-test('runner: pure host-initiated turns stay ack-free while persisted cross-session deliveries get an opening', () => {
+test('runner: pure host turns stay ack-free while UI starts and persisted deliveries get an opening', () => {
   const source = read('src/main/libs/coworkRunner.ts');
+  const mainSource = read('src/main/main.ts');
 
-  const gate = source.indexOf("ackSourceChannel === 'cowork_ui' && (!activeSession.skipInitialUserMessage || crossSessionDelivery)");
-  assert.ok(gate > 0, 'the ack gate keeps pure host prompts off and admits cross-session deliveries');
+  const gate = source.indexOf("ackSourceChannel === 'cowork_ui' && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)");
+  assert.ok(gate > 0, 'the ack gate keeps pure host prompts off and admits owner-initiated starts and cross-session deliveries');
   assert.ok(source.includes('const crossSessionDelivery = /<cross_session_message\\b|\\[ORCH-NOTIFY\\]/i.test(prompt);'),
     'only an already-persisted cross-session delivery overrides skipInitialUserMessage');
+  assert.ok(source.includes('acknowledgeOwner: options.acknowledgeOwner === true'),
+    'the runner carries the explicit owner-initiated flag independently of message persistence');
+  assert.ok(mainSource.includes('skipInitialUserMessage: true,\n        acknowledgeOwner: true,'),
+    'the UI start path marks the already-persisted human turn as owner-initiated');
   const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
   const llmAckCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
   assert.ok(gate < templateAck && gate < llmAckCall,
@@ -221,7 +226,7 @@ test('runner: the ack bubble is dropped once the turn delivered visible text or 
   const kick = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial)');
   assert.ok(kick > 0, 'the kick passes the turn object and the kick-time serial');
   assert.ok(source.includes('this.armTurnAckOpeningFallback(sessionId, prompt, activeSession, turnAckSerial)'),
-    'an independent two-second opening timer is armed beside the LLM attempt');
+    'an independent 250ms opening timer is armed beside the LLM attempt');
   assert.ok(source.includes('activeSession.dshTurnAckOpeningEmitted = false;'),
     'a reused ActiveSession gets a fresh opening budget for each new submission');
 

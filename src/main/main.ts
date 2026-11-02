@@ -12113,6 +12113,7 @@ if (!gotTheLock) {
       }
       runner.startSession(session.id, options.prompt, {
         skipInitialUserMessage: true,
+        acknowledgeOwner: true,
         skillIds: sanitizedSkillIds,
         workspaceRoot: selectedWorkspaceRoot,
         confirmationMode: 'modal',
