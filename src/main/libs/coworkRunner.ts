@@ -9,6 +9,7 @@ import type { Readable } from 'stream';
 import { StringDecoder } from 'string_decoder';
 import { v4 as uuidv4 } from 'uuid';
 import type { PermissionResult } from './coworkPermissionTypes';
+import { stampPermissionDeadline, timeoutDefaultForToolApproval, type PermissionTimeoutDefault } from './permissionTimeoutDefault';
 import { isServerMode } from '../server/serverMode';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode, CoworkSessionStatus, CoworkPermissionMode } from '../coworkStore';
 import { getCurrentApiConfig, resolveCurrentModelLimits, resolveModelOptions, getPersistedAutoApproveTools, getPersistedCoworkEffortLevel, getPersistedChatExperienceMode, resolveDshProviderRoute, resolveSystemRescueBrain, isFreeQuotaProvider, ModelProviderSelectionError, type DshProviderRouteInfo } from './claudeSettings';
@@ -1484,8 +1485,13 @@ export interface PermissionRequest {
   toolInput: Record<string, unknown>;
   // AskUserQuestion only: per-question countdown the renderer wizard applies
   // to each displayed step. null/undefined = no timeout (plan reviews,
-  // long-term-task defining sessions).
+  // long-term-task defining sessions, and every DSH ask — those wait).
   perQuestionTimeoutMs?: number | null;
+  // Epoch ms when the watchdog presses timeoutDefault. Null/absent = the
+  // card stays until a person answers.
+  expiresAt?: number | null;
+  // Which button the watchdog presses, and which button shows the countdown.
+  timeoutDefault?: PermissionTimeoutDefault | null;
 }
 
 export type LocalBufferedSteer = {
@@ -7754,10 +7760,13 @@ export class CoworkRunner extends EventEmitter {
       toolInput: this.buildSafetyQuestionInput(question, requestedToolName, requestedToolInput),
     };
 
+    stampPermissionDeadline(request, 'deny');
     activeSession.pendingPermission = request;
     this.emit('permissionRequest', sessionId, request);
 
-    const result = await this.waitForPermissionResponse(sessionId, request.requestId, signal);
+    const result = await this.waitForPermissionResponse(sessionId, request.requestId, signal, {
+      timeoutBehavior: 'deny',
+    });
     if (activeSession.abortController.signal.aborted || signal.aborted) {
       return 'aborted';
     }
@@ -11156,16 +11165,18 @@ export class CoworkRunner extends EventEmitter {
               toolName: ask.toolName,
               toolInput: { reason: ask.reason ?? '' },
             };
+            const timeoutDefault = timeoutDefaultForToolApproval(ask.reason);
+            stampPermissionDeadline(request, timeoutDefault);
             activeSession.pendingPermission = request;
             this.emit('permissionRequest', sessionId, request);
-            // Route through the shared 60s permission timeout (abort-wired):
-            // an approval nobody answers — a background worker session or one
-            // switched away in the UI — auto-rejects so the blocked tool call
-            // returns instead of wedging the turn in "running" forever. The
-            // bare pendingPermissions.set this replaces had no timeout at
-            // all, and the stall watchdog extends through pendingPermission,
-            // making the hang permanent.
-            void this.waitForPermissionResponse(sessionId, ask.id, activeSession.abortController.signal)
+            // Shared 60s watchdog (abort-wired). Ordinary tool approvals
+            // auto-allow; safety confirms carried in the reason (external
+            // agent CLI, delete) auto-deny. Either way the blocked tool call
+            // returns instead of wedging the turn. The countdown on the
+            // default button reads request.expiresAt.
+            void this.waitForPermissionResponse(sessionId, ask.id, activeSession.abortController.signal, {
+              timeoutBehavior: timeoutDefault,
+            })
               .then((result) => {
                 if (activeSession.pendingPermission?.requestId === ask.id) {
                   activeSession.pendingPermission = null;
@@ -11235,18 +11246,14 @@ export class CoworkRunner extends EventEmitter {
                 return;
               }
             }
-            // Timeout ownership (kernel 0.2.0-rc.2 timed ask mode): the
-            // kernel's own deadline unwinds unanswered asks — the tool returns
-            // { pending: true, callId }, the model continues independent work,
-            // and the bridge's abort closes this modal through onAskCancelled.
-            // The host no longer auto-picks the recommended option (the
-            // retired 120s backstop silently decided FOR the user; pending
-            // never fabricates an answer) and no renderer per-question timer
-            // arms (perQuestionTimeoutMs stays null). Late answers arrive as
-            // ordinary chat messages. Plan-mode exit reviews are unaffected:
-            // dsh-plan-mode asks through ctx.userQuestions.ask() directly with
-            // intent 'plan-review', bypassing the timed tool schema, so they
-            // still block until the user decides or the turn cancels.
+            // Questions wait for a person. The tool is mounted with timeout -1
+            // and the kernel patch ignores a model-supplied timeout, so an
+            // unanswered ask does not become { pending: true } and does not
+            // close this card. perQuestionTimeoutMs stays null: the wizard
+            // does not auto-pick a recommended option. Plan-mode exit reviews
+            // are unaffected: dsh-plan-mode asks through ctx.userQuestions.ask()
+            // directly with intent 'plan-review'. A turn cancel still closes
+            // the card through onAskCancelled.
             const request: PermissionRequest = {
               requestId: ask.id,
               toolName: 'AskUserQuestion',
@@ -12300,6 +12307,10 @@ export class CoworkRunner extends EventEmitter {
         toolName: name,
         toolInput: { reason: policy.reason ?? '' },
       }
+      // This branch only runs for host-policy `ask`: delete confirmation and
+      // external-agent CLI. Both stay deny-by-default. Ordinary tool
+      // approvals go through onApprovalRequest and default to allow.
+      stampPermissionDeadline(request, 'deny')
       if (activeSession) activeSession.pendingPermission = request
       // waitForPermissionResponse registers requestId synchronously in its
       // executor — construct it before emitting so an instant reply cannot
@@ -12307,7 +12318,8 @@ export class CoworkRunner extends EventEmitter {
       const resultPromise = this.waitForPermissionResponse(
         coworkSessionId,
         request.requestId,
-        activeSession?.abortController.signal
+        activeSession?.abortController.signal,
+        { timeoutBehavior: 'deny' }
       )
       this.emit('permissionRequest', coworkSessionId, request)
       const result = await resultPromise
@@ -16009,12 +16021,17 @@ export class CoworkRunner extends EventEmitter {
     sessionId: string,
     requestId: string,
     signal?: AbortSignal,
-    options?: { timeoutMs?: number | null; emitRequest?: PermissionRequest }
+    options?: {
+      timeoutMs?: number | null;
+      emitRequest?: PermissionRequest;
+      timeoutBehavior?: PermissionTimeoutDefault;
+    }
   ): Promise<PermissionResult> {
     // timeoutMs: null suspends the request INDEFINITELY (no watchdog) — for
     // owner-gated actions that must wait for a human click whenever it comes
     // (A2A friend invites), not burn the 60s default into an auto-deny.
     const timeoutMs = options?.timeoutMs === undefined ? PERMISSION_RESPONSE_TIMEOUT_MS : options.timeoutMs;
+    const timeoutBehavior: PermissionTimeoutDefault = options?.timeoutBehavior === 'allow' ? 'allow' : 'deny';
     return new Promise(resolve => {
       let settled = false;
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -16056,10 +16073,12 @@ export class CoworkRunner extends EventEmitter {
       timeoutId = timeoutMs === null
         ? null
         : setTimeout(() => {
-          finalize({
-            behavior: 'deny',
-            message: 'Permission request timed out after 60s',
-          });
+          finalize(timeoutBehavior === 'allow'
+            ? { behavior: 'allow' }
+            : {
+              behavior: 'deny',
+              message: 'Permission request timed out after 60s',
+            });
         }, timeoutMs);
 
       if (signal) {

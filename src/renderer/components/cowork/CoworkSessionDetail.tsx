@@ -42,6 +42,8 @@ import {
   type SentSelectionQuoteLabelSet,
 } from './coworkQuotedSelections';
 import CoworkPermissionPanel from './CoworkPermissionPanel';
+import A2AFriendApprovalBar from './A2AFriendApprovalBar';
+import { friendActionOf } from './permissionPromptLayout';
 import { buildSessionComposerCommands } from './composerCommandCatalog';
 import PermissionModeSelector from './PermissionModeSelector';
 import SubagentPanel from './SubagentPanel';
@@ -2862,6 +2864,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // mapping is the display source of truth, so an IM row never renders the
   // A2A panels (peer profile, episode history, A2A errors).
   const isA2ASession = currentSession?.sessionType === 'a2a' && !currentSession?.imChannel;
+  const friendApprovalPermissions = useMemo(() => {
+    if (!isA2ASession || !currentSession) return [];
+    return pendingPermissions.filter((permission) => (
+      permission.sessionId === currentSession.id && friendActionOf(permission) !== null
+    ));
+  }, [isA2ASession, currentSession, pendingPermissions]);
   const isPrivateA2ASession = useMemo(() => (
     currentSession?.sessionType === 'a2a'
     && currentSession.messages.some((message) => message.metadata?.sourceChannel === 'metaweb_private')
@@ -5306,6 +5314,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       {isA2ASession ? (
         <div className="px-4 py-3 shrink-0 border-t dark:border-claude-darkBorder border-claude-border">
           <div className="mx-auto flex max-w-[clamp(680px,64%,920px)] flex-col items-stretch gap-2">
+            {friendApprovalPermissions.map((permission) => (
+              <A2AFriendApprovalBar key={permission.requestId} permission={permission} />
+            ))}
             {isA2APeerOwner ? (
               <A2AOwnerComposer
                 key={currentSession.id}

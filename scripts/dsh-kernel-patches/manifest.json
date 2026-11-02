@@ -17,12 +17,17 @@
     },
     {
       "patch": "@deepseek-ai+dsh-tool-ask-user+0.2.1-rc.2.patch",
-      "why": "ask_user_question declares and forwards the per-question `detail` context (bare-question incident f3ec66dc)",
+      "why": "ask_user_question declares and forwards the per-question `detail` context (bare-question incident f3ec66dc) and ignores model timeouts so the panel waits for a person",
       "targets": [
         {
           "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-tool-ask-user/lib/index.js",
           "match": "question.detail !== void 0",
           "count": 2
+        },
+        {
+          "file": "dsh-runtime/node_modules/@deepseek-ai/dsh-tool-ask-user/lib/index.js",
+          "match": "IDBots patch (ask-waits-for-human)",
+          "count": 1
         }
       ]
     },

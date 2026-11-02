@@ -60,7 +60,7 @@ export class IMCoworkHandler extends EventEmitter {
   // Track which sessions are created by IM (to filter events)
   private imSessionIds: Set<string> = new Set();
   private sessionConversationMap: Map<string, { conversationId: string; platform: IMPlatform }> = new Map();
-  private pendingPermissionByConversation: Map<string, PendingIMPermission> = new Map();
+  private pendingPermissionByConversation: Map<string, PendingIMPermission[]> = new Map();
   // Session ids whose IM mapping should be torn down after the current turn completes.
   // Populated by `requestSessionReset()` (e.g. from the `start_new_im_session` MCP tool).
   private pendingResets: Set<string> = new Set();
@@ -722,20 +722,28 @@ export class IMCoworkHandler extends EventEmitter {
     accumulator.reject(error);
   }
 
-  private clearPendingPermissionByKey(key: string): PendingIMPermission | null {
-    const pending = this.pendingPermissionByConversation.get(key);
-    if (!pending) return null;
-
-    if (pending.timeoutId) {
-      clearTimeout(pending.timeoutId);
+  private clearPendingPermissionByKey(key: string): void {
+    const list = this.pendingPermissionByConversation.get(key);
+    if (!list) return;
+    for (const pending of list) {
+      if (pending.timeoutId) clearTimeout(pending.timeoutId);
     }
     this.pendingPermissionByConversation.delete(key);
-    return pending;
+  }
+
+  private removePendingPermission(key: string, requestId: string): void {
+    const list = this.pendingPermissionByConversation.get(key);
+    if (!list) return;
+    const index = list.findIndex((entry) => entry.request.requestId === requestId);
+    if (index < 0) return;
+    const [removed] = list.splice(index, 1);
+    if (removed?.timeoutId) clearTimeout(removed.timeoutId);
+    if (list.length === 0) this.pendingPermissionByConversation.delete(key);
   }
 
   private clearPendingPermissionsBySessionId(sessionId: string): void {
-    for (const [key, pending] of this.pendingPermissionByConversation.entries()) {
-      if (pending.sessionId !== sessionId) continue;
+    for (const [key, list] of this.pendingPermissionByConversation.entries()) {
+      if (!list.some((entry) => entry.sessionId === sessionId)) continue;
       this.clearPendingPermissionByKey(key);
     }
   }
@@ -748,13 +756,18 @@ export class IMCoworkHandler extends EventEmitter {
     const questionText = typeof firstQuestion?.question === 'string'
       ? firstQuestion.question
       : '';
+    const waitsForHuman = request.toolName === 'AskUserQuestion'
+      && request.timeoutDefault !== 'allow'
+      && request.timeoutDefault !== 'deny';
 
     return [
       tApp(`检测到需要安全确认的操作（工具: ${request.toolName}）。`, `A safety confirmation is required (tool: ${request.toolName}).`),
       questionText
         ? tApp(`说明: ${questionText}`, `Details: ${questionText}`)
         : tApp('说明: 当前操作涉及删除或访问任务目录外路径。', 'Details: this operation deletes files or accesses a path outside the task directory.'),
-      tApp('请在 60 秒内回复“允许”或“拒绝”。', 'Reply with "yes" or "no" within 60 seconds.'),
+      waitsForHuman
+        ? tApp('请回复“允许”或“拒绝”。该请求会一直等待，直到你回复。', 'Reply with "yes" or "no". This request waits until you answer.')
+        : tApp('请在 60 秒内回复“允许”或“拒绝”。', 'Reply with "yes" or "no" within 60 seconds.'),
     ].join('\n');
   }
 
@@ -802,7 +815,8 @@ export class IMCoworkHandler extends EventEmitter {
 
   private async handlePendingPermissionReply(message: IMMessage): Promise<string | null> {
     const key = this.createConversationKey(message.conversationId, message.platform);
-    const pending = this.pendingPermissionByConversation.get(key);
+    const list = this.pendingPermissionByConversation.get(key);
+    const pending = list?.[0];
     if (!pending) return null;
 
     const normalizedReply = message.content
@@ -813,12 +827,12 @@ export class IMCoworkHandler extends EventEmitter {
     }
 
     if (!this.coworkRunner.isSessionActive(pending.sessionId)) {
-      this.clearPendingPermissionByKey(key);
+      this.removePendingPermission(key, pending.request.requestId);
       return tApp('该确认请求已过期，请重新发送任务。', 'This confirmation request expired. Please send the task again.');
     }
 
     if (IM_DENY_RESPONSE_RE.test(normalizedReply)) {
-      this.clearPendingPermissionByKey(key);
+      this.removePendingPermission(key, pending.request.requestId);
       this.coworkRunner.respondToPermission(pending.request.requestId, {
         behavior: 'deny',
         message: 'Operation denied by IM user confirmation.',
@@ -830,7 +844,7 @@ export class IMCoworkHandler extends EventEmitter {
       return tApp('当前有待确认操作，请回复“允许”或“拒绝”（60 秒内）。', 'A confirmation is pending. Reply with "yes" or "no" (within 60 seconds).');
     }
 
-    this.clearPendingPermissionByKey(key);
+    this.removePendingPermission(key, pending.request.requestId);
     const responsePromise = this.createAccumulatorPromise(pending.sessionId);
     this.coworkRunner.respondToPermission(
       pending.request.requestId,
@@ -855,27 +869,29 @@ export class IMCoworkHandler extends EventEmitter {
     }
 
     const key = this.createConversationKey(conversation.conversationId, conversation.platform);
-    const existingPending = this.clearPendingPermissionByKey(key);
-    if (existingPending) {
-      this.coworkRunner.respondToPermission(existingPending.request.requestId, {
-        behavior: 'deny',
-        message: 'Superseded by a newer permission request.',
-      });
-    }
+    const waitsForHuman = request.toolName === 'AskUserQuestion'
+      && request.timeoutDefault !== 'allow'
+      && request.timeoutDefault !== 'deny';
+    const suspended = this.coworkRunner.isPermissionSuspended?.(request.requestId) === true;
+    const timeoutId = waitsForHuman || suspended
+      ? undefined
+      : setTimeout(() => {
+        const current = this.pendingPermissionByConversation.get(key)
+          ?.find((entry) => entry.request.requestId === request.requestId);
+        if (!current) return;
+        this.removePendingPermission(key, request.requestId);
+        if (request.timeoutDefault === 'allow') {
+          this.coworkRunner.respondToPermission(request.requestId, this.buildAllowPermissionResult(request));
+          return;
+        }
+        this.coworkRunner.respondToPermission(request.requestId, {
+          behavior: 'deny',
+          message: 'Permission request timed out after 60s',
+        });
+      }, PERMISSION_CONFIRM_TIMEOUT_MS);
 
-    const timeoutId = setTimeout(() => {
-      const currentPending = this.pendingPermissionByConversation.get(key);
-      if (!currentPending || currentPending.request.requestId !== request.requestId) {
-        return;
-      }
-      this.clearPendingPermissionByKey(key);
-      this.coworkRunner.respondToPermission(request.requestId, {
-        behavior: 'deny',
-        message: 'Permission request timed out after 60s',
-      });
-    }, PERMISSION_CONFIRM_TIMEOUT_MS);
-
-    this.pendingPermissionByConversation.set(key, {
+    const list = this.pendingPermissionByConversation.get(key) ?? [];
+    list.push({
       key,
       sessionId,
       request,
@@ -884,6 +900,7 @@ export class IMCoworkHandler extends EventEmitter {
       createdAt: Date.now(),
       timeoutId,
     });
+    this.pendingPermissionByConversation.set(key, list);
 
     const accumulator = this.messageAccumulators.get(sessionId);
     if (accumulator) {
@@ -1039,9 +1056,9 @@ export class IMCoworkHandler extends EventEmitter {
     this.sessionConversationMap.clear();
     this.pendingResets.clear();
 
-    for (const [key, pending] of this.pendingPermissionByConversation.entries()) {
-      if (pending.timeoutId) {
-        clearTimeout(pending.timeoutId);
+    for (const [key, list] of this.pendingPermissionByConversation.entries()) {
+      for (const pending of list) {
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
       }
       this.pendingPermissionByConversation.delete(key);
     }

@@ -692,6 +692,8 @@ interface CoworkPermissionRequest {
   toolUseId?: string | null;
   // AskUserQuestion only: per-question countdown for the wizard; null/undefined = no timeout.
   perQuestionTimeoutMs?: number | null;
+  expiresAt?: number | null;
+  timeoutDefault?: 'allow' | 'deny' | null;
 }
 
 interface CoworkApiConfig {
@@ -1329,6 +1331,8 @@ interface IElectronAPI {
         toolInput: Record<string, unknown>;
         toolUseId?: string | null;
         perQuestionTimeoutMs?: number | null;
+        expiresAt?: number | null;
+        timeoutDefault?: 'allow' | 'deny' | null;
       }>;
       error?: string;
     }>;

@@ -153,6 +153,58 @@ test('unmanaged and IM-owned sessions are not relayed', () => {
   assert.equal(store.transcript.length, 0, 'relay-owned session skipped');
 });
 
+test('a second permission request keeps the first card instead of denying it', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('dsh-policy-1', true);
+  runner.pending.set('dsh-policy-2', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 5000 });
+  runner.emit('permissionRequest', SESSION, installGateRequest('dsh-policy-1'));
+  runner.emit('permissionRequest', SESSION, installGateRequest('dsh-policy-2'));
+
+  assert.equal(runner.responded.length, 0, 'the older request is not superseded');
+  assert.equal(store.transcript.length, 2, 'both prompts are posted');
+
+  const reply = await resolveOrchestratorPermissionReply(runner as never, SESSION, '允许');
+  assert.ok(reply);
+  assert.equal(runner.responded.length, 1);
+  assert.equal(runner.responded[0]!.requestId, 'dsh-policy-1', 'text reply answers the oldest card');
+  assert.equal(runner.pending.has('dsh-policy-2'), true);
+});
+
+test('an allow-default approval times out as allow', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('appr-1', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 15 });
+  runner.emit('permissionRequest', SESSION, {
+    requestId: 'appr-1',
+    toolName: 'Bash',
+    toolInput: { reason: 'run a command' },
+    timeoutDefault: 'allow',
+  });
+
+  await sleep(50);
+  assert.equal(runner.responded.length, 1);
+  assert.equal(runner.responded[0]!.result.behavior, 'allow');
+});
+
+test('a question with no default is not auto-answered', async () => {
+  const runner = new StubRunner();
+  const store = makeStore();
+  runner.pending.set('ask-1', true);
+  claimManagedOrchestratorSession(runner as never, SESSION, store as never, { timeoutMs: 15 });
+  runner.emit('permissionRequest', SESSION, {
+    requestId: 'ask-1',
+    toolName: 'AskUserQuestion',
+    toolInput: { questions: [{ question: 'Which color?' }] },
+  });
+
+  await sleep(50);
+  assert.equal(runner.responded.length, 0, 'questions wait for a person');
+  assert.ok(store.transcript[0]!.message.content.includes('一直等待'));
+});
+
 test('unanswered confirmations auto-deny after the configured window', async () => {
   const runner = new StubRunner();
   const store = makeStore();
