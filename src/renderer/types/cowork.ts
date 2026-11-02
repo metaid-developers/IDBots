@@ -418,6 +418,14 @@ export interface CoworkSession {
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   messages: CoworkMessage[];
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`), read
+   * from the conversation mapping. Legacy IM rows stored as 'a2a' are rendered
+   * as IM rows without a data migration.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Bounded A2A history state supplied by the renderer session endpoint. */
   messageHistory?: CoworkMessageHistoryState;
   createdAt: number;
@@ -862,6 +870,14 @@ export interface CoworkSessionSummary {
   archivedAt?: number | null;
   /** Session type: 'standard' = human↔MetaBot, 'a2a' = MetaBot↔MetaBot */
   sessionType?: CoworkSessionType;
+  /**
+   * IM channel behind this row (`im:qq:group` / `im:qq:direct`), read from the
+   * conversation mappings. Display-layer only, so legacy IM rows created as
+   * 'a2a' are badged correctly without a data migration.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Remote peer MetaBot's display name (A2A sessions only) */
   peerName?: string | null;
   /** Remote peer MetaBot's avatar (A2A sessions only) */

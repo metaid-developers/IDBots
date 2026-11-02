@@ -112,9 +112,81 @@ export interface WeixinGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== QQ Types ====================
+
+export interface QQConfig {
+  enabled: boolean;
+  /** QQ Open Platform AppID (public identifier). */
+  appId: string;
+  botId?: string | null;
+  ownerUserOpenid?: string | null;
+  /**
+   * Write-only: the renderer may send an AppSecret to `im:qq:credentials:set`,
+   * but `im:config:get` never returns one. Do not render or persist this value.
+   */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+  /** Group policy: open | allowlist | disabled. Missing => strictest. */
+  groupPolicy?: 'open' | 'allowlist' | 'disabled';
+  /** Group OpenIDs served when groupPolicy === 'allowlist'. */
+  groupAllowlist?: string[];
+  /** Layer 3 (local machine operations). Default OFF. */
+  localToolsEnabled?: boolean;
+  /** Stable ids allowed to use layer 3 after the switch is on. */
+  localToolsAllowFrom?: string[];
+  /**
+   * Daily budget for admitted group messages, across all groups. Default 500.
+   * The per-minute limits are hard-coded, not configurable.
+   */
+  dailyReplyLimit?: number;
+}
+
+export interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  appId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
+/**
+ * Result of the optional platform group-name lookup.
+ *
+ *   ok          a name is available
+ *   forbidden   the endpoint exists but is whitelist-only (code 11253) — the UI
+ *               must say "only the group ID is available" instead of guessing
+ *   unavailable no credentials, or the lookup was never run
+ *   error       network / unexpected failure
+ */
+export type QQGroupNameStatus = 'ok' | 'forbidden' | 'unavailable' | 'error';
+
+/**
+ * A group that messaged the bot while NOT allowlisted.
+ *
+ * The 32-hex `groupId` is the only identifier the platform guarantees and is
+ * always present; `name` is an optional extra. Authorising happens by adding
+ * `groupId` to `groupAllowlist` — never by typing it.
+ */
+export interface QQGroupCandidateView {
+  groupId: string;
+  name: string | null;
+  nameStatus: QQGroupNameStatus;
+  nameCheckedAt: number | null;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  messageCount: number;
+  ignored: boolean;
+  allowed: boolean;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
@@ -122,6 +194,7 @@ export interface IMGatewayConfig {
   telegram: TelegramConfig;
   discord: DiscordConfig;
   weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
 
@@ -136,6 +209,7 @@ export interface IMGatewayStatus {
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
   weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -274,12 +348,22 @@ export const DEFAULT_WEIXIN_CONFIG: WeixinConfig = {
   debug: true,
 };
 
+export const DEFAULT_QQ_CONFIG: QQConfig = {
+  enabled: false,
+  appId: '',
+  botId: null,
+  ownerUserOpenid: null,
+  metabotId: null,
+  debug: true,
+};
+
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_CONFIG,
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
   weixin: DEFAULT_WEIXIN_CONFIG,
+  qq: DEFAULT_QQ_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -321,6 +405,17 @@ export const DEFAULT_IM_STATUS: IMGatewayStatus = {
     startedAt: null,
     lastError: null,
     accountId: null,
+    loginPending: false,
+    loginState: 'idle',
+    qrContent: null,
+    lastInboundAt: null,
+    lastOutboundAt: null,
+  },
+  qq: {
+    connected: false,
+    startedAt: null,
+    lastError: null,
+    appId: null,
     loginPending: false,
     loginState: 'idle',
     qrContent: null,

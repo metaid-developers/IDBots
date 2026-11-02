@@ -281,6 +281,21 @@ const FEATURES_UTIL_INVOKE: Record<string, AllowlistEntry> = {
   'im:weixin:login:start': { tier: 'P2' },
   'im:weixin:login:cancel': { tier: 'P2' },
   'im:weixin:credentials:check': { tier: 'P2' },
+  // QQ: the QR payload and AppID are identifiers; the AppSecret is accepted only
+  // on the write path and is stored 0600, never readable back over IPC.
+  'im:qq:login:start': { tier: 'P2' },
+  'im:qq:login:cancel': { tier: 'P2' },
+  'im:qq:credentials:check': { tier: 'P2' },
+  'im:qq:credentials:set': { tier: 'P2', note: 'write-only AppSecret; no read-back channel exists.' },
+  // QQ group candidates: the ids of groups that messaged the bot while NOT
+  // allowlisted. These are channel state (ids, timestamps, an optional group
+  // name) — reading them grants nothing, and none of these channels can add a
+  // group to the allowlist: that still goes through the existing
+  // `im:config:set` path, which requires the full QQ config object.
+  'im:qq:groups:candidates:list': { tier: 'P2', note: 'read-only: recorded group ids + counters; no secret.' },
+  'im:qq:groups:candidates:dismiss': { tier: 'P2', note: 'marks a candidate ignored; never grants access.' },
+  'im:qq:groups:candidates:restore': { tier: 'P2', note: 'undoes an ignore; never grants access.' },
+  'im:qq:groups:candidates:name': { tier: 'P2', note: 'optional platform name lookup; returns nameStatus, never invents a name.' },
   'chainBackup:getState': { tier: 'P2' },
   'chainBackup:backup': { tier: 'P2', timeoutMs: 900_000, note: '`02`/C2 Limits: timeout 900 s.' },
   'chainBackup:restore': { tier: 'N', note: '`02`: needs mnemonic import; later release.' },

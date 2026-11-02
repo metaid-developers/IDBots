@@ -10,6 +10,8 @@ import { FeishuGateway } from './feishuGateway';
 import { TelegramGateway } from './telegramGateway';
 import { DiscordGateway } from './discordGateway';
 import { WeixinGateway } from './weixinGateway';
+import { QQGateway } from './qqGateway';
+import type { QQGroupCandidateReport, QQGroupCandidateView } from './qqGateway';
 import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
@@ -31,7 +33,7 @@ import { tApp } from '../libs/appLanguage';
 
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
-const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin'] as const;
+const MANAGED_IM_PLATFORMS = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin', 'qq'] as const;
 type ManagedIMPlatform = typeof MANAGED_IM_PLATFORMS[number];
 
 export interface IMGatewayManagerOptions {
@@ -45,6 +47,8 @@ export class IMGatewayManager extends EventEmitter {
   private telegramGateway: TelegramGateway;
   private discordGateway: DiscordGateway;
   private weixinGateway: WeixinGateway;
+  private qqGateway: QQGateway;
+  private qqLoginListener: ((result: { state: string }) => void) | null = null;
   private imStore: IMStore;
   private chatHandler: IMChatHandler | null = null;
   private coworkHandler: IMCoworkHandler | null = null;
@@ -64,6 +68,21 @@ export class IMGatewayManager extends EventEmitter {
     this.telegramGateway = new TelegramGateway();
     this.discordGateway = new DiscordGateway();
     this.weixinGateway = new WeixinGateway();
+    this.qqGateway = new QQGateway({
+      // LIVE config: the settings page can change the group allowlist or the
+      // layer-3 switch while the gateway is connected. A snapshot from
+      // `start()` would keep enforcing the old policy.
+      configProvider: () => this.imStore.getQQConfig(),
+      // The config table is only a MIRROR of the identifiers. Whenever the
+      // gateway resolves the durable 0600 credentials (including the
+      // "table empty, one account file" recovery), write appId / botId /
+      // ownerUserOpenid back so the next toggle and the trust gate agree.
+      onIdentity: (summary) => {
+        if (this.imStore.reconcileQQIdentity(summary)) {
+          this.emit('statusChange', this.getStatus());
+        }
+      },
+    });
 
     // Store Cowork dependencies if provided
     if (options?.coworkRunner && options?.coworkStore) {
@@ -165,6 +184,28 @@ export class IMGatewayManager extends EventEmitter {
       this.emit('statusChange', this.getStatus());
       this.emit('weixinLogin', result);
     });
+
+    // QQ events
+    this.qqGateway.on('status', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('connected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('disconnected', () => {
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('error', (error) => {
+      this.emit('error', { platform: 'qq', error });
+      this.emit('statusChange', this.getStatus());
+    });
+    this.qqGateway.on('message', (message: IMMessage) => {
+      this.emit('message', message);
+    });
+    this.qqGateway.on('login', (result: { state: string }) => {
+      this.emit('statusChange', this.getStatus());
+      this.emit('qqLogin', result);
+    });
   }
 
   /**
@@ -198,6 +239,11 @@ export class IMGatewayManager extends EventEmitter {
       console.log('[IMGatewayManager] Reconnecting Weixin...');
       this.weixinGateway.reconnectIfNeeded();
     }
+
+    if (this.qqGateway && !this.qqGateway.isConnected()) {
+      console.log('[IMGatewayManager] Reconnecting QQ...');
+      this.qqGateway.reconnectIfNeeded();
+    }
   }
 
   /**
@@ -223,6 +269,31 @@ export class IMGatewayManager extends EventEmitter {
       replyFn: (text: string) => Promise<void>
     ): Promise<void> => {
       try {
+        // QQ is the first channel with an entry-point trust gate. A QQ message
+        // without a frozen trust context is a contract violation -> fail
+        // closed (silence, no error text). Strangers/bots never get here at
+        // all (the gateway drops them), this is defence in depth.
+        if (message.platform === 'qq') {
+          const trust = message.trust;
+          if (!trust) {
+            console.warn('[IMGatewayManager] Dropping QQ message without a trust context (fail-closed)', {
+              conversationId: message.conversationId,
+              chatType: message.chatType,
+            });
+            return;
+          }
+          if (trust.level === 'stranger-dm' || trust.level === 'bot-sender') {
+            return;
+          }
+          if (message.chatType === 'group' && trust.toolScope !== 'none') {
+            // Structural invariant: a group turn can never carry local tools.
+            console.warn('[IMGatewayManager] Refusing a group turn with a non-empty tool scope', {
+              conversationId: message.conversationId,
+            });
+            return;
+          }
+        }
+
         let response: string;
         const targetMetabotId = this.getRouteMetabotIdForPlatform(message.platform);
 
@@ -243,6 +314,9 @@ export class IMGatewayManager extends EventEmitter {
           response = await this.chatHandler.processMessage(message);
         }
 
+        // Silent turns (e.g. a dropped or empty answer) must not push an empty
+        // bubble into the chat.
+        if (typeof response === 'string' && !response.trim()) return;
         await replyFn(response);
       } catch (error: any) {
         console.error(`[IMGatewayManager] Error processing message: ${error.message}`);
@@ -260,6 +334,7 @@ export class IMGatewayManager extends EventEmitter {
     this.telegramGateway.setMessageCallback(messageHandler);
     this.discordGateway.setMessageCallback(messageHandler);
     this.weixinGateway.setMessageCallback(messageHandler);
+    this.qqGateway.setMessageCallback(messageHandler);
   }
 
   /**
@@ -336,6 +411,7 @@ export class IMGatewayManager extends EventEmitter {
       telegram: this.telegramGateway.getStatus(),
       discord: this.discordGateway.getStatus(),
       weixin: this.weixinGateway.getStatus(),
+      qq: this.qqGateway.getStatus(),
     };
   }
 
@@ -551,6 +627,8 @@ export class IMGatewayManager extends EventEmitter {
       await this.discordGateway.start(config.discord);
     } else if (platform === 'weixin') {
       await this.weixinGateway.start(config.weixin);
+    } else if (platform === 'qq') {
+      await this.qqGateway.start(config.qq);
     }
   }
 
@@ -568,6 +646,8 @@ export class IMGatewayManager extends EventEmitter {
       await this.discordGateway.stop();
     } else if (platform === 'weixin') {
       await this.weixinGateway.stop();
+    } else if (platform === 'qq') {
+      await this.qqGateway.stop();
     }
   }
 
@@ -611,6 +691,111 @@ export class IMGatewayManager extends EventEmitter {
   /** Whether the Weixin channel has a stored token (drives the settings UI state). */
   hasWeixinCredentials(): boolean {
     return this.weixinGateway.hasCredentials(this.imStore.getWeixinConfig());
+  }
+
+  // ==================== QQ authorization ====================
+
+  /**
+   * Start a QQ QR bind: the connector resolves once the user confirms on the
+   * phone, then the gateway writes AppID + AppSecret into its 0600 store and
+   * starts itself. The AppSecret never reaches the renderer.
+   */
+  async startQQLogin(): Promise<{ content: string }> {
+    this.updateChatHandler();
+
+    const onLogin = (result: { state: string }): void => {
+      if (result.state !== 'confirmed') {
+        this.emit('statusChange', this.getStatus());
+        return;
+      }
+      // The gateway persists credentials (0600) and (re)starts itself. Mirror
+      // BOTH public identifiers into the config table: the AppID for the UI and
+      // the scanned owner OpenID, because the trust gate reads its live config
+      // from this table. Writing only the AppID left a freshly scanned channel
+      // with `ownerUserOpenid: null`, so the owner's first DM was dropped as
+      // `stranger-dm / no-owner-binding`.
+      const summary = this.qqGateway.credentialSummary();
+      if (summary.appId) {
+        this.imStore.setQQConfig({
+          enabled: true,
+          appId: summary.appId,
+          ownerUserOpenid: summary.ownerUserOpenid,
+          appSecret: undefined,
+        });
+      }
+      this.emit('statusChange', this.getStatus());
+    };
+
+    if (this.qqLoginListener) {
+      this.qqGateway.off('login', this.qqLoginListener);
+    }
+    this.qqLoginListener = onLogin;
+    this.qqGateway.on('login', onLogin);
+    return this.qqGateway.beginLogin();
+  }
+
+  async cancelQQLogin(): Promise<void> {
+    if (this.qqLoginListener) {
+      this.qqGateway.off('login', this.qqLoginListener);
+      this.qqLoginListener = null;
+    }
+    await this.qqGateway.cancelLogin();
+  }
+
+  /** Whether a QQ AppID + AppSecret are available (store or live config). */
+  hasQQCredentials(): boolean {
+    return this.qqGateway.hasCredentials(this.imStore.getQQConfig());
+  }
+
+  /** Persist manually entered credentials (0600 file, never the config table). */
+  saveQQCredentials(params: {
+    appId: string;
+    appSecret: string;
+    botId?: string | null;
+    ownerUserOpenid?: string | null;
+  }): { appId: string; botId: string | null } {
+    const stored = this.qqGateway.saveManualCredentials(params);
+    this.imStore.setQQConfig({
+      appId: stored.appId,
+      botId: stored.botId,
+      ownerUserOpenid: params.ownerUserOpenid ?? null,
+      appSecret: undefined,
+    });
+    return { appId: stored.appId, botId: stored.botId };
+  }
+
+  /** Credential-free summary for the settings page. */
+  getQQCredentialSummary(): { hasCredentials: boolean; appId: string | null; source: string | null } {
+    return this.qqGateway.credentialSummary();
+  }
+
+  // ==================== QQ group candidates ====================
+  //
+  // Groups that messaged the bot while not allowlisted. Exposed so the settings
+  // page can offer allow/ignore instead of asking the owner to paste a 32-hex
+  // group OpenID they have no way of knowing.
+
+  /** Remembered groups, split into "needs a decision" and "all". */
+  getQQGroupCandidates(): QQGroupCandidateReport {
+    return this.qqGateway.getGroupCandidates();
+  }
+
+  /** Owner pressed 拒绝: hide the group from the pending list (still refused). */
+  dismissQQGroupCandidate(groupId: string): QQGroupCandidateReport {
+    return this.qqGateway.dismissGroupCandidate(groupId);
+  }
+
+  /** Undo a 拒绝. */
+  restoreQQGroupCandidate(groupId: string): QQGroupCandidateReport {
+    return this.qqGateway.restoreGroupCandidate(groupId);
+  }
+
+  /**
+   * Optional platform name lookup. The endpoint is whitelist-gated (11253), so
+   * `nameStatus` is the answer the UI must render — never a fabricated name.
+   */
+  refreshQQGroupCandidateName(groupId: string): Promise<QQGroupCandidateView | null> {
+    return this.qqGateway.refreshGroupCandidateName(groupId);
   }
 
   /**
@@ -658,6 +843,14 @@ export class IMGatewayManager extends EventEmitter {
         console.error(`[IMGatewayManager] Failed to start Weixin: ${error.message}`);
       }
     }
+
+    if (config.qq.enabled && this.qqGateway.hasCredentials(config.qq)) {
+      try {
+        await this.startGateway('qq');
+      } catch (error: any) {
+        console.error(`[IMGatewayManager] Failed to start QQ: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -670,6 +863,7 @@ export class IMGatewayManager extends EventEmitter {
       this.telegramGateway.stop(),
       this.discordGateway.stop(),
       this.weixinGateway.stop(),
+      this.qqGateway.stop(),
     ]);
   }
 
@@ -677,7 +871,7 @@ export class IMGatewayManager extends EventEmitter {
    * Check if any gateway is connected
    */
   isAnyConnected(): boolean {
-    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected() || this.weixinGateway.isConnected();
+    return this.dingtalkGateway.isConnected() || this.feishuGateway.isConnected() || this.telegramGateway.isConnected() || this.discordGateway.isConnected() || this.weixinGateway.isConnected() || this.qqGateway.isConnected();
   }
 
   /**
@@ -695,6 +889,9 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'weixin') {
       return this.weixinGateway.isConnected();
+    }
+    if (platform === 'qq') {
+      return this.qqGateway.isConnected();
     }
     return this.feishuGateway.isConnected();
   }
@@ -721,6 +918,8 @@ export class IMGatewayManager extends EventEmitter {
         await this.discordGateway.sendNotification(text);
       } else if (platform === 'weixin') {
         await this.weixinGateway.sendNotification(text);
+      } else if (platform === 'qq') {
+        await this.qqGateway.sendNotification(text);
       }
       return true;
     } catch (error: any) {
@@ -742,6 +941,7 @@ export class IMGatewayManager extends EventEmitter {
       telegram: { ...current.telegram, ...(configOverride.telegram || {}) },
       discord: { ...current.discord, ...(configOverride.discord || {}) },
       weixin: { ...current.weixin, ...(configOverride.weixin || {}) },
+      qq: { ...current.qq, ...(configOverride.qq || {}) },
       settings: { ...current.settings, ...(configOverride.settings || {}) },
     };
   }
@@ -766,6 +966,11 @@ export class IMGatewayManager extends EventEmitter {
       return this.weixinGateway.hasCredentials(config.weixin)
         ? []
         : ['WeChat authorization (scan the QR code first)'];
+    }
+    if (platform === 'qq') {
+      return this.qqGateway.hasCredentials(config.qq)
+        ? []
+        : ['QQ AppID + AppSecret (scan the QR code or enter them manually)'];
     }
     return (config.discord.botToken || '').trim() ? [] : ['botToken'];
   }
@@ -807,6 +1012,10 @@ export class IMGatewayManager extends EventEmitter {
 
     if (platform === 'weixin') {
       return this.weixinGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS);
+    }
+
+    if (platform === 'qq') {
+      return this.qqGateway.probeAuth(CONNECTIVITY_TIMEOUT_MS, config.qq);
     }
 
     const discordToken = (config.discord.botToken || '').trim();

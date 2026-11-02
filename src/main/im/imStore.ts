@@ -11,6 +11,7 @@ import {
   TelegramConfig,
   DiscordConfig,
   WeixinConfig,
+  QQConfig,
   IMSettings,
   IMPlatform,
   IMSessionMapping,
@@ -19,8 +20,58 @@ import {
   DEFAULT_TELEGRAM_CONFIG,
   DEFAULT_DISCORD_CONFIG,
   DEFAULT_WEIXIN_CONFIG,
+  DEFAULT_QQ_CONFIG,
   DEFAULT_IM_SETTINGS,
 } from './types';
+import { normalizeQQDailyReplyLimit } from './qqRateLimit';
+
+/**
+ * `appSecret` must never reach the renderer through `im:config:get`, so the
+ * read path drops it even if an older config row still carries one.
+ */
+function stripQQSecret(config: QQConfig): QQConfig {
+  const { appSecret: _secret, ...safe } = config;
+  return safe;
+}
+
+const trimmedOrEmpty = (value: unknown): string =>
+  typeof value === 'string' ? value.trim() : '';
+
+/**
+ * Merge a QQ config patch WITHOUT letting a stale snapshot erase identifiers
+ * the main process already knows.
+ *
+ * REGRESSION this exists for: the settings page holds a copy of `im_config`
+ * from mount time. Scanning the QR writes `appId` / `ownerUserOpenid` into the
+ * table from the main process, but the renderer is never reloaded; the next
+ * toggle then sent `{ ...staleCopy, enabled: true }` — i.e. `appId: ''` and
+ * `ownerUserOpenid: null` — and the shallow merge wrote those values straight
+ * over the live row. The row went blank, `resolveCredentials()` could no
+ * longer find the 0600 account slot, and starting the channel failed.
+ *
+ * RULE: an EMPTY identifier in a patch means "not provided", not "erase".
+ * The one exception is a DIFFERENT non-empty `appId`: that is a re-bind, and
+ * the patch is taken verbatim so a new bot never inherits the old owner.
+ */
+export function mergeQQConfigPreservingIdentity(
+  current: QQConfig,
+  incoming: Partial<QQConfig>
+): QQConfig {
+  const merged: QQConfig = { ...current, ...incoming };
+  const incomingAppId = trimmedOrEmpty(incoming.appId);
+  const currentAppId = trimmedOrEmpty(current.appId);
+  const rebinding = incomingAppId !== '' && incomingAppId !== currentAppId;
+  if (rebinding) return merged;
+
+  if (!incomingAppId && currentAppId) merged.appId = currentAppId;
+  if (!trimmedOrEmpty(incoming.botId) && trimmedOrEmpty(current.botId)) {
+    merged.botId = current.botId;
+  }
+  if (!trimmedOrEmpty(incoming.ownerUserOpenid) && trimmedOrEmpty(current.ownerUserOpenid)) {
+    merged.ownerUserOpenid = current.ownerUserOpenid;
+  }
+  return merged;
+}
 
 export class IMStore {
   private db: Database;
@@ -84,7 +135,7 @@ export class IMStore {
    * Migrate existing IM configs to ensure stable defaults.
    */
   private migrateDefaults(): void {
-    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin'] as const;
+    const platforms = ['dingtalk', 'feishu', 'telegram', 'discord', 'weixin', 'qq'] as const;
     let changed = false;
 
     for (const platform of platforms) {
@@ -166,6 +217,7 @@ export class IMStore {
     const telegram = this.getConfigValue<TelegramConfig>('telegram') ?? DEFAULT_TELEGRAM_CONFIG;
     const discord = this.getConfigValue<DiscordConfig>('discord') ?? DEFAULT_DISCORD_CONFIG;
     const weixin = this.getConfigValue<WeixinConfig>('weixin') ?? DEFAULT_WEIXIN_CONFIG;
+    const qq = this.getConfigValue<QQConfig>('qq') ?? DEFAULT_QQ_CONFIG;
     const settings = this.getConfigValue<IMSettings>('settings') ?? DEFAULT_IM_SETTINGS;
 
     // Resolve enabled field: default to false for safety
@@ -185,6 +237,7 @@ export class IMStore {
       telegram: resolveEnabled(telegram, DEFAULT_TELEGRAM_CONFIG),
       discord: resolveEnabled(discord, DEFAULT_DISCORD_CONFIG),
       weixin: resolveEnabled(weixin, DEFAULT_WEIXIN_CONFIG),
+      qq: stripQQSecret(resolveEnabled(qq, DEFAULT_QQ_CONFIG)),
       settings: { ...DEFAULT_IM_SETTINGS, ...settings },
     };
   }
@@ -204,6 +257,9 @@ export class IMStore {
     }
     if (config.weixin) {
       this.setWeixinConfig(config.weixin);
+    }
+    if (config.qq) {
+      this.setQQConfig(config.qq);
     }
     if (config.settings) {
       this.setIMSettings(config.settings);
@@ -270,6 +326,62 @@ export class IMStore {
     this.setConfigValue('weixin', { ...current, ...config });
   }
 
+  // ==================== QQ Config ====================
+
+  getQQConfig(): QQConfig {
+    const stored = this.getConfigValue<QQConfig>('qq');
+    const merged = stripQQSecret({ ...DEFAULT_QQ_CONFIG, ...stored });
+    // Normalize the configurable daily group budget on every read: a bad row
+    // (0, negative, NaN, a typo) must degrade to the default 500 and never to
+    // "unlimited". This is the same normalizer the limiter uses at runtime.
+    return { ...merged, dailyReplyLimit: normalizeQQDailyReplyLimit(merged.dailyReplyLimit) };
+  }
+
+  /**
+   * Persist QQ config. `appSecret` is accepted for API symmetry but is never
+   * written to the config table: the caller must have stored it through
+   * `QQStore` / `im:qq:credentials:set` first.
+   *
+   * The merge is identity-preserving — see `mergeQQConfigPreservingIdentity`.
+   */
+  setQQConfig(config: Partial<QQConfig>): void {
+    const current = this.getQQConfig();
+    const merged = mergeQQConfigPreservingIdentity(current, config);
+    const { appSecret: _ignoredSecret, ...safe } = merged;
+    this.setConfigValue('qq', stripQQSecret(safe));
+  }
+
+  /**
+   * Backfill the identifier mirror from the durable credential store.
+   *
+   * The config row is a CACHE of what the 0600 file already knows. It can be
+   * empty (fresh database) or stale (a row blanked by an older build) while
+   * the file still carries `appId` / `botId` / `ownerUserOpenid`. Whenever the
+   * gateway resolves credentials it calls this, so a toggle on an empty table
+   * ends with the mirror rebuilt instead of the channel dead.
+   *
+   * Only non-empty identity values are written; nothing is ever cleared here.
+   * Returns true when the row actually changed.
+   */
+  reconcileQQIdentity(identity: {
+    appId?: string | null;
+    botId?: string | null;
+    ownerUserOpenid?: string | null;
+  }): boolean {
+    const appId = trimmedOrEmpty(identity.appId);
+    if (!appId) return false;
+    const current = this.getQQConfig();
+    const patch: Partial<QQConfig> = {};
+    if (appId !== trimmedOrEmpty(current.appId)) patch.appId = appId;
+    const botId = trimmedOrEmpty(identity.botId);
+    if (botId && botId !== trimmedOrEmpty(current.botId)) patch.botId = botId;
+    const owner = trimmedOrEmpty(identity.ownerUserOpenid);
+    if (owner && owner !== trimmedOrEmpty(current.ownerUserOpenid)) patch.ownerUserOpenid = owner;
+    if (Object.keys(patch).length === 0) return false;
+    this.setQQConfig(patch);
+    return true;
+  }
+
   // ==================== IM Settings ====================
 
   getIMSettings(): IMSettings {
@@ -302,7 +414,8 @@ export class IMStore {
     const hasTelegram = !!config.telegram.botToken;
     const hasDiscord = !!config.discord.botToken;
     const hasWeixin = !!(config.weixin.token || '').trim();
-    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasWeixin;
+    const hasQQ = !!config.qq.appId.trim();
+    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasWeixin || hasQQ;
   }
 
   /**

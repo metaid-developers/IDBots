@@ -210,11 +210,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   // are matched by their own session type, so browser sessions can never leak
   // into them.
   const sessionGroups = useMemo(() => {
+    // IM rows belong to the LOCAL list even when an older row is still stored
+    // as 'a2a' (direct IM chats used to be created that way). The mapping
+    // channel is the display source of truth, so this is a render-time
+    // reclassification — no data migration.
+    const isImSession = (session: CoworkSessionSummary) => Boolean(session.imChannel);
     const isLocal = (session: CoworkSessionSummary) =>
-      session.sessionType !== 'a2a' && session.sessionType !== 'group_task';
+      session.sessionType !== 'group_task'
+      && (session.sessionType !== 'a2a' || isImSession(session));
     return {
       local: homeSessions.filter(isLocal),
-      a2a: homeSessions.filter((session) => session.sessionType === 'a2a'),
+      a2a: homeSessions.filter((session) => session.sessionType === 'a2a' && !isImSession(session)),
       group: homeSessions.filter((session) => session.sessionType === 'group_task'),
     };
   }, [homeSessions]);

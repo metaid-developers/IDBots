@@ -806,6 +806,14 @@ export interface CoworkSession {
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   messages: CoworkMessage[];
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`). Read
+   * from the conversation mapping so legacy IM rows stored as 'a2a' are shown
+   * and rendered as IM rows without rewriting their session_type.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Renderer-only bounded history state. Absent for full internal session reads. */
   messageHistory?: CoworkMessageHistoryState;
   createdAt: number;
@@ -928,6 +936,15 @@ export interface CoworkSessionSummary {
   /** Per-session reasoning effort (off/low/high/max, or the 'default' sentinel; null = follow the model default chain). */
   effort?: string | null;
   hiddenFromSessionList?: boolean;
+  /**
+   * IM channel that owns this session (`im:qq:group` / `im:qq:direct`), read
+   * from cowork_conversation_mappings. Display-layer only: it lets the session
+   * list badge an IM row without a destructive `session_type` migration of
+   * rows created before IM sessions were classified as 'standard'.
+   */
+  imChannel?: string | null;
+  /** External conversation id behind `imChannel` (e.g. `qq:group:<openid>`). */
+  imConversationId?: string | null;
   /** Auto-origin marker (see CoworkSession.autoOrigin); null = human-initiated. */
   autoOrigin?: CoworkSessionAutoOrigin | null;
   /** Manual fold placement (see CoworkSession.foldOverride); null = follow the policy. */
@@ -3721,6 +3738,8 @@ export class CoworkStore implements MemoryBackend {
       browser_uri?: string | null;
       browser_title?: string | null;
       hidden_from_session_list?: number | null;
+      im_channel?: string | null;
+      im_conversation_id?: string | null;
       auto_origin?: string | null;
       fold_override?: string | null;
       follow_up_state?: string | null;
@@ -3740,7 +3759,20 @@ export class CoworkStore implements MemoryBackend {
 
     const row = this.getOne<SessionRow>(`
       SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, metabot_id,
-             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list, auto_origin, fold_override, follow_up_state, follow_up_source, follow_up_at, permission_mode, parent_session_id, fork_point_message_id, model, model_provider, effort, project_id, goal, created_at, updated_at
+             session_type, peer_global_metaid, peer_name, peer_avatar, browser_uri, browser_title, hidden_from_session_list,
+             (
+               SELECT im.channel FROM cowork_conversation_mappings im
+               WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
+               ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+               LIMIT 1
+             ) AS im_channel,
+             (
+               SELECT im.external_conversation_id FROM cowork_conversation_mappings im
+               WHERE im.cowork_session_id = cowork_sessions.id AND im.channel LIKE 'im:%'
+               ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+               LIMIT 1
+             ) AS im_conversation_id,
+             auto_origin, fold_override, follow_up_state, follow_up_source, follow_up_at, permission_mode, parent_session_id, fork_point_message_id, model, model_provider, effort, project_id, goal, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `, [id]);
@@ -3787,6 +3819,8 @@ export class CoworkStore implements MemoryBackend {
       peerName: row.peer_name ?? null,
       peerAvatar: row.peer_avatar ?? null,
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
+      imChannel: row.im_channel ?? null,
+      imConversationId: row.im_conversation_id ?? null,
       autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
       foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
       followUpState: (row.follow_up_state as 'pending' | null) ?? null,
@@ -4261,6 +4295,8 @@ export class CoworkStore implements MemoryBackend {
       browser_uri?: string | null;
       browser_title?: string | null;
       hidden_from_session_list?: number | null;
+      im_channel?: string | null;
+      im_conversation_id?: string | null;
       auto_origin?: string | null;
       fold_override?: string | null;
       follow_up_state?: string | null;
@@ -4293,6 +4329,23 @@ export class CoworkStore implements MemoryBackend {
         s.browser_uri,
         s.browser_title,
         s.hidden_from_session_list,
+        -- IM classification for the session row (badge + title fallback).
+        -- Read from the mapping table so rows created BEFORE IM sessions moved
+        -- from 'a2a' to 'standard' are classified identically without a
+        -- destructive data migration. The :group channel wins over the
+        -- legacy im:<platform> channel when both exist.
+        (
+          SELECT im.channel FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel LIKE 'im:%'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_channel,
+        (
+          SELECT im.external_conversation_id FROM cowork_conversation_mappings im
+          WHERE im.cowork_session_id = s.id AND im.channel LIKE 'im:%'
+          ORDER BY (im.channel LIKE 'im:%:group') DESC, im.last_active_at DESC
+          LIMIT 1
+        ) AS im_conversation_id,
         s.auto_origin,
         s.fold_override,
         s.follow_up_state,
@@ -4349,6 +4402,8 @@ export class CoworkStore implements MemoryBackend {
       browserUri: row.browser_uri ?? null,
       browserTitle: row.browser_title ?? null,
       hiddenFromSessionList: Boolean(row.hidden_from_session_list),
+      imChannel: row.im_channel ?? null,
+      imConversationId: row.im_conversation_id ?? null,
       autoOrigin: (row.auto_origin as CoworkSessionAutoOrigin | null) ?? null,
       foldOverride: (row.fold_override as CoworkSessionFoldOverride | null) ?? null,
       followUpState: (row.follow_up_state as 'pending' | null) ?? null,
@@ -10613,6 +10668,15 @@ export class CoworkStore implements MemoryBackend {
       `NOT EXISTS (
         SELECT 1 FROM a2a_conversation_episodes episode
         WHERE episode.session_id = s.id AND episode.next_session_id IS NOT NULL
+      )`,
+      // IM GROUP conversations are untrusted external content. They stay
+      // visible in the owner's local session list (by request), but they must
+      // never be quoted into ANOTHER session's prompt — that would let a group
+      // message enter a private-chat context.
+      `NOT EXISTS (
+        SELECT 1 FROM cowork_conversation_mappings group_map
+        WHERE group_map.cowork_session_id = s.id
+          AND group_map.channel LIKE 'im:%:group'
       )`,
     ];
     const params: Array<string | number> = [options.metabotId];

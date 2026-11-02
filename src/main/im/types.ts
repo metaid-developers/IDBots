@@ -197,9 +197,107 @@ export interface WeixinGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+// ==================== QQ (QQ Open Platform) Types ====================
+
+/**
+ * QQ official-bot channel (QQ Open Platform, official `@tencent-connect/qqbot-nodejs`).
+ *
+ * Credential split, on purpose:
+ *   - `appId` / `botId` / `ownerUserOpenid` are identifiers and may live in the
+ *     renderer-visible config;
+ *   - `appSecret` is a bearer credential. It is persisted by `qqStore.ts` in a
+ *     0600 file under `<userData>/qq/accounts` and is NEVER written to the
+ *     config table, a log line, a buzz, or a status object. The `appSecret`
+ *     field exists only so the settings page can hand a value to the dedicated
+ *     `im:qq:credentials:set` IPC; `imStore.getConfig()` strips it.
+ */
+export interface QQConfig {
+  enabled: boolean;
+  /** QQ Open Platform AppID (public identifier). */
+  appId: string;
+  /** Bot id / robot account label, when the platform returns one. */
+  botId?: string | null;
+  /** OpenID of the user who scanned the QR code (binding owner). */
+  ownerUserOpenid?: string | null;
+  /** Write-only field: accepted by setConfig, never read back. */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+  /**
+   * Group policy. DEFAULT `allowlist` with an EMPTY list — i.e. no group is
+   * served until the owner adds one. `open` lets any group talk to the bot
+   * (layer-1 Q&A only, still no tools); `disabled` refuses every group.
+   */
+  groupPolicy?: QQGroupPolicy;
+  /** Group OpenIDs served when `groupPolicy === 'allowlist'`. */
+  groupAllowlist?: string[];
+  /**
+   * Layer 3 (local machine operations: files, shell, attachments, wallet,
+   * chain writes). DEFAULT OFF. Turning this on does NOT widen groups — their
+   * tool surface stays structurally empty.
+   */
+  localToolsEnabled?: boolean;
+  /** Stable ids (OpenIDs) allowed to use layer 3 after the switch is on. */
+  localToolsAllowFrom?: string[];
+  /**
+   * Daily budget for admitted GROUP messages (all groups combined).
+   *
+   * DEFAULT 500. The two per-minute limits (3 per sender per group, 10 per
+   * group) are deliberately NOT configurable — they are flood guards, not
+   * preferences. Invalid values degrade to the default, never to unlimited.
+   * DM is out of scope: direct messages are owner-only and already isolated.
+   */
+  dailyReplyLimit?: number;
+}
+
+export type QQGroupPolicy = 'open' | 'allowlist' | 'disabled';
+
+/**
+ * Trust level frozen at the IM message entry point (`qqTrust.ts`).
+ *
+ * Carried on the `IMMessage` and then on the runner's per-turn session marker.
+ * Downstream code may READ it; it must never recompute or widen it mid-turn.
+ */
+export type IMTrustLevel = 'group' | 'owner-dm' | 'stranger-dm' | 'bot-sender';
+
+export interface IMTrustContext {
+  level: IMTrustLevel;
+  /**
+   * `none` = the session's tool surface is EMPTY (no host tools registered and
+   * every built-in tool call is denied). `local` = layer 3 granted to the
+   * bound owner.
+   */
+  toolScope: 'none' | 'local';
+  /** Long-term memory + knowledge-base READS. */
+  memoryRead: boolean;
+  /** Long-term memory + knowledge-base WRITES (turn-end update included). */
+  memoryWrite: boolean;
+  /** Group messages never download inbound media. */
+  attachmentPolicy: 'allow' | 'reject';
+  groupId?: string | null;
+  decidedAt: number;
+  reason: string;
+}
+
+export interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  /** AppID currently bound (an identifier, not a secret). */
+  appId: string | null;
+  /** True while a QR login is being polled. */
+  loginPending: boolean;
+  /** Coarse QR login progress for the settings UI. */
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  /** QR payload (a URL) to render for scanning; null when no login is pending. */
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
 // ==================== Common IM Types ====================
 
-export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin';
+export type IMPlatform = 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'nim' | 'xiaomifeng' | 'weixin' | 'qq';
 
 export interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
@@ -207,6 +305,7 @@ export interface IMGatewayConfig {
   telegram: TelegramConfig;
   discord: DiscordConfig;
   weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
 
@@ -221,6 +320,7 @@ export interface IMGatewayStatus {
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
   weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 // ==================== Media Attachment Types ====================
@@ -253,6 +353,12 @@ export interface IMMessage {
   // 媒体附件（Telegram 支持）
   attachments?: IMMediaAttachment[];
   mediaGroupId?: string;      // 媒体组 ID（用于合并多张图片）
+  /**
+   * Entry-point trust decision for channels that enforce one (currently QQ).
+   * Absent means "legacy channel, no trust gate"; a QQ message without this
+   * field is dropped by the manager (fail-closed).
+   */
+  trust?: IMTrustContext;
 }
 
 export interface IMReplyContext {
@@ -383,12 +489,30 @@ export const DEFAULT_IM_SETTINGS: IMSettings = {
   skillsEnabled: true,
 };
 
+export const DEFAULT_QQ_CONFIG: QQConfig = {
+  enabled: false,
+  appId: '',
+  botId: null,
+  ownerUserOpenid: null,
+  metabotId: null,
+  debug: true,
+  // Security defaults: no group is served until the owner adds one, and
+  // layer 3 (local machine operations) is off for everybody.
+  groupPolicy: 'allowlist',
+  groupAllowlist: [],
+  localToolsEnabled: false,
+  localToolsAllowFrom: [],
+  // Group model turns per local day, across all groups. See qqRateLimit.ts.
+  dailyReplyLimit: 500,
+};
+
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_CONFIG,
   feishu: DEFAULT_FEISHU_CONFIG,
   telegram: DEFAULT_TELEGRAM_CONFIG,
   discord: DEFAULT_DISCORD_CONFIG,
   weixin: DEFAULT_WEIXIN_CONFIG,
+  qq: DEFAULT_QQ_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
 
@@ -458,12 +582,25 @@ export const DEFAULT_WEIXIN_STATUS: WeixinGatewayStatus = {
   lastOutboundAt: null,
 };
 
+export const DEFAULT_QQ_STATUS: QQGatewayStatus = {
+  connected: false,
+  startedAt: null,
+  lastError: null,
+  appId: null,
+  loginPending: false,
+  loginState: 'idle',
+  qrContent: null,
+  lastInboundAt: null,
+  lastOutboundAt: null,
+};
+
 export const DEFAULT_IM_STATUS: IMGatewayStatus = {
   dingtalk: DEFAULT_DINGTALK_STATUS,
   feishu: DEFAULT_FEISHU_STATUS,
   telegram: DEFAULT_TELEGRAM_STATUS,
   discord: DEFAULT_DISCORD_STATUS,
   weixin: DEFAULT_WEIXIN_STATUS,
+  qq: DEFAULT_QQ_STATUS,
 };
 
 // ==================== DingTalk Media Types ====================

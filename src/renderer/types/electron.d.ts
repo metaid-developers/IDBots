@@ -1667,16 +1667,54 @@ interface IElectronAPI {
   im: {
     getConfig: () => Promise<{ success: boolean; config?: IMGatewayConfig; error?: string }>;
     setConfig: (config: Partial<IMGatewayConfig>) => Promise<{ success: boolean; error?: string }>;
-    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin') => Promise<{ success: boolean; error?: string }>;
-    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin') => Promise<{ success: boolean; error?: string }>;
+    startGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => Promise<{ success: boolean; error?: string }>;
+    stopGateway: (platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq') => Promise<{ success: boolean; error?: string }>;
     testGateway: (
-      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin',
+      platform: 'dingtalk' | 'feishu' | 'telegram' | 'discord' | 'weixin' | 'qq',
       configOverride?: Partial<IMGatewayConfig>
     ) => Promise<{ success: boolean; result?: IMConnectivityTestResult; error?: string }>;
     /** Weixin QR authorization: returns the QR payload to render for scanning. */
     weixinLoginStart: () => Promise<{ success: boolean; qrcode?: string; content?: string; error?: string }>;
     weixinLoginCancel: () => Promise<{ success: boolean; error?: string }>;
     weixinCheckCredentials: () => Promise<{ success: boolean; hasCredentials?: boolean; error?: string }>;
+    /** QQ: QR bind returns the QR payload; credentials are stored 0600 in main. */
+    qqLoginStart: () => Promise<{ success: boolean; content?: string; error?: string }>;
+    qqLoginCancel: () => Promise<{ success: boolean; error?: string }>;
+    qqCheckCredentials: () => Promise<{ success: boolean; hasCredentials?: boolean; appId?: string | null; source?: string | null; error?: string }>;
+    qqSetCredentials: (params: { appId: string; appSecret: string; botId?: string | null; ownerUserOpenid?: string | null }) => Promise<{ success: boolean; appId?: string; error?: string }>;
+    /**
+     * QQ group authorisation without the 32-hex group OpenID.
+     *
+     * The gateway remembers groups that messaged the bot while NOT allowlisted
+     * — silently (no reply, no model, no tool, no memory). `pending` holds the
+     * ones that still need an owner decision; `groupId` is always present,
+     * `name` only when the platform's whitelist-gated endpoint answered.
+     */
+    qqListGroupCandidates: () => Promise<{
+      success: boolean;
+      pending?: QQGroupCandidateView[];
+      all?: QQGroupCandidateView[];
+      error?: string;
+    }>;
+    qqDismissGroupCandidate: (groupId: string) => Promise<{
+      success: boolean;
+      pending?: QQGroupCandidateView[];
+      all?: QQGroupCandidateView[];
+      error?: string;
+    }>;
+    qqRestoreGroupCandidate: (groupId: string) => Promise<{
+      success: boolean;
+      pending?: QQGroupCandidateView[];
+      all?: QQGroupCandidateView[];
+      error?: string;
+    }>;
+    qqResolveGroupName: (groupId: string) => Promise<{
+      success: boolean;
+      candidate?: QQGroupCandidateView;
+      nameStatus?: 'ok' | 'forbidden' | 'unavailable' | 'error';
+      name?: string | null;
+      error?: string;
+    }>;
     getStatus: () => Promise<{ success: boolean; status?: IMGatewayStatus; error?: string }>;
     onStatusChange: (callback: (status: IMGatewayStatus) => void) => () => void;
     onMessageReceived: (callback: (message: IMMessage) => void) => () => void;
@@ -2377,12 +2415,55 @@ interface WeixinGatewayStatus {
   lastOutboundAt: number | null;
 }
 
+interface QQConfig {
+  enabled: boolean;
+  appId: string;
+  botId?: string | null;
+  ownerUserOpenid?: string | null;
+  /** Write-only: never returned by `im:config:get`. */
+  appSecret?: string;
+  metabotId?: number | null;
+  debug?: boolean;
+}
+
+interface QQGatewayStatus {
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  appId: string | null;
+  loginPending: boolean;
+  loginState: 'idle' | 'wait' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  qrContent: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+}
+
+/**
+ * A QQ group that messaged the bot while NOT allowlisted.
+ *
+ * `groupId` (the platform's 32-hex group OpenID) is the only identifier the
+ * platform guarantees, so it is always shown. `name` is optional and exists
+ * only when the whitelist-gated group-info endpoint answered (`nameStatus`).
+ */
+interface QQGroupCandidateView {
+  groupId: string;
+  name: string | null;
+  nameStatus: 'ok' | 'forbidden' | 'unavailable' | 'error';
+  nameCheckedAt: number | null;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  messageCount: number;
+  ignored: boolean;
+  allowed: boolean;
+}
+
 interface IMGatewayConfig {
   dingtalk: DingTalkConfig;
   feishu: FeishuConfig;
   telegram: TelegramConfig;
   discord: DiscordConfig;
   weixin: WeixinConfig;
+  qq: QQConfig;
   settings: IMSettings;
 }
 
@@ -2570,6 +2651,7 @@ interface IMGatewayStatus {
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
   weixin: WeixinGatewayStatus;
+  qq: QQGatewayStatus;
 }
 
 type IMConnectivityVerdict = 'pass' | 'warn' | 'fail';

@@ -1846,6 +1846,62 @@
       "channel": "im:status:change"
     },
     {
+      "path": "im.qqCheckCredentials",
+      "kind": "invoke",
+      "channel": "im:qq:credentials:check",
+      "args": []
+    },
+    {
+      "path": "im.qqDismissGroupCandidate",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:dismiss",
+      "args": [
+        "groupId"
+      ]
+    },
+    {
+      "path": "im.qqListGroupCandidates",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:list",
+      "args": []
+    },
+    {
+      "path": "im.qqLoginCancel",
+      "kind": "invoke",
+      "channel": "im:qq:login:cancel",
+      "args": []
+    },
+    {
+      "path": "im.qqLoginStart",
+      "kind": "invoke",
+      "channel": "im:qq:login:start",
+      "args": []
+    },
+    {
+      "path": "im.qqResolveGroupName",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:name",
+      "args": [
+        "groupId"
+      ]
+    },
+    {
+      "path": "im.qqRestoreGroupCandidate",
+      "kind": "invoke",
+      "channel": "im:qq:groups:candidates:restore",
+      "args": [
+        "groupId"
+      ]
+    },
+    {
+      "path": "im.qqSetCredentials",
+      "kind": "invoke",
+      "channel": "im:qq:credentials:set",
+      "args": [
+        "params"
+      ]
+    },
+    {
       "path": "im.setConfig",
       "kind": "invoke",
       "channel": "im:config:set",
