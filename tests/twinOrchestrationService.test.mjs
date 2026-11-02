@@ -55,6 +55,19 @@ function makeKv() {
   };
 }
 
+function handoffReply(state, overrides = {}) {
+  const payload = {
+    state,
+    summary: `Worker ${state} summary`,
+    deliverables: [],
+    verificationEvidence: ['file exists'],
+    blockers: [],
+    humanAction: null,
+    ...overrides,
+  };
+  return `Worker summary\n<worker_handoff>${JSON.stringify(payload)}</worker_handoff>`;
+}
+
 // Recording fake for the host CoworkRunner seam (P1-5b default path):
 // insertCrossSessionMessageAndQueue returns a success insert + queued run.
 function makeRecordingRunner() {
@@ -154,6 +167,9 @@ test('delegation creates durable records, launches a dedicated Worker identity, 
     assert.equal(calls[0].disableMemoryUpdates, false);
     assert.match(calls[0].userMessage, /<twin_delegation>/);
     assert.match(calls[0].userMessage, /index.html exists/);
+    assert.match(calls[0].userMessage, /<worker_handoff>/);
+    assert.match(calls[0].userMessage, /humanAction/);
+    assert.equal(service.getTaskStatus('twin-session', result.task.id).attention.waitingOn, 'twin', 'legacy text stays ready and waits for Twin verification');
 
     const reused = await service.delegateLocalWorker('twin-session', {
       workerMetabotId: 2,
@@ -164,6 +180,93 @@ test('delegation creates durable records, launches a dedicated Worker identity, 
     assert.equal(calls.length, 1);
     assert.equal(reused.attempt.id, result.attempt.id);
     assert.equal(orchestrationStore.getActiveWorkload(2), 0);
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('structured ready persists the handoff and derives Twin attention', async () => {
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return handoffReply('ready');
+  });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Build with structured handoff', idempotencyKey: 'structured-ready',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'review'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'twin');
+    assert.equal(status.steps[0].status, 'completed');
+    assert.equal(status.steps[0].attempts[0].result.handoff.structured, true);
+    assert.equal(status.steps[0].attempts[0].result.handoff.state, 'ready');
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('humanAction moves the step to waiting_input and notifies the owner-facing Twin with the concrete question', async () => {
+  const cross = makeCrossSessionHarness();
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return handoffReply('blocked', {
+      summary: 'Implementation is ready; deployment needs approval',
+      blockers: ['production deploy not approved'],
+      humanAction: 'Approve production deploy?',
+    });
+  }, { insertCrossSessionUserMessage: (input) => cross.service.insertUserMessage(input) });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Prepare deployment', idempotencyKey: 'structured-owner-question',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'review'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'owner');
+    assert.equal(status.attention.humanAction, 'Approve production deploy?');
+    assert.equal(status.steps[0].status, 'waiting_input');
+    assert.equal(status.steps[0].attempts[0].status, 'completed');
+    assert.match(cross.inserted[0].message.content, /Approve production deploy\?/);
+    assert.match(cross.inserted[0].message.content, /owner/);
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('waiting_external is persisted and derived distinctly from a Worker or Twin wait', async () => {
+  const cross = makeCrossSessionHarness();
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return handoffReply('waiting_external', { blockers: ['CI still running'] });
+  }, { insertCrossSessionUserMessage: (input) => cross.service.insertUserMessage(input) });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Wait for CI', idempotencyKey: 'structured-external-wait',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'review'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'external');
+    assert.match(status.attention.reason, /CI still running/);
+    assert.equal(status.steps[0].status, 'waiting_input');
+    assert.match(cross.inserted[0].message.content, /CI still running/);
+  } finally {
+    sqliteStore.close();
+  }
+});
+
+test('malformed structured handoff fails closed and derives Twin recovery attention', async () => {
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    await params.onSessionCreated('worker-session-2');
+    return '<worker_handoff>{not json}</worker_handoff>';
+  });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2, objective: 'Return malformed handoff', idempotencyKey: 'structured-malformed',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getTask(result.task.id).status, 'failed'));
+    const status = service.getTaskStatus('twin-session', result.task.id);
+    assert.equal(status.attention.waitingOn, 'twin');
+    assert.equal(status.steps[0].attempts[0].error, 'WORKER_HANDOFF_INVALID');
+    assert.equal(status.steps[0].attempts[0].result.handoff.parseError, 'WORKER_HANDOFF_INVALID');
   } finally {
     sqliteStore.close();
   }

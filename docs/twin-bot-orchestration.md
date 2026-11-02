@@ -110,6 +110,22 @@ At startup, `running` deliveries return to `pending` while completed and termina
 
 The outbox provides durable, idempotent delivery of the wake obligation. It does not claim exactly-once semantics for tools chosen by the target model: external side effects still require their own idempotency and authorization boundaries.
 
+### Structured Worker handoff and attention
+
+A Worker closes its turn with a `<worker_handoff>` JSON block containing `state`, `summary`, `deliverables`, `verificationEvidence`, `blockers`, and `humanAction`. States are `progress`, `ready`, `blocked`, `waiting_external`, `failed`, and `dropped`. Legacy plain-text replies remain valid and mean `ready`; malformed or unknown structured states fail closed instead of being accepted as completed work.
+
+The Attempt stores the handoff as evidence, not proof. `ready` and `dropped` still require Twin verification. `progress`, `blocked`, `waiting_external`, and any handoff carrying `humanAction` leave the Step in `waiting_input`; a human question never silently becomes owner acceptance. `failed` leaves the Step and task eligible for Twin recovery rather than automatic replay.
+
+`twin_task_status` exposes a derived `attention` read model alongside the raw task, steps, and attempts. It identifies who must act next and why:
+
+- `worker`: an Attempt is queued, running, or recoverably timed out.
+- `twin`: work needs planning, verification, correction, retry, or reassignment.
+- `owner`: a Worker asked a concrete human question, or owner acceptance is required.
+- `external`: an external event or condition is the actual blocker.
+- `none`: the task is completed or cancelled.
+
+A concrete human question has priority over other active work. Active Attempts take priority over passive external waits, and failed or ready-but-unexecuted steps remain Twin responsibilities. This read model is derived from facts at read time rather than stored as another lifecycle field that could contradict the ledger.
+
 ### Worker Cowork execution
 
 Each delegation attempt creates a new task-specific Cowork session attributed to the selected Worker `metabotId`. A fresh session avoids contaminating an unrelated historical conversation while preserving the Worker's persistent identity through persona, memory, experience, wallet, skills, and workspace attribution.
