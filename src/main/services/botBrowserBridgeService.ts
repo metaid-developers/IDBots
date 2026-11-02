@@ -13,6 +13,7 @@ import {
 import type { MetabotStore } from '../metabotStore';
 import type { Metabot } from '../types/metabot';
 import type { MetaidDataPayload } from './metaidCore';
+import type { MvcNftChainSellUtxo } from './mvcNftService';
 import type { PinPathResolution } from './pinPathResolver';
 
 export type { PinPathResolution } from './pinPathResolver';
@@ -61,6 +62,9 @@ export type BotBrowserBridgeErrorCode =
   | 'upload_failed'
   | 'pin_write_failed'
   | 'nft_buy_failed'
+  | 'nft_buy_unavailable'
+  | 'sell_utxo_changed'
+  | 'price_changed'
   | 'llm_unavailable'
   | 'llm_timeout'
   | 'empty_content'
@@ -278,6 +282,17 @@ export interface BotBrowserBridgeServiceDeps {
     tokenIndex: string;
     sellUtxo?: { txId: string; outputIndex: number; sellerAddress?: string; price?: number };
   }) => Promise<{ txId: string; fundingTxId: string }>;
+  /**
+   * Live sell-utxo lookup for one token (same open-api-mvc endpoint the buy
+   * signer consults when no outpoint is supplied). The bridge verifies the
+   * confirmation card's amount against this chain ask before signing; a build
+   * that wires no resolver refuses to execute purchases (fail-closed).
+   */
+  fetchNftChainSellUtxo?: (params: {
+    codehash: string;
+    genesis: string;
+    tokenIndex: string;
+  }) => Promise<MvcNftChainSellUtxo | null>;
   pickFiles?: (input: {
     multiple: boolean;
     accept: string[];
@@ -1398,14 +1413,58 @@ export function createBotBrowserBridgeService(
       // Consume before signing: a retried confirmRequest can never re-buy.
       pendingNftBuys.delete(confirmationAttempt.id);
 
-      const sellUtxo = validation.sellTxid !== undefined
-        ? {
-          txId: validation.sellTxid,
-          outputIndex: validation.sellOutputIndex ?? 0,
-          ...(validation.sellerAddress ? { sellerAddress: validation.sellerAddress } : {}),
-          price: validation.priceSats,
-        }
-        : undefined;
+      // Verify the confirmed amount against chain truth before any signature.
+      // The card displays the page-supplied priceSats, but without this check
+      // the wallet paid whatever the sell contract locked (with no outpoint
+      // the signer even fetched the utxo itself) — a page could show 1000
+      // sats while the wallet pays a different ask. Fail-closed: no verified
+      // ask, no signature.
+      if (!deps.fetchNftChainSellUtxo) {
+        return failure('unsupported_method', 'NFT purchase price verification is unavailable in this build.');
+      }
+      let chainUtxo: MvcNftChainSellUtxo | null = null;
+      try {
+        chainUtxo = await deps.fetchNftChainSellUtxo({
+          codehash: validation.codehash,
+          genesis: validation.genesis,
+          tokenIndex: validation.tokenIndex,
+        });
+      } catch (error) {
+        return failure(
+          'nft_buy_failed',
+          `Unable to verify the on-chain ask price; purchase cancelled. ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (!chainUtxo) {
+        return failure(
+          'nft_buy_unavailable',
+          'The NFT no longer has a live sell order on chain; start a new purchase to refresh the ask.',
+        );
+      }
+      if (
+        validation.sellTxid !== undefined
+        && (chainUtxo.txId !== validation.sellTxid || chainUtxo.outputIndex !== validation.sellOutputIndex)
+      ) {
+        return failure(
+          'sell_utxo_changed',
+          'The sell order changed since the confirmation card was issued; start a new purchase.',
+        );
+      }
+      if (chainUtxo.price !== validation.priceSats) {
+        return failure(
+          'price_changed',
+          `The on-chain ask (${chainUtxo.price} sats) no longer matches the confirmed amount (${validation.priceSats} sats); start a new purchase to confirm the current ask.`,
+        );
+      }
+
+      // Pay exactly the verified ask: always pin the outpoint so the signer
+      // cannot re-resolve a different (pricier) utxo between check and sign.
+      const sellUtxo = {
+        txId: chainUtxo.txId,
+        outputIndex: chainUtxo.outputIndex,
+        sellerAddress: validation.sellerAddress ?? chainUtxo.sellerAddress,
+        price: chainUtxo.price,
+      };
 
       try {
         const result = await deps.buyNft({
@@ -1413,7 +1472,7 @@ export function createBotBrowserBridgeService(
           genesis: validation.genesis,
           codehash: validation.codehash,
           tokenIndex: validation.tokenIndex,
-          ...(sellUtxo ? { sellUtxo } : {}),
+          sellUtxo,
         });
         const txid = text(result?.txId);
         const fundingTxid = text(result?.fundingTxId);

@@ -189,7 +189,7 @@ import {
   type WalletQueryChain,
 } from './services/walletQueryService';
 import { executeWalletMvcTransfer } from './services/walletTransferService';
-import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftSellOrders } from './services/mvcNftService';
+import { executeMvcNftTransfer, executeMvcNftTrade, getMvcNftBalance, getMvcNftChainSellUtxo, getMvcNftSellOrders } from './services/mvcNftService';
 import { executeMvcTokenSellTrade, getMvcFtTokenBalance, verifyMvcTokenSellListing } from './services/mvcTokenSellService';
 import {
   broadcastMvcTx,
@@ -3180,6 +3180,11 @@ function getBotBrowserBridgeServiceForWindow(ownerWindow: BrowserWindow | null):
         feeRate: getGlobalFeeRate('mvc'),
       }),
     ),
+    // browser.nft.buy price verification: the live chain ask for one token,
+    // consulted at confirm time so the signed amount always equals the ask
+    // the user confirmed (see botBrowserBridgeService buyNft).
+    fetchNftChainSellUtxo: ({ codehash, genesis, tokenIndex }) =>
+      getMvcNftChainSellUtxo(codehash, genesis, tokenIndex),
   });
   if (ownerWindow) {
     botBrowserBridgeServices.set(ownerWindow, service);
