@@ -436,6 +436,7 @@ import { withChainWriteBudget } from './libs/chainWriteBudget';
 import { buildTwinWorkerDirectory } from './services/twinWorkerDirectoryService';
 import { TwinOrchestrationService } from './services/twinOrchestrationService';
 import { GroupTaskOrchestrationBridge } from './services/groupTaskOrchestrationBridge';
+import { CrossSessionDeliveryStore } from './crossSessionDeliveryStore';
 import { LongTermTaskStore } from './longTermTaskStore';
 import { MetaTaskProjectionStore } from './services/metatask/projectionStore';
 import { MetaTaskRefresher } from './services/metatask/refresher';
@@ -6793,6 +6794,7 @@ const getCoworkRunner = () => {
       },
     };
     coworkRunner = new CoworkRunner(getCoworkStore(), {
+      crossSessionDeliveryStore: new CrossSessionDeliveryStore(getStore().getDatabase(), getStore().getSaveFunction()),
       getSkillSessionEnvOverrides: async (sessionId: string): Promise<Record<string, string>> => {
         const session = getCoworkStore().getSession(sessionId);
         const overrides: Record<string, string> = {};
@@ -8742,9 +8744,17 @@ const getOrchestrationStore = () => {
   if (!orchestrationStore) {
     const sqliteStore = getStore();
     orchestrationStore = new OrchestrationStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
-    const recovered = orchestrationStore.recoverAfterRestart();
+    const recovered = orchestrationStore.recoverAfterRestartWithDetails();
     if (recovered.attempts > 0) {
       console.warn(`[Orchestration] Recovered ${recovered.attempts} in-flight attempt(s) after restart`);
+      const notifyTimer = setTimeout(() => {
+        try {
+          getTwinOrchestrationService().notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+        } catch (error) {
+          console.warn(`[Orchestration] Restart notification failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 0);
+      notifyTimer.unref?.();
     }
   }
   return orchestrationStore;

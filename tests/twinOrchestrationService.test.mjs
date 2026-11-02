@@ -687,6 +687,56 @@ test('P1-5b: default path preserves message + kv guard when the queue-to-continu
   }
 });
 
+test('restart recovery notifies the Twin once without relaunching the interrupted attempt', async () => {
+  const cross = makeCrossSessionHarness();
+  const kv = makeKv();
+  let releaseWorker;
+  const workerCalls = [];
+  const { sqliteStore, orchestrationStore, service } = await makeService(async (params) => {
+    workerCalls.push(params);
+    await params.onSessionCreated('worker-session-2');
+    return new Promise((resolve) => { releaseWorker = resolve; });
+  }, {
+    insertCrossSessionUserMessage: (input) => cross.service.insertUserMessage(input),
+    kv,
+  });
+  try {
+    const result = await service.delegateLocalWorker('twin-session', {
+      workerMetabotId: 2,
+      objective: 'Work that is interrupted by an app restart',
+      idempotencyKey: 'restart-recovery-notify',
+    });
+    await waitFor(() => assert.equal(orchestrationStore.getAttempt(result.attempt.id).status, 'running'));
+
+    const recovered = orchestrationStore.recoverAfterRestartWithDetails();
+    assert.equal(recovered.attempts, 1);
+    assert.equal(recovered.recoveredAttempts[0].status, 'failed');
+    assert.equal(recovered.recoveredAttempts[0].error, 'RECOVERED_AFTER_RESTART');
+    assert.equal(orchestrationStore.getStep(result.step.id).status, 'ready');
+    assert.equal(orchestrationStore.getTask(result.task.id).status, 'running');
+    assert.equal(cross.inserted.length, 0, 'baseline: store recovery alone never notifies the Twin');
+
+    service.notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+    assert.equal(cross.inserted.length, 1);
+    assert.equal(cross.inserted[0].targetSessionId, 'twin-session');
+    assert.match(cross.inserted[0].message.content, /RECOVERED_AFTER_RESTART/);
+    assert.match(cross.inserted[0].message.content, /host restart interrupted tracking/);
+    assert.match(cross.inserted[0].message.content, /retry or reassign/);
+    assert.equal(kv.get(`orch_notify:${result.task.id}:${result.attempt.id}:failed`), '1');
+
+    service.notifyRestartRecoveredAttempts(recovered.recoveredAttempts);
+    assert.equal(cross.inserted.length, 1, 'recovery notification is idempotent');
+    assert.equal(workerCalls.length, 1, 'notification never relaunches external work');
+
+    releaseWorker('late result from the old session');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cross.inserted.length, 1, 'a late result cannot resurrect or duplicate the recovered attempt');
+  } finally {
+    releaseWorker?.('test cleanup');
+    sqliteStore.close();
+  }
+});
+
 test('P1-5b: default path insert failure leaves the kv guard unset and never throws', async () => {
   const kv = makeKv();
   const runner = {
