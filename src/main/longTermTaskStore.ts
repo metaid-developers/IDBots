@@ -90,6 +90,10 @@ export interface LongTermSuperviseState {
   lastFailureSignal?: string;
   /** Last orchestration attention that completed an advancing action. */
   lastAttentionKey?: string;
+  lastAttentionResolution?: 'actioned' | 'resolved' | 'escalated';
+  lastAttentionActionAtMs?: number;
+  nextAttentionRetryAtMs?: number;
+  attentionActionCount?: number;
   /** Timestamps of recent stale-wait convergence escalations (churn breaker). */
   convergenceAtMs?: number[];
 }
@@ -1327,10 +1331,18 @@ export class LongTermTaskStore {
     const convergenceAtMs = Array.isArray((entry as LongTermSuperviseState).convergenceAtMs)
       ? (entry as LongTermSuperviseState).convergenceAtMs.map(Number).filter((value) => Number.isFinite(value))
       : [];
+    const lastAttentionKey = String((entry as LongTermSuperviseState).lastAttentionKey ?? '');
+    const lastAttentionResolution = (entry as LongTermSuperviseState).lastAttentionResolution
+      ?? (lastAttentionKey ? 'actioned' : undefined);
+    const attentionActionCount = Number((entry as LongTermSuperviseState).attentionActionCount);
     return {
       lastSuperviseAtMs,
       lastFailureSignal: String((entry as LongTermSuperviseState).lastFailureSignal ?? ''),
-      lastAttentionKey: String((entry as LongTermSuperviseState).lastAttentionKey ?? ''),
+      lastAttentionKey,
+      lastAttentionResolution,
+      lastAttentionActionAtMs: Number((entry as LongTermSuperviseState).lastAttentionActionAtMs ?? 0),
+      nextAttentionRetryAtMs: Number((entry as LongTermSuperviseState).nextAttentionRetryAtMs ?? 0),
+      attentionActionCount: Number.isFinite(attentionActionCount) ? attentionActionCount : (lastAttentionKey ? 1 : 0),
       convergenceAtMs,
     };
   }
@@ -1342,11 +1354,19 @@ export class LongTermTaskStore {
     // must not wipe the churn-breaker trail.
     const lastFailureSignal = state.lastFailureSignal ?? map[taskId]?.lastFailureSignal ?? '';
     const lastAttentionKey = state.lastAttentionKey ?? map[taskId]?.lastAttentionKey ?? '';
+    const lastAttentionResolution = state.lastAttentionResolution ?? map[taskId]?.lastAttentionResolution;
+    const lastAttentionActionAtMs = state.lastAttentionActionAtMs ?? map[taskId]?.lastAttentionActionAtMs ?? 0;
+    const nextAttentionRetryAtMs = state.nextAttentionRetryAtMs ?? map[taskId]?.nextAttentionRetryAtMs ?? 0;
+    const attentionActionCount = state.attentionActionCount ?? map[taskId]?.attentionActionCount ?? (lastAttentionKey ? 1 : 0);
     const convergenceAtMs = state.convergenceAtMs ?? map[taskId]?.convergenceAtMs ?? [];
     map[taskId] = {
       lastSuperviseAtMs: Math.trunc(state.lastSuperviseAtMs),
       lastFailureSignal,
       lastAttentionKey,
+      lastAttentionResolution,
+      lastAttentionActionAtMs,
+      nextAttentionRetryAtMs,
+      attentionActionCount,
       convergenceAtMs: convergenceAtMs.map(Number).filter((value) => Number.isFinite(value)),
     };
     this.db.run(

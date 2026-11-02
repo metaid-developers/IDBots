@@ -128,7 +128,9 @@ A concrete human question has priority over other active work. Active Attempts t
 
 The long-term advancement handler consumes the same attention model to close the loop. It selects Owner before Twin, External, and Worker attention across every delegation linked by `longterm_task_id + longterm_subtask_id`. Owner questions are journaled as `waiting_owner` and delivered with their concrete `humanAction`; external blockers are journaled as `waiting_external` without an unnecessary model turn; Twin attention produces one supervision turn; Worker attention suppresses duplicate quiet pushes.
 
-Each attention has a persistent action key composed from its orchestration task, wait kind, step, attempt, question, and reason. A key is consumed only after the advancing action succeeds, so a failed turn may retry but the same condition never creates duplicate turns or reminders. A new attempt or question bypasses the ordinary nudge throttle exactly once, while the existing duration and failure-streak supervision remain as fallbacks.
+Each attention has a persistent action key composed from its orchestration task, wait kind, step, attempt, question, and reason. A failed turn may retry, while the same condition never creates duplicate turns or reminders. A new attempt or question bypasses the ordinary nudge throttle exactly once, while the existing duration and failure-streak supervision remain as fallbacks.
+
+Every attention-driven turn is followed by another read of the current attention. `resolved` means the attention changed, the Owner has taken over, or the condition is otherwise cleared; `actioned` means a turn completed but the original attention remains. Unchanged actioned work is retried only after a 30-minute backoff. After two consecutive unresolved actions, it escalates to `escalated` and the Owner receives a concrete decision instead of another blind retry. The store also keeps the last action time, next retry time, and action count. Legacy rows with only `lastAttentionKey` are interpreted as `actioned`, so they receive a result review instead of being silently swallowed.
 
 ### Worker Cowork execution
 

@@ -95,6 +95,8 @@ const DEFAULT_WAITING_OWNER_REMINDER_MS = 12 * 3_600_000;
 const DEFAULT_EXTERNAL_REMINDER_MS = 4 * 3_600_000;
 const DEFAULT_FAILURE_STREAK_THRESHOLD = 2;
 const DEFAULT_EXPECTED_MINUTES = 240;
+const DEFAULT_ATTENTION_RETRY_MS = 30 * 60_000;
+const DEFAULT_ATTENTION_MAX_ATTEMPTS = 2;
 /**
  * Recency window for "the owner is actively engaged in a related session"
  * (default 60 min). Inside the window, owner-facing reminders are suppressed
@@ -255,6 +257,10 @@ export interface LongTermAdvanceDeps {
   sessionRotationThreshold?: number;
   /** Recency window for owner engagement across related sessions (default 60 min — see DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS). */
   ownerEngagementWindowMs?: number;
+  /** Backoff before an unchanged actioned attention may be attempted again. */
+  attentionRetryMs?: number;
+  /** Maximum consecutive unresolved actions before Owner escalation. */
+  attentionMaxAttempts?: number;
 }
 
 /**
@@ -522,6 +528,8 @@ export class LongTermAdvanceService {
   private readonly defaultExpectedMinutes: number;
   private readonly sessionRotationThreshold: number;
   private readonly ownerEngagementWindowMs: number;
+  private readonly attentionRetryMs: number;
+  private readonly attentionMaxAttempts: number;
   private readonly emitLog: (line: string) => void;
 
   constructor(deps: LongTermAdvanceDeps) {
@@ -534,6 +542,8 @@ export class LongTermAdvanceService {
     this.defaultExpectedMinutes = Math.max(1, Math.trunc(deps.defaultExpectedMinutes ?? DEFAULT_EXPECTED_MINUTES));
     this.sessionRotationThreshold = Math.max(10, Math.trunc(deps.sessionRotationThreshold ?? DEFAULT_SESSION_ROTATION_MESSAGES));
     this.ownerEngagementWindowMs = Math.max(60_000, Math.trunc(deps.ownerEngagementWindowMs ?? DEFAULT_OWNER_ENGAGEMENT_WINDOW_MS));
+    this.attentionRetryMs = Math.max(1_000, Math.trunc(deps.attentionRetryMs ?? DEFAULT_ATTENTION_RETRY_MS));
+    this.attentionMaxAttempts = Math.max(1, Math.trunc(deps.attentionMaxAttempts ?? DEFAULT_ATTENTION_MAX_ATTEMPTS));
     this.emitLog = deps.emitLog ?? ((line: string) => console.log(line));
   }
 
@@ -638,7 +648,17 @@ export class LongTermAdvanceService {
       }
       const attention = selectLongTermAttention(this.deps.listOrchestrationAttention?.(card.id, current.id) ?? []);
       const attentionKey = attention ? longTermAttentionKey(attention) : null;
-      const attentionIsFresh = attention !== null && (store.getSuperviseState(card.id)?.lastAttentionKey ?? '') !== attentionKey;
+      const previousAttentionState = store.getSuperviseState(card.id);
+      const sameAttention = attention !== null && (previousAttentionState?.lastAttentionKey ?? '') === attentionKey;
+      const attentionRetryDue = sameAttention
+        && previousAttentionState?.lastAttentionResolution === 'actioned'
+        && nowMs >= (previousAttentionState.nextAttentionRetryAtMs ?? 0)
+        && (previousAttentionState.attentionActionCount ?? 0) < this.attentionMaxAttempts;
+      const attentionEscalationDue = sameAttention
+        && previousAttentionState?.lastAttentionResolution === 'actioned'
+        && nowMs >= (previousAttentionState.nextAttentionRetryAtMs ?? 0)
+        && (previousAttentionState.attentionActionCount ?? 0) >= this.attentionMaxAttempts;
+      const attentionIsFresh = attention !== null && (!sameAttention || attentionRetryDue);
       if (attention?.attention.waitingOn === 'worker') {
         report.skipped.push({ taskId: card.id, reason: `orchestration attention is waiting for the Worker (${attention.attention.reason})` });
         continue;
@@ -655,17 +675,31 @@ export class LongTermAdvanceService {
         store.setSuperviseState(card.id, {
           lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
           lastAttentionKey: attentionKey!,
+          lastAttentionResolution: 'resolved',
+          lastAttentionActionAtMs: nowMs,
+          nextAttentionRetryAtMs: 0,
+          attentionActionCount: 0,
         });
         report.skipped.push({ taskId: card.id, reason: `external attention recorded without a model turn (${attention.attention.reason})` });
         continue;
       }
 
       const reasons = this.collectReasons(detail, current, nowMs, nudgeState?.lastEventId ?? 0, supervision, engagement.lastOwnerAtMs);
-      if (attention && attentionIsFresh && (attention.attention.waitingOn === 'owner' || attention.attention.waitingOn === 'twin')) {
-        if (attention.attention.waitingOn === 'owner' && current.status !== 'waiting_owner') {
+      const attentionForTurn: LongTermAttentionSelection | null = attentionEscalationDue && attention
+        ? {
+          ...attention,
+          attention: {
+            ...attention.attention,
+            waitingOn: 'owner',
+            humanAction: `Twin could not resolve this after ${previousAttentionState?.attentionActionCount ?? 0} action(s): ${attention.attention.humanAction || attention.attention.reason}`,
+          },
+        }
+        : attentionIsFresh ? attention : null;
+      if (attentionForTurn && (attentionForTurn.attention.waitingOn === 'owner' || attentionForTurn.attention.waitingOn === 'twin')) {
+        if (attentionForTurn.attention.waitingOn === 'owner' && current.status !== 'waiting_owner') {
           const parked = store.waitSubtask(current.id, {
             kind: 'owner',
-            note: attention.attention.humanAction || attention.attention.reason,
+            note: attentionForTurn.attention.humanAction || attentionForTurn.attention.reason,
           }, 'system');
           if (!parked.ok) {
             report.skipped.push({ taskId: card.id, reason: `owner attention could not be recorded: ${parked.error}` });
@@ -673,9 +707,8 @@ export class LongTermAdvanceService {
           }
           current = parked.value;
         }
-        reasons.unshift(`attention: ${attention.attention.waitingOn} — ${attention.attention.humanAction || attention.attention.reason}`);
+        reasons.unshift(`attention: ${attentionForTurn.attention.waitingOn} — ${attentionForTurn.attention.humanAction || attentionForTurn.attention.reason}`);
       }
-      const attentionForTurn = attentionIsFresh ? attention : null;
       if (reasons.length === 0) {
         report.skipped.push({ taskId: card.id, reason: `current sub-project is ${current.status}, nothing due` });
         continue;
@@ -693,7 +726,7 @@ export class LongTermAdvanceService {
         nudgeState !== null &&
         nowMs - nudgeState.lastNudgeAtMs < this.nudgeThrottleMs &&
         latestEventId <= nudgeState.lastEventId;
-      if (throttled && !waitDue && supervision === null && !attentionIsFresh) {
+      if (throttled && !waitDue && supervision === null && !attentionIsFresh && !attentionEscalationDue) {
         report.skipped.push({ taskId: card.id, reason: 'nudge throttled (no new events since last escalation)' });
         continue;
       }
@@ -771,10 +804,22 @@ export class LongTermAdvanceService {
             convergenceAtMs: trail,
           });
         }
-        if (attention && attentionIsFresh) {
+        if (attentionForTurn) {
+          const afterTurnAttention = selectLongTermAttention(this.deps.listOrchestrationAttention?.(card.id, current.id) ?? []);
+          const attentionChanged = afterTurnAttention === null || longTermAttentionKey(afterTurnAttention) !== attentionKey;
+          const resolution = attentionEscalationDue
+            ? 'escalated'
+            : attentionForTurn.attention.waitingOn === 'owner' || attentionChanged ? 'resolved' : 'actioned';
+          const actionCount = resolution === 'actioned'
+            ? (sameAttention ? (previousAttentionState?.attentionActionCount ?? 0) + 1 : 1)
+            : resolution === 'escalated' ? (previousAttentionState?.attentionActionCount ?? 0) : 0;
           store.setSuperviseState(card.id, {
             lastSuperviseAtMs: store.getSuperviseState(card.id)?.lastSuperviseAtMs ?? 0,
             lastAttentionKey: attentionKey!,
+            lastAttentionResolution: resolution,
+            lastAttentionActionAtMs: nowMs,
+            nextAttentionRetryAtMs: resolution === 'actioned' ? nowMs + this.attentionRetryMs : 0,
+            attentionActionCount: actionCount,
           });
         }
         this.emitLog(

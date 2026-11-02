@@ -403,7 +403,16 @@ test('supervision re-arm state: set and read back per task', async () => {
   store.setSuperviseState(taskId, { lastSuperviseAtMs: 1234, lastFailureSignal: 'fails:2@a1', lastAttentionKey: 'orch-1:twin:a1' });
   assert.deepEqual(
     store.getSuperviseState(taskId),
-    { lastSuperviseAtMs: 1234, lastFailureSignal: 'fails:2@a1', lastAttentionKey: 'orch-1:twin:a1', convergenceAtMs: [] },
+    {
+      lastSuperviseAtMs: 1234,
+      lastFailureSignal: 'fails:2@a1',
+      lastAttentionKey: 'orch-1:twin:a1',
+      lastAttentionResolution: 'actioned',
+      lastAttentionActionAtMs: 0,
+      nextAttentionRetryAtMs: 0,
+      attentionActionCount: 1,
+      convergenceAtMs: [],
+    },
   );
   // P1-A: a duration-style write (no failure signature) must NOT wipe the
   // failure dedup marker — the two signals consume separately.

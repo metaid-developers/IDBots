@@ -687,6 +687,105 @@ test('attention: Worker execution suppresses a duplicate quiet push', async () =
   assert.match(report.skipped[0].reason, /waiting for the Worker/);
 });
 
+test('action outcome: an unchanged attention retries with backoff and escalates to Owner after bounded attempts', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  deps.attentionRetryMs = 1_000;
+  deps.attentionMaxAttempts = 2;
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-noop',
+    attention: { waitingOn: 'twin', reason: 'still unresolved', attemptId: 'a1' },
+  }];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  await supervisor.run(now);
+  assert.equal(runner.starts.length, 1);
+  let state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'actioned');
+  assert.equal(state.attentionActionCount, 1);
+  assert.equal(state.nextAttentionRetryAtMs, now + 1_000);
+
+  await supervisor.run(now + 500);
+  assert.equal(runner.starts.length, 1, 'backoff suppresses an immediate duplicate action');
+
+  await supervisor.run(now + 1_000);
+  assert.equal(runner.starts.length, 2);
+  state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'actioned');
+  assert.equal(state.attentionActionCount, 2);
+
+  await supervisor.run(now + 2_000);
+  assert.equal(runner.starts.length, 3);
+  state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'escalated');
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+  assert.match(runner.starts[2].prompt, /could not resolve/);
+
+  await supervisor.run(now + 3_000);
+  assert.equal(runner.starts.length, 3, 'Owner escalation does not create another unresolved retry');
+});
+
+test('action outcome: a changed attention is resolved and the new state gets its own action', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  let waitingOn = 'twin';
+  deps.listOrchestrationAttention = () => [{
+    orchestrationTaskId: 'orch-resolved',
+    attention: { waitingOn, reason: 'worker state changed', attemptId: 'a1' },
+  }];
+  runner.startSession = async (sessionId, prompt) => {
+    runner.starts.push({ sessionId, prompt });
+    waitingOn = 'worker';
+  };
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  await supervisor.run(now);
+  const state = store.getSuperviseState(taskId);
+  assert.equal(state.lastAttentionResolution, 'resolved');
+  assert.equal(state.nextAttentionRetryAtMs, 0);
+  assert.equal(state.attentionActionCount, 0);
+
+  const second = await supervisor.run(now + 1_000);
+  assert.equal(second.escalated.length, 0, JSON.stringify(second));
+  assert.equal(runner.starts.length, 1, 'resolved attention cannot be replayed');
+});
+
+test('action outcome: a legacy action key without resolution gets one result review instead of being swallowed', async () => {
+  const { store, runner, deps } = await openWorld();
+  const taskId = await createActive(store);
+  const subtask = store.getTask(taskId).subtasks[0];
+  assert.ok(store.beginSubtask(subtask.id, 'twin').ok);
+  const selection = {
+    orchestrationTaskId: 'legacy-orch',
+    attention: { waitingOn: 'twin', reason: 'legacy failure', attemptId: 'legacy-a1' },
+  };
+  const { longTermAttentionKey } = await import('../dist-electron/main/services/longTermAttentionAction.js');
+  store.setSuperviseState(taskId, {
+    lastSuperviseAtMs: 0,
+    lastAttentionKey: longTermAttentionKey(selection),
+  });
+  deps.attentionRetryMs = 1_000;
+  deps.attentionMaxAttempts = 2;
+  deps.listOrchestrationAttention = () => [selection];
+  const supervisor = new LongTermAdvanceService(deps);
+  const now = Date.now();
+
+  await supervisor.run(now);
+  assert.equal(runner.starts.length, 1, 'legacy actioned state is eligible for result review');
+  assert.equal(store.getSuperviseState(taskId).lastAttentionResolution, 'actioned');
+  assert.equal(store.getSuperviseState(taskId).attentionActionCount, 2);
+
+  await supervisor.run(now + 1_000);
+  assert.equal(store.getSuperviseState(taskId).lastAttentionResolution, 'escalated');
+  assert.equal(store.getTask(taskId).subtasks[0].status, 'waiting_owner');
+});
+
 test('telemetry wiring: real OrchestrationStore attempts sourced from the bound session drive the failure streak', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbots-lt-telemetry-'));
   const sqliteStore = await SqliteStore.create(dir);
