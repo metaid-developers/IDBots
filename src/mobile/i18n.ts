@@ -39,7 +39,9 @@ const zhTranslations: MobileDictionary = {
   'mobile.gateway.tenantUnavailableTitle': '你的 Bot 暂不可用',
   'mobile.gateway.tenantUnavailableBody': '你的 Bot 暂时无法访问。系统会每 5 秒自动检查一次，恢复后自动进入应用。',
   'mobile.gateway.tooManyDevicesTitle': '连接设备过多',
-  'mobile.gateway.tooManyDevicesBody': '当前账号的连接设备数量已达上限。请在其他设备上退出登录后重试。',
+  'mobile.gateway.tooManyDevicesBody':
+    '此设备的连接请求被拒绝：同一账号同时在线的设备数已达上限。请先在其他设备上退出登录以释放一个名额，然后在本设备重新登录即可继续使用。',
+  'mobile.gateway.tooManyDevicesAction': '退出登录并返回登录页',
   'mobile.gateway.versionMismatchTitle': '请更新应用',
   'mobile.gateway.versionMismatchBody': '当前应用版本过旧（服务器要求 {expected}，当前为 {actual}），请更新到最新版本后重试。',
   'mobile.tabs.chat': '聊天',
@@ -573,7 +575,8 @@ const enTranslations: MobileDictionary = {
     'Your Bot is temporarily unreachable. We check every 5 seconds and continue automatically once it is back.',
   'mobile.gateway.tooManyDevicesTitle': 'Too many devices connected',
   'mobile.gateway.tooManyDevicesBody':
-    'This account has reached its connected-device limit. Sign out on another device and try again.',
+    'This device was refused a connection: your account is already signed in on the maximum number of devices. Sign out on one of the other devices to free a slot, then sign in here again.',
+  'mobile.gateway.tooManyDevicesAction': 'Sign out and go to sign-in',
   'mobile.gateway.versionMismatchTitle': 'Please update the app',
   'mobile.gateway.versionMismatchBody':
     'This app version is too old (the server requires {expected}, yours is {actual}). Please update to the latest version.',
