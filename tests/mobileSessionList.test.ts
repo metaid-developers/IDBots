@@ -1,12 +1,31 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { groupSessionsByDay, resolveSessionBot } from '../src/mobile/app/sessionList';
+import { describe, it, test } from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { filterSessionsByTitle, groupSessionsByDay, resolveSessionBot } from '../src/mobile/app/sessionList';
+import { SessionDrawer } from '../src/mobile/app/screens/ChatScreen';
+import { createMobileMockBridge } from '../src/mobile/bridge/mockBridge';
+import { mobileI18n, t } from '../src/mobile/i18n';
 import { isRenderableAvatar, IPC_TRUNCATION_MARKER } from '../src/mobile/app/avatar';
+import type { useChat } from '../src/mobile/app/hooks/useChat';
 import type { CoworkSessionSummary } from '../src/types/cowork';
 import type { MobileMetabot } from '../src/mobile/bridge/types';
 
-/** Minimal session summary factory — only the fields grouping reads. */
-function session(id: string, updatedAt: number): CoworkSessionSummary {
+const here = path.dirname(fileURLToPath(import.meta.url));
+const readSource = (relative: string): string =>
+  fs.readFileSync(path.join(here, relative), 'utf8');
+
+type Chat = ReturnType<typeof useChat>;
+
+/** Minimal session summary factory — only the fields grouping/filtering read. */
+function session(
+  id: string,
+  updatedAt: number,
+  overrides: Partial<CoworkSessionSummary> = {},
+): CoworkSessionSummary {
   return {
     id,
     title: `session ${id}`,
@@ -15,6 +34,7 @@ function session(id: string, updatedAt: number): CoworkSessionSummary {
     createdAt: updatedAt - 1000,
     updatedAt,
     metabotId: 1,
+    ...overrides,
   } as CoworkSessionSummary;
 }
 
@@ -146,5 +166,300 @@ describe('resolveSessionBot', () => {
     assert.equal(view.metabotId, 2);
     assert.equal(view.name, 'Researcher');
     assert.equal(view.avatar, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// filterSessionsByTitle (drawer search, 2026-11-02)
+// ---------------------------------------------------------------------------
+
+describe('filterSessionsByTitle', () => {
+  const input = [
+    session('a', THIS_MORNING, { title: 'Weekly Report' }),
+    session('b', YESTERDAY_EVENING, { title: 'debug notes' }),
+    session('c', THREE_DAYS_AGO, { title: 'Trip plan' }),
+  ];
+
+  it('returns the input unchanged for empty/whitespace queries', () => {
+    assert.equal(filterSessionsByTitle(input, ''), input);
+    assert.equal(filterSessionsByTitle(input, '   '), input);
+    assert.equal(filterSessionsByTitle(input, ''), input); // stable identity: no copy churn
+  });
+
+  it('matches case-insensitive title substrings and preserves order', () => {
+    assert.deepEqual(
+      filterSessionsByTitle(input, 'report').map((entry) => entry.id),
+      ['a'],
+    );
+    assert.deepEqual(
+      filterSessionsByTitle(input, 'REPORT').map((entry) => entry.id),
+      ['a'],
+    );
+    assert.deepEqual(
+      filterSessionsByTitle(input, '  Report ').map((entry) => entry.id),
+      ['a'],
+    );
+    // Substring, not prefix: 'plan' matches 'Trip plan'.
+    assert.deepEqual(
+      filterSessionsByTitle(input, 'plan').map((entry) => entry.id),
+      ['c'],
+    );
+  });
+
+  it('returns an empty list when nothing matches', () => {
+    assert.deepEqual(filterSessionsByTitle(input, 'nomatch'), []);
+  });
+
+  it('never mutates the input', () => {
+    const snapshot = [...input];
+    filterSessionsByTitle(input, 'report');
+    assert.deepEqual(input, snapshot);
+  });
+
+  it('keeps malformed-title rows only for empty queries', () => {
+    const dirty = [
+      session('ok', THIS_MORNING, { title: 'Report' }),
+      { ...session('bad', THIS_MORNING), title: undefined } as unknown as CoworkSessionSummary,
+    ];
+    assert.deepEqual(
+      filterSessionsByTitle(dirty, 'report').map((entry) => entry.id),
+      ['ok'],
+    );
+    // Whitespace-only query still sees every row, dirty or not.
+    assert.equal(filterSessionsByTitle(dirty, '').length, 2);
+  });
+
+  it('composes with day grouping: filtered results keep Today/Yesterday/Earlier', () => {
+    const filtered = filterSessionsByTitle(input, 'e'); // matches Weekly Report (a), debug notes (b)
+    const groups = groupSessionsByDay(filtered, NOW);
+    assert.deepEqual(
+      groups.map((group) => group.key),
+      ['today', 'yesterday'],
+    );
+    assert.deepEqual(groups[0]?.sessions.map((entry) => entry.id), ['a']);
+    assert.deepEqual(groups[1]?.sessions.map((entry) => entry.id), ['b']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SessionDrawer markup (SSR) + handler-contract pins (2026-11-02)
+//
+// Harness note (same convention as tests/mobileEmojiPicker.test.tsx): these
+// renderer tests are server-rendered, so event handlers cannot be fired —
+// markup is asserted via SSR and the interactive wiring (open / rename /
+// delete-confirm) is pinned against the real ChatScreen source.
+// ---------------------------------------------------------------------------
+
+function chatFixture(overrides: Record<string, unknown> = {}): Chat {
+  return {
+    messages: [],
+    sessions: [],
+    sessionId: null,
+    sessionTitle: null,
+    metabotId: null,
+    isStreaming: false,
+    isSending: false,
+    isUploading: false,
+    restoring: false,
+    pendingPermissionCount: 0,
+    turnPhase: 'idle',
+    permission: null,
+    toolCalls: [],
+    attempts: [],
+    actionError: null,
+    quotaExhausted: false,
+    quotaKind: null,
+    hasMoreHistory: false,
+    draft: '',
+    attachments: [],
+    uploads: [],
+    setMetabotId: () => undefined,
+    setDraft: () => undefined,
+    reloadSessions: async () => undefined,
+    openSession: async () => undefined,
+    renameSession: async () => false,
+    archiveSession: async () => false,
+    newChat: () => undefined,
+    send: async () => undefined,
+    stop: async () => undefined,
+    pickAttachments: () => undefined,
+    removeAttachment: () => undefined,
+    removeUpload: () => undefined,
+    loadEarlierMessages: async () => undefined,
+    respondPermission: async () => undefined,
+    dismissPermission: () => undefined,
+    reopenPermissions: () => undefined,
+    dismissQuota: () => undefined,
+    reconcileSubmission: async () => undefined,
+    retrySubmission: async () => undefined,
+    discardSubmission: () => undefined,
+    applyResync: () => undefined,
+    getOpenSessionId: () => null,
+    getStreamingMessage: () => null,
+    ...overrides,
+  } as unknown as Chat;
+}
+
+function renderDrawer(chatOverrides: Record<string, unknown> = {}): string {
+  return renderToStaticMarkup(
+    React.createElement(SessionDrawer, {
+      chat: chatFixture(chatOverrides),
+      bots: [],
+      open: true,
+      onPickBot: () => undefined,
+      onClose: () => undefined,
+    }),
+  );
+}
+
+const DRAWER_SOURCE = readSource('../src/mobile/app/screens/ChatScreen.tsx');
+
+describe('SessionDrawer search + rows (SSR)', () => {
+  it('renders the search input with localized placeholder and testid', () => {
+    mobileI18n.setLanguage('zh');
+    const markup = renderDrawer();
+    assert.ok(markup.includes('data-testid="session-search-input"'));
+    assert.ok(markup.includes(`placeholder="${t('mobile.chat.searchSessions')}"`));
+    // Empty initial query: no clear button, and the copy is search copy only.
+    assert.ok(!markup.includes('data-testid="session-search-clear"'));
+  });
+
+  it('renders every session row with its actions button, groups intact', () => {
+    // The drawer groups against the live clock (groupSessionsByDay defaults
+    // now=Date.now()), so the fixture uses wall-clock-relative timestamps.
+    const realNow = Date.now();
+    const markup = renderDrawer({
+      sessions: [
+        session('today-run', realNow - 60_000, { status: 'running' }),
+        session('yesterday-idle', realNow - 26 * 60 * 60 * 1000),
+        session('old-idle', realNow - 4 * 24 * 60 * 60 * 1000),
+      ],
+    });
+    assert.ok(markup.includes('data-testid="session-group-today"'));
+    assert.ok(markup.includes('data-testid="session-group-yesterday"'));
+    assert.ok(markup.includes('data-testid="session-group-earlier"'));
+    for (const id of ['today-run', 'yesterday-idle', 'old-idle']) {
+      assert.ok(markup.includes(`data-testid="session-actions-${id}"`), `actions button for ${id}`);
+      assert.ok(markup.includes(`data-testid="session-bot-avatar-${id}"`), `avatar for ${id}`);
+    }
+    // Exactly one running dot (today-run) — the indicator is unchanged.
+    assert.equal(markup.split('h-2 w-2 shrink-0 rounded-full').length - 1, 1);
+  });
+
+  it('keeps tap-to-open wiring and search->grouping composition in the source', () => {
+    // Open behavior: the row button still opens the session and closes the drawer.
+    assert.match(DRAWER_SOURCE, /void chat\.openSession\(session\.id\);\s*\n\s*props\.onClose\(\);/);
+    // The drawer filters by title BEFORE grouping (composition with pure functions).
+    assert.match(DRAWER_SOURCE, /const visibleSessions = filterSessionsByTitle\(chat\.sessions, searchQuery\);/);
+    assert.match(DRAWER_SOURCE, /const groups = groupSessionsByDay\(visibleSessions\);/);
+  });
+
+  it('shows the localized search-empty copy branch in the source', () => {
+    assert.match(DRAWER_SOURCE, /session-search-empty/);
+    assert.match(DRAWER_SOURCE, /t\('mobile\.chat\.searchEmpty'\)/);
+    for (const language of ['zh', 'en'] as const) {
+      mobileI18n.setLanguage(language);
+      assert.ok(t('mobile.chat.searchEmpty').length > 0, `searchEmpty copy for ${language}`);
+      assert.ok(t('mobile.chat.searchSessions').length > 0, `searchSessions copy for ${language}`);
+    }
+  });
+});
+
+describe('SessionDrawer rename + delete-confirm (source-contract pins)', () => {
+  it('wires rename exclusively through the rename sheet confirm button', () => {
+    // The rename bridge call has exactly one call site, inside submitRename.
+    assert.equal(DRAWER_SOURCE.split('chat.renameSession(renameFor.id, renameDraft)').length - 1, 1);
+    // And submitRename is reached only from the confirm button.
+    assert.match(DRAWER_SOURCE, /data-testid="session-rename-confirm"[\s\S]{0,200}?void submitRename\(\);/);
+    // Confirm is disabled for blank titles (trim + non-empty gate in the UI).
+    assert.match(DRAWER_SOURCE, /disabled=\{renameDraft\.trim\(\) === ''\}/);
+  });
+
+  it('gates delete behind its own confirm sheet and archives (no hard delete)', () => {
+    // The archive bridge call has exactly one call site, inside confirmDelete.
+    assert.equal(DRAWER_SOURCE.split('chat.archiveSession(deleteFor.id)').length - 1, 1);
+    // Reached only from the confirm button of the dedicated sheet.
+    assert.match(DRAWER_SOURCE, /data-testid="session-delete-confirm"[\s\S]{0,200}?void confirmDelete\(\);/);
+    // The menu's Delete button only OPENS the confirm sheet — its opening
+    // tag never references the archive call or confirmDelete.
+    const menuDeleteIdx = DRAWER_SOURCE.indexOf('data-testid="session-action-delete"');
+    assert.ok(menuDeleteIdx >= 0, 'menu delete button rendered');
+    const menuDeleteOpenTag = DRAWER_SOURCE.slice(menuDeleteIdx, DRAWER_SOURCE.indexOf('>', menuDeleteIdx) + 1);
+    assert.ok(!menuDeleteOpenTag.includes('archiveSession'));
+    assert.ok(!menuDeleteOpenTag.includes('confirmDelete'));
+    // Confirm copy states the archive semantics in both languages.
+    for (const language of ['zh', 'en'] as const) {
+      mobileI18n.setLanguage(language);
+      assert.ok(t('mobile.chat.deleteBody').length > 0, `deleteBody copy for ${language}`);
+      assert.ok(t('mobile.chat.deleteTitle').length > 0, `deleteTitle copy for ${language}`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mock bridge rename/archive semantics (the wire path the drawer rides on)
+// ---------------------------------------------------------------------------
+
+describe('mock bridge session management channels', () => {
+  function makeBridge() {
+    return createMobileMockBridge({
+      streamTokenIntervalMs: 1,
+      orderCompleteDelayMs: 10,
+      reconnectBlackoutMs: 10,
+      scheduledRunDelayMs: 10,
+      manualRunDelayMs: 10,
+    });
+  }
+
+  async function listTitles(api: { cowork: { listSessions: () => Promise<{ sessions?: Array<{ title: string }> }> } }): Promise<string[]> {
+    const result = await api.cowork.listSessions();
+    return (result.sessions ?? []).map((entry) => entry.title);
+  }
+
+  it('renameSession trims, persists via listSessions, and rejects empty/unknown', async () => {
+    const bridge = makeBridge();
+    try {
+      const api = bridge.electron;
+      const created = await api.cowork.createGreetingSession({ title: 'Original', fallbackGreeting: 'hi' });
+      const id = created.session?.id;
+      assert.ok(id, 'greeting session created');
+      const renamed = await api.cowork.renameSession({ sessionId: id as string, title: '  Renamed Title  ' });
+      assert.equal(renamed.success, true);
+      assert.ok((await listTitles(api)).includes('Renamed Title'), 'trimmed title visible in listSessions');
+      const blank = await api.cowork.renameSession({ sessionId: id as string, title: '   ' });
+      assert.equal(blank.success, false, 'blank title rejected');
+      const missing = await api.cowork.renameSession({ sessionId: 'no-such-session', title: 'x' });
+      assert.equal(missing.success, false, 'unknown session rejected');
+    } finally {
+      bridge.destroy();
+    }
+  });
+
+  it('archiveSession hides from listSessions, survives in listArchivedSessions, restores via unarchive', async () => {
+    const bridge = makeBridge();
+    try {
+      const api = bridge.electron;
+      const created = await api.cowork.createGreetingSession({ title: 'Doomed', fallbackGreeting: 'hi' });
+      const id = created.session?.id as string;
+      assert.ok((await listTitles(api)).includes('Doomed'));
+
+      const archived = await api.cowork.archiveSession(id);
+      assert.equal(archived.success, true);
+      assert.ok(!(await listTitles(api)).includes('Doomed'), 'archived row hidden from active list');
+      const archivedList = await api.cowork.listArchivedSessions();
+      assert.ok(
+        (archivedList.sessions ?? []).some((entry) => entry.id === id),
+        'archived row listed by listArchivedSessions (reversible)',
+      );
+
+      const restored = await api.cowork.unarchiveSession(id);
+      assert.equal(restored.success, true);
+      assert.ok((await listTitles(api)).includes('Doomed'), 'unarchive restores the row');
+
+      const missing = await api.cowork.archiveSession('no-such-session');
+      assert.equal(missing.success, false, 'unknown session rejected');
+    } finally {
+      bridge.destroy();
+    }
   });
 });

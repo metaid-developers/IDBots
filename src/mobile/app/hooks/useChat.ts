@@ -250,6 +250,53 @@ export function useChat(bots: MockMetabot[] = []) {
     controller?.openSession(id) ?? false
   ), [controller]);
 
+  // -------------------------------------------------------------------------
+  // Session management (drawer rename/delete, 2026-11-02).
+  //
+  // Both go through the allowlisted cowork channels (ipc-contract.json):
+  //   - rename  -> cowork.renameSession({ sessionId, title }) — real,
+  //     server-side title change, same channel the desktop sidebar uses;
+  //   - "delete" -> cowork.archiveSession(sessionId) — there is NO hard-delete
+  //     channel in the allowlist (desktop cowork.ts: "Hard delete is
+  //     intentionally not exposed to users"), so the drawer's delete ARCHIVES:
+  //     the row leaves the list, the record survives (dream/experience still
+  //     see it) and Settings -> Archived Chats can restore it. Documented in
+  //     the drawer UI and the tests.
+  // The real gateway shim exposes both generically from the contract; the
+  // mock bridge implements them with the same semantics.
+  // -------------------------------------------------------------------------
+  const renameSession = useCallback(async (id: string, title: string): Promise<boolean> => {
+    const normalized = title.trim();
+    if (!normalized) return false;
+    const cowork = hasAppBridge() ? getMobileElectron().cowork : undefined;
+    if (!cowork?.renameSession) return false;
+    try {
+      const result = await cowork.renameSession({ sessionId: id, title: normalized });
+      if (!result?.success) return false;
+    } catch {
+      return false;
+    }
+    await controller?.reloadSessions();
+    if (id === sessionId) await controller?.refreshSession(id);
+    return true;
+  }, [controller, sessionId]);
+
+  const archiveSession = useCallback(async (id: string): Promise<boolean> => {
+    const cowork = hasAppBridge() ? getMobileElectron().cowork : undefined;
+    if (!cowork?.archiveSession) return false;
+    try {
+      const result = await cowork.archiveSession(id);
+      if (!result?.success) return false;
+    } catch {
+      return false;
+    }
+    // Archiving the open session leaves the chat surface — the mobile
+    // equivalent of the desktop "navigate home" after archive.
+    if (id === sessionId) controller?.newChat();
+    await controller?.reloadSessions();
+    return true;
+  }, [controller, sessionId]);
+
   const applyResync = useCallback((resync: CoworkResyncSnapshot): void => {
     controller?.applyResync(resync);
   }, [controller]);
@@ -295,6 +342,8 @@ export function useChat(bots: MockMetabot[] = []) {
     setDraft: (text: string) => controller?.setDraft(text),
     reloadSessions: async (): Promise<void> => { await controller?.reloadSessions(); },
     openSession,
+    renameSession,
+    archiveSession,
     newChat: () => controller?.newChat(),
     send,
     stop: async (): Promise<CoworkActionResult> => (

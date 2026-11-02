@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, PlusIcon, PaperAirplaneIcon, PaperClipIcon, FaceSmileIcon, StopIcon, EllipsisHorizontalIcon, MagnifyingGlassIcon, PencilSquareIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import MarkdownContent from '@/components/MarkdownContent';
 import MobileArtifactPreview from '../components/MobileArtifactPreview';
 import CoworkPermissionPanel from '@/components/cowork/CoworkPermissionPanel';
@@ -17,7 +17,7 @@ import { useKeyboardInset } from '../hooks/useKeyboardInset';
 import { useNativeBackHandler } from '../hooks/useNativeBackHandler';
 import { BottomSheet } from '../components/BottomSheet';
 import { BotAvatar } from '../components/BotAvatar';
-import { groupSessionsByDay, resolveSessionBot } from '../sessionList';
+import { filterSessionsByTitle, groupSessionsByDay, resolveSessionBot } from '../sessionList';
 import { sortBotsForList } from '../botList';
 import { useVoiceInput } from '../voice/useVoiceInput';
 import { VoiceButton, VoiceErrorBanner } from '../voice/VoiceButton';
@@ -30,14 +30,55 @@ const GROUP_LABEL_KEYS = {
   earlier: 'mobile.chat.group.earlier',
 } as const;
 
-function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; onPickBot: () => void; onClose: () => void }): JSX.Element | null {
+/**
+ * Chat drawer (UE rework 2026-10-29, A4; search/rename/delete 2026-11-02).
+ *
+ * Rows keep their day-grouped, tap-to-open behavior unchanged. New affordances:
+ *   - a title search (sync filter — the session list is a small client-side
+ *     summary array, so per-keystroke filtering is cheap by construction);
+ *   - a per-row "…" actions button opening a bottom sheet with Rename/Delete;
+ *   - Delete is gated behind its own confirm sheet and calls the ARCHIVE
+ *     channel (cowork.archiveSession): the allowlist has no hard-delete
+ *     session channel by design (desktop cowork.ts: "Hard delete is
+ *     intentionally not exposed to users"), so the row leaves the list while
+ *     the record survives — restorable via the desktop Archived Chats UI.
+ * Closing the drawer resets the search query and any open sub-sheet.
+ */
+export function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; onPickBot: () => void; onClose: () => void }): JSX.Element | null {
   const { chat, bots } = props;
+  const [searchQuery, setSearchQuery] = useState('');
+  const [actionsFor, setActionsFor] = useState<{ id: string; title: string } | null>(null);
+  const [renameFor, setRenameFor] = useState<{ id: string; title: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [deleteFor, setDeleteFor] = useState<{ id: string; title: string } | null>(null);
   useNativeBackHandler(() => {
     props.onClose();
     return true;
   }, props.open, 100);
+  // Reset transient drawer state on close so reopening starts clean (no
+  // stale search text, no orphaned sheets).
+  useEffect(() => {
+    if (props.open) return;
+    setSearchQuery('');
+    setActionsFor(null);
+    setRenameFor(null);
+    setRenameDraft('');
+    setDeleteFor(null);
+  }, [props.open]);
   if (!props.open) return null;
-  const groups = groupSessionsByDay(chat.sessions);
+  const visibleSessions = filterSessionsByTitle(chat.sessions, searchQuery);
+  const groups = groupSessionsByDay(visibleSessions);
+  const trimmedQuery = searchQuery.trim();
+  const submitRename = async (): Promise<void> => {
+    if (!renameFor) return;
+    const ok = await chat.renameSession(renameFor.id, renameDraft);
+    if (ok) setRenameFor(null);
+  };
+  const confirmDelete = async (): Promise<void> => {
+    if (!deleteFor) return;
+    const ok = await chat.archiveSession(deleteFor.id);
+    if (ok) setDeleteFor(null);
+  };
   return (
     <div className="fixed inset-0 z-30">
       <button type="button" aria-label={t('mobile.common.close')} className="absolute inset-0 bg-black/40" onClick={props.onClose} tabIndex={-1} />
@@ -56,9 +97,39 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
             {t('mobile.chat.newChat')}
           </button>
         </div>
+        <div className="border-b border-[var(--border-color)] px-4 py-2">
+          <div className="flex items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2">
+            <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" aria-hidden />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={t('mobile.chat.searchSessions')}
+              aria-label={t('mobile.chat.searchSessions')}
+              data-testid="session-search-input"
+              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)]"
+            />
+            {searchQuery !== '' ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label={t('mobile.chat.searchClear')}
+                data-testid="session-search-clear"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] active:text-[var(--text-primary)]"
+              >
+                <XMarkIcon className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
+          </div>
+        </div>
         <div className="flex-1 overflow-y-auto" data-testid="session-drawer-list">
           {groups.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-[var(--text-secondary)]">{t('mobile.chat.drawerEmpty')}</p>
+            <p
+              className="px-4 py-6 text-sm text-[var(--text-secondary)]"
+              data-testid={trimmedQuery !== '' ? 'session-search-empty' : undefined}
+            >
+              {trimmedQuery !== '' ? t('mobile.chat.searchEmpty') : t('mobile.chat.drawerEmpty')}
+            </p>
           ) : (
             groups.map((group) => (
               <section key={group.key}>
@@ -71,18 +142,20 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
                 {group.sessions.map((session) => {
                   const bot = resolveSessionBot(chat.sessions, session.id, null, bots);
                   return (
-                    <button
+                    <div
                       key={session.id}
-                      type="button"
-                      onClick={() => {
-                        void chat.openSession(session.id);
-                        props.onClose();
-                      }}
-                      className={`block w-full min-h-[52px] border-b border-[var(--border-color)] px-4 py-2 text-left text-sm active:bg-[var(--bg-hover)] ${
+                      className={`flex items-stretch border-b border-[var(--border-color)] ${
                         session.id === chat.sessionId ? 'bg-[var(--bg-hover)]' : ''
                       }`}
                     >
-                      <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void chat.openSession(session.id);
+                          props.onClose();
+                        }}
+                        className="flex min-h-[52px] min-w-0 flex-1 items-center gap-2 px-4 py-2 text-left text-sm active:bg-[var(--bg-hover)]"
+                      >
                         <BotAvatar name={bot.name} avatar={bot.avatar} size={32} testId={`session-bot-avatar-${session.id}`} />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-2">
@@ -90,8 +163,17 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
                             <span className="truncate text-[var(--text-primary)]">{session.title}</span>
                           </span>
                         </span>
-                      </span>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActionsFor({ id: session.id, title: session.title })}
+                        aria-label={t('mobile.chat.sessionActions')}
+                        data-testid={`session-actions-${session.id}`}
+                        className="flex min-h-[52px] min-w-[44px] shrink-0 items-center justify-center px-2 text-[var(--text-secondary)] active:bg-[var(--bg-hover)] active:text-[var(--text-primary)]"
+                      >
+                        <EllipsisHorizontalIcon className="h-5 w-5" aria-hidden />
+                      </button>
+                    </div>
                   );
                 })}
               </section>
@@ -99,6 +181,98 @@ function SessionDrawer(props: { chat: Chat; bots: MockMetabot[]; open: boolean; 
           )}
         </div>
       </div>
+      {actionsFor ? (
+        <BottomSheet title={t('mobile.chat.sessionActionsTitle')} onClose={() => setActionsFor(null)}>
+          <div className="flex flex-col" data-testid="session-action-menu">
+            <button
+              type="button"
+              data-testid="session-action-rename"
+              onClick={() => {
+                setRenameFor(actionsFor);
+                setRenameDraft(actionsFor.title);
+                setActionsFor(null);
+              }}
+              className="flex min-h-[52px] items-center gap-3 border-b border-[var(--border-color)] px-1 py-2 text-left text-[15px] text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              <PencilSquareIcon className="h-5 w-5 text-[var(--text-secondary)]" aria-hidden />
+              {t('mobile.chat.rename')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-action-delete"
+              onClick={() => {
+                setDeleteFor(actionsFor);
+                setActionsFor(null);
+              }}
+              className="flex min-h-[52px] items-center gap-3 px-1 py-2 text-left text-[15px] text-red-600 active:bg-[var(--bg-hover)]"
+            >
+              <TrashIcon className="h-5 w-5" aria-hidden />
+              {t('mobile.chat.delete')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
+      {renameFor ? (
+        <BottomSheet title={t('mobile.chat.renameTitle')} onClose={() => setRenameFor(null)}>
+          <input
+            type="text"
+            value={renameDraft}
+            onChange={(event) => setRenameDraft(event.target.value)}
+            placeholder={t('mobile.chat.renamePlaceholder')}
+            aria-label={t('mobile.chat.renamePlaceholder')}
+            data-testid="session-rename-input"
+            className="min-h-[44px] w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2.5 text-[15px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)]"
+          />
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid="session-rename-cancel"
+              onClick={() => setRenameFor(null)}
+              className="flex min-h-[44px] items-center rounded-xl border border-[var(--border-color)] px-4 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              {t('mobile.common.cancel')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-rename-confirm"
+              disabled={renameDraft.trim() === ''}
+              onClick={() => {
+                void submitRename();
+              }}
+              className="flex min-h-[44px] items-center rounded-xl bg-[var(--color-primary)] px-4 text-sm text-black active:opacity-80 disabled:opacity-40"
+            >
+              {t('mobile.chat.renameSave')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
+      {deleteFor ? (
+        <BottomSheet title={t('mobile.chat.deleteTitle')} onClose={() => setDeleteFor(null)}>
+          <p data-testid="session-delete-body" className="text-sm leading-relaxed text-[var(--text-secondary)]">
+            {t('mobile.chat.deleteBody')}
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid="session-delete-cancel"
+              onClick={() => setDeleteFor(null)}
+              className="flex min-h-[44px] items-center rounded-xl border border-[var(--border-color)] px-4 text-sm text-[var(--text-primary)] active:bg-[var(--bg-hover)]"
+            >
+              {t('mobile.common.cancel')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-delete-confirm"
+              onClick={() => {
+                void confirmDelete();
+              }}
+              className="flex min-h-[44px] items-center rounded-xl bg-red-100 px-4 text-sm text-red-700 active:bg-red-200"
+            >
+              {t('mobile.chat.deleteConfirm')}
+            </button>
+          </div>
+        </BottomSheet>
+      ) : null}
     </div>
   );
 }
