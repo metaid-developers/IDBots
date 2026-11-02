@@ -117,10 +117,27 @@ export function sanitizeTurnAckReply(raw: string): string {
   return capped.slice(0, cut).trimEnd();
 }
 
+export function buildFallbackTurnAckReply(userText: string): string {
+  const normalized = (userText ?? '').replace(/\s+/g, ' ').trim();
+  const cjk = containsCjk(normalized);
+  const firstSentence = normalized.split(/[。！？!?；;]/, 1)[0]?.trim() ?? '';
+  let summary = firstSentence;
+  const comma = summary.search(/[,，]/);
+  if (comma >= 4) {
+    summary = summary.slice(0, comma);
+  } else if (summary.length > 40) {
+    summary = `${truncateUtf16UnitsSafe(summary, 40).trimEnd()}…`;
+  }
+  if (!summary) summary = cjk ? '这个问题' : 'this request';
+  return sanitizeTurnAckReply(cjk
+    ? `收到，我先核对「${summary}」的原因和处理路径，然后直接推进；有关键进展或需要你决定的事，我会再汇报。`
+    : `Got it. I’ll look into “${summary}”, confirm the cause and next step, then move it forward. I’ll report key milestones or anything that needs your decision.`);
+}
+
 /**
  * Input-aware sanitize for the LLM ack (2026-10-23 thinking-leak fix).
  * Two deterministic rejections return '' BEFORE the length cap so the caller
- * keeps the template phrase instead of emitting leaked reasoning:
+ * uses the deterministic opening instead of emitting leaked reasoning:
  *  - genre guard: the ack reads as meta-analysis about the message (starts
  *    with "The user" or contains one of TURN_ACK_GENRE_MARKERS);
  *  - language guard: the user wrote CJK but the ack contains no CJK at all.

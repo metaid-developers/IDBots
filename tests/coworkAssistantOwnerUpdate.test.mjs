@@ -42,10 +42,10 @@ class RecordingStore {
   }
 }
 
-function setup({ assistant = true, active = true } = {}) {
+function setup({ assistant = true, active = true, waitTimeoutMs = 0 } = {}) {
   const { CoworkRunner } = loadRunner()
   const store = new RecordingStore()
-  const runner = new CoworkRunner(store, { localTurnStallTimeoutMs: 0 })
+  const runner = new CoworkRunner(store, { localTurnStallTimeoutMs: 0, assistantOwnerWaitTimeoutMs: waitTimeoutMs })
   runner.isAssistantModeOwnerChatSession = () => assistant
   runner.buildSessionInlineTools = () => []
   if (active) {
@@ -184,4 +184,69 @@ test('a late owner_update cannot charge the next submission or suppress its ack'
   assert.equal(previous.dshTurnAckVisibleTextSeen, false)
   assert.equal(next.assistantOwnerUpdateCount, 0)
   assert.equal(next.dshTurnAckVisibleTextSeen, false)
+})
+
+test('a second opening is rejected once an opening or real reply is already visible', async () => {
+  const { runner, store } = setup()
+  const first = await callUpdate(runner, 'I will check the purchase validation first.', 'opening')
+  assert.equal(JSON.parse(first.text).shown, true)
+  const second = await callUpdate(runner, 'I will check the purchase validation first.', 'opening')
+  assert.equal(JSON.parse(second.text).shown, false)
+  assert.match(JSON.parse(second.text).reason, /opening already delivered/)
+  assert.equal(store.messages.length, 1)
+})
+
+test('host waiting update fires at five minutes and backs off without hidden tool activity resetting it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000 })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+
+  t.mock.timers.tick(299_999)
+  assert.equal(store.messages.length, 0)
+  active.assistantOwnerWaitingForTool = true
+  t.mock.timers.tick(1)
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].metadata.ownerUpdateKind, 'waiting')
+  assert.match(store.messages[0].content, /执行步骤|execution step/)
+  assert.equal(active.assistantOwnerUpdateCount, 1)
+
+  t.mock.timers.tick(599_999)
+  assert.equal(store.messages.length, 1)
+  t.mock.timers.tick(1)
+  assert.equal(store.messages.length, 2)
+  assert.equal(active.assistantOwnerUpdateCount, 2)
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
+test('a real owner update resets the five-minute visible-message window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000 })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+  t.mock.timers.tick(200_000)
+
+  const result = await callUpdate(runner, 'The root cause is verified.')
+  assert.equal(JSON.parse(result.text).shown, true)
+  t.mock.timers.tick(299_999)
+  assert.equal(store.messages.length, 1)
+  t.mock.timers.tick(1)
+  assert.equal(store.messages.length, 2)
+  assert.equal(store.messages[1].metadata.ownerUpdateKind, 'waiting')
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
+test('turn teardown clears the waiting timer so it cannot leak into the next submission', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 1_000 })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+  runner.removeActiveSession('s1', active)
+  assert.equal(active.assistantOwnerHeartbeatTimer, null)
+
+  t.mock.timers.tick(5_000)
+  assert.equal(store.messages.length, 0)
+  t.mock.timers.reset()
 })
