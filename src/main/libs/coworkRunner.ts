@@ -11379,11 +11379,11 @@ export class CoworkRunner extends EventEmitter {
             stampPermissionDeadline(request, timeoutDefault);
             activeSession.pendingPermission = request;
             this.emit('permissionRequest', sessionId, request);
-            // Shared 60s watchdog (abort-wired). Ordinary tool approvals
-            // auto-allow; safety confirms carried in the reason (external
-            // agent CLI, delete) auto-deny. Either way the blocked tool call
-            // returns instead of wedging the turn. The countdown on the
-            // default button reads request.expiresAt.
+            // Shared 60s watchdog (abort-wired). Every unanswered tool
+            // approval auto-denies (fail-closed, 2026-11-03 review — the
+            // ordinary-approvals auto-allow default was reverted). Either way
+            // the blocked tool call returns instead of wedging the turn. The
+            // countdown on the default button reads request.expiresAt.
             void this.waitForPermissionResponse(sessionId, ask.id, activeSession.abortController.signal, {
               timeoutBehavior: timeoutDefault,
             })
