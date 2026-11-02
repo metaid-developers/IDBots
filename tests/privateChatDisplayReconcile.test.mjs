@@ -156,3 +156,64 @@ test('reconcile inserts a processed inbound bubble in chain order and is idempot
     sqlite.cleanup();
   }
 });
+
+test('reconcile never resurrects handshake or order-protocol rows the daemon consumed silently', async () => {
+  const sqlite = await createSqliteStore();
+  try {
+    insertMetabot(sqlite.db, 1, LOCAL);
+    const store = createCoworkStore(sqlite.db);
+    const session = store.createSession(
+      'Peer', '/tmp/a2a', '', 'local', [], 1, 'a2a', PEER, 'Peer',
+    );
+    store.registerA2AEpisode({
+      sessionId: session.id,
+      localMetabotId: 1,
+      localGlobalMetaId: LOCAL,
+      peerGlobalMetaId: PEER,
+      episodeIndex: 1,
+      startedAt: 1,
+    });
+    store.upsertConversationMapping({
+      channel: 'metaweb_private',
+      externalConversationId: `metaweb-private:${PEER}`,
+      metabotId: 1,
+      coworkSessionId: session.id,
+      metadataJson: null,
+    });
+    // Protocol rows the daemon marks processed with no display append:
+    // decrypted handshake words and order payloads routed to metaweb_order.
+    const protocolRows = [
+      { pinId: `${'11'.repeat(32)}i0`, content: 'ping' },
+      { pinId: `${'22'.repeat(32)}i0`, content: 'pong' },
+      { pinId: `${'33'.repeat(32)}i0`, content: '[DELIVERY] {"result":"done"}' },
+      { pinId: `${'44'.repeat(32)}i0`, content: '[ORDER_STATUS:2026-11-03] shipped' },
+      { pinId: `${'55'.repeat(32)}i0`, content: '[NeedsRating] The service is complete. Please rate it.' },
+      { pinId: `${'66'.repeat(32)}i0`, content: '[ORDER] buy request' },
+    ];
+    let offset = 2_000;
+    for (const row of protocolRows) {
+      insertPrivateRow(sqlite.db, {
+        pinId: row.pinId,
+        fromGlobalMetaId: PEER,
+        toGlobalMetaId: LOCAL,
+        content: row.content,
+        chainTimestamp: offset,
+      });
+      offset += 1_000;
+    }
+
+    const result = reconcilePrivateChatDisplayGaps({
+      db: sqlite.db,
+      coworkStore: store,
+      identities: [{ metabotId: 1, globalMetaId: LOCAL }],
+      nowSec: 10_000,
+      lookbackSec: 20_000,
+    });
+
+    assert.equal(result.inserted, 0, 'no protocol row may become a chat bubble');
+    assert.equal(store.getSession(session.id).messages.length, 0);
+  } finally {
+    sqlite.store?.close?.();
+    sqlite.cleanup();
+  }
+});
