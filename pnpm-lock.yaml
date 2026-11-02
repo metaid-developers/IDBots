@@ -21,7 +21,7 @@ overrides:
   rimraf: 2.7.1
 
 patchedDependencies:
-  '@openagentinternet/agent-browser-ui@0.7.1': 9bc86e4cfedb305cea89c05d308e58360829e31e549035fbf2e3d5e966b78816
+  '@openagentinternet/agent-browser-ui@0.8.0': fdae042bd3f83bfca06937fff46cf85686f61d76e8c3a0fb10c7e5b687e35281
 
 importers:
 
@@ -55,17 +55,17 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(typescript@5.9.3)
       '@openagentinternet/agent-browser-core':
-        specifier: 0.7.1
-        version: 0.7.1
+        specifier: 0.8.0
+        version: 0.8.0
       '@openagentinternet/agent-browser-host-contract':
-        specifier: 0.7.1
-        version: 0.7.1
+        specifier: 0.8.0
+        version: 0.8.0
       '@openagentinternet/agent-browser-name-resolvers':
-        specifier: 0.7.1
-        version: 0.7.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
+        specifier: 0.8.0
+        version: 0.8.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
       '@openagentinternet/agent-browser-ui':
-        specifier: 0.7.1
-        version: 0.7.1(patch_hash=9bc86e4cfedb305cea89c05d308e58360829e31e549035fbf2e3d5e966b78816)
+        specifier: 0.8.0
+        version: 0.8.0(patch_hash=fdae042bd3f83bfca06937fff46cf85686f61d76e8c3a0fb10c7e5b687e35281)
       '@reduxjs/toolkit':
         specifier: ^2.2.1
         version: 2.11.2(react-redux@9.2.0(@types/react@18.3.28)(react@18.3.1)(redux@5.0.1))(react@18.3.1)
@@ -1018,20 +1018,20 @@ packages:
     resolution: {integrity: sha512-CcYQP6dfrF7mfzZyp1nFVkqs2viQeuWJEurlFpaIOOI/bWSTp0/SveB6yavZBhNHgZ8UwciKFzjBVJQXSwl6wg==}
     engines: {node: '>=20.0.0'}
 
-  '@openagentinternet/agent-browser-core@0.7.1':
-    resolution: {integrity: sha512-ep+15HVCMSSgfxTbj3vPWR+/N+hOczfOBK5RZ+bfp/bUQ1wzp1ccJMpvubLDjJG7/r5SHepffl3oll59nCRVOw==}
+  '@openagentinternet/agent-browser-core@0.8.0':
+    resolution: {integrity: sha512-+Rt5GRItDY6+X4rHaBcKbwGHG64z37RBG060cPxwIcx0PuDZfl9JT55Svj/UWan7qGsKC66tGledSryn9OJBYw==}
 
-  '@openagentinternet/agent-browser-host-contract@0.7.1':
-    resolution: {integrity: sha512-jLgVPG9/CKmXG966mTHlGKEMoSXC7heXu2u8WSDjh0CDHTu7uMkvCRkf/MJ7l86Luuktr8kAs71V+CaUxzA5Pw==}
+  '@openagentinternet/agent-browser-host-contract@0.8.0':
+    resolution: {integrity: sha512-P/S/asqRSVG47Hjwa4y4+RcPPH6xkjGP6Mlz7PjtdWj8vONIY95LIS43+CPd6zYAdAeAJ9x91bWGEEm9z4G1bQ==}
 
-  '@openagentinternet/agent-browser-name-resolvers@0.7.1':
-    resolution: {integrity: sha512-3U9Ez+Bfn7JDSbgd/ecCQx6fO7tq1/PZ94e+tChvVWQ485Hx0zxX0Rddjp7PsdGXIgRzszSZqoS6ZCbN4i0o9w==}
+  '@openagentinternet/agent-browser-name-resolvers@0.8.0':
+    resolution: {integrity: sha512-Bd8PJ83AI24YmfZfUylsxABc/GhZ87CgRdpZYe4uNlw1aEBlFMMQqnkHtOkzyYx6p5ZL6zMsS+U6Fh05wBaw4g==}
 
-  '@openagentinternet/agent-browser-renderers@0.7.1':
-    resolution: {integrity: sha512-7kQxFB8gkiL9htNf/YUtll+dIkGWbmjI60+AyDQRDutttHlj5gKD1LRsxiZZuJ5MiH4PQVWTHTP9nehfW8iRDA==}
+  '@openagentinternet/agent-browser-renderers@0.8.0':
+    resolution: {integrity: sha512-6b+ksVJE66ePl87epg7paDU5wPzNbFqgGV3B5miJAkI8mHAQXnIyVX0udPkF/d9d69852HH7gjQ6HCGEiIPTEA==}
 
-  '@openagentinternet/agent-browser-ui@0.7.1':
-    resolution: {integrity: sha512-Jz+Ged+U9WdS+Z0+IaBcpP+j6iVpzEZvrcdbAiSxKoaF9D1THyygtbAW5mkE0H4vGrTRSfH2xMd1gbTEIasOLA==}
+  '@openagentinternet/agent-browser-ui@0.8.0':
+    resolution: {integrity: sha512-7iulJHNDy3n5Lfzr9vQ4yWcjfWgfZ7qMXLkDFaK0d3sy/VH4RXUKM0PTgX7//JDt4FDbPb2g+bZTkVB0mxlisQ==}
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -5433,15 +5433,15 @@ snapshots:
       - encoding
       - typescript
 
-  '@openagentinternet/agent-browser-core@0.7.1':
+  '@openagentinternet/agent-browser-core@0.8.0':
     dependencies:
-      '@openagentinternet/agent-browser-host-contract': 0.7.1
+      '@openagentinternet/agent-browser-host-contract': 0.8.0
 
-  '@openagentinternet/agent-browser-host-contract@0.7.1': {}
+  '@openagentinternet/agent-browser-host-contract@0.8.0': {}
 
-  '@openagentinternet/agent-browser-name-resolvers@0.7.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)':
+  '@openagentinternet/agent-browser-name-resolvers@0.8.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)':
     dependencies:
-      '@openagentinternet/agent-browser-core': 0.7.1
+      '@openagentinternet/agent-browser-core': 0.8.0
       viem: 2.0.0(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.3.6)
     transitivePeerDependencies:
       - bufferutil
@@ -5449,16 +5449,16 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@openagentinternet/agent-browser-renderers@0.7.1':
+  '@openagentinternet/agent-browser-renderers@0.8.0':
     dependencies:
-      '@openagentinternet/agent-browser-host-contract': 0.7.1
+      '@openagentinternet/agent-browser-host-contract': 0.8.0
       marked: 18.0.13
 
-  '@openagentinternet/agent-browser-ui@0.7.1(patch_hash=9bc86e4cfedb305cea89c05d308e58360829e31e549035fbf2e3d5e966b78816)':
+  '@openagentinternet/agent-browser-ui@0.8.0(patch_hash=fdae042bd3f83bfca06937fff46cf85686f61d76e8c3a0fb10c7e5b687e35281)':
     dependencies:
-      '@openagentinternet/agent-browser-core': 0.7.1
-      '@openagentinternet/agent-browser-host-contract': 0.7.1
-      '@openagentinternet/agent-browser-renderers': 0.7.1
+      '@openagentinternet/agent-browser-core': 0.8.0
+      '@openagentinternet/agent-browser-host-contract': 0.8.0
+      '@openagentinternet/agent-browser-renderers': 0.8.0
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
