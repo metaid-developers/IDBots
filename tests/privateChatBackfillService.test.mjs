@@ -175,6 +175,7 @@ test('backfill recovers a directory peer whose last pin is missing locally', asy
       identity: LOCAL_IDENTITY,
       peerGlobalMetaID: PEER_GLOBAL_META_ID,
       inserted: 3,
+      archivedPinIds: ['pin-b'],
     }]);
     assert.deepEqual(
       harness.historyCalls.map((call) => [call.metaId, call.otherMetaId]),

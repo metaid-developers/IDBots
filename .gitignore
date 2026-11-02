@@ -623,6 +623,7 @@ man_base_data_pebble/
 !tests/privateChatEmptyReplyRetry.test.mjs
 !tests/privateChatNoReplyWake.test.mjs
 !tests/privateChatInboundVisibility.test.mjs
+!tests/privateChatDisplayReconcile.test.mjs
 !tests/privateChatInboundNoReplyTextVisibility.test.mjs
 !tests/privateChatSendGate.test.mjs
 !tests/privateChatRowScheduler.test.mjs

@@ -5,6 +5,7 @@
  */
 
 import type { SqliteDatabase as Database } from '../sqliteTypes';
+import { reconcilePrivateChatDisplayGaps } from './privateChatDisplayReconcile';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { getPrivateKeyBufferForEcdh } from './metabotWalletService';
 import { stripLoneSurrogates, truncateUtf16Units, truncateUtf16UnitsFromEnd } from '../libs/llmSafeText';
@@ -7092,6 +7093,25 @@ export function startPrivateChatDaemon(
       );
     }
   };
+  if (typeof metabotStore.listMetabots === 'function') {
+    try {
+      const identities = metabotStore.listMetabots()
+        .filter((metabot) => metabot.enabled !== false && String(metabot.globalmetaid || '').trim())
+        .map((metabot) => ({
+          metabotId: metabot.id,
+          globalMetaId: String(metabot.globalmetaid).trim(),
+        }));
+      const repaired = reconcilePrivateChatDisplayGaps({
+        db,
+        coworkStore,
+        identities,
+        emitLog,
+      });
+      if (repaired.inserted > 0) saveDb();
+    } catch (error) {
+      emitLog(`[PrivateChat] Display reconcile failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   pollTimer = setInterval(() => {
     runPollTick();
   }, POLL_INTERVAL_MS);
