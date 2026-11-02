@@ -1061,6 +1061,16 @@ export class QQGateway extends EventEmitter {
       return;
     }
 
+    // Positive-path audit: the drop path always logged, but an ANSWERED message
+    // left no evidence of which tier granted it — which is exactly what made the
+    // `no-owner-binding` incident hard to read. One line, no identifiers.
+    this.debugLog('inbound accepted by trust gate', {
+      messageId: (msg.messageId || '').trim(),
+      kind: msg.kind,
+      level: gate.trust.level,
+      reason: gate.reason,
+    });
+
     const messageId = (msg.messageId || '').trim();
     if (messageId) {
       if (this.isDuplicate(messageId)) return;
