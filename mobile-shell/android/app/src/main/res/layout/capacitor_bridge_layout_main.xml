@@ -3,9 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context="world.idbots.app.MainActivity">
+    tools:context="com.idbots.world.MainActivity">
 
-    <world.idbots.app.NativeShellWebView
+    <com.idbots.world.NativeShellWebView
         android:id="@+id/webview"
         android:layout_width="fill_parent"
         android:layout_height="fill_parent" />

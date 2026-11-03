@@ -1,14 +1,14 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "world.idbots.app"
+    namespace = "com.idbots.world"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "world.idbots.app"
+        applicationId "com.idbots.world"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "0.1.0"
+        versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +16,26 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // Credentials come from the environment so no secret is committed.
+            // Set IDBOTS_ANDROID_KEYSTORE / _STORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD.
+            def ksPath = System.getenv('IDBOTS_ANDROID_KEYSTORE')
+            if (ksPath != null) {
+                storeFile file(ksPath)
+                storePassword System.getenv('IDBOTS_ANDROID_STORE_PASSWORD')
+                keyAlias System.getenv('IDBOTS_ANDROID_KEY_ALIAS') ?: 'idbots'
+                keyPassword System.getenv('IDBOTS_ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (System.getenv('IDBOTS_ANDROID_KEYSTORE') != null) {
+                signingConfig signingConfigs.release
+            }
         }
     }
     buildFeatures {

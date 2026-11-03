@@ -44,9 +44,9 @@ test('Android has API 26 and explicit staging and production variants', () => {
   assert.match(manifest, /android:allowBackup="false"/);
   assert.match(manifest, /android:usesCleartextTraffic="false"/);
   assert.match(manifest, /android:windowSoftInputMode="adjustResize"/);
-  const activity = read('../android/app/src/main/java/world/idbots/app/MainActivity.java');
+  const activity = read('../android/app/src/main/java/com/idbots/world/MainActivity.java');
   assert.match(activity, /registerPlugin\(NativeBackPlugin\.class\)/);
-  const backPlugin = read('../android/app/src/main/java/world/idbots/app/NativeBackPlugin.java');
+  const backPlugin = read('../android/app/src/main/java/com/idbots/world/NativeBackPlugin.java');
   assert.match(backPlugin, /@CapacitorPlugin\(name = "NativeBack"\)/);
   assert.match(backPlugin, /getBridge\(\)\.getActivity\(\)\.finish\(\)/);
 });
@@ -61,7 +61,7 @@ test('Gradle wrapper remains executable in Git and on disk', () => {
 });
 
 test('both platforms install the adapter before remote application scripts', () => {
-  assert.match(read('../android/app/src/main/java/world/idbots/app/NativeShellWebView.java'), /DOCUMENT_START_SCRIPT/);
+  assert.match(read('../android/app/src/main/java/com/idbots/world/NativeShellWebView.java'), /DOCUMENT_START_SCRIPT/);
   assert.match(read('../ios/App/App/NativeBridgeViewController.swift'), /injectionTime: \.atDocumentStart, forMainFrameOnly: true/);
   assert.match(read('../ios/App/App/NativeShellNavigationDelegate.swift'), /decisionHandler\(\.cancel\)/);
 });

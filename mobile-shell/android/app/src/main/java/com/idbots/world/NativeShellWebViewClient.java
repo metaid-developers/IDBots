@@ -1,4 +1,4 @@
-package world.idbots.app;
+package com.idbots.world;
 
 import android.content.ActivityNotFoundException;
 import android.content.Intent;

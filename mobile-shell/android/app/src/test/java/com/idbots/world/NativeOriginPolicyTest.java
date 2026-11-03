@@ -1,4 +1,4 @@
-package world.idbots.app;
+package com.idbots.world;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -32,7 +32,7 @@ public class NativeOriginPolicyTest {
         assertTrue(NativeOriginPolicy.isApprovedExternal("http://example.com/"));
         assertTrue(NativeOriginPolicy.isApprovedExternal("alipays://platformapi/startapp?saId=10000007"));
         assertFalse(NativeOriginPolicy.isApprovedExternal("javascript:alert(1)"));
-        assertFalse(NativeOriginPolicy.isApprovedExternal("file:///data/user/0/world.idbots.app/private"));
+        assertFalse(NativeOriginPolicy.isApprovedExternal("file:///data/user/0/com.idbots.world/private"));
         assertFalse(NativeOriginPolicy.isApprovedExternal("https://user@example.com/"));
     }
 }

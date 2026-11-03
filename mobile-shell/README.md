@@ -138,9 +138,9 @@ DEBUG builds log only non-secret bootstrap fields: origin, platform, bridge vers
 For iOS Simulator smoke runs, `NS0_SMOKE` is honored only in DEBUG and only when explicitly supplied:
 
 ```bash
-SIMCTL_CHILD_NS0_SMOKE=external xcrun simctl launch booted world.idbots.app
-SIMCTL_CHILD_NS0_SMOKE=offline xcrun simctl launch booted world.idbots.app
-SIMCTL_CHILD_NS0_SMOKE=offline-retry xcrun simctl launch booted world.idbots.app
+SIMCTL_CHILD_NS0_SMOKE=external xcrun simctl launch booted com.idbots.world
+SIMCTL_CHILD_NS0_SMOKE=offline xcrun simctl launch booted com.idbots.world
+SIMCTL_CHILD_NS0_SMOKE=offline-retry xcrun simctl launch booted com.idbots.world
 ```
 
 - `external` asks the privileged WebView to navigate to `https://example.com/`; native policy cancels it and hands it to the system browser.
@@ -150,7 +150,7 @@ SIMCTL_CHILD_NS0_SMOKE=offline-retry xcrun simctl launch booted world.idbots.app
 For Android, enable WebView debugging in the DEBUG build, forward its DevTools socket, then run the CDP smoke script:
 
 ```bash
-adb forward tcp:9222 "localabstract:webview_devtools_remote_$(adb shell pidof world.idbots.app | tr -d '\r')"
+adb forward tcp:9222 "localabstract:webview_devtools_remote_$(adb shell pidof com.idbots.world | tr -d '\r')"
 node scripts/android-webview-smoke.mjs bootstrap
 node scripts/android-webview-smoke.mjs external
 node scripts/android-webview-smoke.mjs offline

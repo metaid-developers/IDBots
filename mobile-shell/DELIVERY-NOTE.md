@@ -23,7 +23,7 @@ No GitHub push, main merge, staging/production deployment, signing-key access, T
 | C2 / allowlist version | `1.0.0` / `1.0.0` |
 | Default flavor | `staging` → `https://staging.idbots.world/` |
 | Explicit production flavor | `production` → `https://app.idbots.world/` (configuration tested; WebView NOT RUN) |
-| Application ID | `world.idbots.app` |
+| Application ID | `com.idbots.world` |
 
 The branch was created directly from the named local `main` SHA with `git worktree add -b feat/mobile-native-lifecycle .worktrees/mobile-native-lifecycle main`. No feature branch was used as its parent and no remote fetch was needed. The NS1 planning documents were read from the separate `docs/cloud-mobile-native-shell` worktree because they are not present on this `main`; that documentation branch was not modified or merged.
 
