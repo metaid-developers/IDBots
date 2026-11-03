@@ -7,7 +7,7 @@
  * the mnemonic import view; "Log Out" removes it and lands on the empty view.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   UserCircleIcon,
   UserPlusIcon,
@@ -18,6 +18,8 @@ import {
   ArrowPathIcon,
   ArrowLeftIcon,
   ArrowRightStartOnRectangleIcon,
+  CreditCardIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 import { coworkService } from '../../services/cowork';
@@ -25,7 +27,10 @@ import MnemonicWordGrid from './MnemonicWordGrid';
 import UserBackupMnemonicModal from './UserBackupMnemonicModal';
 import ChainBackupRestorePrompt from './ChainBackupRestorePrompt';
 import ChainBackupMnemonicReminderModal from './ChainBackupMnemonicReminderModal';
-import PaymentReceivingSettings from '../settings/PaymentReceivingSettings';
+import PaymentReceivingSettingsModal, {
+  initialPaymentModalState,
+  paymentModalReducer,
+} from '../settings/PaymentReceivingSettings';
 
 type ViewState = 'loading' | 'empty' | 'create' | 'backup' | 'import' | 'profile';
 
@@ -187,6 +192,12 @@ const UserSettings: React.FC = () => {
   // Logout / switch account — the same confirm modal with different copy and a
   // different landing view ('switch' lands directly on the mnemonic import).
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
+  // S3 收款设置：入口按钮 + Modal。reducer 与 Modal 壳同源（PaymentReceivingSettings），
+  // 开合与 tab 门的转移函数是纯函数，单测直接驱动同一模块。
+  const [paymentSettings, dispatchPaymentSettings] = useReducer(
+    paymentModalReducer,
+    initialPaymentModalState,
+  );
   const [logoutMode, setLogoutMode] = useState<'logout' | 'switch'>('logout');
   const [mnemonicReminderOpen, setMnemonicReminderOpen] = useState(false);
   const [revealedMnemonic, setRevealedMnemonic] = useState('');
@@ -1176,8 +1187,27 @@ const UserSettings: React.FC = () => {
           </div>
         </div>
 
-        {/* S3 收款信息：加密保存于本机，绝不上链（design doc 02） */}
-        <PaymentReceivingSettings />
+        {/* S3 收款设置入口：不再直接摊开表单（design doc 02；owner 2026-11-04 要求收敛），
+            点击弹出 Modal 面板配置收款信息，表单加密逻辑不变 */}
+        <button
+          type="button"
+          data-payment-settings-entry="true"
+          onClick={() => dispatchPaymentSettings({ type: 'open' })}
+          className="w-full flex items-center gap-3 rounded-xl border dark:border-claude-darkBorder border-claude-border bg-claude-accent/5 dark:hover:bg-white/5 hover:bg-black/[0.03] active:scale-[0.995] px-4 py-3 text-left transition-colors"
+        >
+          <span className="flex-shrink-0 w-10 h-10 rounded-xl bg-claude-accent/15 flex items-center justify-center">
+            <CreditCardIcon className="h-5 w-5 text-claude-accent" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium dark:text-claude-darkText text-claude-text">
+              {i18nService.t('paymentSettingsTitle')}
+            </span>
+            <span className="block mt-0.5 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary truncate">
+              {i18nService.t('paymentSettingsEntryDesc')}
+            </span>
+          </span>
+          <ChevronRightIcon className="flex-shrink-0 h-4 w-4 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+        </button>
 
         {/* Logout confirmation modal */}
         {logoutModalOpen && (
@@ -1256,6 +1286,16 @@ const UserSettings: React.FC = () => {
               </div>
             </div>
           </div>
+        )}
+
+        {/* S3 收款设置 Modal —— 点遮罩 / 右上角 ✕ / 取消均可关闭；
+            保存成功后 2 秒提示并停留在 Modal 内（可继续编辑或手动关闭） */}
+        {paymentSettings.open && (
+          <PaymentReceivingSettingsModal
+            state={paymentSettings}
+            dispatch={dispatchPaymentSettings}
+            onClose={() => dispatchPaymentSettings({ type: 'close' })}
+          />
         )}
 
         {chainRestorePrompt && (

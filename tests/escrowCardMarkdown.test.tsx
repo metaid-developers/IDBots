@@ -42,13 +42,20 @@ import {
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
+// Relative to the real clock: T1 renders via MarkdownContent, which passes
+// no `now` to EscrowCard, so the card reads Date.now() at render time. The
+// fixture previously used a literal timestamp and went red on 2026-11-04
+// when the wall clock walked past its 24h deadline — same mechanism, now
+// anchored to the process clock so the deadline always stays 23h ahead.
+const STATE_ENTERED_AT = Date.now() - 60 * 60 * 1000;
+
 const PAYLOAD: EscrowCardData = {
   orderId: 'esc-42',
   title: '星球系列 #3',
   kind: 'mrc721',
   amountCents: 9900,
   state: 'ITEM_ESCROWED',
-  stateEnteredAt: 1_793_640_000_000,
+  stateEnteredAt: STATE_ENTERED_AT,
   timerHours: 24,
   next: { actor: '买方', text: '请点对点付款并上传凭证' },
   parties: { seller: '卖家甲', buyer: '买家乙', agent: '担保bot' },
@@ -57,7 +64,7 @@ const PAYLOAD: EscrowCardData = {
 };
 
 const FENCE = serializeEscrowCardFence(PAYLOAD);
-const NOW = 1_793_640_000_000 + 60 * 60 * 1000; // 1h after state entry
+const NOW = STATE_ENTERED_AT + 60 * 60 * 1000; // 1h after state entry
 
 // ---------------------------------------------------------------------------
 // 1. Fence → card
