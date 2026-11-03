@@ -272,6 +272,7 @@ tests/*
 !tests/sidebarNavigation.test.mjs
 !tests/botBrowserBridgeService.test.mjs
 !tests/botBrowserNftBuy.test.mjs
+!tests/botBrowserMrc721Buy.test.mjs
 !tests/botBrowserHumanPinWrite.test.mjs
 !tests/humanIdentityPinWriter.test.mjs
 !tests/pinPathResolver.test.mjs
