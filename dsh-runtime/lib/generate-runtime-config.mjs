@@ -910,6 +910,12 @@ export function generateRuntimeConfig(input) {
       { id: 'computer-use', name: '@deepseek-ai/dsh-computer-use' },
       { id: 'computer-use-cua-native', name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native' },
       { id: 'idbots-cu-route-guard', name: plugin('idbots-cu-route-guard.mjs') },
+      // AX-first locate layer over the same switch: a targeted find resolves the
+      // element semantically (two CLI calls for read → act → verify) and only
+      // falls back to a screenshot for surfaces AX cannot see. Mounted here, so
+      // the MetaBot editor's desktop-control switch turns it on and off together
+      // with the driver it fronts, and no second capability appears anywhere else.
+      { id: 'idbots-desktop-ax', name: plugin('idbots-desktop-ax.mjs') },
     ] : []),
     ...(input.extraEntries ?? []),
   ]
