@@ -797,11 +797,17 @@ const createMarkdownComponents = (
     // chat/twemoji.ts).
     if (typeof src === 'string' && isTwemojiAssetUrl(src)) {
       return (
+        // my-0: assistant bubbles (and any other surface) wrap this content in
+        // typography's `prose`, whose img rule paints margin-top/bottom
+        // (~1.7em) on EVERY image — on an inline glyph that margin shoved the
+        // emoji visibly above the text baseline (reported 2026-11-03). The
+        // inline twemoji is text-height and carries its own alignment; block
+        // margins must stay at zero.
         <img
           src={src}
           alt={alt}
           draggable={false}
-          className="inline-block h-[1.25em] w-[1.25em] align-[-0.2em] mx-[0.06em]"
+          className="my-0 inline-block h-[1.25em] w-[1.25em] align-[-0.2em] mx-[0.06em]"
         />
       );
     }
