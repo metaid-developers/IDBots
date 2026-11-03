@@ -21,4 +21,13 @@ end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+  # Pod targets cannot carry an app provisioning profile. When the archive is driven from
+  # CI with a manual PROVISIONING_PROFILE_SPECIFIER, Xcode inherits it into every Pod target
+  # and refuses with "does not support provisioning profiles". Clear it for Pods only; the
+  # App target keeps its manually specified profile.
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ''
+    end
+  end
 end
