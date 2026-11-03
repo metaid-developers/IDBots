@@ -104,6 +104,9 @@ jobs:
       - name: xcodebuild archive (Manual signing, App Store)
         working-directory: mobile-shell/ios/App
         run: |
+          # Without pipefail the xcbeautify stage masks xcodebuild's exit status and a
+          # failed archive reports success. Always fail the step on the real result.
+          set -o pipefail
           xcodebuild archive \
             -workspace App.xcworkspace \
             -scheme App \
