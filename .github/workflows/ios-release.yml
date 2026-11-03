@@ -33,6 +33,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # App Store Connect has rejected builds linked against anything older than the iOS 26
+      # SDK (altool error 90725). The macos-15 image ships Xcode 26.3 but defaults to 16.4,
+      # so select the newer toolchain explicitly instead of relying on the image default.
+      - name: Select Xcode 26 (required for App Store uploads)
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app
+          xcodebuild -version
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
