@@ -1928,6 +1928,21 @@ export class CoworkStore implements MemoryBackend {
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN activity_at INTEGER;');
         changed = true;
       }
+      if (!sessionColumns.includes('last_turn_failed_at_ms')) {
+        // Turn-outcome markers for the long-term-task heartbeat self-heal
+        // (see recordSessionTurnFailure): the newest turn settlement that left
+        // the owner without an answer. NULL = no such settlement recorded.
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN last_turn_failed_at_ms INTEGER;');
+        changed = true;
+      }
+      if (!sessionColumns.includes('last_turn_completed_at_ms')) {
+        // Newest turn settlement that DID answer (kind completed); pairs with
+        // last_turn_failed_at_ms so a heartbeat probe can tell "the owner's
+        // message died in a failed turn" apart from "a later turn failed for
+        // unrelated reasons after the owner was already answered".
+        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN last_turn_completed_at_ms INTEGER;');
+        changed = true;
+      }
 
       // Sweep failed-fork orphans: a fork whose session row exists but has
       // zero messages is unambiguously a fork that died mid-copy (forkSession
@@ -4596,6 +4611,39 @@ export class CoworkStore implements MemoryBackend {
   getSessionMetabotId(sessionId: string): number | null {
     const row = this.getOne<{ metabot_id: number | null }>('SELECT metabot_id FROM cowork_sessions WHERE id = ?', [sessionId]);
     return row?.metabot_id != null ? Number(row.metabot_id) : null;
+  }
+
+  /**
+   * Record that a turn settled WITHOUT answering (provider error, stall abort,
+   * empty terminal, truncated) — the long-term-task heartbeat's
+   * unanswered-owner-reply self-heal keys off this marker: an owner message
+   * whose answering turn died must not read as owner engagement that resets
+   * the reminder clock (2026-11-03 session 68650d7b: the owner's reply died
+   * with STREAM_CLOSED and the task sat silent for the full 12h re-present
+   * window because the dead message anchored the quiet clock).
+   */
+  recordSessionTurnFailure(sessionId: string, atMs: number): void {
+    // No saveDb(): per-turn hot writes follow the addMessage pattern — the
+    // native backend persists via WAL and the wasm backend's full-file export
+    // is far too expensive per turn (the debounced saves cover it).
+    this.db.run('UPDATE cowork_sessions SET last_turn_failed_at_ms = ? WHERE id = ?', [atMs, sessionId]);
+  }
+
+  /** Record a turn settlement that DID answer (see recordSessionTurnFailure). */
+  recordSessionTurnCompletion(sessionId: string, atMs: number): void {
+    this.db.run('UPDATE cowork_sessions SET last_turn_completed_at_ms = ? WHERE id = ?', [atMs, sessionId]);
+  }
+
+  /** Turn-outcome markers for one session (null = never recorded). */
+  getSessionTurnOutcome(sessionId: string): { lastFailedAtMs: number | null; lastCompletedAtMs: number | null } {
+    const row = this.getOne<{ last_failed: number | null; last_completed: number | null }>(
+      'SELECT last_turn_failed_at_ms AS last_failed, last_turn_completed_at_ms AS last_completed FROM cowork_sessions WHERE id = ?',
+      [sessionId],
+    );
+    return {
+      lastFailedAtMs: row?.last_failed != null ? Number(row.last_failed) : null,
+      lastCompletedAtMs: row?.last_completed != null ? Number(row.last_completed) : null,
+    };
   }
 
   /**

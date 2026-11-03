@@ -169,6 +169,7 @@ tests/*
 !tests/dshDeepseekToolInputRepair.test.mjs
 !tests/dshCompactionOverflowShrink.test.mjs
 !tests/dshRuntimeConfigCompactionPolicy.test.mjs
+!tests/dshRuntimeConfigRetryPolicy.test.mjs
 !tests/dshRuntimeConfigEfforts.test.mjs
 !tests/dshRuntimeGlmResponsesBoot.test.mjs
 !tests/dshRuntimeOpencodeSessionHeaders.test.mjs

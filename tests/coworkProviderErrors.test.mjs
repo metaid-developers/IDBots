@@ -328,3 +328,28 @@ test('isTransientDshTurnError classifies the Zhipu gateway network-error templat
   assert.equal(isTransientDshTurnError({ kind: 'completed' }), false);
   assert.equal(isTransientDshTurnError(null), false);
 });
+
+test('isTransientDshTurnError classifies the mid-stream STREAM_CLOSED death as transient', async () => {
+  const { isTransientDshTurnError } = await import('../dist-electron/main/libs/coworkAssistantReply.js');
+
+  // The 2026-11-03 session cw-68650d7b death shape, verbatim: the turn rode
+  // "Service is too busy" retries through steps 3-5, and the one request that
+  // got through died when the provider closed the SSE connection before
+  // message_stop — kernel code STREAM_CLOSED. Same environmental class as
+  // EMPTY_RESPONSE (a stream that closed with no content): the resume ladder
+  // must engage instead of settling the turn (and the owner's pending
+  // question) as failed.
+  assert.equal(
+    isTransientDshTurnError({
+      kind: 'error',
+      error: { code: 'STREAM_CLOSED', message: 'DeepSeek Messages stream ended before message_stop' },
+    }),
+    true,
+  );
+  // The kernel-normalized code alone (message wording may vary per adapter —
+  // the pi-ai route throws the same code for its streams).
+  assert.equal(isTransientDshTurnError({ kind: 'error', error: { code: 'STREAM_CLOSED', message: '' } }), true);
+  // Non-error outcomes and other codes must not classify.
+  assert.equal(isTransientDshTurnError({ kind: 'completed' }), false);
+  assert.equal(isTransientDshTurnError({ kind: 'error', error: { code: 'INVALID_REQUEST', message: 'bad' } }), false);
+});

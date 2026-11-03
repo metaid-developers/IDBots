@@ -132,6 +132,11 @@ test('every route carries the outage-tuned retry policy', () => {
   const expectedPolicy = {
     mode: 'normal',
     maxRetries: 8,
+    // Explicit retryableCodes: the kernel default omits STREAM_CLOSED, so a
+    // mid-stream truncation (provider closed the SSE connection before
+    // message_stop; 2026-11-03 session cw-68650d7b) used to skip the ladder
+    // and kill the whole turn.
+    retryableCodes: ['EMPTY_RESPONSE', 'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'STREAM_CLOSED'],
     backoff: { initialDelayMs: 1_000, maxDelayMs: 30_000 },
   }
   const config = generateRuntimeConfig(baseInput([
