@@ -139,6 +139,72 @@ export function resolveTurnAckActivity(userText: string): TurnAckActivity {
   return 'working';
 }
 
+/** Input cap for the user-text slice sent to the wait-update model. */
+const OWNER_WAIT_USER_TEXT_MAX_CHARS = 1200;
+
+/** Input cap for the session-title context line on the wait update. */
+const OWNER_WAIT_TITLE_MAX_CHARS = 120;
+
+export interface OwnerWaitUpdateInput {
+  /** The turn's user message — language cue and topic context. */
+  userText: string;
+  sessionTitle?: string | null;
+  /** How long the owner has been waiting without a visible message. */
+  waitedMs: number;
+  /** True while a tool/execution step is still running. */
+  waitingForTool: boolean;
+  /** How many wait updates this turn already sent (0 = first). */
+  priorCount: number;
+}
+
+/**
+ * Prompt messages for the one-shot owner wait update — the "still working"
+ * heartbeat bubble (pure). Owner decision 2026-11-04: NO canned text anywhere
+ * in bubbles — the old fixed heartbeat strings ("有一个执行步骤还在运行…") read
+ * as a recording, so the wait line is written by the LLM in the bot's own
+ * words, per fire, from the live wait context. Same output contract as the
+ * turn ack: one short line, the user's language, sanitized through the shared
+ * input-aware guard.
+ */
+export function buildOwnerWaitUpdateMessages(
+  input: OwnerWaitUpdateInput
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const userText = (input.userText ?? '').trim();
+  const title = (input.sessionTitle ?? '').trim();
+  const waitedMinutes = Math.max(1, Math.round(input.waitedMs / 60_000));
+  const titleLine = title ? `Session title: ${truncateUtf16UnitsSafe(title, OWNER_WAIT_TITLE_MAX_CHARS)}\n` : '';
+  const activityLine = input.waitingForTool
+    ? 'Current activity: an execution step (a tool/command) is still running.'
+    : 'Current activity: still thinking, organizing, or checking results — no step is visibly stuck.';
+  const repeatLine = input.priorCount > 0
+    ? `You have already sent ${input.priorCount} such note(s) this turn — say something NEW; do not repeat your earlier wording or structure.`
+    : '';
+  return [
+    {
+      role: 'system',
+      content: [
+        `You are a chat assistant still working on the user's request; the user has been waiting about ${waitedMinutes} minute(s) with no new visible message from you. Write ONE short chat line — your own words — telling them plainly what is happening right now and that work continues.`,
+        'This line must sound like a real person replying in chat, never a canned status template. Vary your wording naturally; never produce stock phrases like "仍在处理中" or "still processing" unless that is genuinely what you mean in your own voice.',
+        '- If a step is still executing, say so plainly; otherwise say you are still thinking or organizing.',
+        '- A brief natural acknowledgment of the wait is fine when it is genuinely meant; no apologies theater.',
+        'Rules: 1 sentence, under 30 words. Same language as the user message. No markdown, lists, quotes, or emoji. No promises, no ETAs, no deadlines. Output only the finished text — never your thinking or reasoning about these rules.',
+        "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        titleLine,
+        `Minutes waited: ${waitedMinutes}`,
+        activityLine,
+        repeatLine,
+        '',
+        `User message:\n${truncateUtf16UnitsSafe(userText, OWNER_WAIT_USER_TEXT_MAX_CHARS)}`,
+      ].filter((line) => line !== '').join('\n'),
+    },
+  ];
+}
+
 /**
  * Deterministic opening, emitted synchronously at the early-ack site. Reserved
  * for openings that CARRY INFORMATION a template genuinely cannot get wrong —
