@@ -1,9 +1,9 @@
 import React from 'react';
 import type { OpenTeamCollabSummary } from '../../types/openTeamCollab';
-import { i18nService } from '../../services/i18n';
-import { GroupTaskTypeBadge, GroupTaskGuestBadge } from './GroupTaskSidebarList';
-import { relativeTimeTitle } from './GroupTaskListMeta';
+import { GroupTaskTypeBadge } from './GroupTaskSidebarList';
+import { GroupTaskMemberAvatarRow, relativeTimeTitle } from './GroupTaskListMeta';
 import { formatGroupTaskRelativeTime, toGroupTaskDate } from './groupTaskUtils';
+import { openTeamCollabStatusBadgeClass, openTeamCollabStatusLabel } from './OpenTeamCollabsSection';
 
 export interface OpenTeamCollabSidebarRowProps {
   collab: OpenTeamCollabSummary;
@@ -14,8 +14,10 @@ export interface OpenTeamCollabSidebarRowProps {
 }
 
 /**
- * Sidebar row for an OpenTeam collaboration (guest role). Shows title, OpenTeam
- * + Guest badges, and relative time. Integrates with the unified task list.
+ * Sidebar row for an OpenTeam collaboration (guest role), mirroring the local
+ * GroupTaskSidebarRow rhythm: title + type/status badges on the first line,
+ * participating-bot avatars + relative time below. No message count and no
+ * guest badge — the OpenTeam badge is the only type marker.
  */
 export const OpenTeamCollabSidebarRow: React.FC<OpenTeamCollabSidebarRowProps> = ({
   collab,
@@ -27,23 +29,15 @@ export const OpenTeamCollabSidebarRow: React.FC<OpenTeamCollabSidebarRowProps> =
 
   // On-chain timestamps are epoch SECONDS — route them through the shared
   // auto-detecting helper (toGroupTaskDate) instead of `new Date()`, which
-  // would read them as milliseconds and render ~"20000d" on every row.
+  // would read them as milliseconds and render absurd labels like "20739d".
   const updatedAtDate = toGroupTaskDate(collab.lastMessageAt ?? collab.createdAt);
   const relative = formatGroupTaskRelativeTime(updatedAtDate ? updatedAtDate.getTime() : null);
-
-  // Check for unread checkpoint (if hasOpenCheckpoint exists in future)
-  const hasCheckpoint = false; // OpenTeam doesn't expose this yet
 
   return (
     <div
       role="button"
       tabIndex={0}
       aria-current={isSelected ? 'true' : undefined}
-      className={`
-        group relative flex items-start gap-2 px-3 py-2 cursor-pointer
-        transition-colors rounded-lg
-        ${isSelected ? 'bg-slate-100 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}
-      `}
       onClick={(e) => {
         e.stopPropagation();
         onSelect();
@@ -54,43 +48,34 @@ export const OpenTeamCollabSidebarRow: React.FC<OpenTeamCollabSidebarRowProps> =
           onSelect();
         }
       }}
+      className={`
+        group relative px-2.5 py-1.5 rounded-lg cursor-pointer
+        transition-colors
+        ${isSelected ? 'bg-black/[0.06] dark:bg-white/[0.08]' : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'}
+      `}
     >
-      {/* Left side: title + badges */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1">
-          <span className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
-            {displayTitle}
-          </span>
-          <GroupTaskTypeBadge type="openteam-guest" />
-          <GroupTaskGuestBadge />
-        </div>
-
-        {/* Status indicators */}
-        <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-          {hasCheckpoint && (
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
-              <span>{i18nService.t('groupTaskCheckpoint')}</span>
-            </span>
-          )}
-
-          {collab.status === 'left' && (
-            <span className="text-amber-600 dark:text-amber-400">
-              {i18nService.t('groupTaskLeft')}
-            </span>
-          )}
-
-          {collab.status === 'active' && collab.messageCount > 0 && (
-            <span>{collab.messageCount} {i18nService.t('groupTaskMessages')}</span>
-          )}
-        </div>
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className="flex-1 min-w-0 truncate text-sm font-medium dark:text-claude-darkText text-claude-text">
+          {displayTitle}
+        </span>
+        <GroupTaskTypeBadge type="openteam-guest" />
+        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${openTeamCollabStatusBadgeClass(collab)}`}>
+          {openTeamCollabStatusLabel(collab)}
+        </span>
       </div>
 
-      {/* Right side: timestamp */}
-      <div className="flex-shrink-0 text-xs text-slate-500 dark:text-slate-400">
-        <time dateTime={updatedAtDate?.toISOString() ?? undefined} title={relativeTimeTitle(relative.unit, relative.count)}>
-          {relative.compact}
-        </time>
+      {/* Participating bots (avatar row, like local task rows) + last activity */}
+      <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary leading-tight">
+        <GroupTaskMemberAvatarRow members={collab.memberPreviews ?? []} />
+        {relative.compact ? (
+          <time
+            className="shrink-0 whitespace-nowrap"
+            dateTime={updatedAtDate?.toISOString()}
+            title={relativeTimeTitle(relative.unit, relative.count)}
+          >
+            {relative.compact}
+          </time>
+        ) : null}
       </div>
     </div>
   );

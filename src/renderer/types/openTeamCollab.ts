@@ -14,6 +14,15 @@ export type OpenTeamCollabLeftCause = 'kick' | 'self_check' | 'opt_out';
 /** Host task status learned from the chair's [STATUS:...] group messages (main-side mirror). */
 export type OpenTeamCollabTaskStatus = 'executing' | 'review' | 'done' | 'cancelled';
 
+/** One participating bot (avatar-row preview; mirror of the main-side shape). */
+export interface OpenTeamCollabMemberPreview {
+  name: string;
+  avatar: string | null;
+  role: 'worker';
+  metabotId: number | null;
+  globalMetaId: string | null;
+}
+
 export interface OpenTeamCollabSummary {
   id: number;
   groupId: string;
@@ -43,6 +52,8 @@ export interface OpenTeamCollabSummary {
    */
   taskStatus: OpenTeamCollabTaskStatus | null;
   taskStatusUpdatedAt: string | null;
+  /** Avatar-row preview of the participating bots (first-speech order, capped). */
+  memberPreviews: OpenTeamCollabMemberPreview[];
 }
 
 /** P0-1: one received [OPENTEAM_INVITE] on this machine, whatever its outcome. */

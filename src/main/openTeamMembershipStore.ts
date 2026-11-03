@@ -21,6 +21,9 @@ export type OpenTeamInviteStatus = 'pending' | 'accepted' | 'declined' | 'expire
  */
 export const OPENTEAM_OWNER_INTENT_DECLINE_REASONS = ['bot_disabled', 'remote_collab_disabled'] as const;
 
+/** Avatar rows stay compact: at most this many previews ride a collab summary. */
+export const OPEN_TEAM_MEMBER_PREVIEW_CAP = 8;
+
 export interface OpenTeamMembership {
   id: number;
   groupId: string;
@@ -127,6 +130,24 @@ export interface OpenTeamCollabSummary extends OpenTeamMembership {
   messageCount: number;
   /** chain_timestamp of the newest indexed message; null when none. */
   lastMessageAt: number | null;
+  /**
+   * Avatar-row preview of the participating bots (speaker roster, first-speech
+   * order). Local bots resolve name/avatar/metabotId from the metabots table;
+   * remote bots carry the sender snapshot from their first message.
+   */
+  memberPreviews: OpenTeamCollabMemberPreview[];
+}
+
+/**
+ * One participating bot in an OpenTeam group, shaped like the renderer's
+ * GroupTaskMemberPreview so task rows can render the same avatar row.
+ */
+export interface OpenTeamCollabMemberPreview {
+  name: string;
+  avatar: string | null;
+  role: 'worker';
+  metabotId: number | null;
+  globalMetaId: string | null;
 }
 
 export interface UpsertOpenTeamMembershipInput {
@@ -431,6 +452,46 @@ export class OpenTeamMembershipStore {
   }
 
   /**
+   * Participating bots of one OpenTeam group (speaker roster, first-speech
+   * order) with display fields resolved: a speaker whose GlobalMetaID maps to
+   * a metabots row is a LOCAL bot (metabotId set, freshest name/avatar);
+   * everyone else is remote and carries the sender snapshot (name/avatar) from
+   * their first indexed message. Backs the sidebar/home avatar rows and the
+   * collab detail member list.
+   */
+  listGroupMemberRoster(groupId: string): OpenTeamCollabMemberPreview[] {
+    const rows = this.getAll<{
+      sender_global_metaid: string;
+      sender_name: string | null;
+      sender_avatar: string | null;
+      metabot_id: number | null;
+      metabot_name: string | null;
+      metabot_avatar: string | null;
+    }>(
+      `SELECT s.sender_global_metaid, s.sender_name, s.sender_avatar,
+              mb.id AS metabot_id, mb.name AS metabot_name, mb.avatar AS metabot_avatar
+       FROM (
+         SELECT sender_global_metaid, sender_name, sender_avatar, MIN(id) AS first_id
+         FROM group_chat_messages
+         WHERE group_id = ? AND sender_global_metaid IS NOT NULL
+         GROUP BY sender_global_metaid
+       ) s
+       LEFT JOIN metabots mb
+         ON LOWER(TRIM(mb.globalmetaid)) = LOWER(TRIM(s.sender_global_metaid))
+       ORDER BY s.first_id ASC`,
+      [groupId],
+    );
+    return rows.map((row) => ({
+      name: (row.metabot_name ?? row.sender_name ?? '').trim()
+        || (row.metabot_id != null ? `bot-${row.metabot_id}` : ''),
+      avatar: row.metabot_avatar ?? row.sender_avatar ?? null,
+      role: 'worker' as const,
+      metabotId: row.metabot_id ?? null,
+      globalMetaId: String(row.sender_global_metaid ?? '').trim() || null,
+    }));
+  }
+
+  /**
    * All memberships (active + left), newest first, enriched with the local
    * bot's name and a group_chat_messages digest. Backs the owner-facing
    * "External collaborations" view: an auto-accepted invite must still be
@@ -458,6 +519,7 @@ export class OpenTeamMembershipStore {
         lastMessageAt: row.last_message_at != null && Number.isFinite(lastMessageAt)
           ? lastMessageAt
           : null,
+        memberPreviews: this.listGroupMemberRoster(row.group_id).slice(0, OPEN_TEAM_MEMBER_PREVIEW_CAP),
       };
     });
   }

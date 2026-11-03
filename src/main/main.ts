@@ -15144,49 +15144,56 @@ if (!gotTheLock) {
         throw new Error('No OpenTeam membership for this group on this machine');
       }
 
-      // For OpenTeam guest collab, get members from group_chat_messages
-      const store = getGroupTaskStore();
+      // For OpenTeam guest collab, members are reconstructed from the group's
+      // indexed messages: a speaker whose GlobalMetaID maps to a metabots row
+      // is THIS machine's bot (metabotId + freshest name/avatar — it must read
+      // as 本地, not remote); everyone else is remote and keeps the sender
+      // name/avatar snapshot from their first indexed message.
+      const roster = getOpenTeamMembershipStore().listGroupMemberRoster(groupId);
 
-      // Get unique members who have sent messages in this group
-      const memberRows = await withSqliteRecovery('openTeamCollab:getMembers:uniqueMembers', () =>
-        store.listGroupChatSpeakers(groupId));
-
-      const globalMetaIds = memberRows.map(r => r.senderGlobalmetaid);
+      const globalMetaIds = roster
+        .map((entry) => entry.globalMetaId)
+        .filter((value): value is string => Boolean(value));
 
       // Get last speak timestamps
       const lastSpeakMap = await withSqliteRecovery('openTeamCollab:getMembers:lastSpeak', () =>
-        store.getMembersLastSpeakAt(groupId, globalMetaIds));
+        getGroupTaskStore().getMembersLastSpeakAt(groupId, globalMetaIds));
 
       // Get last working timestamps
       const lastWorkingMap = await withSqliteRecovery('openTeamCollab:getMembers:lastWorking', () =>
-        store.getMembersWorkingAt(groupId, globalMetaIds));
+        getGroupTaskStore().getMembersWorkingAt(groupId, globalMetaIds));
 
       // Build member summaries
-      const members: GroupTaskMemberSummary[] = memberRows.map(row => {
-        const gmid = row.senderGlobalmetaid.toLowerCase();
+      const members: GroupTaskMemberSummary[] = roster.map((entry) => {
+        const gmid = (entry.globalMetaId ?? '').toLowerCase();
         const lastSpeakAt = lastSpeakMap.get(gmid) ?? null;
         const lastWorkingAt = lastWorkingMap.get(gmid) ?? null;
         const lastActivityAt = Math.max(lastSpeakAt ?? 0, lastWorkingAt ?? 0) || null;
+        const fallbackName = entry.metabotId != null
+          ? `bot-${entry.metabotId}`
+          : entry.globalMetaId
+            ? `${entry.globalMetaId.slice(0, 10)}…`
+            : 'remote bot';
 
         return {
           // Required GroupTaskMember fields (synthetic for OpenTeam guests)
           id: 0, // No local row for guest members
           taskId: 0, // Not tied to a local task
-          metabotId: null,
-          globalmetaid: row.senderGlobalmetaid,
+          metabotId: entry.metabotId,
+          globalmetaid: entry.globalMetaId,
           // GroupTaskMemberRole has no guest variant; guests read as plain
           // workers (the member UI only special-cases 'chair').
           role: 'worker' as const,
           joinedPinId: null,
           createdAt: null,
-          displayName: row.senderName ?? 'Unknown',
+          displayName: entry.name || fallbackName,
           removedAt: null,
           removePinId: null,
-          name: row.senderName ?? 'Unknown',
+          name: entry.name || fallbackName,
           status: 'standby' as const, // Default status for guest members
           statusChangedAt: null,
           // GroupTaskMemberSummary extension fields
-          avatar: null, // OpenTeam guest doesn't have avatar info
+          avatar: entry.avatar, // Local metabot avatar, else the sender snapshot
           lastActivityAt,
           lastSpeakAt,
           lastWorkingAt,
