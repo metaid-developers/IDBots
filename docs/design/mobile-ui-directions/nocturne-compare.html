@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDBots Direction D - Dark and Daylight</title>
+<style>
+  * { box-sizing: border-box; }
+  :root { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif; color: #252527; background: #e9eaec; font-synthesis: none; }
+  body { margin: 0; min-height: 100dvh; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button:focus-visible, a:focus-visible { outline: 3px solid rgba(174,137,12,.45); outline-offset: 3px; }
+  .header { max-width: 1120px; margin: 0 auto; padding: 26px 22px 18px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { width: 42px; height: 42px; border-radius: 13px; image-rendering: pixelated; }
+  .eyebrow { margin: 0 0 4px; color: #69696e; font-size: 12px; font-weight: 650; letter-spacing: .04em; }
+  h1 { margin: 0; font-size: clamp(26px, 3vw, 36px); line-height: 1.12; letter-spacing: -.04em; }
+  .intro { max-width: 600px; margin: 8px 0 0; color: #646469; font-size: 14px; line-height: 1.5; }
+  .view-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 17px; }
+  .view-button { min-height: 44px; border: 1px solid #ccced3; border-radius: 999px; background: #f8f8f9; color: #505055; padding: 0 15px; font-size: 13px; font-weight: 650; cursor: pointer; }
+  .view-button[aria-pressed="true"] { border-color: #e2c33e; background: #ffdc51; color: #302b12; }
+  .view-button:active { transform: scale(.97); }
+  .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 520px)); justify-content: center; gap: 20px; max-width: 1120px; margin: 0 auto; padding: 0 16px 26px; }
+  .preview { min-width: 0; overflow: hidden; border: 1px solid #d4d5d9; border-radius: 24px; background: #f7f7f8; box-shadow: 0 8px 26px rgba(45,48,55,.06); }
+  .preview-meta { min-height: 62px; display: flex; align-items: center; gap: 11px; padding: 11px 15px; border-bottom: 1px solid #dedee2; }
+  .swatch { width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid rgba(0,0,0,.12); border-radius: 10px; }
+  .swatch.dark { background: #111112; }
+  .swatch.light { background: #f2f3f5; }
+  .preview-copy { min-width: 0; flex: 1; }
+  .preview-copy h2 { margin: 0; font-size: 15px; }
+  .preview-copy p { margin: 3px 0 0; color: #6a6a70; font-size: 12px; }
+  .open-link { min-height: 44px; display: inline-flex; align-items: center; color: #3e3e43; font-size: 12px; font-weight: 650; text-decoration: none; }
+  .open-link:hover { text-decoration: underline; }
+  iframe { display: block; width: 100%; height: 1070px; border: 0; background: #e8e8eb; }
+  @media (max-width: 900px) {
+    .comparison { grid-template-columns: minmax(0, 520px); }
+  }
+  @media (max-width: 540px) {
+    .header { padding: 20px 14px 14px; }
+    .comparison { padding: 0 8px 18px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <img src="assets/logo-64.png" alt="IDBots">
+      <div>
+        <p class="eyebrow">DIRECTION D · APPEARANCE STUDY</p>
+        <h1>Nocturne and Daylight.</h1>
+        <p class="intro">The same layout, navigation, and interaction model. Separate material, contrast, and shadow decisions for dark and light appearances.</p>
+      </div>
+    </div>
+    <nav class="view-controls" aria-label="Synchronized preview">
+      <button class="view-button" type="button" data-view="chat" aria-pressed="true">Conversation</button>
+      <button class="view-button" type="button" data-view="tasks" aria-pressed="false">Tasks</button>
+      <button class="view-button" type="button" data-view="plan" aria-pressed="false">Expanded plan</button>
+    </nav>
+  </header>
+
+  <main class="comparison">
+    <section class="preview">
+      <div class="preview-meta"><span class="swatch dark" aria-hidden="true"></span><div class="preview-copy"><h2>Nocturne</h2><p>Low-light focus with a warm result sheet.</p></div><a class="open-link" href="design-demos/nocturne.html?appearance=dark" target="_blank" rel="noopener">Open ↗</a></div>
+      <iframe id="darkFrame" src="design-demos/nocturne.html?appearance=dark" title="Nocturne dark appearance"></iframe>
+    </section>
+    <section class="preview">
+      <div class="preview-meta"><span class="swatch light" aria-hidden="true"></span><div class="preview-copy"><h2>Daylight</h2><p>Cool neutral surfaces with precise golden accents.</p></div><a class="open-link" href="design-demos/nocturne.html?appearance=light" target="_blank" rel="noopener">Open ↗</a></div>
+      <iframe id="lightFrame" src="design-demos/nocturne.html?appearance=light" title="Nocturne light appearance"></iframe>
+    </section>
+  </main>
+
+<script>
+  const frames = [document.getElementById('darkFrame'), document.getElementById('lightFrame')];
+  const viewButtons = document.querySelectorAll('[data-view]');
+
+  function withDocument(callback) {
+    frames.forEach((frame) => {
+      if (frame.contentDocument?.readyState === 'complete') callback(frame.contentDocument);
+    });
+  }
+
+  function closePlan(doc) {
+    const layer = doc.getElementById('planLayer');
+    if (layer && !layer.hidden) doc.querySelector('[data-close-plan]')?.click();
+  }
+
+  function showView(view) {
+    withDocument((doc) => {
+      closePlan(doc);
+      if (view === 'plan') {
+        doc.querySelector('[data-tab="chat"]')?.click();
+        doc.querySelector('[data-open-plan]')?.click();
+        return;
+      }
+      doc.querySelector(`[data-tab="${view}"]`)?.click();
+    });
+    viewButtons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.view === view)));
+  }
+
+  viewButtons.forEach((button) => button.addEventListener('click', () => showView(button.dataset.view)));
+</script>
+</body>
+</html>

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDBots Daylight - Me and Forms</title>
+<!--
+  Assumptions: standalone design prototype for the Daylight direction, not production code.
+  Reasoning: native grouped lists keep the primary Me page quiet while consistent
+  labels, fields, segmented controls, switches, and explicit save actions carry
+  the denser secondary forms. Sample identity, usage, Bot, and task data is fictional.
+  No backend, native API, account, payment, or model request is connected.
+-->
+<style>
+  * { box-sizing: border-box; }
+  :root { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif; color: #242425; background: #e8e8eb; font-synthesis: none; }
+  body { margin: 0; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 26px 16px 36px; }
+  button, input, select, textarea { font: inherit; }
+  button { -webkit-tap-highlight-color: transparent; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(174,137,12,.34); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+  .review-head { width: 417px; max-width: 100%; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+  .review-kicker { margin: 0 0 4px; color: #6b6b70; font-size: 12px; font-weight: 650; letter-spacing: .04em; }
+  .review-title { margin: 0; font-size: 23px; line-height: 1.15; letter-spacing: -.03em; }
+  .review-copy { margin: 7px 0 0; max-width: 250px; color: #626267; font-size: 13px; line-height: 1.45; }
+  .appearance-toggle { min-height: 44px; flex: 0 0 auto; border: 1px solid #c9c9ce; border-radius: 999px; background: #f8f8fa; color: #2b2b2e; padding: 0 15px; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+  /* iPhone chrome values are reproduced from the supplied ios_frame.jsx asset. */
+  .ios-wrapper { display: inline-block; padding: 12px; background: #000; border-radius: 60px; box-shadow: 0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,.3); position: relative; }
+  .phone-screen {
+    --status: #111; --home: rgba(0,0,0,.3); --canvas: #f2f3f5; --elevated: #fff;
+    --header: rgba(248,249,250,.88); --text: #242425; --secondary: #626267; --tertiary: #76767c;
+    --line: rgba(20,20,25,.09); --input: #fff; --input-border: #d7d9de; --tab: rgba(250,251,252,.9);
+    --accent: #ffdc51; --accent-foreground: #6b5200; --accent-ink: #2c290f;
+    --shadow: 0 10px 26px rgba(40,45,55,.08); --segment: #e9eaee;
+    position: relative; width: 393px; height: 852px; border-radius: 48px; overflow: hidden; background: var(--canvas); color: var(--text);
+  }
+  .phone-screen[data-appearance="dark"] {
+    --status: #f5f5f4; --home: rgba(255,255,255,.5); --canvas: #111112; --elevated: #19191b;
+    --header: rgba(17,17,18,.9); --text: #f4f3ef; --secondary: #aaa9a4; --tertiary: #7e7d79;
+    --line: rgba(255,255,255,.09); --input: #232326; --input-border: #49494d; --tab: rgba(24,24,26,.9);
+    --accent: #ffdc51; --accent-foreground: #ffdc51; --accent-ink: #2c290f;
+    --shadow: 0 12px 28px rgba(0,0,0,.2); --segment: #29292c;
+  }
+  .status-bar { position: absolute; inset: 0 0 auto; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; color: var(--status); font-size: 16px; font-weight: 600; z-index: 20; pointer-events: none; }
+  .status-icons { display: flex; align-items: center; gap: 6px; }
+  .signal { display: flex; align-items: flex-end; gap: 2px; height: 12px; }
+  .signal i { width: 3px; background: currentColor; border-radius: 1px; }
+  .battery { width: 26px; height: 12px; border: 1.5px solid currentColor; border-radius: 3px; padding: 1px; position: relative; opacity: .8; }
+  .battery::before { content: ""; display: block; width: 85%; height: 100%; background: currentColor; border-radius: 1px; }
+  .battery::after { content: ""; position: absolute; top: 3px; right: -3px; width: 2px; height: 6px; background: currentColor; border-radius: 0 1px 1px 0; }
+  .dynamic-island { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 124px; height: 36px; background: #000; border-radius: 999px; z-index: 30; }
+  .ios-content { position: absolute; top: 54px; left: 0; right: 0; bottom: 34px; overflow: hidden; }
+  .home-indicator { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 140px; height: 5px; background: var(--home); border-radius: 999px; z-index: 10; }
+
+  .app { height: 100%; display: flex; flex-direction: column; background: var(--canvas); }
+  .screen { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+  .topbar { min-height: 68px; display: grid; grid-template-columns: 76px 1fr 76px; align-items: center; padding: 5px 10px; border-bottom: 1px solid var(--line); background: var(--header); backdrop-filter: blur(22px) saturate(130%); -webkit-backdrop-filter: blur(22px) saturate(130%); }
+  .topbar.simple { grid-template-columns: 1fr auto; padding: 8px 20px; }
+  .page-title { margin: 0; font-size: 23px; line-height: 1.2; letter-spacing: -.035em; }
+  .page-subtitle { margin: 3px 0 0; color: var(--secondary); font-size: 12px; }
+  .nav-title { align-self: center; justify-self: center; font-size: 16px; font-weight: 650; }
+  .nav-button { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; border: 0; border-radius: 14px; background: transparent; color: var(--text); font-size: 14px; cursor: pointer; }
+  .nav-button:active { transform: scale(.95); }
+  .nav-button.save { color: var(--accent-foreground); font-weight: 700; }
+  .nav-button.save:disabled { color: var(--tertiary); opacity: .55; }
+  .content { min-height: 0; flex: 1; overflow-y: auto; padding: 14px 16px 24px; scrollbar-width: none; }
+  .content::-webkit-scrollbar { display: none; }
+  .section-label { margin: 16px 4px 8px; color: var(--secondary); font-size: 11px; font-weight: 650; letter-spacing: .055em; }
+  .section-label:first-child { margin-top: 2px; }
+
+  .profile-card { width: 100%; display: flex; align-items: center; gap: 13px; padding: 14px; border: 1px solid var(--line); border-radius: 22px; background: var(--elevated); color: var(--text); box-shadow: var(--shadow); text-align: left; cursor: pointer; }
+  .profile-card img { width: 54px; height: 54px; border-radius: 17px; image-rendering: pixelated; }
+  .profile-copy { min-width: 0; flex: 1; }
+  .profile-name { display: block; font-size: 18px; font-weight: 670; letter-spacing: -.02em; }
+  .profile-id { display: block; margin-top: 3px; color: var(--secondary); font-size: 12px; }
+  .profile-card .icon, .list-row .chevron { color: var(--tertiary); }
+  .balance-card { padding: 15px; border: 1px solid var(--line); border-radius: 22px; background: var(--elevated); box-shadow: var(--shadow); }
+  .balance-values { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .balance-value span { display: block; color: var(--secondary); font-size: 12px; }
+  .balance-value strong { display: block; margin-top: 3px; font-size: 21px; letter-spacing: -.025em; }
+  .balance-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .balance-note { color: var(--secondary); font-size: 12px; }
+  .primary-button { min-height: 44px; border: 0; border-radius: 14px; background: var(--accent); color: var(--accent-ink); padding: 0 17px; font-size: 14px; font-weight: 680; cursor: pointer; }
+  .primary-button:active { transform: scale(.97); }
+  .primary-button.full { width: 100%; min-height: 48px; }
+  .list-group { overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--elevated); }
+  .list-row { width: 100%; min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); text-align: left; }
+  .list-row:last-child { border-bottom: 0; }
+  button.list-row { cursor: pointer; }
+  button.list-row:active { background: var(--segment); }
+  .row-leading { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; background: var(--segment); color: var(--secondary); }
+  .row-leading img { width: 30px; height: 30px; border-radius: 10px; image-rendering: pixelated; }
+  .row-copy { min-width: 0; flex: 1; }
+  .row-title { display: block; font-size: 15px; font-weight: 600; }
+  .row-subtitle { display: block; margin-top: 2px; color: var(--secondary); font-size: 12px; }
+  .row-value { flex: 0 0 auto; color: var(--secondary); font-size: 12px; }
+  .row-value.gold { color: var(--accent-foreground); font-weight: 650; }
+  .list-row .chevron { width: 17px; height: 17px; flex: 0 0 auto; }
+
+  .me-router { min-height: 0; flex: 1; position: relative; overflow: hidden; }
+  .me-page { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--canvas); }
+  .me-page.secondary { z-index: 5; transform: translateX(102%); transition: transform .24s cubic-bezier(.2,.8,.2,1); }
+  .me-page.secondary.open { transform: translateX(0); }
+  .form-section { margin-bottom: 16px; }
+  .form-card { padding: 15px; border: 1px solid var(--line); border-radius: 20px; background: var(--elevated); }
+  .form-card + .form-card { margin-top: 12px; }
+  .field + .field { margin-top: 15px; }
+  .field-label { display: block; margin-bottom: 6px; color: var(--text); font-size: 13px; font-weight: 650; }
+  .field-control { width: 100%; min-height: 46px; border: 1px solid var(--input-border); border-radius: 14px; background: var(--input); color: var(--text); padding: 11px 13px; font-size: 15px; }
+  textarea.field-control { min-height: 84px; resize: none; line-height: 1.45; }
+  .field-control::placeholder { color: var(--tertiary); }
+  .field-help { margin: 6px 1px 0; color: var(--secondary); font-size: 12px; line-height: 1.45; }
+  .segmented { display: flex; gap: 3px; padding: 3px; border-radius: 14px; background: var(--segment); }
+  .segment { min-height: 40px; flex: 1; border: 0; border-radius: 11px; background: transparent; color: var(--secondary); font-size: 13px; font-weight: 600; cursor: pointer; }
+  .segment[aria-pressed="true"] { background: var(--elevated); color: var(--accent-foreground); box-shadow: 0 2px 8px rgba(40,45,55,.1); }
+  .setting-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .setting-row:last-child { border-bottom: 0; }
+  .setting-copy { min-width: 0; }
+  .setting-name { display: block; font-size: 14px; font-weight: 600; }
+  .setting-help { display: block; margin-top: 3px; color: var(--secondary); font-size: 12px; line-height: 1.4; }
+  .switch { width: 48px; height: 30px; flex: 0 0 auto; position: relative; border: 0; border-radius: 999px; background: #c8cbd1; padding: 2px; cursor: pointer; }
+  .switch::after { content: ""; display: block; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.18); transition: transform .18s ease; }
+  .switch[aria-checked="true"] { background: var(--accent); }
+  .switch[aria-checked="true"]::after { transform: translateX(18px); }
+  .editor-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 12px; scrollbar-width: none; }
+  .editor-tabs::-webkit-scrollbar { display: none; }
+  .editor-tab { min-height: 40px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--elevated); color: var(--secondary); padding: 0 10px; font-size: 12px; font-weight: 650; cursor: pointer; }
+  .editor-tab[aria-selected="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+  .avatar-editor { display: flex; align-items: center; gap: 13px; }
+  .avatar-editor img { width: 58px; height: 58px; border-radius: 18px; image-rendering: pixelated; }
+  .secondary-button { min-height: 40px; border: 1px solid var(--input-border); border-radius: 12px; background: var(--input); color: var(--text); padding: 0 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .check-row { min-height: 44px; display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .check-row input { width: 20px; height: 20px; accent-color: var(--accent-foreground); }
+  .simple-center { padding: 40px 22px; text-align: center; color: var(--secondary); font-size: 14px; line-height: 1.55; }
+
+  .tabbar { min-height: 65px; display: grid; grid-template-columns: repeat(3,1fr); padding: 4px 24px 0; border-top: 1px solid var(--line); background: var(--tab); backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(140%); }
+  .tab { min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 14px; background: transparent; color: var(--secondary); font-size: 11px; cursor: pointer; }
+  .tab .icon { width: 22px; height: 22px; }
+  .tab[aria-selected="true"] { color: var(--accent-foreground); }
+  .tab[aria-selected="true"] .icon { stroke-width: 2; }
+  .toast { position: absolute; left: 50%; bottom: 88px; z-index: 40; max-width: 330px; transform: translateX(-50%); padding: 10px 15px; border: 1px solid var(--input-border); border-radius: 999px; background: var(--elevated); color: var(--text); box-shadow: var(--shadow); font-size: 12.5px; text-align: center; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+  <header class="review-head">
+    <div><p class="review-kicker">DAYLIGHT · ME AND FORMS</p><h1 class="review-title">Quiet settings, clear actions.</h1><p class="review-copy">A native grouped-list home with full settings and Bot editing flows.</p></div>
+    <button class="appearance-toggle" id="appearanceToggle" type="button" aria-pressed="true">Dark appearance</button>
+  </header>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25-9 3.694-9 8.25c0 2.023.856 3.883 2.303 5.34-.202 1.319-.834 2.453-1.803 3.16 1.787-.028 3.494-.57 4.977-1.551 1.098.392 2.292.601 3.523.601Z"/></symbol>
+    <symbol id="i-tasks" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.25a7.5 7.5 0 0 1 15 0"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4.5v15m7.5-7.5h-15"/></symbol>
+    <symbol id="i-bots" viewBox="0 0 24 24"><path d="M8.25 9h7.5M9 13.5h6M6.75 3.75h10.5a3 3 0 0 1 3 3v10.5a3 3 0 0 1-3 3H6.75a3 3 0 0 1-3-3V6.75a3 3 0 0 1 3-3ZM9 3.75V1.5m6 2.25V1.5M3.75 9H1.5m20.25 0H24"/></symbol>
+    <symbol id="i-skills" viewBox="0 0 24 24"><path d="M14.25 6.75 12 4.5 9.75 6.75 6 6l-.75 3.75L2.25 12l3 2.25L6 18l3.75-.75L12 19.5l2.25-2.25L18 18l.75-3.75L21.75 12l-3-2.25L18 6l-3.75.75Z"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24"><path d="M9 4.5A3.75 3.75 0 0 0 5.25 8.25v.75A3.75 3.75 0 0 0 3 12.75v1.5A3.75 3.75 0 0 0 6.75 18H9m6-13.5a3.75 3.75 0 0 1 3.75 3.75v.75a3.75 3.75 0 0 1 2.25 3.75v1.5A3.75 3.75 0 0 1 17.25 18H15M9 2.25h6v19.5H9z"/></symbol>
+    <symbol id="i-general" viewBox="0 0 24 24"><path d="M4.5 7.5h15m-15 9h15M8.25 4.5v6m7.5 3v6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-10.5v6m0-10.5v.01"/></symbol>
+  </svg>
+
+  <div class="ios-wrapper">
+    <div class="phone-screen" id="phone" data-appearance="light">
+      <div class="status-bar"><span>9:41</span><div class="status-icons"><span class="signal"><i style="height:4px"></i><i style="height:6px"></i><i style="height:9px"></i><i style="height:11px"></i></span><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M8 11.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor"/><path d="M3 7.5a7 7 0 0 1 10 0M1 4.5a11 11 0 0 1 14 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="battery"></span></div></div>
+      <div class="dynamic-island"></div>
+      <div class="ios-content">
+        <main class="app">
+          <section class="screen" data-screen="chat" hidden><header class="topbar simple"><div><h1 class="page-title">Chat</h1><p class="page-subtitle">Your Twin Bot is ready</p></div></header><div class="simple-center">Return to the Daylight conversation prototype from the link in the review notes.</div></section>
+          <section class="screen" data-screen="tasks" hidden><header class="topbar simple"><div><h1 class="page-title">Tasks</h1><p class="page-subtitle">Your Bot keeps things moving</p></div></header><div class="content"><p class="section-label">IN PROGRESS</p><div class="list-group"><div class="list-row"><span class="row-copy"><span class="row-title">Weekend in Hangzhou</span><span class="row-subtitle">A two-day itinerary is ready</span></span><span class="row-value gold">Review</span></div><div class="list-row"><span class="row-copy"><span class="row-title">Tea house reminder</span><span class="row-subtitle">Saturday at 14:30</span></span><span class="row-value gold">Scheduled</span></div></div></div></section>
+
+          <section class="screen" data-screen="me" aria-label="Me">
+            <div class="me-router" id="meRouter">
+              <section class="me-page" data-page="root">
+                <header class="topbar simple"><div><h1 class="page-title">Me</h1><p class="page-subtitle">Your identity and preferences</p></div></header>
+                <div class="content">
+                  <button class="profile-card" type="button" data-toast="Profile editing is outside this form preview"><img src="data:image/png;base64,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" alt="IDBots"><span class="profile-copy"><span class="profile-name">Ming Chen</span><span class="profile-id">MetaID idq1…8f2c</span></span><svg class="icon"><use href="#i-right"/></svg></button>
+                  <p class="section-label">PLAN AND USAGE</p>
+                  <div class="balance-card"><div class="balance-values"><div class="balance-value"><span>Traffic</span><strong>184 MB</strong></div><div class="balance-value"><span>LLM credits</span><strong>2,460</strong></div></div><div class="balance-footer"><span class="balance-note">Available this billing cycle</span><button class="primary-button" type="button" data-toast="Recharge is outside this form preview">Recharge</button></div></div>
+                  <p class="section-label">WORKSPACE</p>
+                  <div class="list-group">
+                    <button class="list-row" type="button" data-open="bots"><span class="row-leading"><svg class="icon"><use href="#i-bots"/></svg></span><span class="row-copy"><span class="row-title">My Bots</span></span><span class="row-value">3</span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                    <button class="list-row" type="button" data-toast="Skills are outside this form preview"><span class="row-leading"><svg class="icon"><use href="#i-skills"/></svg></span><span class="row-copy"><span class="row-title">Skills</span></span><span class="row-value">8 enabled</span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                    <button class="list-row" type="button" data-toast="Memory settings are available in General"><span class="row-leading"><svg class="icon"><use href="#i-memory"/></svg></span><span class="row-copy"><span class="row-title">Memory</span></span><span class="row-value">On</span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                  </div>
+                  <p class="section-label">PREFERENCES</p>
+                  <div class="list-group">
+                    <button class="list-row" type="button" data-open="general"><span class="row-leading"><svg class="icon"><use href="#i-general"/></svg></span><span class="row-copy"><span class="row-title">General</span></span><span class="row-value">English · System</span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                    <button class="list-row" type="button" data-toast="Account and security are outside this form preview"><span class="row-leading"><svg class="icon"><use href="#i-user"/></svg></span><span class="row-copy"><span class="row-title">Account and security</span></span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                    <button class="list-row" type="button" data-toast="About is outside this form preview"><span class="row-leading"><svg class="icon"><use href="#i-info"/></svg></span><span class="row-copy"><span class="row-title">About</span></span><span class="row-value">1.0.10</span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="me-page secondary" data-page="general" hidden>
+                <header class="topbar"><button class="nav-button" type="button" data-back><svg class="icon"><use href="#i-left"/></svg><span>Me</span></button><strong class="nav-title">General</strong><span></span></header>
+                <div class="content">
+                  <p class="section-label">LANGUAGE AND APPEARANCE</p>
+                  <div class="form-card">
+                    <div class="field"><label class="field-label">Language</label><div class="segmented" data-segment="language"><button class="segment" type="button" aria-pressed="true" data-setting="Language set to English">English</button><button class="segment" type="button" aria-pressed="false" data-setting="Language set to Chinese">中文</button></div></div>
+                    <div class="field"><label class="field-label">Appearance</label><div class="segmented" data-segment="appearance"><button class="segment" type="button" aria-pressed="false" data-theme="light">Light</button><button class="segment" type="button" aria-pressed="false" data-theme="dark">Dark</button><button class="segment" type="button" aria-pressed="true" data-theme="system">System</button></div><p class="field-help">System follows the appearance of your device.</p></div>
+                  </div>
+                  <p class="section-label">MEMORY</p>
+                  <div class="form-card">
+                    <div class="setting-row"><span class="setting-copy"><span class="setting-name">Long-term memory</span><span class="setting-help">Remember useful preferences across conversations.</span></span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Long-term memory" data-setting="Long-term memory updated"></button></div>
+                    <div class="setting-row"><span class="setting-copy"><span class="setting-name">Implicit updates</span><span class="setting-help">Let Twin learn from ordinary conversations.</span></span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Implicit updates" data-setting="Implicit updates updated"></button></div>
+                    <div class="setting-row"><span class="setting-copy"><span class="setting-name">Memory review</span><span class="setting-help">Review suggested memories before they are kept.</span></span><button class="switch" type="button" role="switch" aria-checked="false" aria-label="Memory review" data-setting="Memory review updated"></button></div>
+                  </div>
+                  <p class="section-label">TRAFFIC</p>
+                  <div class="form-card"><div class="setting-row"><span class="setting-copy"><span class="setting-name">Low balance reminder</span><span class="setting-help">Notify you before traffic runs out.</span></span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Low balance reminder" data-setting="Low balance reminder updated"></button></div></div>
+                </div>
+              </section>
+
+              <section class="me-page secondary" data-page="bots" hidden>
+                <header class="topbar"><button class="nav-button" type="button" data-back><svg class="icon"><use href="#i-left"/></svg><span>Me</span></button><strong class="nav-title">My Bots</strong><button class="nav-button" type="button" aria-label="Create Bot" data-toast="Bot creation is outside this edit preview"><svg class="icon"><use href="#i-plus"/></svg></button></header>
+                <div class="content"><p class="section-label">YOUR BOTS</p><div class="list-group">
+                  <button class="list-row" type="button" data-open="botEdit"><span class="row-leading"><img src="data:image/png;base64,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" alt="Twin Bot"></span><span class="row-copy"><span class="row-title">Twin Bot</span><span class="row-subtitle">Personal companion</span></span><span class="row-value gold">Twin</span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                  <button class="list-row" type="button" data-open="botEdit"><span class="row-leading"><img src="data:image/png;base64,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" alt="Travel Bot"></span><span class="row-copy"><span class="row-title">Travel Planner</span><span class="row-subtitle">Trips, food, and local guides</span></span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                  <button class="list-row" type="button" data-open="botEdit"><span class="row-leading"><img src="data:image/png;base64,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" alt="Research Bot"></span><span class="row-copy"><span class="row-title">Research Assistant</span><span class="row-subtitle">Reading and structured summaries</span></span><svg class="icon chevron"><use href="#i-right"/></svg></button>
+                </div><p class="field-help">Select a Bot to edit its identity, persona, model, and chat settings.</p></div>
+              </section>
+
+              <section class="me-page secondary" data-page="botEdit" hidden>
+                <header class="topbar"><button class="nav-button" type="button" data-back><svg class="icon"><use href="#i-left"/></svg><span>Bots</span></button><strong class="nav-title">Edit Bot</strong><button class="nav-button save" id="saveBot" type="button" disabled>Save</button></header>
+                <div class="content">
+                  <div class="form-section"><div class="form-card">
+                    <div class="field"><label class="field-label" for="botName">Name</label><input class="field-control" id="botName" value="Twin Bot" data-dirty></div>
+                    <div class="field"><label class="field-label" for="botRole">Role</label><input class="field-control" id="botRole" value="Personal companion" data-dirty></div>
+                  </div></div>
+                  <div class="editor-tabs" role="tablist" aria-label="Bot editor sections">
+                    <button class="editor-tab" type="button" role="tab" aria-selected="true" data-editor-tab="basic">Basic</button><button class="editor-tab" type="button" role="tab" aria-selected="false" data-editor-tab="persona">Persona</button><button class="editor-tab" type="button" role="tab" aria-selected="false" data-editor-tab="model">Model</button><button class="editor-tab" type="button" role="tab" aria-selected="false" data-editor-tab="chat">Chat settings</button><button class="editor-tab" type="button" role="tab" aria-selected="false" data-editor-tab="other">Other</button>
+                  </div>
+                  <div data-editor-panel="basic"><div class="form-card"><div class="avatar-editor"><img src="data:image/png;base64,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" alt="Twin Bot"><div><button class="secondary-button" type="button" data-dirty>Change avatar</button><p class="field-help">PNG or JPEG, up to 4 MB.</p></div></div></div><div class="form-card"><div class="field"><label class="field-label" for="botBio">Short bio</label><textarea class="field-control" id="botBio" data-dirty>A calm personal assistant for planning, research, and everyday tasks.</textarea><p class="field-help">Shown on your Bot page and in shared conversations.</p></div></div></div>
+                  <div data-editor-panel="persona" hidden><div class="form-card"><div class="field"><label class="field-label" for="botSoul">Personality</label><textarea class="field-control" id="botSoul" data-dirty>Warm, concise, and dependable. Ask before making important decisions.</textarea></div><div class="field"><label class="field-label" for="botGoal">Primary goal</label><textarea class="field-control" id="botGoal" data-dirty>Help me turn rough ideas into useful, finished outcomes.</textarea></div></div></div>
+                  <div data-editor-panel="model" hidden><div class="form-card"><div class="field"><label class="field-label" for="primaryModel">Primary model</label><select class="field-control" id="primaryModel" data-dirty><option>DeepSeek Flash</option><option>DeepSeek Reasoner</option><option>Kimi for Coding</option></select><p class="field-help">Used for ordinary conversations and task execution.</p></div><div class="field"><label class="field-label" for="primaryEffort">Reasoning effort</label><select class="field-control" id="primaryEffort" data-dirty><option>Default</option><option>Low</option><option>High</option><option>Maximum</option></select></div></div><div class="form-card"><div class="field"><label class="field-label" for="fallbackModel">Fallback model</label><select class="field-control" id="fallbackModel" data-dirty><option>None</option><option selected>DeepSeek Reasoner</option><option>Kimi for Coding</option></select><p class="field-help">Used only when the primary model is unavailable.</p></div></div></div>
+                  <div data-editor-panel="chat" hidden><div class="form-card"><p class="field-label">Allowed chat skills</p><label class="check-row"><input type="checkbox" checked data-dirty>Web search</label><label class="check-row"><input type="checkbox" checked data-dirty>Travel planning</label><label class="check-row"><input type="checkbox" data-dirty>Document generation</label></div><div class="form-card"><div class="setting-row"><span class="setting-copy"><span class="setting-name">Automatic replies</span><span class="setting-help">Allow this Bot to answer other Bots.</span></span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="Automatic replies" data-dirty></button></div><div class="field"><label class="field-label" for="maxTurns">Maximum incoming turns</label><select class="field-control" id="maxTurns" data-dirty><option>4 turns</option><option selected>8 turns</option><option>12 turns</option></select></div></div></div>
+                  <div data-editor-panel="other" hidden><div class="form-card"><div class="setting-row"><span class="setting-copy"><span class="setting-name">On-chain identity</span><span class="setting-help">Synced with this Bot's MetaID.</span></span><span class="row-value gold">Synced</span></div><div class="setting-row"><span class="setting-copy"><span class="setting-name">Wallet balance</span><span class="setting-help">Available for on-chain writes.</span></span><span class="row-value">0.42 SPACE</span></div></div></div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <nav class="tabbar" aria-label="Main navigation">
+            <button class="tab" type="button" data-tab="chat" aria-selected="false"><svg class="icon"><use href="#i-chat"/></svg><span>Chat</span></button>
+            <button class="tab" type="button" data-tab="tasks" aria-selected="false"><svg class="icon"><use href="#i-tasks"/></svg><span>Tasks</span></button>
+            <button class="tab" type="button" data-tab="me" aria-selected="true"><svg class="icon"><use href="#i-user"/></svg><span>Me</span></button>
+          </nav>
+        </main>
+      </div>
+      <div class="home-indicator"></div>
+      <div class="toast" id="toast" role="status" hidden></div>
+    </div>
+  </div>
+
+<script>
+  const phone = document.getElementById('phone');
+  const appearanceToggle = document.getElementById('appearanceToggle');
+  const toast = document.getElementById('toast');
+  const pageStack = [];
+  let toastTimer;
+
+  function showToast(message) {
+    clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.hidden = false;
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 1800);
+  }
+
+  function setAppearance(mode) {
+    const light = mode === 'light';
+    phone.dataset.appearance = light ? 'light' : 'dark';
+    appearanceToggle.textContent = light ? 'Dark appearance' : 'Light appearance';
+    appearanceToggle.setAttribute('aria-pressed', String(light));
+  }
+
+  appearanceToggle.addEventListener('click', () => setAppearance(phone.dataset.appearance === 'light' ? 'dark' : 'light'));
+
+  function openPage(id) {
+    const page = document.querySelector(`[data-page="${id}"]`);
+    if (!page) return;
+    pageStack.push(id);
+    page.hidden = false;
+    requestAnimationFrame(() => page.classList.add('open'));
+  }
+
+  function closePage() {
+    const id = pageStack.pop();
+    if (!id) return;
+    const page = document.querySelector(`[data-page="${id}"]`);
+    page.classList.remove('open');
+    setTimeout(() => { page.hidden = true; }, 240);
+  }
+
+  document.querySelectorAll('[data-open]').forEach((button) => button.addEventListener('click', () => openPage(button.dataset.open)));
+  document.querySelectorAll('[data-back]').forEach((button) => button.addEventListener('click', closePage));
+  document.querySelectorAll('[data-toast]').forEach((button) => button.addEventListener('click', () => showToast(button.dataset.toast)));
+
+  document.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => {
+    while (pageStack.length) {
+      const id = pageStack.pop();
+      const page = document.querySelector(`[data-page="${id}"]`);
+      page.classList.remove('open');
+      page.hidden = true;
+    }
+    document.querySelectorAll('[data-screen]').forEach((screen) => { screen.hidden = screen.dataset.screen !== tab.dataset.tab; });
+    document.querySelectorAll('[data-tab]').forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+  }));
+
+  document.querySelectorAll('[data-segment]').forEach((group) => {
+    group.querySelectorAll('.segment').forEach((button) => button.addEventListener('click', () => {
+      group.querySelectorAll('.segment').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+      if (button.dataset.setting) showToast(button.dataset.setting);
+      if (button.dataset.theme) {
+        const theme = button.dataset.theme;
+        setAppearance(theme === 'system' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : theme);
+        showToast(theme === 'system' ? 'Appearance follows your device' : `${theme === 'light' ? 'Light' : 'Dark'} appearance selected`);
+      }
+    }));
+  });
+
+  document.querySelectorAll('.switch').forEach((control) => control.addEventListener('click', () => {
+    control.setAttribute('aria-checked', String(control.getAttribute('aria-checked') !== 'true'));
+    if (control.dataset.setting) showToast(control.dataset.setting);
+    if (control.hasAttribute('data-dirty')) document.getElementById('saveBot').disabled = false;
+  }));
+
+  document.querySelectorAll('[data-editor-tab]').forEach((tab) => tab.addEventListener('click', () => {
+    document.querySelectorAll('[data-editor-tab]').forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+    document.querySelectorAll('[data-editor-panel]').forEach((panel) => { panel.hidden = panel.dataset.editorPanel !== tab.dataset.editorTab; });
+  }));
+  document.querySelectorAll('[data-dirty]').forEach((control) => {
+    const eventName = control.matches('input[type="checkbox"], select') ? 'change' : 'input';
+    control.addEventListener(eventName, () => { document.getElementById('saveBot').disabled = false; });
+    if (control.matches('select')) control.addEventListener('change', () => { document.getElementById('saveBot').disabled = false; });
+  });
+  document.getElementById('saveBot').addEventListener('click', (event) => {
+    event.currentTarget.disabled = true;
+    showToast('Bot changes saved locally');
+  });
+  const requestedPage = new URLSearchParams(window.location.search).get('page');
+  if (['general', 'bots', 'botEdit'].includes(requestedPage)) openPage(requestedPage);
+  window.__ready = true;
+</script>
+</body>
+</html>

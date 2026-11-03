@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDBots Mobile UI Directions</title>
+<style>
+  * { box-sizing: border-box; }
+  :root { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif; color: #242426; background: #eeeeef; font-synthesis: none; }
+  body { margin: 0; min-height: 100dvh; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button:focus-visible, a:focus-visible { outline: 3px solid rgba(174,137,12,.45); outline-offset: 3px; }
+  .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; max-width: 1888px; margin: 0 auto; padding: 28px 24px 20px; }
+  .brand-lockup { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .brand-lockup img { width: 46px; height: 46px; border-radius: 14px; image-rendering: pixelated; box-shadow: 0 5px 16px rgba(100,75,0,.12); }
+  .eyebrow { margin: 0 0 5px; color: #6d6d72; font-size: 12px; font-weight: 650; letter-spacing: .04em; }
+  h1 { margin: 0; font-size: clamp(25px, 2.2vw, 38px); line-height: 1.12; letter-spacing: -.04em; text-wrap: pretty; }
+  .intro { max-width: 570px; margin: 8px 0 0; color: #66666b; font-size: 14px; line-height: 1.5; }
+  .view-switch { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 600px; }
+  .view-button { min-height: 44px; border: 1px solid #d0d0d4; border-radius: 999px; background: #f8f8f9; color: #545459; padding: 0 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .view-button[aria-pressed="true"] { border-color: #e6c94e; background: #ffdc51; color: #302b12; box-shadow: inset 0 1px 0 rgba(255,255,255,.45); }
+  .view-button:active { transform: scale(.97); }
+  .comparison-note { max-width: 1888px; margin: 0 auto; padding: 0 26px 16px; color: #717176; font-size: 12px; }
+  .gallery { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; max-width: 1888px; margin: 0 auto; padding: 0 16px 28px; align-items: start; }
+  .gallery.focus { grid-template-columns: minmax(0, 560px); justify-content: center; }
+  .direction-card { min-width: 0; overflow: hidden; border: 1px solid #d9d9dd; border-radius: 24px; background: #f8f8f9; box-shadow: 0 8px 28px rgba(40,40,45,.05); }
+  .direction-card[hidden] { display: none; }
+  .card-meta { min-height: 72px; display: flex; align-items: center; gap: 11px; padding: 13px 15px; border-bottom: 1px solid #dedee2; }
+  .direction-letter { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; background: #ffdc51; color: #342e0e; font-size: 14px; font-weight: 750; }
+  .card-copy { min-width: 0; flex: 1; }
+  .card-copy h2 { margin: 0; font-size: 15px; letter-spacing: -.015em; }
+  .card-copy p { margin: 3px 0 0; color: #707075; font-size: 12px; line-height: 1.35; }
+  .open-link { min-height: 44px; display: inline-flex; align-items: center; flex: 0 0 auto; color: #3d3d42; font-size: 12px; font-weight: 650; text-decoration: none; }
+  .open-link:hover { text-decoration: underline; }
+  .direction-frame { display: block; width: 100%; height: 1070px; border: 0; background: #e8e8eb; }
+  @media (max-width: 1500px) {
+    .page-header { align-items: flex-start; flex-direction: column; }
+    .view-switch { justify-content: flex-start; }
+    .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .gallery.focus { grid-template-columns: minmax(0, 560px); }
+  }
+  @media (max-width: 720px) {
+    .page-header { padding: 22px 16px 16px; }
+    .comparison-note { padding: 0 18px 14px; }
+    .gallery, .gallery.focus { grid-template-columns: minmax(0, 1fr); padding: 0 10px 20px; }
+    .direction-frame { height: 1050px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="page-header">
+    <div class="brand-lockup">
+      <img src="assets/logo-64.png" alt="IDBots">
+      <div>
+        <p class="eyebrow">IDBOTS MOBILE UI DIRECTIONS</p>
+        <h1>Four ways to make Twin feel at home on iOS.</h1>
+        <p class="intro">The same conversation and itinerary in four distinct consumer app directions. Compare the structure, material, reading rhythm, and bottom controls.</p>
+      </div>
+    </div>
+    <nav class="view-switch" aria-label="Design direction filter">
+      <button class="view-button" type="button" data-view="all" aria-pressed="true">Compare all</button>
+      <button class="view-button" type="button" data-view="material" aria-pressed="false">A · Tactile</button>
+      <button class="view-button" type="button" data-view="cupertino" aria-pressed="false">B · Cupertino</button>
+      <button class="view-button" type="button" data-view="editorial" aria-pressed="false">C · Quiet</button>
+      <button class="view-button" type="button" data-view="nocturne" aria-pressed="false">D · Nocturne</button>
+    </nav>
+  </header>
+  <p class="comparison-note">Interactive prototypes with sample data. Use the appearance control inside each direction, open the plan, switch tabs, or send a local message.</p>
+
+  <main class="gallery" id="gallery">
+    <section class="direction-card" data-direction="material">
+      <div class="card-meta"><span class="direction-letter">A</span><div class="card-copy"><h2>Friendly tactile companion</h2><p>Warm geometry and physical feedback.</p></div><a class="open-link" href="design-demos/material.html" target="_blank" rel="noopener">Open ↗</a></div>
+      <iframe class="direction-frame" src="design-demos/material.html" title="Direction A, friendly tactile companion"></iframe>
+    </section>
+    <section class="direction-card" data-direction="cupertino">
+      <div class="card-meta"><span class="direction-letter">B</span><div class="card-copy"><h2>Cupertino clarity</h2><p>Classic iOS chat with precise native hierarchy.</p></div><a class="open-link" href="design-demos/cupertino.html" target="_blank" rel="noopener">Open ↗</a></div>
+      <iframe class="direction-frame" src="design-demos/cupertino.html" title="Direction B, Cupertino clarity"></iframe>
+    </section>
+    <section class="direction-card" data-direction="editorial">
+      <div class="card-meta"><span class="direction-letter">C</span><div class="card-copy"><h2>Quiet content editorial</h2><p>Reading-led conversation with fewer containers.</p></div><a class="open-link" href="design-demos/editorial.html" target="_blank" rel="noopener">Open ↗</a></div>
+      <iframe class="direction-frame" src="design-demos/editorial.html" title="Direction C, quiet content editorial"></iframe>
+    </section>
+    <section class="direction-card" data-direction="nocturne">
+      <div class="card-meta"><span class="direction-letter">D</span><div class="card-copy"><h2>Nocturne companion</h2><p>Low-light focus with warm result sheets.</p></div><a class="open-link" href="design-demos/nocturne.html" target="_blank" rel="noopener">Open ↗</a></div>
+      <iframe class="direction-frame" src="design-demos/nocturne.html" title="Direction D, nocturne companion"></iframe>
+    </section>
+  </main>
+
+<script>
+  const gallery = document.getElementById('gallery');
+  const viewButtons = document.querySelectorAll('[data-view]');
+  const cards = document.querySelectorAll('[data-direction]');
+  viewButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const view = button.dataset.view;
+      gallery.classList.toggle('focus', view !== 'all');
+      cards.forEach((card) => { card.hidden = view !== 'all' && card.dataset.direction !== view; });
+      viewButtons.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+    });
+  });
+</script>
+</body>
+</html>
