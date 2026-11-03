@@ -66,7 +66,9 @@ jobs:
           CERTIFICATE_PATH="$RUNNER_TEMP/dist_certificate.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/idbots-signing.keychain-db"
 
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo "cert secret length: ${#BUILD_CERTIFICATE_BASE64}"
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 -d > "$CERTIFICATE_PATH"
+          echo "decoded cert bytes: $(wc -c < "$CERTIFICATE_PATH")"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -87,7 +89,9 @@ jobs:
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
         run: |
           PP_PATH="$RUNNER_TEMP/idbots-appstore.mobileprovision"
-          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+          echo "profile secret length: ${#PROVISIONING_PROFILE_BASE64}"
+          printf '%s' "$PROVISIONING_PROFILE_BASE64" | base64 -d > "$PP_PATH"
+          echo "decoded profile bytes: $(wc -c < "$PP_PATH")"
 
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
