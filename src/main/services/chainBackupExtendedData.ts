@@ -4,7 +4,8 @@ import type { Metabot } from '../types/metabot';
 import type { ChainBackupObject, ChainBackupImportOptions } from './chainBackupData';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CONVERSATION_WINDOW_DAYS = 60;
+/** Conversation window: the most recent month of messages rides the backup. */
+const CONVERSATION_WINDOW_DAYS = 30;
 
 /**
  * Conversation slimming. Messages are the dominant share of a real backup
