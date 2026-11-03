@@ -4,6 +4,9 @@ import { isRetryableMvcBroadcastError, resolveBroadcastTxResult } from '../libs/
 import { freshGetUrlAndInit } from './freshFetch';
 
 const METALET_HOST = 'https://www.metalet.space';
+// open-api-mvc: the chain-data host meta-contract's own Api (API_TARGET.APIMVC,
+// livenet default) consults for sell-utxo lookups.
+const MVC_OPEN_API_HOST = 'https://api.microvisionchain.com/open-api-mvc';
 const NET = 'livenet';
 const RETRYABLE_MVC_NFT_BUILD_ATTEMPTS = 3;
 const RETRYABLE_MVC_NFT_BROADCAST_DELAY_MS = 750;
@@ -113,9 +116,31 @@ interface MvcNftServiceDeps {
   fetchSummaryList: (address: string) => Promise<RawMvcNftSummaryRow[]>;
   fetchUtxoList: (address: string) => Promise<RawMvcNftUtxoRow[]>;
   fetchSellUtxoList: (address: string) => Promise<RawMvcNftSellUtxoRow[]>;
+  fetchGenesisSellUtxo: (codehash: string, genesis: string, tokenIndex: string) => Promise<RawMvcGenesisSellUtxoRow[]>;
   buildRawTx: typeof buildMvcNftTransferRawTx;
   buildTradeRawTx: typeof buildMvcNftTradeRawTx;
   broadcastTx: (rawTx: string) => Promise<string>;
+}
+
+/**
+ * open-api-mvc genesis sell-utxo row (GET /contract/nft/sell/genesis/
+ * {codehash}/{genesis}/utxo?tokenIndex=…): the endpoint meta-contract's
+ * NftManager queries itself whenever a buy arrives without an explicit sell
+ * utxo. `price` is the live ask embedded in the sell contract.
+ */
+interface RawMvcGenesisSellUtxoRow {
+  txid?: string;
+  txIndex?: number | string;
+  address?: string;
+  price?: number | string;
+  isReady?: boolean | string | number;
+}
+
+export interface MvcNftChainSellUtxo {
+  txId: string;
+  outputIndex: number;
+  sellerAddress?: string;
+  price: number;
 }
 
 function normalizeCount(value: unknown): number {
@@ -226,6 +251,13 @@ const defaultDeps: MvcNftServiceDeps = {
     const response = await fetchJson<{ list?: RawMvcNftSellUtxoRow[] }>(
       `${METALET_HOST}/wallet-api/v4/mvc/address/contract/nft/sell/utxo-list?net=${NET}&address=${encodeURIComponent(address)}`,
     );
+    return Array.isArray(response?.list) ? response.list : [];
+  },
+  fetchGenesisSellUtxo: async (codehash, genesis, tokenIndex) => {
+    const response = await fetchJson<RawMvcGenesisSellUtxoRow[] | { list?: RawMvcGenesisSellUtxoRow[] }>(
+      `${MVC_OPEN_API_HOST}/contract/nft/sell/genesis/${encodeURIComponent(codehash)}/${encodeURIComponent(genesis)}/utxo?tokenIndex=${encodeURIComponent(tokenIndex)}`,
+    );
+    if (Array.isArray(response)) return response;
     return Array.isArray(response?.list) ? response.list : [];
   },
   broadcastTx: async (rawTx) => {
@@ -456,6 +488,35 @@ export async function getMvcNftSellOrders(
     if (order) orders.push(order);
   }
   return { address, count: orders.length, orders };
+}
+
+/**
+ * Resolve the live sell utxo for one token straight from the same open-api-mvc
+ * endpoint the buy signer consults when no outpoint is supplied — the ask this
+ * resolver returns is the amount a purchase WILL pay. Returns null when the
+ * token has no ready sell utxo on chain (nothing for sale / already sold /
+ * indexer lag). Used by the bot-browser buy bridge to verify the confirmation
+ * card's amount against chain truth before any signature happens.
+ */
+export async function getMvcNftChainSellUtxo(
+  codehash: string,
+  genesis: string,
+  tokenIndex: string,
+  deps: Pick<MvcNftServiceDeps, 'fetchGenesisSellUtxo'> = defaultDeps,
+): Promise<MvcNftChainSellUtxo | null> {
+  const rows = await deps.fetchGenesisSellUtxo(codehash, genesis, tokenIndex);
+  for (const row of rows) {
+    const ready = row.isReady === true || row.isReady === 1 || String(row.isReady ?? '').toLowerCase() === 'true';
+    if (!ready) continue;
+    const txId = String(row.txid ?? '').trim().toLowerCase();
+    const outputIndex = Number(row.txIndex);
+    const price = Number(row.price);
+    if (!/^[0-9a-f]{64}$/.test(txId) || !Number.isInteger(outputIndex) || outputIndex < 0) continue;
+    if (!Number.isFinite(price) || price <= 0) continue;
+    const sellerAddress = String(row.address ?? '').trim() || undefined;
+    return { txId, outputIndex, ...(sellerAddress ? { sellerAddress } : {}), price: Math.round(price) };
+  }
+  return null;
 }
 
 export type MvcNftTradeAction = 'sell' | 'cancelSell' | 'buy';

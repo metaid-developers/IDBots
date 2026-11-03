@@ -50,6 +50,26 @@ export function isPrivateChatDisplayCiphertext(value: string): boolean {
   return false;
 }
 
+/**
+ * Rows the daemon deliberately consumes WITHOUT a display bubble must never be
+ * resurrected by this pass (pre-release review P1): handshake pings/pongs are
+ * answered silently (privateChatDaemon marks them processed with no append,
+ * and the listener already stores the DECRYPTED text, so plaintext "ping"
+ * passes the ciphertext filter), and order-protocol payloads ([ORDER],
+ * [DELIVERY], [ORDER_STATUS], [NeedsRating]) route into their own
+ * metaweb_order sessions — their pins never appear in this transcript, so
+ * without the filter the reconcile re-inserted raw protocol text into the
+ * private chat. Handshake matching mirrors the daemon's
+ * isPrivateChatHandshakePlaintext (letters-only normalize, ping/pong); kept
+ * local to avoid a privateChatDaemon import cycle.
+ */
+function isProtocolRowWithoutDisplay(content: string): boolean {
+  const trimmed = content.trim();
+  const handshakeWord = trimmed.toLowerCase().replace(/[^a-z]/g, '');
+  if (handshakeWord === 'ping' || handshakeWord === 'pong') return true;
+  return /^\[(ORDER|DELIVERY|ORDER_STATUS|NeedsRating)/i.test(trimmed);
+}
+
 function chainTimestampMs(value: number | string | null): number | null {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
@@ -198,6 +218,7 @@ export function reconcilePrivateChatDisplayGaps(input: {
         if (!pinId || knownPins.has(pinId)) continue;
         const content = String(row.content ?? '');
         if (isPrivateChatDisplayCiphertext(content)) continue;
+        if (isProtocolRowWithoutDisplay(content)) continue;
         const chainMs = chainTimestampMs(row.chain_timestamp);
         if (chainMs == null) continue;
         const fromGlobalMetaId = String(row.from_global_metaid ?? '').trim();

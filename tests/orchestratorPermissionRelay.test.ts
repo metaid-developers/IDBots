@@ -172,7 +172,7 @@ test('a second permission request keeps the first card instead of denying it', a
   assert.equal(runner.pending.has('dsh-policy-2'), true);
 });
 
-test('an allow-default approval times out as allow', async () => {
+test('an ordinary tool approval times out as deny (fail-closed, 2026-11-03 review)', async () => {
   const runner = new StubRunner();
   const store = makeStore();
   runner.pending.set('appr-1', true);
@@ -181,12 +181,12 @@ test('an allow-default approval times out as allow', async () => {
     requestId: 'appr-1',
     toolName: 'Bash',
     toolInput: { reason: 'run a command' },
-    timeoutDefault: 'allow',
+    timeoutDefault: 'deny',
   });
 
   await sleep(50);
   assert.equal(runner.responded.length, 1);
-  assert.equal(runner.responded[0]!.result.behavior, 'allow');
+  assert.equal(runner.responded[0]!.result.behavior, 'deny');
 });
 
 test('a question with no default is not auto-answered', async () => {

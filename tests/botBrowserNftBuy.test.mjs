@@ -87,11 +87,18 @@ function nftBuyPayload(overrides = {}) {
 
 function createBuyDeps(overrides = {}) {
   const calls = [];
+  const chainCalls = [];
   const deps = {
     metabotStore: createStore(),
     buyNft: async (params) => {
       calls.push(params);
       return { txId: 'd'.repeat(64), fundingTxId: 'e'.repeat(64) };
+    },
+    // Default chain ask: the exact sell utxo the default page payload points
+    // at, priced at the same 100000 sats the payload declares.
+    fetchNftChainSellUtxo: async (params) => {
+      chainCalls.push(params);
+      return { txId: SELL_TXID, outputIndex: 0, sellerAddress: '1SellerAddressFixture', price: 100000 };
     },
     now: () => 1_000,
     confirmationTtlMs: 60_000,
@@ -105,7 +112,7 @@ function createBuyDeps(overrides = {}) {
     })(),
     ...overrides,
   };
-  return { deps, calls };
+  return { deps, calls, chainCalls };
 }
 
 function readManual(result) {
@@ -321,4 +328,124 @@ test('nft buy: builds wire without deps.buyNft as unsupported_method', async () 
   const result = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
   assert.equal(result.ok, false);
   assert.equal(result.code, 'unsupported_method');
+});
+
+test('nft buy: the confirm path verifies the confirmed amount against the live chain ask', async () => {
+  const { deps, calls, chainCalls } = createBuyDeps();
+  const service = createBotBrowserBridgeService(deps);
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  assert.equal(chainCalls.length, 0); // phase 1 never touches the chain
+
+  const phaseTwo = await service.buyNft({
+    ...BUY_INPUT,
+    resourceUri: confirmRequest.resourceUri,
+    payload: confirmRequest.payload,
+  });
+
+  assert.equal(phaseTwo.ok, true);
+  assert.deepEqual(chainCalls, [{ codehash: CODEHASH, genesis: GENESIS, tokenIndex: '7898' }]);
+  // The signer pays the VERIFIED chain ask, pinned to the verified outpoint.
+  assert.equal(calls[0].sellUtxo.price, 100000);
+  assert.equal(calls[0].sellUtxo.txId, SELL_TXID);
+});
+
+test('nft buy: an on-chain ask different from the confirmed amount is refused before signing', async () => {
+  const { deps, calls } = createBuyDeps({
+    fetchNftChainSellUtxo: async () => ({ txId: SELL_TXID, outputIndex: 0, sellerAddress: '1SellerAddressFixture', price: 250000 }),
+  });
+  const service = createBotBrowserBridgeService(deps);
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  const result = await service.buyNft({ ...BUY_INPUT, resourceUri: confirmRequest.resourceUri, payload: confirmRequest.payload });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'price_changed');
+  assert.match(result.message, /250000/);
+  assert.match(result.message, /100000/);
+  assert.equal(calls.length, 0);
+});
+
+test('nft buy: a sell utxo that changed on chain since the card is refused before signing', async () => {
+  const { deps, calls } = createBuyDeps({
+    fetchNftChainSellUtxo: async () => ({ txId: 'f'.repeat(64), outputIndex: 1, sellerAddress: '1Other', price: 100000 }),
+  });
+  const service = createBotBrowserBridgeService(deps);
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  const result = await service.buyNft({ ...BUY_INPUT, resourceUri: confirmRequest.resourceUri, payload: confirmRequest.payload });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'sell_utxo_changed');
+  assert.equal(calls.length, 0);
+});
+
+test('nft buy: no live sell order on chain refuses the purchase without signing', async () => {
+  const { deps, calls } = createBuyDeps({
+    fetchNftChainSellUtxo: async () => null,
+  });
+  const service = createBotBrowserBridgeService(deps);
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  const result = await service.buyNft({ ...BUY_INPUT, resourceUri: confirmRequest.resourceUri, payload: confirmRequest.payload });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'nft_buy_unavailable');
+  assert.equal(calls.length, 0);
+});
+
+test('nft buy: a chain-ask lookup failure is fail-closed, not a blind purchase', async () => {
+  const { deps, calls } = createBuyDeps({
+    fetchNftChainSellUtxo: async () => {
+      throw new Error('indexer timeout');
+    },
+  });
+  const service = createBotBrowserBridgeService(deps);
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  const result = await service.buyNft({ ...BUY_INPUT, resourceUri: confirmRequest.resourceUri, payload: confirmRequest.payload });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'nft_buy_failed');
+  assert.match(result.message, /Unable to verify the on-chain ask/);
+  assert.equal(calls.length, 0);
+});
+
+test('nft buy: without a chain-ask resolver the confirm path is unsupported (fail-closed)', async () => {
+  const { deps, calls } = createBuyDeps();
+  delete deps.fetchNftChainSellUtxo;
+  const service = createBotBrowserBridgeService(deps);
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload: nftBuyPayload() });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  const result = await service.buyNft({ ...BUY_INPUT, resourceUri: confirmRequest.resourceUri, payload: confirmRequest.payload });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'unsupported_method');
+  assert.equal(calls.length, 0);
+});
+
+test('nft buy: a page intent without an outpoint pays the verified chain ask, not a page-declared price', async () => {
+  const { deps, calls } = createBuyDeps();
+  const service = createBotBrowserBridgeService(deps);
+
+  const payload = nftBuyPayload({ priceSats: 1 }); // page claims 1 sat…
+  delete payload.sellTxid;
+  delete payload.sellOutputIndex;
+  delete payload.sellerAddress;
+
+  const phaseOne = await service.buyNft({ ...BUY_INPUT, payload });
+  const confirmRequest = readManual(phaseOne).confirmRequest;
+  const result = await service.buyNft({ ...BUY_INPUT, resourceUri: confirmRequest.resourceUri, payload: confirmRequest.payload });
+
+  // …but the card amount never matches the real ask, so the purchase is
+  // refused instead of paying the chain price the card never showed.
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'price_changed');
+  assert.equal(calls.length, 0);
 });

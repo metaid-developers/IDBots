@@ -32,6 +32,10 @@ const baseCollab: OpenTeamCollabSummary = {
   leftReason: null,
   taskStatus: null,
   taskStatusUpdatedAt: null,
+  memberPreviews: [
+    { name: 'Worker Seven', avatar: null, role: 'worker', metabotId: 7, globalMetaId: 'gmid-bot-7' },
+    { name: 'Remote Chair', avatar: null, role: 'worker', metabotId: null, globalMetaId: 'gmid-inviter-abcdef' },
+  ],
 };
 
 test('shortGlobalMetaId: trims, shortens, tolerates empty input', () => {
@@ -97,19 +101,23 @@ test('OpenTeamCollabCard: renders the host task status label on the badge', () =
   assert.ok(!markup.includes(i18nService.t('openTeamCollabStatusActive')), 'plain active label replaced');
 });
 
-test('OpenTeamCollabCard: renders title, status, bot, inviter and message count', () => {
+test('OpenTeamCollabCard: renders title, status, avatars and inviter — no message count', () => {
   const markup = renderToStaticMarkup(
     <OpenTeamCollabCard collab={baseCollab} onClick={() => {}} />,
   );
   assert.ok(markup.includes('External Task'), 'task title rendered');
   assert.ok(markup.includes(i18nService.t('openTeamCollabStatusActive')), 'active status label rendered');
-  assert.ok(markup.includes('Worker Seven'), 'bot name rendered');
+  assert.ok(markup.includes('W'), 'avatar initial rendered for a name-only preview');
   assert.ok(markup.includes('gmid-invit…'), 'short inviter id rendered');
-  assert.ok(markup.includes('12'), 'message count rendered');
+  assert.ok(
+    !markup.includes(i18nService.t('openTeamCollabMessageCount').replace('{count}', '12')),
+    'message count removed from the card',
+  );
+  assert.ok(!markup.includes('>12<'), 'raw message count not rendered');
   assert.ok(!markup.includes(i18nService.t('openTeamCollabStatusLeft')), 'left label not rendered for active row');
 });
 
-test('OpenTeamCollabCard: falls back to bot id and untitled group label', () => {
+test('OpenTeamCollabCard: falls back to the group label, no bot-id meta line', () => {
   const markup = renderToStaticMarkup(
     <OpenTeamCollabCard
       collab={{
@@ -119,13 +127,15 @@ test('OpenTeamCollabCard: falls back to bot id and untitled group label', () => 
         inviterGlobalmetaid: null,
         status: 'left',
         messageCount: 0,
+        memberPreviews: [],
       }}
       onClick={() => {}}
     />,
   );
-  assert.ok(markup.includes('bot-7'), 'bot id fallback rendered');
+  assert.ok(markup.includes('group-ext-1'), 'group id fallback rendered as the title');
   assert.ok(markup.includes(i18nService.t('openTeamCollabStatusLeft')), 'left status label rendered');
   assert.ok(!markup.includes('External Task'), 'no task title for fallback row');
+  assert.ok(!markup.includes('bot-7'), 'no "my bot" meta line anymore');
 });
 
 // ---------------------------------------------------------------------------

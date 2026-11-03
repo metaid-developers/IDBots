@@ -2714,30 +2714,6 @@ export class GroupTaskStore {
   }
 
   /**
-   * OpenTeam guest collab: distinct senders of one group's chat transcript —
-   * the guest-side member roster. Guest machines hold no group_task_members
-   * rows for foreign groups, so the roster is reconstructed from who has
-   * actually spoken. Ordered by first speech (MIN(id)); sender_name is the
-   * snapshot carried by that first message.
-   */
-  listGroupChatSpeakers(
-    groupId: string,
-  ): Array<{ senderGlobalmetaid: string; senderName: string | null }> {
-    const rows = this.getAll<{ sender_global_metaid: string; sender_name: string | null }>(
-      `SELECT sender_global_metaid, sender_name
-       FROM group_chat_messages
-       WHERE group_id = ? AND sender_global_metaid IS NOT NULL
-       GROUP BY sender_global_metaid
-       ORDER BY MIN(id) ASC`,
-      [groupId],
-    );
-    return rows.map((row) => ({
-      senderGlobalmetaid: String(row.sender_global_metaid),
-      senderName: row.sender_name ?? null,
-    }));
-  }
-
-  /**
    * Round-4 (show summary): last chain speak timestamp (epoch seconds) per
    * sender GlobalMetaID for one group — the summary view's member list shows
    * when each member last spoke. Senders without any timestamp are absent.
