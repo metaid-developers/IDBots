@@ -12,7 +12,7 @@ import { resolveWritableSkillsRoot } from './skillRoots';
 import { getMetaidRpcBase, getMetaidRpcTokenFilePath, METAID_RPC_AUTHFILE_ENV } from '../services/metaidRpcEndpoint';
 import { chatCompletionWithTools } from '../services/cognitiveChatCompletion';
 import type { MetabotBrainOptions } from '../services/llmFallback';
-import { buildTurnAckReplyMessages, sanitizeTurnAckReplyForInput } from './turnAckReply';
+import { buildTurnAckReplyMessages, buildOwnerWaitUpdateMessages, sanitizeTurnAckReplyForInput, type OwnerWaitUpdateInput } from './turnAckReply';
 import { modelAlwaysThinks } from './modelThinking';
 import { isSqliteWasmBoundsError } from '../sqliteRecovery';
 import { assignPathValue, collapseWindowsPathKeys, pathValueOf } from './windowsPathEnv';
@@ -1435,6 +1435,62 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
       throw error;
     }
     console.error('Failed to generate turn ack reply:', error);
+    return '';
+  }
+}
+
+/**
+ * One-shot LLM owner wait update — the text of the "still working" heartbeat
+ * bubble. Owner decision 2026-11-04: no canned text in ANY bubble (the fixed
+ * heartbeat strings read as a recording), so each fire writes its own line
+ * from the live wait context. Same call class as generateTurnAckReply: Twin
+ * system brain pair, thinking off, tight budget, 4s per-attempt timeout,
+ * reasoning-promoted/length-truncated output rejected, input-aware sanitize.
+ * Returns '' on any failure — the runner then emits NO heartbeat bubble at
+ * all (the owner's rule: no bubble beats a canned one) and backs off to the
+ * next window.
+ */
+export async function generateOwnerWaitUpdate(input: OwnerWaitUpdateInput): Promise<string> {
+  try {
+    const brain = turnAckReplyBrainProvider?.() ?? null;
+    const effectiveModel =
+      brain?.llmId ??
+      resolveApiConfigForModel(null, 'local', null, brain?.llmProvider ?? null)?.config?.model ??
+      null;
+    const maxTokens = modelAlwaysThinks(effectiveModel) ? 2048 : 96;
+    const result = await chatCompletionWithTools(
+      buildOwnerWaitUpdateMessages(input),
+      {
+        llmId: brain?.llmId ?? undefined,
+        llmProvider: brain?.llmProvider ?? undefined,
+        fallbackLlmId: brain?.fallbackLlmId ?? undefined,
+        fallbackLlmProvider: brain?.fallbackLlmProvider ?? undefined,
+        thinking: 'disabled',
+        effort: 'off',
+        maxTokens,
+        temperature: 0.7,
+        throwOnEmptyContent: true,
+        webSearch: false,
+        attemptTimeoutMs: 4_000,
+      }
+    );
+    const metadata = result.responseMetadata;
+    const promotedFromReasoning = metadata?.contentBlockTypes?.includes('reasoning') ?? false;
+    if (promotedFromReasoning || metadata?.stopReason === 'length') {
+      console.info(
+        '[ownerWait] dropped LLM wait update:',
+        `promotedFromReasoning=${promotedFromReasoning}`,
+        `stopReason=${metadata?.stopReason ?? 'n/a'}`,
+        `blocks=${metadata?.contentBlockTypes?.join(',') ?? 'none'}`
+      );
+      return '';
+    }
+    return sanitizeTurnAckReplyForInput(result.content ?? '', input.userText);
+  } catch (error) {
+    if (isSqliteWasmBoundsError(error)) {
+      throw error;
+    }
+    console.error('Failed to generate owner wait update:', error);
     return '';
   }
 }

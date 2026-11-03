@@ -46,10 +46,17 @@ class RecordingStore {
   }
 }
 
-function setup({ assistant = true, active = true, waitTimeoutMs = 0 } = {}) {
+function setup({ assistant = true, active = true, waitTimeoutMs = 0, waitGenerator } = {}) {
   const { CoworkRunner } = loadRunner()
   const store = new RecordingStore()
-  const runner = new CoworkRunner(store, { localTurnStallTimeoutMs: 0, assistantOwnerWaitTimeoutMs: waitTimeoutMs })
+  const runner = new CoworkRunner(store, {
+    localTurnStallTimeoutMs: 0,
+    assistantOwnerWaitTimeoutMs: waitTimeoutMs,
+    // 2026-11-04: the heartbeat text is LLM-written per fire (no canned
+    // strings anywhere); tests inject a stub. The production default is
+    // coworkUtil's generateOwnerWaitUpdate on the Twin system brain.
+    ownerWaitUpdateGenerator: waitGenerator ?? (async () => '我还在继续推进，稍等我一下。'),
+  })
   runner.isAssistantModeOwnerChatSession = () => assistant
   runner.buildSessionInlineTools = () => []
   if (active) {
@@ -224,26 +231,52 @@ test('visible thinking without a real opening no longer suppresses owner_update 
   runner.removeActiveSession('s1', active)
 })
 
-test('host waiting update fires at five minutes and backs off without hidden tool activity resetting it', (t) => {
+test('host waiting update fires at five minutes and backs off without hidden tool activity resetting it', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { runner, store } = setup({ waitTimeoutMs: 300_000 })
   const active = runner.activeSessions.get('s1')
   runner.armAssistantOwnerWaitTimer('s1', active)
 
   t.mock.timers.tick(299_999)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(store.messages.length, 0)
   active.assistantOwnerWaitingForTool = true
   t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(store.messages.length, 1)
   assert.equal(store.messages[0].metadata.ownerUpdateKind, 'waiting')
-  assert.match(store.messages[0].content, /执行步骤|execution step/)
+  assert.equal(store.messages[0].content, '我还在继续推进，稍等我一下。', 'the bubble carries the generator text, never a canned string')
   assert.equal(active.assistantOwnerUpdateCount, 1)
 
   t.mock.timers.tick(599_999)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(store.messages.length, 1)
   t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(store.messages.length, 2)
   assert.equal(active.assistantOwnerUpdateCount, 2)
+  clearTimeout(active.assistantOwnerHeartbeatTimer)
+  t.mock.timers.reset()
+})
+
+test('an empty generator result emits no bubble and backs off to the next window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { runner, store } = setup({ waitTimeoutMs: 300_000, waitGenerator: async () => '' })
+  const active = runner.activeSessions.get('s1')
+  runner.armAssistantOwnerWaitTimer('s1', active)
+
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.messages.length, 0, 'no bubble beats a canned one — empty generation emits nothing')
+  assert.equal(active.assistantOwnerHeartbeatCount, 1, 'the failed fire still counts for backoff')
+  assert.ok(active.assistantOwnerHeartbeatTimer, 'the timer re-armed for the next window')
+  // Next window doubles (backoff), so nothing at +300s, one more try at +600s.
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(active.assistantOwnerHeartbeatCount, 1)
+  t.mock.timers.tick(300_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(active.assistantOwnerHeartbeatCount, 2)
   clearTimeout(active.assistantOwnerHeartbeatTimer)
   t.mock.timers.reset()
 })
@@ -258,8 +291,10 @@ test('a real owner update resets the five-minute visible-message window', async 
   const result = await callUpdate(runner, 'The root cause is verified.')
   assert.equal(JSON.parse(result.text).shown, true)
   t.mock.timers.tick(299_999)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(store.messages.length, 1)
   t.mock.timers.tick(1)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(store.messages.length, 2)
   assert.equal(store.messages[1].metadata.ownerUpdateKind, 'waiting')
   clearTimeout(active.assistantOwnerHeartbeatTimer)

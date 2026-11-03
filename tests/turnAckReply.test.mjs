@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   TURN_ACK_REPLY_MAX_CHARS,
   buildDeterministicTurnAckOpening,
+  buildOwnerWaitUpdateMessages,
   buildTurnAckReplyMessages,
   containsCjk,
   resolveTurnAckActivity,
@@ -481,4 +482,67 @@ test('runner: the owner wait heartbeat logs due-but-suppressed outcomes', () => 
   assert.ok(source.includes("'owner wait heartbeat dropped: turn no longer active'"), 'stale-turn drops are logged');
   assert.ok(source.includes("'owner wait heartbeat not armed for this turn'"),
     'an entry-arm early-exit is logged (the session-32a29372 silent-stretch diagnostic)');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-11-04 owner decision: no canned text in ANY bubble — the wait heartbeat
+// ---------------------------------------------------------------------------
+
+test('buildOwnerWaitUpdateMessages: system+user roles, wait context carried, anti-template rule pinned', () => {
+  const messages = buildOwnerWaitUpdateMessages({
+    userText: '帮我把这个 bug 修一下',
+    sessionTitle: '修复构建',
+    waitedMs: 5 * 60_000,
+    waitingForTool: true,
+    priorCount: 0,
+  });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].role, 'system');
+  assert.ok(messages[0].content.includes('waiting about 5 minute(s)'), 'wait duration carried');
+  assert.ok(messages[0].content.includes('never a canned status template'), 'the no-canned rule is in the prompt');
+  assert.ok(messages[0].content.includes('Same language as the user message'), 'language rule pinned');
+  assert.ok(messages[0].content.includes("never mention what language it is in"), 'no-meta rule pinned');
+  assert.ok(!messages[0].content.includes('say something NEW'), 'first fire carries no repeat warning');
+  assert.ok(messages[1].content.includes('Session title: 修复构建'));
+  assert.ok(messages[1].content.includes('an execution step (a tool/command) is still running'), 'tool-waiting context');
+  assert.ok(messages[1].content.includes('帮我把这个 bug 修一下'), 'user text carried');
+
+  const again = buildOwnerWaitUpdateMessages({ userText: 'hello', waitedMs: 11 * 60_000, waitingForTool: false, priorCount: 2 });
+  assert.ok(again[0].content.includes('waiting about 11 minute(s)'));
+  assert.ok(again[1].content.includes('say something NEW'), 'repeat fires demand fresh wording');
+  assert.ok(again[1].content.includes('2 such note(s)'), 'the prior count is carried');
+  assert.ok(again[1].content.includes('still thinking, organizing, or checking results'), 'non-tool context');
+
+  const long = buildOwnerWaitUpdateMessages({ userText: 'x'.repeat(5000), waitedMs: 60_000, waitingForTool: false, priorCount: 0 });
+  assert.ok(long[1].content.length < 1600, 'user text slice stays bounded');
+});
+
+test('runner: the wait heartbeat text is LLM-generated per fire — no canned strings remain', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(!source.includes('有一个执行步骤还在运行'), 'the fixed tool-waiting string is deleted');
+  assert.ok(!source.includes('这一轮仍在处理和核对中'), 'the fixed generic-waiting string is deleted');
+  assert.ok(!source.includes('One execution step is still running'), 'the English fixed string is deleted too');
+  assert.ok(!source.includes('still being processed and checked'), 'the English generic string is deleted too');
+  const emitter = source.indexOf('private async emitOwnerWaitHeartbeat(');
+  assert.ok(emitter > 0, 'the heartbeat emitter exists');
+  const body = source.slice(emitter, emitter + 2400);
+  assert.ok(body.includes('this.ownerWaitUpdateGenerator ?? generateOwnerWaitUpdate'),
+    'the seam defaults to the coworkUtil LLM generator');
+  assert.ok(body.includes("reason: 'generator returned empty'"),
+    'an empty generation emits NO bubble and backs off (no canned fallback)');
+  assert.ok(body.includes("kind: 'waiting'"), 'the bubble keeps the waiting kind for the renderer');
+  assert.ok(source.includes('activeSession.assistantOwnerTurnUserText = prompt;'),
+    'the turn user text is captured at entry for heartbeat language/topic context');
+});
+
+test('coworkUtil: generateOwnerWaitUpdate mirrors the ack call class', () => {
+  const source = read('src/main/libs/coworkUtil.ts');
+  const start = source.indexOf('export async function generateOwnerWaitUpdate(');
+  assert.ok(start > 0, 'generateOwnerWaitUpdate exists');
+  const body = source.slice(start, source.indexOf('\n}', start) + 2);
+  assert.ok(body.includes('buildOwnerWaitUpdateMessages(input)'), 'rides the pure prompt builder');
+  assert.ok(body.includes("thinking: 'disabled'") && body.includes("effort: 'off'"), 'no reasoning wait');
+  assert.ok(body.includes('attemptTimeoutMs: 4_000'), 'bounded per-attempt latency');
+  assert.ok(body.includes('fallbackLlmId'), 'fallback brain wired like titles/ack');
+  assert.ok(body.includes('sanitizeTurnAckReplyForInput(result.content'), 'shared input-aware sanitize');
 });

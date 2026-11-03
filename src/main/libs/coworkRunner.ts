@@ -46,7 +46,8 @@ import {
   buildCoworkSteerSdkMessage,
   buildCoworkSteerText,
 } from './coworkSteerChannel';
-import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply } from './coworkUtil';
+import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply, generateOwnerWaitUpdate } from './coworkUtil';
+import type { OwnerWaitUpdateInput } from './turnAckReply';
 import { buildDeterministicTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
@@ -1561,6 +1562,12 @@ interface ActiveSession {
   assistantOwnerLastVisibleAt?: number;
   assistantOwnerHeartbeatCount?: number;
   assistantOwnerWaitingForTool?: boolean;
+  /**
+   * The current turn's user message, captured at turn entry — the wait
+   * heartbeat's LLM line (emitOwnerWaitHeartbeat) reads it for language and
+   * topic context. Re-captured per turn at the entry arm site.
+   */
+  assistantOwnerTurnUserText?: string;
   /** Persistence-only flag; it does not identify whether the owner initiated the turn. */
   skipInitialUserMessage: boolean;
   /** Explicit owner-initiated turn, including UI starts whose user message is already persisted. */
@@ -2599,6 +2606,15 @@ export interface CoworkRunnerOptions {
     currentUserText: string;
   }) => Promise<boolean | null>;
   /**
+   * The wait heartbeat's text generator (owner decision 2026-11-04: no canned
+   * text in any bubble — the old fixed heartbeat strings are gone).
+   * Called per heartbeat fire with the live wait context; must return a short
+   * bot-voiced line or '' (an empty result emits NO bubble and backs off to
+   * the next window). Default when unset: the coworkUtil one-shot LLM
+   * generator on the Twin system brain. Tests inject a stub.
+   */
+  ownerWaitUpdateGenerator?: (input: OwnerWaitUpdateInput) => Promise<string>;
+  /**
    * Optional cerebellum (小脑) turn-end classifier behind the "Follow-Up
    * Tasks" (待跟进任务) bucket: one Noul over the session title + the turn's
    * final assistant message decides whether a completed turn on an
@@ -2790,6 +2806,7 @@ export class CoworkRunner extends EventEmitter {
   private cerebellumIntuition?: CoworkRunnerOptions['cerebellumIntuition'];
   private cerebellumEffortSelector?: CoworkRunnerOptions['cerebellumEffortSelector'];
   private cerebellumTurnAckGate?: CoworkRunnerOptions['cerebellumTurnAckGate'];
+  private ownerWaitUpdateGenerator?: CoworkRunnerOptions['ownerWaitUpdateGenerator'];
   private cerebellumSessionFollowUpGate?: CoworkRunnerOptions['cerebellumSessionFollowUpGate'];
   /**
    * Per-session sticky state for the auto effort rung: the last escalated
@@ -3006,6 +3023,7 @@ export class CoworkRunner extends EventEmitter {
     this.cerebellumIntuition = options?.cerebellumIntuition;
     this.cerebellumEffortSelector = options?.cerebellumEffortSelector;
     this.cerebellumTurnAckGate = options?.cerebellumTurnAckGate;
+    this.ownerWaitUpdateGenerator = options?.ownerWaitUpdateGenerator;
     this.cerebellumSessionFollowUpGate = options?.cerebellumSessionFollowUpGate;
     this.localTurnStallTimeoutMs = Math.max(
       0,
@@ -10932,6 +10950,7 @@ export class CoworkRunner extends EventEmitter {
               deterministicOpening,
             );
           }
+          activeSession.assistantOwnerTurnUserText = prompt;
           this.armAssistantOwnerWaitTimer(sessionId, activeSession);
           if (!activeSession.assistantOwnerHeartbeatTimer) {
             // The heartbeat is the last-resort "still working" bubble (session
@@ -12670,21 +12689,47 @@ export class CoworkRunner extends EventEmitter {
         this.armAssistantOwnerWaitTimer(sessionId, activeSession)
         return
       }
-      const message = activeSession.assistantOwnerWaitingForTool
-        ? tApp(
-          '有一个执行步骤还在运行，任务没有停止。我会继续等它完成并核对结果；有新的关键进展或需要你操作时，我会及时告诉你。',
-          'One execution step is still running; the task has not stopped. I’ll wait for it to finish and check the result. I’ll let you know when there is meaningful progress or anything that needs your action.',
-        )
-        : tApp(
-          '这一轮仍在处理和核对中，暂时没有新的关键结果。我会继续推进；如果需要你决定或操作，我会马上告诉你。',
-          'This turn is still being processed and checked, with no new key result yet. I’ll keep moving it forward and let you know immediately if a decision or action is needed from you.',
-        )
-      const outcome = this.emitAssistantOwnerUpdate(sessionId, { message, kind: 'waiting' }, activeSession)
+      void this.emitOwnerWaitHeartbeat(sessionId, activeSession)
+    }, delayMs)
+    activeSession.assistantOwnerHeartbeatTimer.unref?.()
+  }
+
+  /**
+   * The wait heartbeat's bubble text is written by the LLM per fire — the
+   * bot's own words about the live wait context (owner decision 2026-11-04:
+   * NO canned text in any bubble; the old fixed heartbeat strings are
+   * deleted). An empty/failed generation emits NOTHING (no bubble beats a
+   * canned one) and the timer backs off to the next window so a later stretch
+   * can try again.
+   */
+  private async emitOwnerWaitHeartbeat(sessionId: string, activeSession: ActiveSession): Promise<void> {
+    try {
+      const waitedMs = Date.now() - (activeSession.assistantOwnerLastVisibleAt ?? Date.now())
+      const generator = this.ownerWaitUpdateGenerator ?? generateOwnerWaitUpdate
+      const text = await generator({
+        userText: activeSession.assistantOwnerTurnUserText ?? '',
+        sessionTitle: this.store.getSession(sessionId)?.title ?? null,
+        waitedMs,
+        waitingForTool: activeSession.assistantOwnerWaitingForTool === true,
+        priorCount: activeSession.assistantOwnerHeartbeatCount ?? 0,
+      }).catch(() => '')
+      if (!text) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: 'generator returned empty' })
+        activeSession.assistantOwnerHeartbeatCount = (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
+        activeSession.assistantOwnerLastVisibleAt = Date.now()
+        this.armAssistantOwnerWaitTimer(sessionId, activeSession)
+        return
+      }
+      const outcome = this.emitAssistantOwnerUpdate(sessionId, { message: text, kind: 'waiting' }, activeSession)
       if (!outcome.shown) {
         coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: outcome.reason ?? 'unknown' })
       }
-    }, delayMs)
-    activeSession.assistantOwnerHeartbeatTimer.unref?.()
+    } catch (error) {
+      coworkLog('WARN', 'turn:ack', 'owner wait heartbeat failed; backing off to the next window', {
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private emitAssistantOwnerUpdate(
