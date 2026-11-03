@@ -47,7 +47,7 @@ import {
   buildCoworkSteerText,
 } from './coworkSteerChannel';
 import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply } from './coworkUtil';
-import { buildFallbackTurnAckReply, resolveTurnAckActivity } from './turnAckReply';
+import { buildInstantTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
@@ -522,9 +522,8 @@ const DELETE_TOOL_NAMES = new Set(['delete', 'remove', 'unlink', 'rmdir']);
 // per task_id, so the subagent panel updates don't flood the message stream.
 const SUBAGENT_PROGRESS_THROTTLE_MS = 1_000;
 const ASSISTANT_OWNER_UPDATE_PER_TURN_CAP = 6;
-export const ASSISTANT_OWNER_WAIT_INITIAL_MS = 5 * 60_000;
+export const ASSISTANT_OWNER_WAIT_INITIAL_MS = 3 * 60_000;
 export const ASSISTANT_OWNER_WAIT_MAX_MS = 30 * 60_000;
-export const TURN_ACK_OPENING_FALLBACK_MS = 250;
 // Tools that never mutate the workspace or external state. Used by 'plan'
 // permission mode to enforce read-only behavior; owner_update only writes the
 // session's own UI transcript. Bash is intentionally excluded (it can do
@@ -1541,8 +1540,23 @@ interface ActiveSession {
    */
   dshTurnAckSerial?: number;
   dshTurnAckVisibleTextSeen?: boolean;
-  dshTurnAckFallbackTimer?: NodeJS.Timeout | null;
   dshTurnAckOpeningEmitted?: boolean;
+  /**
+   * 2026-11-03 rework: the opening bubble is emitted SYNCHRONOUSLY at the
+   * early-ack site (same tick as the turnAck phrase) instead of via a 250ms
+   * timer — the timer lost to eventloop:lag stalls (22s measured) and to the
+   * LLM ack race, so owners saw no first sentence at all or a late robotic
+   * one. The LLM ack now REFINES this bubble in place (title pattern) rather
+   * than racing it.
+   */
+  /** Message id of the opening bubble, for the in-place LLM refine. */
+  dshTurnAckOpeningMessageId?: string;
+  /** Current opening text (instant, then refined); injected into the turn prompt. */
+  dshTurnAckOpeningText?: string;
+  /** Set once the LLM refine replaced the instant text (refine runs at most once). */
+  dshTurnAckOpeningRefined?: boolean;
+  /** Set when the MODEL produced its own visible text — cancels the refine. */
+  dshTurnAckModelTextSeen?: boolean;
   finalizingTurn?: boolean;
   finalizationAttempted?: boolean;
   finalizationFallbackText?: string;
@@ -3048,7 +3062,6 @@ export class CoworkRunner extends EventEmitter {
   private removeActiveSession(sessionId: string, activeSession: ActiveSession): void {
     if (this.activeSessions.get(sessionId) !== activeSession) return;
     activeSession.localTurnState = 'closing';
-    this.cancelTurnAckOpeningFallback(activeSession);
     if (activeSession.assistantOwnerHeartbeatTimer) {
       clearTimeout(activeSession.assistantOwnerHeartbeatTimer);
       activeSession.assistantOwnerHeartbeatTimer = null;
@@ -8746,7 +8759,7 @@ export class CoworkRunner extends EventEmitter {
     }
   }
 
-  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode; imTrust?: IMTrustContext } = {}): Promise<void> {
+  async continueSession(sessionId: string, prompt: string, options: { systemPrompt?: string; skillIds?: string[]; skipUserMessage?: boolean; permissionMode?: CoworkPermissionMode; imTrust?: IMTrustContext; acknowledgeOwner?: boolean } = {}): Promise<void> {
     this.stoppedSessions.delete(sessionId);
 
     // Apply mid-session permission mode change if requested.
@@ -8762,16 +8775,25 @@ export class CoworkRunner extends EventEmitter {
     if (!activeSession) {
       // If not active, start a new run. Auto-approve rules default to the
       // persisted app-level list so continuing a session still honors them.
+      // acknowledgeOwner must ride along (2026-11-03 live test, session
+      // fd23405b turn 2): the submission persists the owner's text and calls
+      // with skipUserMessage: true, so without this flag the startSession
+      // fallback silently dropped EVERY follow-up turn's first sentence.
       await this.startSession(sessionId, prompt, {
         skillIds: options.skillIds,
         systemPrompt: options.systemPrompt,
         skipInitialUserMessage: options.skipUserMessage,
+        ...(options.acknowledgeOwner ? { acknowledgeOwner: true } : {}),
         permissionMode: options.permissionMode,
         ...(options.imTrust ? { imTrust: options.imTrust } : {}),
         autoApproveTools: getPersistedAutoApproveTools(),
       });
       return;
     }
+    // Per-turn owner flag: owner submissions mark it true; machine flows
+    // (scheduler, IM relay, cross-session) leave it false so a live session
+    // object never inherits the previous turn's owner acknowledgment.
+    activeSession.acknowledgeOwner = options.acknowledgeOwner === true;
     // Trust can only be NARROWED across turns, never widened (a group turn
     // must not inherit a better grant from an earlier turn of the same id).
     activeSession.imTrust = this.mergeImTrust(activeSession.imTrust, options.imTrust);
@@ -10841,6 +10863,19 @@ export class CoworkRunner extends EventEmitter {
         resolveEffectiveEffort(activeSession.effortOverride)
       activeSession.finalizationAttempted = false;
       activeSession.finalizationFallbackText = undefined;
+      // Reset the ack state unconditionally so a gated-out turn (professional
+      // mode, host-authored) can never leak the previous turn's opening text
+      // into its prompt injection below. dshTurnAckSerial is deliberately NOT
+      // reset: it stays monotonic per ActiveSession object so an in-flight
+      // refine from turn N can never pass turn N+1's gate (the 2026-10-20
+      // double-ack incident).
+      let assistantOwnerChatForTurn = false;
+      activeSession.dshTurnAckVisibleTextSeen = false;
+      activeSession.dshTurnAckOpeningEmitted = false;
+      activeSession.dshTurnAckOpeningMessageId = undefined;
+      activeSession.dshTurnAckOpeningText = undefined;
+      activeSession.dshTurnAckOpeningRefined = false;
+      activeSession.dshTurnAckModelTextSeen = false;
       // Turn acknowledgment fires EARLY with the best tier known without any
       // round-trip: the explicit pick's tier when set, else generic. This
       // covers cold-start windows (the free relay's first key bootstrap has
@@ -10849,32 +10884,46 @@ export class CoworkRunner extends EventEmitter {
       // newer turnAck message wins the renderer's tail scan by construction).
       try {
         const ackSourceChannel = this.store.getConversationSourceContextBySession(sessionId)?.sourceChannel
-        // Pure host-authored turns carry no user message. Already-persisted
-        // cross-session deliveries are different: the owner still needs an
-        // immediate, contextual opening even though insertion is not repeated.
+        // First-sentence bubbles are an assistant-mode promise (the owner's
+        // 2026-11-03 requirement); professional mode streams the model's own
+        // text directly and needs no host opening. Pure host-authored turns
+        // carry no user message. Already-persisted cross-session deliveries
+        // are different: the owner still needs an immediate, contextual
+        // opening even though insertion is not repeated.
+        assistantOwnerChatForTurn = getPersistedChatExperienceMode() === 'assistant'
+          && this.isAssistantModeOwnerChatSession(sessionId);
         const crossSessionDelivery = /<cross_session_message\b|\[ORCH-NOTIFY\]/i.test(prompt);
-        if (ackSourceChannel === 'cowork_ui' && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
+        if (ackSourceChannel === 'cowork_ui' && assistantOwnerChatForTurn
+          && (activeSession.acknowledgeOwner || !activeSession.skipInitialUserMessage || crossSessionDelivery)) {
           const earlyAckTier = effectiveEffortRung != null
             ? mapCerebellumEffortRungToTurnAckTier(effectiveEffortRung)
             : 'generic'
           this.emitTurnAck(sessionId, earlyAckTier, prompt)
           coworkLog('INFO', 'turn:ack', 'turn acknowledgment emitted', { sessionId, tier: earlyAckTier })
-          // LLM ack bubble: the phrase above is a template in the activity
-          // indicator; this fires a one-shot cognitive call (title-class
-          // latency) in parallel with everything below, so a real
-          // LLM-written bubble can land while the turn is still pre-flight
-          // or mid-reasoning. Fully fire-and-forget — the gates inside drop
-          // it when the turn beats it to visible text. The turn's
-          // ActiveSession object and the serial AT KICK TIME are both
-          // captured: the resolve-time gate requires object identity, which
-          // serial equality alone cannot provide (a fresh object per turn
-          // restarts the serial at 1).
+          // The opening bubble is emitted SYNCHRONOUSLY here — same tick as
+          // the phrase above. 2026-11-03 (session acb5961b): the previous
+          // 250ms timer + LLM-ack race both lived on timers that an
+          // eventloop:lag stall (22s measured during a cold kernel boot)
+          // starved, so the owner's first bubble lost to the model reply or
+          // arrived as late robotic boilerplate. Same-tick emission is stall-
+          // immune; the serial AT KICK TIME and the ActiveSession object are
+          // captured for the refine gate below (object identity, which serial
+          // equality alone cannot provide — a fresh object per turn restarts
+          // the serial at 1).
           const turnAckSerial = (activeSession.dshTurnAckSerial ?? 0) + 1;
           activeSession.dshTurnAckSerial = turnAckSerial;
-          activeSession.dshTurnAckVisibleTextSeen = false;
-          activeSession.dshTurnAckOpeningEmitted = false;
+          this.emitTurnAckOpeningBubble(
+            sessionId,
+            prompt,
+            activeSession,
+            turnAckSerial,
+            buildInstantTurnAckOpening(prompt, `${sessionId}:${turnAckSerial}`),
+          );
           this.armAssistantOwnerWaitTimer(sessionId, activeSession);
-          this.armTurnAckOpeningFallback(sessionId, prompt, activeSession, turnAckSerial);
+          // LLM refine (fire-and-forget): replaces the instant opening's
+          // content in place once it lands — the title-generation pattern —
+          // never emitting a second bubble. Dropped when the model's own
+          // visible text arrives first.
           void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial);
         }
       } catch { /* best-effort: the ack must never break a turn */ }
@@ -10944,7 +10993,20 @@ export class CoworkRunner extends EventEmitter {
       // env sync, the host-tool build, and the agent pre-warm above; collect
       // it now (the first heavy await on the turn path).
       const volatileBlocks = await volatileContextPromise
-      const volatileHead = [localTimePrompt, volatileBlocks]
+      // Assistant-mode anti-echo: tell the model verbatim what first response
+      // the owner already received, so it continues with substance instead of
+      // repeating the acknowledgment (owner requirement 2026-11-03). The text
+      // is read at assembly time, so a refine that already landed rides along.
+      const instantAckNotice = assistantOwnerChatForTurn && activeSession.dshTurnAckOpeningText
+        ? [
+          '<instant_ack>',
+          'An instant first response has ALREADY been sent to the user for this message:',
+          `"${activeSession.dshTurnAckOpeningText}"`,
+          'Treat it as already said. Do not repeat, rephrase, or open your reply with another acknowledgment — continue directly with substance.',
+          '</instant_ack>',
+        ].join('\n')
+        : ''
+      const volatileHead = [localTimePrompt, volatileBlocks, instantAckNotice]
         .filter((section) => section?.trim())
         .join('\n\n')
       // Kernel-owned session titles derive from the FIRST human message in
@@ -11350,6 +11412,7 @@ export class CoworkRunner extends EventEmitter {
               && ((message as { content?: string }).content ?? '').trim().length > 0
             ) {
               activeSession.dshTurnAckVisibleTextSeen = true
+              activeSession.dshTurnAckModelTextSeen = true
               this.noteAssistantOwnerVisible(sessionId, activeSession)
             }
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
@@ -11371,6 +11434,7 @@ export class CoworkRunner extends EventEmitter {
             armDshStallWatchdog();
             if (metadata?.isThinking !== true && content.trim().length > 0) {
               activeSession.dshTurnAckVisibleTextSeen = true;
+              activeSession.dshTurnAckModelTextSeen = true;
               this.noteAssistantOwnerVisible(sessionId, activeSession);
             }
             this.dshStreamUi.onFinalize(sessionId, messageId, content, metadata);
@@ -12542,7 +12606,6 @@ export class CoworkRunner extends EventEmitter {
 
   private noteAssistantOwnerVisible(sessionId: string, activeSession: ActiveSession, waiting = false): void {
     if (this.activeSessions.get(sessionId) !== activeSession || !this.isAssistantModeOwnerChatSession(sessionId)) return
-    this.cancelTurnAckOpeningFallback(activeSession)
     activeSession.assistantOwnerLastVisibleAt = Date.now()
     activeSession.assistantOwnerHeartbeatCount = waiting
       ? (activeSession.assistantOwnerHeartbeatCount ?? 0) + 1
@@ -12624,6 +12687,7 @@ export class CoworkRunner extends EventEmitter {
     })
     activeSession.assistantOwnerUpdateCount = count + 1
     activeSession.dshTurnAckVisibleTextSeen = true
+    activeSession.dshTurnAckModelTextSeen = true
     this.noteAssistantOwnerVisible(sessionId, activeSession, kind === 'waiting')
     this.emit('message', sessionId, stored)
     return {
@@ -16612,42 +16676,19 @@ export class CoworkRunner extends EventEmitter {
     this.emit('message', sessionId, message);
   }
 
-  private cancelTurnAckOpeningFallback(turn: ActiveSession): void {
-    if (!turn.dshTurnAckFallbackTimer) return;
-    clearTimeout(turn.dshTurnAckFallbackTimer);
-    turn.dshTurnAckFallbackTimer = null;
-  }
-
-  private armTurnAckOpeningFallback(
-    sessionId: string,
-    userPrompt: string,
-    turn: ActiveSession,
-    turnSerial: number,
-  ): void {
-    this.cancelTurnAckOpeningFallback(turn);
-    if (turn.dshTurnAckOpeningEmitted || turn.dshTurnAckVisibleTextSeen) return;
-    turn.dshTurnAckFallbackTimer = setTimeout(() => {
-      turn.dshTurnAckFallbackTimer = null;
-      this.emitTurnAckOpeningBubble(sessionId, userPrompt, turn, turnSerial, null, true);
-    }, TURN_ACK_OPENING_FALLBACK_MS);
-    turn.dshTurnAckFallbackTimer.unref?.();
-  }
-
   private emitTurnAckOpeningBubble(
     sessionId: string,
     userPrompt: string,
     turn: ActiveSession,
     turnSerial: number,
-    generatedReply: string | null,
-    fallback: boolean,
+    instantReply: string,
   ): void {
     if (this.activeSessions.get(sessionId) !== turn
       || turn.dshTurnAckSerial !== turnSerial
       || turn.dshTurnAckVisibleTextSeen
       || turn.dshTurnAckOpeningEmitted) return;
-    const reply = generatedReply?.trim() || buildFallbackTurnAckReply(userPrompt);
+    const reply = instantReply.trim();
     if (!reply) return;
-    this.cancelTurnAckOpeningFallback(turn);
     const message = this.store.addMessage(sessionId, {
       type: 'assistant',
       content: reply,
@@ -16655,28 +16696,45 @@ export class CoworkRunner extends EventEmitter {
     });
     turn.dshTurnAckOpeningEmitted = true;
     turn.dshTurnAckVisibleTextSeen = true;
+    turn.dshTurnAckOpeningMessageId = message.id;
+    turn.dshTurnAckOpeningText = reply;
+    turn.dshTurnAckOpeningRefined = false;
     turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
     this.noteAssistantOwnerVisible(sessionId, turn);
     this.emit('message', sessionId, message);
-    coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, fallback });
+    coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, instant: true });
   }
 
+  /**
+   * LLM refine of the instant opening bubble (title pattern: instant local
+   * placeholder, async refinement updates it in place). Runs once per turn;
+   * dropped once the MODEL produced its own visible text — polishing the ack
+   * after the answer arrived would read as noise, and the delta pipe forwards
+   * a full-content rewrite for the replacement, never a duplicate bubble.
+   */
   private async emitTurnAckReplyBubble(
     sessionId: string,
     userPrompt: string,
     turn: ActiveSession,
     turnSerial: number,
   ): Promise<void> {
-    if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') {
-      this.emitTurnAckOpeningBubble(sessionId, userPrompt, turn, turnSerial, null, true);
-      return;
-    }
+    if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
     try {
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
       const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
-      this.emitTurnAckOpeningBubble(sessionId, userPrompt, turn, turnSerial, generatedReply || null, !generatedReply);
+      if (!generatedReply) return;
+      if (this.activeSessions.get(sessionId) !== turn
+        || turn.dshTurnAckSerial !== turnSerial
+        || turn.dshTurnAckOpeningRefined
+        || turn.dshTurnAckModelTextSeen
+        || !turn.dshTurnAckOpeningMessageId) return;
+      turn.dshTurnAckOpeningRefined = true;
+      turn.dshTurnAckOpeningText = generatedReply;
+      this.updateMessageMerged(sessionId, turn.dshTurnAckOpeningMessageId, { content: generatedReply });
+      this.emit('messageUpdate', sessionId, turn.dshTurnAckOpeningMessageId, generatedReply);
+      coworkLog('INFO', 'turn:ack', 'opening bubble refined in place', { sessionId });
     } catch (error) {
-      coworkLog('WARN', 'turn:ack', 'llm ack bubble skipped; deterministic opening timer remains armed', {
+      coworkLog('WARN', 'turn:ack', 'llm ack refine skipped; instant opening stays', {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       });

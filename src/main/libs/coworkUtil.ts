@@ -1356,9 +1356,11 @@ export function setTurnAckReplyBrainProvider(provider: (() => MetabotBrainOption
  * One-shot LLM acknowledgment for a turn (first-response latency). Mirrors
  * generateSessionTitle: a direct cognitive-layer call — no kernel spawn, no
  * agent loop — so it returns in seconds while the DSH turn is still warming
- * up. Returns '' when the call fails or the output is unusable; the runner
- * then emits a deterministic task-focused opening instead of leaving no
- * persistent first bubble. Single attempt, no fallback brain.
+ * up. Since 2026-11-03 this text REFINES the already-shown instant opening
+ * bubble (the runner updates the bubble in place) instead of creating it, so
+ * a slow or failed call no longer costs the owner their first sentence.
+ * Returns '' when the call fails or the output is unusable; the runner keeps
+ * the deterministic instant opening. Primary + fallback brain, like titles.
  */
 export async function generateTurnAckReply(userText: string, sessionTitle?: string | null): Promise<string> {
   try {
@@ -1382,6 +1384,11 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
       {
         llmId: brain?.llmId ?? undefined,
         llmProvider: brain?.llmProvider ?? undefined,
+        // Same brain pair the session title rides: a hung primary relay
+        // (2026-11-03 acb5961b — the primary ack call timed out with no
+        // retry) falls back once, so the refine keeps a chance to land.
+        fallbackLlmId: brain?.fallbackLlmId ?? undefined,
+        fallbackLlmProvider: brain?.fallbackLlmProvider ?? undefined,
         thinking: 'disabled',
         // An ack must never wait on reasoning (same rationale as titles).
         effort: 'off',
