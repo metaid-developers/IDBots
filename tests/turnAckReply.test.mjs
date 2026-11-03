@@ -439,3 +439,17 @@ test('main.ts: the JEV relay credential warm rides the idle startup tier', () =>
   assert.ok(source.slice(warm, warm + 500).includes('} catch {'),
     'the warm is fail-silent — a failed warm leaves the on-demand bootstrap as the fallback');
 });
+
+// ---------------------------------------------------------------------------
+// 2026-11-03 session 32a29372: stall-killed ack, bounced opening narration
+// ---------------------------------------------------------------------------
+
+test('runner: owner_update opening suppression keys on a real delivered opening, not any visible text', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes("if (kind === 'opening' && activeSession.dshTurnAckOpeningEmitted)"),
+    'only a delivered opening bubble suppresses another opening (session 32a29372)');
+  assert.ok(!source.includes("if (kind === 'opening' && activeSession.dshTurnAckVisibleTextSeen)"),
+    'the broad visible-text flag no longer suppresses openings');
+  assert.ok(source.includes("if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true"),
+    'a delivered owner_update opening marks the slot (second opening still rejected)');
+});

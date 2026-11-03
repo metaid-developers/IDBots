@@ -12686,7 +12686,15 @@ export class CoworkRunner extends EventEmitter {
     if (kind !== 'opening' && kind !== 'milestone' && kind !== 'problem' && kind !== 'waiting') {
       return { shown: false, reason: 'kind must be opening, milestone, problem or waiting' }
     }
-    if (kind === 'opening' && activeSession.dshTurnAckVisibleTextSeen) {
+    // Suppress a second OPENING only when an opening bubble actually went out:
+    // the host ack (emitTurnAckOpeningBubble/emitTurnAckReplyBubble) or an
+    // earlier owner_update 'opening' — both set dshTurnAckOpeningEmitted. This
+    // used to read dshTurnAckVisibleTextSeen, which ANY visible assistant event
+    // arms; in session 32a29372 a thinking bubble armed it with no real opening
+    // delivered, the model's one opening narration was bounced, and it then
+    // looped tools for minutes with no user-facing progress text. Thinking is
+    // process, not an opening.
+    if (kind === 'opening' && activeSession.dshTurnAckOpeningEmitted) {
       return { shown: false, reason: 'opening already delivered; report only new milestones or problems' }
     }
     const count = activeSession.assistantOwnerUpdateCount ?? 0
@@ -12702,6 +12710,7 @@ export class CoworkRunner extends EventEmitter {
       metadata: { narration: true, ownerUpdateKind: kind },
     })
     activeSession.assistantOwnerUpdateCount = count + 1
+    if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true
     activeSession.dshTurnAckVisibleTextSeen = true
     this.noteAssistantOwnerVisible(sessionId, activeSession, kind === 'waiting')
     this.emit('message', sessionId, stored)
