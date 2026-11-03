@@ -420,3 +420,14 @@ test('runner + main.ts: the ack gate is a runner option wired to the cerebellum 
   assert.ok(!logCall.includes('currentUserText'),
     'the gate log never carries user text');
 });
+
+test('main.ts: the JEV relay credential warm rides the idle startup tier', () => {
+  const source = read('src/main/main.ts');
+  assert.ok(source.includes("{ label: 'jev relay credential warm', run: warmJevRelayCredentials }"),
+    'the warm is an idle-tier step (runs after service registration, off the startup path)');
+  const warm = source.indexOf('const warmJevRelayCredentials =');
+  assert.ok(warm > 0 && source.slice(warm, warm + 400).includes('resolveJevRelayCredentials()'),
+    'the warm resolves the relay credentials (persisted hit is a pure local read)');
+  assert.ok(source.slice(warm, warm + 500).includes('} catch {'),
+    'the warm is fail-silent — a failed warm leaves the on-demand bootstrap as the fallback');
+});

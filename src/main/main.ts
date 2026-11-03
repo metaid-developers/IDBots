@@ -5386,7 +5386,25 @@ const startStartupIdleTier = (): void => {
     { label: 'group task comm stats backfill', run: runStartupGroupTaskCommStatsBackfill },
     { label: 'nightly services', run: startStartupNightlyServices },
     { label: 'idle sync jobs', run: runInitialSqliteBackgroundJobs },
+    { label: 'jev relay credential warm', run: warmJevRelayCredentials },
   ]);
+};
+
+/**
+ * First-turn first-sentence latency (2026-11-03, session 3ecd2a2f: the ack
+ * landed ~17s after the owner's message): when no relay key is persisted, the
+ * identity-signed bootstrap — observed at 15s+ — used to fire inside the first
+ * turn's ack/cerebellum calls. Resolving the credentials here moves that cost
+ * into the idle startup tier; a persisted key makes this a pure local read.
+ * Fail-silent: a failed warm changes nothing, the first turn just bootstraps
+ * on demand as before.
+ */
+const warmJevRelayCredentials = async (): Promise<void> => {
+  try {
+    await resolveJevRelayCredentials();
+  } catch {
+    // best-effort warm — the on-demand path stays the fallback
+  }
 };
 
 /**
