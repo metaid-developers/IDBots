@@ -439,3 +439,46 @@ test('main.ts: the JEV relay credential warm rides the idle startup tier', () =>
   assert.ok(source.slice(warm, warm + 500).includes('} catch {'),
     'the warm is fail-silent — a failed warm leaves the on-demand bootstrap as the fallback');
 });
+
+// ---------------------------------------------------------------------------
+// 2026-11-03 session 32a29372: stall-killed ack, bounced opening narration
+// ---------------------------------------------------------------------------
+
+test('runner: owner_update opening suppression keys on a real delivered opening, not any visible text', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes("if (kind === 'opening' && activeSession.dshTurnAckOpeningEmitted)"),
+    'only a delivered opening bubble suppresses another opening (session 32a29372)');
+  assert.ok(!source.includes("if (kind === 'opening' && activeSession.dshTurnAckVisibleTextSeen)"),
+    'the broad visible-text flag no longer suppresses openings');
+  assert.ok(source.includes("if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true"),
+    'a delivered owner_update opening marks the slot (second opening still rejected)');
+});
+
+test('runner: an empty first ack attempt gets exactly one retry, gates re-applied across the wait', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const start = source.indexOf('private async emitTurnAckReplyBubble(');
+  const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
+  // A stall kills both attempts in one tick (their 4s timeout timers fire late
+  // together); one retry on the recovered loop completes the fail-open posture.
+  assert.ok(body.includes('if (!generatedReply) {'), 'the retry branch keys on an empty first attempt');
+  assert.ok(body.includes("coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt'"),
+    'the retry logs itself');
+  assert.ok(body.includes('setTimeout(resolve, 1500)'), 'the retry waits 1.5s for the loop to recover');
+  assert.ok(body.includes('generatedReply = await generateTurnAckReply(userPrompt, sessionTitle)'),
+    'the retry is a fresh call without the gate abort signal');
+  assert.equal(body.split('generateTurnAckReply(userPrompt').length - 1, 2,
+    'at most two ack calls per turn (first attempt + one retry)');
+  // A gate skip never retries (the abort was intentional).
+  const skipIdx = body.indexOf("first sentence skipped: cerebellum judged the message directly answerable");
+  const retryIdx = body.indexOf('retrying first sentence after an empty first attempt');
+  assert.ok(skipIdx > 0 && skipIdx < retryIdx, 'the skip return precedes the retry branch');
+});
+
+test('runner: the owner wait heartbeat logs due-but-suppressed outcomes', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  assert.ok(source.includes("'owner wait heartbeat suppressed'"), 'a suppressed heartbeat is logged with its reason');
+  assert.ok(source.includes("'owner wait heartbeat deferred: permission prompt pending'"), 'permission deferrals are logged');
+  assert.ok(source.includes("'owner wait heartbeat dropped: turn no longer active'"), 'stale-turn drops are logged');
+  assert.ok(source.includes("'owner wait heartbeat not armed for this turn'"),
+    'an entry-arm early-exit is logged (the session-32a29372 silent-stretch diagnostic)');
+});

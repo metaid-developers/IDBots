@@ -10933,6 +10933,12 @@ export class CoworkRunner extends EventEmitter {
             );
           }
           this.armAssistantOwnerWaitTimer(sessionId, activeSession);
+          if (!activeSession.assistantOwnerHeartbeatTimer) {
+            // The heartbeat is the last-resort "still working" bubble (session
+            // 32a29372: a 6-minute tool loop with no text and no heartbeat —
+            // if it never even arms, say so in the log).
+            coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat not armed for this turn', { sessionId });
+          }
           // The LLM first sentence (fire-and-forget): the bot's own words
           // about THIS message, emitted as the first bubble when the one-shot
           // call lands — but ONLY when the cerebellum ack gate inside says the
@@ -12650,8 +12656,16 @@ export class CoworkRunner extends EventEmitter {
     const delayMs = Math.max(1, waitWindowMs - (Date.now() - lastVisibleAt))
     activeSession.assistantOwnerHeartbeatTimer = setTimeout(() => {
       activeSession.assistantOwnerHeartbeatTimer = null
-      if (this.activeSessions.get(sessionId) !== activeSession || activeSession.abortController.signal.aborted) return
+      // 2026-11-03 session 32a29372: a turn looped tools for ~6 minutes with
+      // no user-facing text and the wait heartbeat never appeared in the
+      // transcript — the guards below used to skip silently. Log every
+      // due-but-suppressed heartbeat so the next occurrence self-explains.
+      if (this.activeSessions.get(sessionId) !== activeSession || activeSession.abortController.signal.aborted) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat dropped: turn no longer active', { sessionId })
+        return
+      }
       if (activeSession.pendingPermission) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat deferred: permission prompt pending', { sessionId })
         activeSession.assistantOwnerLastVisibleAt = Date.now()
         this.armAssistantOwnerWaitTimer(sessionId, activeSession)
         return
@@ -12665,7 +12679,10 @@ export class CoworkRunner extends EventEmitter {
           '这一轮仍在处理和核对中，暂时没有新的关键结果。我会继续推进；如果需要你决定或操作，我会马上告诉你。',
           'This turn is still being processed and checked, with no new key result yet. I’ll keep moving it forward and let you know immediately if a decision or action is needed from you.',
         )
-      this.emitAssistantOwnerUpdate(sessionId, { message, kind: 'waiting' }, activeSession)
+      const outcome = this.emitAssistantOwnerUpdate(sessionId, { message, kind: 'waiting' }, activeSession)
+      if (!outcome.shown) {
+        coworkLog('DEBUG', 'turn:ack', 'owner wait heartbeat suppressed', { sessionId, reason: outcome.reason ?? 'unknown' })
+      }
     }, delayMs)
     activeSession.assistantOwnerHeartbeatTimer.unref?.()
   }
@@ -12686,7 +12703,15 @@ export class CoworkRunner extends EventEmitter {
     if (kind !== 'opening' && kind !== 'milestone' && kind !== 'problem' && kind !== 'waiting') {
       return { shown: false, reason: 'kind must be opening, milestone, problem or waiting' }
     }
-    if (kind === 'opening' && activeSession.dshTurnAckVisibleTextSeen) {
+    // Suppress a second OPENING only when an opening bubble actually went out:
+    // the host ack (emitTurnAckOpeningBubble/emitTurnAckReplyBubble) or an
+    // earlier owner_update 'opening' — both set dshTurnAckOpeningEmitted. This
+    // used to read dshTurnAckVisibleTextSeen, which ANY visible assistant event
+    // arms; in session 32a29372 a thinking bubble armed it with no real opening
+    // delivered, the model's one opening narration was bounced, and it then
+    // looped tools for minutes with no user-facing progress text. Thinking is
+    // process, not an opening.
+    if (kind === 'opening' && activeSession.dshTurnAckOpeningEmitted) {
       return { shown: false, reason: 'opening already delivered; report only new milestones or problems' }
     }
     const count = activeSession.assistantOwnerUpdateCount ?? 0
@@ -12702,6 +12727,7 @@ export class CoworkRunner extends EventEmitter {
       metadata: { narration: true, ownerUpdateKind: kind },
     })
     activeSession.assistantOwnerUpdateCount = count + 1
+    if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true
     activeSession.dshTurnAckVisibleTextSeen = true
     this.noteAssistantOwnerVisible(sessionId, activeSession, kind === 'waiting')
     this.emit('message', sessionId, stored)
@@ -16757,7 +16783,7 @@ export class CoworkRunner extends EventEmitter {
         });
       }
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
+      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
       if (gatePromise) {
         // Emission latency is max(ack call, gate budget) — the gate settles
         // within its own 1.5s abort window, long before the ack's 4s attempt
@@ -16768,7 +16794,26 @@ export class CoworkRunner extends EventEmitter {
           return;
         }
       }
-      if (!generatedReply) return;
+      if (!generatedReply) {
+        // 2026-11-03 session 32a29372: a main-process stall kills BOTH attempts
+        // in one tick — their 4s timeout timers fire late and simultaneously —
+        // leaving the turn with no first sentence even though the gate failed
+        // open. One retry on the recovered loop completes the fail-open
+        // posture; the identity/visible-text drop gates re-apply across the
+        // wait, so a retry never lands on a settled or superseded turn.
+        if (this.activeSessions.get(sessionId) !== turn
+          || turn.dshTurnAckSerial !== turnSerial
+          || turn.dshTurnAckVisibleTextSeen
+          || turn.dshTurnAckOpeningEmitted) return;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (this.activeSessions.get(sessionId) !== turn
+          || turn.dshTurnAckSerial !== turnSerial
+          || turn.dshTurnAckVisibleTextSeen
+          || turn.dshTurnAckOpeningEmitted) return;
+        coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt', { sessionId });
+        generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+        if (!generatedReply) return;
+      }
       if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen

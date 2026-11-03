@@ -202,6 +202,28 @@ test('a second opening is rejected once an opening or real reply is already visi
   assert.equal(store.messages.length, 1)
 })
 
+// 2026-11-03 session 32a29372: the model's one opening narration was bounced
+// ("opening already delivered") because visible text (a thinking bubble) had
+// armed dshTurnAckVisibleTextSeen with NO real opening delivered, and the
+// model then looped tools for ~6 minutes with no user-facing progress. The
+// suppression now keys on dshTurnAckOpeningEmitted — only a real opening
+// bubble (the host ack or an earlier owner_update 'opening') suppresses
+// another; thinking/process text is not an opening.
+test('visible thinking without a real opening no longer suppresses owner_update opening', async () => {
+  const { runner, store } = setup()
+  const active = runner.activeSessions.get('s1')
+  active.dshTurnAckVisibleTextSeen = true // a thinking bubble became visible
+  // dshTurnAckOpeningEmitted stays falsy — no opening bubble went out.
+  const result = await callUpdate(runner, '我先逐条核实分支状态，再给合并建议。', 'opening')
+  assert.equal(JSON.parse(result.text).shown, true)
+  assert.equal(store.messages.length, 1)
+  assert.equal(store.messages[0].metadata.ownerUpdateKind, 'opening')
+  assert.equal(active.dshTurnAckOpeningEmitted, true, 'the delivered opening marks the slot')
+  const second = await callUpdate(runner, '另一个开场', 'opening')
+  assert.equal(JSON.parse(second.text).shown, false, 'a second opening is still rejected')
+  runner.removeActiveSession('s1', active)
+})
+
 test('host waiting update fires at five minutes and backs off without hidden tool activity resetting it', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { runner, store } = setup({ waitTimeoutMs: 300_000 })
