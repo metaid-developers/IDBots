@@ -241,10 +241,12 @@ test('S4 correction sweep: pre-signing marks re-judged — unsigned relays/prose
     const relaySession = '77777777-7777-7777-7777-777777777777';
     const emitSession = '88888888-8888-8888-8888-888888888888';
     const proseSession = '99999999-9999-9999-9999-999999999999';
+    const anchorSession = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     for (const [side, sid, title] of [
       [1, relaySession, '转述收到的转移卡'],
       [2, emitSession, 'MRC721 验收转移实测'],
       [3, proseSession, '设计文档引用演示卡'],
+      [4, anchorSession, '早于卡附带的转移实测会话'],
     ]) {
       db.run(
         'INSERT INTO cowork_sessions (id, title, cwd, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
@@ -265,6 +267,11 @@ test('S4 correction sweep: pre-signing marks re-judged — unsigned relays/prose
     db.run("INSERT INTO cowork_messages (id, session_id, type, content, created_at, sequence) VALUES (?, ?, 'assistant', ?, ?, 3)", [
       'm-prose', proseSession, `交付说明里演示一张卡：\n\n${fence(listedListed())}`, 4,
     ]);
+    // An ANCHOR-ONLY host emit: the broadcast text but no card at all
+    // (streamed pre-card-attach, mirrors live messages 03bebacd/306a6cd8).
+    db.run("INSERT INTO cowork_messages (id, session_id, type, content, created_at, sequence) VALUES (?, ?, 'tool_result', ?, ?, 4)", [
+      'm-anchor', anchorSession, `NFT transfer broadcast on-chain.\n- txid: ${'e'.repeat(64)}\n- token: #5028 (genesis 005d69cba8c80e6978157e146f998c21288a9d49)\n- Verify with wallet_nft_balance after the tx confirms.`, 5,
+    ]);
 
     try {
       db.run("DELETE FROM cowork_config WHERE key = 'tradeBadgeSourceSignSwept'");
@@ -280,6 +287,7 @@ test('S4 correction sweep: pre-signing marks re-judged — unsigned relays/prose
     assert.equal(badgeFor(relaySession), null, 'relay copy unmarks');
     assert.equal(badgeFor(proseSession), null, 'prose demo unmarks');
     assert.equal(badgeFor(emitSession), 'p2p', 'genuinely-executed bare emit keeps its badge');
+    assert.equal(badgeFor(anchorSession), 'p2p', 'anchor-only host emit (pre-card-attach streaming) keeps its badge');
     const flag = db.exec("SELECT key FROM cowork_config WHERE key = 'tradeBadgeSourceSignSwept'");
     assert.equal(flag[0]?.values?.length, 1, 'one-shot sweep flag persisted');
   } finally {

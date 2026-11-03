@@ -8,7 +8,7 @@ import type { Database as SqlJsDatabase } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import type { DataGuardStats } from './libs/dataGuard';
 import { truncateUtf16Units } from './libs/llmSafeText';
-import { scanMessageTradeBadgeLegacy } from './libs/tradeBadge';
+import { scanMessageTradeBadgeLegacy, isBareTradeEmit } from './libs/tradeBadge';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
 import { writeFileAtomicSync } from './libs/atomicFile';
@@ -425,20 +425,36 @@ export class SqliteStore {
    */
   private backfillTradeBadges(): void {
     try {
-      // Prefilter messages that could carry an nft-card fence (cheap LIKE),
-      // classify in JS with the strict scanner, roll each session up to its
-      // strongest kind. 70w-row libraries hit the prefilter on ~14 sessions
-      // (measured 2026-11-02), so the JS pass is tiny; the LIKE sweep itself
-      // is a single one-time sequential scan paid only on this migration.
-      const candidates = this.db.exec(
-        "SELECT session_id, content FROM cowork_messages WHERE content LIKE '%```nft%'",
-      );
+      // Prefilter messages that could carry an nft-card fence OR a host emit
+      // anchor line (cheap LIKEs), classify in JS with the strict scanner,
+      // roll each session up to its strongest kind. 70w-row libraries hit
+      // the fence prefilter on ~14 sessions (measured 2026-11-02), so the
+      // JS pass is tiny; the LIKE sweep itself is a single one-time
+      // sequential scan paid only on this migration.
+      const candidates = this.db.exec(`
+        SELECT session_id, content FROM cowork_messages
+        WHERE content LIKE '%\`\`\`nft%'
+           OR content LIKE 'MRC-721 transfer broadcast on-chain%'
+           OR content LIKE 'MRC-721 listing is ready.%'
+           OR content LIKE 'MRC-721 purchase broadcast on-chain%'
+           OR content LIKE 'NFT transfer broadcast on-chain%'
+           OR content LIKE 'NFT listed for sale on-chain%'
+           OR content LIKE 'NFT sell order cancelled on-chain%'
+           OR content LIKE 'NFT purchase broadcast on-chain%'
+      `);
       const rollup = new Map<string, string>();
       for (const row of candidates[0]?.values ?? []) {
         const sessionId = String(row[0] ?? '');
         const content = String(row[1] ?? '');
         if (!sessionId || !content) continue;
-        const kind = scanMessageTradeBadgeLegacy(content, sessionId);
+        // Legacy re-judge: signed/bare-emitted cards classify through the
+        // scanner; an ANCHOR-ONLY message (host emit text without an
+        // attached card — emit chunks streamed pre-card-attach) is still a
+        // fact of a real in-session trade and keeps the badge p2p. Relay
+        // mirror copies start with a transcript header line, never an
+        // anchor, so they cannot ride this fallback.
+        const kind = scanMessageTradeBadgeLegacy(content, sessionId)
+          ?? (isBareTradeEmit(content) ? 'p2p' : null);
         if (!kind) continue;
         const existing = rollup.get(sessionId);
         rollup.set(sessionId, kind === 'escrow' || existing === 'escrow' ? 'escrow' : 'p2p');
