@@ -844,11 +844,12 @@ const createMarkdownComponents = (
 
     const hrefValue = typeof href === 'string' ? href.trim() : '';
 
-    // In-app session deep links (idbots://session/<sessionId>, emitted e.g. by
-    // the Twin Bot's daily report) jump straight to the referenced CoWork
+    // In-app session deep links jump straight to the referenced CoWork
     // conversation via the shared sessionDeepLink helper (the app-wide
     // 'cowork:viewSession' DOM event, handler in App.tsx) — they never leave
-    // the app. Unrecognised idbots:// shapes are a no-op with a warning.
+    // the app. Both shapes parse: the daily report's idbots://session/<id>
+    // and the bare IDBots://<id> form the app itself emits everywhere.
+    // Unrecognised idbots:// shapes are a no-op with a warning.
     if (hrefValue && getHrefProtocol(hrefValue) === 'idbots') {
       const sessionId = parseIdbotsSessionUri(hrefValue);
       const handleIdbotsClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
