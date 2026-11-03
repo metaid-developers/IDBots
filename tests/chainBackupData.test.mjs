@@ -208,7 +208,7 @@ test('journal rebuild from manifest: post-restore backup diffs to zero', async (
 });
 
 test('runChainBackup: publishes encrypted segments + manifest, incremental second run', async () => {
-  const { runChainBackup, CHAIN_BACKUP_OBJECT_PATH, CHAIN_BACKUP_MANIFEST_PATH } =
+  const { runChainBackup, CHAIN_BACKUP_MANIFEST_PATH } =
     require('../dist-electron/main/services/chainBackupService.js');
   const { readChainBackupState } = require('../dist-electron/main/services/chainBackupData.js');
 
@@ -221,13 +221,20 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   );
 
   const userStore = { get: () => ({ mnemonic: TEST_MNEMONIC, globalmetaid: TEST_GID }) };
-  const published = []; // {metaidData, pinId}
+  const published = []; // {metaidData, pinId} — manifest pins only; segments ride the metafile channel
+  const files = new Map(); // pinId -> Buffer (uploaded segment ciphertext)
   let pinCounter = 0;
   const createPinImpl = async (_store, _botId, metaidData) => {
     pinCounter += 1;
     const pinId = `pin${String(pinCounter).padStart(4, '0')}` + '0'.repeat(55) + 'i0';
     published.push({ metaidData, pinId });
     return { txids: ['tx' + pinCounter], pinId, totalCost: 100 };
+  };
+  const uploadMetaFileImpl = async (_store, params) => {
+    pinCounter += 1;
+    const pinId = `file${String(pinCounter).padStart(4, '0')}` + '0'.repeat(55) + 'i0';
+    files.set(pinId, fs.readFileSync(params.filePath));
+    return { pinId, metafileUri: `metafile://${pinId}`, totalCost: 42 };
   };
   let manifestSyncs = 0;
   const syncBotsManifestImpl = async () => {
@@ -240,6 +247,7 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
     metabotStore: source.metabotStore,
     userStore,
     createPinImpl,
+    uploadMetaFileImpl,
     syncBotsManifestImpl,
     sleep: async () => {},
   };
@@ -252,22 +260,22 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   assert.equal(first.bots[0].uploadedObjects, 3); // memory + key_envelope + bot_profile
   assert.equal(first.bots[0].segments, 1);
 
-  // One object pin (create) + one manifest pin (create).
-  const objectPins = published.filter((p) => p.metaidData.path === CHAIN_BACKUP_OBJECT_PATH);
+  // One segment metafile + one manifest pin (create).
   const manifestPins = published.filter((p) => p.metaidData.path === CHAIN_BACKUP_MANIFEST_PATH);
-  assert.equal(objectPins.length, 1);
+  assert.equal(files.size, 1);
   assert.equal(manifestPins.length, 1);
   assert.equal(manifestPins[0].metaidData.operation, 'create');
 
-  // The object pin decrypts with the mnemonic-derived key and hashes correctly.
-  const envelope = JSON.parse(objectPins[0].metaidData.payload);
-  assert.equal(envelope.cipher, 'aes-256-gcm');
-  assert.equal(envelope.encoding, 'gzip');
+  // The segment metafile decrypts with the mnemonic-derived key, is gzipped,
+  // and hashes correctly.
   const key = deriveBackupKey(TEST_MNEMONIC, TEST_GID);
-  const segment = JSON.parse(
-    zlib.gunzipSync(decryptBytes(key, Buffer.from(envelope.payload, 'base64'))).toString('utf8'),
-  );
-  assert.equal(objectId(segment), envelope.segment);
+  const segmentBytes = [...files.values()][0];
+  const segment = JSON.parse(zlib.gunzipSync(decryptBytes(key, segmentBytes)).toString('utf8'));
+  const manifest = JSON.parse(manifestPins[0].metaidData.payload);
+  assert.equal(manifest.segments.length, 1);
+  assert.equal(manifest.segments[0].storage, 'metafile');
+  assert.equal(manifest.segments[0].bytes, segmentBytes.length);
+  assert.equal(objectId(segment), manifest.segments[0].segment);
   assert.equal(segment.objects.length, 3);
 
   // State journal written.
@@ -275,14 +283,13 @@ test('runChainBackup: publishes encrypted segments + manifest, incremental secon
   assert.ok(state);
   assert.equal(state.manifest_pinid, manifestPins[0].pinId);
 
-  // Second run: nothing new → no object pin; manifest refreshed via modify.
+  // Second run: nothing new → no new segment file; manifest refreshed via modify.
   const second = await runChainBackup(deps);
   assert.equal(second.success, true);
   assert.equal(second.bots[0].uploadedObjects, 0);
   assert.equal(second.bots[0].skippedObjects, 3);
   assert.equal(manifestSyncs, 2);
-  const secondObjectPins = published.slice(objectPins.length).filter((p) => p.metaidData.path === CHAIN_BACKUP_OBJECT_PATH);
-  assert.equal(secondObjectPins.length, 0);
+  assert.equal(files.size, 1, 'no new segment file is uploaded');
   const modifyPins = published.filter((p) => p.metaidData.operation === 'modify');
   assert.equal(modifyPins.length, 1);
   assert.equal(modifyPins[0].metaidData.path, `@${manifestPins[0].pinId}`);

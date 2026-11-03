@@ -104,12 +104,14 @@ function seedMemories(source, bot, count, bytesPerMemory) {
 
 function createHarness() {
   const pins = {};
+  const files = new Map(); // pinId -> Buffer (metafile segment ciphertext)
   const scopedListings = {};
   const calls = [];
   const delays = [];
   let sequence = 0;
   let failure = null;
 
+  // Manifest pins (the backup-protocol marker) still ride createPin.
   const createPinImpl = async (metabotStore, metabotId, metaidData) => {
     const bot = metabotStore.getMetabotById(metabotId);
     const owner = bot.globalmetaid;
@@ -155,15 +157,40 @@ function createHarness() {
     return { pinId, txids: [`tx-resume-${sequence}`], totalCost: 0 };
   };
 
-  const findPublishedSegmentPinImpl = async ({ segmentKey, segmentHash }) => {
-    for (const [pinId, payload] of Object.entries(pins)) {
-      try {
-        const envelope = JSON.parse(payload);
-        if (envelope.segmentKey === segmentKey || envelope.segment === segmentHash) return { pinId };
-      } catch { /* non-object pin */ }
+  // Segment payloads publish as /file metafiles. The call is tagged with the
+  // legacy object path so fault-injection predicates keep reading naturally.
+  const uploadMetaFileImpl = async (metabotStore, params) => {
+    const bot = metabotStore.getMetabotById(params.metabotId);
+    const owner = bot.globalmetaid;
+    sequence += 1;
+    const pinId = `file-resume-${sequence}`;
+    const segmentKey = (path.basename(params.filePath).match(/^backup-(.+)\.bin$/) ?? [])[1] ?? null;
+    const bytes = fs.readFileSync(params.filePath);
+    const call = {
+      pinId,
+      owner,
+      operation: 'create',
+      path: CHAIN_BACKUP_OBJECT_PATH,
+      segmentKey,
+      accepted: false,
+    };
+    calls.push(call);
+    const shouldFail = failure && failure.predicate(call);
+    if (shouldFail && !failure.accept) {
+      const error = failure.error;
+      failure = null;
+      throw error;
     }
-    return null;
+    files.set(pinId, bytes);
+    call.accepted = true;
+    if (shouldFail) {
+      const error = failure.error;
+      failure = null;
+      throw error;
+    }
+    return { pinId, metafileUri: `metafile://${pinId}`, totalCost: 0 };
   };
+
   const fetchManifestStateImpl = async ({ botGlobalMetaId }) => {
     const candidates = scopedListings[`${botGlobalMetaId}|${CHAIN_BACKUP_MANIFEST_PATH}`] ?? [];
     if (!candidates.length) return null;
@@ -178,9 +205,9 @@ function createHarness() {
     userStore,
     saveDb: sqliteStore.getSaveFunction(),
     createPinImpl,
+    uploadMetaFileImpl,
     maxNetworkAttempts: options.maxNetworkAttempts ?? 2,
     sleep: async (ms) => { delays.push(ms); },
-    findPublishedSegmentPinImpl: options.findPublishedSegmentPinImpl ?? findPublishedSegmentPinImpl,
     fetchManifestStateImpl: options.fetchManifestStateImpl ?? fetchManifestStateImpl,
     syncBotsManifestImpl: async (_users, store) => {
       const bots = store.listMetabots()
@@ -200,11 +227,11 @@ function createHarness() {
 
   return {
     pins,
+    files,
     scopedListings,
     calls,
     delays,
     runBackup,
-    findPublishedSegmentPinImpl,
     fetchManifestStateImpl,
     failNext(predicate, error, accept) {
       failure = { predicate, error, accept };
@@ -224,6 +251,10 @@ function stubRestoreIndexer(harness) {
       status,
       json: async () => body,
       text: async () => typeof body === 'string' ? body : JSON.stringify(body),
+      arrayBuffer: async () => {
+        const buf = Buffer.isBuffer(body) ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      },
       headers: { get: () => contentType },
     });
     const addressScoped = href.match(/\/api\/address\/pin\/list\/([^/?]+)\?/);
@@ -239,6 +270,13 @@ function stubRestoreIndexer(harness) {
         modify_history: item.modify_history,
       }));
       return respond(200, { code: 1, data: { list, nextCursor: null } });
+    }
+    const metafileContent = href.match(/\/api\/v1\/files\/(?:accelerate\/)?content\/([^/?]+)/);
+    if (metafileContent) {
+      const pinId = decodeURIComponent(metafileContent[1]);
+      const body = harness.files.get(pinId);
+      if (body == null) return respond(404, { code: 0, message: 'not found' });
+      return respond(200, body, 'application/octet-stream');
     }
     const content = href.match(/\/content\/([^/?]+)/);
     if (content) {
@@ -311,7 +349,7 @@ for (const fraction of [0.1, 0.5, 0.9]) {
   });
 }
 
-test('a response-lost segment is adopted by segmentKey without a duplicate pin', async () => {
+test('a response-lost segment is re-uploaded and the run still completes', async () => {
   const source = await openStore('idbots-resume-response-loss-');
   const { bot } = await createBot(source.metabotStore);
   const userStore = insertUserIdentity(source.db, source.sqliteStore.getSaveFunction());
@@ -324,35 +362,33 @@ test('a response-lost segment is adopted by segmentKey without a duplicate pin',
   const failedSegmentKey = harness.calls.find((call) => call.path === CHAIN_BACKUP_OBJECT_PATH).segmentKey;
   const second = await harness.runBackup(source.metabotStore, userStore, source.sqliteStore, { maxNetworkAttempts: 1 });
   assert.equal(second.success, true, JSON.stringify(second));
-  assert.ok(second.bots[0].resumedSegments > 0);
+  // Metafile segments carry no cleartext key, so a response-lost upload cannot
+  // be reconciled chain-side: it is simply published again.
   assert.equal(
     harness.calls.filter((call) => call.segmentKey === failedSegmentKey && call.path === CHAIN_BACKUP_OBJECT_PATH).length,
-    1,
-    'the accepted segment is not attempted again',
+    2,
+    'the response-lost segment is uploaded again (duplicate tolerated)',
   );
+  const uploads = listChainBackupSegmentUploads(source.db, bot.globalmetaid);
+  assert.ok(uploads.every((upload) => upload.status === 'published' && upload.storage === 'metafile'));
 });
 
-test('indexer lag gets a second reconciliation before a segment is republished', async () => {
-  const source = await openStore('idbots-resume-indexer-lag-');
+test('manifest refs mark segments as metafile storage with byte sizes', async () => {
+  const source = await openStore('idbots-resume-metafile-refs-');
   const { bot } = await createBot(source.metabotStore);
   const userStore = insertUserIdentity(source.db, source.sqliteStore.getSaveFunction());
-  seedMemories(source, bot, 1, 1024);
+  seedMemories(source, bot, 3, 40 * 1024);
   const harness = createHarness();
-  harness.failNext((call) => call.path === CHAIN_BACKUP_OBJECT_PATH, new TypeError('fetch failed'), true);
-  await harness.runBackup(source.metabotStore, userStore, source.sqliteStore, { maxNetworkAttempts: 1 });
-
-  let lookups = 0;
-  const second = await harness.runBackup(source.metabotStore, userStore, source.sqliteStore, {
-    maxNetworkAttempts: 1,
-    findPublishedSegmentPinImpl: async (input) => {
-      lookups += 1;
-      if (lookups === 1) return null;
-      return harness.findPublishedSegmentPinImpl(input);
-    },
-  });
-  assert.equal(second.success, true, JSON.stringify(second));
-  assert.equal(lookups, 2);
-  assert.equal(harness.calls.filter((call) => call.path === CHAIN_BACKUP_OBJECT_PATH).length, 1);
+  const result = await harness.runBackup(source.metabotStore, userStore, source.sqliteStore);
+  assert.equal(result.success, true, JSON.stringify(result));
+  const manifestPinId = result.bots[0].manifestPinId;
+  const manifest = JSON.parse(harness.pins[manifestPinId]);
+  assert.ok(manifest.segments.length >= 1);
+  for (const ref of manifest.segments) {
+    assert.equal(ref.storage, 'metafile');
+    assert.ok(harness.files.has(ref.pinId), `segment pin ${ref.pinId} is a metafile`);
+    assert.equal(ref.bytes, harness.files.get(ref.pinId).length);
+  }
 });
 
 test('a response-lost manifest is adopted without forking or another chain write', async () => {
@@ -464,18 +500,10 @@ test('oversized objects are chunked within budget, restored byte-for-byte, and s
 
   const backupKey = deriveBackupKey(USER_MNEMONIC, USER_GID);
   let chunkCount = 0;
-  for (const [pinId, payload] of Object.entries(harness.pins)) {
-    if (pinId === 'pin-bots' || pinId.includes('manifest')) continue;
-    try {
-      const envelope = JSON.parse(payload);
-      if (!envelope.payload) continue;
-      const decrypted = decryptBytes(backupKey, Buffer.from(envelope.payload, 'base64'));
-      const plaintext = JSON.parse(
-        (envelope.encoding === 'gzip' ? zlib.gunzipSync(decrypted) : decrypted).toString('utf8'),
-      );
-      assert.ok(Buffer.byteLength(JSON.stringify(plaintext), 'utf8') <= CHAIN_BACKUP_SEGMENT_PLAINTEXT_LIMIT);
-      chunkCount += plaintext.objects.filter((obj) => obj.kind === 'object_chunk').length;
-    } catch { /* public manifest */ }
+  for (const bytes of harness.files.values()) {
+    const plaintext = JSON.parse(zlib.gunzipSync(decryptBytes(backupKey, bytes)).toString('utf8'));
+    assert.ok(Buffer.byteLength(JSON.stringify(plaintext), 'utf8') <= CHAIN_BACKUP_SEGMENT_PLAINTEXT_LIMIT);
+    chunkCount += plaintext.objects.filter((obj) => obj.kind === 'object_chunk').length;
   }
   assert.ok(chunkCount > 1, 'the oversized memory is split into multiple chunks');
 

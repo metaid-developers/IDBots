@@ -120,6 +120,19 @@ export function buildObjectPinContent(
   });
 }
 
+/**
+ * Current wire format: the segment plaintext gzipped and encrypted, uploaded
+ * as a raw binary `/file` metafile (no JSON envelope, no base64 inflation).
+ * Decoding is decryptBytes → gunzip → JSON.parse; the manifest ref's
+ * `segment` hash still covers the plaintext.
+ */
+export function buildSegmentFileBytes(
+  backupKey: Buffer,
+  segmentPlaintext: Record<string, unknown>,
+): Buffer {
+  return encryptBytes(backupKey, gzipSync(Buffer.from(canonicalJson(segmentPlaintext), 'utf8')));
+}
+
 export function buildManifestContent(input: {
   botGlobalMetaId: string;
   botName: string;

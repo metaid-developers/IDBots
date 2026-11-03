@@ -14,6 +14,7 @@ import {
   CHAIN_BACKUP_ENCODING_GZIP,
   CHAIN_BACKUP_KDF,
   CHAIN_BACKUP_MANIFEST_PATH,
+  CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE,
   type ChainBackupSegmentRef,
 } from './chainBackupService';
 import type { SqliteDatabase } from '../sqliteTypes';
@@ -24,6 +25,7 @@ import type { Metabot, MetabotUpdate } from '../types/metabot';
 const USER_BOTS_PATH = '/info/bots';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_INDEXER_PAGES = 50;
+const DEFAULT_METAFILE_INDEXER_BASE_URL = 'https://file.metaid.io/metafile-indexer';
 
 export interface ChainBackupRestoreProgress {
   phase: 'discover' | 'manifest' | 'segments' | 'skeleton' | 'import' | 'done' | 'error';
@@ -131,6 +133,39 @@ export async function fetchPinContentText(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Download a metafile-stored backup segment: raw ciphertext bytes from the
+ * metafile indexer (accelerate first, preview as fallback).
+ */
+export async function fetchMetafileSegmentBytes(
+  pinId: string,
+  options?: { metafileIndexerBaseUrl?: string; timeoutMs?: number },
+): Promise<Buffer> {
+  const baseUrl = (options?.metafileIndexerBaseUrl || DEFAULT_METAFILE_INDEXER_BASE_URL).replace(/\/+$/, '');
+  const urls = [
+    `${baseUrl}/api/v1/files/accelerate/content/${encodeURIComponent(pinId)}`,
+    `${baseUrl}/api/v1/files/content/${encodeURIComponent(pinId)}`,
+  ];
+  let lastError = 'unreachable';
+  for (const url of urls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        continue;
+      }
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(`metafile segment fetch failed: ${lastError}`);
 }
 
 function text(value: unknown): string {
@@ -489,6 +524,7 @@ export interface RunChainBackupRestoreDeps {
   onProgress?: (progress: ChainBackupRestoreProgress) => void;
   applyAssignedSkills?: (metabotId: number, skills: string[]) => void;
   baseUrl?: string;
+  metafileIndexerBaseUrl?: string;
 }
 
 export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Promise<ChainBackupRestoreResult> {
@@ -540,22 +576,28 @@ export async function runChainBackupRestore(deps: RunChainBackupRestoreDeps): Pr
       for (let s = 0; s < manifestHit.manifest.segments.length; s += 1) {
         const ref = manifestHit.manifest.segments[s];
         try {
-          const envelope = JSON.parse(await fetchPinContentText(ref.pinId, fetchOptions)) as SegmentEnvelope;
-          if (envelope.cipher !== CHAIN_BACKUP_CIPHER || envelope.kdf !== CHAIN_BACKUP_KDF) {
-            throw new Error(`unsupported backup envelope (cipher=${envelope.cipher}, kdf=${envelope.kdf})`);
+          let plaintext: unknown;
+          if (ref.storage === CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE) {
+            const decrypted = decryptBytes(
+              backupKey,
+              await fetchMetafileSegmentBytes(ref.pinId, { metafileIndexerBaseUrl: deps.metafileIndexerBaseUrl }),
+            );
+            plaintext = JSON.parse(gunzipSync(decrypted).toString('utf8'));
+          } else {
+            const envelope = JSON.parse(await fetchPinContentText(ref.pinId, fetchOptions)) as SegmentEnvelope;
+            if (envelope.cipher !== CHAIN_BACKUP_CIPHER || envelope.kdf !== CHAIN_BACKUP_KDF) {
+              throw new Error(`unsupported backup envelope (cipher=${envelope.cipher}, kdf=${envelope.kdf})`);
+            }
+            if (text(envelope.bot) !== entry.globalMetaId) throw new Error('SEGMENT_BOT_MISMATCH');
+            const decrypted = decryptBytes(backupKey, Buffer.from(envelope.payload, 'base64'));
+            const encoding = text(envelope.encoding);
+            if (encoding && encoding !== CHAIN_BACKUP_ENCODING_GZIP) {
+              throw new Error(`unsupported backup encoding: ${encoding}`);
+            }
+            plaintext = JSON.parse(
+              (encoding === CHAIN_BACKUP_ENCODING_GZIP ? gunzipSync(decrypted) : decrypted).toString('utf8'),
+            );
           }
-          if (text(envelope.bot) !== entry.globalMetaId) throw new Error('SEGMENT_BOT_MISMATCH');
-          if (text(envelope.segment) && envelope.segment !== ref.segment) {
-            throw new Error(`segment reference mismatch for pin ${ref.pinId}`);
-          }
-          const decrypted = decryptBytes(backupKey, Buffer.from(envelope.payload, 'base64'));
-          const encoding = text(envelope.encoding);
-          if (encoding && encoding !== CHAIN_BACKUP_ENCODING_GZIP) {
-            throw new Error(`unsupported backup encoding: ${encoding}`);
-          }
-          const plaintext = JSON.parse(
-            (encoding === CHAIN_BACKUP_ENCODING_GZIP ? gunzipSync(decrypted) : decrypted).toString('utf8'),
-          );
           if (objectId(plaintext) !== ref.segment) {
             throw new Error(`segment hash mismatch for pin ${ref.pinId}`);
           }

@@ -10,3 +10,11 @@ export const CHAIN_BACKUP_SEGMENT_PLAINTEXT_LIMIT = 256 * 1024;
  * ciphertext; `gzip` means the decrypted payload is gzip-compressed JSON.
  */
 export const CHAIN_BACKUP_ENCODING_GZIP = 'gzip';
+/**
+ * Segment storage marker on manifest refs. Refs written before the metafile
+ * switch carry no `storage` field and point at legacy inline-JSON pins under
+ * CHAIN_BACKUP_OBJECT_PATH; `metafile` means the pinId is a `/file` metafile
+ * whose content is the raw encrypted segment (gzip inside AES-256-GCM).
+ */
+export const CHAIN_BACKUP_SEGMENT_STORAGE_METAFILE = 'metafile';
+export const CHAIN_BACKUP_METAFILE_CONTENT_TYPE = 'application/octet-stream';
