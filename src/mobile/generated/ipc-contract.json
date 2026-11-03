@@ -181,6 +181,14 @@
       ]
     },
     {
+      "path": "botBrowser.buyMrc721",
+      "kind": "invoke",
+      "channel": "botBrowser:mrc721Buy",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "botBrowser.buyNft",
       "kind": "invoke",
       "channel": "botBrowser:buyNft",
@@ -2549,6 +2557,26 @@
       "channel": "metaid:resolveAvatarSource",
       "args": [
         "params"
+      ]
+    },
+    {
+      "path": "paymentInfo.clear",
+      "kind": "invoke",
+      "channel": "paymentInfo:clear",
+      "args": []
+    },
+    {
+      "path": "paymentInfo.get",
+      "kind": "invoke",
+      "channel": "paymentInfo:get",
+      "args": []
+    },
+    {
+      "path": "paymentInfo.save",
+      "kind": "invoke",
+      "channel": "paymentInfo:save",
+      "args": [
+        "input"
       ]
     },
     {

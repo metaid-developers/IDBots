@@ -101,6 +101,13 @@ export interface IdBotsBrowserHostAdapterInput {
    * user-approved confirmRequest. Keys stay in the host.
    */
   buyNft?: (input: BotBrowserBridgeTrustedActionRequest) => Promise<BrowserCommandResult<unknown>>;
+  /**
+   * MRC-721 purchase trusted action (browser.mrc721.buy): forwards the page's
+   * listing credential to the main-process bridge service, which runs the
+   * two-phase confirmation and executes the mrc721_buy worker chain ONLY for
+   * a valid user-approved confirmRequest. Keys stay in the host.
+   */
+  buyMrc721?: (input: BotBrowserBridgeTrustedActionRequest) => Promise<BrowserCommandResult<unknown>>;
   openConversation: (request: BotBrowserConversationRequest) => Promise<void>;
   /**
    * Sends an on-chain /protocols/simplemsg PIN (ECDH-encrypted) to a peer.
@@ -434,6 +441,7 @@ export function createIdbotsBrowserHostAdapter(
           templateSettings: true,
           walletLogin: false,
           nftBuy: true,
+          mrc721Buy: true,
         },
         labels: {
           actorChip: 'Actor',
@@ -598,10 +606,6 @@ export function createIdbotsBrowserHostAdapter(
             'NFT purchase is not supported in this IDBots build.',
           );
         }
-        // 'nft-buy' ships in the next agent-browser-host-contract release;
-        // the installed 0.7.1 union does not list it yet, so bridge the kind
-        // through unknown. The runtime dispatch matches the plain string.
-        const nftBuyKind = 'nft-buy' as unknown as BrowserTrustedActionKind;
         return runBridgeTrustedAction(
           input.buyNft,
           {
@@ -610,11 +614,34 @@ export function createIdbotsBrowserHostAdapter(
             sessionId: text(actionInput.sessionId) || undefined,
             payload: actionInput.payload,
           },
-          nftBuyKind,
+          actionInput.kind,
           'botBrowser:buyNft',
           'nft_buy_failed',
           'NFT purchase failed.',
           'NFT purchase is not supported in this IDBots build.',
+        );
+      }
+
+      if (actionKind === 'mrc721-buy') {
+        if (!input.buyMrc721) {
+          return browserFailure(
+            'unsupported_method',
+            'MRC-721 purchase is not supported in this IDBots build.',
+          );
+        }
+        return runBridgeTrustedAction(
+          input.buyMrc721,
+          {
+            actorId: text(actionInput.actorId) || undefined,
+            resourceUri: actionInput.resourceUri,
+            sessionId: text(actionInput.sessionId) || undefined,
+            payload: actionInput.payload,
+          },
+          actionInput.kind,
+          'botBrowser:mrc721Buy',
+          'mrc721_buy_failed',
+          'MRC-721 purchase failed.',
+          'MRC-721 purchase is not supported in this IDBots build.',
         );
       }
 

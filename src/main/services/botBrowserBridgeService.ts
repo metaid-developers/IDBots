@@ -14,6 +14,8 @@ import type { MetabotStore } from '../metabotStore';
 import type { Metabot } from '../types/metabot';
 import type { MetaidDataPayload } from './metaidCore';
 import type { MvcNftChainSellUtxo } from './mvcNftService';
+import type { Mrc721ItemSummary } from './mrc721Service';
+import { parseMrc721AtomicSwapListing, type Mrc721AtomicSwapListing } from './mrc721AtomicSwapService';
 import type { PinPathResolution } from './pinPathResolver';
 
 export type { PinPathResolution } from './pinPathResolver';
@@ -63,6 +65,7 @@ export type BotBrowserBridgeErrorCode =
   | 'pin_write_failed'
   | 'nft_buy_failed'
   | 'nft_buy_unavailable'
+  | 'mrc721_buy_failed'
   | 'sell_utxo_changed'
   | 'price_changed'
   | 'llm_unavailable'
@@ -208,6 +211,30 @@ export interface BotBrowserNftBuyInput {
   payload?: unknown;
 }
 
+/**
+ * Validated browser.mrc721.buy purchase intent. The page posts the MRC-721
+ * atomic-swap listing credential (JSON string or object); the bridge re-parses
+ * it through the worker-chain parser (mrc721AtomicSwapService
+ * parseMrc721AtomicSwapListing) and hashes the NORMALIZED listing, so a card
+ * approved for one listing can never authorize a tampered variant. The
+ * credential is buyer-directed by v1.1 design — output 0 pays the NFT only to
+ * listing.buyerAddress, and the worker refuses to sign for any other wallet.
+ */
+export interface BotBrowserMrc721BuyInput {
+  actorId?: string;
+  resourceUri?: string;
+  sessionId?: string;
+  payload?: unknown;
+}
+
+export interface BotBrowserMrc721BuyResult {
+  txid: string;
+  itemPinId: string;
+  priceSats: number;
+  sellerAddress: string;
+  buyerAddress: string;
+}
+
 export interface BotBrowserHostPickedFile {
   filePath: string;
   name?: string;
@@ -293,6 +320,31 @@ export interface BotBrowserBridgeServiceDeps {
     genesis: string;
     tokenIndex: string;
   }) => Promise<MvcNftChainSellUtxo | null>;
+  /**
+   * MRC-721 purchase backend (browser.mrc721.buy): the existing mrc721_buy
+   * worker chain (buyMrc721Listing → completeMvc721BuyTx). The worker path
+   * re-verifies the whole listing against chain truth — seller signature over
+   * exactly the NFT outpoint, output 0 pays the NFT to the listed buyer,
+   * output 1 pays the listed price to the seller, outpoint unspent, price
+   * floor — before the buyer wallet appends its UTXO and signs; keys never
+   * leave the host. Runs ONLY for a user-approved two-phase confirmation.
+   */
+  buyMrc721?: (params: {
+    metabotId: number;
+    listing: Mrc721AtomicSwapListing;
+  }) => Promise<{
+    txId: string;
+    itemPinId: string;
+    priceSats: number;
+    sellerAddress: string;
+    buyerAddress: string;
+  }>;
+  /**
+   * Best-effort jig display data for the MRC-721 confirmation card (manapi
+   * item/info read: name, collection, cover). Lookup failures/pin-id misses
+   * degrade the card to the bare credential — never block the intent gate.
+   */
+  fetchMrc721ItemDisplay?: (pinId: string) => Promise<Mrc721ItemSummary | null>;
   pickFiles?: (input: {
     multiple: boolean;
     accept: string[];
@@ -312,7 +364,7 @@ export interface BotBrowserBridgeServiceDeps {
  * electron-log file transport captures them) for later review.
  */
 export interface BotBrowserBridgeAuditEvent {
-  type: 'permission-granted' | 'permission-revoked' | 'granted-write' | 'pin-write' | 'nft-buy';
+  type: 'permission-granted' | 'permission-revoked' | 'granted-write' | 'pin-write' | 'nft-buy' | 'mrc721-buy';
   at: number;
   /** Local MetaBot id for Bot actors; the host Actor id for the human account. */
   actorId: number | string;
@@ -329,6 +381,7 @@ export interface BotBrowserBridgeAuditEvent {
 export interface BotBrowserBridgeService {
   writeMetaIdPin(input: BotBrowserPinWriteInput): Promise<BrowserCommandResult<BotBrowserPinWriteResult>>;
   buyNft(input: BotBrowserNftBuyInput): Promise<BrowserCommandResult<BotBrowserNftBuyResult>>;
+  buyMrc721(input: BotBrowserMrc721BuyInput): Promise<BrowserCommandResult<BotBrowserMrc721BuyResult>>;
   uploadMetaFile(input: BotBrowserMetaFileUploadInput): Promise<BrowserCommandResult<BotBrowserMetaFileUploadResult>>;
   completeLlm(input: BotBrowserLlmCompleteInput): Promise<BrowserCommandResult<BrowserLlmCompleteResult>>;
   requestPermissions(input: BotBrowserPermissionsInput): Promise<BrowserCommandResult<BrowserPermissionsResult>>;
@@ -967,6 +1020,31 @@ function validateNftBuyPayload(payload: unknown):
   return normalized;
 }
 
+const MRC721_BUY_PARTIAL_TX_MAX = 100_000;
+
+function validateMrc721BuyPayload(payload: unknown):
+  | Mrc721AtomicSwapListing
+  | BrowserCommandResult<never> {
+  // Byte cap before parse: the partialTx composer payload is a bounded
+  // serialization; a page posting megabytes of garbage pays nothing but CPU.
+  const raw = objectRecord(payload);
+  if (!raw && typeof payload !== 'string') {
+    return failure('invalid_params', 'MRC-721 buy requires a listing credential object or JSON string.');
+  }
+  try {
+    const listing = parseMrc721AtomicSwapListing(payload);
+    if (listing.partialTx.length > MRC721_BUY_PARTIAL_TX_MAX) {
+      return failure('invalid_params', 'MRC-721 buy partialTx exceeds the acceptable serialized listing size.');
+    }
+    return listing;
+  } catch (error) {
+    return failure(
+      'invalid_params',
+      (error instanceof Error ? error.message : String(error)) || 'MRC-721 buy requires a valid MRC-721 atomic-swap listing credential.',
+    );
+  }
+}
+
 function requestHash(payload: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
@@ -1089,6 +1167,7 @@ export function createBotBrowserBridgeService(
   const pendingPinWrites = new Map<string, PendingPinWriteAuthorization>();
   const pendingPermissions = new Map<string, PendingPermissionAuthorization>();
   const pendingNftBuys = new Map<string, PendingNftBuyAuthorization>();
+  const pendingMrc721Buys = new Map<string, PendingNftBuyAuthorization>();
   const activePermissions = new Map<string, ActivePermissionContext>();
   // Per-resource sliding windows for host-owned v1.1 quotas.
   const llmTimestamps = new Map<string, number[]>();
@@ -1127,6 +1206,11 @@ export function createBotBrowserBridgeService(
     for (const [confirmationId, authorization] of pendingNftBuys) {
       if (authorization.expiresAt <= currentTime) {
         pendingNftBuys.delete(confirmationId);
+      }
+    }
+    for (const [confirmationId, authorization] of pendingMrc721Buys) {
+      if (authorization.expiresAt <= currentTime) {
+        pendingMrc721Buys.delete(confirmationId);
       }
     }
   };
@@ -1348,6 +1432,82 @@ export function createBotBrowserBridgeService(
     );
   };
 
+  const issueMrc721BuyConfirmation = async (
+    actorResult: Extract<ResolvedBridgeActor, { kind: 'bot' }>,
+    resourceUri: string,
+    validation: Mrc721AtomicSwapListing,
+  ): Promise<BrowserCommandResult<BotBrowserMrc721BuyResult>> => {
+    const issuedAt = now();
+    removeExpiredPinWrites(issuedAt);
+    if (pendingMrc721Buys.size >= MAX_PENDING_PIN_WRITE_CONFIRMATIONS) {
+      const oldestConfirmationId = pendingMrc721Buys.keys().next().value;
+      if (typeof oldestConfirmationId === 'string') {
+        pendingMrc721Buys.delete(oldestConfirmationId);
+      }
+    }
+
+    const confirmationId = createConfirmationId();
+    const opaqueToken = createConfirmationToken();
+    const expiresAt = issuedAt + confirmationTtlMs;
+    pendingMrc721Buys.set(confirmationId, {
+      actorKey: actorResult.actorId,
+      actorGlobalMetaId: actorResult.actor.globalMetaId,
+      resourceUri,
+      requestHash: requestHash(validation as unknown as Record<string, unknown>),
+      tokenHash: tokenHash(opaqueToken),
+      expiresAt,
+    });
+
+    // Best-effort jig look-up for the card. A pin the indexer has not picked
+    // up yet still shows the bare credential instead of blocking the intent.
+    const display: Record<string, string> = {
+      sellerAddress: validation.sellerAddress,
+      buyerAddress: validation.buyerAddress,
+    };
+    try {
+      const item = deps.fetchMrc721ItemDisplay
+        ? await deps.fetchMrc721ItemDisplay(validation.itemPinId)
+        : null;
+      if (item) {
+        if (typeof item.name === 'string' && item.name) display.name = item.name.slice(0, 120);
+        if (typeof item.collectionName === 'string' && item.collectionName) {
+          display.collectionName = item.collectionName.slice(0, 120);
+        }
+        if (typeof item.cover === 'string' && item.cover) display.imgUrl = item.cover.slice(0, 2048);
+      }
+    } catch {
+      // display enrichment only
+    }
+
+    return browserManualActionRequired(
+      'manual_action_required',
+      'Confirm this MRC-721 purchase before the host executes it.',
+      {
+        data: {
+          confirmation: {
+            actor: actorResult.actor,
+            listing: validation,
+            display,
+            confirmationId,
+            expiresAt,
+          },
+          confirmRequest: {
+            resourceUri,
+            kind: 'mrc721-buy',
+            payload: {
+              ...validation,
+              confirmed: true,
+              hostConfirmation: {
+                id: confirmationId,
+                token: opaqueToken,
+              },
+            },
+          },
+        },
+      },
+    );
+  };
+
   return {
     async buyNft(input: BotBrowserNftBuyInput): Promise<BrowserCommandResult<BotBrowserNftBuyResult>> {
       // Payment gate: there is NO auto-buy path. Every first request resolves
@@ -1498,6 +1658,105 @@ export function createBotBrowserBridgeService(
         });
       } catch (error) {
         return failure('nft_buy_failed', (error instanceof Error ? error.message : String(error)) || 'NFT purchase failed.');
+      }
+    },
+
+    async buyMrc721(input: BotBrowserMrc721BuyInput): Promise<BrowserCommandResult<BotBrowserMrc721BuyResult>> {
+      // Payment gate: there is NO auto-buy path (same door as buyNft). Every
+      // first request resolves to a confirmation card; the signer only ever
+      // runs for an exact, still-pending host confirmation matching the
+      // actor, resource, and the full normalized listing — and the
+      // authorization is consumed BEFORE the worker chain starts so a
+      // replayed or raced confirm can never spend twice. Chain truth
+      // (seller signature over the exact NFT outpoint, both outputs, unspent,
+      // price floor, buyer binding) is re-verified inside the worker chain
+      // before anything is signed; a mismatch throws and the consumed
+      // confirmation stays consumed.
+      const actorResult = resolveActor(deps, input.actorId);
+      if (isCommandFailure(actorResult)) {
+        const confirmationAttempt = parseHostConfirmationAttempt(input.payload);
+        if (!isCommandFailure(confirmationAttempt) && confirmationAttempt) {
+          const authorization = pendingMrc721Buys.get(confirmationAttempt.id);
+          if (authorization && tokenMatches(confirmationAttempt.token, authorization.tokenHash)) {
+            pendingMrc721Buys.delete(confirmationAttempt.id);
+          }
+        }
+        return actorResult;
+      }
+      if (actorResult.kind !== 'bot') {
+        return failure(
+          'unsupported_actor',
+          'MRC-721 purchases spend a local Bot wallet; the account Actor cannot buy.',
+        );
+      }
+      const resourceUri = normalizedResourceUri(input.resourceUri);
+      if (!resourceUri) {
+        return failure('invalid_request', 'MRC-721 buy resourceUri is required.');
+      }
+      if (!deps.buyMrc721) {
+        return failure('unsupported_method', 'MRC-721 purchase is not supported in this IDBots build.');
+      }
+
+      const validation = validateMrc721BuyPayload(input.payload);
+      if (isCommandFailure(validation)) return validation;
+
+      const confirmationAttempt = parseHostConfirmationAttempt(input.payload);
+      if (isCommandFailure(confirmationAttempt)) return confirmationAttempt;
+
+      if (!confirmationAttempt) {
+        return issueMrc721BuyConfirmation(actorResult, resourceUri, validation);
+      }
+
+      const authorization = pendingMrc721Buys.get(confirmationAttempt.id);
+      if (!authorization || !tokenMatches(confirmationAttempt.token, authorization.tokenHash)) {
+        return invalidConfirmation();
+      }
+      const currentTime = now();
+      if (authorization.expiresAt <= currentTime) {
+        pendingMrc721Buys.delete(confirmationAttempt.id);
+        return issueMrc721BuyConfirmation(actorResult, resourceUri, validation);
+      }
+      if (
+        authorization.actorKey !== actorResult.actorId
+        || authorization.actorGlobalMetaId !== actorResult.actor.globalMetaId
+        || authorization.resourceUri !== resourceUri
+        || authorization.requestHash !== requestHash(validation as unknown as Record<string, unknown>)
+      ) {
+        pendingMrc721Buys.delete(confirmationAttempt.id);
+        return invalidConfirmation();
+      }
+
+      // Consume before signing: a retried confirmRequest can never re-buy.
+      pendingMrc721Buys.delete(confirmationAttempt.id);
+
+      try {
+        const result = await deps.buyMrc721({
+          metabotId: actorResult.metabotId,
+          listing: validation,
+        });
+        const txid = text(result?.txId);
+        const itemPinId = text(result?.itemPinId);
+        if (!txid || !itemPinId) {
+          return failure('mrc721_buy_failed', 'MRC-721 purchase failed.');
+        }
+        recordAudit({
+          type: 'mrc721-buy',
+          at: now(),
+          actorId: actorResult.metabotId,
+          actorGlobalMetaId: actorResult.actor.globalMetaId,
+          resourceUri,
+          sessionId: normalizedSessionId(input.sessionId),
+          txid,
+        });
+        return browserSuccess({
+          txid,
+          itemPinId,
+          priceSats: typeof result?.priceSats === 'number' ? result.priceSats : validation.priceSats,
+          sellerAddress: text(result?.sellerAddress) || validation.sellerAddress,
+          buyerAddress: text(result?.buyerAddress) || validation.buyerAddress,
+        });
+      } catch (error) {
+        return failure('mrc721_buy_failed', (error instanceof Error ? error.message : String(error)) || 'MRC-721 purchase failed.');
       }
     },
 

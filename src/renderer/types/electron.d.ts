@@ -1089,6 +1089,12 @@ interface IElectronAPI {
       sessionId?: string;
       payload?: unknown;
     }) => Promise<HostBrowserCommandResult<unknown>>;
+    buyMrc721: (input: {
+      actorId?: string;
+      resourceUri?: string;
+      sessionId?: string;
+      payload?: unknown;
+    }) => Promise<HostBrowserCommandResult<unknown>>;
     sendPrivateChat: (input: {
       actorId?: string;
       peerGlobalMetaId?: string;
