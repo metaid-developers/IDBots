@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import {
   TURN_ACK_REPLY_MAX_CHARS,
-  buildInstantTurnAckOpening,
+  buildDeterministicTurnAckOpening,
   buildTurnAckReplyMessages,
   containsCjk,
   resolveTurnAckActivity,
@@ -28,7 +28,7 @@ test('buildTurnAckReplyMessages: system+user roles, title line optional, user te
   assert.equal(withTitle.length, 2);
   assert.equal(withTitle[0].role, 'system');
   assert.equal(withTitle[1].role, 'user');
-  assert.ok(withTitle[0].content.includes('acknowledgment'));
+  assert.ok(withTitle[0].content.includes('FIRST response'));
   assert.ok(withTitle[1].content.includes('Session title: 定时任务排查'));
   assert.ok(withTitle[1].content.includes('帮我看下定时任务'));
 
@@ -41,56 +41,46 @@ test('buildTurnAckReplyMessages: system+user roles, title line optional, user te
   assert.ok(long[1].content.length < 1500, 'user text slice stays bounded');
 });
 
-// 2026-11-03 incident (session acb5961b): the old default template
-// interpolated the user's text into an incident-report formula — "收到，我先
-// 核对「你好，晚上好」的原因和处理路径" — absurd on a greeting. The instant
-// opening is deliberately content-free: natural line, user language, and
-// NEVER a quote or paraphrase of the user's message.
-test('buildInstantTurnAckOpening: a natural content-free line in the user language, never echoing the message', () => {
-  const zh = buildInstantTurnAckOpening('依然不能一键购买，点‘一键购买’报错：“购买未完成。请重试。”', 's1:1');
-  assert.ok(zh.length > 0, 'always returns an opening');
-  assert.ok(containsCjk(zh), 'CJK input gets a CJK line');
-  assert.ok(!zh.includes('一键购买'), 'the user message is never quoted or paraphrased');
-  assert.ok(!zh.includes('核对'), 'no incident-report boilerplate');
-  assert.ok(zh.length <= TURN_ACK_REPLY_MAX_CHARS);
-
-  const en = buildInstantTurnAckOpening('Fix the purchase flow', 's1:1');
-  assert.ok(en.length > 0);
-  assert.ok(!containsCjk(en), 'Latin input gets a Latin line');
-  assert.ok(!en.includes('purchase'), 'the user message is never echoed');
+// 2026-11-03 owner decision (session 2c70849f: "好的，这就处理。" three times
+// in eight minutes): a rotating canned line is worse than no line. The
+// deterministic opening is reserved for worker delivery notices — text that
+// carries real information (WHO delivered, what happens next) and cannot be
+// mistaken for the bot making conversation. Everything else returns '' and
+// waits for the LLM first sentence.
+test('buildDeterministicTurnAckOpening: empty for generic turns — no canned lines, ever', () => {
+  assert.equal(buildDeterministicTurnAckOpening('依然不能一键购买，点‘一键购买’报错：“购买未完成。请重试。”'), '');
+  assert.equal(buildDeterministicTurnAckOpening('帮我把这个修一下'), '');
+  assert.equal(buildDeterministicTurnAckOpening('Fix the purchase flow'), '');
+  assert.equal(buildDeterministicTurnAckOpening(''), '');
+  assert.equal(buildDeterministicTurnAckOpening(`Fix ${'x'.repeat(500)}`), '');
 });
 
-test('buildInstantTurnAckOpening: variety across turns via the seed, stable per seed', () => {
-  const seeds = ['s1:1', 's1:2', 's1:3', 's1:4', 's1:5', 's1:6'];
-  const openings = new Set(seeds.map((seed) => buildInstantTurnAckOpening('帮我把这个修一下', seed)));
-  assert.ok(openings.size >= 2, 'the pool actually varies across turns');
-  assert.equal(
-    buildInstantTurnAckOpening('帮我把这个修一下', 's1:1'),
-    buildInstantTurnAckOpening('帮我把这个修一下', 's1:1'),
-    'the same seed is stable (a re-emit cannot change the text)',
-  );
-  assert.ok(buildInstantTurnAckOpening('', 'x').length > 0, 'empty input still opens');
-  const long = buildInstantTurnAckOpening(`Fix ${'x'.repeat(500)}`, 's1:1');
-  assert.ok(long.length <= TURN_ACK_REPLY_MAX_CHARS + 1, 'long input never leaks into the line');
-});
-
-test('instant opening uses a local-search intent instead of a generic status', () => {
+test('buildDeterministicTurnAckOpening: search_local also waits for the LLM', () => {
   const prompt = '这个文件好像之前申请过的，你要不搜一下本机看有没有？如果不是一个 APP 一个独立文件，而是跟账号走的，我猜大概率本机上已经有了。';
   assert.equal(resolveTurnAckActivity(prompt), 'search_local');
-  assert.equal(
-    buildInstantTurnAckOpening(prompt, 's1:1'),
-    '我先在本机查找相关文件和信息，确认能否直接复用；找到后我会直接告诉你结果。',
-  );
+  assert.equal(buildDeterministicTurnAckOpening(prompt), '',
+    'the old search template was the same canned line every time — gone with the pool');
 });
 
-test('instant opening names the worker delivery without leaking cross-session markup or ids', () => {
+test('buildDeterministicTurnAckOpening: names the worker delivery without leaking cross-session markup or ids', () => {
   const prompt = '来自af3365c8-dfb6-4348-b350-0a0db4edbcc4 的信息：<cross_session_message trust="untrusted">[ORCH-NOTIFY] worker Builder阿码 已完成 task 46828477-0719-4984-8391-3148bec1a3fc → review，请验收；验收后向 owner 交付完整成果</cross_session_message>';
   assert.equal(resolveTurnAckActivity(prompt), 'verify_delivery');
-  const opening = buildInstantTurnAckOpening(prompt, 's1:1');
+  const opening = buildDeterministicTurnAckOpening(prompt);
   assert.match(opening, /^Builder阿码已交付一个子任务/);
   assert.match(opening, /验收结果/);
   assert.ok(!opening.includes('cross_session'));
   assert.ok(!opening.includes('46828477'));
+});
+
+test('turnAckReply: no phrase pool survives anywhere in the module', () => {
+  const source = read('src/main/libs/turnAckReply.ts');
+  assert.ok(!source.includes('INSTANT_OPENING_POOL'), 'the canned pools are deleted');
+  assert.ok(!source.includes('pickFromPool'), 'no pool picker remains');
+  // The LLM prompt now owns the human tone.
+  assert.ok(source.includes('never a canned service template'),
+    'the LLM ack prompt pins the human, non-boilerplate voice');
+  assert.ok(source.includes('a greeting gets a greeting back'),
+    'greetings are answered like a person would');
 });
 
 test('sanitizeTurnAckReply: passes clean text through, strips wrapping noise', () => {
@@ -170,17 +160,21 @@ test('buildTurnAckReplyMessages: prompt forbids describing/analyzing/quoting the
 // Source contracts (emission wiring + gates)
 // ---------------------------------------------------------------------------
 
-test('runner: the opening bubble is emitted synchronously at the early-ack site and refined fire-and-forget', () => {
+test('runner: the deterministic opening is same-tick and information-only; the LLM first sentence kicks fire-and-forget', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
   const templateAck = source.indexOf('this.emitTurnAck(sessionId, earlyAckTier, prompt)');
+  const deterministicBuild = source.indexOf('const deterministicOpening = buildDeterministicTurnAckOpening(prompt);');
   const openingEmit = source.indexOf('this.emitTurnAckOpeningBubble(');
-  const refineCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
+  const llmCall = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt,');
   const envSyncSite = source.indexOf('await this.syncDshSkillSessionEnv(');
   assert.ok(templateAck > 0, 'the template ack still fires first (instant indicator cover)');
-  assert.ok(openingEmit > templateAck, 'the opening bubble is emitted right after the template ack');
-  assert.ok(refineCall > openingEmit, 'the LLM refine kicks after the opening bubble');
-  assert.ok(envSyncSite > refineCall, 'the whole ack block precedes every pre-flight await on the turn path');
+  assert.ok(deterministicBuild > templateAck, 'the deterministic text is built after the template ack');
+  assert.ok(openingEmit > deterministicBuild, 'the opening bubble emission follows the build');
+  assert.ok(source.includes('if (deterministicOpening) {'),
+    'generic turns emit NO deterministic bubble — only information-bearing ones');
+  assert.ok(llmCall > openingEmit, 'the LLM first-sentence call kicks after the deterministic branch');
+  assert.ok(envSyncSite > llmCall, 'the whole ack block precedes every pre-flight await on the turn path');
   // 2026-11-03 (session acb5961b): the old 250ms setTimeout lost to a 22s
   // eventloop:lag stall — the opening must be same-tick, timer-free.
   assert.ok(!source.includes('TURN_ACK_OPENING_FALLBACK_MS'), 'the fallback-timer constant is gone');
@@ -190,8 +184,6 @@ test('runner: the opening bubble is emitted synchronously at the early-ack site 
     'external-facing surfaces keep their established posture (cowork_ui only)');
   assert.ok(gateWindow.includes('assistantOwnerChatForTurn'),
     'the first-sentence bubble is assistant-mode only (owner requirement 2026-11-03)');
-  assert.ok(gateWindow.includes('buildInstantTurnAckOpening(prompt'),
-    'the instant opening is built from the prompt at the site');
 });
 
 // 2026-10-23 first-run greeting incident (session a6194072): the greeting turn
@@ -226,40 +218,38 @@ test('runner: pure host turns stay ack-free while UI starts and persisted delive
   );
 });
 
-test('runner: the opening bubble is identity/serial gated, and the LLM refine updates it in place exactly once', () => {
+test('runner: the LLM first sentence CREATES the bubble once, gated on identity/serial/visible-text', () => {
   const source = read('src/main/libs/coworkRunner.ts');
 
   const emitter = source.indexOf('private emitTurnAckOpeningBubble(');
-  assert.ok(emitter > 0, 'the opening emitter exists');
-  const body = source.slice(emitter, source.indexOf('private emitSdkRuntimeStatus(', emitter));
+  assert.ok(emitter > 0, 'the deterministic opening emitter exists');
+  const llm = source.indexOf('private async emitTurnAckReplyBubble(');
+  assert.ok(llm > emitter, 'the LLM creator follows the deterministic emitter');
+  const body = source.slice(llm, source.indexOf('private emitSdkRuntimeStatus(', llm));
   assert.ok(body.includes('this.activeSessions.get(sessionId) !== turn'),
-    'an opening whose turn object is no longer the registry current is dropped (identity)');
+    'a first sentence whose turn object is no longer the registry current is dropped (identity)');
   assert.ok(body.includes('turn.dshTurnAckSerial !== turnSerial'),
-    'a stale opening superseded by a re-kick on the same object is dropped');
+    'a stale first sentence superseded by a re-kick on the same object is dropped');
   assert.ok(body.includes('turn.dshTurnAckVisibleTextSeen'),
-    'an opening landing after real visible text is dropped');
+    'a first sentence landing after real visible text (model, owner_update or an earlier opening) is dropped');
   assert.ok(body.includes('turn.dshTurnAckOpeningEmitted'),
-    'an opening can only be emitted once');
+    'at most one opening bubble per turn');
+  assert.ok(body.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
+    'the first sentence rides the one-shot cognitive path with session-title context');
   assert.ok(body.includes("metadata: { turnAckReply: true, isFinal: true }"),
     'the bubble is a final assistant message tagged turnAckReply');
-  assert.ok(body.includes('turn.dshTurnAckOpeningMessageId = message.id'),
-    'the bubble id is kept for the in-place refine');
+  assert.ok(body.includes("this.store.addMessage(sessionId, {"),
+    'the LLM first sentence CREATES the bubble — no placeholder to refine');
+  assert.ok(!body.includes('updateMessageMerged') && !body.includes("emit('messageUpdate'"),
+    'no in-place refine machinery remains in the ack path (2026-11-03 second pass)');
   assert.ok(body.includes('turn.assistantOwnerUpdateCount = Math.max(1,'),
     'the host opening and model updates share one per-turn budget');
   assert.ok(!body.includes('activeSession.dshTurnAckSerial !== turnSerial'),
     'the gate must not re-read the registry object for the serial');
-
-  const refine = source.indexOf('private async emitTurnAckReplyBubble(');
-  assert.ok(refine > emitter, 'the refine follows the emitter');
-  const refineBody = source.slice(refine, source.indexOf('private emitSdkRuntimeStatus(', refine));
-  assert.ok(refineBody.includes('generateTurnAckReply(userPrompt, sessionTitle)'),
-    'the refine rides the one-shot cognitive path with session-title context');
-  assert.ok(refineBody.includes('turn.dshTurnAckModelTextSeen'),
-    'a refine after the model produced visible text is dropped');
-  assert.ok(refineBody.includes('turn.dshTurnAckOpeningRefined'),
-    'the refine runs at most once per turn');
-  assert.ok(refineBody.includes("this.emit('messageUpdate', sessionId, turn.dshTurnAckOpeningMessageId, generatedReply)"),
-    'the refine REPLACES the bubble content in place — never a second bubble');
+  assert.ok(!source.includes('dshTurnAckOpeningMessageId')
+    && !source.includes('dshTurnAckOpeningRefined')
+    && !source.includes('dshTurnAckModelTextSeen'),
+    'the refine-era ActiveSession fields are gone');
 
   const kick = source.indexOf('void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial)');
   assert.ok(kick > 0, 'the kick passes the turn object and the kick-time serial');

@@ -77,11 +77,11 @@ export function buildTurnAckReplyMessages(
     {
       role: 'system',
       content: [
-        'You write the opening response of a chat assistant. The user just sent a message; the full work or answer follows later.',
-        'The app has ALREADY shown the user a generic instant acknowledgment; your text REPLACES it, so say something more useful than "received":',
-        '- For a simple question or a greeting, respond naturally as a person would (a greeting gets a greeting back).',
+        'You write the FIRST response a chat assistant sends to the user\'s just-arrived message; the full work or answer follows later.',
+        'This line must sound like a real person replying in chat — the bot\'s own words about THIS message, never a canned service template. Vary your wording naturally; never produce boilerplate like "收到，我马上看" unless that is genuinely what you mean.',
+        '- For a simple question or a greeting, respond naturally as a person would (a greeting gets a greeting back; "在吗" gets "在的").',
         '- For a real task, say in plain words how you will approach it, and roughly whether it is quick or will take a while with progress updates.',
-        'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not solve the task or promise deadlines. No markdown, lists, quotes, emoji. No formulaic boilerplate (never "cause and handling path" style phrasing). Output only the finished text — never your thinking or reasoning about these rules.',
+        'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not solve the task or promise deadlines. No markdown, lists, quotes, emoji. Output only the finished text — never your thinking or reasoning about these rules.',
         "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
       ].join('\n'),
     },
@@ -129,66 +129,34 @@ export function resolveTurnAckActivity(userText: string): TurnAckActivity {
 }
 
 /**
- * Instant opening lines for the plain "working" case. Deliberately
- * content-free: the 2026-11-03 incident (session acb5961b) showed the old
- * template `收到，我先核对「{user text}」的原因和处理路径…` reads as absurd
- * incident-report boilerplate on greetings and simple messages ("核对你好、
- * 晚上好的原因"). The instant bubble only bridges the 0-2s window until the
- * LLM refine replaces its text, so it stays a plain natural acknowledgment.
+ * Deterministic opening, emitted synchronously at the early-ack site. Reserved
+ * for openings that CARRY INFORMATION a template genuinely cannot get wrong —
+ * a worker delivery notice names the actor and the pending review, which is
+ * status, not conversation.
+ *
+ * Everything else returns ''. Owner decision 2026-11-03 (session 2c70849f:
+ * "好的，这就处理。" three times in eight minutes): a rotating canned line is
+ * worse than no line — the first sentence must be the bot's own words about
+ * THIS message, so the generic case waits for the LLM ack (emitTurnAckReplyBubble)
+ * and shows nothing but the activity indicator until it lands. Never bring
+ * back a phrase pool here.
  */
-const INSTANT_OPENING_POOL_ZH = [
-  '收到，我马上看。',
-  '好的，这就处理。',
-  '收到，我来安排。',
-  '好，我先看一下。',
-] as const;
-const INSTANT_OPENING_POOL_EN = [
-  'Got it — on it now.',
-  'Sure, taking care of it.',
-  'Got it, looking into it.',
-  'On it — one moment.',
-] as const;
-
-/** Deterministic 0..len-1 pick from a string seed (session id + serial). */
-function pickFromPool(pool: readonly string[], seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  }
-  return pool[hash % pool.length];
-}
-
-/**
- * The deterministic opening emitted synchronously at the early-ack site —
- * the bubble the owner sees within the same tick as the send, immune to any
- * main-process stall (2026-11-03: the 250ms fallback timer fired 22s late
- * under an eventloop:lag stall, so the first bubble lost to the model reply).
- * verify_delivery keeps the actor-aware text (it carries real information);
- * everything else gets a plain natural line with no user-text interpolation.
- */
-export function buildInstantTurnAckOpening(userText: string, varietySeed = ''): string {
+export function buildDeterministicTurnAckOpening(userText: string): string {
   const normalized = (userText ?? '').replace(/\s+/g, ' ').trim();
   const cjk = containsCjk(normalized);
-  const activity = resolveTurnAckActivity(normalized);
-  if (activity === 'verify_delivery') {
-    const worker = normalized.match(/\[ORCH-NOTIFY\]\s+worker\s+(.+?)\s+已完成\s+task\s+\S+/i)?.[1]?.trim();
-    const actor = worker || (cjk ? '协作 Bot' : 'The worker bot');
-    return sanitizeTurnAckReply(cjk
-      ? `${actor}已交付一个子任务，我先核对交付物和当前状态，再向你汇报验收结果；如果需要后续发版或你操作，我会一并说明。`
-      : `${actor} has delivered a subtask. I’ll check the deliverables and current state, then report the review outcome and any release or action needed next.`);
-  }
-  if (activity === 'search_local') {
-    return sanitizeTurnAckReply(cjk
-      ? '我先在本机查找相关文件和信息，确认能否直接复用；找到后我会直接告诉你结果。'
-      : 'I’ll search this machine for the relevant files and information, check whether we can reuse them, and tell you the result directly.');
-  }
-  return pickFromPool(cjk ? INSTANT_OPENING_POOL_ZH : INSTANT_OPENING_POOL_EN, varietySeed);
+  if (resolveTurnAckActivity(normalized) !== 'verify_delivery') return '';
+  const worker = normalized.match(/\[ORCH-NOTIFY\]\s+worker\s+(.+?)\s+已完成\s+task\s+\S+/i)?.[1]?.trim();
+  const actor = worker || (cjk ? '协作 Bot' : 'The worker bot');
+  return sanitizeTurnAckReply(cjk
+    ? `${actor}已交付一个子任务，我先核对交付物和当前状态，再向你汇报验收结果；如果需要后续发版或你操作，我会一并说明。`
+    : `${actor} has delivered a subtask. I’ll check the deliverables and current state, then report the review outcome and any release or action needed next.`);
 }
 
 /**
  * Input-aware sanitize for the LLM ack (2026-10-23 thinking-leak fix).
  * Two deterministic rejections return '' BEFORE the length cap so the caller
- * uses the deterministic opening instead of emitting leaked reasoning:
+ * shows NO first sentence rather than a bad one (the activity indicator keeps
+ * covering the wait; a leaked-reasoning or wrong-language bubble is worse):
  *  - genre guard: the ack reads as meta-analysis about the message (starts
  *    with "The user" or contains one of TURN_ACK_GENRE_MARKERS);
  *  - language guard: the user wrote CJK but the ack contains no CJK at all.
