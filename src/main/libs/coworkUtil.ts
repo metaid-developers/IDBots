@@ -1359,15 +1359,18 @@ export function setTurnAckReplyBrainProvider(provider: (() => MetabotBrainOption
  * up. Since 2026-11-03 (second pass, owner decision after session 2c70849f)
  * this is THE first sentence for generic turns — the bot's own words about
  * this message; canned phrase pools are gone. Since the same day's third pass
- * (session 3ecd2a2f) the runner's cerebellum ack gate calls this only for
- * turns that need an interim acknowledgment, and the prompt never answers the
+ * (session 3ecd2a2f) the runner's cerebellum ack gate decides which turns get
+ * an interim acknowledgment at all, and the prompt never answers the
  * message's content (this call sees no time/memory context, so a substantive
- * ack can contradict the real reply). Returns '' when the call fails or the
- * output is unusable; the runner then shows no first sentence at all (the
- * activity indicator covers the wait) rather than a canned line.
- * Primary + fallback brain, like titles.
+ * ack can contradict the real reply). The optional signal lets the runner
+ * abort the in-flight attempt when the gate's skip verdict lands mid-call
+ * (an abort is non-terminal: no fallback retry, no system rescue — the call
+ * settles as '' and the turn simply shows no first sentence). Returns '' when
+ * the call fails or the output is unusable; the runner then shows no first
+ * sentence at all (the activity indicator covers the wait) rather than a
+ * canned line. Primary + fallback brain, like titles.
  */
-export async function generateTurnAckReply(userText: string, sessionTitle?: string | null): Promise<string> {
+export async function generateTurnAckReply(userText: string, sessionTitle?: string | null, signal?: AbortSignal): Promise<string> {
   try {
     const brain = turnAckReplyBrainProvider?.() ?? null;
     // Effective model for the thinking-aware budget below: the brain's llmId,
@@ -1404,6 +1407,9 @@ export async function generateTurnAckReply(userText: string, sessionTitle?: stri
         // search detour would defeat the whole point of a fast ack.
         webSearch: false,
         attemptTimeoutMs: 4_000,
+        // Caller abort (the ack gate's skip verdict) — linked into each
+        // per-attempt timeout signal by withPerAttemptSignal.
+        signal,
       }
     );
     // F1 (2026-10-23 thinking-leak fix): on the always-thinking GLM-5.x

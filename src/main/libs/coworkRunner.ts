@@ -16723,16 +16723,19 @@ export class CoworkRunner extends EventEmitter {
    * need an interim acknowledgment (owner decision 2026-11-03, session
    * 2c70849f: a rotating canned line is worse than no line, so the phrase pool
    * is gone and this call CREATES the bubble instead of refining a
-   * placeholder). Since the same day's second review (session 3ecd2a2f) the
-   * cerebellum ack gate runs FIRST: conversational messages the main reply
-   * covers in one short answer get NO ack bubble at all (single-bubble turns),
-   * and the ack prompt never answers content. A null gate verdict
-   * (unconfigured/timeout/malformed) fails open to emitting — a redundant
-   * bubble beats a silent wait. Delivered when the one-shot call lands (~1-3s,
-   * primary + fallback brain); dropped entirely when the model's own visible
-   * text beat it, a newer turn started, or the output was unusable — the
-   * activity indicator covers the wait, and no bubble beats a canned or wrong
-   * one.
+   * placeholder). The cerebellum ack gate (session 3ecd2a2f) races the ack
+   * call IN PARALLEL — verdict and generation are both kicked at turn entry
+   * and the verdict is only awaited at emission time: stacking the gate ahead
+   * of generation (the first wiring) added its latency to every emit, and
+   * under the session-e2f359d7 main-process stall the serial chain nearly
+   * doubled the wait. A skip verdict aborts the in-flight ack attempt (an
+   * abort is non-terminal: no fallback retry, no rescue) and no bubble is
+   * created — conversational messages get a single-bubble turn; a null
+   * verdict (unconfigured/timeout/malformed) fails open to emitting — a
+   * redundant bubble beats a silent wait. Dropped entirely when the model's
+   * own visible text beat it, a newer turn started, or the output was
+   * unusable — the activity indicator covers the wait, and no bubble beats a
+   * canned or wrong one.
    */
   private async emitTurnAckReplyBubble(
     sessionId: string,
@@ -16742,20 +16745,29 @@ export class CoworkRunner extends EventEmitter {
   ): Promise<void> {
     if (resolveTurnAckActivity(userPrompt) === 'verify_delivery') return;
     try {
-      // Cerebellum ack gate, awaited BEFORE the ack LLM call fires: the JEV
-      // verdict costs ~0.2-1.5s (own abort budget) and a "skip" saves the ack
-      // completion entirely — stacking it behind generation would burn the
-      // quota anyway and only shave the emission, not the call.
-      if (this.cerebellumTurnAckGate) {
-        const needsAck = await this.cerebellumTurnAckGate({ currentUserText: userPrompt })
-          .catch(() => null);
+      const ackAbort = new AbortController();
+      // Gate and ack call kick together; a skip verdict aborts the in-flight
+      // ack attempt the moment it lands instead of waiting out the call.
+      const gatePromise = this.cerebellumTurnAckGate
+        ? this.cerebellumTurnAckGate({ currentUserText: userPrompt }).catch(() => null)
+        : null;
+      if (gatePromise) {
+        void gatePromise.then((needsAck) => {
+          if (needsAck === false) ackAbort.abort();
+        });
+      }
+      const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
+      const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
+      if (gatePromise) {
+        // Emission latency is max(ack call, gate budget) — the gate settles
+        // within its own 1.5s abort window, long before the ack's 4s attempt
+        // timeout, so a healthy turn pays nothing for the gate.
+        const needsAck = await gatePromise;
         if (needsAck === false) {
           coworkLog('INFO', 'turn:ack', 'first sentence skipped: cerebellum judged the message directly answerable', { sessionId });
           return;
         }
       }
-      const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
       if (!generatedReply) return;
       if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
