@@ -95,7 +95,9 @@ jobs:
 
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
-          UUID=$(security cms -D -i "$PP_PATH" | /usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin)
+          # PlistBuddy cannot read a non-seekable /dev/stdin reliably; decode to a real file first.
+          security cms -D -i "$PP_PATH" > "$RUNNER_TEMP/pp.plist"
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/pp.plist")
           echo "Provisioning profile UUID: $UUID"
           cp "$PP_PATH" "$PROFILE_DIR/$UUID.mobileprovision"
 
