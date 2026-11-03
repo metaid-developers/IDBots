@@ -454,11 +454,16 @@ const Sidebar: React.FC<SidebarProps> = ({
    *  - to Follow-Up: the override must stop fighting the marker (both 'in'
    *    and 'out' outrank it in the placement precedence), so it resets to
    *    null, and the marker persists 'pending' with source 'manual';
-   *  - to the normal list: an auto-created run (the fold's own policy put it
-   *    there) needs an explicit 'out' to survive the policy, a row with no
-   *    policy pull only has to drop its override back to null; the follow-up
-   *    marker is cleared either way (clearSessionFollowUp clears ANY pending
-   *    source main-side — the same manual move-out the old menu performed).
+   *  - to the normal list: an explicit 'out' is written whenever ANY lane
+   *    would pull the row back out of the normal list — the auto-origin fold
+   *    policy, or a live board decision owed on the session
+   *    (decisionSessionIds: waiting_owner sub-projects bound to it) — because
+   *    foldOverride outranks both in the placement precedence; without the
+   *    'out', a decision-owed row dropped its marker, wrote null, and stayed
+   *    in Follow-Up — a silent no-op (the reported bug). A row with no pull
+   *    at all only drops its override back to null; the follow-up marker is
+   *    cleared either way (clearSessionFollowUp clears ANY pending source
+   *    main-side — the same manual move-out the old menu performed).
    */
   const handleMoveSessionToSection = async (sessionId: string, target: SessionSidebarSection) => {
     const session = sessions.find((item) => item.id === sessionId);
@@ -471,9 +476,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       await coworkService.setSessionFollowUp(sessionId, true);
     } else {
       await coworkService.setSessionFollowUp(sessionId, false);
+      const needsExplicitOut =
+        shouldFoldIntoAutonomousTasks(session) || decisionSessionIds.has(sessionId);
       await coworkService.setSessionFoldOverride(
         sessionId,
-        shouldFoldIntoAutonomousTasks(session) ? 'out' : null,
+        needsExplicitOut ? 'out' : null,
       );
     }
   };
