@@ -11,11 +11,19 @@
  * single local ciphertext row. Nothing here ever goes on-chain, and plain
  * values never enter logs. The renderer only round-trips the owner's own
  * form through the paymentInfo IPC; main re-validates every save.
+ *
+ * Shell contract (UI modal slice): UserSettings no longer renders the form
+ * inline — it shows an entry button and mounts `PaymentReceivingSettingsModal`
+ * when the (reducer-driven) state is open. The modal carries the tabs
+ * (Alipay first — further payment methods plug in as tabs later) and keeps
+ * 「收款设置」+ the never-on-chain badge in its header. The form body below is
+ * the original form, byte-for-byte in behavior; only the outer card chrome
+ * (title / description / badge) moved into the modal header.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
-import { PhotoIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { PhotoIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { i18nService } from '../../services/i18n';
 
 interface ReceivingFormState {
@@ -35,6 +43,9 @@ const EMPTY_FORM: ReceivingFormState = {
 const ALIPAY_QR_PREFIX = 'https://qr.alipay.com/';
 const ALIPAY_PID_RE = /^2088\d{12}$/;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/** Save-success hint auto-dismisses after this long (stay-in-modal UX). */
+export const SAVE_SUCCESS_NOTICE_MS = 2_000;
 
 const inputClass = 'block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors';
 const labelClass = 'block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary';
@@ -60,16 +71,69 @@ async function decodeQrFromDataUrl(dataUrl: string): Promise<string | null> {
   return decoded?.data?.trim() ?? null;
 }
 
-const PaymentReceivingSettings: React.FC = () => {
+// ---------------------------------------------------------------------------
+// Modal shell state — pure reducer so the open/close/tab doors are testable
+// the same way as the other wired doors in this repo (server-rendered suite:
+// drive the real module, then pin the wiring in source).
+// ---------------------------------------------------------------------------
+
+export type PaymentSettingsTab = 'alipay';
+
+export interface PaymentModalState {
+  open: boolean;
+  activeTab: PaymentSettingsTab;
+}
+
+export type PaymentModalAction =
+  | { type: 'open' }
+  | { type: 'close' }
+  | { type: 'switch-tab'; tab: PaymentSettingsTab };
+
+/** Tabs of the receiving-settings modal. New payment methods add rows here —
+ * the tab bar renders whatever lives in this list. */
+export const PAYMENT_SETTINGS_TABS: { key: PaymentSettingsTab; labelKey: string }[] = [
+  { key: 'alipay', labelKey: 'paymentSettingsTabAlipay' },
+];
+
+export const initialPaymentModalState: PaymentModalState = { open: false, activeTab: 'alipay' };
+
+export const paymentModalReducer = (
+  state: PaymentModalState,
+  action: PaymentModalAction,
+): PaymentModalState => {
+  switch (action.type) {
+    case 'open':
+      return { ...state, open: true };
+    case 'close':
+      return { ...state, open: false };
+    case 'switch-tab':
+      // Unknown tab ids clamp to a no-op — future tabs must be registered in
+      // PAYMENT_SETTINGS_TABS, never invented at the call site.
+      return PAYMENT_SETTINGS_TABS.some((tab) => tab.key === action.tab)
+        ? { ...state, activeTab: action.tab }
+        : state;
+    default:
+      return state;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Form body — the original PaymentReceivingSettings form, unchanged in
+// behavior (validation, encrypted round-trip IPC, save/clear arming). Only
+// the outer card chrome (title / description / badge) moved to the modal.
+// ---------------------------------------------------------------------------
+
+export const PaymentReceivingForm: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [hasIdentity, setHasIdentity] = useState(true);
   const [form, setForm] = useState<ReceivingFormState>(EMPTY_FORM);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [clearArmed, setClearArmed] = useState(false);
+  const [saveNotice, setSaveNotice] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,10 +169,14 @@ const PaymentReceivingSettings: React.FC = () => {
     void load();
   }, [load]);
 
+  // The 2s success hint is the only timer-driven feedback: never leak the timer.
+  useEffect(() => () => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+  }, []);
+
   const patchForm = useCallback((patch: Partial<ReceivingFormState>) => {
     setForm((prev) => ({ ...prev, ...patch }));
     setError('');
-    setSavedAt(null);
     setClearArmed(false);
   }, []);
 
@@ -137,7 +205,6 @@ const PaymentReceivingSettings: React.FC = () => {
       return;
     }
     patchForm({ qrImageDataUrl: dataUrl, qrContent: decoded });
-    setSavedAt(null);
   }, [patchForm]);
 
   const handleSave = useCallback(async () => {
@@ -173,8 +240,15 @@ const PaymentReceivingSettings: React.FC = () => {
         return;
       }
       setUpdatedAt(result.updatedAt ?? Date.now());
-      setSavedAt(Date.now());
       setClearArmed(false);
+      // Save succeeded → flash the success hint for 2s; the modal stays open
+      // (the owner may keep editing or close it manually).
+      setSaveNotice(true);
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = setTimeout(() => {
+        setSaveNotice(false);
+        noticeTimerRef.current = null;
+      }, SAVE_SUCCESS_NOTICE_MS);
     } catch {
       setError(i18nService.t('paymentInfoSaveFailed'));
     } finally {
@@ -197,7 +271,6 @@ const PaymentReceivingSettings: React.FC = () => {
       }
       setForm(EMPTY_FORM);
       setUpdatedAt(null);
-      setSavedAt(null);
       setClearArmed(false);
     } catch {
       setError(i18nService.t('paymentInfoSaveFailed'));
@@ -207,21 +280,7 @@ const PaymentReceivingSettings: React.FC = () => {
   }, [clearArmed]);
 
   return (
-    <div className="rounded-xl border dark:border-claude-darkBorder border-claude-border px-4 py-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium dark:text-claude-darkText text-claude-text">
-            {i18nService.t('paymentInfoTitle')}
-          </p>
-          <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-            {i18nService.t('paymentInfoDescription')}
-          </p>
-        </div>
-        <span className="shrink-0 rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
-          {i18nService.t('paymentInfoNeverOnChain')}
-        </span>
-      </div>
-
+    <div className="space-y-3">
       {loading ? (
         <p className={hintClass}>{i18nService.t('loading')}</p>
       ) : !hasIdentity ? (
@@ -303,15 +362,18 @@ const PaymentReceivingSettings: React.FC = () => {
           {error && (
             <div className="text-xs text-red-500 bg-red-500/10 px-3 py-2 rounded-lg">{error}</div>
           )}
-          {(savedAt || updatedAt) && (
+          {!saveNotice && updatedAt && (
             <p className={hintClass}>
-              {savedAt
-                ? i18nService.t('paymentInfoSaved')
-                : i18nService.t('paymentInfoUpdatedAt').replace(
-                  '{time}',
-                  new Date(updatedAt as number).toLocaleString(),
-                )}
+              {i18nService.t('paymentInfoUpdatedAt').replace(
+                '{time}',
+                new Date(updatedAt).toLocaleString(),
+              )}
             </p>
+          )}
+          {saveNotice && (
+            <div data-payment-save-success="true" className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-lg">
+              {i18nService.t('paymentInfoSaveSuccess')}
+            </div>
           )}
 
           <div className="flex items-center justify-end gap-3 pt-1">
@@ -339,4 +401,97 @@ const PaymentReceivingSettings: React.FC = () => {
   );
 };
 
-export default PaymentReceivingSettings;
+// ---------------------------------------------------------------------------
+// Modal shell — header (title + never-on-chain badge + ✕), tab bar (Alipay
+// today; further payment methods join PAYMENT_SETTINGS_TABS), body = the
+// original form, footer cancel. Overlay / ✕ / cancel all close; a successful
+// save keeps the modal open with a 2s success hint.
+// ---------------------------------------------------------------------------
+
+const PaymentReceivingSettingsModal: React.FC<{
+  state: PaymentModalState;
+  dispatch: React.Dispatch<PaymentModalAction>;
+  onClose: () => void;
+}> = ({ state, dispatch, onClose }) => (
+  <div
+    data-payment-modal-overlay="true"
+    className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+    onClick={onClose}
+  >
+    <div
+      className="w-full max-w-xl dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-modal border dark:border-claude-darkBorder border-claude-border overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* header: 收款设置 + 加密保存·绝不上链 + ✕ */}
+      <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
+              {i18nService.t('paymentSettingsTitle')}
+            </h2>
+            <span className="shrink-0 rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+              {i18nService.t('paymentInfoNeverOnChain')}
+            </span>
+          </div>
+          <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {i18nService.t('paymentInfoDescription')}
+          </p>
+        </div>
+        <button
+          type="button"
+          data-payment-modal-close="true"
+          aria-label={i18nService.t('paymentSettingsModalClose')}
+          title={i18nService.t('paymentSettingsModalClose')}
+          onClick={onClose}
+          className="shrink-0 rounded-lg p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+        >
+          <XMarkIcon className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* tab bar: first tab 支付宝；后续收款方式在 PAYMENT_SETTINGS_TABS 扩展 */}
+      <div role="tablist" className="flex gap-1 px-6 border-b dark:border-claude-darkBorder border-claude-border">
+        {PAYMENT_SETTINGS_TABS.map((tab) => {
+          const active = state.activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              data-payment-tab={tab.key}
+              onClick={() => dispatch({ type: 'switch-tab', tab: tab.key })}
+              className={`px-3 py-2 text-sm -mb-px border-b-2 transition-colors ${
+                active
+                  ? 'border-claude-accent text-claude-accent font-medium'
+                  : 'border-transparent dark:text-claude-darkTextSecondary text-claude-textSecondary hover:dark:text-claude-darkText hover:text-claude-text'
+              }`}
+            >
+              {i18nService.t(tab.labelKey)}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* body: one panel per tab; the Alipay panel is the original form */}
+      <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
+        {state.activeTab === 'alipay' ? (
+          <PaymentReceivingForm />
+        ) : null}
+      </div>
+
+      <div className="flex justify-end px-6 py-4 border-t dark:border-claude-darkBorder border-claude-border">
+        <button
+          type="button"
+          data-payment-modal-cancel="true"
+          onClick={onClose}
+          className="px-4 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+        >
+          {i18nService.t('cancel')}
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
+export default PaymentReceivingSettingsModal;
