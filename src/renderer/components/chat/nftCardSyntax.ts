@@ -93,6 +93,16 @@ export interface NftCardData {
   priceSats?: number;
   /** listed | transferred | sold | bought | escrow | delisted | minted | info … */
   action?: string;
+  /**
+   * Host source signature (S4 source-signing slice, owner decision A):
+   * `v1.<issuedMs>.<sessionId>.<hmac64>` stamped by the host main process
+   * when it actually executed the card's trade. The renderer holds no HMAC
+   * secret, so it can only shape/parse this field and compare the bound
+   * session id; the authoritative verification lives main-side
+   * (tradeActivityStamp). A v1-shaped stamp is what the trade-mark
+   * detection (p2p family) keys on — unsigned cards never mark.
+   */
+  hostStamp?: string;
 }
 
 export const isNftCardFenceLanguage = (language: string): boolean =>
@@ -241,6 +251,13 @@ export const parseNftCardFence = (codeText: string): NftCardData | null => {
   if (priceSats !== undefined) data.priceSats = priceSats;
   const action = cleanTextField(row.action, MAX_ACTION_FIELD);
   if (action) data.action = action.toLowerCase();
+  // hostStamp is copy-through only: an admissible stamp keeps its exact
+  // bytes so main-side verification (HMAC over the whole fence payload) sees
+  // what was emitted. Malformed → dropped, which fails the mark gate closed.
+  const hostStamp = cleanTextField(row.hostStamp, 256);
+  if (hostStamp && /^v1\.\d+\.[A-Za-z0-9-]+\.[0-9a-f]{64}$/.test(hostStamp)) {
+    data.hostStamp = hostStamp;
+  }
   return data;
 };
 
@@ -351,7 +368,7 @@ export const groupAdjacentNftCardFences = (content: string): string => {
 const NFT_CARD_KEY_ORDER: Array<keyof NftCardData> = [
   'format', 'pinId', 'genesis', 'codehash', 'tokenIndex', 'number', 'name',
   'series', 'imgUrl', 'icon', 'owner', 'ownerLabel', 'issuer', 'issuerLabel',
-  'priceSats', 'action',
+  'priceSats', 'action', 'hostStamp',
 ];
 
 /**

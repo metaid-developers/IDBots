@@ -52,10 +52,47 @@ const mergeKind = (a: TradeBadgeKind | null, b: TradeBadgeKind | null): TradeBad
   return null;
 };
 
-const foldCards = (cards: NftCardData[], state: { kind: TradeBadgeKind | null; actions: string[] }): void => {
+/**
+ * Host stamp structural check (renderer side, main-side HMAC verify mirror).
+ *
+ * The renderer cannot hold the HMAC secret (source-signing slice, owner
+ * decision A), so this is a presence-shape + binding check only: the stamp
+ * must parse as `v1.<issuedMs>.<sessionId>.<64hex>` and — when the viewing
+ * context knows its session id — bind to THAT session (a card relayed from
+ * another session's emit fails, killing the cross-session mislabel).
+ * Authoritative HMAC verification lives main-side (tradeBadge.ts write
+ * path); the renderer chip never fabricates a mark the store column lacks.
+ */
+const STAMP_PREFIX = 'v1.';
+
+const stampSessionBound = (card: NftCardData, sessionId: string | undefined): boolean => {
+  const row = card as unknown as Record<string, unknown>;
+  const stamp = typeof row.hostStamp === 'string' ? row.hostStamp.trim() : '';
+  if (!stamp.startsWith(STAMP_PREFIX)) return false;
+  const tail = stamp.slice(STAMP_PREFIX.length);
+  const first = tail.indexOf('.');
+  if (first <= 0) return false;
+  if (!/^\d+$/.test(tail.slice(0, first))) return false;
+  const rest = tail.slice(first + 1);
+  const second = rest.indexOf('.');
+  if (second <= 0) return false;
+  const bound = rest.slice(0, second);
+  if (!bound || !/^[0-9a-f]{64}$/.test(rest.slice(second + 1))) return false;
+  // Chain-side group transcripts have no cowork session id to bind to; the
+  // shape check above is the strongest available there (trust model:
+  // adversary-in-the-message is out of scope, HMAC truth stays main-side).
+  return !sessionId || bound === sessionId;
+};
+
+const foldCards = (
+  cards: NftCardData[],
+  state: { kind: TradeBadgeKind | null; actions: string[] },
+  context: { sessionId?: string } | undefined,
+): void => {
   for (const card of cards) {
     const kind = actionTradeKind(card.action);
     if (!kind) continue;
+    if (kind === 'p2p' && !stampSessionBound(card, context?.sessionId)) continue;
     state.kind = mergeKind(state.kind, kind);
     state.actions.push(card.action as string);
   }
@@ -65,8 +102,16 @@ const foldCards = (cards: NftCardData[], state: { kind: TradeBadgeKind | null; a
  * Detect the trade activity a message's text announces. Returns null for
  * messages with no trade-card fence (including every text that merely
  * mentions tools or quotes fences without valid card payloads).
+ *
+ * Source-signing slice (2026-11-03): p2p cards must carry a v1-shaped
+ * hostStamp; when `context.sessionId` is known (cowork session detail / A2A)
+ * the stamp must also bind to that session. Escrow keeps the reserved
+ * hand-written contract.
  */
-export const detectTradeActivity = (content: string): TradeActivity | null => {
+export const detectTradeActivity = (
+  content: string,
+  context?: { sessionId?: string },
+): TradeActivity | null => {
   const text = typeof content === 'string' ? content : '';
   if (!text || !text.includes('```')) return null;
 
@@ -94,10 +139,10 @@ export const detectTradeActivity = (content: string): TradeActivity | null => {
     if (!body) continue;
     if (isGroup) {
       const cards = parseNftCardGroupFence(body);
-      if (cards) foldCards(cards, state);
+      if (cards) foldCards(cards, state, context);
     } else {
       const card = parseNftCardFence(body);
-      if (card) foldCards([card], state);
+      if (card) foldCards([card], state, context);
     }
   }
 

@@ -37,12 +37,37 @@ const transferCard = {
 const fence = (body: unknown, tag = 'nft-card') =>
   `\`\`\`${tag}\n${typeof body === 'string' ? body : JSON.stringify(body)}\n\`\`\``;
 
-test('detectTradeActivity: sale / transfer / escrow classification', () => {
-  assert.deepEqual(detectTradeActivity(`上架：\n\n${fence(listedCard)}`), { kind: 'p2p', actions: ['listed'] });
-  assert.deepEqual(detectTradeActivity(`转给你：\n\n${fence(transferCard)}`), { kind: 'p2p', actions: ['transferred'] });
+/**
+ * Renderer-side port of the hostStamp field: the structural shape the chip
+ * detector accepts (v1.<ms>.<boundSession>.<64hex>) — no HMAC secret, HMAC
+ * truth stays main-side.
+ */
+const stamp = (boundSession: string) =>
+  `v1.1744444444000.${boundSession}.${'a'.repeat(64)}`;
+
+test('detectTradeActivity: SIGNED/BOUND sale / transfer → p2p; escrow keeps hand-written contract', () => {
+  const sid = 'session-emit';
+  assert.deepEqual(
+    detectTradeActivity(`上架：\n\n${fence({ ...listedCard, hostStamp: stamp(sid) })}`, { sessionId: sid }),
+    { kind: 'p2p', actions: ['listed'] },
+  );
+  assert.deepEqual(
+    detectTradeActivity(`转给你：\n\n${fence({ ...transferCard, hostStamp: stamp(sid) })}`, { sessionId: sid }),
+    { kind: 'p2p', actions: ['transferred'] },
+  );
   assert.deepEqual(detectTradeActivity(`担保放行：\n\n${fence(escrowCard)}`), { kind: 'escrow', actions: ['escrow'] });
   const mixed = `${fence(transferCard)}\n\n${fence(escrowCard)}`;
-  assert.deepEqual(detectTradeActivity(mixed), { kind: 'escrow', actions: ['transferred', 'escrow'] });
+  assert.deepEqual(detectTradeActivity(mixed), { kind: 'escrow', actions: ['escrow'] });
+});
+
+test('detectTradeActivity: unsigned cards and out-of-session stamps leave no p2p chip', () => {
+  const sid = 'session-emit';
+  // Unsigned relay/report/demo card (the 2b74d76e mislabel case) → null.
+  assert.equal(detectTradeActivity(fence(listedCard), { sessionId: sid }), null);
+  // A signed card bound to ANOTHER session fails the binding here.
+  assert.equal(detectTradeActivity(fence({ ...listedCard, hostStamp: stamp('other-session') }), { sessionId: sid }), null);
+  // Malformed stamp shapes fail closed.
+  assert.equal(detectTradeActivity(fence({ ...listedCard, hostStamp: 'vX.badsig' }), { sessionId: sid }), null);
 });
 
 test('detectTradeActivity: analysis quotes, minted cards and plain text → null', () => {
@@ -103,24 +128,64 @@ test('group-task transcript: a trade announcement message carries the trade chip
   );
   assert.doesNotMatch(plain, /(NFT 担保交易|>NFT escrow<)/);
   assert.doesNotMatch(plain, /bg-amber-500\/15/);
+
+  // Chain-side group transcripts carry no cowork session id: the chip gate
+  // is the v1 stamp shape (bound-session equality is main-side truth there).
+  const p2pSigned = renderToStaticMarkup(
+    <GroupTaskMessageItem
+      message={gtMessage(`已上架：\n\n${fence({ ...listedCard, hostStamp: stamp('some-emit-session') })}`)}
+      senderDisplayName="Worker Bot"
+      isChairSender={false}
+      isOwnerSender={false}
+    />,
+  );
+  assert.match(p2pSigned, /(NFT 交易|>NFT trade<)/);
+  assert.match(p2pSigned, /bg-sky-500\/15/);
+
+  const p2pUnsigned = renderToStaticMarkup(
+    <GroupTaskMessageItem
+      message={gtMessage(`已上架（转引）：\n\n${fence(listedCard)}`)}
+      senderDisplayName="Worker Bot"
+      isChairSender={false}
+      isOwnerSender={false}
+    />,
+  );
+  assert.doesNotMatch(p2pUnsigned, /(NFT 交易|>NFT trade<)/);
 });
 
-test('A2A private chat: a sale announcement message carries the trade chip in the meta row', () => {
+test('A2A private chat: a SIGNED+BOUND sale announcement message carries the trade chip in the meta row', () => {
   const markup = renderToStaticMarkup(
     <A2AMessageItem
       message={{
         id: 'msg-trade',
         type: 'assistant',
-        content: `已上架：\n\n${fence(listedCard)}`,
+        content: `已上架：\n\n${fence({ ...listedCard, hostStamp: stamp('a2a-session') })}`,
         timestamp: 1_744_444_444_000,
         metadata: { direction: 'outgoing', txid: 'c'.repeat(64) },
       }}
       metabotName="Local Bot"
+      sessionId="a2a-session"
     />,
   );
   assert.match(markup, /(NFT 交易|>NFT trade<)/);
   assert.match(markup, /bg-sky-500\/15/);
   assert.match(markup, /txid:/, 'the chain-message bubble branch renders');
+
+  // An unsigned (hand-written/relay) p2p card no longer produces the chip.
+  const unsigned = renderToStaticMarkup(
+    <A2AMessageItem
+      message={{
+        id: 'msg-unsigned',
+        type: 'assistant',
+        content: `已上架（转引自他会话）：\n\n${fence(listedCard)}`,
+        timestamp: 1_744_444_444_000,
+        metadata: { direction: 'outgoing', txid: 'c'.repeat(64) },
+      }}
+      metabotName="Local Bot"
+      sessionId="a2a-session"
+    />,
+  );
+  assert.doesNotMatch(unsigned, /(NFT 交易|>NFT trade<)/);
 
   const plain = renderToStaticMarkup(
     <A2AMessageItem

@@ -66,6 +66,12 @@ interface A2AMessageItemProps {
    * Renders a green chip beside the PEER's name only.
    */
   peerIsFriend?: boolean;
+  /**
+   * Session id of the A2A conversation — scope for the session-bound
+   * hostStamp structural check (source-signing slice): a trade chip on an
+   * A2A bubble requires the card's hostStamp to bind to THIS session.
+   */
+  sessionId?: string;
 }
 
 const formatTime = (timestamp: number): string => {
@@ -668,6 +674,7 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
   onResendDigitalDelivery,
   isAssistantMode = false,
   peerIsFriend = false,
+  sessionId = undefined,
 }) => {
   // tool_use / tool_result: compact collapsible block (collapsed by default)
   if (message.type === 'tool_use' || message.type === 'tool_result') {
@@ -791,8 +798,9 @@ const A2AMessageItem: React.FC<A2AMessageItemProps> = ({
     : stripOrderProtocolTag(message.content);
   // S4 chat trade marker: the message announces an NFT trade (nft-card
   // fence with a trade action) → a trade chip rides the meta row, same
-  // family as the session-list trade icon.
-  const tradeActivity = detectTradeActivity(contentToRender);
+  // family as the session-list trade icon. The p2p chip needs a hostStamp
+  // bound to THIS A2A session (source-signing slice).
+  const tradeActivity = detectTradeActivity(contentToRender, { sessionId });
   const metafileItems = extractMetafileItems(contentToRender);
   const markdownClassName = messengerMarkdownClassName(displayRight);
   const txidPreview = formatA2ATxidPreview(txid);

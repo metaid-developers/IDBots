@@ -62,6 +62,31 @@ const MRC721_PIN_ID_RE = /^[0-9a-f]{64}i\d{1,6}$/;
 
 const MAX_CARD_TEXT_FIELD = 64;
 
+/**
+ * First-line anchors of the seven host trade-emit stations (one for each
+ * announcing tool result): mrc721 transfer/sell/buy + wallet transfer/sell/
+ * cancel/buy. A REAL host emit IS the tool output, so the anchoring message
+ * starts on one of these lines; design prose, demo cards and cross-session
+ * relay copies (mirrors of other sessions' outputs) never do. Serving ONLY
+ * the legacy re-judge — fresh writes prove themselves with host stamps.
+ * Keep in sync with the emit sites (mrc721AgentTools.ts / walletAgentTools.ts).
+ */
+export const TRADE_EMIT_ANCHORS: readonly string[] = [
+  'MRC-721 transfer broadcast on-chain',
+  'MRC-721 listing is ready.',
+  'MRC-721 purchase broadcast on-chain.',
+  'NFT transfer broadcast on-chain.',
+  'NFT listed for sale on-chain.',
+  'NFT sell order cancelled on-chain.',
+  'NFT purchase broadcast on-chain.',
+];
+
+/** True when a message IS a host trade tool's bare output (by first-line anchor). */
+export const isBareTradeEmit = (content: string): boolean => {
+  const first = String(content ?? '').split('\n', 1)[0]?.trim() ?? '';
+  return TRADE_EMIT_ANCHORS.some((anchor) => first.startsWith(anchor));
+};
+
 
 
 /**
@@ -197,7 +222,7 @@ const scanMessageTradeBadgeImpl = (
         const record = row as Record<string, unknown>;
         if (!hasValidNftIdentity(record)) continue;
         const rowKind = cardTradeKind(record);
-        if (rowKind === 'p2p' && !p2pMarkAllowed(rowKind, record, bareEmit, context)) continue;
+        if (rowKind === 'p2p' && !p2pMarkAllowed(record, bareEmit, context)) continue;
         kind = mergeKind(kind, rowKind);
       }
       continue;
@@ -207,7 +232,7 @@ const scanMessageTradeBadgeImpl = (
     const record = parsed as Record<string, unknown>;
     if (!hasValidNftIdentity(record)) continue;
     const recordKind = cardTradeKind(record);
-    if (recordKind === 'p2p' && !p2pMarkAllowed(recordKind, record, bareEmit, context)) continue;
+    if (recordKind === 'p2p' && !p2pMarkAllowed(record, bareEmit, context)) continue;
     kind = mergeKind(kind, recordKind);
   }
 

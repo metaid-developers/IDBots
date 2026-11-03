@@ -1821,6 +1821,9 @@ const AssistantMessageItem: React.FC<{
    * the feedback thumbs render, so a turn's narration segments do not each
    * carry a near-duplicate clock. */
   isTurnEnd?: boolean;
+  /** Session id of the conversation this bubble renders — scope for the
+   * session-bound hostStamp structural check (source-signing slice). */
+  sessionId?: string;
 }> = ({
   message,
   resolveLocalFilePath,
@@ -1831,6 +1834,7 @@ const AssistantMessageItem: React.FC<{
   onQuoteReply,
   isAssistantMode = false,
   isTurnEnd = false,
+  sessionId = undefined,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
@@ -1838,8 +1842,9 @@ const AssistantMessageItem: React.FC<{
   const thinkSplit = splitThinkTaggedContent(displayContent);
   // S4 chat trade marker: this message announces an NFT trade (nft-card
   // fence with a trade action) → a trade chip rides the bubble footer /
-  // professional turn-end row, same family as the messenger chips.
-  const tradeActivity = detectTradeActivity(displayContent);
+  // professional turn-end row, same family as the messenger chips. The p2p
+  // chip needs a hostStamp bound to THIS session (source-signing slice).
+  const tradeActivity = detectTradeActivity(displayContent, { sessionId });
   const renderExtension = React.useContext(MessageExtensionContext);
 
   if (gigSquareCard) {
@@ -2610,6 +2615,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
           onQuoteReply={onQuoteReply}
           isAssistantMode={isAssistantMode}
           isTurnEnd={!isAssistantMode || index === visibleAssistantItems.length - 1}
+          sessionId={sessionId ?? undefined}
         />
       );
     }
@@ -2746,6 +2752,7 @@ const AssistantTurnBlock = React.memo(function AssistantTurnBlock({
                   onQuoteReply={onQuoteReply}
                   isAssistantMode={isAssistantMode}
                   isTurnEnd
+                  sessionId={sessionId ?? undefined}
                 />
               </>
             ) : (
@@ -5183,6 +5190,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                   onResendDigitalDelivery={handleResendDigitalDelivery}
                   isAssistantMode={isAssistantMode}
                   peerIsFriend={a2aPeerIsFriend}
+                  sessionId={currentSession?.id ?? undefined}
                 />
               </div>
             );

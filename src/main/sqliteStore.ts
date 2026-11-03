@@ -8,7 +8,7 @@ import type { Database as SqlJsDatabase } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import type { DataGuardStats } from './libs/dataGuard';
 import { truncateUtf16Units } from './libs/llmSafeText';
-import { scanMessageTradeBadge } from './libs/tradeBadge';
+import { scanMessageTradeBadgeLegacy } from './libs/tradeBadge';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
 import { writeFileAtomicSync } from './libs/atomicFile';
@@ -388,6 +388,76 @@ export class SqliteStore {
 
   getBackendKind(): SqliteBackendKind {
     return this.backendKind;
+  }
+
+  /** Is the one-shot migration flag present in cowork_config? (absent = falsy) */
+  private configFlagSet(key: string): boolean {
+    try {
+      const row = this.db.exec("SELECT value FROM cowork_config WHERE key = ?", [key])[0]?.values ?? [];
+      return row.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private markConfigFlag(key: string): void {
+    try {
+      this.db.run(
+        "INSERT OR REPLACE INTO cowork_config (key, value, updated_at) VALUES (?, '1', ?)",
+        [key, Date.now()],
+      );
+    } catch {
+      // Flag persistence is best-effort: a failed write re-runs the sweep next
+      // boot, which is idempotent under the current scanner semantics.
+    }
+  }
+
+  /**
+   * One-shot trade-badge (re)judge sweep over cowork_messages (S4 source-
+   * signing correction slice, 2026-11-03). Historical messages predate the
+   * stamp mechanism, so unsigned p2p rows survive only as bare host emits
+   * (tool output IS the announcing message — its first line matches an emit
+   * anchor): demo cards, analysis quotes and cross-session relay copies
+   * clear out, genuinely-executed emissions keep their badge, and every
+   * session whose mark no longer classifies goes back to NULL. Escrow stays
+   * on the unchanged hand-written contract; fresh marks are stamped at the
+   * write path only.
+   */
+  private backfillTradeBadges(): void {
+    try {
+      // Prefilter messages that could carry an nft-card fence (cheap LIKE),
+      // classify in JS with the strict scanner, roll each session up to its
+      // strongest kind. 70w-row libraries hit the prefilter on ~14 sessions
+      // (measured 2026-11-02), so the JS pass is tiny; the LIKE sweep itself
+      // is a single one-time sequential scan paid only on this migration.
+      const candidates = this.db.exec(
+        "SELECT session_id, content FROM cowork_messages WHERE content LIKE '%```nft%'",
+      );
+      const rollup = new Map<string, string>();
+      for (const row of candidates[0]?.values ?? []) {
+        const sessionId = String(row[0] ?? '');
+        const content = String(row[1] ?? '');
+        if (!sessionId || !content) continue;
+        const kind = scanMessageTradeBadgeLegacy(content, sessionId);
+        if (!kind) continue;
+        const existing = rollup.get(sessionId);
+        rollup.set(sessionId, kind === 'escrow' || existing === 'escrow' ? 'escrow' : 'p2p');
+      }
+
+      // Re-judge applies to ALL sessions: previously planted marks whose
+      // candidate messages no longer classify must go back to NULL.
+      const sessions = this.db.exec('SELECT id FROM cowork_sessions');
+      for (const row of sessions[0]?.values ?? []) {
+        const sessionId = String(row[0] ?? '');
+        if (!sessionId) continue;
+        const kind = rollup.get(sessionId) ?? null;
+        this.db.run('UPDATE cowork_sessions SET trade_badge = ? WHERE id = ?', [kind, sessionId]);
+      }
+    } catch {
+      // Backfill is best-effort: the write path heals any session the sweep
+      // missed on its next trade message (upgrade-only).
+    }
+    this.markConfigFlag('tradeBadgeSourceSignSwept');
   }
 
   private initializeTables(basePath: string) {
@@ -2491,19 +2561,20 @@ export class SqliteStore {
         // conversation carries — 'p2p' (contract sale/listing or direct
         // transfer) or 'escrow' (three-party escrow activity), NULL = none.
         // Write-path maintained (coworkStore.addMessageWithId only upgrades),
-        // read by listSessions; this backfill seeds historical sessions once.
+        // read by listSessions.
         this.db.run('ALTER TABLE cowork_sessions ADD COLUMN trade_badge TEXT;');
-        this.backfillTradeBadges(false);
         this.save();
-      } else if (!this.getConfigValue('tradeBadgeSourceSignSwept')) {
-        // Source-signing correction slice (2026-11-03): the column already
-        // existed on this database, so the ORIGINAL unsigned scanner may have
-        // seeded its marks (on the live build: one marked session carried a
-        // cross-session relay copy of another session's real trade, two more
-        // were demo/analysis cards). Re-judge every session once under the
-        // post-signing rules; one-shot via the cowork_config flag, cost
-        // profile identical to the original backfill.
-        this.backfillTradeBadges(true);
+      }
+
+      if (!columns.includes('trade_badge') || !this.configFlagSet('tradeBadgeSourceSignSwept')) {
+        // One-shot seed/re-judge sweep, guarded by the cowork_config flag:
+        //  - fresh column upgrade → seed historical sessions once;
+        //  - sourcesigning correction slice (2026-11-03) → re-judge marks the
+        //    ORIGINAL unsigned scanner planted (on the live build: one marked
+        //    session carried a cross-session relay copy of another session's
+        //    real trade, two more were demo/analysis cards — those unmark,
+        //    genuinely-executed bare emits keep their badge).
+        this.backfillTradeBadges();
         this.save();
       }
 
