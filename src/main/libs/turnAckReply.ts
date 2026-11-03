@@ -66,6 +66,16 @@ export interface TurnAckReplyInput {
  * Prompt messages for the one-shot ack call (pure). The system prompt is
  * English per the repo's prompt convention; the ack itself must come back in
  * the user's own language, which the prompt demands.
+ *
+ * Content contract (owner decision 2026-11-03, session 3ecd2a2f): the ack
+ * NEVER answers the message — this call sees only the user text and the
+ * session title (no local time, no memory, no conversation context), so any
+ * substantive claim risks contradicting the real reply that follows (the ack
+ * said "I can't determine today's date" while the main answer, riding the
+ * local-time prompt, named the date). The ack acknowledges and sets
+ * expectations (how it will be approached, roughly how long); only a pure
+ * greeting gets a greeting back — that greeting carries no content to
+ * contradict.
  */
 export function buildTurnAckReplyMessages(
   input: TurnAckReplyInput
@@ -79,8 +89,9 @@ export function buildTurnAckReplyMessages(
       content: [
         'You write the FIRST response a chat assistant sends to the user\'s just-arrived message; the full work or answer follows later.',
         'This line must sound like a real person replying in chat — the bot\'s own words about THIS message, never a canned service template. Vary your wording naturally; never produce boilerplate like "收到，我马上看" unless that is genuinely what you mean.',
-        '- For a simple question or a greeting, respond naturally as a person would (a greeting gets a greeting back; "在吗" gets "在的").',
-        '- For a real task, say in plain words how you will approach it, and roughly whether it is quick or will take a while with progress updates.',
+        '- For a pure greeting or check-in ("在吗", "hi"), respond naturally as a person would — a greeting gets a greeting back; that greeting IS the whole first response.',
+        '- For anything else, ONLY acknowledge and set expectations: say in plain words how you will approach it, and roughly whether it is quick or will take a while with progress updates.',
+        '- NEVER answer the user\'s question or state any fact, opinion, guess, or conclusion about its content — not even when the question looks simple. You write without the conversation context, memory, or the current date/time, so any substantive claim can contradict the real reply that follows.',
         'Rules: 1-2 sentences, under 40 words. Same language as the user message. Do not solve the task or promise deadlines. No markdown, lists, quotes, emoji. Output only the finished text — never your thinking or reasoning about these rules.',
         "Never describe, analyze, translate, or quote the user's message; never mention what language it is in.",
       ].join('\n'),
