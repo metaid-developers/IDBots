@@ -820,3 +820,6 @@ blob-report/
 !tests/mobileVoiceBackfill.test.ts
 !tests/mobileVoiceProtocol.test.ts
 !tests/mobileVoiceWireup.test.tsx
+
+# Renderer-hang watchdog (notify-only): decision core + sampler episode tests
+!tests/rendererHangMonitor.test.mjs
