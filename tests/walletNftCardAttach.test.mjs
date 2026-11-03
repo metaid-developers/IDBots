@@ -149,8 +149,10 @@ test('wallet_nft_transfer appends an enriched transferred card with the recipien
   assert.equal(card.action, 'transferred');
   assert.ok(card.imgUrl.startsWith('https://'));
   assert.ok(card.icon.startsWith('metafile://'));
-  // Key order is the pinned cross-side contract (renderer parses the same shape).
-  assert.equal(Object.keys(card).join(','), 'format,genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,action');
+  // Key order is the pinned cross-side contract (renderer parses the same
+  // shape). hostStamp rides the tail since the source-signing slice — a
+  // host-emitted card always carries it.
+  assert.equal(Object.keys(card).join(','), 'format,genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,action,hostStamp');
 });
 
 test('wallet_nft_transfer to a local bot name prefills the recipient label', async () => {
@@ -170,7 +172,7 @@ test('wallet_nft_transfer to a local bot name prefills the recipient label', asy
   assert.equal(card.action, 'transferred');
   assert.equal(
     Object.keys(card).join(','),
-    'format,genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,ownerLabel,action',
+    'format,genesis,codehash,tokenIndex,name,series,imgUrl,icon,owner,ownerLabel,action,hostStamp',
   );
 });
 
