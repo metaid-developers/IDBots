@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { fetchFromLocalOrFallback } from './localIndexerProxy';
+import { fetchFromLocalOrFallback, fetchJsonWithFallbackOnMiss } from './localIndexerProxy';
 import { resolveBroadcastTxResult } from '../libs/mvcSpend';
 import type { MetabotStore } from '../metabotStore';
 
@@ -473,6 +473,181 @@ export async function fetchMrc721ItemVerify(params: {
   return fetchMrc721Single<Mrc721VerifyInfo>('/api/mrc721/item/verify', {
     pinId: params.pinId,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Holder gate + collection search (P0: mrc721_verify_holding / search tools)
+// ---------------------------------------------------------------------------
+
+/**
+ * MetaID (64-hex global metaid) → holder address, through the same
+ * metafile-indexer user-info route the metaid:getUserInfo IPC uses
+ * (local-first, then file.metaid.io). Returns null when the MetaID is unknown.
+ */
+export async function fetchMrc721AddressByMetaId(params: {
+  metaId: string;
+}): Promise<string | null> {
+  const metaId = typeof params.metaId === 'string' ? params.metaId.trim() : '';
+  if (!metaId) return null;
+  const localPath = `/api/v1/users/info/metaid/${encodeURIComponent(metaId)}`;
+  const fallbackUrl = `https://file.metaid.io/metafile-indexer/api/v1/info/metaid/${encodeURIComponent(metaId)}`;
+  // A payload without a usable holder address counts as a semantic miss so
+  // the fallback (and only the fallback) answers with a real record.
+  const isMiss = (payload: unknown): boolean => {
+    const data = (payload as { data?: { address?: unknown } } | null)?.data;
+    return !data || typeof data.address !== 'string' || !data.address;
+  };
+  const response = await fetchJsonWithFallbackOnMiss(localPath, fallbackUrl, isMiss);
+  const payload = (await response.json().catch(() => null)) as {
+    data?: { address?: unknown };
+  } | null;
+  const address = payload?.data?.address;
+  return typeof address === 'string' && address ? address : null;
+}
+
+function mrc721CollectionMatchesKeyword(row: Mrc721CollectionSummary, keyword: string): boolean {
+  const haystacks = [row.name, row.collectionName, row.desc, row.pinid, row.createMetaId];
+  return haystacks.some(
+    (value) => typeof value === 'string' && value.toLowerCase().includes(keyword),
+  );
+}
+
+export interface Mrc721CollectionSupplyState {
+  totalSupply?: number;
+  mintedCount: number;
+  /** true = supply exhausted; false = slots left; null = unlimited or the count scan hit its page cap. */
+  complete: boolean | null;
+}
+
+export interface Mrc721CollectionSearchResult {
+  items: Mrc721CollectionSummary[];
+  /** Total collection rows scanned from the indexer page list. */
+  scanned: number;
+  /** true = the page cap stopped the scan before the indexer list was exhausted. */
+  truncated: boolean;
+  /** When requested: minted-count state keyed by collectionid (pinid). */
+  supplyState?: Record<string, Mrc721CollectionSupplyState>;
+}
+
+const MRC721_SEARCH_MAX_PAGES_DEFAULT = 20;
+const MRC721_SEARCH_SUPPLY_STATE_CAP = 20;
+const MRC721_SEARCH_SUPPLY_STATE_PAGE_CAP = 50;
+
+/**
+ * Collection search by keyword (name / namespace / description) and/or issuer
+ * address. The indexer does not expose a keyword/issuer query yet
+ * (docs/nft-indexer-requirements.md R-A/R-B), so filtering runs client-side
+ * over the registered-collection page list — fine at today's scale, swapped
+ * for server-side search when man-p2p ships it.
+ */
+export async function searchMrc721Collections(params: {
+  keyword?: string;
+  issuerAddress?: string;
+  includeSupplyState?: boolean;
+  maxPages?: number;
+  pageSize?: number;
+}): Promise<Mrc721CollectionSearchResult> {
+  const keyword = (params.keyword ?? '').trim().toLowerCase();
+  const issuerAddress = (params.issuerAddress ?? '').trim();
+  if (!keyword && !issuerAddress) {
+    throw new Error('collection search requires a keyword or an issuerAddress');
+  }
+  const maxPages = Math.min(Math.max(1, params.maxPages ?? MRC721_SEARCH_MAX_PAGES_DEFAULT), 50);
+  const pageSize = Math.min(Math.max(1, params.pageSize ?? 100), 100);
+  const items: Mrc721CollectionSummary[] = [];
+  let scanned = 0;
+  let truncated = false;
+  let cursor: string | number | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const result = await fetchMrc721CollectionPageList({ cursor, size: pageSize });
+    const rows = result.items ?? [];
+    scanned += rows.length;
+    for (const row of rows) {
+      if (issuerAddress && (row.createAddress ?? '') !== issuerAddress) continue;
+      if (keyword && !mrc721CollectionMatchesKeyword(row, keyword)) continue;
+      items.push(row);
+    }
+    if (!result.cursor) break;
+    cursor = result.cursor;
+    if (page === maxPages - 1) truncated = true;
+  }
+
+  const result: Mrc721CollectionSearchResult = { items, scanned, truncated };
+  if (params.includeSupplyState) {
+    const supplyState: Record<string, Mrc721CollectionSupplyState> = {};
+    for (const row of items.slice(0, MRC721_SEARCH_SUPPLY_STATE_CAP)) {
+      if (!row.pinid) continue;
+      let mintedCount = 0;
+      let exhausted = false;
+      let itemCursor: string | number | undefined;
+      for (let pages = 0; pages < MRC721_SEARCH_SUPPLY_STATE_PAGE_CAP; pages++) {
+        const itemPage = await fetchMrc721CollectionItems({ pinid: row.pinid, cursor: itemCursor, size: 100 });
+        mintedCount += itemPage.items.length;
+        if (!itemPage.cursor) {
+          exhausted = true;
+          break;
+        }
+        itemCursor = itemPage.cursor;
+      }
+      supplyState[row.pinid] = {
+        totalSupply: row.totalSupply,
+        mintedCount,
+        complete: exhausted && row.totalSupply != null && row.totalSupply >= 0
+          ? mintedCount >= row.totalSupply
+          : null,
+      };
+    }
+    result.supplyState = supplyState;
+  }
+  return result;
+}
+
+export interface Mrc721HoldingVerdict {
+  holderAddress: string;
+  collectionName?: string;
+  collectionPinId?: string;
+  holds: boolean;
+  count: number;
+  /** Live (non-burned) holdings of the collection, holder-view order. */
+  items: Mrc721ItemSummary[];
+}
+
+/**
+ * Hard holder gate (requirement S4): does this address currently hold at
+ * least one live item of the given MRC-721 collection? Backs the
+ * `mrc721_verify_holding` agent tool and is directly callable by host
+ * internals (badge-gated replies, access checks). Read-only indexer lookups;
+ * a moved-on item flips the verdict because the holder view is live.
+ */
+export async function verifyMrc721Holding(params: {
+  holderAddress: string;
+  collectionName?: string;
+  collectionPinId?: string;
+}): Promise<Mrc721HoldingVerdict> {
+  const holderAddress = (params.holderAddress ?? '').trim();
+  if (!holderAddress) throw new Error('verifyMrc721Holding requires holderAddress');
+  const collectionName = (params.collectionName ?? '').trim() || undefined;
+  let collectionPinId = (params.collectionPinId ?? '').trim() || undefined;
+  if (!collectionPinId && !collectionName) {
+    throw new Error('verifyMrc721Holding requires collectionName or collectionPinId');
+  }
+  if (!collectionPinId && collectionName) {
+    const collection = await fetchMrc721CollectionInfo({ name: collectionName });
+    collectionPinId = collection?.pinid || undefined;
+    if (!collectionPinId) {
+      throw new Error(`collection "${collectionName}" is not indexed (yet) — holdings cannot be verified against an unindexed collection`);
+    }
+  }
+  const items = await fetchMrc721AddressItems({ address: holderAddress, pinId: collectionPinId });
+  const live = (items ?? []).filter((item) => !item.burned);
+  return {
+    holderAddress,
+    collectionName,
+    collectionPinId,
+    holds: live.length > 0,
+    count: live.length,
+    items: live,
+  };
 }
 
 // ---------------------------------------------------------------------------

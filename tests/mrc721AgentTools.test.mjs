@@ -36,6 +36,8 @@ const TOOL_NAMES = [
   'mrc721_collections',
   'mrc721_item_info',
   'mrc721_collection_info',
+  'mrc721_verify_holding',
+  'mrc721_search_collections',
 ];
 
 function makeHarness(overrides = {}) {
@@ -536,4 +538,215 @@ test('mrc721_sell_orders lists a local listing with its invalid reason', async (
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /invalid order1/);
   assert.match(result.content[0].text, /no longer in the seller's hand/);
+});
+
+// ---------------------------------------------------------------------------
+// P0: mrc721_verify_holding (S4 hard holder gate) + mrc721_search_collections
+// (S1 keyword/issuer search) + MetaID read targets (S8)
+// ---------------------------------------------------------------------------
+
+const METAID = '2eb21238314aca030b67ed7b7c4c613f2e8cb7e42ee9140589a4df9da3854aa2';
+
+function holderItem(overrides = {}) {
+  return {
+    itemPinId: PINID,
+    collectionName: 'pixel-cats',
+    number: 5,
+    burned: false,
+    ...overrides,
+  };
+}
+
+function collectionRow(overrides = {}) {
+  return {
+    collectionName: 'pixel-cats',
+    name: 'Pixel Cats',
+    totalSupply: 10,
+    totalnum: 3,
+    royaltyRate: 5,
+    desc: 'A pixel cat album for tests',
+    pinid: DESC_PINID,
+    createAddress: BOT_ADDRESS,
+    createMetaId: METAID,
+    createTime: 1793537073,
+    genesisChainName: 'mvc',
+    ...overrides,
+  };
+}
+
+function manapiDispatch(routes) {
+  return async (url) => {
+    const raw = String(url);
+    for (const [pattern, responder] of routes) {
+      if (raw.includes(pattern)) return responder(raw);
+    }
+    throw new Error(`unexpected fetch: ${raw}`);
+  };
+}
+
+test('mrc721_verify_holding returns HOLDS with the item list for a live holding', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /# metabot_id 1/);
+  assert.match(result.content[0].text, /verdict: HOLDS \(1 item\(s\)\)/);
+  assert.match(result.content[0].text, new RegExp(PINID));
+  assert.match(result.content[0].text, /\(#5\)/);
+});
+
+test('mrc721_verify_holding returns NOT_HOLDING for an empty live holder view', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 1, data: collectionRow() })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem({ burned: true })] } })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ address: OTHER_ADDRESS, collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /verdict: NOT_HOLDING/);
+});
+
+test('mrc721_verify_holding reports an unindexed collection as a lookup failure, never as NOT_HOLDING', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/info', () => jsonResponse({ code: 0, message: 'not found' })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'], collection_name: 'ghost-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /lookup failed/);
+  assert.match(result.content[0].text, /not indexed/);
+  assert.doesNotMatch(result.content[0].text, /NOT_HOLDING/);
+});
+
+test('mrc721_verify_holding resolves an external MetaID to its holder address', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['metafile-indexer/api/v1/info/metaid', () => jsonResponse({ code: 1, data: { address: OTHER_ADDRESS } })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
+    ]),
+    () => byName.mrc721_verify_holding.handler({ metaid: METAID, collection_pinid: DESC_PINID }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, new RegExp(OTHER_ADDRESS));
+  assert.match(result.content[0].text, /verdict: HOLDS/);
+});
+
+test('mrc721_verify_holding requires a collection to check against', async () => {
+  const { byName } = makeHarness();
+  const result = await byName.mrc721_verify_holding.handler({ names: ['AI_Sunny'] });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /requires collection_name or collection_pinid/);
+});
+
+test('mrc721_search_collections matches a keyword against name and returns the description', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow(), collectionRow({ collectionName: 'dog-pics', name: 'Dog Pics', desc: 'dogs only' })], },
+      })],
+    ]),
+    () => byName.mrc721_search_collections.handler({ keyword: 'pixel' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /scanned 2 registered collection\(s\), matched: 1/);
+  assert.match(result.content[0].text, /Pixel Cats/);
+  assert.match(result.content[0].text, /A pixel cat album for tests/);
+});
+
+test('mrc721_search_collections filters by issuer via the local bot name', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => jsonResponse({
+        code: 1,
+        data: { list: [collectionRow(), collectionRow({ collectionName: 'other-cats', createAddress: OTHER_ADDRESS })] },
+      })],
+    ]),
+    () => byName.mrc721_search_collections.handler({ issuer: 'AI_Sunny' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, new RegExp(`issuer: ${BOT_ADDRESS}`.replace(/[$()*+.?[\\\]^{|}]/g, '\\$&')));
+  assert.match(result.content[0].text, /matched: 1/);
+});
+
+test('mrc721_search_collections computes minted counts when supply_state is requested', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => jsonResponse({ code: 1, data: { list: [collectionRow()] } })],
+      ['/api/mrc721/collection/items/pageList', () => jsonResponse({
+        code: 1,
+        data: { list: [holderItem(), holderItem(), holderItem()] },
+      })],
+    ]),
+    () => byName.mrc721_search_collections.handler({ issuer: 'AI_Sunny', supply_state: true }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /minted: 3\/10 \(slots remaining\)/);
+});
+
+test('mrc721_search_collections requires a keyword or an issuer', async () => {
+  const { byName } = makeHarness();
+  const result = await byName.mrc721_search_collections.handler({});
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /requires a keyword or an issuer/);
+});
+
+test('mrc721_balance resolves a MetaID read target and renders its holdings', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['metafile-indexer/api/v1/info/metaid', () => jsonResponse({ code: 1, data: { address: OTHER_ADDRESS } })],
+      ['/api/mrc721/address/item', () => jsonResponse({ code: 1, data: { list: [holderItem()] } })],
+    ]),
+    () => byName.mrc721_balance.handler({ metaid: METAID }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, new RegExp(OTHER_ADDRESS));
+  assert.match(result.content[0].text, /pixel-cats: 1 item\(s\)/);
+});
+
+test('mrc721_balance reports an unresolvable MetaID instead of silently dropping it', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    async () => jsonResponse({ code: 1, data: {} }),
+    () => byName.mrc721_balance.handler({ metaid: METAID }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /could not resolve MetaID/);
+});
+
+test('mrc721_search_collections scans multiple pages and reports truncation honestly', async () => {
+  const { byName } = makeHarness();
+  let page = 0;
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/collection/pageList', () => {
+        page += 1;
+        return jsonResponse({
+          code: 1,
+          data: page === 1
+            ? { list: [collectionRow()], cursor: 'next-page-token' }
+            : { list: [collectionRow({ collectionName: 'late-cats', name: 'Late Cats' })], cursor: 'still-more' },
+        });
+      }],
+    ]),
+    () => byName.mrc721_search_collections.handler({ keyword: 'cats', max_pages: 2 }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /scanned 2 registered collection\(s\) \(page cap hit/);
+  assert.match(result.content[0].text, /matched: 2/);
+  assert.match(result.content[0].text, /Late Cats/);
 });

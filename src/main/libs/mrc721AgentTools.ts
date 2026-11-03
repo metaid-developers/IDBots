@@ -4,6 +4,7 @@ import { chainWriteFailureDetail, feeAssistReceiptLines } from './chainFeeAssist
 import { appendNftCardBlock, buildMrc721CardFields } from './nftCardMarkdown';
 import { withNftCardHostStamp } from './tradeActivityStamp';
 import {
+  fetchMrc721AddressByMetaId,
   fetchMrc721AddressCollections,
   fetchMrc721AddressItems,
   fetchMrc721CollectionInfo,
@@ -14,7 +15,9 @@ import {
   fetchMrc721ItemVerify,
   isMvcAddress,
   MRC721_MIN_SELL_PRICE_SATS,
+  searchMrc721Collections,
   validateMrc721CollectionName,
+  verifyMrc721Holding,
   waitForMrc721CollectionInfo,
   waitForMrc721ItemInfo,
   type Mrc721CollectionSummary,
@@ -492,6 +495,40 @@ function resolveReadTargets(input: {
 }
 
 /**
+ * MetaID read-target flavor (requirement S8): resolve a 64-hex MetaID to its
+ * holder address through the metafile-indexer user-info route. Returns null
+ * when unresolvable — callers surface a descriptive error instead of silently
+ * dropping the target.
+ */
+async function resolveMetaidTargetAddress(metaIdRaw: string): Promise<string | null> {
+  const metaId = asString(metaIdRaw);
+  if (!metaId) return null;
+  try {
+    return await fetchMrc721AddressByMetaId({ metaId });
+  } catch {
+    return null;
+  }
+}
+
+/** Issuer filter resolution for the search tool: local name → address → MetaID. */
+async function resolveIssuerFilter(
+  issuerRaw: string,
+  control: Mrc721ToolsControl,
+): Promise<string | { error: string }> {
+  const raw = asString(issuerRaw);
+  if (!raw) return { error: 'issuer is empty' };
+  if (isMvcAddress(raw)) return raw;
+  const localId = control.resolveMetabotIdByName(raw);
+  if (localId != null) {
+    const address = control.getMetabotMvcAddress(localId);
+    if (address) return address;
+  }
+  const byMetaId = await resolveMetaidTargetAddress(raw);
+  if (byMetaId) return byMetaId;
+  return { error: `"${raw}" is neither a local MetaBot name, an MVC address, nor a resolvable MetaID` };
+}
+
+/**
  * Card-enrichment reads (S3 chat NFT cards). Both go through the host control
  * when wired (main.ts), falling back to the direct service calls — every
  * failure degrades to an identity-only card, never a failed action.
@@ -903,7 +940,7 @@ export function buildMrc721AgentTools(deps: {
   const mrc721Balance = tool(
     'mrc721_balance',
     [
-      'Query the MRC-721 NFT holdings (pin-based MetaID NFTs) of local MetaBots by id, or of a raw address — the pin-based counterpart of wallet_nft_balance (MetaContract NFTs).',
+      'Query the MRC-721 NFT holdings (pin-based MetaID NFTs) of local MetaBots by id, or of a raw address or external MetaID — the pin-based counterpart of wallet_nft_balance (MetaContract NFTs).',
       'Reads the indexer holder view (address/item), optionally filtered to one collection; grouping and per-item identity (item pinId, collection, number, official-mint badge) come from the index.',
       'Read-only index data; cross-chain — a raw BTC address works as-is. Batch multiple metabot_ids in ONE call. Defaults to THIS session bot when nothing is passed.',
     ].join(' '),
@@ -911,6 +948,7 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids: z.array(z.number().int().positive()).optional().describe('Local MetaBot ids to query, e.g. [1, 15]. Batch in one call.'),
       names: z.array(z.string()).optional().describe('Local MetaBot names to resolve and query, e.g. ["AI_Sunny"].'),
       address: z.string().optional().describe('Explicit address to query (MVC or BTC; used as-is).'),
+      metaid: z.string().optional().describe('64-hex MetaID to query — resolved to its holder address via the user-info indexer (external users).'),
       collection_name: z.string().optional().describe('Filter to one collection by name (resolved via the indexer).'),
       collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (the collection_desc pinId).'),
     },
@@ -918,9 +956,17 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids?: number[];
       names?: string[];
       address?: string;
+      metaid?: string;
       collection_name?: string;
       collection_pinid?: string;
     }) => {
+      let metaidAddress: string | undefined;
+      if (args.metaid) {
+        metaidAddress = (await resolveMetaidTargetAddress(args.metaid)) ?? undefined;
+        if (!metaidAddress) {
+          return textResult(`mrc721_balance: could not resolve MetaID "${asString(args.metaid)}" to a holder address.`, true);
+        }
+      }
       let collectionPinId = asString(args.collection_pinid) || undefined;
       const collectionName = asString(args.collection_name);
       if (!collectionPinId && collectionName) {
@@ -934,9 +980,13 @@ export function buildMrc721AgentTools(deps: {
           return textResult(`mrc721_balance: collection lookup failed: ${errorMessage(error)}`, true);
         }
       }
-      const targets = resolveReadTargets(args, control, sessionMetabotId());
+      const targets = resolveReadTargets(
+        { metabot_ids: args.metabot_ids, names: args.names, address: metaidAddress ?? args.address },
+        control,
+        sessionMetabotId(),
+      );
       if (!targets.length) {
-        return textResult('mrc721_balance requires metabot_ids or address (or a session bot).', true);
+        return textResult('mrc721_balance requires metabot_ids, address, metaid (or a session bot).', true);
       }
       const lines: string[] = [];
       for (const target of targets) {
@@ -971,6 +1021,7 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids: z.array(z.number().int().positive()).optional().describe('Local MetaBot ids for scope "mine". Batch in one call.'),
       names: z.array(z.string()).optional().describe('Local MetaBot names for scope "mine", e.g. ["AI_Sunny"].'),
       address: z.string().optional().describe('Explicit address for scope "mine" (used as-is).'),
+      metaid: z.string().optional().describe('64-hex MetaID for scope "mine" — resolved to its holder address via the user-info indexer (external users).'),
       cursor: z.string().optional().describe('Page cursor for scope "market" (from the previous call).'),
       size: z.number().int().positive().max(100).optional().describe('Page size for scope "market".'),
     },
@@ -979,6 +1030,7 @@ export function buildMrc721AgentTools(deps: {
       metabot_ids?: number[];
       names?: string[];
       address?: string;
+      metaid?: string;
       cursor?: string;
       size?: number;
     }) => {
@@ -994,9 +1046,20 @@ export function buildMrc721AgentTools(deps: {
           return textResult(`mrc721_collections (market) failed: ${errorMessage(error)}`, true);
         }
       }
-      const targets = resolveReadTargets(args, control, sessionMetabotId());
+      let metaidAddress: string | undefined;
+      if (args.metaid) {
+        metaidAddress = (await resolveMetaidTargetAddress(args.metaid)) ?? undefined;
+        if (!metaidAddress) {
+          return textResult(`mrc721_collections: could not resolve MetaID "${asString(args.metaid)}" to a holder address.`, true);
+        }
+      }
+      const targets = resolveReadTargets(
+        { metabot_ids: args.metabot_ids, names: args.names, address: metaidAddress ?? args.address },
+        control,
+        sessionMetabotId(),
+      );
       if (!targets.length) {
-        return textResult('mrc721_collections (mine) requires metabot_ids or address (or a session bot).', true);
+        return textResult('mrc721_collections (mine) requires metabot_ids, address, metaid (or a session bot).', true);
       }
       const lines: string[] = [];
       for (const target of targets) {
@@ -1282,6 +1345,146 @@ export function buildMrc721AgentTools(deps: {
     },
   );
 
+  // -------------------------------------------------------------------------
+  // mrc721_verify_holding (S4 read: hard holder gate for badge/access flows)
+  // -------------------------------------------------------------------------
+  const mrc721VerifyHolding = tool(
+    'mrc721_verify_holding',
+    [
+      'Verify whether a holder currently holds at least one MRC-721 item (pin-based MetaID NFT) of a given collection — the hard holder gate for badge/access flows (e.g. only fans holding the badge collection may get a reply).',
+      'Holders: local MetaBot ids/names, a raw address, or an external 64-hex MetaID (resolved via the user-info indexer). The verdict covers live (non-burned) items only and reads the live holder view, so a transferred-away NFT flips it to NOT_HOLDING.',
+      'Read-only, no wallet involvement. Use for gating decisions; use mrc721_balance for full holdings inventories.',
+    ].join(' '),
+    {
+      metabot_ids: z.array(z.number().int().positive()).optional().describe('Local MetaBot ids to check, e.g. [1, 15]. Batch in one call.'),
+      names: z.array(z.string()).optional().describe('Local MetaBot names to check, e.g. ["AI_Sunny"].'),
+      address: z.string().optional().describe('Explicit holder address (MVC livenet; BTC addresses read-only).'),
+      metaid: z.string().optional().describe('64-hex MetaID to check — resolved to its holder address via the user-info indexer (external users).'),
+      collection_name: z.string().optional().describe('Collection to check against, by namespace name (resolved via the indexer).'),
+      collection_pinid: z.string().optional().describe('Collection to check against, as the collectionid (collection_desc pinId).'),
+    },
+    async (args: {
+      metabot_ids?: number[];
+      names?: string[];
+      address?: string;
+      metaid?: string;
+      collection_name?: string;
+      collection_pinid?: string;
+    }) => {
+      const collectionName = asString(args.collection_name) || undefined;
+      const collectionPinId = asString(args.collection_pinid) || undefined;
+      if (!collectionName && !collectionPinId) {
+        return textResult('mrc721_verify_holding requires collection_name or collection_pinid.', true);
+      }
+      let metaidAddress: string | undefined;
+      if (args.metaid) {
+        metaidAddress = (await resolveMetaidTargetAddress(args.metaid)) ?? undefined;
+        if (!metaidAddress) {
+          return textResult(`mrc721_verify_holding: could not resolve MetaID "${asString(args.metaid)}" to a holder address.`, true);
+        }
+      }
+      const targets = resolveReadTargets(
+        { metabot_ids: args.metabot_ids, names: args.names, address: metaidAddress ?? args.address },
+        control,
+        sessionMetabotId(),
+      );
+      if (!targets.length) {
+        return textResult('mrc721_verify_holding requires metabot_ids, names, address, or metaid.', true);
+      }
+      const lines: string[] = [`MRC-721 holding check — collection: ${collectionName ?? collectionPinId}`];
+      for (const target of targets) {
+        const label = target.metabotId != null ? `metabot_id ${target.metabotId}` : 'address';
+        if (!target.address) {
+          lines.push(`# ${label}\n- lookup failed: local MetaBot not found or has no MVC address`);
+          continue;
+        }
+        try {
+          const verdict = await verifyMrc721Holding({
+            holderAddress: target.address,
+            collectionName,
+            collectionPinId,
+          });
+          lines.push(`# ${label} ${target.address}\n- verdict: ${verdict.holds ? `HOLDS (${verdict.count} item(s))` : 'NOT_HOLDING'}`);
+          if (verdict.count) {
+            const itemList = verdict.items
+              .map((item) => `${item.itemPinId}${item.number != null ? ` (#${item.number})` : ''}`)
+              .join(', ');
+            lines.push(`- items: ${itemList}`);
+          }
+        } catch (error) {
+          // Distinguishable from NOT_HOLDING on purpose: an unindexed
+          // collection or an index outage must not read as "no badge".
+          lines.push(`# ${label} ${target.address}\n- lookup failed: ${errorMessage(error)}`);
+        }
+      }
+      return textResult(lines.join('\n'));
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // mrc721_search_collections (S1 read: keyword/issuer collection search)
+  // -------------------------------------------------------------------------
+  const mrc721SearchCollections = tool(
+    'mrc721_search_collections',
+    [
+      'Search MRC-721 collections (pin-based MetaID NFT albums) by keyword and/or by issuer — keyword matches (case-insensitive) the display name, the collection namespace, the description, and the collectionid; issuer accepts a local MetaBot name, a 64-hex MetaID, or an MVC address.',
+      'Returns matching collection summaries (display name, mint progress, royalty, issuer identity, collectionid) plus each description. supply_state=true also computes per-collection minted counts (minted vs totalSupply, first 20 matches) for issuer/creator flows like "which of my albums still has slots".',
+      'Read-only index data. Filtering runs client-side over the registered-collection page list (scanned count is reported); use max_pages for deeper scans.',
+    ].join(' '),
+    {
+      keyword: z.string().optional().describe('Search text matched (case-insensitive) against name, collection namespace, description, collectionid.'),
+      issuer: z.string().optional().describe('Issuer filter: local MetaBot name, 64-hex MetaID, or MVC address (collections this issuer created).'),
+      supply_state: z.boolean().optional().describe('Also compute mintedCount vs totalSupply per matched collection (first 20 matches; slower). Default false.'),
+      max_pages: z.number().int().min(1).max(50).optional().describe('Indexer page-list pages to scan (default 20).'),
+      size: z.number().int().min(1).max(50).optional().describe('Max collections returned (default 20).'),
+    },
+    async (args: {
+      keyword?: string;
+      issuer?: string;
+      supply_state?: boolean;
+      max_pages?: number;
+      size?: number;
+    }) => {
+      const keyword = asString(args.keyword);
+      let issuerAddress: string | undefined;
+      if (args.issuer) {
+        const resolved = await resolveIssuerFilter(args.issuer, control);
+        if (typeof resolved === 'object') {
+          return textResult(`mrc721_search_collections: ${resolved.error}.`, true);
+        }
+        issuerAddress = resolved;
+      }
+      if (!keyword && !issuerAddress) {
+        return textResult('mrc721_search_collections requires a keyword or an issuer.', true);
+      }
+      try {
+        const result = await searchMrc721Collections({
+          keyword: keyword || undefined,
+          issuerAddress,
+          includeSupplyState: args.supply_state === true,
+          maxPages: args.max_pages,
+        });
+        const lines: string[] = ['MRC-721 collection search:'];
+        lines.push(`- keyword: ${keyword ? `"${keyword}"` : '(none)'} | issuer: ${issuerAddress ?? '(none)'}`);
+        lines.push(`- scanned ${result.scanned} registered collection(s)${result.truncated ? ' (page cap hit — raise max_pages for deeper scans)' : ''}, matched: ${result.items.length}`);
+        if (!result.items.length) lines.push('- no matching collections');
+        for (const collection of result.items.slice(0, args.size ?? 20)) {
+          lines.push(formatMrc721CollectionLine(collection));
+          if (collection.desc) lines.push(`  desc: ${collection.desc}`);
+          const state = result.supplyState?.[collection.pinid ?? ''];
+          if (state) {
+            const supplySuffix = state.totalSupply != null && state.totalSupply >= 0 ? `/${state.totalSupply}` : '';
+            const suffix = state.complete === true ? ' (supply exhausted)' : state.complete === false ? ' (slots remaining)' : '';
+            lines.push(`  minted: ${state.mintedCount}${supplySuffix}${suffix}`);
+          }
+        }
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        return textResult(`mrc721_search_collections failed: ${errorMessage(error)}`, true);
+      }
+    }
+  );
+
   return [
     mrc721CollectionCreate,
     mrc721CollectionUpdate,
@@ -1294,5 +1497,7 @@ export function buildMrc721AgentTools(deps: {
     mrc721Collections,
     mrc721ItemInfo,
     mrc721CollectionInfo,
+    mrc721VerifyHolding,
+    mrc721SearchCollections,
   ];
 }
