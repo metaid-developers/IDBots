@@ -1732,6 +1732,14 @@
       ]
     },
     {
+      "path": "idbots.getNftCaRegistry",
+      "kind": "invoke",
+      "channel": "idbots:getNftCaRegistry",
+      "args": [
+        "input"
+      ]
+    },
+    {
       "path": "idbots.getOfficialSkillsStatus",
       "kind": "invoke",
       "channel": "idbots:getOfficialSkillsStatus",
@@ -2549,6 +2557,26 @@
       "channel": "metaid:resolveAvatarSource",
       "args": [
         "params"
+      ]
+    },
+    {
+      "path": "paymentInfo.clear",
+      "kind": "invoke",
+      "channel": "paymentInfo:clear",
+      "args": []
+    },
+    {
+      "path": "paymentInfo.get",
+      "kind": "invoke",
+      "channel": "paymentInfo:get",
+      "args": []
+    },
+    {
+      "path": "paymentInfo.save",
+      "kind": "invoke",
+      "channel": "paymentInfo:save",
+      "args": [
+        "input"
       ]
     },
     {

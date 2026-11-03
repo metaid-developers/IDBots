@@ -1160,6 +1160,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('idbots:getMetabotWalletAssets', input),
     getMetabotNfts: (input: { metabotId: number; kind: 'mrc721' | 'metacontract' }) =>
       ipcRenderer.invoke('idbots:getMetabotNfts', input),
+    getNftCaRegistry: (input: { refresh?: boolean }) =>
+      ipcRenderer.invoke('idbots:getNftCaRegistry', input),
     healNftCard: (input: {
       format: 'mrc721' | 'metacontract';
       genesis?: string;

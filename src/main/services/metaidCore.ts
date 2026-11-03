@@ -1024,6 +1024,20 @@ function buildEditAvatarSyncStep(avatar: string | null | undefined): MetabotInfo
     };
   }
 
+  // NFT avatar references (nft://mrc721/<itemPinId>) are a local display-only
+  // decoration: the /info/avatar protocol pins image bytes, so an NFT
+  // reference is published as a clear (empty) avatar instead of pinning a
+  // non-image value the protocol cannot carry. The step still runs so the
+  // edit-sync step bookkeeping stays complete.
+  if (/^nft:\/\//i.test(avatarRaw)) {
+    return {
+      key: 'avatar',
+      path: '/info/avatar',
+      contentType: 'text/plain',
+      payload: '',
+    };
+  }
+
   const avatarStep = buildAvatarDataUrlSyncStep(avatarRaw);
   if (!avatarStep) {
     throw new Error(

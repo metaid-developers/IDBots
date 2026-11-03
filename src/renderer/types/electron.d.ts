@@ -1894,6 +1894,11 @@ interface IElectronAPI {
       items?: ElectronMetabotNftListItem[];
       error?: string;
     }>;
+    getNftCaRegistry: (input: { refresh?: boolean }) => Promise<{
+      success: boolean;
+      registry?: ElectronNftCaRegistry;
+      error?: string;
+    }>;
     healNftCard: (input: {
       format: 'mrc721' | 'metacontract';
       genesis?: string;
@@ -2418,6 +2423,12 @@ interface IElectronAPI {
   p2p: {
     /** Lookup by globalMetaId, or by MVC address (chat NFT card owner/issuer identity). */
     getUserInfo: (params: { globalMetaId?: string; address?: string }) => Promise<unknown>;
+    /**
+     * Resolves an avatar reference (data:, http(s), metafile://, bare pin, or
+     * `nft://mrc721/<itemPinId>`) to a renderable source. For NFT references
+     * the response additionally carries `nft` item facts (collectionPinId /
+     * collectionName) for the CA-registry certified badge.
+     */
     resolveAvatarSource: (params: { reference: string }) => Promise<unknown>;
     listContacts: (params: { observerGlobalMetaId: string }) => Promise<{ success: boolean; contacts?: CoworkMetaIDContactSummary[]; error?: string }>;
     getContactDetail: (params: { observerGlobalMetaId: string; subjectGlobalMetaId: string }) => Promise<{ success: boolean; detail?: CoworkMetaIDContactDetail; error?: string }>;
@@ -2682,6 +2693,32 @@ interface ElectronMetabotNftListItem {
   createTime?: number;
   height?: number;
   raw: ElectronMetabotMrc721Raw | ElectronMetabotMetaContractNftRaw;
+}
+
+/** One certified collection in the IDBots NFT CA registry pin content. */
+interface ElectronNftCaCollectionEntry {
+  collectionPinId: string;
+  collectionName?: string;
+  note?: string;
+  certifiedAt?: number;
+}
+
+/**
+ * The IDBots NFT CA registry read off the official on-chain pin. When the CA
+ * pin is not configured yet (it does not exist today) the registry is empty
+ * and `verified` is false — renderers must not draw certification badges.
+ */
+interface ElectronNftCaRegistry {
+  protocol: 'idbots-nft-ca';
+  version: number;
+  verified: boolean;
+  status: 'empty-no-pin-configured' | 'unavailable' | 'verified' | 'unverified';
+  detail?: string;
+  pinId: string | null;
+  creatorMetaId: string | null;
+  officialMetaId: string;
+  collections: ElectronNftCaCollectionEntry[];
+  fetchedAt: number;
 }
 
 interface IMGatewayStatus {

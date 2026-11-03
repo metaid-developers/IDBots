@@ -74,10 +74,12 @@ after that date so it gets a tier here.
 | Channel | Tier | Notes |
 |---------|------|-------|
 | `metabot:list`, `metabot:get`, `metabot:checkNameExists`, `metabot:create`, `metabot:update`, `metabot:setEnabled`, `metabot:getSetting`, `metabot:setSetting` | P1 | |
+| `paymentInfo:get`, `paymentInfo:save`, `paymentInfo:clear` | P1 | The user's own encrypted payment receiving info (AES-256-GCM at rest); CRUD on personal settings, no funds. |
 | `idbots:getMetaBots`, `idbots:addMetaBot`, `idbots:deleteMetaBot`, `idbots:syncMetaBot`, `idbots:syncMetaBotEditChanges`, `idbots:resumeMetabotSetup` | P1 | |
 | `idbots:createMetaBotOnChain` | P1 | Timeout 300 s. |
 | `idbots:getAddressBalance`, `idbots:getMetabotWalletAssets`, `idbots:getMetabotNfts` | P1 | |
 | `idbots:healNftCard` | P1 | Re-resolves one NFT card artwork URL (read + local cache update, no funds). |
+| `idbots:getNftCaRegistry` | P1 | Reads the IDBots official NFT-avatar CA registry pin (read + local cache, no funds). |
 | `idbots:getOfficialSkillsStatus`, `idbots:getCommunitySkillsStatus`, `idbots:installOfficialSkill`, `idbots:syncAllOfficialSkills` | P1 | |
 | `idbots:uploadMetabotHomepageFile` | P2-R | R-size. |
 | `idbots:getListenerConfig`, `idbots:getListenerStatus`, `idbots:startMetaWebListener`, `idbots:toggleListener` | P2 | Server mode keeps the listener running by default (REQ-A-8). |

@@ -5,6 +5,7 @@ import type {
   MetabotNftKind,
   MetabotNftListItem,
 } from './metabotNftService';
+import type { NftCaRegistry } from './nftCaService';
 
 type RegisterIpcHandlerFn = (channel: string, handler: (event: any, ...args: any[]) => any) => void;
 
@@ -23,6 +24,7 @@ interface RegisterMetabotNftIpcHandlersDeps {
     store: MetabotStore,
     input: MetabotMrc721TransferInput,
   ) => Promise<{ txId: string; pinId: string; toAddress: string; spentOutpoint: string; outputValue: number }>;
+  getNftCaRegistry: (input: { refresh?: boolean }) => Promise<NftCaRegistry>;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -78,6 +80,21 @@ export function registerMetabotNftIpcHandlers(deps: RegisterMetabotNftIpcHandler
         const metabotId = normalizeMetabotId(input?.metabotId);
         const result = await deps.transferMetabotMrc721(deps.getMetabotStore(), { ...input, metabotId });
         return { success: true, result };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+  );
+
+  // Read-only CA registry read for the NFT-avatar certified badge. The
+  // reader itself degrades to an empty/verified:false registry and never
+  // throws; `refresh: true` bypasses the main-process TTL cache.
+  deps.registerIpcHandler(
+    'idbots:getNftCaRegistry',
+    async (_event, input: { refresh?: boolean }) => {
+      try {
+        const registry = await deps.getNftCaRegistry({ refresh: input?.refresh === true });
+        return { success: true, registry };
       } catch (error) {
         return { success: false, error: getErrorMessage(error) };
       }

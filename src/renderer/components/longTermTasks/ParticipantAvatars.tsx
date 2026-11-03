@@ -1,5 +1,6 @@
 import React from 'react';
 import type { LongTermParticipant } from '../../types/longTermTask';
+import { isRenderableAvatarSource } from '../../utils/avatarSource';
 
 /**
  * Participant bot avatar stack (card + detail page). Every bot that touched
@@ -25,7 +26,10 @@ const ParticipantAvatars: React.FC<{
       <span className="flex -space-x-1.5 items-center">
         {visible.map((bot) => (
           <span key={bot.id} title={bot.name} className={cell}>
-            {bot.avatar ? (
+            {/* nft:// avatar references are not directly renderable here —
+                the letter fallback shows until this surface wraps the shared
+                NftAvatarFrame (follow-up). */}
+            {isRenderableAvatarSource(bot.avatar) ? (
               <img
                 src={bot.avatar}
                 alt={bot.name}

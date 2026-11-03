@@ -37,6 +37,9 @@ import {
 } from './allowChatSkills.ts';
 import MetaBotAdvancedActionsSection from './MetaBotAdvancedActionsSection';
 import MetaBotHomepageSection, { composeHomepageForSave } from './MetaBotHomepageSection';
+import MetaBotNftAvatarPickerModal from './MetaBotNftAvatarPickerModal';
+import NftAvatarFrame from './NftAvatarFrame';
+import { parseNftAvatarReference } from './nftAvatarPresentation.js';
 import KnowledgeBasePanel from './KnowledgeBasePanel';
 import SurfSection from './SurfSection';
 import DailyReportSection from './DailyReportSection';
@@ -258,6 +261,7 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
   onDelete,
 }) => {
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [nftAvatarPickerOpen, setNftAvatarPickerOpen] = useState(false);
   const [values, setValues] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [baseline, setBaseline] = useState<MetaBotEditValues>(() => buildInitialValues(initialValues));
   const [activeTab, setActiveTab] = useState<MetaBotEditTabKey>('basic');  const [savingTab, setSavingTab] = useState<MetaBotEditTabKey | null>(null);
@@ -712,12 +716,17 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
             {i18nService.t('metabotAvatar')}
           </label>
           <div className="min-w-0 flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="w-16 h-16 rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex-shrink-0 flex items-center justify-center">
-              {values.avatar && (values.avatar.startsWith('data:') || values.avatar.startsWith('http')) ? (
-                <img src={values.avatar} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <PhotoIcon className="h-8 w-8 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
-              )}
+            <div className="w-16 h-16 flex-shrink-0">
+              <NftAvatarFrame
+                avatar={values.avatar}
+                frameClassName="w-16 h-16 rounded-xl"
+                imgClassName="border dark:border-claude-darkBorder border-claude-border"
+                fallback={(
+                  <div className="w-16 h-16 rounded-xl dark:bg-claude-darkSurface bg-claude-surface border dark:border-claude-darkBorder border-claude-border overflow-hidden flex items-center justify-center">
+                    <PhotoIcon className="h-8 w-8 dark:text-claude-darkTextSecondary text-claude-textSecondary" />
+                  </div>
+                )}
+              />
             </div>
             <div className="flex-1 min-w-0">
               <input
@@ -727,16 +736,31 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
                 className="hidden"
                 onChange={handleAvatarFileChange}
               />
-              <button
-                type="button"
-                onClick={() => avatarInputRef.current?.click()}
-                className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-              >
-                {i18nService.t('metabotAvatarUpload')}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                >
+                  {i18nService.t('metabotAvatarUpload')}
+                </button>
+                <button
+                  type="button"
+                  data-slot="metabot-avatar-pick-nft"
+                  onClick={() => setNftAvatarPickerOpen(true)}
+                  className="px-3 py-2 text-sm rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                >
+                  {i18nService.t('metabotAvatarPickNft')}
+                </button>
+              </div>
               <p className={hintClass}>
                 {i18nService.t('metabotAvatarPlaceholder')}
               </p>
+              {parseNftAvatarReference(values.avatar) && (
+                <p className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                  {i18nService.t('metabotNftAvatarLocalOnlyHint')}
+                </p>
+              )}
               {values.avatar && (
                 <button
                   type="button"
@@ -1440,6 +1464,19 @@ const MetaBotEditTabs: React.FC<MetaBotEditTabsProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* NFT avatar picker — display-only local decoration, sets an
+          nft://mrc721/<itemPinId> reference into the avatar field. */}
+      {nftAvatarPickerOpen && metabotId && (
+        <MetaBotNftAvatarPickerModal
+          metabotId={metabotId}
+          onPick={(reference) => {
+            handleChange('avatar', reference);
+            setNftAvatarPickerOpen(false);
+          }}
+          onClose={() => setNftAvatarPickerOpen(false)}
+        />
       )}
 
     </div>

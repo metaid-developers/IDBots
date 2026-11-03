@@ -36,11 +36,30 @@ test('registerMetabotNftIpcHandlers exposes the NFT list and transfer handlers',
       spentOutpoint: 'outpoint',
       outputValue: 1000,
     }),
+    getNftCaRegistry: async (input) => ({
+      protocol: 'idbots-nft-ca',
+      version: 1,
+      verified: false,
+      status: 'empty-no-pin-configured',
+      pinId: null,
+      creatorMetaId: null,
+      officialMetaId: '',
+      collections: [],
+      fetchedAt: 1,
+      ...(input?.refresh === true ? { detail: 'refreshed' } : {}),
+    }),
   });
 
   assert.equal(typeof handlers['idbots:getMetabotNfts'], 'function');
   assert.equal(typeof handlers['idbots:transferMetabotMvcNft'], 'function');
   assert.equal(typeof handlers['idbots:transferMetabotMrc721'], 'function');
+  assert.equal(typeof handlers['idbots:getNftCaRegistry'], 'function');
+
+  const registry = await handlers['idbots:getNftCaRegistry']({}, {});
+  assert.equal(registry.success, true);
+  assert.equal(registry.registry.status, 'empty-no-pin-configured');
+  const refreshed = await handlers['idbots:getNftCaRegistry']({}, { refresh: true });
+  assert.equal(refreshed.registry.detail, 'refreshed', 'refresh flag must reach the reader');
 
   const items = await handlers['idbots:getMetabotNfts']({}, { metabotId: 7, kind: 'mrc721' });
   assert.deepEqual(items, {
@@ -94,15 +113,20 @@ test('registerMetabotNftIpcHandlers surfaces NFT errors as failure payloads', as
     transferMetabotMrc721: async () => {
       throw new Error('mrc721 transfer boom');
     },
+    getNftCaRegistry: async () => {
+      throw new Error('ca boom');
+    },
   });
 
   await assert.doesNotReject(async () => {
     const items = await handlers['idbots:getMetabotNfts']({}, { metabotId: 1, kind: 'mrc721' });
     const mvcTransfer = await handlers['idbots:transferMetabotMvcNft']({}, { metabotId: 1 });
     const mrc721Transfer = await handlers['idbots:transferMetabotMrc721']({}, { metabotId: 1 });
+    const registry = await handlers['idbots:getNftCaRegistry']({}, {});
 
     assert.deepEqual(items, { success: false, error: 'nft boom' });
     assert.deepEqual(mvcTransfer, { success: false, error: 'mvc transfer boom' });
     assert.deepEqual(mrc721Transfer, { success: false, error: 'mrc721 transfer boom' });
+    assert.deepEqual(registry, { success: false, error: 'ca boom' });
   });
 });

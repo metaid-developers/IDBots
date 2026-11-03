@@ -236,6 +236,8 @@ import {
 } from './services/metabotNftService';
 import { registerMetabotNftIpcHandlers } from './services/metabotNftIpc';
 import { healNftCard } from './services/nftCardHealService';
+import { getNftCaRegistry } from './services/nftCaService';
+import { parseNftAvatarReference, resolveNftAvatar } from './services/nftAvatarService';
 import { initTrafficAccountService, registerTrafficAccountIpcHandlers } from './services/trafficAccountService';
 import { initBundleService, registerBundleIpcHandlers } from './services/bundleService';
 import { initLlmRelayService, registerLlmRelayIpcHandlers, getLlmRelayQuota } from './services/llmRelayService';
@@ -18370,6 +18372,7 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     getMetabotNftItems: (store, input) => getMetabotNftItems(store, input),
     transferMetabotMvcNft: (store, input) => transferMetabotMvcNft(store, input),
     transferMetabotMrc721: (store, input) => transferMetabotMrc721(store, input),
+    getNftCaRegistry: (input) => getNftCaRegistry(input),
   });
 
   // Chat NftCard heal channel: renderer-side fallback lookups for missing
@@ -19441,6 +19444,14 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
       const reference = toSafeString(params?.reference).trim();
       if (!reference) {
         return { success: true, avatarUrl: null };
+      }
+      // NFT avatar references (nft://mrc721/<itemPinId>) resolve through the
+      // mrc721 item-info → cover → pin-asset chain; the item's collection
+      // facts ride along so the renderer can draw the CA-registry badge.
+      const nftRef = parseNftAvatarReference(reference);
+      if (nftRef) {
+        const resolved = await resolveNftAvatar(nftRef);
+        return { success: true, avatarUrl: resolved.avatarUrl, nft: resolved.nft };
       }
       return {
         success: true,
