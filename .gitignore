@@ -675,6 +675,7 @@ man_base_data_pebble/
 !tests/scheduledTaskCreateDefaultBinding.test.mjs
 !tests/schedulerTargetSession.test.mjs
 !tests/scheduledTaskSkipLedger.test.mjs
+!tests/scheduledTaskSingleRunner.test.mjs
 !tests/scheduledTaskLifecycleStore.test.mjs
 !tests/scheduledTaskLifecycleUi.test.mjs
 !tests/scheduledTaskLifecycleSeams.test.mjs
