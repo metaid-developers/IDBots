@@ -83,6 +83,9 @@ tests/*
 !tests/escrowOrderStateMachine.test.ts
 !tests/escrowCardMarkdown.test.tsx
 !tests/escrowAgentTools.test.mjs
+!tests/nftCaService.test.mjs
+!tests/nftAvatarService.test.mjs
+!tests/mrc721SellIntentService.test.mjs
 !tests/tradeActivityUi.test.tsx
 !tests/qqSecurity.test.ts
 !tests/qqSessionClassification.test.ts

@@ -1590,7 +1590,11 @@ export function buildMrc721AgentTools(deps: {
         return textResult(lines.join('\n'));
       } catch (error) {
         const status = (error as { mrc721Status?: number }).mrc721Status;
-        if (status === 404) {
+        const code = (error as { mrc721Code?: unknown }).mrc721Code;
+        // Both miss flavors degrade to the same honest guidance: HTTP 404
+        // (route absent on older indexers) and an envelope miss (code !== 1,
+        // the house convention for "not served here").
+        if (status === 404 || code !== undefined) {
           return textResult(
             'mrc721_market_intents: the configured indexer does not serve sell-intent queries yet (indexer requirement R-C). '
             + 'Local man-p2p ships them; until the endpoint is reachable, discovery of other bots\' intents runs through chat announcements.',

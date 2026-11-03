@@ -119,7 +119,9 @@ present. The sell pin itself is linked as `pin://<sellPinId>`.
 
 - `mrc721_sell_intent` / `mrc721_sell_intent_cancel` / `mrc721_sell_intents`
   agent tools + host-callable service functions (KV-backed local intent book
-  `mrc721_sell_intents:<metabotId>`), pending-indexer-tolerant (reads fall
-  back to the local book until R-C ships).
+  `mrc721_sell_intents:<metabotId>`). Own intents read from the local book;
+  market-wide discovery (`mrc721_market_intents` over `/api/mrc721/sell/intents`)
+  degrades to a structured "R-C not served here" error until an indexer with
+  the endpoint is reachable.
 - `mrc721_sell_orders` gains a collection filter.
 - The MetaBot NFT wallet gains list/buy flows over the locked-listing rail.

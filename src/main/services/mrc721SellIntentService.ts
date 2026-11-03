@@ -41,7 +41,9 @@ export interface Mrc721SellIntentContent {
   settlement: string[];
   note?: string;
   contact?: { metaId?: string; metabotId?: number };
+  /** Epoch SECONDS (doc schema §2.2 — the indexer keys on this unit). */
   createdAt: number;
+  /** Epoch SECONDS; display-only expiry window. */
   expiresAt?: number;
 }
 
@@ -147,6 +149,12 @@ export function parseMrc721SellIntent(input: unknown): Mrc721SellIntentContent {
   };
 }
 
+/**
+ * Race-safety note: the KV intent book relies on read→write sections staying
+ * SYNCHRONOUS (no await between readIntents and the following writeIntents —
+ * Node's single thread makes that atomic). Inserting an await in between
+ * would reintroduce lost updates across concurrent tool calls.
+ */
 function readIntents(kv: SellIntentKv, metabotId: number): Mrc721SellIntentRecord[] {
   const stored = kv.get<Mrc721SellIntentRecord[]>(intentsKey(metabotId));
   return Array.isArray(stored) ? stored : [];
@@ -207,7 +215,10 @@ export async function declareMrc721SellIntent(
     throw new Error(`item ${itemPinId} is held by ${item.ownerAddress ?? 'someone else'}, not by the declaring bot`);
   }
 
-  const now = Date.now();
+  const nowMs = Date.now();
+  // Pin content timestamps are epoch SECONDS (doc schema §2.2, manapi
+  // convention); the local book's updatedAt stays ms (local bookkeeping only).
+  const nowSeconds = Math.floor(nowMs / 1000);
   const intent: Mrc721SellIntentContent = {
     protocol: MRC721_SELL_INTENT_PROTOCOL,
     version: MRC721_SELL_INTENT_VERSION,
@@ -233,12 +244,19 @@ export async function declareMrc721SellIntent(
       : ['atomic-swap', 'escrow'],
     note: input.note?.trim() || undefined,
     contact: { metaId: metabot.globalmetaid ?? undefined, metabotId: input.metabotId },
-    createdAt: now,
-    expiresAt: input.expiresInHours && input.expiresInHours > 0 ? now + input.expiresInHours * 3_600_000 : undefined,
+    createdAt: nowSeconds,
+    expiresAt: input.expiresInHours && input.expiresInHours > 0 ? nowSeconds + input.expiresInHours * 3_600 : undefined,
   };
 
+  // One pin per item (doc §2.1): the first declaration creates the
+  // /nft/mrc721sell/{itemPinId} pin; a re-declare (including after a cancel)
+  // must MODIFY the same pin so the indexer keeps a single current record.
+  const records = readIntents(input.intents, input.metabotId);
+  const existing = records.findIndex((record) => record.intent.itemPinId === itemPinId);
+  const operation: 'create' | 'modify' = existing >= 0 ? 'modify' : 'create';
+
   const broadcast = await broadcastMrc721Pin(deps.createPin, input.metabotId, {
-    operation: 'create',
+    operation,
     path: `${MRC721_SELL_INTENT_PATH_ROOT}/${itemPinId}`,
     encryption: '0',
     version: '1.0.0',
@@ -246,15 +264,13 @@ export async function declareMrc721SellIntent(
     payload: JSON.stringify(intent),
   }, { network: input.network ?? 'mvc', origin: input.origin ?? 'tool:mrc721_sell_intent' });
 
-  const records = readIntents(input.intents, input.metabotId);
-  const existing = records.findIndex((record) => record.intent.itemPinId === itemPinId);
   const record: Mrc721SellIntentRecord = {
     id: existing >= 0 ? records[existing].id : randomBytes(8).toString('hex'),
     metabotId: input.metabotId,
     intent,
     sellPinId: broadcast.pinId,
     status: 'active',
-    updatedAt: now,
+    updatedAt: nowMs,
   };
   if (existing >= 0) records[existing] = record;
   else records.push(record);
