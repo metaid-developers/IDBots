@@ -512,6 +512,7 @@ import {
   type BotBrowserLlmCompleteInput,
   type BotBrowserMetaFileUploadInput,
   type BotBrowserNftBuyInput,
+  type BotBrowserMrc721BuyInput,
   type BotBrowserPinWriteInput,
   type BotBrowserPermissionsInput,
   type HumanBridgeActor,
@@ -3194,6 +3195,27 @@ function getBotBrowserBridgeServiceForWindow(ownerWindow: BrowserWindow | null):
     // the user confirmed (see botBrowserBridgeService buyNft).
     fetchNftChainSellUtxo: ({ codehash, genesis, tokenIndex }) =>
       getMvcNftChainSellUtxo(codehash, genesis, tokenIndex),
+    // browser.mrc721.buy backend: the mrc721_buy worker chain
+    // (buyMrc721Listing → completeMvc721BuyTx) with the same op budget the
+    // agent tool uses. The worker chain re-verifies the entire listing
+    // against chain truth before the buyer wallet signs; runs only for a
+    // confirmed purchase intent, and keys stay in the main process.
+    buyMrc721: (params) => withChainWriteBudget(
+      'mrc721_buy',
+      () => buyMrc721Listing(
+        {
+          completeBuy: (store, mrcParams) => completeMvc721BuyTx(store, mrcParams),
+        },
+        {
+          ...params,
+          store: getMetabotStore(),
+          feeRate: getGlobalFeeRate('mvc'),
+        },
+      ),
+    ),
+    // browser.mrc721.buy confirmation-card jig display (best-effort; an
+    // un-indexed pin degrades the card to the bare credential).
+    fetchMrc721ItemDisplay: (pinId) => fetchMrc721ItemInfo({ pinId }),
   });
   if (ownerWindow) {
     botBrowserBridgeServices.set(ownerWindow, service);
@@ -11632,6 +11654,16 @@ if (!gotTheLock) {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     return getBotBrowserBridgeServiceForWindow(ownerWindow).buyNft(
       botBrowserBridgeInput<BotBrowserNftBuyInput>(input),
+    );
+  });
+
+  // browser.mrc721.buy trusted action: two-phase confirmed MRC-721 atomic-swap
+  // purchase (same payment gate as browser.nft.buy; the worker chain
+  // re-verifies the listing against chain truth before any signature).
+  registerIpcHandler('botBrowser:mrc721Buy', async (event, input: unknown) => {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    return getBotBrowserBridgeServiceForWindow(ownerWindow).buyMrc721(
+      botBrowserBridgeInput<BotBrowserMrc721BuyInput>(input),
     );
   });
 
