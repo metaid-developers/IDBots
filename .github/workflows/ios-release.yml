@@ -1,6 +1,9 @@
 name: iOS Release (cloud-signed)
 
-# 手工触发：Actions → iOS Release (cloud-signed) → Run workflow → 选分支 → 填 version
+# Manual run: Actions -> iOS Release (cloud-signed) -> Run workflow -> pick branch -> fill version.
+# NOTE: workflow_dispatch only becomes clickable once this file exists on the default branch
+# (GitHub platform rule). The push trigger below lets the pipeline be exercised from its own
+# feature branch before that merge; it is scoped to this branch and to signing-relevant paths.
 on:
   workflow_dispatch:
     inputs:
@@ -8,14 +11,23 @@ on:
         description: "Marketing version for this App Store build (e.g. 1.0.0)"
         required: true
         default: "1.0.0"
+  push:
+    branches:
+      - ci/ios-cloud-build
+    paths:
+      - '.github/workflows/ios-release.yml'
+      - 'mobile-shell/**'
 
 permissions:
   contents: read
 
 jobs:
   build-ipa:
-    runs-on: macos-15 # 免费公共 runner，不使用 larger runner
+    runs-on: macos-15 # free public runner; never a paid larger runner
     timeout-minutes: 90
+    env:
+      # workflow_dispatch provides inputs.version; a push-run has no inputs, so fall back.
+      BUILD_VERSION: ${{ inputs.version || '1.0.0' }}
 
     steps:
       - name: Checkout
@@ -24,7 +36,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Activate pnpm (repo pins pnpm@11.24.0)
         run: |
@@ -96,7 +108,7 @@ jobs:
             DEVELOPMENT_TEAM=48AW2FB7Y2 \
             CODE_SIGN_IDENTITY="iPhone Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="IDBots App Store (com.idbots.world)" \
-            MARKETING_VERSION="${{ inputs.version }}" \
+            MARKETING_VERSION="$BUILD_VERSION" \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             | xcbeautify --renderer github-actions
 
