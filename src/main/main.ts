@@ -154,6 +154,14 @@ import {
 import { shouldAcquireSingleInstanceLock, shouldRefuseSharedUserData } from './libs/singleInstanceLock';
 import { mockCreateWalletAndFund, mockPushConfigToChain } from './services/chainActionMock';
 import { createMetaBotWallet, getPrivateKeyBufferForEcdh } from './services/metabotWalletService';
+import { PaymentInfoStore } from './services/paymentInfoStore';
+import {
+  decryptPaymentInfo,
+  derivePaymentInfoKey,
+  encryptPaymentInfo,
+  validatePaymentReceivingInfo,
+  type PaymentReceivingInfo,
+} from './services/paymentInfoCrypto';
 import { UserIdentityStore } from './userIdentityStore';
 import type { UserIdentity } from './types/userIdentity';
 import {
@@ -9150,6 +9158,18 @@ const getUserIdentityStore = () => {
   return userIdentityStore;
 };
 
+// S3 payment receiving-info: lazy singleton over the same sqlite handle.
+// The store only ever sees ciphertext; derive/encrypt/decrypt happen in the
+// IPC layer below with the identity's mnemonic-derived key.
+let paymentInfoStore: PaymentInfoStore | null = null;
+const getPaymentInfoStore = () => {
+  if (!paymentInfoStore) {
+    const sqliteStore = getStore();
+    paymentInfoStore = new PaymentInfoStore(sqliteStore.getDatabase(), sqliteStore.getSaveFunction());
+  }
+  return paymentInfoStore;
+};
+
 // Extracted cores shared by the IPC handlers and the C2 sensitive route
 // (src/main/gateway/wiring.ts): the gateway reveals mnemonics through the
 // exact same code path, never through IPC (REQ-A-20).
@@ -16632,6 +16652,63 @@ if (!gotTheLock) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error('[UserIdentity] userIdentity:revealMnemonic failed:', errMsg);
       return { success: false, error: errMsg };
+    }
+  });
+
+  // ── S3 payment receiving-info (owner-device only, encrypted at rest, never on-chain) ──
+  // get returns the decrypted form to the owner's own settings view (the
+  // device holds the mnemonic, per design doc 02 §4); save validates then
+  // re-encrypts the whole payload; clear wipes the row. Logs carry error
+  // codes only — plaintext receiving data never enters a log line.
+  registerIpcHandler('paymentInfo:get', async () => {
+    try {
+      const identity = getUserIdentityStore().get();
+      if (!identity?.mnemonic || !identity.globalmetaid?.trim()) {
+        return { success: false, error: 'USER_IDENTITY_MISSING', info: null, updatedAt: null };
+      }
+      const row = getPaymentInfoStore().get();
+      if (!row) {
+        return { success: true, info: null, updatedAt: null };
+      }
+      const key = derivePaymentInfoKey(identity.mnemonic, identity.globalmetaid.trim());
+      const info = decryptPaymentInfo(key, row.cipher);
+      return { success: true, info, updatedAt: row.updatedAt };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[PaymentInfo] paymentInfo:get failed:', errMsg);
+      return { success: false, error: 'PAYMENT_INFO_READ_FAILED', info: null, updatedAt: null };
+    }
+  });
+
+  registerIpcHandler('paymentInfo:save', async (_event, input: { info: unknown }) => {
+    try {
+      const identity = getUserIdentityStore().get();
+      if (!identity?.mnemonic || !identity.globalmetaid?.trim()) {
+        return { success: false, error: 'USER_IDENTITY_MISSING', updatedAt: null };
+      }
+      const validated = validatePaymentReceivingInfo(input?.info);
+      if (!validated.ok || !validated.value) {
+        return { success: false, error: validated.errors[0] ?? 'INVALID_PAYMENT_INFO', updatedAt: null };
+      }
+      const key = derivePaymentInfoKey(identity.mnemonic, identity.globalmetaid.trim());
+      const cipher = encryptPaymentInfo(key, validated.value as PaymentReceivingInfo);
+      const updatedAt = getPaymentInfoStore().save(cipher);
+      return { success: true, updatedAt };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[PaymentInfo] paymentInfo:save failed:', errMsg);
+      return { success: false, error: 'PAYMENT_INFO_WRITE_FAILED', updatedAt: null };
+    }
+  });
+
+  registerIpcHandler('paymentInfo:clear', async () => {
+    try {
+      getPaymentInfoStore().clear();
+      return { success: true };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error('[PaymentInfo] paymentInfo:clear failed:', errMsg);
+      return { success: false, error: 'PAYMENT_INFO_CLEAR_FAILED' };
     }
   });
 

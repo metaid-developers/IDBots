@@ -2131,6 +2131,22 @@ interface IElectronAPI {
     retrySubsidy: () => Promise<{ success: boolean; identity?: PublicUserIdentity | null; subsidy?: UserIdentitySubsidyResult; error?: string }>;
     retryChainSync: () => Promise<{ success: boolean; identity?: PublicUserIdentity | null; subsidy?: UserIdentitySubsidyResult; chainSync?: UserIdentityChainSyncResult; error?: string }>;
   };
+  /** S3 fiat receiving info — encrypted at rest, owner device only, never on-chain. */
+  paymentInfo: {
+    get: () => Promise<{
+      success: boolean;
+      info?: {
+        payeeDisplayName?: string;
+        alipayPid?: string;
+        qrContent?: string;
+        qrImageDataUrl?: string;
+      } | null;
+      updatedAt?: number | null;
+      error?: string;
+    }>;
+    save: (input: { info: unknown }) => Promise<{ success: boolean; updatedAt?: number | null; error?: string }>;
+    clear: () => Promise<{ success: boolean; error?: string }>;
+  };
   social: {
     /** S5 friend badge data source: pair state via the S4 metaso provider. */
     getPairRelationship: (input: { observerGlobalMetaId: string; peerGlobalMetaId: string }) => Promise<{
