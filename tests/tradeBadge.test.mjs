@@ -10,6 +10,8 @@ const distRoot = fs.existsSync(new URL('../dist-electron/main/libs/tradeBadge.js
   : '../dist-electron';
 const require = (await import('node:module')).createRequire(import.meta.url);
 const { scanMessageTradeBadge, mergeTradeBadge } = require(`${distRoot}/libs/tradeBadge.js`);
+const { buildNftCardHostStamp } = require(`${distRoot}/libs/tradeActivityStamp.js`);
+const getStampSession = () => 'sess-stamp-1';
 
 const listedListed = (overrides = {}) => JSON.stringify({
   format: 'metacontract',
@@ -40,15 +42,23 @@ const transferCard = (overrides = {}) => JSON.stringify({
 
 const fence = (body, tag = 'nft-card') => `\`\`\`${tag}\n${body}\n\`\`\``;
 
-test('scanMessageTradeBadge: sale/listing announcement → p2p', () => {
-  const text = `已上架！\n\n${fence(listedListed())}`;
-  assert.equal(scanMessageTradeBadge(text), 'p2p');
+test('scanMessageTradeBadge: signed listing → p2p; unsigned list copy never marks (owner decision A)', () => {
+  const sessionId = getStampSession();
+  const fields = JSON.parse(listedListed());
+  fields.hostStamp = buildNftCardHostStamp({ sessionId, fields });
+  assert.equal(scanMessageTradeBadge(`已上架！\n\n${fence(JSON.stringify(fields))}`, { sessionId }), 'p2p');
+  assert.equal(scanMessageTradeBadge(`已上架！\n\n${fence(listedListed())}`, { sessionId }), null);
+  assert.equal(scanMessageTradeBadge(`已上架！\n\n${fence(listedListed())}`), null);
 });
 
-test('scanMessageTradeBadge: direct transfer → p2p; aliases nft/nftcard recognized', () => {
-  assert.equal(scanMessageTradeBadge(fence(transferCard(), 'nft')), 'p2p');
-  assert.equal(scanMessageTradeBadge(fence(transferCard(), 'nftcard')), 'p2p');
-  assert.equal(scanMessageTradeBadge(fence(transferCard())), 'p2p');
+test('scanMessageTradeBadge: signed transfer → p2p across aliases; unsigned never marks', () => {
+  const sessionId = getStampSession();
+  const fields = JSON.parse(transferCard());
+  fields.hostStamp = buildNftCardHostStamp({ sessionId, fields });
+  assert.equal(scanMessageTradeBadge(fence(JSON.stringify(fields), 'nft-card'), { sessionId }), 'p2p');
+  assert.equal(scanMessageTradeBadge(fence(JSON.stringify(fields), 'nft'), { sessionId }), 'p2p');
+  assert.equal(scanMessageTradeBadge(fence(JSON.stringify(fields), 'nftcard'), { sessionId }), 'p2p');
+  assert.equal(scanMessageTradeBadge(fence(transferCard(), 'nft'), { sessionId }), null);
 });
 
 test('scanMessageTradeBadge: escrow announcement → escrow, and outranks p2p in one text', () => {
@@ -79,11 +89,16 @@ test('scanMessageTradeBadge: invalid identity (bad genesis) is not evidence', ()
   assert.equal(scanMessageTradeBadge(fence(listedListed({ genesis: 'zz'.repeat(20) }))), null);
 });
 
-test('scanMessageTradeBadge: nft-card-group array bodies classify with escrow precedence', () => {
+test('scanMessageTradeBadge: group bodies — escrow precedence unaffected; p2p rows need stamps', () => {
   const groupBody = JSON.stringify([JSON.parse(transferCard()), JSON.parse(escrowCard())]);
   assert.equal(scanMessageTradeBadge(fence(groupBody, 'nft-card-group')), 'escrow');
-  const p2pGroupBody = JSON.stringify([JSON.parse(listedListed()), JSON.parse(transferCard())]);
-  assert.equal(scanMessageTradeBadge(fence(p2pGroupBody, 'nft-card-group')), 'p2p');
+  const sessionId = getStampSession();
+  const signedTransfer = JSON.parse(transferCard());
+  signedTransfer.hostStamp = buildNftCardHostStamp({ sessionId, fields: signedTransfer });
+  const signedGroupBody = JSON.stringify([JSON.parse(listedListed()), signedTransfer]);
+  assert.equal(scanMessageTradeBadge(fence(signedGroupBody, 'nft-card-group'), { sessionId }), 'p2p');
+  const unsignedGroupBody = JSON.stringify([JSON.parse(listedListed()), JSON.parse(transferCard())]);
+  assert.equal(scanMessageTradeBadge(fence(unsignedGroupBody, 'nft-card-group'), { sessionId }), null);
 });
 
 test('scanMessageTradeBadge: plain chat text and unterminated fences → null', () => {
@@ -113,8 +128,10 @@ test('S4 store integration: addMessage upgrades the session badge; listSessions 
     store.addMessage(session.id, { type: 'user', content: '帮我看看这个 NFT' });
     assert.equal(store.listSessions().find((s) => s.id === session.id).tradeBadge, null);
 
-    // A listing announcement: p2p.
-    store.addMessage(session.id, { type: 'assistant', content: `上架了：\n\n${fence(listedListed())}` });
+    // A listing announcement (host-stamped emit): p2p.
+    const eslintedFields = JSON.parse(listedListed());
+    eslintedFields.hostStamp = buildNftCardHostStamp({ sessionId: session.id, fields: eslintedFields });
+    store.addMessage(session.id, { type: 'assistant', content: `上架了：\n\n${fence(JSON.stringify(eslintedFields))}` });
     assert.equal(store.listSessions().find((s) => s.id === session.id).tradeBadge, 'p2p');
 
     // Later plain messages never downgrade.

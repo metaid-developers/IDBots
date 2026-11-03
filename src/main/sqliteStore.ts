@@ -8,7 +8,7 @@ import type { Database as SqlJsDatabase } from 'sql.js';
 import { DB_FILENAME } from './appConstants';
 import type { DataGuardStats } from './libs/dataGuard';
 import { truncateUtf16Units } from './libs/llmSafeText';
-import { scanMessageTradeBadge } from './libs/tradeBadge';
+import { scanMessageTradeBadge, scanMessageTradeBadgeLegacy } from './libs/tradeBadge';
 import { OWNER_SCOPE_KEY } from './memory/memoryScope';
 import { findNearestExistingFile } from './libs/runtimePaths';
 import { writeFileAtomicSync } from './libs/atomicFile';
@@ -338,6 +338,59 @@ export class SqliteStore {
   private emitter = new EventEmitter();
   private isClosed = false;
   private static sqlPromise: Promise<SqlJsStatic> | null = null;
+
+  private getConfigValue(key: string): string | null {
+    const rows = this.db.exec('SELECT value FROM cowork_config WHERE key = ?', [key]);
+    const first = rows[0]?.values?.[0];
+    return first == null || first[0] == null ? null : String(first[0]);
+  }
+
+  /**
+   * One-shot trade-badge backfill / re-judge sweep (S4, 2026-11-03).
+   * legacyMode=false (fresh column): classify ONLY freshly-writable signals —
+   * verified hostStamp cards (historical unsigned text yields null by design).
+   * legacyMode=true (correction sweep): re-judge marks the pre-signing scanner
+   * planted, using the legacy scanner's anchors (guard flag in the caller).
+   * Completing either passes writes the 'tradeBadgeSourceSignSwept' kv flag so
+   * the legacy sweep stays one-shot; failures are best-effort (the write path
+   * heals any session the sweep missed on its next trade message).
+   */
+  private backfillTradeBadges(legacyMode: boolean): void {
+    try {
+      const candidates = this.db.exec(`
+        SELECT session_id, content FROM cowork_messages
+        WHERE content LIKE '%\`\`\`nft%' OR content LIKE '%\`\`\`nftcard%'
+      `);
+      const rollup = new Map<string, string>();
+      for (const row of candidates[0]?.values ?? []) {
+        const sessionId = String(row[0] ?? '');
+        const content = String(row[1] ?? '');
+        if (!sessionId || !content) continue;
+        const kind = legacyMode
+          ? scanMessageTradeBadgeLegacy(content, sessionId)
+          : scanMessageTradeBadge(content, { sessionId });
+        if (!kind) continue;
+        const existing = rollup.get(sessionId);
+        rollup.set(sessionId, kind === 'escrow' || existing === 'escrow' ? 'escrow' : 'p2p');
+      }
+      for (const [sessionId, kind] of rollup) {
+        this.db.run('UPDATE cowork_sessions SET trade_badge = ? WHERE id = ?', [kind, sessionId]);
+      }
+    } catch (error) {
+      console.warn('Trade badge backfill failed (best-effort, write path heals):', error);
+    }
+    try {
+      const now = Date.now();
+      this.db.run(
+        `INSERT INTO cowork_config (key, value, updated_at)
+         VALUES ('tradeBadgeSourceSignSwept', '1', ?)
+         ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = ?`,
+        [now, now],
+      );
+    } catch {
+      // The flag write is advisory; the sweep remains one-shot per launch.
+    }
+  }
 
   private constructor(db: SqliteDatabase, dbPath: string, backendKind: SqliteBackendKind) {
     this.db = db;
