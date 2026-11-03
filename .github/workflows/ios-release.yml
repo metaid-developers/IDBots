@@ -50,6 +50,13 @@ jobs:
         working-directory: mobile-shell
         run: pnpm install --frozen-lockfile
 
+      # The iOS project references App/public, App/config.xml and
+      # App/idbots-native-bootstrap.js, none of which are committed: they are produced by the
+      # Capacitor sync (webDir www -> App/public, flavor selection -> config.xml + bootstrap).
+      - name: Select production flavor and sync web assets into the iOS project
+        working-directory: mobile-shell
+        run: pnpm run sync:production
+
       - name: pod install (CocoaPods, App target)
         working-directory: mobile-shell/ios/App
         run: pod install
