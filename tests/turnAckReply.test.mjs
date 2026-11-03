@@ -453,3 +453,23 @@ test('runner: owner_update opening suppression keys on a real delivered opening,
   assert.ok(source.includes("if (kind === 'opening') activeSession.dshTurnAckOpeningEmitted = true"),
     'a delivered owner_update opening marks the slot (second opening still rejected)');
 });
+
+test('runner: an empty first ack attempt gets exactly one retry, gates re-applied across the wait', () => {
+  const source = read('src/main/libs/coworkRunner.ts');
+  const start = source.indexOf('private async emitTurnAckReplyBubble(');
+  const body = source.slice(start, source.indexOf('private emitSdkRuntimeStatus(', start));
+  // A stall kills both attempts in one tick (their 4s timeout timers fire late
+  // together); one retry on the recovered loop completes the fail-open posture.
+  assert.ok(body.includes('if (!generatedReply) {'), 'the retry branch keys on an empty first attempt');
+  assert.ok(body.includes("coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt'"),
+    'the retry logs itself');
+  assert.ok(body.includes('setTimeout(resolve, 1500)'), 'the retry waits 1.5s for the loop to recover');
+  assert.ok(body.includes('generatedReply = await generateTurnAckReply(userPrompt, sessionTitle)'),
+    'the retry is a fresh call without the gate abort signal');
+  assert.equal(body.split('generateTurnAckReply(userPrompt').length - 1, 2,
+    'at most two ack calls per turn (first attempt + one retry)');
+  // A gate skip never retries (the abort was intentional).
+  const skipIdx = body.indexOf("first sentence skipped: cerebellum judged the message directly answerable");
+  const retryIdx = body.indexOf('retrying first sentence after an empty first attempt');
+  assert.ok(skipIdx > 0 && skipIdx < retryIdx, 'the skip return precedes the retry branch');
+});

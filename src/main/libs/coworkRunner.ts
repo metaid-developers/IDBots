@@ -16766,7 +16766,7 @@ export class CoworkRunner extends EventEmitter {
         });
       }
       const sessionTitle = this.store.getSession(sessionId)?.title ?? null;
-      const generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
+      let generatedReply = await generateTurnAckReply(userPrompt, sessionTitle, ackAbort.signal);
       if (gatePromise) {
         // Emission latency is max(ack call, gate budget) — the gate settles
         // within its own 1.5s abort window, long before the ack's 4s attempt
@@ -16777,7 +16777,26 @@ export class CoworkRunner extends EventEmitter {
           return;
         }
       }
-      if (!generatedReply) return;
+      if (!generatedReply) {
+        // 2026-11-03 session 32a29372: a main-process stall kills BOTH attempts
+        // in one tick — their 4s timeout timers fire late and simultaneously —
+        // leaving the turn with no first sentence even though the gate failed
+        // open. One retry on the recovered loop completes the fail-open
+        // posture; the identity/visible-text drop gates re-apply across the
+        // wait, so a retry never lands on a settled or superseded turn.
+        if (this.activeSessions.get(sessionId) !== turn
+          || turn.dshTurnAckSerial !== turnSerial
+          || turn.dshTurnAckVisibleTextSeen
+          || turn.dshTurnAckOpeningEmitted) return;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (this.activeSessions.get(sessionId) !== turn
+          || turn.dshTurnAckSerial !== turnSerial
+          || turn.dshTurnAckVisibleTextSeen
+          || turn.dshTurnAckOpeningEmitted) return;
+        coworkLog('INFO', 'turn:ack', 'retrying first sentence after an empty first attempt', { sessionId });
+        generatedReply = await generateTurnAckReply(userPrompt, sessionTitle);
+        if (!generatedReply) return;
+      }
       if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
         || turn.dshTurnAckVisibleTextSeen
