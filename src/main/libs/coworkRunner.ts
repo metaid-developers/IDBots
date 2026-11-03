@@ -47,7 +47,7 @@ import {
   buildCoworkSteerText,
 } from './coworkSteerChannel';
 import { getEnhancedEnv, getSkillHostEnv, getSkillsRoot, ensureCoworkTempDir, generateSessionTitle, generateTurnAckReply } from './coworkUtil';
-import { buildInstantTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
+import { buildDeterministicTurnAckOpening, resolveTurnAckActivity } from './turnAckReply';
 import { rewriteWin32McpStdioServer } from './win32StdioCommand';
 import { ensurePythonRuntimeReady } from './pythonRuntime';
 import { resolveBundledSkillsRoot } from './skillRoots';
@@ -1542,21 +1542,17 @@ interface ActiveSession {
   dshTurnAckVisibleTextSeen?: boolean;
   dshTurnAckOpeningEmitted?: boolean;
   /**
-   * 2026-11-03 rework: the opening bubble is emitted SYNCHRONOUSLY at the
-   * early-ack site (same tick as the turnAck phrase) instead of via a 250ms
-   * timer — the timer lost to eventloop:lag stalls (22s measured) and to the
-   * LLM ack race, so owners saw no first sentence at all or a late robotic
-   * one. The LLM ack now REFINES this bubble in place (title pattern) rather
-   * than racing it.
+   * 2026-11-03 rework (second pass, owner decision after session 2c70849f):
+   * the first sentence must be the bot's OWN words about this message — a
+   * rotating canned line is worse than no line. Generic turns get their first
+   * bubble from the LLM ack (emitTurnAckReplyBubble creates it, ~1-3s);
+   * deterministic text is reserved for information-bearing delivery notices
+   * (buildDeterministicTurnAckOpening, emitted same-tick at the early-ack
+   * site). When neither lands (dead brain, stall, model beat it), the turn
+   * shows only the activity indicator — never a canned bubble.
    */
-  /** Message id of the opening bubble, for the in-place LLM refine. */
-  dshTurnAckOpeningMessageId?: string;
-  /** Current opening text (instant, then refined); injected into the turn prompt. */
+  /** The opening text shown so far this turn; injected into the turn prompt. */
   dshTurnAckOpeningText?: string;
-  /** Set once the LLM refine replaced the instant text (refine runs at most once). */
-  dshTurnAckOpeningRefined?: boolean;
-  /** Set when the MODEL produced its own visible text — cancels the refine. */
-  dshTurnAckModelTextSeen?: boolean;
   finalizingTurn?: boolean;
   finalizationAttempted?: boolean;
   finalizationFallbackText?: string;
@@ -10872,10 +10868,7 @@ export class CoworkRunner extends EventEmitter {
       let assistantOwnerChatForTurn = false;
       activeSession.dshTurnAckVisibleTextSeen = false;
       activeSession.dshTurnAckOpeningEmitted = false;
-      activeSession.dshTurnAckOpeningMessageId = undefined;
       activeSession.dshTurnAckOpeningText = undefined;
-      activeSession.dshTurnAckOpeningRefined = false;
-      activeSession.dshTurnAckModelTextSeen = false;
       // Turn acknowledgment fires EARLY with the best tier known without any
       // round-trip: the explicit pick's tier when set, else generic. This
       // covers cold-start windows (the free relay's first key bootstrap has
@@ -10900,30 +10893,33 @@ export class CoworkRunner extends EventEmitter {
             : 'generic'
           this.emitTurnAck(sessionId, earlyAckTier, prompt)
           coworkLog('INFO', 'turn:ack', 'turn acknowledgment emitted', { sessionId, tier: earlyAckTier })
-          // The opening bubble is emitted SYNCHRONOUSLY here — same tick as
-          // the phrase above. 2026-11-03 (session acb5961b): the previous
-          // 250ms timer + LLM-ack race both lived on timers that an
-          // eventloop:lag stall (22s measured during a cold kernel boot)
-          // starved, so the owner's first bubble lost to the model reply or
-          // arrived as late robotic boilerplate. Same-tick emission is stall-
-          // immune; the serial AT KICK TIME and the ActiveSession object are
-          // captured for the refine gate below (object identity, which serial
-          // equality alone cannot provide — a fresh object per turn restarts
-          // the serial at 1).
+          // A deterministic bubble is emitted SYNCHRONOUSLY here — same tick
+          // as the phrase above — but ONLY when it carries real information
+          // (worker delivery notices). Generic turns get NO canned line
+          // (owner decision 2026-11-03, session 2c70849f: "好的，这就处理。"
+          // three times in eight minutes reads as a bot playing a recording);
+          // their first sentence is the LLM-written one below. The serial AT
+          // KICK TIME and the ActiveSession object are captured for the
+          // emission gate (object identity, which serial equality alone
+          // cannot provide — a fresh object per turn restarts the serial at 1).
           const turnAckSerial = (activeSession.dshTurnAckSerial ?? 0) + 1;
           activeSession.dshTurnAckSerial = turnAckSerial;
-          this.emitTurnAckOpeningBubble(
-            sessionId,
-            prompt,
-            activeSession,
-            turnAckSerial,
-            buildInstantTurnAckOpening(prompt, `${sessionId}:${turnAckSerial}`),
-          );
+          const deterministicOpening = buildDeterministicTurnAckOpening(prompt);
+          if (deterministicOpening) {
+            this.emitTurnAckOpeningBubble(
+              sessionId,
+              prompt,
+              activeSession,
+              turnAckSerial,
+              deterministicOpening,
+            );
+          }
           this.armAssistantOwnerWaitTimer(sessionId, activeSession);
-          // LLM refine (fire-and-forget): replaces the instant opening's
-          // content in place once it lands — the title-generation pattern —
-          // never emitting a second bubble. Dropped when the model's own
-          // visible text arrives first.
+          // The LLM first sentence (fire-and-forget): the bot's own words
+          // about THIS message, emitted as the first bubble when the one-shot
+          // call lands. Dropped when the model's own visible text beat it, a
+          // newer turn started, or the output was unusable — no bubble beats
+          // a canned or wrong one.
           void this.emitTurnAckReplyBubble(sessionId, prompt, activeSession, turnAckSerial);
         }
       } catch { /* best-effort: the ack must never break a turn */ }
@@ -11412,7 +11408,6 @@ export class CoworkRunner extends EventEmitter {
               && ((message as { content?: string }).content ?? '').trim().length > 0
             ) {
               activeSession.dshTurnAckVisibleTextSeen = true
-              activeSession.dshTurnAckModelTextSeen = true
               this.noteAssistantOwnerVisible(sessionId, activeSession)
             }
             const stored = this.store.addMessage(sessionId, message as Omit<CoworkMessage, 'id' | 'timestamp'>);
@@ -11434,7 +11429,6 @@ export class CoworkRunner extends EventEmitter {
             armDshStallWatchdog();
             if (metadata?.isThinking !== true && content.trim().length > 0) {
               activeSession.dshTurnAckVisibleTextSeen = true;
-              activeSession.dshTurnAckModelTextSeen = true;
               this.noteAssistantOwnerVisible(sessionId, activeSession);
             }
             this.dshStreamUi.onFinalize(sessionId, messageId, content, metadata);
@@ -12687,7 +12681,6 @@ export class CoworkRunner extends EventEmitter {
     })
     activeSession.assistantOwnerUpdateCount = count + 1
     activeSession.dshTurnAckVisibleTextSeen = true
-    activeSession.dshTurnAckModelTextSeen = true
     this.noteAssistantOwnerVisible(sessionId, activeSession, kind === 'waiting')
     this.emit('message', sessionId, stored)
     return {
@@ -16681,13 +16674,13 @@ export class CoworkRunner extends EventEmitter {
     userPrompt: string,
     turn: ActiveSession,
     turnSerial: number,
-    instantReply: string,
+    deterministicReply: string,
   ): void {
     if (this.activeSessions.get(sessionId) !== turn
       || turn.dshTurnAckSerial !== turnSerial
       || turn.dshTurnAckVisibleTextSeen
       || turn.dshTurnAckOpeningEmitted) return;
-    const reply = instantReply.trim();
+    const reply = deterministicReply.trim();
     if (!reply) return;
     const message = this.store.addMessage(sessionId, {
       type: 'assistant',
@@ -16696,21 +16689,22 @@ export class CoworkRunner extends EventEmitter {
     });
     turn.dshTurnAckOpeningEmitted = true;
     turn.dshTurnAckVisibleTextSeen = true;
-    turn.dshTurnAckOpeningMessageId = message.id;
     turn.dshTurnAckOpeningText = reply;
-    turn.dshTurnAckOpeningRefined = false;
     turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
     this.noteAssistantOwnerVisible(sessionId, turn);
     this.emit('message', sessionId, message);
-    coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, instant: true });
+    coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, deterministic: true });
   }
 
   /**
-   * LLM refine of the instant opening bubble (title pattern: instant local
-   * placeholder, async refinement updates it in place). Runs once per turn;
-   * dropped once the MODEL produced its own visible text — polishing the ack
-   * after the answer arrived would read as noise, and the delta pipe forwards
-   * a full-content rewrite for the replacement, never a duplicate bubble.
+   * The LLM-written first sentence — THE first bubble for every generic turn
+   * (owner decision 2026-11-03, session 2c70849f: a rotating canned line is
+   * worse than no line, so the phrase pool is gone and this call CREATES the
+   * bubble instead of refining a placeholder). Delivered when the one-shot
+   * call lands (~1-3s, primary + fallback brain); dropped entirely when the
+   * model's own visible text beat it, a newer turn started, or the output was
+   * unusable — the activity indicator covers the wait, and no bubble beats a
+   * canned or wrong one.
    */
   private async emitTurnAckReplyBubble(
     sessionId: string,
@@ -16725,16 +16719,22 @@ export class CoworkRunner extends EventEmitter {
       if (!generatedReply) return;
       if (this.activeSessions.get(sessionId) !== turn
         || turn.dshTurnAckSerial !== turnSerial
-        || turn.dshTurnAckOpeningRefined
-        || turn.dshTurnAckModelTextSeen
-        || !turn.dshTurnAckOpeningMessageId) return;
-      turn.dshTurnAckOpeningRefined = true;
+        || turn.dshTurnAckVisibleTextSeen
+        || turn.dshTurnAckOpeningEmitted) return;
+      const message = this.store.addMessage(sessionId, {
+        type: 'assistant',
+        content: generatedReply,
+        metadata: { turnAckReply: true, isFinal: true },
+      });
+      turn.dshTurnAckOpeningEmitted = true;
+      turn.dshTurnAckVisibleTextSeen = true;
       turn.dshTurnAckOpeningText = generatedReply;
-      this.updateMessageMerged(sessionId, turn.dshTurnAckOpeningMessageId, { content: generatedReply });
-      this.emit('messageUpdate', sessionId, turn.dshTurnAckOpeningMessageId, generatedReply);
-      coworkLog('INFO', 'turn:ack', 'opening bubble refined in place', { sessionId });
+      turn.assistantOwnerUpdateCount = Math.max(1, turn.assistantOwnerUpdateCount ?? 0);
+      this.noteAssistantOwnerVisible(sessionId, turn);
+      this.emit('message', sessionId, message);
+      coworkLog('INFO', 'turn:ack', 'opening bubble emitted', { sessionId, llm: true });
     } catch (error) {
-      coworkLog('WARN', 'turn:ack', 'llm ack refine skipped; instant opening stays', {
+      coworkLog('WARN', 'turn:ack', 'llm first sentence skipped; activity indicator covers the wait', {
         sessionId,
         message: error instanceof Error ? error.message : String(error),
       });

@@ -1356,11 +1356,12 @@ export function setTurnAckReplyBrainProvider(provider: (() => MetabotBrainOption
  * One-shot LLM acknowledgment for a turn (first-response latency). Mirrors
  * generateSessionTitle: a direct cognitive-layer call — no kernel spawn, no
  * agent loop — so it returns in seconds while the DSH turn is still warming
- * up. Since 2026-11-03 this text REFINES the already-shown instant opening
- * bubble (the runner updates the bubble in place) instead of creating it, so
- * a slow or failed call no longer costs the owner their first sentence.
- * Returns '' when the call fails or the output is unusable; the runner keeps
- * the deterministic instant opening. Primary + fallback brain, like titles.
+ * up. Since 2026-11-03 (second pass, owner decision after session 2c70849f)
+ * this is THE first sentence for every generic turn — the bot's own words
+ * about this message; canned phrase pools are gone. Returns '' when the call
+ * fails or the output is unusable; the runner then shows no first sentence at
+ * all (the activity indicator covers the wait) rather than a canned line.
+ * Primary + fallback brain, like titles.
  */
 export async function generateTurnAckReply(userText: string, sessionTitle?: string | null): Promise<string> {
   try {
