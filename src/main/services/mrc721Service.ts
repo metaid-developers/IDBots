@@ -475,6 +475,19 @@ export async function fetchMrc721ItemVerify(params: {
   });
 }
 
+/**
+ * Shared read for sibling MRC-721 domain modules (sell intents): one indexer
+ * read through the standard remote-first path. Errors propagate with the
+ * structured mrc721Status/mrc721Code markers so callers can degrade honestly
+ * when the endpoint is not served yet.
+ */
+export function fetchMrc721IndexerJson(
+  localPath: string,
+  query: Record<string, string | number | undefined>,
+): Promise<unknown> {
+  return fetchMrc721Json(localPath, query);
+}
+
 // ---------------------------------------------------------------------------
 // Holder gate + collection search (P0: mrc721_verify_holding / search tools)
 // ---------------------------------------------------------------------------

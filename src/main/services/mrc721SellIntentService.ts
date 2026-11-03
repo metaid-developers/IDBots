@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   broadcastMrc721Pin,
+  fetchMrc721IndexerJson,
   fetchMrc721ItemInfo,
   isMvcAddress,
   isMrc721PinId,
@@ -352,4 +353,131 @@ export async function listMrc721MySellIntents(
     });
   }
   return views;
+}
+
+// ---------------------------------------------------------------------------
+// Market reads (S2): other bots' declared sell intents via the indexer
+// ---------------------------------------------------------------------------
+
+/**
+ * One sell-intent row as served by the indexer (man-p2p ships camelCase plus
+ * lowercase duplicates; we read the camelCase shape). Chain facts ride along.
+ */
+export interface Mrc721SellIntentRow {
+  itemPinId: string;
+  sellPinId?: string;
+  active?: boolean;
+  collectionName?: string;
+  collectionPinId?: string;
+  sellerAddress?: string;
+  sellerMetaId?: string;
+  priceHintSats?: number;
+  acceptedCurrencies?: string[];
+  settlement?: string[];
+  note?: string;
+  contact?: { metaId?: string; metabotId?: number };
+  createdAt?: number;
+  expiresAt?: number;
+  chainName?: string;
+  height?: number;
+  txId?: string;
+  updatedAt?: number;
+}
+
+function sellIntentRowFrom(raw: unknown): Mrc721SellIntentRow {
+  const record = asRecord(raw);
+  const row: Mrc721SellIntentRow = {
+    itemPinId: String(record.itemPinId ?? record.itempinid ?? ''),
+    active: record.active === undefined ? undefined : record.active !== false,
+  };
+  const pickString = (...keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return undefined;
+  };
+  row.sellPinId = pickString('sellPinId', 'sellpinid');
+  row.collectionName = pickString('collectionName', 'collectionname');
+  row.collectionPinId = pickString('collectionPinId', 'collectionpinid');
+  row.sellerAddress = pickString('sellerAddress', 'selleraddress');
+  row.sellerMetaId = pickString('sellerMetaId', 'sellermetaid');
+  row.note = pickString('note');
+  row.chainName = pickString('chainName', 'chainname');
+  row.txId = pickString('txId', 'txid');
+  if (Number.isFinite(Number(record.priceHintSats ?? record.pricehintsats))) {
+    row.priceHintSats = Number(record.priceHintSats ?? record.pricehintsats) || undefined;
+  }
+  const currencies = record.acceptedCurrencies ?? record.acceptedcurrencies;
+  if (Array.isArray(currencies)) {
+    row.acceptedCurrencies = currencies.map((entry) => String(entry)).filter(Boolean);
+  }
+  if (Array.isArray(record.settlement)) {
+    row.settlement = record.settlement.map((entry) => String(entry)).filter(Boolean);
+  }
+  if (Number.isFinite(Number(record.createdAt ?? record.createdat))) {
+    row.createdAt = Number(record.createdAt ?? record.createdat) || undefined;
+  }
+  if (Number.isFinite(Number(record.expiresAt ?? record.expiresat))) {
+    row.expiresAt = Number(record.expiresAt ?? record.expiresat) || undefined;
+  }
+  if (Number.isFinite(Number(record.updatedAt ?? record.updatedat))) {
+    row.updatedAt = Number(record.updatedAt ?? record.updatedat) || undefined;
+  }
+  if (Number.isFinite(Number(record.height))) row.height = Number(record.height);
+  return row;
+}
+
+export interface Mrc721SellIntentPage {
+  items: Mrc721SellIntentRow[];
+  total?: number;
+  cursor?: string;
+}
+
+/**
+ * Query the indexer for declared sell intents (docs/nft-sell-protocol-draft.md
+ * §2.3, indexer requirement R-C). Served by man-p2p; indexers without the
+ * endpoint surface a structured 404 that callers must degrade on honestly.
+ */
+export async function fetchMrc721SellIntents(params: {
+  collectionPinId?: string;
+  collectionName?: string;
+  itemPinId?: string;
+  sellerAddress?: string;
+  active?: boolean;
+  cursor?: string | number;
+  size?: number;
+}): Promise<Mrc721SellIntentPage> {
+  const data = await fetchMrc721IndexerJson('/api/mrc721/sell/intents', {
+    collectionPinId: params.collectionPinId,
+    collectionName: params.collectionName,
+    itemPinId: params.itemPinId,
+    sellerAddress: params.sellerAddress,
+    active: params.active == null ? undefined : (params.active ? 'true' : 'false'),
+    cursor: params.cursor,
+    size: params.size,
+  }) as { list?: unknown; total?: unknown; cursor?: unknown } | null;
+  const items = Array.isArray(data?.list) ? data.list.map(sellIntentRowFrom) : [];
+  return {
+    items,
+    total: Number.isFinite(Number(data?.total)) ? Number(data?.total) : undefined,
+    cursor: typeof data?.cursor === 'string' && data.cursor ? data.cursor : undefined,
+  };
+}
+
+/** Single sell-intent lookup by item; a server-answered miss returns null. */
+export async function fetchMrc721SellIntentInfo(params: {
+  itemPinId: string;
+}): Promise<Mrc721SellIntentRow | null> {
+  try {
+    const data = await fetchMrc721IndexerJson('/api/mrc721/sell/intent/info', {
+      itemPinId: params.itemPinId,
+    });
+    return data ? sellIntentRowFrom(data) : null;
+  } catch (error) {
+    const status = (error as { mrc721Status?: number }).mrc721Status;
+    const code = (error as { mrc721Code?: unknown }).mrc721Code;
+    if (status === 404 || code !== undefined) return null;
+    throw error;
+  }
 }

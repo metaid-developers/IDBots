@@ -25,7 +25,10 @@ import {
   type Mrc721ItemTransferRecord,
   type Mrc721VerifyInfo,
 } from '../services/mrc721Service';
-import type { Mrc721SellIntentContent } from '../services/mrc721SellIntentService';
+import {
+  fetchMrc721SellIntents,
+  type Mrc721SellIntentContent,
+} from '../services/mrc721SellIntentService';
 
 /**
  * MRC-721 (pin-based MetaID NFT) agent tools — R6 of the IDBots MRC-721
@@ -1530,6 +1533,76 @@ export function buildMrc721AgentTools(deps: {
   );
 
   // -------------------------------------------------------------------------
+  // mrc721_market_intents (S2 read: discover declared sell intents)
+  // -------------------------------------------------------------------------
+  const mrc721MarketIntents = tool(
+    'mrc721_market_intents',
+    [
+      'Discover declared MRC-721 sell intents (the "NFT 售" on-chain declarations, docs/nft-sell-protocol-draft.md) from the indexer: what is up for sale in a collection, by an issuer, or for one item — with each seller\'s accepted currencies and settlement rails (atomic-swap for native SPACE, escrow for any currency).',
+      'Read-only. These are INTENTS, not escrowed listings: before engaging, re-verify the seller still holds the item (mrc721_item_info or mrc721_verify_holding) and confirm the deal terms with the seller directly.',
+      'Requires an indexer that serves sell-intent queries (local man-p2p ships them; requirement R-C). Your own intents are better listed via mrc721_sell_intents.',
+    ].join(' '),
+    {
+      collection_name: z.string().optional().describe('Filter to one collection by namespace name.'),
+      collection_pinid: z.string().optional().describe('Filter to one collection by collectionid (collection_desc pinId).'),
+      seller: z.string().optional().describe('Filter by seller: local MetaBot name, 64-hex MetaID, or MVC address.'),
+      item_pin_id: z.string().optional().describe('Filter to one item.'),
+      active: z.boolean().optional().describe('Only live intents when true; only withdrawn/closed ones when false. Default: all.'),
+      cursor: z.string().optional().describe('Page cursor from the previous call.'),
+      size: z.number().int().min(1).max(100).optional().describe('Page size (default 20).'),
+    },
+    async (args: {
+      collection_name?: string;
+      collection_pinid?: string;
+      seller?: string;
+      item_pin_id?: string;
+      active?: boolean;
+      cursor?: string;
+      size?: number;
+    }) => {
+      let sellerAddress: string | undefined;
+      if (args.seller) {
+        const resolved = await resolveIssuerFilter(args.seller, control);
+        if (typeof resolved === 'object') {
+          return textResult(`mrc721_market_intents: ${resolved.error}.`, true);
+        }
+        sellerAddress = resolved;
+      }
+      try {
+        const page = await fetchMrc721SellIntents({
+          collectionName: asString(args.collection_name) || undefined,
+          collectionPinId: asString(args.collection_pinid) || undefined,
+          itemPinId: asString(args.item_pin_id) || undefined,
+          sellerAddress,
+          active: args.active,
+          cursor: args.cursor,
+          size: args.size ?? 20,
+        });
+        if (!page.items.length) return textResult('No sell intents match these filters (or none declared yet).');
+        const lines = [`Declared MRC-721 sell intents${page.total != null ? ` (${page.items.length} of ${page.total})` : ` (${page.items.length})`}:`];
+        for (const row of page.items) {
+          const state = row.active === false ? 'INACTIVE' : 'ACTIVE';
+          lines.push(`- ${state} ${row.itemPinId}${row.collectionName ? ` · ${row.collectionName}` : ''} · hint ${row.priceHintSats != null ? `${row.priceHintSats} sats` : 'make an offer'} · ${row.acceptedCurrencies?.join(',') ?? 'space'} · ${row.settlement?.join('/') ?? 'atomic-swap/escrow'} · seller ${row.sellerAddress ?? 'unknown'}`);
+          if (row.note) lines.push(`  note: ${row.note}`);
+          if (row.sellPinId) lines.push(`  intent pin: pin://${row.sellPinId}`);
+        }
+        if (page.cursor) lines.push(`- next cursor: ${page.cursor}`);
+        return textResult(lines.join('\n'));
+      } catch (error) {
+        const status = (error as { mrc721Status?: number }).mrc721Status;
+        if (status === 404) {
+          return textResult(
+            'mrc721_market_intents: the configured indexer does not serve sell-intent queries yet (indexer requirement R-C). '
+            + 'Local man-p2p ships them; until the endpoint is reachable, discovery of other bots\' intents runs through chat announcements.',
+            true,
+          );
+        }
+        return textResult(`mrc721_market_intents failed: ${errorMessage(error)}`, true);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // mrc721_verify_holding (S4 read: hard holder gate for badge/access flows)
   // -------------------------------------------------------------------------
   const mrc721VerifyHolding = tool(
@@ -1680,6 +1753,7 @@ export function buildMrc721AgentTools(deps: {
     mrc721SellIntent,
     mrc721SellIntentCancel,
     mrc721SellIntents,
+    mrc721MarketIntents,
     mrc721Balance,
     mrc721Collections,
     mrc721ItemInfo,

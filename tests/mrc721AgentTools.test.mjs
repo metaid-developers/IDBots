@@ -41,6 +41,7 @@ const TOOL_NAMES = [
   'mrc721_sell_intent',
   'mrc721_sell_intent_cancel',
   'mrc721_sell_intents',
+  'mrc721_market_intents',
 ];
 
 function makeHarness(overrides = {}) {
@@ -882,4 +883,46 @@ test('mrc721_sell_orders filters by collection through the indexer item view', a
   assert.equal(result.isError, undefined);
   assert.match(result.content[0].text, /Local MRC-721 listings \(1\)/);
   assert.doesNotMatch(result.content[0].text, /30000 sats/);
+});
+
+test('mrc721_market_intents renders indexer sell intents with settlement rails', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    manapiDispatch([
+      ['/api/mrc721/sell/intents', () => jsonResponse({
+        code: 1,
+        data: {
+          list: [{
+            itemPinId: PINID,
+            sellPinId: SELL_PIN_ID,
+            active: true,
+            collectionName: 'pixel-cats',
+            sellerAddress: OTHER_ADDRESS,
+            priceHintSats: 30000,
+            acceptedCurrencies: ['space', 'fiat:CNY'],
+            settlement: ['atomic-swap', 'escrow'],
+            note: 'open to offers',
+          }],
+          total: 1,
+        },
+      })],
+    ]),
+    () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, undefined);
+  assert.match(result.content[0].text, /ACTIVE/);
+  assert.match(result.content[0].text, /30000 sats/);
+  assert.match(result.content[0].text, /space,fiat:CNY/);
+  assert.match(result.content[0].text, /atomic-swap\/escrow/);
+  assert.match(result.content[0].text, new RegExp(SELL_PIN_ID));
+});
+
+test('mrc721_market_intents degrades honestly when the indexer lacks the endpoint', async () => {
+  const { byName } = makeHarness();
+  const result = await withFetchStub(
+    async () => new Response('404 page not found', { status: 404 }),
+    () => byName.mrc721_market_intents.handler({ collection_name: 'pixel-cats' }),
+  );
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /does not serve sell-intent queries yet/);
 });
