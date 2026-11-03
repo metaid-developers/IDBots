@@ -9,6 +9,47 @@ import type { NftCaRegistry } from './nftCaService';
 
 type RegisterIpcHandlerFn = (channel: string, handler: (event: any, ...args: any[]) => any) => void;
 
+/** One local MRC-721 atomic-swap listing record, refreshed per read. */
+export interface MetabotMrc721SellOrderView {
+  id: string;
+  status: 'valid' | 'invalid' | 'expired';
+  reason?: string;
+  itemPinId: string;
+  buyerAddress: string;
+  priceSats: number;
+  outpoint: string;
+}
+
+/** Read-only summary of a verified listing (idbots:verifyMrc721Listing ok:true). */
+export interface MetabotMrc721ListingSummary {
+  itemPinId: string;
+  collectionPinId: string;
+  sellerAddress: string;
+  buyerAddress: string;
+  priceSats: number;
+  outpoint: string;
+  createdAt: number;
+  expiresAt: number;
+  feeRate: number;
+}
+
+export interface MetabotMrc721SellResult {
+  listingJson: string;
+  itemPinId: string;
+  buyerAddress: string;
+  priceSats: number;
+  outpoint: string;
+}
+
+export interface MetabotMrc721BuyResult {
+  txId: string;
+  itemPinId: string;
+  priceSats: number;
+  sellerAddress: string;
+  feeSats: number;
+  feeRateEffective: number;
+}
+
 interface RegisterMetabotNftIpcHandlersDeps {
   registerIpcHandler: RegisterIpcHandlerFn;
   getMetabotStore: () => MetabotStore;
@@ -25,6 +66,30 @@ interface RegisterMetabotNftIpcHandlersDeps {
     input: MetabotMrc721TransferInput,
   ) => Promise<{ txId: string; pinId: string; toAddress: string; spentOutpoint: string; outputValue: number }>;
   getNftCaRegistry: (input: { refresh?: boolean }) => Promise<NftCaRegistry>;
+  // MRC-721 atomic-swap trade (MetaBot NFT wallet modal). Same service deps
+  // as the mrc721_sell/mrc721_buy agent-tool backends minus the agent-tool
+  // chain-write budget — UI money movement like idbots:transferMetabotMrc721
+  // does not budget either.
+  sellMrc721Listing: (
+    store: MetabotStore,
+    input: { metabotId: number; itemPinId: string; buyerAddress: string; priceSats: number },
+  ) => Promise<MetabotMrc721SellResult>;
+  buyMrc721Listing: (
+    store: MetabotStore,
+    input: { metabotId: number; listing: unknown },
+  ) => Promise<MetabotMrc721BuyResult>;
+  listMrc721SellOrders: (store: MetabotStore, metabotId: number) => Promise<MetabotMrc721SellOrderView[]>;
+  verifyMrc721Listing: (listing: unknown) => Promise<{
+    itemPinId: string;
+    collectionPinId: string;
+    sellerAddress: string;
+    buyerAddress: string;
+    priceSats: number;
+    outpoint: { txid: string; vout: number; satoshis: number };
+    createdAt: number;
+    expiresAt: number;
+    feeRate: number;
+  }>;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -40,6 +105,16 @@ function normalizeMetabotId(value: unknown): number {
     throw new Error('metabotId must be a positive integer');
   }
   return id;
+}
+
+/**
+ * Pulls the "check N (...)" marker out of an mrc721ListingError message
+ * ("MRC-721 listing failed check 4 (unspent): ..."); non-listing errors fall
+ * back to 'unknown'.
+ */
+function extractListingCheck(message: string): string {
+  const match = /MRC-721 listing failed (check [^:]+):/.exec(message);
+  return match ? match[1] : 'unknown';
 }
 
 export function registerMetabotNftIpcHandlers(deps: RegisterMetabotNftIpcHandlersDeps): void {
@@ -82,6 +157,97 @@ export function registerMetabotNftIpcHandlers(deps: RegisterMetabotNftIpcHandler
         return { success: true, result };
       } catch (error) {
         return { success: false, error: getErrorMessage(error) };
+      }
+    },
+  );
+
+  // MRC-721 atomic-swap listing creation (MetaBot NFT wallet "sell" flow):
+  // builds + seller-signs the partial transaction and records the listing
+  // locally. Nothing is broadcast — the buyer completes the swap.
+  deps.registerIpcHandler(
+    'idbots:sellMrc721Listing',
+    async (_event, input: { metabotId: number; itemPinId: string; buyerAddress: string; priceSats: number }) => {
+      try {
+        const metabotId = normalizeMetabotId(input?.metabotId);
+        const priceSats = Number(input?.priceSats);
+        if (!Number.isInteger(priceSats) || priceSats <= 0) {
+          return { success: false, error: 'priceSats must be a positive integer' };
+        }
+        const result = await deps.sellMrc721Listing(deps.getMetabotStore(), {
+          metabotId,
+          itemPinId: String(input?.itemPinId ?? ''),
+          buyerAddress: String(input?.buyerAddress ?? ''),
+          priceSats,
+        });
+        return { success: true, result };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+  );
+
+  // MRC-721 atomic-swap purchase (MetaBot NFT wallet "buy" flow): verifies
+  // the five listing checks, enforces the buyer lock, then completes and
+  // broadcasts the swap transaction.
+  deps.registerIpcHandler(
+    'idbots:buyMrc721Listing',
+    async (_event, input: { metabotId: number; listing: unknown }) => {
+      try {
+        const metabotId = normalizeMetabotId(input?.metabotId);
+        const result = await deps.buyMrc721Listing(deps.getMetabotStore(), {
+          metabotId,
+          listing: input?.listing,
+        });
+        return { success: true, result };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+  );
+
+  // Local sell-order records for one bot, each re-verified on read (status
+  // valid/invalid/expired plus the failing check as reason). Read-only.
+  deps.registerIpcHandler(
+    'idbots:listMrc721SellOrders',
+    async (_event, input: { metabotId: number }) => {
+      try {
+        const metabotId = normalizeMetabotId(input?.metabotId);
+        const orders = await deps.listMrc721SellOrders(deps.getMetabotStore(), metabotId);
+        return { success: true, orders };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+  );
+
+  // Read-only pre-buy listing check (checks 1–5). Never throws raw: shape,
+  // ownership and node/indexer hiccups all surface as ok:false with the
+  // failing check name, so the modal can block before the money step.
+  deps.registerIpcHandler(
+    'idbots:verifyMrc721Listing',
+    async (_event, input: { listing: unknown }) => {
+      try {
+        const listing = await deps.verifyMrc721Listing(input?.listing);
+        return {
+          success: true,
+          result: {
+            ok: true,
+            listing: {
+              itemPinId: listing.itemPinId,
+              collectionPinId: listing.collectionPinId,
+              sellerAddress: listing.sellerAddress,
+              buyerAddress: listing.buyerAddress,
+              priceSats: listing.priceSats,
+              outpoint: `${listing.outpoint.txid}:${listing.outpoint.vout}`,
+              createdAt: listing.createdAt,
+              expiresAt: listing.expiresAt,
+              feeRate: listing.feeRate,
+            } satisfies MetabotMrc721ListingSummary,
+          },
+        };
+      } catch (error) {
+        const message = getErrorMessage(error);
+        return { success: true, result: { ok: false, check: extractListingCheck(message), error: message } };
       }
     },
   );

@@ -1928,6 +1928,57 @@ interface IElectronAPI {
       result?: { txId: string; pinId: string; toAddress: string; spentOutpoint: string; outputValue: number };
       error?: string;
     }>;
+    sellMrc721Listing: (params: {
+      metabotId: number;
+      itemPinId: string;
+      buyerAddress: string;
+      priceSats: number;
+    }) => Promise<{
+      success: boolean;
+      result?: { listingJson: string; itemPinId: string; buyerAddress: string; priceSats: number; outpoint: string };
+      error?: string;
+    }>;
+    buyMrc721Listing: (params: {
+      metabotId: number;
+      listing: unknown;
+    }) => Promise<{
+      success: boolean;
+      result?: { txId: string; itemPinId: string; priceSats: number; sellerAddress: string; feeSats: number; feeRateEffective: number };
+      error?: string;
+    }>;
+    listMrc721SellOrders: (params: { metabotId: number }) => Promise<{
+      success: boolean;
+      orders?: Array<{
+        id: string;
+        status: 'valid' | 'invalid' | 'expired';
+        reason?: string;
+        itemPinId: string;
+        buyerAddress: string;
+        priceSats: number;
+        outpoint: string;
+      }>;
+      error?: string;
+    }>;
+    verifyMrc721Listing: (params: { listing: unknown }) => Promise<{
+      success: boolean;
+      result?: {
+        ok: boolean;
+        listing?: {
+          itemPinId: string;
+          collectionPinId: string;
+          sellerAddress: string;
+          buyerAddress: string;
+          priceSats: number;
+          outpoint: string;
+          createdAt: number;
+          expiresAt: number;
+          feeRate: number;
+        };
+        check?: string;
+        error?: string;
+      };
+      error?: string;
+    }>;
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => Promise<{
       success: boolean;
       list?: Array<{ title: string; desc: string; feeRate: number }>;

@@ -1183,6 +1183,20 @@ contextBridge.exposeInMainWorld('electron', {
       toAddress: string;
       feeRate: number;
     }) => ipcRenderer.invoke('idbots:transferMetabotMrc721', params),
+    sellMrc721Listing: (params: {
+      metabotId: number;
+      itemPinId: string;
+      buyerAddress: string;
+      priceSats: number;
+    }) => ipcRenderer.invoke('idbots:sellMrc721Listing', params),
+    buyMrc721Listing: (params: {
+      metabotId: number;
+      listing: unknown;
+    }) => ipcRenderer.invoke('idbots:buyMrc721Listing', params),
+    listMrc721SellOrders: (params: { metabotId: number }) =>
+      ipcRenderer.invoke('idbots:listMrc721SellOrders', params),
+    verifyMrc721Listing: (params: { listing: unknown }) =>
+      ipcRenderer.invoke('idbots:verifyMrc721Listing', params),
     getTransferFeeSummary: (chain: 'mvc' | 'doge' | 'btc') => ipcRenderer.invoke('idbots:getTransferFeeSummary', chain),
     getTokenTransferFeeSummary: (input: { kind: 'mrc20' | 'mvc-ft' }) =>
       ipcRenderer.invoke('idbots:getTokenTransferFeeSummary', input),

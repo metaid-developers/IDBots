@@ -86,6 +86,10 @@ after that date so it gets a tier here.
 | `idbots:assignGroupChatTask` | P2 | |
 | `idbots:buildTransferPreview`, `idbots:buildTokenTransferPreview`, `idbots:getTransferFeeSummary`, `idbots:getTokenTransferFeeSummary` | P2 | Read-only previews. |
 | `idbots:executeTransfer`, `idbots:executeTokenTransfer` | N | Moving funds out of custodial wallets needs SMS re-verification; later release. |
+| `idbots:sellMrc721Listing` | N | MRC-721 atomic-swap listing from the desktop MetaBot NFT wallet; moving funds out of custodial wallets needs SMS re-verification; later release. |
+| `idbots:buyMrc721Listing` | N | MRC-721 atomic-swap purchase from the desktop MetaBot NFT wallet; moving funds out of custodial wallets needs SMS re-verification; later release. |
+| `idbots:listMrc721SellOrders` | N | MRC-721 sell-order records of the desktop MetaBot NFT wallet (read + per-order re-verify); tiered with the trade channels. |
+| `idbots:verifyMrc721Listing` | N | Read-only pre-buy MRC-721 listing check (indexer/node reads, no funds); tiered with the trade channels. |
 | `idbots:getMetaBotMnemonic` | H | C2 sensitive route. |
 | `idbots:restoreMetaBotFromMnemonic` | N | Mnemonic input over the socket; later release. |
 | `userIdentity:get`, `userIdentity:updateName`, `userIdentity:retryChainSync`, `userIdentity:retrySubsidy` | P1 | |

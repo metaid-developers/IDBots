@@ -212,6 +212,7 @@ import {
   sellMrc721Item,
   transferMrc721Item,
   updateMrc721Collection,
+  verifyMrc721Listing,
   type Mrc721CreatePinFn,
 } from './services/mrc721Service';
 import {
@@ -18373,6 +18374,53 @@ registerIpcHandler('gigSquare:sendOrder', async (_event, params: {
     transferMetabotMvcNft: (store, input) => transferMetabotMvcNft(store, input),
     transferMetabotMrc721: (store, input) => transferMetabotMrc721(store, input),
     getNftCaRegistry: (input) => getNftCaRegistry(input),
+    // MRC-721 atomic-swap trade backends for the NFT wallet modal — the exact
+    // same service deps as the mrc721Tools.sell/buy backends above, WITHOUT
+    // the agent-tool chain-write budget (UI transfers like
+    // idbots:transferMetabotMrc721 do not budget either).
+    sellMrc721Listing: (store, input) => sellMrc721Item(
+      { buildPartialTx: (partialTxStore, params) => buildMvc721SellPartialTx(partialTxStore, params) },
+      {
+        ...input,
+        store,
+        feeRate: getGlobalFeeRate('mvc'),
+        orders: mrc721SellOrdersFromSqlite(getStore()),
+      },
+    ).then((listing) => ({
+      listingJson: JSON.stringify(listing),
+      itemPinId: listing.itemPinId,
+      buyerAddress: listing.buyerAddress,
+      priceSats: listing.priceSats,
+      outpoint: `${listing.outpoint.txid}:${listing.outpoint.vout}`,
+    })),
+    buyMrc721Listing: (store, input) => buyMrc721Listing(
+      { completeBuy: (buyStore, params) => completeMvc721BuyTx(buyStore, params) },
+      {
+        ...input,
+        store,
+        feeRate: getGlobalFeeRate('mvc'),
+      },
+    ).then((result) => ({
+      txId: result.txId,
+      itemPinId: result.itemPinId,
+      priceSats: result.priceSats,
+      sellerAddress: result.sellerAddress,
+      feeSats: result.feeSats,
+      feeRateEffective: result.feeRateEffective,
+    })),
+    listMrc721SellOrders: (_store, metabotId) => listMrc721MySellOrders(
+      mrc721SellOrdersFromSqlite(getStore()),
+      metabotId,
+    ).then((views) => views.map((view) => ({
+      id: view.id,
+      status: view.status,
+      reason: view.reason,
+      itemPinId: view.listing.itemPinId,
+      buyerAddress: view.listing.buyerAddress,
+      priceSats: view.listing.priceSats,
+      outpoint: `${view.listing.outpoint.txid}:${view.listing.outpoint.vout}`,
+    }))),
+    verifyMrc721Listing: (listing) => verifyMrc721Listing(listing).then((verified) => verified.listing),
   });
 
   // Chat NftCard heal channel: renderer-side fallback lookups for missing
